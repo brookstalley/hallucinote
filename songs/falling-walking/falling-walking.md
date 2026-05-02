@@ -343,6 +343,71 @@ Confirmed working pattern for future iterations:
 
 ---
 
+## v3 changes (2026-05-01 musicality pass)
+
+| Area | Change |
+|------|--------|
+| Chorus pad / pad twist | Removed re-articulation stabs that were retriggering the slow-attack patch and killing the sustain. Each chord now holds 7.5 beats (out of 8) — short breath at chord change, long bloom in between. Lets the patch evolve as designed. |
+| Verse bass | Full embellishment pass: chord tones (3rds, 5ths), octave-up answers, ghost notes, chromatic walks into chord changes (F#2 → Gm at bar 9; G#2-A2-Bb1 → Bb at bar 13; Bb1-A1 → A at bar 15). Each bar is now varied; no two bars repeat verbatim. |
+| Chorus bass | Alternating structure: odd bars (1/3/5/7) play plain tresillo on root to establish the calypso pulse; even bars (2/4/6/8) embellish with chord tone (3rd) → root → 5th-up octave → root → walk-to-next-chord. |
+| Chorus bass twist (NEW) | C3' variant — same shape but bars 7-8 are Bb (matches the B♭maj7 pad twist). Walks: Bb1 → D2 → F2 → A1 (half-step below D for loop-back). Lives at slot 3 track 7. |
+| Chorus sub twist (NEW) | C3' variant — bars 7-8 are Bb-1 octave (22) instead of G-1 (31). Slot 3 track 6. |
+| Verse drums | Drummer flourishes: open-hat (46) lifts on bars 4/8/12 beat 3.5 (sectional accents on the mini-fill bars). Soft crash (49 vel 75) on bar 9 beat 1 (Gm chord arrival). Splash (55 vel 70) on bar 13 beat 1 (Bb arrival). Ride-bell (53) ghost notes through bar 7 — texture variation deep in the long Dm. |
+| Chorus drums | Soft crash (49 vel 88) on bar 1 beat 1 (chorus entry). Snare flick on 31.5/31.75 — pushes into the next section. (c3prime_drums inherits these because it's `list(chorus_drums) + crashes`.) |
+
+### Updated slot map (additions to v2)
+
+| Slot | Track | Clip |
+|------|-------|------|
+| 3 | 6 (Sub) | `Chorus Sub Twist` (NEW — Bb in bars 7-8) |
+| 3 | 7 (Bass) | `Chorus Bass Twist` (NEW — Bb walk in bars 7-8) |
+
+Arrangement at bar 83 (C3') now uses these twist variants for bass + sub, matching the pad/pluck/bell twists already there.
+
+### Technique notes
+
+- Removing the chorus pad stabs was a Live engine quirk fix: stabs at the same pitch as the sustained chord retrigger the synth's slow-attack envelope, killing the bloom. The MIDI showed an 8-beat sustain but the audible note effectively ended at the first stab.
+- Bass embellishment pattern that worked here: **plain bar establishes, embellished bar develops, walk-in bar prepares next chord**. Each 2-bar chord block becomes a mini phrase rather than a static drone.
+- Drummer logic: small accents (open hat, ride bell) are cheap — they imply intent without cluttering. Soft crashes (vel 70-88) on chord-change downbeats mark form for the listener; loud crashes would derail the brooding aesthetic.
+
+---
+
+## Mix v1 plan (2026-05-01)
+
+Devices loaded onto tracks via MCP. **Parameters intentionally left at default** because `set_device_parameter` is currently throwing internal errors (see `docs/mcp-requirements.md` #17b) — the values below are the intended target, applied either manually in Live's UI or programmatically once the MCP gap is fixed.
+
+### Per-track inserts (loaded ✓ — settings TBD)
+
+| Track | Devices loaded | Intended settings |
+|-------|---------------|-------------------|
+| 5 — 01 Drums | EQ8 → Drum Buss | EQ8: HP 30Hz brick, dip -2dB @ 350Hz Q 1.0, +1.5dB shelf @ 10kHz. Drum Buss: drive 6dB, crunch 30%, boom 60Hz/0.3s, transients +25%, comp ~2dB GR |
+| 6 — 02 Sub Bass | EQ8 → Utility | EQ8: HP 28Hz @ 48dB/oct, LP 120Hz @ 24dB/oct. Utility: Bass Mono 150Hz |
+| 7 — 03 Synth Bass | EQ8 → Saturator | EQ8: HP 60Hz, -3dB bell @ 250Hz Q 1.5 (mud), +1.5dB bell @ 1.2kHz Q 1.0 (presence). Saturator: drive 4dB, Soft Sine, output -2dB |
+| 8 — 04 Verse Pad | EQ8 → Chorus-Ensemble | EQ8: HP 200Hz @ 24dB/oct, -2dB bell @ 350Hz Q 1.0. Chorus: Ensemble mode, amount 30%, rate 0.3Hz, width 100% |
+| 9 — 05 Chorus Pluck | EQ8 | EQ8: HP 300Hz @ 24dB/oct |
+| 10 — 06 Bell | EQ8 | EQ8: HP 500Hz @ 24dB/oct |
+| 11 — 07 Bridge EP | EQ8 → Chorus-Ensemble | EQ8: HP 100Hz @ 24dB/oct. Chorus: Classic mode, amount 15% (subtle), rate 0.4Hz, width 70% |
+| 12 — 08 Chiptune Lead | EQ8 → Chorus-Ensemble | EQ8: HP 200Hz @ 24dB/oct. Chorus: Ensemble mode, amount 25%, rate 0.5Hz, width 100% |
+
+### Deferred — blocked on MCP gaps (not yet attempted)
+
+| Block | Reason | Plan |
+|-------|--------|------|
+| Hybrid Reverb on Return A (track 13) | `load_instrument_or_effect` errors "Track index out of range" on returns | Hybrid Reverb, Hall, decay 3.5s, predelay 30ms, dry/wet 100% |
+| Echo on Return B (track 14) | Same — returns not addressable | Echo, 1/8 dotted ping-pong, feedback 35%, HP filter 250Hz, dry/wet 100% |
+| Send levels per track | No `set_track_send` tool exists (req #16) | T8 Pad → A -10dB, T10 Bell → A -8dB / B -14dB, T9 Pluck → A -16dB / B -18dB, others lighter |
+| Sidechain Compressor on T7 Synth Bass | No sidechain routing tool (req #17) | Comp keyed to T5 kick, ratio 4:1, ~3dB GR, attack 5ms, release 150ms |
+| Sidechain Compressor on T8 Verse Pad | Same | Comp keyed to T5 kick, ratio 6:1, ~4dB GR, attack 1ms, release 200ms |
+| Master bus glue + limiter | Master not addressable as a track index | Glue 2:1, ~1.5dB GR. Limiter ceiling -1.0dB, lookahead 1.5ms |
+
+### Why this order
+
+EQ8 first on every track (HP filter pass) gives the biggest perceived clarity gain for the least effort — even at default Live settings, just having the slot present is harmless; once the HP frequencies are dialed, low-end mud disappears across the song. Drum Buss / Saturator / Chorus-Ensemble are character shapers placed *after* EQ in the chain so they color the cleaned-up signal, not the muddy pre-cleanup version.
+
+Sidechain is the largest single missing element for "powerful electronic" character — but it's strictly blocked on MCP req #17, so leaving comps off-track until that lands.
+
+---
+
 ## MCP capability gaps observed
 
 Surfacing these for future tooling improvements:

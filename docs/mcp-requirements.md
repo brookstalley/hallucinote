@@ -64,6 +64,39 @@ This unlocks everything: humanization passes, "raise verse ghosts by 5", surgica
 
 **Required:** Return `{track_index, arrangement_clip_index, name, start_bar, end_bar}` so subsequent ops can target the new clip without a follow-up `get_arrangement_info` call.
 
+### Mixing-time blockers
+
+The items above all surfaced during note authoring. Items #16-#17 surfaced when planning the mix pass for falling-walking — they prevent an agent from completing standard electronic-mix moves without the user dragging knobs manually.
+
+### 16. Per-track send level control
+
+**Current state:** `set_track_volume` and `set_track_panning` exist for the main mixer; there is no equivalent for send slots. Return tracks can be created and have devices loaded onto them, but there is no way to programmatically set the send amount from each track to each return.
+
+**Problem:** Send-based reverb/delay is the standard architecture in electronic mixing — one reverb on a return, every track sends to it at appropriate levels. Without programmatic send control, an agent can set up returns and load reverbs but cannot complete the mixing work; the user has to drag every send knob manually. For an 8-track song with 2-3 returns that's 16-24 manual drag operations after every "load reverb" decision.
+
+**Required:**
+- `get_track_sends(track_index)` → `[{return_index, level, pre_post}, ...]`
+- `set_track_send(track_index, return_index, level)` — level normalized 0.0-1.0
+- Bonus: `set_track_send_mode(track_index, return_index, mode: "pre"|"post")`
+
+### 17b. `get_device_parameters` and `set_device_parameter` are currently broken
+
+**Current state (2026-05-01):** Both tools throw `No module named 'MCP_Server'` on every call against any device on any track. The error appears to be a Python import path issue in the remote-script side — the `MCP_Server` module isn't reachable when the parameter handlers are invoked. Other tools (`load_instrument_or_effect`, `set_track_volume`, etc.) work fine on the same tracks/devices, so it's not a session-state issue.
+
+**Problem:** With these broken, an agent can load devices but cannot configure any of them. The entire mixing pass for falling-walking landed in the project ~10 devices loaded with default settings, no parameter movement possible. Any sound-design iteration is also blocked — can't read what's set, can't write a change.
+
+**Required:** Fix the import / module-path issue so both tools work. Likely a one-line `sys.path.insert(...)` or relative import fix in the remote script. Reproduces immediately with: `set_device_parameter(track_index=5, device_index=1, parameter_name="1 Filter On A", value=1)`.
+
+### 17. Sidechain routing configuration
+
+**Current state:** `set_device_parameter` works for normal device params (threshold, ratio, attack, release on Compressor) but not for routing-class settings — Sidechain enable, sidechain source track, sidechain channel. These do not appear in Live's `device.parameters` list; they live on `Device.routing` properties or similar.
+
+**Problem:** Sidechain pumping is the signature of modern electronic production. An agent can load Compressors and dial their dynamics params, but enabling sidechain + selecting "01 Drums" as the source is a manual 2-click operation per compressor. For falling-walking with 4-5 sidechain compressors, that's 8-10 scattered manual clicks during the mix session — and breaks the agent's ability to A/B different sidechain depths programmatically.
+
+**Required:**
+- `set_compressor_sidechain(track_index, device_index, enabled: bool, source_track_index?: int, gain_db?: float)`
+- Or generally: `set_device_routing(track_index, device_index, routing_field, value)` — covering sidechain source on Compressor, MIDI input source on instruments, audio input source on Audio Effect Rack chains, etc.
+
 ---
 
 ## Priority 2 — Efficiency (10×+ round-trip wins)
@@ -186,6 +219,55 @@ Without those, the DB just shifts the friction location: instead of regenerating
 - **Per-note authoring UI** — once notes have IDs in a DB, a piano-roll-like web UI becomes viable. Not MCP-related but the architecture enables it.
 - **Live-edit ingestion** — if Ableton emits MIDI change events (it can via control surfaces), the DB could subscribe and stay in sync without explicit pull.
 - **Cross-song templates** — "load the Ahlimba kit + my standard sidechain bus + a verse-style trip-hop drum pattern in F# minor" becomes one tool call.
+
+---
+
+## Future direction — Audio rendering and analysis tools
+
+This came up while planning the mixing pass for falling-walking. The mixing workflow has a fundamental gap that the current toolset can't address: an agent can load and configure devices, but it cannot *evaluate* the result. All judgment about whether the bass is too muddy, whether the chorus is bright enough, whether the sidechain pump feels right — that's offloaded entirely to the user's ear, with no signal back to the agent.
+
+### What's missing today
+
+- **No audio rendering** — can't bounce a clip / region / track to a buffer
+- **No spectral readout** — can't see "this bass has a 230Hz peak"
+- **No transient / level data** — can't see if the kick is actually punchy
+- **No solo + context comparison** — can't programmatically compare "bass with kick" vs "bass alone"
+- **No reference comparison** — can't compare against a target track
+
+### Proposed tools, ranked by leverage
+
+1. **`render_region(track_indices, bar_start, bar_end, mode)`** — bounce a slice to a temp WAV. `mode = "solo"` (just these tracks) or `"in_mix"` (with everyone). This is the foundation; everything else builds on it.
+
+2. **`analyze_audio(wav_path)`** returning structured numbers:
+   - LUFS integrated + short-term, true peak
+   - Spectral centroid, energy by band (sub <60Hz, low 60-250Hz, low-mid 250-500Hz, mid 500-2kHz, hi-mid 2-6kHz, air >6kHz) — values in dB
+   - Transient density / crest factor
+   - Mono compatibility (M/S correlation)
+   - Stereo width per band
+
+   That's symbolic data the agent can reason over: *"the verse bass has 8dB more 200-400Hz than the kick — they're fighting."*
+
+3. **`compare_to_reference(rendered_wav, reference_wav)`** — same analysis on a reference track, returns the delta. *"Your chorus has 6dB less air, kick is 3dB hotter, stereo width 30% narrower."*
+
+4. **`get_full_signal_chain(track_index)`** — every device + every parameter, recursively through racks / sends / master. Right now `get_device_parameters` is per-device; a full snapshot lets the agent reason about the whole signal path.
+
+5. **`measure_sidechain_pump(bus_track, key_track)`** — render a region, detect ducking depth + recovery shape. *"Your pad is ducking 4dB with 80ms release."*
+
+### Minimal v1
+
+Just (1) + (2). Render a region, analyze it, return numbers. Once an agent can see *"the bass is at -18 LUFS short-term and has a 240Hz peak that's 6dB above the kick fundamental,"* it can prescribe specific moves: HP at 35Hz, dip at 240Hz on bass to make room for kick, add 1.5dB shelf at 80Hz on kick. The user verifies by ear.
+
+### Honest limitation
+
+Even with all this, the agent would be doing spectroscopy, not aesthetic judgment. It could tell you the bass is muddy (objective) but not whether it feels *right* for falling-walking (subjective). The latter still needs the user's ear. The tools just let the agent give informed suggestions instead of generic ones.
+
+### What this depends on
+
+- Live's freeze / render API (or `Song.export_audio()` if exposable) for `render_region` — may require running Live in a render-ready mode
+- Bundling `pyloudnorm` + `scipy.signal` (or equivalent) in the MCP server's Python env for `analyze_audio`
+- File-system access for the temp WAV path (already implicit in current setup)
+
+Pragmatic estimate: `render_region` + `analyze_audio` is ~2 days of work against AbletonMCP, and it'd unlock 80% of the mixing collaboration value.
 
 ---
 

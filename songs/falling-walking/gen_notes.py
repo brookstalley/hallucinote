@@ -84,31 +84,103 @@ verse_drums.append({"pitch": 49, "start_time": bs + 3.5, "duration": 1.0, "veloc
 verse_drums.append({"pitch": 42, "start_time": bs + 0.0, "duration": 0.1, "velocity": 80})
 verse_drums.append({"pitch": 42, "start_time": bs + 0.5, "duration": 0.1, "velocity": 45})
 
-# BASS — follows kick stumble + octave answers; bar 15 is 8th-note drive
-verse_bass = []
-for b in range(14):
-    bs = b * 4.0
-    if b < 8:
-        p = 38
-    elif b < 12:
-        p = 43
-    else:
-        p = 34
-    # Root on 1
-    verse_bass.append({"pitch": p, "start_time": bs + 0.0, "duration": 1.5, "velocity": 102})
-    # Stumble: matches kick
-    if b % 2 == 0:
-        verse_bass.append({"pitch": p, "start_time": bs + 2.75, "duration": 0.75, "velocity": 88})
-    else:
-        verse_bass.append({"pitch": p, "start_time": bs + 2.0, "duration": 1.5, "velocity": 92})
-    # Octave-up answer on 3.5 every other bar
-    if b % 2 == 1:
-        verse_bass.append({"pitch": p + 12, "start_time": bs + 3.5, "duration": 0.4, "velocity": 80})
+# Drummer flourishes — open-hat lifts on mini-fill bars 4/8/12 beat 3.5
+for _b in [3, 7, 11]:
+    verse_drums.append({"pitch": 46, "start_time": _b * 4.0 + 3.5, "duration": 0.4, "velocity": 70})
+# Soft chord-change crashes (drummer marks the form, not bombast)
+verse_drums.append({"pitch": 49, "start_time": 32.0, "duration": 1.5, "velocity": 75})  # bar 9 Gm arrival
+verse_drums.append({"pitch": 55, "start_time": 48.0, "duration": 1.0, "velocity": 70})  # bar 13 Bb (splash)
+# Ride bell ghost notes in bar 7 — texture variation deep in the long Dm
+for _t, _v in [(0.0, 45), (1.0, 38), (2.0, 42), (3.0, 36)]:
+    verse_drums.append({"pitch": 53, "start_time": 24.0 + _t, "duration": 0.15, "velocity": _v})
 
-# Bar 15 (A): 8th-note drive
-for t in [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]:
-    v = 95 + int(t * 3)
-    verse_bass.append({"pitch": 33, "start_time": 56.0 + t, "duration": 0.4, "velocity": v})
+# BASS — bass-player thinking: chord tones, ghosts, chromatic walks into chord changes
+verse_bass = []
+def _vb(p, t, dur, v):
+    verse_bass.append({"pitch": p, "start_time": t, "duration": dur, "velocity": v})
+
+# Bars 1-8 Dm (D2=38)
+# Bar 1: establish — pure root + stumble
+_vb(38, 0.0, 1.5, 105)
+_vb(38, 2.75, 0.75, 88)
+# Bar 2: octave answer
+_vb(38, 4.0, 0.5, 100)
+_vb(33, 4.5, 0.3, 70)            # A1 grace (5th below)
+_vb(38, 6.0, 1.5, 92)
+_vb(50, 7.5, 0.4, 80)            # D3 octave answer
+# Bar 3: 3rd embellishment
+_vb(38, 8.0, 1.5, 102)
+_vb(38, 10.75, 0.4, 88)
+_vb(41, 11.25, 0.5, 78)          # F2 (3rd of Dm)
+_vb(38, 11.75, 0.25, 70)
+# Bar 4: turnaround mini-walk
+_vb(38, 12.0, 1.5, 100)
+_vb(38, 14.0, 0.75, 90)
+_vb(33, 14.875, 0.125, 50)       # A1 ghost
+_vb(36, 15.5, 0.25, 78)          # C2 walk
+_vb(38, 15.75, 0.25, 85)         # back to D
+# Bar 5: octave figure restart
+_vb(38, 16.0, 1.0, 105)
+_vb(50, 17.0, 0.5, 78)            # D3 octave accent
+_vb(38, 18.75, 0.75, 88)
+# Bar 6: ghost-heavy
+_vb(38, 20.0, 0.4, 98)
+_vb(38, 20.5, 0.125, 45)         # ghost
+_vb(38, 22.0, 1.0, 92)
+_vb(45, 23.5, 0.4, 80)           # A2 (5th up)
+# Bar 7: chord-tone climb
+_vb(38, 24.0, 1.0, 102)
+_vb(41, 25.0, 0.5, 80)           # F2
+_vb(38, 26.75, 0.5, 88)
+_vb(40, 27.5, 0.5, 75)           # E2 chromatic passing
+# Bar 8: walk into Gm
+_vb(38, 28.0, 1.5, 100)
+_vb(38, 30.0, 0.5, 92)
+_vb(41, 30.5, 0.5, 90)           # F2
+_vb(42, 31.5, 0.5, 95)           # F#2 chromatic leading tone
+
+# Bars 9-12 Gm (G2=43)
+# Bar 9: strong arrival
+_vb(43, 32.0, 1.5, 110)
+_vb(43, 34.75, 0.75, 90)
+# Bar 10: 3rd embellishment + ghost
+_vb(43, 36.0, 0.5, 100)
+_vb(38, 36.875, 0.125, 55)       # D2 ghost (5th below)
+_vb(43, 38.0, 1.0, 92)
+_vb(46, 39.5, 0.4, 82)           # Bb2 (3rd of Gm)
+# Bar 11: chord tone climb
+_vb(43, 40.0, 1.0, 102)
+_vb(46, 41.0, 0.5, 82)           # Bb2
+_vb(43, 42.75, 0.5, 88)
+_vb(50, 43.5, 0.4, 80)           # D3 (5th)
+# Bar 12: walk into Bb
+_vb(43, 44.0, 1.0, 100)
+_vb(43, 46.0, 0.5, 90)
+_vb(44, 46.5, 0.5, 78)           # G#2 chromatic
+_vb(45, 47.0, 0.5, 88)           # A2
+_vb(34, 47.5, 0.5, 95)           # Bb1 (low octave land)
+
+# Bars 13-14 Bb (Bb1=34)
+# Bar 13: strong, low octave
+_vb(34, 48.0, 1.5, 105)
+_vb(34, 50.75, 0.75, 88)
+_vb(41, 51.5, 0.5, 80)           # F2 (5th)
+# Bar 14: walk into A
+_vb(34, 52.0, 1.0, 102)
+_vb(38, 53.0, 0.5, 88)           # D2 (3rd of Bb)
+_vb(41, 54.0, 0.5, 92)           # F2 (5th of Bb)
+_vb(38, 54.5, 0.5, 85)
+_vb(34, 55.0, 0.5, 88)
+_vb(34, 55.5, 0.25, 92)
+_vb(33, 55.75, 0.25, 100)        # A1 pickup to bar 15
+
+# Bar 15 A — 8th-note drive with octave punctuation + chromatic neighbor
+for i, t in enumerate([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]):
+    p = 45 if i in (3, 6) else 33  # A2 octave on beats 2.5 and 4.0; A1 elsewhere
+    v = 95 + i * 2
+    _vb(p, 56.0 + t, 0.4, v)
+_vb(34, 59.5, 0.25, 92)           # Bb1 chromatic upper
+_vb(33, 59.75, 0.25, 110)         # A1 resolve into bar 16/chorus
 
 # SUB — octave below synth bass
 verse_sub = [{"pitch": max(n["pitch"] - 12, 0),
@@ -165,24 +237,89 @@ for b in range(8):
     if b % 2 == 1:
         chorus_drums.append({"pitch": 46, "start_time": bs + 3.75, "duration": 0.25, "velocity": 80})
 
-# BASS — tresillo (3-3-2) per chord
-chorus_bass = []
-chord_starts = [(0.0, 38), (8.0, 41), (16.0, 36), (24.0, 43)]
-tresillo_pos = [(0.0, 102), (0.75, 90), (1.5, 88), (2.0, 95), (2.75, 85), (3.5, 88)]
-for chord_start, p in chord_starts:
-    for bar_offset in [0.0, 4.0]:
-        bs = chord_start + bar_offset
-        for t, v in tresillo_pos:
-            chorus_bass.append({"pitch": p, "start_time": bs + t, "duration": 0.5, "velocity": v})
+# Soft crash on chorus arrival (subtle entry accent)
+chorus_drums.append({"pitch": 49, "start_time": 0.0, "duration": 1.5, "velocity": 88})
+# Snare flick on bar 8 final 16ths — pushes into next section
+chorus_drums.append({"pitch": 38, "start_time": 31.5, "duration": 0.1, "velocity": 70})
+chorus_drums.append({"pitch": 38, "start_time": 31.75, "duration": 0.1, "velocity": 88})
+
+# BASS — tresillo with bass-player embellishments. Plain bar establishes; embellished bar
+# adds chord tones, octave jumps, and walks into the next chord change.
+TRESILLO = [(0.0, 102), (0.75, 90), (1.5, 88), (2.0, 95), (2.75, 85), (3.5, 88)]
+
+def _build_chorus_bass(walk_in_pitches):
+    """walk_in_pitches: 4-tuple of pitches to use on bar 8 last 3.5 beat (walk back to next loop)."""
+    notes = []
+    def add(p, t, dur, v):
+        notes.append({"pitch": p, "start_time": t, "duration": dur, "velocity": v})
+
+    # Bars 1-2 Dm (D2=38)
+    # Bar 1: plain tresillo on D2
+    for t, v in TRESILLO: add(38, t, 0.5, v)
+    # Bar 2: embellished — chord tones + octave answer
+    add(38, 4.0, 0.5, 100)
+    add(41, 4.75, 0.4, 88)        # F2 (3rd)
+    add(38, 5.5, 0.4, 85)
+    add(50, 6.0, 0.5, 95)         # D3 octave up
+    add(38, 6.75, 0.4, 82)
+    add(40, 7.5, 0.5, 88)         # E2 chromatic walk to F at bar 3
+
+    # Bars 3-4 F (F2=41)
+    # Bar 3: plain tresillo on F2
+    for t, v in TRESILLO: add(41, 8.0 + t, 0.5, v)
+    # Bar 4: embellished — chord tones + walk to C
+    add(41, 12.0, 0.5, 100)
+    add(45, 12.75, 0.4, 88)       # A2 (3rd of F)
+    add(41, 13.5, 0.4, 85)
+    add(48, 14.0, 0.5, 95)        # C3 (5th up octave)
+    add(41, 14.75, 0.4, 82)
+    add(38, 15.5, 0.5, 88)        # D2 upper neighbor leading to C
+
+    # Bars 5-6 C (C2=36)
+    # Bar 5: plain tresillo on C2
+    for t, v in TRESILLO: add(36, 16.0 + t, 0.5, v)
+    # Bar 6: embellished — chord tones + walk to G
+    add(36, 20.0, 0.5, 100)
+    add(40, 20.75, 0.4, 88)       # E2 (3rd of C)
+    add(36, 21.5, 0.4, 85)
+    add(43, 22.0, 0.5, 95)        # G2 (5th)
+    add(36, 22.75, 0.4, 82)
+    add(41, 23.5, 0.5, 90)        # F2 passing to G
+
+    # Bars 7-8 — caller-supplied (G or Bb)
+    # Bar 7: plain tresillo on first walk_in pitch
+    p7 = walk_in_pitches[0]
+    for t, v in TRESILLO: add(p7, 24.0 + t, 0.5, v)
+    # Bar 8: embellished walk back to Dm for next chorus loop
+    add(walk_in_pitches[0], 28.0, 0.5, 100)
+    add(walk_in_pitches[1], 28.75, 0.4, 88)
+    add(walk_in_pitches[0], 29.5, 0.4, 85)
+    add(walk_in_pitches[2], 30.0, 0.5, 95)
+    add(walk_in_pitches[0], 30.75, 0.4, 82)
+    add(walk_in_pitches[3], 31.5, 0.5, 92)
+    return notes
+
+# walk_in_pitches: [root, 3rd, 5th-up, walk-to-next-chord]
+# Regular chorus bars 7-8 = G2: G2, B2, D3, A2 (A2 = 5th of Dm, primes loop-back)
+chorus_bass = _build_chorus_bass([43, 47, 50, 45])
+# C3' twist bars 7-8 = Bb: Bb1, D2, F2, A1 (A1 half-step below Dm root)
+chorus_bass_twist = _build_chorus_bass([34, 38, 41, 33])
 
 # SUB — root on beat 1 of each bar, sustained
 chorus_sub = []
-for chord_start, p in chord_starts:
+for chord_start, p in [(0.0, 38), (8.0, 41), (16.0, 36), (24.0, 43)]:
     for bar_offset in [0.0, 4.0]:
         bs = chord_start + bar_offset
         chorus_sub.append({"pitch": p - 12, "start_time": bs + 0.0, "duration": 3.5, "velocity": 88})
 
-# PAD with 7ths — sustained + tresillo stab on beat 0.75
+# C3' twist sub — last 2 bars Bb-1 octave instead of G-1 octave
+chorus_sub_twist = []
+for chord_start, p in [(0.0, 38), (8.0, 41), (16.0, 36), (24.0, 34)]:  # last chord is Bb1=34
+    for bar_offset in [0.0, 4.0]:
+        bs = chord_start + bar_offset
+        chorus_sub_twist.append({"pitch": p - 12, "start_time": bs + 0.0, "duration": 3.5, "velocity": 88})
+
+# PAD with 7ths — long sustains let the slow-evolving patch bloom; tiny gap at chord change
 chorus_pad = []
 chord_voicings_pad = [
     (0.0,  [53, 57, 60, 62]),
@@ -191,9 +328,7 @@ chord_voicings_pad = [
     (24.0, [55, 59, 62])
 ]
 for start, voicing in chord_voicings_pad:
-    add_chord(chorus_pad, voicing, start, 8.0, 78)
-    for bar_off in [0.0, 4.0]:
-        stab(chorus_pad, voicing, start + bar_off + 0.75, 92, 0.4)
+    add_chord(chorus_pad, voicing, start, 7.5, 78)
 
 # C3' TWIST PAD — last 2 bars Bbmaj7 instead of G
 chorus_pad_twist = []
@@ -204,9 +339,7 @@ chord_voicings_twist = [
     (24.0, [53, 57, 58, 62])
 ]
 for start, voicing in chord_voicings_twist:
-    add_chord(chorus_pad_twist, voicing, start, 8.0, 78)
-    for bar_off in [0.0, 4.0]:
-        stab(chorus_pad_twist, voicing, start + bar_off + 0.75, 92, 0.4)
+    add_chord(chorus_pad_twist, voicing, start, 7.5, 78)
 
 # PLUCK — calypso tresillo
 chord_voicings_pluck = {
@@ -473,6 +606,7 @@ for start, pitch, dur in [
 output = {
     "verse_drums": verse_drums, "verse_bass": verse_bass, "verse_sub": verse_sub, "verse_pad": verse_pad,
     "chorus_drums": chorus_drums, "chorus_bass": chorus_bass, "chorus_sub": chorus_sub,
+    "chorus_bass_twist": chorus_bass_twist, "chorus_sub_twist": chorus_sub_twist,
     "chorus_pad": chorus_pad, "chorus_pad_twist": chorus_pad_twist,
     "chorus_pluck": chorus_pluck, "chorus_pluck_twist": chorus_pluck_twist,
     "chorus_bell": chorus_bell, "chorus_bell_twist": chorus_bell_twist,

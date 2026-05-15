@@ -5,6 +5,7 @@
      (builder), (critic), (reflection), or (migrated).
      Review with /janitor or when planning new work. -->
 
+- `apply_push_results` silently ignores unknown `key:` kinds (`tempo_point:`, `cue_point:`, `time_signature_point:`, etc.) — fine for push-only chunk 2 but the silent no-op will mask real failures once those tools become dispatchable. Add a dispatch table driven from planner side, raise on unknown kinds, and grow the `apply_push_results` test to cover each. (critic)
 - Audio clips: clip kind discriminator, file references, warp metadata, warp markers. Deferred from V1. (migrated)
 - Track routing: sidechain, parallel busses, input/output routing config. Schema + sync work. (migrated)
 - Group tracks (`tracks.parent_track_id` + Live group semantics). (migrated)

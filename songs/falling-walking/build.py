@@ -62,9 +62,10 @@ def build(reset: bool = False) -> str:
         # in 4/4. `native` timing_mode is the default; setting it explicitly here
         # so the event log records the choice rather than relying on the default.
         M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
-        M.add_tempo_point(conn, song_id=song_id, start_bar=0.0, tempo_bpm=132.0)
+        # Bars are 1-based across the codebase — the song starts at bar 1.
+        M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=132.0)
         M.add_time_signature_point(
-            conn, song_id=song_id, start_bar=0.0, numerator=4, denominator=4
+            conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4
         )
         # Sections — bar positions are 1-based to match the arrangement entries
         # below. The verse runs bars 1-16 (15 bars of trip-hop drums + pad);

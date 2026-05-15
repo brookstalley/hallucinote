@@ -23,12 +23,18 @@ ALIASES_TODAY: dict[str, str] = {
     "create_midi_track_with": "_emulate_create_midi_track_with",
     # PR B: doesn't exist yet — agent must loop through ops manually
     "batch_arrangement_layout": "_emulate_batch_arrangement_layout",
-    # Chunk 2: tempo automation per beat-position (only `set_tempo` exists today —
-    # global, single value, no ramp). Single-point/hold-ramp maps can emulate
-    # via set_tempo; multi-point / linear ramps are a hard MCP gap.
+    # Chunk 2: tempo automation per (bar, beat) — only `set_tempo` exists today
+    # (global, single value, no ramp). Canonical args:
+    #   {bar: int 1-based, beat: float 0-based-within-bar, bpm: float, ramp: str}.
+    # Single-point/hold-ramp maps can emulate via set_tempo; multi-point /
+    # linear ramps are a hard MCP gap.
     "write_tempo_point": "_emulate_write_tempo_point",
     # Chunk 2: arrangement-level meter changes are not exposed by MCP at all.
+    # Canonical args: {bar, beat, numerator: int, denominator: int}.
     "write_time_signature_point": "_emulate_write_time_signature_point",
+    # NOTE on tools called directly (no alias entry needed):
+    # - `create_cue_point(bar: int 1-based, beat: float 0-based, name: str)`.
+    #   Planner output for this tool MUST match this signature.
 }
 
 

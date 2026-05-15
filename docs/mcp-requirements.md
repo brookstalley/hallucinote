@@ -103,20 +103,20 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 
 Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
 
-### Tempo automation at a beat position
+### Tempo automation at a (bar, beat)
 
-**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement beat, and no way to express linear ramps between points.
+**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement position, and no way to express linear ramps between points.
 
 **Required:**
-- `write_tempo_point(at_beat_position: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope.
-- For single-point/`hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
+- `write_tempo_point(bar: int, beat: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope. `bar` is 1-based and `beat` is 0-based-within-bar, matching `create_cue_point`.
+- For single-point / `hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
 
 ### Arrangement-level time signature changes
 
 **Current state:** No MCP tool writes meter-change events on the arrangement. The Live API exposes time-signature markers, but they're not surfaced.
 
 **Required:**
-- `write_time_signature_point(at_beat_position: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline.
+- `write_time_signature_point(bar: int, beat: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline. `bar` 1-based, `beat` 0-based-within-bar.
 
 ### Section markers (informational)
 

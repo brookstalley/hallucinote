@@ -82,9 +82,14 @@ CREATE INDEX IF NOT EXISTS idx_arrangement_clip ON arrangement(clip_id);
 -- structure, tempo / meter changes, and arrangement markers. All four are
 -- song-scoped and cascade-deleted with the song.
 --
--- Bar positions are REAL. Convention is per-song and informally 1-based to
--- match `arrangement.start_bar`; bar-to-beat translation in the sync layer
--- treats `start_bar=0` as "the start of the song" (Live's beat-position 0).
+-- Bar positions are REAL and 1-based across the codebase (matching Live's
+-- MCP tools — see docs/mcp-requirements.md). The first bar of a song is
+-- `bar = 1.0`. The sync layer splits fractional bar positions into
+-- `(bar: int, beat: float)` for MCP at the boundary.
+--
+-- Section spans are half-open: `[start_bar, end_bar)`. A section running
+-- bars 1..16 has start_bar=1, end_bar=16 (16 bars total — bars 1..15 are
+-- inside; bar 16 is the next section's start).
 
 CREATE TABLE IF NOT EXISTS sections (
     id              TEXT PRIMARY KEY,

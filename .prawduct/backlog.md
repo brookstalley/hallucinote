@@ -5,6 +5,8 @@
      (builder), (critic), (reflection), or (migrated).
      Review with /janitor or when planning new work. -->
 
+- Enforce 1-based bar convention. Add CHECK `start_bar >= 1.0` (and `position_bar >= 1.0`) on `sections`/`tempo_map`/`time_signature_map`/`cue_points`, or a runtime guard in `sync.push._split_bar` that raises on `bar_pos < 1.0`. Today the convention is documented in `schema.sql` and `mcp-requirements.md` line 369 but not enforced — `_split_bar(0.0, ...)` returns `(0, 0.0)` which is an invalid Live position. (critic)
+- Standardize `tests/test_score_extensions.py` fixtures on 1-based bars. Several tests use `start_bar=0.0` / `position_bar=0.0` which conflicts with the 1-based convention falling-walking now follows. Either land the CHECK above (forces the fix) or update the fixtures by hand. (critic)
 - `apply_push_results` silently ignores unknown `key:` kinds (`tempo_point:`, `cue_point:`, `time_signature_point:`, etc.) — fine for push-only chunk 2 but the silent no-op will mask real failures once those tools become dispatchable. Add a dispatch table driven from planner side, raise on unknown kinds, and grow the `apply_push_results` test to cover each. (critic)
 - Audio clips: clip kind discriminator, file references, warp metadata, warp markers. Deferred from V1. (migrated)
 - Track routing: sidechain, parallel busses, input/output routing config. Schema + sync work. (migrated)

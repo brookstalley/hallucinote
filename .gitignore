@@ -7,3 +7,28 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Songwright DB files (per-user, never committed)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Build artifacts
+build/
+dist/
+
+# Prawduct session files
+.claude/settings.local.json
+.prawduct/.critic-findings.json
+.prawduct/.test-evidence.json
+.prawduct/.pr-reviews/
+.prawduct/.session-git-baseline
+.prawduct/.session-handoff.md
+.prawduct/.session-reflected
+.prawduct/.session-start
+.prawduct/.subagent-briefing.md
+.prawduct/.gates-waived
+.prawduct/reflections.md
+.prawduct/sync-manifest.json
+.prawduct/artifacts/build-plan.md

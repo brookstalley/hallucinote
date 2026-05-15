@@ -1,0 +1,140 @@
+"""Read-side helpers. Pure SQL, no event emission, never mutate.
+
+Anything that needs to write goes through `mutations`.
+
+Ableton bindings live in `ableton_sessions` + `ableton_links` (a session-
+scoped projection), not on core rows. Read them via `get_ableton_link` /
+`get_ableton_links_for_session`; the sync layer joins them in.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+
+def get_song_by_name(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM songs WHERE name = ?", (name,)).fetchone()
+
+
+def get_tracks_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM tracks WHERE song_id = ? ORDER BY track_index",
+        (song_id,),
+    ).fetchall()
+
+
+def get_track(conn: sqlite3.Connection, track_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
+
+
+def get_clips_for_track(conn: sqlite3.Connection, track_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM clips WHERE track_id = ? ORDER BY slot",
+        (track_id,),
+    ).fetchall()
+
+
+def get_clip(conn: sqlite3.Connection, clip_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+
+
+def get_notes_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[dict[str, Any]]:
+    """Return notes as dicts with tags deserialized. Sorted by start_beats."""
+    rows = conn.execute(
+        """SELECT id, pitch, start_beats, duration_beats, velocity, mute, tags_json
+           FROM notes WHERE clip_id = ? ORDER BY start_beats, pitch""",
+        (clip_id,),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "id": r["id"],
+                "pitch": r["pitch"],
+                "start_beats": r["start_beats"],
+                "duration_beats": r["duration_beats"],
+                "velocity": r["velocity"],
+                "mute": r["mute"],
+                "tags": json.loads(r["tags_json"]) if r["tags_json"] else [],
+            }
+        )
+    return out
+
+
+def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    """Return arrangement rows joined with track + clip names. No Ableton info —
+    sync-time bindings come from `ableton_links` via `get_ableton_link`."""
+    return conn.execute(
+        """SELECT a.*, t.name AS track_name, c.name AS clip_name
+           FROM arrangement a
+           JOIN tracks t ON t.id = a.track_id
+           JOIN clips  c ON c.id = a.clip_id
+           WHERE a.song_id = ?
+           ORDER BY a.track_id, a.start_bar""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_events_for_song(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM events WHERE song_id = ? ORDER BY seq DESC LIMIT ?",
+        (song_id, limit),
+    ).fetchall()
+
+
+def get_events_for_clip(
+    conn: sqlite3.Connection,
+    clip_id: str,
+    *,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM events WHERE clip_id = ? ORDER BY seq DESC LIMIT ?",
+        (clip_id, limit),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Ableton projection
+# ---------------------------------------------------------------------------
+
+
+def get_ableton_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM ableton_sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+
+
+def get_ableton_link(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    db_kind: str,
+    db_id: str,
+) -> int | None:
+    """Return the ableton_index for (session, db_kind, db_id), or None."""
+    row = conn.execute(
+        """SELECT ableton_index FROM ableton_links
+           WHERE session_id = ? AND db_kind = ? AND db_id = ?""",
+        (session_id, db_kind, db_id),
+    ).fetchone()
+    return row["ableton_index"] if row else None
+
+
+def get_ableton_links_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM ableton_links WHERE session_id = ?",
+        (session_id,),
+    ).fetchall()

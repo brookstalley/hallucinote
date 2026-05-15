@@ -139,32 +139,76 @@ def create_request(
 # ---------------------------------------------------------------------------
 
 
+TIMING_MODES = frozenset({"native", "grid"})
+
+
 def create_song(
     conn: sqlite3.Connection,
     *,
     name: str,
     key: str | None = None,
-    tempo: float | None = None,
-    time_signature: str | None = None,
+    timing_mode: str = "native",
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
+    """Create a song. Tempo and meter live in `tempo_map` / `time_signature_map`;
+    add at least one point in each before pushing.
+
+    `timing_mode='native'` (default) renders bar positions through the maps,
+    matching Live's tempo/meter. `'grid'` opts out — generators handle
+    resolved positions internally for polytempic experiments.
+    """
+    if timing_mode not in TIMING_MODES:
+        raise ValueError(
+            f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
+        )
     sid = _uuid()
     conn.execute(
-        "INSERT INTO songs (id, name, key, tempo, time_signature) VALUES (?, ?, ?, ?, ?)",
-        (sid, name, key, tempo, time_signature),
+        "INSERT INTO songs (id, name, key, timing_mode) VALUES (?, ?, ?, ?)",
+        (sid, name, key, timing_mode),
     )
     _emit(
         conn,
         E.SONG_CREATED,
-        {"name": name, "key": key, "tempo": tempo, "time_signature": time_signature},
+        {"name": name, "key": key, "timing_mode": timing_mode},
         song_id=sid,
         actor=actor,
         request_id=request_id,
         reason=reason,
     )
     return sid
+
+
+def set_song_timing_mode(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    timing_mode: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Switch a song between 'native' (use tempo/time-signature maps) and 'grid'
+    (generators resolve positions themselves). Maps are preserved either way."""
+    if timing_mode not in TIMING_MODES:
+        raise ValueError(
+            f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
+        )
+    conn.execute(
+        "UPDATE songs SET timing_mode = ? WHERE id = ?",
+        (timing_mode, song_id),
+    )
+    _touch_song(conn, song_id)
+    _emit(
+        conn,
+        E.SONG_TIMING_MODE_SET,
+        {"timing_mode": timing_mode},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +636,341 @@ def remove_arrangement(
         request_id=request_id,
         reason=reason,
     )
+
+
+# ---------------------------------------------------------------------------
+# Score: sections
+# ---------------------------------------------------------------------------
+
+
+def create_section(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    name: str,
+    start_bar: float,
+    end_bar: float,
+    color: int | None = None,
+    notes_md: str | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Mark a named span of bars (verse, chorus, bridge, ...). DB-only metadata
+    unless Live exposes section markers; surfaces in event log either way."""
+    if end_bar <= start_bar:
+        raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
+    sid = _uuid()
+    conn.execute(
+        """INSERT INTO sections
+               (id, song_id, name, start_bar, end_bar, color, notes_md)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (sid, song_id, name, start_bar, end_bar, color, notes_md),
+    )
+    _emit(
+        conn,
+        E.SECTION_CREATED,
+        {
+            "section_id": sid,
+            "name": name,
+            "start_bar": start_bar,
+            "end_bar": end_bar,
+            "color": color,
+            "notes_md": notes_md,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return sid
+
+
+_SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md"}
+
+
+def update_section(
+    conn: sqlite3.Connection,
+    *,
+    section_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial update by id. `changes` keys must be in _SECTION_FIELDS."""
+    bad = set(changes) - _SECTION_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    row = conn.execute(
+        "SELECT song_id, start_bar, end_bar FROM sections WHERE id = ?", (section_id,)
+    ).fetchone()
+    if row is None:
+        return
+    # Span guard: validate the resulting span, not just the new value, so updating
+    # start_bar past the existing end_bar (or vice versa) fails cleanly.
+    new_start = float(changes.get("start_bar", row["start_bar"]))
+    new_end = float(changes.get("end_bar", row["end_bar"]))
+    if new_end <= new_start:
+        raise ValueError(f"end_bar ({new_end}) must exceed start_bar ({new_start})")
+
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [section_id]
+    conn.execute(f"UPDATE sections SET {', '.join(sets)} WHERE id = ?", vals)
+    _emit(
+        conn,
+        E.SECTION_UPDATED,
+        {"section_id": section_id, "changes": changes},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+def delete_section(
+    conn: sqlite3.Connection,
+    *,
+    section_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id FROM sections WHERE id = ?", (section_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM sections WHERE id = ?", (section_id,))
+    _emit(
+        conn,
+        E.SECTION_DELETED,
+        {"section_id": section_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+# ---------------------------------------------------------------------------
+# Score: tempo map
+# ---------------------------------------------------------------------------
+
+TEMPO_RAMP_KINDS = frozenset({"linear", "hold"})
+
+
+def add_tempo_point(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    start_bar: float,
+    tempo_bpm: float,
+    ramp: str = "hold",
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Add a tempo point at `start_bar`. `ramp='hold'` keeps tempo constant
+    until the next point; `'linear'` ramps to the next point's tempo."""
+    if ramp not in TEMPO_RAMP_KINDS:
+        raise ValueError(
+            f"invalid ramp {ramp!r}; expected one of {sorted(TEMPO_RAMP_KINDS)}"
+        )
+    if tempo_bpm <= 0:
+        raise ValueError(f"tempo_bpm must be positive, got {tempo_bpm}")
+    pid = _uuid()
+    conn.execute(
+        """INSERT INTO tempo_map (id, song_id, start_bar, tempo_bpm, ramp)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid, song_id, start_bar, tempo_bpm, ramp),
+    )
+    _emit(
+        conn,
+        E.TEMPO_POINT_ADDED,
+        {
+            "point_id": pid,
+            "start_bar": start_bar,
+            "tempo_bpm": tempo_bpm,
+            "ramp": ramp,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return pid
+
+
+def remove_tempo_point(
+    conn: sqlite3.Connection,
+    *,
+    point_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id FROM tempo_map WHERE id = ?", (point_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM tempo_map WHERE id = ?", (point_id,))
+    _emit(
+        conn,
+        E.TEMPO_POINT_REMOVED,
+        {"point_id": point_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+# ---------------------------------------------------------------------------
+# Score: time-signature map
+# ---------------------------------------------------------------------------
+
+
+def add_time_signature_point(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    start_bar: float,
+    numerator: int,
+    denominator: int,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Add a meter change at `start_bar` (numerator/denominator)."""
+    if numerator <= 0 or denominator <= 0:
+        raise ValueError(
+            f"numerator/denominator must be positive, got {numerator}/{denominator}"
+        )
+    pid = _uuid()
+    conn.execute(
+        """INSERT INTO time_signature_map
+               (id, song_id, start_bar, numerator, denominator)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid, song_id, start_bar, numerator, denominator),
+    )
+    _emit(
+        conn,
+        E.TIME_SIGNATURE_POINT_ADDED,
+        {
+            "point_id": pid,
+            "start_bar": start_bar,
+            "numerator": numerator,
+            "denominator": denominator,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return pid
+
+
+def remove_time_signature_point(
+    conn: sqlite3.Connection,
+    *,
+    point_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id FROM time_signature_map WHERE id = ?", (point_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM time_signature_map WHERE id = ?", (point_id,))
+    _emit(
+        conn,
+        E.TIME_SIGNATURE_POINT_REMOVED,
+        {"point_id": point_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+# ---------------------------------------------------------------------------
+# Score: cue points (arrangement markers)
+# ---------------------------------------------------------------------------
+
+
+def add_cue_point(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    position_bar: float,
+    name: str | None = None,
+    color: int | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Add an arrangement marker at `position_bar`. Maps to Live's cue points."""
+    pid = _uuid()
+    conn.execute(
+        """INSERT INTO cue_points (id, song_id, position_bar, name, color)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid, song_id, position_bar, name, color),
+    )
+    _emit(
+        conn,
+        E.CUE_POINT_ADDED,
+        {
+            "cue_id": pid,
+            "position_bar": position_bar,
+            "name": name,
+            "color": color,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return pid
+
+
+def remove_cue_point(
+    conn: sqlite3.Connection,
+    *,
+    cue_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id FROM cue_points WHERE id = ?", (cue_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM cue_points WHERE id = ?", (cue_id,))
+    _emit(
+        conn,
+        E.CUE_POINT_REMOVED,
+        {"cue_id": cue_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ def conn(tmp_path):
 
 @pytest.fixture
 def song(conn):
-    return M.create_song(conn, name="t", key="Dm", tempo=132.0, time_signature="4/4")
+    return M.create_song(conn, name="t", key="Dm")
 
 
 @pytest.fixture

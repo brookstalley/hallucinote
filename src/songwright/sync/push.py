@@ -20,6 +20,10 @@ from typing import Any
 
 from songwright.db import mutations as M, queries as Q
 
+# Live's default meter when a song has no `time_signature_map` rows.
+_DEFAULT_NUMERATOR = 4
+_DEFAULT_DENOMINATOR = 4
+
 
 @dataclass
 class ToolCall:
@@ -55,6 +59,50 @@ class PushPlan:
 # ---------------------------------------------------------------------------
 # Note conversion: DB -> MCP
 # ---------------------------------------------------------------------------
+
+
+def _beats_per_bar(numerator: int, denominator: int) -> float:
+    """Live counts a beat as a quarter note regardless of meter, so the beat
+    count per bar is `numerator * (4 / denominator)` (e.g., 6/8 -> 3 beats,
+    7/4 -> 7 beats, 4/4 -> 4 beats)."""
+    return numerator * (4.0 / denominator)
+
+
+def _bar_to_beats(
+    bar: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Convert a bar position to beats given a sorted time_signature_map.
+
+    Segments span (point[i].start_bar, point[i+1].start_bar) with the meter from
+    point[i]; the final segment extends to infinity. Empty maps fall back to 4/4.
+    Bars before the first map point use the first point's meter (so a `start_bar`
+    of bar 0 with the first point at bar 0 gives 0 beats, as expected).
+    """
+    if not ts_points:
+        return bar * _beats_per_bar(_DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR)
+
+    beats = 0.0
+    cursor_bar = ts_points[0]["start_bar"]
+    if bar <= cursor_bar:
+        # Before / at first point: use first point's meter back to bar 0.
+        return bar * _beats_per_bar(
+            ts_points[0]["numerator"], ts_points[0]["denominator"]
+        )
+    # Account for any leading region before the first point.
+    beats += cursor_bar * _beats_per_bar(
+        ts_points[0]["numerator"], ts_points[0]["denominator"]
+    )
+
+    for i, point in enumerate(ts_points):
+        segment_start = point["start_bar"]
+        segment_end = ts_points[i + 1]["start_bar"] if i + 1 < len(ts_points) else None
+        bpb = _beats_per_bar(point["numerator"], point["denominator"])
+        if segment_end is None or bar <= segment_end:
+            beats += (bar - segment_start) * bpb
+            return beats
+        beats += (segment_end - segment_start) * bpb
+    return beats  # unreachable; loop always returns
 
 
 def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -217,6 +265,135 @@ def plan_push_arrangement(
                     f"across {len(track_indices_seen)} tracks",
         ))
     plan.warn("planner does not yet emit pre-clear ops — agent must clear target tracks first")
+    return plan
+
+
+# ---------------------------------------------------------------------------
+# Score-half planners: tempo / meter / cue points / sections
+# ---------------------------------------------------------------------------
+
+
+def plan_push_tempo_map(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+) -> PushPlan:
+    """Emit canonical `write_tempo_point` calls — one per row in `tempo_map`.
+
+    Positions are converted to beats via the song's time_signature_map (defaulting
+    to 4/4 if empty, with a warning).
+    """
+    plan = PushPlan()
+    rows = Q.get_tempo_map(conn, song_id)
+    if not rows:
+        plan.warn("no tempo_map rows for this song; nothing to push")
+        return plan
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    if not ts_points:
+        plan.warn(
+            "no time_signature_map; assuming 4/4 for bar->beats conversion"
+        )
+    for r in rows:
+        beats = _bar_to_beats(r["start_bar"], ts_points)
+        plan.add(ToolCall(
+            tool="write_tempo_point",
+            args={
+                "at_beat_position": beats,
+                "bpm": r["tempo_bpm"],
+                "ramp": r["ramp"],
+            },
+            key=f"tempo_point:{r['id']}",
+            purpose=f"set tempo to {r['tempo_bpm']:g} bpm at bar {r['start_bar']:g} "
+                    f"(ramp={r['ramp']})",
+        ))
+    if len(rows) > 1 or any(r["ramp"] == "linear" for r in rows):
+        plan.warn(
+            "multi-point or ramped tempo maps require full tempo-automation MCP "
+            "support (see docs/mcp-requirements.md, P2)"
+        )
+    return plan
+
+
+def plan_push_time_signature_map(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+) -> PushPlan:
+    """Emit canonical `write_time_signature_point` calls — one per meter change.
+
+    Live exposes no MCP tool for arrangement-level meter changes today; the
+    planner produces canonical calls and warns about the MCP gap so apply can
+    no-op until support lands.
+    """
+    plan = PushPlan()
+    rows = Q.get_time_signature_map(conn, song_id)
+    if not rows:
+        plan.warn("no time_signature_map rows for this song; nothing to push")
+        return plan
+    for r in rows:
+        beats = _bar_to_beats(r["start_bar"], rows)
+        plan.add(ToolCall(
+            tool="write_time_signature_point",
+            args={
+                "at_beat_position": beats,
+                "numerator": r["numerator"],
+                "denominator": r["denominator"],
+            },
+            key=f"time_signature_point:{r['id']}",
+            purpose=f"set meter to {r['numerator']}/{r['denominator']} "
+                    f"at bar {r['start_bar']:g}",
+        ))
+    plan.warn(
+        "time-signature change writes are an MCP gap "
+        "(see docs/mcp-requirements.md, P2)"
+    )
+    return plan
+
+
+def plan_push_cue_points(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+) -> PushPlan:
+    """Emit `create_cue_point` calls for every row in `cue_points`. Live's
+    cue point MCP tool exists; positions are converted bars->beats."""
+    plan = PushPlan()
+    rows = Q.get_cue_points(conn, song_id)
+    if not rows:
+        plan.warn("no cue_points for this song; nothing to push")
+        return plan
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    if not ts_points:
+        plan.warn(
+            "no time_signature_map; assuming 4/4 for cue-point bar->beats conversion"
+        )
+    for r in rows:
+        beats = _bar_to_beats(r["position_bar"], ts_points)
+        plan.add(ToolCall(
+            tool="create_cue_point",
+            args={"time": beats, "name": r["name"]},
+            key=f"cue_point:{r['id']}",
+            purpose=f"create cue point '{r['name'] or ''}' at bar {r['position_bar']:g}",
+        ))
+    return plan
+
+
+def plan_push_sections(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+) -> PushPlan:
+    """Sections are DB-only metadata today — Live has no section-marker concept
+    distinct from cue points. The planner emits no calls; it surfaces the
+    section count as a warn so callers can decide whether to mirror sections
+    as cue points themselves."""
+    plan = PushPlan()
+    rows = Q.get_sections_for_song(conn, song_id)
+    if rows:
+        plan.warn(
+            f"{len(rows)} section(s) are DB-only; Live exposes no section-marker "
+            "tool. Consider creating matching cue_points for visibility."
+        )
     return plan
 
 

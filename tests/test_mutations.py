@@ -18,7 +18,7 @@ def conn(tmp_path):
 
 @pytest.fixture
 def song(conn):
-    return M.create_song(conn, name="t", key="Dm", tempo=132.0, time_signature="4/4")
+    return M.create_song(conn, name="t", key="Dm")
 
 
 @pytest.fixture
@@ -41,12 +41,12 @@ def _events(conn):
 
 
 def test_create_song_emits_event(conn):
-    sid = M.create_song(conn, name="x", key="Dm", tempo=132.0, time_signature="4/4")
+    sid = M.create_song(conn, name="x", key="Dm")
     rows = _events(conn)
     assert len(rows) == 1
     assert rows[0]["kind"] == E.SONG_CREATED
     payload = json.loads(rows[0]["payload_json"])
-    assert payload == {"name": "x", "key": "Dm", "tempo": 132.0, "time_signature": "4/4"}
+    assert payload == {"name": "x", "key": "Dm", "timing_mode": "native"}
     # song id is a 32-char UUID hex
     assert isinstance(sid, str) and len(sid) == 32 and all(c in "0123456789abcdef" for c in sid)
 

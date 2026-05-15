@@ -101,6 +101,42 @@ def get_events_for_clip(
 
 
 # ---------------------------------------------------------------------------
+# Score: sections, tempo map, time-signature map, cue points
+# ---------------------------------------------------------------------------
+
+
+def get_sections_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM sections WHERE song_id = ? ORDER BY start_bar, end_bar",
+        (song_id,),
+    ).fetchall()
+
+
+def get_tempo_map(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM tempo_map WHERE song_id = ? ORDER BY start_bar",
+        (song_id,),
+    ).fetchall()
+
+
+def get_time_signature_map(
+    conn: sqlite3.Connection,
+    song_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM time_signature_map WHERE song_id = ? ORDER BY start_bar",
+        (song_id,),
+    ).fetchall()
+
+
+def get_cue_points(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM cue_points WHERE song_id = ? ORDER BY position_bar",
+        (song_id,),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection
 # ---------------------------------------------------------------------------
 

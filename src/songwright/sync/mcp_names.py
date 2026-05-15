@@ -23,6 +23,12 @@ ALIASES_TODAY: dict[str, str] = {
     "create_midi_track_with": "_emulate_create_midi_track_with",
     # PR B: doesn't exist yet — agent must loop through ops manually
     "batch_arrangement_layout": "_emulate_batch_arrangement_layout",
+    # Chunk 2: tempo automation per beat-position (only `set_tempo` exists today —
+    # global, single value, no ramp). Single-point/hold-ramp maps can emulate
+    # via set_tempo; multi-point / linear ramps are a hard MCP gap.
+    "write_tempo_point": "_emulate_write_tempo_point",
+    # Chunk 2: arrangement-level meter changes are not exposed by MCP at all.
+    "write_time_signature_point": "_emulate_write_time_signature_point",
 }
 
 

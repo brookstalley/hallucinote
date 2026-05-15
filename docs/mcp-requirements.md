@@ -99,6 +99,33 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 
 ---
 
+## Priority 2 — Score-half push gaps (chunk 2)
+
+Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
+
+### Tempo automation at a beat position
+
+**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement beat, and no way to express linear ramps between points.
+
+**Required:**
+- `write_tempo_point(at_beat_position: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope.
+- For single-point/`hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
+
+### Arrangement-level time signature changes
+
+**Current state:** No MCP tool writes meter-change events on the arrangement. The Live API exposes time-signature markers, but they're not surfaced.
+
+**Required:**
+- `write_time_signature_point(at_beat_position: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline.
+
+### Section markers (informational)
+
+**Current state:** Live has no first-class "section marker" concept distinct from cue points. Songwright's `sections` table is DB-only.
+
+**Required (nice-to-have):** If Live ever exposes named ranges (e.g., loop regions with labels) via MCP, we can mirror sections one-for-one. Until then, callers can mirror sections as `cue_points` for visibility. No MCP work required today.
+
+---
+
 ## Priority 2 — Efficiency (10×+ round-trip wins)
 
 ### 7. Recursive browser tree

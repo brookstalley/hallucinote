@@ -11,11 +11,23 @@ from __future__ import annotations
 # Songs / structure
 SONG_CREATED = "song_created"
 SONG_UPDATED = "song_updated"
+SONG_TIMING_MODE_SET = "song_timing_mode_set"
 TRACK_CREATED = "track_created"
 TRACK_UPDATED = "track_updated"
 CLIP_CREATED = "clip_created"
 CLIP_UPDATED = "clip_updated"
 CLIP_DELETED = "clip_deleted"
+
+# Score: sections, tempo map, time-signature map, cue points
+SECTION_CREATED = "section_created"
+SECTION_UPDATED = "section_updated"
+SECTION_DELETED = "section_deleted"
+TEMPO_POINT_ADDED = "tempo_point_added"
+TEMPO_POINT_REMOVED = "tempo_point_removed"
+TIME_SIGNATURE_POINT_ADDED = "time_signature_point_added"
+TIME_SIGNATURE_POINT_REMOVED = "time_signature_point_removed"
+CUE_POINT_ADDED = "cue_point_added"
+CUE_POINT_REMOVED = "cue_point_removed"
 
 # Notes
 NOTES_INSERTED = "notes_inserted"

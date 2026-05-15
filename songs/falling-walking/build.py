@@ -55,9 +55,35 @@ def build(reset: bool = False) -> str:
             conn,
             name="falling-walking",
             key="Dm",
-            tempo=132.0,
-            time_signature="4/4",
         )
+
+        # Score-half: tempo / meter / sections / cue points.
+        # Single-point maps are sufficient for falling-walking — constant 132bpm
+        # in 4/4. `native` timing_mode is the default; setting it explicitly here
+        # so the event log records the choice rather than relying on the default.
+        M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
+        M.add_tempo_point(conn, song_id=song_id, start_bar=0.0, tempo_bpm=132.0)
+        M.add_time_signature_point(
+            conn, song_id=song_id, start_bar=0.0, numerator=4, denominator=4
+        )
+        # Sections — bar positions are 1-based to match the arrangement entries
+        # below. The verse runs bars 1-16 (15 bars of trip-hop drums + pad);
+        # the chorus runs bars 16-24 (8 bars of tresillo + walking bass).
+        M.create_section(
+            conn, song_id=song_id, name="verse",
+            start_bar=1.0, end_bar=16.0,
+            notes_md="trip-hop drums + Dm pad with bar 4/8 stabs",
+        )
+        M.create_section(
+            conn, song_id=song_id, name="chorus",
+            start_bar=16.0, end_bar=24.0,
+            notes_md="tresillo bass walking through Dm-F-C-G",
+        )
+        # Cue points: arrangement-level markers at section starts so the Live UI
+        # surfaces section boundaries even though Live has no native section
+        # marker concept.
+        M.add_cue_point(conn, song_id=song_id, position_bar=1.0, name="verse")
+        M.add_cue_point(conn, song_id=song_id, position_bar=16.0, name="chorus")
 
         # Tracks
         track_ids: dict[str, str] = {}
@@ -176,8 +202,12 @@ def report(song_id: str) -> None:
     """Print a quick summary of what got built."""
     conn = init_db(DB_PATH)
     try:
+        song_row = conn.execute(
+            "SELECT timing_mode FROM songs WHERE id=?", (song_id,)
+        ).fetchone()
         tracks = Q.get_tracks_for_song(conn, song_id)
-        print(f"song_id={song_id}, tracks={len(tracks)}")
+        print(f"song_id={song_id}, timing_mode={song_row['timing_mode']}, "
+              f"tracks={len(tracks)}")
         for t in tracks:
             clips = Q.get_clips_for_track(conn, t["id"])
             print(f"  track {t['track_index']}  {t['name']:<8} ({len(clips)} clips)")
@@ -187,6 +217,15 @@ def report(song_id: str) -> None:
                       f"{c['length_beats']:.1f}bt  {len(notes)} notes")
         arr = Q.get_arrangement_for_song(conn, song_id)
         print(f"arrangement entries: {len(arr)}")
+        sections = Q.get_sections_for_song(conn, song_id)
+        print(f"sections: {[s['name'] for s in sections]}")
+        tempo = Q.get_tempo_map(conn, song_id)
+        print(f"tempo_map: {[(t['start_bar'], t['tempo_bpm'], t['ramp']) for t in tempo]}")
+        ts = Q.get_time_signature_map(conn, song_id)
+        print(f"time_signature_map: "
+              f"{[(p['start_bar'], p['numerator'], p['denominator']) for p in ts]}")
+        cues = Q.get_cue_points(conn, song_id)
+        print(f"cue_points: {[(c['position_bar'], c['name']) for c in cues]}")
     finally:
         conn.close()
 

@@ -13,11 +13,15 @@ CREATE TABLE IF NOT EXISTS songs (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     key             TEXT,
-    tempo           REAL,
-    time_signature  TEXT,
+    timing_mode     TEXT NOT NULL DEFAULT 'native'
+                        CHECK (timing_mode IN ('native', 'grid')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+-- Tempo and time signature are no longer scalar columns; see tempo_map and
+-- time_signature_map for the multi-point automation that supplants them.
+-- `timing_mode='grid'` opts the song into pure-grid (polytempic) encoding
+-- where generators handle resolved positions internally.
 
 CREATE TABLE IF NOT EXISTS tracks (
     id                      TEXT PRIMARY KEY,
@@ -70,6 +74,64 @@ CREATE TABLE IF NOT EXISTS arrangement (
 CREATE INDEX IF NOT EXISTS idx_arrangement_song ON arrangement(song_id);
 CREATE INDEX IF NOT EXISTS idx_arrangement_track ON arrangement(track_id);
 CREATE INDEX IF NOT EXISTS idx_arrangement_clip ON arrangement(clip_id);
+
+-- =============================================================================
+-- Score: sections, tempo map, time-signature map, cue points
+-- =============================================================================
+-- These four tables round out the Score half so songs can express sectional
+-- structure, tempo / meter changes, and arrangement markers. All four are
+-- song-scoped and cascade-deleted with the song.
+--
+-- Bar positions are REAL. Convention is per-song and informally 1-based to
+-- match `arrangement.start_bar`; bar-to-beat translation in the sync layer
+-- treats `start_bar=0` as "the start of the song" (Live's beat-position 0).
+
+CREATE TABLE IF NOT EXISTS sections (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    start_bar       REAL NOT NULL,
+    end_bar         REAL NOT NULL,
+    color           INTEGER,
+    notes_md        TEXT,
+    CHECK (end_bar > start_bar)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sections_song ON sections(song_id);
+
+CREATE TABLE IF NOT EXISTS tempo_map (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    start_bar       REAL NOT NULL,
+    tempo_bpm       REAL NOT NULL CHECK (tempo_bpm > 0),
+    ramp            TEXT NOT NULL DEFAULT 'hold'
+                        CHECK (ramp IN ('linear', 'hold')),
+    UNIQUE(song_id, start_bar)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tempo_map_song ON tempo_map(song_id, start_bar);
+
+CREATE TABLE IF NOT EXISTS time_signature_map (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    start_bar       REAL NOT NULL,
+    numerator       INTEGER NOT NULL CHECK (numerator > 0),
+    denominator     INTEGER NOT NULL CHECK (denominator > 0),
+    UNIQUE(song_id, start_bar)
+);
+
+CREATE INDEX IF NOT EXISTS idx_time_signature_map_song
+    ON time_signature_map(song_id, start_bar);
+
+CREATE TABLE IF NOT EXISTS cue_points (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    position_bar    REAL NOT NULL,
+    name            TEXT,
+    color           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_cue_points_song ON cue_points(song_id, position_bar);
 
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (

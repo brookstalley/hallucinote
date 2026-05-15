@@ -19,12 +19,11 @@ build/
 dist/
 
 # Ableton Live project directories — local DAW state, not source of truth.
-# Captured snapshots that the build replays will be tracked explicitly per-song
-# (e.g. songs/<name>/captured_session.json) once chunk 3 lands the capture tool.
+# Captured snapshots ARE source of truth (build.py replays them) and are
+# tracked explicitly per song at songs/<name>/captured_session.json.
 **/*.als
 **/*.flac
 **/* Project/
-songs/*/captured_session.json
 
 # Prawduct session files
 .claude/settings.local.json

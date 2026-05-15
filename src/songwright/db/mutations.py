@@ -216,6 +216,9 @@ def set_song_timing_mode(
 # ---------------------------------------------------------------------------
 
 
+TRACK_KINDS = frozenset({"midi", "audio", "return", "master", "group"})
+
+
 def create_track(
     conn: sqlite3.Connection,
     *,
@@ -223,15 +226,22 @@ def create_track(
     track_index: int,
     name: str,
     instrument_uri: str | None = None,
+    kind: str = "midi",
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
+    """Create a track. `kind` selects 'midi' (default), 'audio', 'master', or
+    'group'; 'return' is reserved (returns live in the `returns` table). Mixer
+    state lives on the row but is set separately via `set_track_mixer`."""
+    if kind not in TRACK_KINDS:
+        raise ValueError(f"invalid kind {kind!r}; expected one of {sorted(TRACK_KINDS)}")
     tid = _uuid()
     conn.execute(
-        """INSERT INTO tracks (id, song_id, track_index, name, instrument_uri)
-           VALUES (?, ?, ?, ?, ?)""",
-        (tid, song_id, track_index, name, instrument_uri),
+        """INSERT INTO tracks
+               (id, song_id, track_index, name, instrument_uri, kind)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (tid, song_id, track_index, name, instrument_uri, kind),
     )
     _emit(
         conn,
@@ -241,6 +251,7 @@ def create_track(
             "track_index": track_index,
             "name": name,
             "instrument_uri": instrument_uri,
+            "kind": kind,
         },
         song_id=song_id,
         actor=actor,
@@ -249,6 +260,48 @@ def create_track(
     )
     _touch_song(conn, song_id)
     return tid
+
+
+_MIXER_FIELDS = {"volume", "pan", "mute", "solo", "arm", "color"}
+
+
+def set_track_mixer(
+    conn: sqlite3.Connection,
+    *,
+    track_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial mixer update. `changes` keys must be in _MIXER_FIELDS.
+
+    Volume is normalized 0.0–1.0 (Live convention); pan is -1.0..+1.0;
+    mute/solo/arm are 0/1; color is RGB int. Schema CHECKs enforce ranges.
+    """
+    bad = set(changes) - _MIXER_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    row = conn.execute(
+        "SELECT song_id FROM tracks WHERE id = ?", (track_id,)
+    ).fetchone()
+    if row is None:
+        return
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [track_id]
+    conn.execute(f"UPDATE tracks SET {', '.join(sets)} WHERE id = ?", vals)
+    _emit(
+        conn,
+        E.TRACK_MIXER_SET,
+        {"track_id": track_id, "changes": changes},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -974,11 +1027,207 @@ def remove_cue_point(
 
 
 # ---------------------------------------------------------------------------
+# Mix: returns + sends
+# ---------------------------------------------------------------------------
+
+
+def create_return(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    name: str,
+    position: int,
+    volume: float | None = None,
+    pan: float | None = None,
+    color: int | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Create a return track. `position` is the return's index in Live (1-based,
+    matching captured_session.json). Volume/pan optional; default state is
+    whatever Live applies to a freshly-created return."""
+    rid = _uuid()
+    conn.execute(
+        """INSERT INTO returns
+               (id, song_id, name, position, volume, pan, color)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (rid, song_id, name, position, volume, pan, color),
+    )
+    _emit(
+        conn,
+        E.RETURN_CREATED,
+        {
+            "return_id": rid,
+            "name": name,
+            "position": position,
+            "volume": volume,
+            "pan": pan,
+            "color": color,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return rid
+
+
+_RETURN_FIELDS = {"name", "position", "volume", "pan", "color"}
+
+
+def update_return(
+    conn: sqlite3.Connection,
+    *,
+    return_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial update by id. `changes` keys must be in _RETURN_FIELDS."""
+    bad = set(changes) - _RETURN_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    row = conn.execute(
+        "SELECT song_id FROM returns WHERE id = ?", (return_id,)
+    ).fetchone()
+    if row is None:
+        return
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [return_id]
+    conn.execute(f"UPDATE returns SET {', '.join(sets)} WHERE id = ?", vals)
+    _emit(
+        conn,
+        E.RETURN_UPDATED,
+        {"return_id": return_id, "changes": changes},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+def delete_return(
+    conn: sqlite3.Connection,
+    *,
+    return_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id FROM returns WHERE id = ?", (return_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM returns WHERE id = ?", (return_id,))
+    _emit(
+        conn,
+        E.RETURN_DELETED,
+        {"return_id": return_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+def set_send_level(
+    conn: sqlite3.Connection,
+    *,
+    from_track_id: str,
+    to_return_id: str,
+    level: float,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Upsert send level for (from_track, to_return). `level` is normalized
+    0.0–1.0 to match track volume conventions."""
+    if not (0.0 <= level <= 1.0):
+        raise ValueError(f"level {level} out of range [0.0, 1.0]")
+    # Resolve song for the emitted event — track and return must share a song.
+    track_row = conn.execute(
+        "SELECT song_id FROM tracks WHERE id = ?", (from_track_id,)
+    ).fetchone()
+    ret_row = conn.execute(
+        "SELECT song_id FROM returns WHERE id = ?", (to_return_id,)
+    ).fetchone()
+    if track_row is None or ret_row is None:
+        raise ValueError(
+            f"send endpoints missing: track={from_track_id!r}, return={to_return_id!r}"
+        )
+    if track_row["song_id"] != ret_row["song_id"]:
+        raise ValueError(
+            "cross-song send: track and return belong to different songs"
+        )
+    conn.execute(
+        """INSERT INTO sends (from_track_id, to_return_id, level)
+           VALUES (?, ?, ?)
+           ON CONFLICT(from_track_id, to_return_id)
+           DO UPDATE SET level = excluded.level""",
+        (from_track_id, to_return_id, level),
+    )
+    _emit(
+        conn,
+        E.SEND_SET,
+        {
+            "from_track_id": from_track_id,
+            "to_return_id": to_return_id,
+            "level": level,
+        },
+        song_id=track_row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, track_row["song_id"])
+
+
+def remove_send(
+    conn: sqlite3.Connection,
+    *,
+    from_track_id: str,
+    to_return_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    track_row = conn.execute(
+        "SELECT song_id FROM tracks WHERE id = ?", (from_track_id,)
+    ).fetchone()
+    if track_row is None:
+        return
+    cur = conn.execute(
+        "DELETE FROM sends WHERE from_track_id = ? AND to_return_id = ?",
+        (from_track_id, to_return_id),
+    )
+    if cur.rowcount == 0:
+        return
+    _emit(
+        conn,
+        E.SEND_REMOVED,
+        {"from_track_id": from_track_id, "to_return_id": to_return_id},
+        song_id=track_row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, track_row["song_id"])
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection: sessions + links
 # ---------------------------------------------------------------------------
 
 # db_kind values currently used by the sync layer.
-ABLETON_LINK_KINDS = frozenset({"track", "clip", "arrangement", "note"})
+ABLETON_LINK_KINDS = frozenset({"track", "clip", "arrangement", "note", "return"})
 
 
 def create_ableton_session(

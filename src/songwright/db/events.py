@@ -18,6 +18,14 @@ CLIP_CREATED = "clip_created"
 CLIP_UPDATED = "clip_updated"
 CLIP_DELETED = "clip_deleted"
 
+# Mix: track kind, mixer state, returns, sends
+TRACK_MIXER_SET = "track_mixer_set"
+RETURN_CREATED = "return_created"
+RETURN_UPDATED = "return_updated"
+RETURN_DELETED = "return_deleted"
+SEND_SET = "send_set"
+SEND_REMOVED = "send_removed"
+
 # Score: sections, tempo map, time-signature map, cue points
 SECTION_CREATED = "section_created"
 SECTION_UPDATED = "section_updated"

@@ -126,6 +126,45 @@ Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push 
 
 ---
 
+## Priority 2 — Mix-half push gaps (chunk 3)
+
+Surfaced by chunk 3 of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively. Volume/pan/sends are *already* callable and used directly by the planner.
+
+### Return-track creation
+
+**Current state:** No MCP tool creates a return track. `list_return_tracks`, `get_track_sends`, and `set_track_send` operate against existing returns only. Returns must be created in the Live UI before any send-driven mix work can land.
+
+**Required:**
+- `create_return_track(name: str)` — create a fresh return track at the end of the return list. Returns `{return_index: int}` (1-based). Mirrors `create_midi_track` for the return strip.
+
+### Per-track mute / solo / arm / color writes
+
+**Current state:** `set_track_volume` and `set_track_panning` exist; the rest of the per-track mixer state has no MCP tool. Mute/solo are essential for rough-mix iteration ("solo the drums and tell me if the kick is masked"); arm gates record passes; color is the lowest-bandwidth way to visually communicate role/section.
+
+**Required:**
+- `set_track_mute(track_index: int, value: bool)` — toggle mute on a session track.
+- `set_track_solo(track_index: int, value: bool)` — toggle solo.
+- `set_track_arm(track_index: int, value: bool)` — toggle record-arm.
+- `set_track_color(track_index: int, value: int)` — set track color (Live uses RGB ints).
+
+### Master-strip volume / pan writes
+
+**Current state:** Master volume/pan are reachable in the Live API via the master strip, but no MCP tool exposes writes to them. Without these, an agent can build the entire mix but can't set the final master fader.
+
+**Required:**
+- `set_master_volume(value: float)` — normalized 0.0–1.0 (0.85 = 0 dB), matching `set_track_volume`.
+- `set_master_panning(value: float)` — −1.0..+1.0, matching `set_track_panning`.
+
+### Return-track volume / pan writes
+
+**Current state:** `set_track_volume(track_index)` is for session tracks only (no return-track variant). Returns can be created (when the above lands) and their devices loaded, but the return fader can't be moved programmatically.
+
+**Required:**
+- `set_return_volume(return_index: int, value: float)` — normalized 0.0–1.0.
+- `set_return_panning(return_index: int, value: float)` — −1.0..+1.0.
+
+---
+
 ## Priority 2 — Efficiency (10×+ round-trip wins)
 
 ### 7. Recursive browser tree

@@ -29,8 +29,25 @@ CREATE TABLE IF NOT EXISTS tracks (
     track_index             INTEGER NOT NULL,
     name                    TEXT NOT NULL,
     instrument_uri          TEXT,
+    kind                    TEXT NOT NULL DEFAULT 'midi'
+                                CHECK (kind IN ('midi','audio','return','master','group')),
+    -- Mixer state. Volume/pan use Live's normalized range (0.0–1.0) matching
+    -- the captured_session.json convention; conversion to dB happens at the UI
+    -- layer if needed. mute/solo/arm are 0/1 booleans. color is RGB int.
+    volume                  REAL CHECK (volume IS NULL OR (volume >= 0.0 AND volume <= 1.0)),
+    pan                     REAL CHECK (pan IS NULL OR (pan >= -1.0 AND pan <= 1.0)),
+    mute                    INTEGER CHECK (mute IS NULL OR mute IN (0, 1)),
+    solo                    INTEGER CHECK (solo IS NULL OR solo IN (0, 1)),
+    arm                     INTEGER CHECK (arm IS NULL OR arm IN (0, 1)),
+    color                   INTEGER,
     UNIQUE(song_id, track_index)
 );
+-- `kind` is the discriminator: 'midi' (default), 'audio', 'master', 'group',
+-- and 'return' (reserved — returns currently live in the `returns` table for
+-- their distinct shape). 'audio' and 'group' are valid in V1 but produce no
+-- clip authoring; master tracks live here with `kind='master'` and are
+-- special-cased in sync (Live's master is reached via the master strip, not
+-- by track index).
 
 CREATE INDEX IF NOT EXISTS idx_tracks_song ON tracks(song_id);
 
@@ -137,6 +154,45 @@ CREATE TABLE IF NOT EXISTS cue_points (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cue_points_song ON cue_points(song_id, position_bar);
+
+-- =============================================================================
+-- Mix: returns + sends
+-- =============================================================================
+-- Returns are functionally distinct from main tracks (no slots, no instrument,
+-- target of sends from every audible track) and get their own table. Master is
+-- modeled as a `tracks` row with `kind='master'`; only returns are split out.
+-- Volume/pan match the same normalized 0.0–1.0 / -1.0–1.0 ranges as tracks.
+
+CREATE TABLE IF NOT EXISTS returns (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    position        INTEGER NOT NULL,
+    volume          REAL CHECK (volume IS NULL OR (volume >= 0.0 AND volume <= 1.0)),
+    pan             REAL CHECK (pan IS NULL OR (pan >= -1.0 AND pan <= 1.0)),
+    color           INTEGER,
+    UNIQUE(song_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_returns_song ON returns(song_id, position);
+
+-- Sends are the (track -> return) connection points carrying the send level.
+-- Composite PK enforces one send per (from_track, to_return); changing the
+-- level is an upsert. Level is normalized 0.0–1.0 to match track volume.
+--
+-- Cross-song integrity (track.song_id == return.song_id) is enforced *only* in
+-- `mutations.set_send_level`. The FKs guarantee both endpoints exist, not that
+-- they belong to the same song. Raw-SQL inserts that bypass mutators would
+-- silently corrupt the model — keep the mutator discipline tight.
+
+CREATE TABLE IF NOT EXISTS sends (
+    from_track_id   TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    to_return_id    TEXT NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+    level           REAL NOT NULL CHECK (level >= 0.0 AND level <= 1.0),
+    PRIMARY KEY (from_track_id, to_return_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sends_return ON sends(to_return_id);
 
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (

@@ -406,6 +406,158 @@ def plan_push_sections(
 
 
 # ---------------------------------------------------------------------------
+# Mix-half planner: track mixer + returns + sends
+# ---------------------------------------------------------------------------
+
+
+# Mixer fields that have a direct, callable MCP tool today. mute/solo/arm/color
+# require emulation (see mcp_names.ALIASES_TODAY).
+_DIRECT_MIXER_TOOLS = {
+    "volume": ("set_track_volume", "volume"),
+    "pan":    ("set_track_panning", "panning"),
+}
+
+
+def plan_push_mix(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan the push of mix state — track volume/pan/sends + return tracks + master.
+
+    Pre-conditions (planner warns; doesn't fix):
+      - Tracks/returns that aren't yet linked in this session are flagged as a
+        create step. Track creation lives in `plan_push_clip`; for returns,
+        this planner emits the (gap-flagged) `create_return_track` call.
+      - mute/solo/arm/color/master writes are MCP gaps today — calls are
+        emitted under canonical names so the alias table tracks the gap.
+    """
+    plan = PushPlan()
+    tracks = Q.get_tracks_for_song(conn, song_id)
+    returns = Q.get_returns_for_song(conn, song_id)
+    sends = Q.get_sends_for_song(conn, song_id)
+
+    if not tracks and not returns and not sends:
+        plan.warn("no mix state to push for this song")
+        return plan
+
+    # ---- Tracks: volume / pan via direct MCP tools, mute/solo/arm/color via gap-flagged emulation
+    for t in tracks:
+        if t["kind"] == "master":
+            # Master strip: no track_index. Volume/pan writes are MCP gaps.
+            if t["volume"] is not None:
+                plan.add(ToolCall(
+                    tool="set_master_volume",
+                    args={"value": t["volume"]},
+                    key=f"master_volume:{t['id']}",
+                    purpose=f"set master volume to {t['volume']:g}",
+                ))
+            if t["pan"] is not None:
+                plan.add(ToolCall(
+                    tool="set_master_panning",
+                    args={"value": t["pan"]},
+                    key=f"master_pan:{t['id']}",
+                    purpose=f"set master pan to {t['pan']:g}",
+                ))
+            continue
+
+        if t["kind"] == "return":
+            # 'return' kind on a `tracks` row is reserved; real returns live in
+            # `returns`. Skip silently — replay won't put rows here today.
+            continue
+
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"]
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}) not linked in session — "
+                "create it via plan_push_clip first, then re-run plan_push_mix"
+            )
+            continue
+
+        for mixer_field, (tool, arg) in _DIRECT_MIXER_TOOLS.items():
+            value = t[mixer_field]
+            if value is None:
+                continue
+            plan.add(ToolCall(
+                tool=tool,
+                args={"track_index": track_at, arg: value},
+                key=f"track_{mixer_field}:{t['id']}",
+                purpose=f"set {t['name']} {mixer_field} to {value:g}",
+            ))
+
+        # mute/solo/arm/color are gap-flagged.
+        for mixer_field, gap_tool in (
+            ("mute", "set_track_mute"),
+            ("solo", "set_track_solo"),
+            ("arm",  "set_track_arm"),
+            ("color", "set_track_color"),
+        ):
+            value = t[mixer_field]
+            if value is None:
+                continue
+            plan.add(ToolCall(
+                tool=gap_tool,
+                args={"track_index": track_at, "value": value},
+                key=f"track_{mixer_field}:{t['id']}",
+                purpose=f"set {t['name']} {mixer_field} to {value} (MCP gap)",
+            ))
+
+    # ---- Returns: create unlinked, then push volume/pan (currently no MCP for return mixer state)
+    for r in returns:
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        )
+        if return_at is None:
+            plan.add(ToolCall(
+                tool="create_return_track",
+                args={"name": r["name"]},
+                key=f"return:{r['id']}",
+                purpose=f"create return track '{r['name']}' (MCP gap — emulation needed)",
+            ))
+            plan.warn(
+                f"return {r['name']!r} not linked yet; apply_push_results will record "
+                "the new return_index when create_return_track returns"
+            )
+
+    if returns:
+        plan.warn(
+            "return-track volume/pan writes are not in scope — set_track_volume "
+            "operates on session tracks only. Track this as an MCP gap if return "
+            "mixer state needs programmatic push."
+        )
+
+    # ---- Sends: cross product of (linked track) x (linked return)
+    for s in sends:
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=s["from_track_id"]
+        )
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=s["to_return_id"]
+        )
+        if track_at is None or return_at is None:
+            plan.warn(
+                f"send {s['from_track_name']} -> {s['return_name']}: missing link "
+                f"(track={track_at}, return={return_at}); skipping"
+            )
+            continue
+        plan.add(ToolCall(
+            tool="set_track_send",
+            args={
+                "track_index": track_at,
+                "return_index": return_at,
+                "value": s["level"],
+            },
+            key=f"send:{s['from_track_id']}:{s['to_return_id']}",
+            purpose=f"send {s['from_track_name']} -> {s['return_name']} = {s['level']:g}",
+        ))
+
+    return plan
+
+
+# ---------------------------------------------------------------------------
 # Result application
 # ---------------------------------------------------------------------------
 
@@ -479,6 +631,17 @@ def apply_push_results(
                     db_kind="arrangement",
                     db_id=db_id,
                     ableton_index=res["arrangement_clip_index"],
+                    actor=actor,
+                    request_id=request_id,
+                    reason=reason,
+                )
+            elif kind == "return" and "return_index" in res:
+                M.link_db_to_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="return",
+                    db_id=db_id,
+                    ableton_index=res["return_index"],
                     actor=actor,
                     request_id=request_id,
                     reason=reason,

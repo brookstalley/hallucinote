@@ -17,6 +17,10 @@ def get_song_by_name(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM songs WHERE name = ?", (name,)).fetchone()
 
 
+def get_song(conn: sqlite3.Connection, song_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
+
+
 def get_tracks_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM tracks WHERE song_id = ? ORDER BY track_index",
@@ -132,6 +136,68 @@ def get_time_signature_map(
 def get_cue_points(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM cue_points WHERE song_id = ? ORDER BY position_bar",
+        (song_id,),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Mix: returns + sends
+# ---------------------------------------------------------------------------
+
+
+def get_returns_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM returns WHERE song_id = ? ORDER BY position",
+        (song_id,),
+    ).fetchall()
+
+
+def get_return(conn: sqlite3.Connection, return_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM returns WHERE id = ?", (return_id,)
+    ).fetchone()
+
+
+def get_return_by_name(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    name: str,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM returns WHERE song_id = ? AND name = ?",
+        (song_id, name),
+    ).fetchone()
+
+
+def get_sends_for_track(
+    conn: sqlite3.Connection,
+    from_track_id: str,
+) -> list[sqlite3.Row]:
+    """Return all sends from a track. Joined with the return's position+name so
+    callers can sort/display without a second query."""
+    return conn.execute(
+        """SELECT s.*, r.name AS return_name, r.position AS return_position
+           FROM sends s
+           JOIN returns r ON r.id = s.to_return_id
+           WHERE s.from_track_id = ?
+           ORDER BY r.position""",
+        (from_track_id,),
+    ).fetchall()
+
+
+def get_sends_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    """Return every send in the song. Joined with track + return identity so the
+    caller has the full (from, to, level) matrix without N+1 lookups."""
+    return conn.execute(
+        """SELECT s.from_track_id, s.to_return_id, s.level,
+                  t.track_index AS from_track_index, t.name AS from_track_name,
+                  r.position AS return_position, r.name AS return_name
+           FROM sends s
+           JOIN tracks  t ON t.id = s.from_track_id
+           JOIN returns r ON r.id = s.to_return_id
+           WHERE t.song_id = ?
+           ORDER BY t.track_index, r.position""",
         (song_id,),
     ).fetchall()
 

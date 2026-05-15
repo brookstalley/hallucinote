@@ -32,9 +32,29 @@ ALIASES_TODAY: dict[str, str] = {
     # Chunk 2: arrangement-level meter changes are not exposed by MCP at all.
     # Canonical args: {bar, beat, numerator: int, denominator: int}.
     "write_time_signature_point": "_emulate_write_time_signature_point",
+    # Chunk 3: return-track creation is not exposed by MCP. Canonical args:
+    #   {name: str}. Emulation must create the track via the Live UI/API and
+    #   return its 1-based `return_index`.
+    "create_return_track": "_emulate_create_return_track",
+    # Chunk 3: per-track mute/solo/arm and color writes are not exposed by MCP.
+    # Canonical args: {track_index: int 1-based, value: bool|int}. Today these
+    # are manual-knob operations.
+    "set_track_mute": "_emulate_set_track_mute",
+    "set_track_solo": "_emulate_set_track_solo",
+    "set_track_arm": "_emulate_set_track_arm",
+    "set_track_color": "_emulate_set_track_color",
+    # Chunk 3: master-strip volume/pan writes are not exposed by MCP. Canonical
+    # args: {value: float} — no track_index, master is reached by the master
+    # strip itself in Live's API.
+    "set_master_volume": "_emulate_set_master_volume",
+    "set_master_panning": "_emulate_set_master_panning",
     # NOTE on tools called directly (no alias entry needed):
     # - `create_cue_point(bar: int 1-based, beat: float 0-based, name: str)`.
     #   Planner output for this tool MUST match this signature.
+    # - `set_track_volume(track_index: int 1-based, volume: float 0.0-1.0)`.
+    # - `set_track_panning(track_index: int 1-based, panning: float -1.0..1.0)`.
+    # - `set_track_send(track_index: int 1-based, return_index: int 1-based,
+    #     value: float 0.0-1.0)`.
 }
 
 

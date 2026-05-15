@@ -1,9 +1,9 @@
 """Build falling-walking into a SQLite DB using the songwright layer.
 
-Side-by-side with the legacy gen_notes.py for now. This file demonstrates the
-generator -> mutator -> DB pattern; not yet a full port of every clip in the
-song. Once Wave 1 MCP tools land, the same DB rows drive the push to Ableton
-via `songwright.sync.push`.
+Chunk 3 milestone: the mix layout (12 tracks, 2 returns, sends matrix, master)
+is seeded from `captured_session.json` via `songwright.capture.replay_capture`
+rather than being hand-authored in this file. Score data (tempo/meter/sections/
+cue points) and clip authoring still live here; later chunks will absorb more.
 
 Run:
     python songs/falling-walking/build.py
@@ -12,23 +12,15 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from songwright.capture import replay_capture
 from songwright.db import init_db, mutations as M, queries as Q
 from songwright.generators import bass, drums, harmony
 
 DB_PATH = Path(__file__).parent / "falling-walking.db"
-
-# Track instrument URIs and Ableton mapping. URIs are placeholders — replace
-# with real `query:...#FileId_...` values discovered via the MCP browser tree.
-TRACK_DEFS = [
-    # Subtle Electronics Kit fits the trip-hop / electronic brief.
-    {"index": 1, "name": "Drums",   "instrument_uri": "query:Drums#FileId_5438"},
-    {"index": 2, "name": "Bass",    "instrument_uri": "query:Synths#Operator"},
-    {"index": 3, "name": "Sub",     "instrument_uri": "query:Synths#Operator"},
-    {"index": 4, "name": "Pad",     "instrument_uri": "query:Synths#Drift"},
-    {"index": 5, "name": "Pluck",   "instrument_uri": "query:Synths#Wavetable"},
-]
+SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # MIDI roots for the verse / chorus chord progression.
 D2, F2, C2, G2, BB1, A1 = 38, 41, 36, 43, 34, 33
@@ -37,6 +29,11 @@ D2, F2, C2, G2, BB1, A1 = 38, 41, 36, 43, 34, 33
 DM_PAD = [53, 57, 62]
 GM_PAD = [55, 58, 62]
 BB_PAD = [53, 58, 62]
+
+
+def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
+    """Map track name -> id for the song. Master is included; returns are not."""
+    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
 
 
 def build(reset: bool = False) -> str:
@@ -51,16 +48,22 @@ def build(reset: bool = False) -> str:
             print(f"song already exists (id={existing['id']}); use --reset to rebuild")
             return existing["id"]
 
-        song_id = M.create_song(
+        # Mix-half: replay the captured Ableton session into DB rows. Creates
+        # 12 tracks (with kinds + mixer state), 2 returns, the master strip,
+        # and the sends matrix.
+        snapshot = json.loads(SNAPSHOT_PATH.read_text())
+        song_id = replay_capture(
             conn,
-            name="falling-walking",
-            key="Dm",
+            snapshot,
+            song_name="falling-walking",
+            song_key="Dm",
+            actor="sync",
+            reason="initial chunk-3 capture replay",
         )
 
-        # Score-half: tempo / meter / sections / cue points.
-        # Single-point maps are sufficient for falling-walking — constant 132bpm
-        # in 4/4. `native` timing_mode is the default; setting it explicitly here
-        # so the event log records the choice rather than relying on the default.
+        # Score-half: tempo / meter / sections / cue points (chunk 2).
+        # `native` timing_mode is the default; setting it explicitly so the
+        # event log records the choice rather than relying on the default.
         M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
         # Bars are 1-based across the codebase — the song starts at bar 1.
         M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=132.0)
@@ -68,8 +71,7 @@ def build(reset: bool = False) -> str:
             conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4
         )
         # Sections — bar positions are 1-based to match the arrangement entries
-        # below. The verse runs bars 1-16 (15 bars of trip-hop drums + pad);
-        # the chorus runs bars 16-24 (8 bars of tresillo + walking bass).
+        # below. The verse runs bars 1-16; the chorus runs bars 16-24.
         M.create_section(
             conn, song_id=song_id, name="verse",
             start_bar=1.0, end_bar=16.0,
@@ -86,26 +88,19 @@ def build(reset: bool = False) -> str:
         M.add_cue_point(conn, song_id=song_id, position_bar=1.0, name="verse")
         M.add_cue_point(conn, song_id=song_id, position_bar=16.0, name="chorus")
 
-        # Tracks
-        track_ids: dict[str, str] = {}
-        for t in TRACK_DEFS:
-            track_ids[t["name"]] = M.create_track(
-                conn,
-                song_id=song_id,
-                track_index=t["index"],
-                name=t["name"],
-                instrument_uri=t["instrument_uri"],
-            )
+        # Clip authoring lives on the *captured* tracks now — names match what
+        # Ableton has, not the previous placeholder set.
+        tracks = _tracks_by_name(conn, song_id)
 
         # ------------------------------------------------------------------
         # Verse drums (15 bars trip-hop with fills at bars 4/8/12)
         # ------------------------------------------------------------------
         verse_drums_clip = M.create_clip(
             conn,
-            track_id=track_ids["Drums"],
+            track_id=tracks["01 Drums"],
             slot=1,
             length_beats=60.0,
-            name="verse_drums",
+            name="Verse Drums",
             section_role="verse",
             generator_call={
                 "fn": "drums.trip_hop_drum_pattern",
@@ -120,10 +115,10 @@ def build(reset: bool = False) -> str:
         # ------------------------------------------------------------------
         verse_pad_clip = M.create_clip(
             conn,
-            track_id=track_ids["Pad"],
+            track_id=tracks["04 Verse Pad"],
             slot=1,
             length_beats=60.0,
-            name="verse_pad",
+            name="Verse Pad",
             section_role="verse",
         )
         verse_pad_notes = (
@@ -136,14 +131,17 @@ def build(reset: bool = False) -> str:
         M.replace_clip_notes(conn, clip_id=verse_pad_clip, notes=verse_pad_notes)
 
         # ------------------------------------------------------------------
-        # Chorus bass — tresillo on Dm + walking embellishment into next chord
+        # Chorus bass — tresillo on Dm + walking embellishment into next chord.
+        # Authored on "03 Synth Bass" (the Fat Square Bass that carries the
+        # progression); "02 Sub Bass" reinforces the root but is not authored
+        # here.
         # ------------------------------------------------------------------
         chorus_bass_clip = M.create_clip(
             conn,
-            track_id=track_ids["Bass"],
+            track_id=tracks["03 Synth Bass"],
             slot=2,
             length_beats=32.0,
-            name="chorus_bass",
+            name="Chorus Bass",
             section_role="chorus",
         )
         chorus_bass_notes = (
@@ -180,17 +178,17 @@ def build(reset: bool = False) -> str:
         # ------------------------------------------------------------------
         M.add_arrangement(
             conn, song_id=song_id,
-            track_id=track_ids["Drums"], clip_id=verse_drums_clip,
+            track_id=tracks["01 Drums"], clip_id=verse_drums_clip,
             start_bar=1.0, end_bar=16.0,
         )
         M.add_arrangement(
             conn, song_id=song_id,
-            track_id=track_ids["Pad"], clip_id=verse_pad_clip,
+            track_id=tracks["04 Verse Pad"], clip_id=verse_pad_clip,
             start_bar=1.0, end_bar=16.0,
         )
         M.add_arrangement(
             conn, song_id=song_id,
-            track_id=track_ids["Bass"], clip_id=chorus_bass_clip,
+            track_id=tracks["03 Synth Bass"], clip_id=chorus_bass_clip,
             start_bar=16.0, end_bar=24.0,
         )
 
@@ -203,19 +201,33 @@ def report(song_id: str) -> None:
     """Print a quick summary of what got built."""
     conn = init_db(DB_PATH)
     try:
-        song_row = conn.execute(
-            "SELECT timing_mode FROM songs WHERE id=?", (song_id,)
-        ).fetchone()
+        song_row = Q.get_song(conn, song_id)
         tracks = Q.get_tracks_for_song(conn, song_id)
         print(f"song_id={song_id}, timing_mode={song_row['timing_mode']}, "
               f"tracks={len(tracks)}")
         for t in tracks:
+            mixer = []
+            if t["volume"] is not None:
+                mixer.append(f"v={t['volume']:.3f}")
+            if t["pan"] is not None and t["pan"] != 0:
+                mixer.append(f"p={t['pan']:+.2f}")
+            mixer_str = f" [{', '.join(mixer)}]" if mixer else ""
             clips = Q.get_clips_for_track(conn, t["id"])
-            print(f"  track {t['track_index']}  {t['name']:<8} ({len(clips)} clips)")
+            print(f"  track {t['track_index']:>2}  {t['name']:<16} "
+                  f"({t['kind']}, {len(clips)} clips){mixer_str}")
             for c in clips:
                 notes = Q.get_notes_for_clip(conn, c["id"])
-                print(f"    slot {c['slot']}  {c['name']:<20} "
+                print(f"      slot {c['slot']}  {c['name']:<20} "
                       f"{c['length_beats']:.1f}bt  {len(notes)} notes")
+        returns = Q.get_returns_for_song(conn, song_id)
+        print(f"returns: {len(returns)}")
+        for r in returns:
+            print(f"  return {r['position']}  {r['name']:<12} v={r['volume']}")
+        sends = Q.get_sends_for_song(conn, song_id)
+        if sends:
+            print(f"sends: {len(sends)}")
+            for s in sends:
+                print(f"  {s['from_track_name']:<16} -> {s['return_name']:<10} = {s['level']:.3f}")
         arr = Q.get_arrangement_for_song(conn, song_id)
         print(f"arrangement entries: {len(arr)}")
         sections = Q.get_sections_for_song(conn, song_id)

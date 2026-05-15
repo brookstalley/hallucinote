@@ -562,6 +562,42 @@ def plan_push_mix(
 # ---------------------------------------------------------------------------
 
 
+# Key kinds that record an `ableton_links` binding when the agent reports
+# success. Each entry maps the `ToolCall.key` prefix to (db_kind, result field
+# the agent's result dict must carry).
+_LINK_KINDS: dict[str, tuple[str, str]] = {
+    "track":       ("track",       "track_index"),
+    "clip":        ("clip",        "clip_index"),
+    "arrangement": ("arrangement", "arrangement_clip_index"),
+    "return":      ("return",      "return_index"),
+}
+
+# Key kinds that have no DB binding to record but are valid acks — the planner
+# emits them and the agent reports success/failure, but songwright has nothing
+# to write. Membership here is a contract: every key kind the planner emits
+# MUST appear in either `_LINK_KINDS` or `_ACK_ONLY_KINDS`, or
+# `apply_push_results` raises. This makes the dispatch surface auditable: when
+# a planner grows a new key kind, the developer is forced to declare its
+# resolution here, which surfaces silent-drop bugs at write time.
+_ACK_ONLY_KINDS: frozenset[str] = frozenset({
+    # Chunk 2 (score)
+    "arrangement_batch",     # batch_arrangement_layout outer envelope; inner ops carry `arrangement:` keys
+    "tempo_point",           # write_tempo_point
+    "time_signature_point",  # write_time_signature_point
+    "cue_point",             # create_cue_point
+    # Chunk 3 (mix)
+    "track_volume",          # set_track_volume
+    "track_pan",             # set_track_panning
+    "track_mute",            # set_track_mute (MCP gap)
+    "track_solo",            # set_track_solo (MCP gap)
+    "track_arm",             # set_track_arm (MCP gap)
+    "track_color",           # set_track_color (MCP gap)
+    "master_volume",         # set_master_volume (MCP gap)
+    "master_pan",            # set_master_panning (MCP gap)
+    "send",                  # set_track_send
+})
+
+
 def apply_push_results(
     conn: sqlite3.Connection,
     results: list[dict[str, Any]],
@@ -584,13 +620,12 @@ def apply_push_results(
           "error": "...optional..."
         }
 
-    Recognized result shapes:
-      - track:<uuid> from create_midi_track_with
-            result = {"track_index": int}
-      - clip:<uuid> from replace_session_clip / set_clip_notes
-            result = {"clip_index": int}  # only relevant for replace; ignored otherwise
-      - arrangement:<uuid> from a duplicate op inside batch_arrangement_layout
-            result = {"arrangement_clip_index": int}
+    Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding) and
+    `_ACK_ONLY_KINDS` (no DB write). An unknown kind raises `ValueError` so a
+    new planner-emitted key kind can't silently no-op past this layer.
+
+    Failed results (`ok=False`) are skipped — the agent layer is the source
+    of truth for tool-side errors; songwright records nothing for them.
     """
     with conn:
         for r in results:
@@ -598,51 +633,37 @@ def apply_push_results(
                 continue
             key = r.get("key", "")
             kind, _, db_id = key.partition(":")
-            if not db_id:
+            if not kind:
+                raise ValueError(f"push result missing 'key': {r!r}")
+
+            if kind in _ACK_ONLY_KINDS:
                 continue
 
-            res = r.get("result") or {}
-            if kind == "track" and "track_index" in res:
+            if kind in _LINK_KINDS:
+                if not db_id:
+                    raise ValueError(
+                        f"push result key {key!r} missing db_id after {kind!r}:"
+                    )
+                db_kind, result_field = _LINK_KINDS[kind]
+                res = r.get("result") or {}
+                if result_field not in res:
+                    # Tool ran but didn't return the binding field (e.g.
+                    # set_clip_notes for `clip:` keys — no new index to record).
+                    # Skip; nothing to link.
+                    continue
                 M.link_db_to_ableton(
                     conn,
                     session_id=session_id,
-                    db_kind="track",
+                    db_kind=db_kind,
                     db_id=db_id,
-                    ableton_index=res["track_index"],
+                    ableton_index=res[result_field],
                     actor=actor,
                     request_id=request_id,
                     reason=reason,
                 )
-            elif kind == "clip" and "clip_index" in res:
-                M.link_db_to_ableton(
-                    conn,
-                    session_id=session_id,
-                    db_kind="clip",
-                    db_id=db_id,
-                    ableton_index=res["clip_index"],
-                    actor=actor,
-                    request_id=request_id,
-                    reason=reason,
-                )
-            elif kind == "arrangement" and "arrangement_clip_index" in res:
-                M.link_db_to_ableton(
-                    conn,
-                    session_id=session_id,
-                    db_kind="arrangement",
-                    db_id=db_id,
-                    ableton_index=res["arrangement_clip_index"],
-                    actor=actor,
-                    request_id=request_id,
-                    reason=reason,
-                )
-            elif kind == "return" and "return_index" in res:
-                M.link_db_to_ableton(
-                    conn,
-                    session_id=session_id,
-                    db_kind="return",
-                    db_id=db_id,
-                    ableton_index=res["return_index"],
-                    actor=actor,
-                    request_id=request_id,
-                    reason=reason,
-                )
+                continue
+
+            raise ValueError(
+                f"unknown push result key kind {kind!r} (full key={key!r}). "
+                f"Declare it in _LINK_KINDS or _ACK_ONLY_KINDS in sync/push.py."
+            )

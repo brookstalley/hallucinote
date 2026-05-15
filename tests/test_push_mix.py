@@ -145,39 +145,75 @@ def test_apply_push_results_links_returns(conn, song, session):
     assert linked == 1
 
 
-def test_apply_push_results_silently_drops_unknown_chunk3_keys(conn, song, session):
-    """Documents the current silent-no-op behavior for chunk-3 result keys.
+def test_apply_push_results_accepts_chunk3_keys_as_acks(conn, song, session):
+    """Chunk-3 mixer/send keys are recognized acks: no raise, no link written.
 
     `plan_push_mix` emits keys like `track_volume:`, `track_pan:`, `send:`,
-    `master_volume:` — none of which have an apply_push_results branch yet.
-    Today they're silent no-ops; backlog item: switch to a raise-on-unknown
-    dispatch table so silent drops can't mask real failures.
+    `master_volume:` — none of these record an `ableton_links` binding (the
+    bindings come from the prior `track:` / `return:` creates). The dispatch
+    table in `apply_push_results` declares them as ack-only; this test pins
+    that contract.
     """
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     M.set_track_mixer(conn, track_id=tid, volume=0.5)
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5
     )
-    # Feed a result for a key kind that apply_push_results doesn't recognize.
-    # Should not raise; should not link anything new beyond what we just set.
     push.apply_push_results(
         conn,
         [
             {"key": f"track_volume:{tid}", "ok": True, "tool": "set_track_volume",
              "result": {}},
+            {"key": f"track_pan:{tid}", "ok": True, "tool": "set_track_panning",
+             "result": {}},
+            {"key": f"track_mute:{tid}", "ok": True, "tool": "set_track_mute",
+             "result": {}},
+            {"key": f"track_solo:{tid}", "ok": True, "tool": "set_track_solo",
+             "result": {}},
+            {"key": f"track_arm:{tid}", "ok": True, "tool": "set_track_arm",
+             "result": {}},
+            {"key": f"track_color:{tid}", "ok": True, "tool": "set_track_color",
+             "result": {}},
             {"key": f"send:{tid}:fake_return_uuid_for_test", "ok": True,
              "tool": "set_track_send", "result": {}},
             {"key": f"master_volume:{tid}", "ok": True, "tool": "set_master_volume",
              "result": {}},
+            {"key": f"master_pan:{tid}", "ok": True, "tool": "set_master_panning",
+             "result": {}},
         ],
         session_id=session,
     )
-    # No new links materialized.
+    # No new links materialized — only the original track link survives.
     from songwright.db import queries as Q
     links = Q.get_ableton_links_for_session(conn, session)
-    # Only the original track link should exist.
     assert len(links) == 1
     assert links[0]["db_kind"] == "track"
+
+
+def test_apply_push_results_raises_on_unknown_kind(conn, song, session):
+    """Dispatch contract: a key kind not in `_LINK_KINDS` or `_ACK_ONLY_KINDS`
+    must raise rather than silently no-op. This forces a future planner that
+    grows a new key kind to declare its resolution at the apply layer.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    with pytest.raises(ValueError, match="unknown push result key kind"):
+        push.apply_push_results(
+            conn,
+            [
+                {"key": f"device_param:{tid}", "ok": True,
+                 "tool": "set_device_parameter", "result": {}},
+            ],
+            session_id=session,
+        )
+
+
+def test_apply_push_results_raises_on_missing_key(conn, session):
+    with pytest.raises(ValueError, match="missing 'key'"):
+        push.apply_push_results(
+            conn,
+            [{"ok": True, "tool": "set_track_volume", "result": {}}],
+            session_id=session,
+        )
 
 
 def test_plan_push_mix_empty_song_warns(conn, song, session):

@@ -49,10 +49,14 @@ Developer preferences for how code is written in this project. Captured during d
 
 ## Workflow
 
-- **Branching**: feature-branches (default: feature-branches — create a branch for medium+ work, direct commits to protected branches only for trivial fixes; set to "direct" for solo projects where committing to main is OK)
-- **Protected branches**: main, develop (branches that should not receive direct commits unless branching is "direct")
-- **PR creation**: wait_for_user (default: wait_for_user — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes)
-- **PR merge**: wait_for_user (default: wait_for_user — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean)
+- **Branching model**: **gitflow** — `develop` is the primary integration branch; `main` is release-only.
+- **Branching**: feature-branches — every feature/fix branch is cut from `develop` and PR'd back to `develop`. Direct commits to protected branches only for trivial fixes (and only when `Branching` is `direct`, which it isn't here).
+- **Branch flow**:
+  - `feature/...` / `fix/...` / `refactor/...` → PR target: `develop`
+  - `develop` → `main`: release PRs only; cut periodically when a batch of work is ready to ship. No direct commits to `main`.
+- **Protected branches**: `main`, `develop` (no direct commits).
+- **PR creation**: `wait_for_user` (default — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes).
+- **PR merge**: `wait_for_user` (default — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean).
 
 ---
 

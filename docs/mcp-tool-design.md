@@ -2,15 +2,15 @@
 
 **Status:** Plan (not yet implemented). Date: 2026-05-16.
 **Audience:** Builders on `ableton-mcp-extended`; consumers (notably Hallucinote).
-**Goal:** Cut AbletonMCP's tool surface from **51 → ~10 unified tools** without losing capability, and add the discovery primitives (resources, prompts, help) that let an agent navigate the surface without ballooning context.
+**Goal:** Cut AbletonMCP's tool surface from **52 → ~10 unified tools** without losing capability, and add the discovery primitives (resources, prompts, help) that let an agent navigate the surface without ballooning context.
 
 ---
 
 ## TL;DR
 
-- **Where we are.** 51 MCP tools on AbletonMCP today. Many are per-property setters (`set_track_volume`, `set_track_panning`, ...) that should collapse into one tool with an action grammar. Hallucinote's `sync/mcp_names.py` already encodes ~20 of these as `_emulate_*` placeholders — the pain is visible.
+- **Where we are.** 52 MCP tools on AbletonMCP today. Many are per-property setters (`set_track_volume`, `set_track_panning`, ...) that should collapse into one tool with an action grammar. Hallucinote's `sync/mcp_names.py` already encodes 27 of these as `_emulate_*` placeholders — the pain is visible.
 - **Where we're going.** Ten unified tools — `ableton_session`, `ableton_track`, `ableton_return`, `ableton_clip`, `ableton_note`, `ableton_device`, `ableton_automation`, `ableton_arrangement`, `ableton_browser`, `ableton_help` — each with an `action` parameter and self-service help. The narrow setters fold into actions (`ableton_track(action='set_property', track_index=5, property='volume', value=0.7)`). Reads that don't need per-call parameters become **resources** (`ableton://browser/instruments`, `ableton://plugins/installed`, `ableton://session/snapshot`). Multi-step recipes become **prompts** (`setup_sidechain_compression`, `build_return_bus`).
-- **Why now.** The research is unambiguous: tool count past ~25 measurably degrades model effectiveness, and past ~50 collapses it. AbletonMCP sits at 51 and growing. Hallucinote (the primary consumer) has been the canary.
+- **Why now.** The research is unambiguous: tool count past ~25 measurably degrades model effectiveness, and past ~50 collapses it. AbletonMCP sits at 52 and growing. Hallucinote (the primary consumer) has been the canary.
 - **Cost of inaction.** Every chunk of Hallucinote (W3-3, W3-4, future note pull) carries an "MCP gap" appendix that's actually a tool-count problem in disguise. Each new capability adds a new narrow tool. Consolidation pays the cost once and then becomes a free side-effect of every future capability.
 - **Hallucinote-side cost of the change.** Small. `mcp_names.ALIASES_TODAY` was designed for exactly this transition — the table is the boundary. Push planners already emit canonical names; we just retarget the aliases. The `apply_push_results._ACK_ONLY_KINDS` set shrinks; `mcp_names.py` line count drops by ~half.
 
@@ -20,17 +20,17 @@
 
 ### 1.1 Current tool count
 
-51 tools in `MCP_Server/server.py` (verified by grep on `@mcp.tool()`). Domain distribution:
+52 tools in `MCP_Server/server.py` (verified by grep on `@mcp.tool()`). Domain distribution:
 
 | Domain | Tools | Tool names |
 |---|---|---|
 | Session / global reads | 4 | `get_session_info`, `get_arrangement_info`, `get_cue_points`, `probe_live_object` |
-| Track management | 3 | `create_midi_track`, `delete_track`, `set_track_name`, `get_track_deletion_status` |
-| Track mixer | 4 | `get_track_volume`, `set_track_volume`, `set_track_panning`, (mute/solo/arm/color absent — listed as gaps in `docs/mcp-requirements.md` chunk-3) |
+| Track management | 5 | `create_midi_track`, `delete_track`, `set_track_name`, `get_track_info`, `get_track_deletion_status` |
+| Track mixer | 3 | `get_track_volume`, `set_track_volume`, `set_track_panning` (mute/solo/arm/color absent — listed as gaps in `docs/mcp-requirements.md` chunk-3) |
 | Return tracks | 1 | `list_return_tracks` |
 | Sends | 2 | `get_track_sends`, `set_track_send` |
 | Session clips | 4 | `create_clip`, `fire_clip`, `stop_clip`, `set_clip_name` |
-| Arrangement clips | 4 | `create_arrangement_midi_clip`, `create_arrangement_audio_clip`, `delete_arrangement_clip`, `set_arrangement_clip_property`, `duplicate_clip_to_arrangement` |
+| Arrangement clips | 5 | `create_arrangement_midi_clip`, `create_arrangement_audio_clip`, `delete_arrangement_clip`, `set_arrangement_clip_property`, `duplicate_clip_to_arrangement` |
 | Notes | 1 | `add_notes_to_clip` (truly: replaces; see Hallucinote `mcp-requirements.md` gap #1) |
 | Automation | 1 | `manage_clip_automation` (action-based — precedent) |
 | Devices | 9 | `delete_device`, `enable_device`, `disable_device`, `get_device_parameters`, `set_device_parameter`, `get_device_routing_info`, `set_device_sidechain`, `navigate_device_preset`, `load_instrument_or_effect` |
@@ -44,33 +44,34 @@
 | Tempo | 1 | `set_tempo` |
 | View | 1 | `set_ableton_view` |
 | Plugin discovery | 1 | `list_external_plugins` |
+| **Total** | **52** | |
 
-Most tools have one or two parameters and a one-line docstring. The selection space the LLM searches at every Ableton call is 51-wide.
+Most tools have one or two parameters and a one-line docstring. The selection space the LLM searches at every Ableton call is 52-wide.
 
 ### 1.2 Evidence the surface is too wide
 
 Three independent signals all point the same way:
 
-**Anthropic's own threshold.** The 2025 "advanced tool use" guidance recommends deferred Tool Search "when tool definitions consume >10K tokens" and notes internal testing showed Opus 4 accuracy improving "from 49% to 74%" with Tool Search enabled.<sup>[1]</sup> The implicit message: at ~10K tokens of tool definitions, you have too many tools to load eagerly. AbletonMCP's 51 tools easily clear that.
+**Anthropic's own threshold.** The 2025 "advanced tool use" guidance recommends deferred Tool Search "when tool definitions consume >10K tokens" and notes internal testing showed Opus 4 accuracy improving "from 49% to 74%" with Tool Search enabled.<sup>[1]</sup> The implicit message: at ~10K tokens of tool definitions, you have too many tools to load eagerly. AbletonMCP's 52 tools easily clear that.
 
 **Speakeasy Pet Store experiment.** At 10 tools performance is perfect; at 20 tools large models scored 19/20; at 107 tools "both large and small models failed completely, and task success collapsed."<sup>[2]</sup> AbletonMCP is in the failing region.
 
 **GitHub Copilot reduced its MCP from 40 → 13 tools** and saw "2 to 5 percentage point improvement across SWE-Lancer and SWEbench-Verified benchmarks, plus a 400ms latency reduction."<sup>[2]</sup>
 
-**Client-side caps confirm the constraint is industry-wide.** Cursor caps at 40 tools (silent drops above); Copilot caps at 128. AbletonMCP at 51 exceeds Cursor's cap.
+**Client-side caps confirm the constraint is industry-wide.** Cursor caps at 40 tools (silent drops above); Copilot caps at 128. AbletonMCP at 52 exceeds Cursor's cap.
 
 **Hallucinote-internal evidence.**
-- `mcp_names.ALIASES_TODAY` (the planner's name-rewrite table) has **22 entries** today, mostly `_emulate_*` placeholders for narrow setters that don't yet exist on the MCP side. Every new narrow setter Hallucinote needs adds one alias.
+- `mcp_names.ALIASES_TODAY` (the planner's name-rewrite table) has **27 entries** today, mostly `_emulate_*` placeholders for narrow setters that don't yet exist on the MCP side. Every new narrow setter Hallucinote needs adds one alias.
 - `sync/push.py`'s `_DIRECT_MIXER_TOOLS` carves out just `volume`/`pan` because those are the only mixer fields with direct MCP tools today — the rest are gap-flagged. The dual-path code is friction.
 - `mcp-requirements.md` lists ≥10 narrow setters that "would be a new tool" — every one collapses into a single action on a unified tool under this proposal.
 
 ### 1.3 What "model effectiveness degrades" looks like in practice
 
-When the LLM has 51 tools to choose from, three failure modes appear:
+When the LLM has 52 tools to choose from, three failure modes appear:
 
 1. **Wrong tool selected.** Near-twin tools (`set_track_volume` vs `set_track_panning` vs hypothetical `set_track_mute`) compete for the LLM's attention. Selection accuracy drops as the count rises.<sup>[3]</sup>
 2. **Tool unused, hallucinated parameters instead.** If the agent can't find the right tool quickly, it sometimes invokes a near-match with guessed parameters — `set_track_volume(track_index=5, mute=True)` is the kind of error this produces.
-3. **Context bloat.** Every tool's schema lives in the prompt for every Ableton interaction. At 51 tools, that's a significant fraction of the context window paid for capabilities not used in this turn.
+3. **Context bloat.** Every tool's schema lives in the prompt for every Ableton interaction. At 52 tools, that's a significant fraction of the context window paid for capabilities not used in this turn.
 
 ---
 
@@ -667,7 +668,7 @@ Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexi
 ### 12.1 What changes
 
 - **`.mcp.json`**: path swaps from `../ableton-mcp-extended/...` to the installed `hallucinote-mcp` (either a sibling clone for `--dev` use or the pip-installed entry point).
-- **`sync/mcp_names.py`**: shrinks from 22 entries to ~3-5 as unified tools land. The structure stays the same; the entries contract.
+- **`sync/mcp_names.py`**: shrinks from 27 entries to ~3-5 as unified tools land. The structure stays the same; the entries contract.
 - **`sync/push.py`**: `_DIRECT_MIXER_TOOLS` dictionary collapses — every mixer field becomes direct, dispatched via action on `ableton_track`. `plan_push_mix` emits ~30% fewer ToolCalls (combining mixer-property writes into batched-action shape if MCP supports it).
 - **`sync/push.py`**: `apply_push_results._ACK_ONLY_KINDS` shrinks for the same reason — fewer narrow keys to maintain.
 - **`sync/pull.py`**: pull planners' probe lists shrink; `get_session_info` may move to a resource read where appropriate.
@@ -693,7 +694,7 @@ Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexi
 
 Naming these so we don't reinvent them.
 
-1. **REST→MCP 1:1 mapping.** The current 51-tool surface is exactly this anti-pattern — Live API methods became MCP tools 1:1. Don't extend the pattern; reverse it.<sup>[9]</sup>
+1. **REST→MCP 1:1 mapping.** The current 52-tool surface is exactly this anti-pattern — Live API methods became MCP tools 1:1. Don't extend the pattern; reverse it.<sup>[9]</sup>
 2. **One mega-tool with a free-form query.** Block-style `execute_mutation_query(graphql)` is elegant for some domains but wrong for Ableton — it pushes Live API expertise onto the LLM and weakens schema validation. We want **typed actions with enums**, not freeform queries.
 3. **Magic strings.** Action and property parameters are documented enums, not free strings. `'volume'` is a valid value; `'vol'` is not. The error response tells the agent which is which.
 4. **Hidden coupling.** No "you must call X before Y" requirements that aren't surfaced in the tool's help text and the error message when violated.
@@ -746,8 +747,8 @@ These are the load-bearing choices, captured so we can revisit later if needed.
 
 Numbers we'll measure after Phase 5:
 
-- Tool count: 51 → 10
-- Hallucinote `mcp_names.ALIASES_TODAY` entries: 22 → ≤5
+- Tool count: 52 → 10
+- Hallucinote `mcp_names.ALIASES_TODAY` entries: 27 → ≤5
 - Hallucinote LOC delta: net -~340 lines
 - Server instructions token count: ≤500 tokens (initialize response)
 - Per-tool description size: ≤200 tokens (so 10 tools × 200 ≈ 2000 tokens total tool-definition cost, vs ~10,000+ today)

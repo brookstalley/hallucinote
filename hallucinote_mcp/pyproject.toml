@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hallucinote-mcp"
+version = "0.1.0"
+description = "Ableton Live MCP server: 10 unified tools with action dispatch, designed for low-context-cost agent interaction."
+requires-python = ">=3.10"
+authors = [
+    { name = "Brooks Talley" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = [
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+hallucinote-mcp = "hallucinote_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hallucinote_mcp*"]
+
+[tool.setuptools.package-data]
+hallucinote_mcp = ["skills/**/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -60,8 +60,12 @@ class LiveOp:
         target="song.tracks[{track_index-1}].mixer_device.volume"
 
     For ``property_read`` and ``property_write``, ``property`` is the final
-    attribute name. For ``method_call``, ``method`` is the method name and
-    ``method_args`` is a tuple of param-name templates resolved at call time.
+    attribute name. ``value_param`` names the validated param that holds the
+    value to write (default ``"value"``) — this lets domain-specific names
+    (``bpm``, ``volume``) sit in the wire request without forcing a handler.
+
+    For ``method_call``, ``method`` is the method name and ``method_args``
+    is a tuple of param-name templates resolved at call time.
     """
 
     kind: LiveOpKind
@@ -69,6 +73,7 @@ class LiveOp:
     property: str = ""
     method: str = ""
     method_args: tuple[str, ...] = ()
+    value_param: str = "value"
 
 
 @dataclass(frozen=True)

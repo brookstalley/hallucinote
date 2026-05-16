@@ -446,18 +446,27 @@ def plan_push_mix(
     # ---- Tracks: volume / pan via direct MCP tools, mute/solo/arm/color via gap-flagged emulation
     for t in tracks:
         if t["kind"] == "master":
-            # Master strip: no track_index. Volume/pan writes are MCP gaps.
+            # Master strip: no track_index. Under the unified surface, master
+            # mixer state lives at ableton_session(action='set_master_property').
             if t["volume"] is not None:
                 plan.add(ToolCall(
-                    tool="set_master_volume",
-                    args={"value": t["volume"]},
+                    tool="ableton_session",
+                    args={
+                        "action": "set_master_property",
+                        "property": "volume",
+                        "value": t["volume"],
+                    },
                     key=f"master_volume:{t['id']}",
                     purpose=f"set master volume to {t['volume']:g}",
                 ))
             if t["pan"] is not None:
                 plan.add(ToolCall(
-                    tool="set_master_panning",
-                    args={"value": t["pan"]},
+                    tool="ableton_session",
+                    args={
+                        "action": "set_master_property",
+                        "property": "panning",
+                        "value": t["pan"],
+                    },
                     key=f"master_pan:{t['id']}",
                     purpose=f"set master pan to {t['pan']:g}",
                 ))

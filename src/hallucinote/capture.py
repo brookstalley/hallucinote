@@ -363,7 +363,7 @@ def capture_plan() -> list[dict[str, str]]:
     docs/mcp-requirements.md, chunk-4 P2 section).
     """
     return [
-        {"tool": "get_session_info",
+        {"tool": "ableton_session(action='info')",
          "purpose": "global state: tempo, signature, master volume/pan, track counts"},
         {"tool": "list_return_tracks",
          "purpose": "return tracks: name + volume + pan per return; "

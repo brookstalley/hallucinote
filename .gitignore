@@ -39,3 +39,4 @@ dist/
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
+.claude/scheduled_tasks.lock

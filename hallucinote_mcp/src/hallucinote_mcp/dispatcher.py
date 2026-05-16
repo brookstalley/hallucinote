@@ -261,7 +261,7 @@ def execute_declarative(
     if op.kind == "property_read":
         return getattr(target_obj, op.property)
     if op.kind == "property_write":
-        setattr(target_obj, op.property, params["value"])
+        setattr(target_obj, op.property, params[op.value_param])
         return None
     if op.kind == "method_call":
         method = getattr(target_obj, op.method)

@@ -120,8 +120,8 @@ def plan_pull_mix(
     tracks = Q.get_tracks_for_song(conn, song_id)
 
     plan.add(PullCall(
-        tool="get_session_info",
-        args={},
+        tool="ableton_session",
+        args={"action": "info"},
         key="session_info",
         purpose="pull tempo / signature / master volume+pan",
     ))
@@ -184,8 +184,8 @@ def plan_pull_score_globals(
     """
     plan = PullPlan()
     plan.add(PullCall(
-        tool="get_session_info",
-        args={},
+        tool="ableton_session",
+        args={"action": "info"},
         key="session_info",
         purpose="pull global tempo + signature (+ master mixer state)",
     ))

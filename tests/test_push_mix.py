@@ -87,13 +87,18 @@ def test_plan_push_mix_master_uses_master_strip_tools(conn, song, session):
     )
     M.set_track_mixer(conn, track_id=mid, volume=0.85, pan=0.0)
     plan = push.plan_push_mix(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    # Master is reached via the master strip — no track_index.
-    assert "set_master_volume" in by_tool
-    assert "set_master_panning" in by_tool
-    master_vol = by_tool["set_master_volume"][0]
-    assert master_vol.args == {"value": 0.85}
-    assert "track_index" not in master_vol.args
+    # Master is reached via the unified ableton_session tool (M-1 retarget):
+    # ableton_session(action='set_master_property', property=..., value=...).
+    # No track_index — master is implicit.
+    session_calls = [c for c in plan.calls if c.tool == "ableton_session"]
+    master_props = [
+        c for c in session_calls
+        if c.args.get("action") == "set_master_property"
+    ]
+    assert {c.args["property"] for c in master_props} == {"volume", "panning"}
+    vol_call = next(c for c in master_props if c.args["property"] == "volume")
+    assert vol_call.args["value"] == 0.85
+    assert "track_index" not in vol_call.args
 
 
 def test_plan_push_mix_emits_create_return_track_when_unlinked(conn, song, session):
@@ -176,9 +181,9 @@ def test_apply_push_results_accepts_chunk3_keys_as_acks(conn, song, session):
              "result": {}},
             {"key": f"send:{tid}:fake_return_uuid_for_test", "ok": True,
              "tool": "set_track_send", "result": {}},
-            {"key": f"master_volume:{tid}", "ok": True, "tool": "set_master_volume",
+            {"key": f"master_volume:{tid}", "ok": True, "tool": "ableton_session",
              "result": {}},
-            {"key": f"master_pan:{tid}", "ok": True, "tool": "set_master_panning",
+            {"key": f"master_pan:{tid}", "ok": True, "tool": "ableton_session",
              "result": {}},
         ],
         session_id=session,
@@ -263,5 +268,10 @@ def test_plan_push_mix_handles_falling_walking_snapshot(conn, session, tmp_path)
     assert len(by_tool.get("set_track_volume", [])) >= 8
     # 16 sends from 8 audible tracks × 2 returns
     assert len(by_tool.get("set_track_send", [])) == 16
-    # Master uses master-strip tool
-    assert "set_master_volume" in by_tool
+    # Master uses the unified ableton_session tool (M-1 retarget).
+    session_calls = by_tool.get("ableton_session", [])
+    master_props = [
+        c for c in session_calls
+        if c.args.get("action") == "set_master_property"
+    ]
+    assert any(c.args.get("property") == "volume" for c in master_props)

@@ -43,11 +43,10 @@ ALIASES_TODAY: dict[str, str] = {
     "set_track_solo": "_emulate_set_track_solo",
     "set_track_arm": "_emulate_set_track_arm",
     "set_track_color": "_emulate_set_track_color",
-    # Chunk 3: master-strip volume/pan writes are not exposed by MCP. Canonical
-    # args: {value: float} — no track_index, master is reached by the master
-    # strip itself in Live's API.
-    "set_master_volume": "_emulate_set_master_volume",
-    "set_master_panning": "_emulate_set_master_panning",
+    # NOTE: master-strip volume/pan writes (formerly `set_master_volume` /
+    # `set_master_panning`) are now emitted directly by the planner as
+    # `ableton_session(action='set_master_property', property=..., value=...)`.
+    # Wave M-1 retargeted these — no alias entry needed.
     # Chunk 4a: device chain construction. Canonical args:
     #   load_device(track_index: int 1-based, position: int 1-based,
     #               kind: str, preset_uri: str | null)

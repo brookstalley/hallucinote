@@ -34,6 +34,13 @@ DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"
 DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
 
+# Mix: automation envelopes + breakpoints
+ENVELOPE_CREATED = "envelope_created"
+ENVELOPE_DELETED = "envelope_deleted"
+BREAKPOINT_ADDED = "breakpoint_added"
+BREAKPOINT_REMOVED = "breakpoint_removed"
+BREAKPOINTS_REPLACED = "breakpoints_replaced"
+
 # Score: sections, tempo map, time-signature map, cue points
 SECTION_CREATED = "section_created"
 SECTION_UPDATED = "section_updated"

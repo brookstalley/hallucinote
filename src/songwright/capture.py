@@ -11,7 +11,10 @@ top-level device chains + dialed device parameters. Nested rack chains
 (`DrumGroupDevice` pads, `InstrumentGroupDevice` chains) are schema-supported
 but NOT yet populated by replay — the snapshot's `_note` flags them as
 "internal chain instruments not captured" and MCP gap #17b currently blocks
-deep probe. Automation envelopes (chunk 4b) remain out of scope.
+deep probe. Automation envelopes (chunk 4b) are schema-modeled and push-
+plannable but the capture/replay path doesn't ingest them yet — MCP exposes
+no read surface for the seven envelope target families (see
+docs/mcp-requirements.md, chunk-4b section).
 
 Snapshot shape (extends the existing `captured_session.json` prototype):
 

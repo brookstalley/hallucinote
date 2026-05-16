@@ -205,6 +205,62 @@ Realistically this is a sizable ask. Until it lands, songwright models nested ch
 
 ---
 
+## Priority 2 — Automation envelope gaps (chunk 4b)
+
+Surfaced by chunk 4b. Songwright models seven envelope target families (`clip_cc`, `clip_pitch_bend`, `note_expression`, `device_parameter`, `mixer_volume`, `mixer_pan`, `send_level`) and the planner emits one canonical write call per envelope with breakpoints inline. MCP today exposes only `manage_clip_automation(track_index, clip_index, action, parameter_name)` — it creates an empty envelope on a single named parameter but has no breakpoint write surface. Every canonical name below is gap-flagged in `mcp_names.ALIASES_TODAY` and routes through an emulator that drives `manage_clip_automation` + low-level Live API calls per breakpoint.
+
+Breakpoint payload shape (shared across all envelope writes):
+
+```
+[{time_beats: float, value: float, curve_kind: 'linear'|'hold'|'fast'|'slow'}, ...]
+```
+
+Each write should return `{envelope_index: int}` so `apply_push_results` can record an `envelope:` link binding for clear-and-rewrite vs. update-in-place semantics on subsequent pushes.
+
+### Clip envelopes — CC and pitch bend
+
+**Current state:** `manage_clip_automation` operates on session/arrangement clips by `parameter_name` (e.g., `"volume"`, `"panning"`). MIDI CC envelopes per CC number and clip-level pitch bend envelopes are not exposed.
+
+**Required:**
+- `write_clip_cc_envelope(track_index, clip_index, cc_number: int 0-127, breakpoints)` — write a clip-scoped MIDI CC envelope. Replaces the existing envelope on that CC if one exists.
+- `write_clip_pitch_bend_envelope(track_index, clip_index, breakpoints)` — write the clip's pitch-bend envelope. `value` range -1.0 to +1.0 (mapped to MIDI -8192..+8191 at the boundary).
+
+### Per-note expression (MPE)
+
+**Current state:** No MCP surface for MPE / per-note envelopes. Live's Push 3 and any MPE controller can produce them at the UI layer, but they can't be written programmatically.
+
+**Required:**
+- `write_note_expression_envelope(track_index, clip_index, note_pitch: int, note_start_beats: float, axis: 'pitch'|'pressure'|'timbre', breakpoints)` — write a per-note expression envelope. Note is identified by `(pitch, start_beats)` within the clip rather than an opaque note ID, matching `add_notes_to_clip`'s in-band addressing. This is the schema path to microtonal — `axis='pitch'` with breakpoints in semitone offsets carries microtonal pitch bend per note.
+
+### Device parameter envelopes
+
+**Current state:** `manage_clip_automation` can target a parameter by name on a track's clip envelope, but device-parameter envelopes (the dialed parameter automation that appears in Live's device automation lane) are not exposed directly. Return-device parameter envelopes are entirely absent (same gap as #17b for static writes).
+
+**Required:**
+- `write_device_parameter_envelope(track_index, device_index: int 1-based, parameter_name: str, breakpoints)` — write a track-side device parameter envelope. Values 0.0-1.0 normalized.
+- `write_return_device_parameter_envelope(return_index, device_index: int 1-based, parameter_name: str, breakpoints)` — same shape for returns.
+
+### Mixer envelopes
+
+**Current state:** `manage_clip_automation` can create a clip-scoped `volume`/`panning` envelope. Track-strip (mixer-lane) volume/pan envelopes — the ones that run for the whole track rather than within a clip — aren't exposed. mute/solo/arm have no envelope at all.
+
+**Required:**
+- `write_mixer_volume_envelope(track_index, breakpoints)` — track-strip volume envelope. `value` range 0.0-1.0.
+- `write_mixer_pan_envelope(track_index, breakpoints)` — track-strip pan envelope. `value` range -1.0 to +1.0.
+
+### Send-level envelopes
+
+**Current state:** `set_track_send` writes a static level. Send automation is not exposed.
+
+**Required:**
+- `write_send_envelope(track_index, return_index, breakpoints)` — send-level envelope from one track to one return. `value` range 0.0-1.0.
+
+### Capture-side read
+
+All of the above are write-only gaps in the chunk-4b push. Chunk 4b's capture extension is **deferred** — `replay_capture` does not yet ingest envelopes from snapshots. A future pull-side wave will need read capability for each envelope kind: `get_clip_envelopes`, `get_note_expression_envelopes`, `get_device_envelopes`, `get_mixer_envelopes`, `get_send_envelopes`. Logged here so the gap is in one place.
+
+---
+
 ## Priority 2 — Efficiency (10×+ round-trip wins)
 
 ### 7. Recursive browser tree

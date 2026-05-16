@@ -269,6 +269,126 @@ CREATE TABLE IF NOT EXISTS device_parameters (
 
 CREATE INDEX IF NOT EXISTS idx_device_parameters_device ON device_parameters(device_id);
 
+-- =============================================================================
+-- Mix: automation envelopes + breakpoints
+-- =============================================================================
+-- Unified shape: one `envelopes` table covers seven target families and one
+-- `automation_breakpoints` table carries the (time, value) timeline. The same
+-- breakpoint shape works for a clip-CC ramp, a pitch-bend curve, an MPE
+-- expression on a single note, a device parameter sweep, a mixer fade, or a
+-- send-level ramp.
+--
+-- target_kind discriminates the target family; the polymorphic FK columns
+-- below carry the actual target identity. CASE-based CHECK enforces that the
+-- right column is set for each kind (and no others). ON DELETE CASCADE on
+-- every target FK so that deleting a clip / note / device / track / return
+-- collapses any envelopes that referenced it.
+--
+-- target_kind => target columns + parameter_path semantics
+--   clip_cc           target_clip_id;   parameter_path = CC number string ("64")
+--   clip_pitch_bend   target_clip_id;   parameter_path NULL
+--   note_expression   target_note_id;   parameter_path = MPE axis ("pitch","pressure","timbre")
+--   device_parameter  target_device_id; parameter_path = parameter name ("Threshold")
+--   mixer_volume      target_track_id;  parameter_path NULL
+--   mixer_pan         target_track_id;  parameter_path NULL
+--   send_level        target_track_id + target_send_return_id; parameter_path NULL
+--
+-- Pointing device_parameter envelopes at `devices.id` (with the parameter
+-- name in `parameter_path`) rather than at `device_parameters.id` lets an
+-- envelope exist for a parameter that has no static dialed value — automation
+-- can be the parameter's only state. Mutators map kind → expected columns.
+
+CREATE TABLE IF NOT EXISTS envelopes (
+    id                      TEXT PRIMARY KEY,
+    song_id                 TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    target_kind             TEXT NOT NULL,
+    target_clip_id          TEXT REFERENCES clips(id) ON DELETE CASCADE,
+    target_note_id          TEXT REFERENCES notes(id) ON DELETE CASCADE,
+    target_device_id        TEXT REFERENCES devices(id) ON DELETE CASCADE,
+    target_track_id         TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+    target_send_return_id   TEXT REFERENCES returns(id) ON DELETE CASCADE,
+    parameter_path          TEXT,
+    CHECK (
+        CASE target_kind
+            WHEN 'clip_cc' THEN
+                target_clip_id IS NOT NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_track_id IS NULL
+                AND target_send_return_id IS NULL
+                AND parameter_path IS NOT NULL
+            WHEN 'clip_pitch_bend' THEN
+                target_clip_id IS NOT NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_track_id IS NULL
+                AND target_send_return_id IS NULL
+            WHEN 'note_expression' THEN
+                target_note_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_device_id IS NULL
+                AND target_track_id IS NULL
+                AND target_send_return_id IS NULL
+                AND parameter_path IS NOT NULL
+            WHEN 'device_parameter' THEN
+                target_device_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_track_id IS NULL
+                AND target_send_return_id IS NULL
+                AND parameter_path IS NOT NULL
+            WHEN 'mixer_volume' THEN
+                target_track_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_send_return_id IS NULL
+            WHEN 'mixer_pan' THEN
+                target_track_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_send_return_id IS NULL
+            WHEN 'send_level' THEN
+                target_track_id IS NOT NULL
+                AND target_send_return_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+            ELSE 0
+        END
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_envelopes_song   ON envelopes(song_id);
+CREATE INDEX IF NOT EXISTS idx_envelopes_clip   ON envelopes(target_clip_id);
+CREATE INDEX IF NOT EXISTS idx_envelopes_note   ON envelopes(target_note_id);
+CREATE INDEX IF NOT EXISTS idx_envelopes_device ON envelopes(target_device_id);
+CREATE INDEX IF NOT EXISTS idx_envelopes_track  ON envelopes(target_track_id);
+
+-- Breakpoints describe the envelope's value over time. `time_beats` is in
+-- clip-local beats for clip-/note-scoped envelopes and arrangement-local
+-- beats for mixer/send/device envelopes (the planner does the conversion at
+-- push time per target_kind). `value` is unconstrained at the schema level —
+-- ranges vary by target_kind (0..127 for CC, -1..1 for pitch bend, 0..1 for
+-- mixer/device, etc.) so the planner / generator validates per kind.
+--
+-- curve_kind matches Live's segment curve options. 'linear' is the default
+-- (straight ramp to the next breakpoint); 'hold' freezes value until the
+-- next breakpoint; 'fast' / 'slow' are exponential curves.
+
+CREATE TABLE IF NOT EXISTS automation_breakpoints (
+    id              TEXT PRIMARY KEY,
+    envelope_id     TEXT NOT NULL REFERENCES envelopes(id) ON DELETE CASCADE,
+    time_beats      REAL NOT NULL CHECK (time_beats >= 0.0),
+    value           REAL NOT NULL,
+    curve_kind      TEXT NOT NULL DEFAULT 'linear'
+                        CHECK (curve_kind IN ('linear','hold','fast','slow'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_breakpoints_env
+    ON automation_breakpoints(envelope_id, time_beats);
+
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (
     id                  TEXT PRIMARY KEY,

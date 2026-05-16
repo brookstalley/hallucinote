@@ -1546,11 +1546,371 @@ def remove_device_parameter(
 
 
 # ---------------------------------------------------------------------------
+# Mix: automation envelopes + breakpoints
+# ---------------------------------------------------------------------------
+# Unified shape per target_kind. The mutator validates that the right target
+# kwarg is set for the given kind, that parameter_path is present where it's
+# required, and resolves song_id from the target (so the event carries song
+# provenance even when target_song_id isn't passed explicitly).
+#
+# Cascade: every target FK has ON DELETE CASCADE, so deleting a clip/note/
+# device/track/return collapses any envelopes that pointed at it. No mutator
+# discipline needed for cascade — schema handles it.
+
+
+ENVELOPE_TARGET_KINDS = frozenset({
+    "clip_cc",
+    "clip_pitch_bend",
+    "note_expression",
+    "device_parameter",
+    "mixer_volume",
+    "mixer_pan",
+    "send_level",
+})
+
+# parameter_path is required for these kinds (CC number / MPE axis / param name)
+# and optional/forbidden for the rest.
+_PARAMETER_PATH_REQUIRED = frozenset({
+    "clip_cc", "note_expression", "device_parameter",
+})
+
+# MPE axes accepted in parameter_path for note_expression envelopes.
+NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
+
+BREAKPOINT_CURVE_KINDS = frozenset({"linear", "hold", "fast", "slow"})
+
+
+def create_envelope(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    target_kind: str,
+    target_clip_id: str | None = None,
+    target_note_id: str | None = None,
+    target_device_id: str | None = None,
+    target_track_id: str | None = None,
+    target_send_return_id: str | None = None,
+    parameter_path: str | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Create an envelope row. Returns the envelope id.
+
+    Caller passes exactly the target kwarg(s) the kind requires:
+      clip_cc / clip_pitch_bend  -> target_clip_id
+      note_expression            -> target_note_id (parameter_path = MPE axis)
+      device_parameter           -> target_device_id (parameter_path = name)
+      mixer_volume / mixer_pan   -> target_track_id
+      send_level                 -> target_track_id + target_send_return_id
+
+    The schema CHECK is the last-line defense; this mutator raises early with
+    a clearer message and validates parameter_path semantics (required for
+    clip_cc / note_expression / device_parameter; MPE axis allowlist).
+    """
+    if target_kind not in ENVELOPE_TARGET_KINDS:
+        raise ValueError(
+            f"invalid target_kind {target_kind!r}; "
+            f"expected one of {sorted(ENVELOPE_TARGET_KINDS)}"
+        )
+
+    expected_targets: dict[str, tuple[str, ...]] = {
+        "clip_cc":          ("target_clip_id",),
+        "clip_pitch_bend":  ("target_clip_id",),
+        "note_expression":  ("target_note_id",),
+        "device_parameter": ("target_device_id",),
+        "mixer_volume":     ("target_track_id",),
+        "mixer_pan":        ("target_track_id",),
+        "send_level":       ("target_track_id", "target_send_return_id"),
+    }
+    all_targets = {
+        "target_clip_id": target_clip_id,
+        "target_note_id": target_note_id,
+        "target_device_id": target_device_id,
+        "target_track_id": target_track_id,
+        "target_send_return_id": target_send_return_id,
+    }
+    required = expected_targets[target_kind]
+    for k in required:
+        if all_targets[k] is None:
+            raise ValueError(
+                f"target_kind={target_kind!r} requires kwarg {k}"
+            )
+    for k, v in all_targets.items():
+        if k not in required and v is not None:
+            raise ValueError(
+                f"target_kind={target_kind!r} forbids kwarg {k} (got {v!r})"
+            )
+
+    if target_kind in _PARAMETER_PATH_REQUIRED:
+        if not parameter_path:
+            raise ValueError(
+                f"target_kind={target_kind!r} requires parameter_path "
+                "(CC number / MPE axis / parameter name)"
+            )
+    else:
+        if parameter_path is not None:
+            raise ValueError(
+                f"target_kind={target_kind!r} does not use parameter_path "
+                f"(got {parameter_path!r})"
+            )
+
+    if target_kind == "note_expression" and parameter_path not in NOTE_EXPRESSION_AXES:
+        raise ValueError(
+            f"note_expression parameter_path {parameter_path!r} not in "
+            f"{sorted(NOTE_EXPRESSION_AXES)}"
+        )
+
+    if target_kind == "clip_cc":
+        try:
+            cc_number = int(parameter_path)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"clip_cc parameter_path must be an integer CC number "
+                f"(got {parameter_path!r})"
+            ) from exc
+        if not 0 <= cc_number <= 127:
+            raise ValueError(
+                f"clip_cc CC number {cc_number} out of MIDI range [0, 127]"
+            )
+
+    # Provenance: clip envelopes carry their target_clip_id; note_expression
+    # envelopes resolve clip via the note's parent so audit-trail queries by
+    # clip find them too.
+    event_clip_id = target_clip_id
+    if target_kind == "note_expression":
+        note_row = conn.execute(
+            "SELECT clip_id FROM notes WHERE id = ?", (target_note_id,),
+        ).fetchone()
+        if note_row is not None:
+            event_clip_id = note_row["clip_id"]
+
+    env_id = _uuid()
+    conn.execute(
+        """INSERT INTO envelopes
+               (id, song_id, target_kind,
+                target_clip_id, target_note_id, target_device_id,
+                target_track_id, target_send_return_id, parameter_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            env_id, song_id, target_kind,
+            target_clip_id, target_note_id, target_device_id,
+            target_track_id, target_send_return_id, parameter_path,
+        ),
+    )
+    _emit(
+        conn,
+        E.ENVELOPE_CREATED,
+        {
+            "envelope_id": env_id,
+            "target_kind": target_kind,
+            "target_clip_id": target_clip_id,
+            "target_note_id": target_note_id,
+            "target_device_id": target_device_id,
+            "target_track_id": target_track_id,
+            "target_send_return_id": target_send_return_id,
+            "parameter_path": parameter_path,
+        },
+        song_id=song_id,
+        clip_id=event_clip_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, song_id)
+    return env_id
+
+
+def delete_envelope(
+    conn: sqlite3.Connection,
+    *,
+    envelope_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT song_id, target_clip_id FROM envelopes WHERE id = ?",
+        (envelope_id,),
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM envelopes WHERE id = ?", (envelope_id,))
+    _emit(
+        conn,
+        E.ENVELOPE_DELETED,
+        {"envelope_id": envelope_id},
+        song_id=row["song_id"],
+        clip_id=row["target_clip_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+def _resolve_envelope_song(
+    conn: sqlite3.Connection, envelope_id: str,
+) -> tuple[str | None, str | None]:
+    """Return (song_id, target_clip_id) for an envelope, for event provenance."""
+    row = conn.execute(
+        "SELECT song_id, target_clip_id FROM envelopes WHERE id = ?",
+        (envelope_id,),
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row["song_id"], row["target_clip_id"]
+
+
+def add_breakpoint(
+    conn: sqlite3.Connection,
+    *,
+    envelope_id: str,
+    time_beats: float,
+    value: float,
+    curve_kind: str = "linear",
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Append a single breakpoint to an envelope. Returns the breakpoint id."""
+    if curve_kind not in BREAKPOINT_CURVE_KINDS:
+        raise ValueError(
+            f"invalid curve_kind {curve_kind!r}; "
+            f"expected one of {sorted(BREAKPOINT_CURVE_KINDS)}"
+        )
+    bp_id = _uuid()
+    conn.execute(
+        """INSERT INTO automation_breakpoints
+               (id, envelope_id, time_beats, value, curve_kind)
+           VALUES (?, ?, ?, ?, ?)""",
+        (bp_id, envelope_id, time_beats, value, curve_kind),
+    )
+    song_id, clip_id = _resolve_envelope_song(conn, envelope_id)
+    _emit(
+        conn,
+        E.BREAKPOINT_ADDED,
+        {
+            "breakpoint_id": bp_id,
+            "envelope_id": envelope_id,
+            "time_beats": time_beats,
+            "value": value,
+            "curve_kind": curve_kind,
+        },
+        song_id=song_id,
+        clip_id=clip_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    return bp_id
+
+
+def remove_breakpoint(
+    conn: sqlite3.Connection,
+    *,
+    breakpoint_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        "SELECT envelope_id FROM automation_breakpoints WHERE id = ?",
+        (breakpoint_id,),
+    ).fetchone()
+    if row is None:
+        return
+    envelope_id = row["envelope_id"]
+    conn.execute(
+        "DELETE FROM automation_breakpoints WHERE id = ?", (breakpoint_id,)
+    )
+    song_id, clip_id = _resolve_envelope_song(conn, envelope_id)
+    _emit(
+        conn,
+        E.BREAKPOINT_REMOVED,
+        {"breakpoint_id": breakpoint_id, "envelope_id": envelope_id},
+        song_id=song_id,
+        clip_id=clip_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+
+
+def replace_breakpoints(
+    conn: sqlite3.Connection,
+    *,
+    envelope_id: str,
+    breakpoints: Sequence[dict[str, Any]],
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> list[str]:
+    """Atomic: delete every breakpoint for `envelope_id`, insert the new set.
+    Returns the new breakpoint ids in insertion order. Single event emitted.
+
+    Each breakpoint dict: {time_beats: float, value: float,
+    curve_kind: 'linear'|'hold'|'fast'|'slow' (default 'linear')}.
+    """
+    with conn:
+        prev_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM automation_breakpoints WHERE envelope_id = ?",
+            (envelope_id,),
+        ).fetchone()["c"]
+        conn.execute(
+            "DELETE FROM automation_breakpoints WHERE envelope_id = ?",
+            (envelope_id,),
+        )
+        new_ids: list[str] = []
+        for bp in breakpoints:
+            curve = bp.get("curve_kind", "linear")
+            if curve not in BREAKPOINT_CURVE_KINDS:
+                raise ValueError(
+                    f"invalid curve_kind {curve!r}; "
+                    f"expected one of {sorted(BREAKPOINT_CURVE_KINDS)}"
+                )
+            bp_id = _uuid()
+            conn.execute(
+                """INSERT INTO automation_breakpoints
+                       (id, envelope_id, time_beats, value, curve_kind)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (bp_id, envelope_id, float(bp["time_beats"]),
+                 float(bp["value"]), curve),
+            )
+            new_ids.append(bp_id)
+        song_id, clip_id = _resolve_envelope_song(conn, envelope_id)
+        _emit(
+            conn,
+            E.BREAKPOINTS_REPLACED,
+            {
+                "envelope_id": envelope_id,
+                "prev_count": prev_count,
+                "new_count": len(new_ids),
+                "breakpoint_ids": new_ids,
+            },
+            song_id=song_id,
+            clip_id=clip_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        if song_id:
+            _touch_song(conn, song_id)
+    return new_ids
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection: sessions + links
 # ---------------------------------------------------------------------------
 
 # db_kind values currently used by the sync layer.
-ABLETON_LINK_KINDS = frozenset({"track", "clip", "arrangement", "note", "return", "device"})
+ABLETON_LINK_KINDS = frozenset({
+    "track", "clip", "arrangement", "note", "return", "device", "envelope",
+})
 
 
 def create_ableton_session(

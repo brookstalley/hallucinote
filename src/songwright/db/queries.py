@@ -301,6 +301,80 @@ def get_device_parameters(
 
 
 # ---------------------------------------------------------------------------
+# Mix: automation envelopes + breakpoints
+# ---------------------------------------------------------------------------
+
+
+def get_envelope(conn: sqlite3.Connection, envelope_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM envelopes WHERE id = ?", (envelope_id,)
+    ).fetchone()
+
+
+def get_envelopes_for_song(
+    conn: sqlite3.Connection, song_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM envelopes WHERE song_id = ?
+           ORDER BY target_kind, id""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_envelopes_for_clip(
+    conn: sqlite3.Connection, clip_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM envelopes WHERE target_clip_id = ?
+           ORDER BY target_kind, parameter_path""",
+        (clip_id,),
+    ).fetchall()
+
+
+def get_envelopes_for_note(
+    conn: sqlite3.Connection, note_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM envelopes WHERE target_note_id = ?
+           ORDER BY parameter_path""",
+        (note_id,),
+    ).fetchall()
+
+
+def get_envelopes_for_device(
+    conn: sqlite3.Connection, device_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM envelopes WHERE target_device_id = ?
+           ORDER BY parameter_path""",
+        (device_id,),
+    ).fetchall()
+
+
+def get_envelopes_for_track(
+    conn: sqlite3.Connection, track_id: str,
+) -> list[sqlite3.Row]:
+    """Mixer + send envelopes anchored on this track (mixer_volume, mixer_pan,
+    send_level). Device-parameter envelopes for this track's devices are NOT
+    included — query via `get_envelopes_for_device` per device."""
+    return conn.execute(
+        """SELECT * FROM envelopes WHERE target_track_id = ?
+           ORDER BY target_kind, target_send_return_id""",
+        (track_id,),
+    ).fetchall()
+
+
+def get_breakpoints(
+    conn: sqlite3.Connection, envelope_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM automation_breakpoints
+           WHERE envelope_id = ? ORDER BY time_beats, id""",
+        (envelope_id,),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection
 # ---------------------------------------------------------------------------
 

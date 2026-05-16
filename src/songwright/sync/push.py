@@ -733,6 +733,408 @@ def _emit_device_calls(
 
 
 # ---------------------------------------------------------------------------
+# Mix-half planner: automation envelopes
+# ---------------------------------------------------------------------------
+#
+# One ToolCall per envelope, breakpoints inline (same shape as
+# `set_clip_notes(notes=[...])`). Canonical names per target_kind below; all
+# of them are MCP gaps today and are flagged in `mcp_names.ALIASES_TODAY`.
+#
+#   clip_cc           write_clip_cc_envelope(track_index, clip_index,
+#                                            cc_number, breakpoints)
+#   clip_pitch_bend   write_clip_pitch_bend_envelope(track_index, clip_index,
+#                                                    breakpoints)
+#   note_expression   write_note_expression_envelope(track_index, clip_index,
+#                                                    note_pitch, note_start_beats,
+#                                                    axis, breakpoints)
+#   device_parameter  write_device_parameter_envelope(track_index,
+#                                                     device_index,
+#                                                     parameter_name, breakpoints)
+#                     write_return_device_parameter_envelope(return_index,
+#                                                            device_index,
+#                                                            parameter_name,
+#                                                            breakpoints)
+#   mixer_volume      write_mixer_volume_envelope(track_index, breakpoints)
+#   mixer_pan         write_mixer_pan_envelope(track_index, breakpoints)
+#   send_level        write_send_envelope(track_index, return_index, breakpoints)
+#
+# Breakpoint shape (inline list): {time_beats, value, curve_kind}.
+
+
+def _breakpoints_for_mcp(bps: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [
+        {
+            "time_beats": float(bp["time_beats"]),
+            "value": float(bp["value"]),
+            "curve_kind": bp["curve_kind"],
+        }
+        for bp in bps
+    ]
+
+
+def plan_push_envelopes(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan the push of every envelope in a song. One canonical call per
+    envelope with breakpoints inline. Envelopes whose target isn't linked in
+    the session yet are skipped with a warning; envelopes with zero
+    breakpoints are skipped with a warning (nothing to push)."""
+    plan = PushPlan()
+    envelopes = Q.get_envelopes_for_song(conn, song_id)
+    if not envelopes:
+        plan.warn("no envelopes for this song; nothing to push")
+        return plan
+
+    for env in envelopes:
+        breakpoints = Q.get_breakpoints(conn, env["id"])
+        if not breakpoints:
+            plan.warn(
+                f"envelope {env['id']} ({env['target_kind']}) has no "
+                "breakpoints; skipping"
+            )
+            continue
+        target_kind = env["target_kind"]
+        bps_mcp = _breakpoints_for_mcp(breakpoints)
+
+        if target_kind in ("clip_cc", "clip_pitch_bend"):
+            _emit_clip_envelope(
+                plan, conn,
+                session_id=session_id,
+                envelope=env,
+                breakpoints_mcp=bps_mcp,
+            )
+        elif target_kind == "note_expression":
+            _emit_note_expression_envelope(
+                plan, conn,
+                session_id=session_id,
+                envelope=env,
+                breakpoints_mcp=bps_mcp,
+            )
+        elif target_kind == "device_parameter":
+            _emit_device_parameter_envelope(
+                plan, conn,
+                session_id=session_id,
+                envelope=env,
+                breakpoints_mcp=bps_mcp,
+            )
+        elif target_kind in ("mixer_volume", "mixer_pan"):
+            _emit_mixer_envelope(
+                plan, conn,
+                session_id=session_id,
+                envelope=env,
+                breakpoints_mcp=bps_mcp,
+            )
+        elif target_kind == "send_level":
+            _emit_send_envelope(
+                plan, conn,
+                session_id=session_id,
+                envelope=env,
+                breakpoints_mcp=bps_mcp,
+            )
+        else:
+            # Schema CHECK already enforces target_kind ∈ allowlist; this is a
+            # belt-and-suspenders guard for future kinds added to the schema
+            # without a matching planner branch.
+            raise ValueError(
+                f"plan_push_envelopes: target_kind {target_kind!r} has no "
+                "emitter branch — add one alongside the schema entry"
+            )
+    return plan
+
+
+def _clip_and_track_indices(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    clip_id: str,
+) -> tuple[int | None, int | None]:
+    """Resolve (track_index, clip_index) for a clip in a session, or (None, None)
+    if either isn't linked yet."""
+    clip_row = Q.get_clip(conn, clip_id)
+    if clip_row is None:
+        return None, None
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=clip_row["track_id"]
+    )
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=clip_id
+    )
+    return track_at, clip_at
+
+
+def _emit_clip_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """clip_cc + clip_pitch_bend emission."""
+    clip_id = envelope["target_clip_id"]
+    track_at, clip_at = _clip_and_track_indices(
+        conn, session_id=session_id, clip_id=clip_id
+    )
+    if track_at is None or clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): "
+            f"clip {clip_id} not linked in session (track={track_at}, "
+            f"clip={clip_at}); skipping"
+        )
+        return
+    if envelope["target_kind"] == "clip_cc":
+        # Mutator validated parameter_path as an int in [0,127] at create time.
+        cc_number = int(envelope["parameter_path"])
+        plan.add(ToolCall(
+            tool="write_clip_cc_envelope",
+            args={
+                "track_index": track_at,
+                "clip_index": clip_at,
+                "cc_number": cc_number,
+                "breakpoints": breakpoints_mcp,
+            },
+            key=f"envelope:{envelope['id']}",
+            purpose=(
+                f"clip_cc CC{cc_number} on clip {clip_at}: "
+                f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+            ),
+        ))
+    else:
+        plan.add(ToolCall(
+            tool="write_clip_pitch_bend_envelope",
+            args={
+                "track_index": track_at,
+                "clip_index": clip_at,
+                "breakpoints": breakpoints_mcp,
+            },
+            key=f"envelope:{envelope['id']}",
+            purpose=(
+                f"clip_pitch_bend on clip {clip_at}: "
+                f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+            ),
+        ))
+
+
+def _emit_note_expression_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """note_expression emission — MPE per-note envelopes addressed by
+    (clip, pitch, start_beats). Note links aren't tracked, so the canonical
+    args identify the note in-band."""
+    note_row = conn.execute(
+        """SELECT n.pitch, n.start_beats, n.clip_id
+           FROM notes n WHERE n.id = ?""",
+        (envelope["target_note_id"],),
+    ).fetchone()
+    if note_row is None:
+        plan.warn(
+            f"envelope {envelope['id']} (note_expression): note "
+            f"{envelope['target_note_id']} not found; skipping"
+        )
+        return
+    track_at, clip_at = _clip_and_track_indices(
+        conn, session_id=session_id, clip_id=note_row["clip_id"]
+    )
+    if track_at is None or clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (note_expression): clip not linked "
+            f"(track={track_at}, clip={clip_at}); skipping"
+        )
+        return
+    plan.add(ToolCall(
+        tool="write_note_expression_envelope",
+        args={
+            "track_index": track_at,
+            "clip_index": clip_at,
+            "note_pitch": note_row["pitch"],
+            "note_start_beats": float(note_row["start_beats"]),
+            "axis": envelope["parameter_path"],
+            "breakpoints": breakpoints_mcp,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"note_expression {envelope['parameter_path']} on note "
+            f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}: "
+            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+        ),
+    ))
+
+
+def _emit_device_parameter_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """device_parameter emission — track-side or return-side depending on the
+    device's parent chain. Requires both the parent (track/return) AND the
+    device itself to be linked."""
+    device_id = envelope["target_device_id"]
+    device_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="device", db_id=device_id,
+    )
+    chain_row = conn.execute(
+        """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE d.id = ?""",
+        (device_id,),
+    ).fetchone()
+    if chain_row is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): device "
+            f"{device_id} not found; skipping"
+        )
+        return
+    if chain_row["parent_rack_device_id"] is not None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): nested-rack "
+            f"device {device_id} — push not yet supported (MCP gap)"
+        )
+        return
+    if chain_row["parent_track_id"] is not None:
+        parent_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track",
+            db_id=chain_row["parent_track_id"],
+        )
+        if parent_at is None or device_at is None:
+            plan.warn(
+                f"envelope {envelope['id']} (device_parameter): track or "
+                f"device not linked (track={parent_at}, device={device_at}); "
+                "skipping"
+            )
+            return
+        plan.add(ToolCall(
+            tool="write_device_parameter_envelope",
+            args={
+                "track_index": parent_at,
+                "device_index": device_at,
+                "parameter_name": envelope["parameter_path"],
+                "breakpoints": breakpoints_mcp,
+            },
+            key=f"envelope:{envelope['id']}",
+            purpose=(
+                f"device_parameter {envelope['parameter_path']} on track "
+                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s) "
+                "(MCP gap)"
+            ),
+        ))
+    else:
+        # parent_return_id is set (CHECK ensures one of the three).
+        parent_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return",
+            db_id=chain_row["parent_return_id"],
+        )
+        if parent_at is None or device_at is None:
+            plan.warn(
+                f"envelope {envelope['id']} (device_parameter): return or "
+                f"device not linked (return={parent_at}, device={device_at}); "
+                "skipping"
+            )
+            return
+        plan.add(ToolCall(
+            tool="write_return_device_parameter_envelope",
+            args={
+                "return_index": parent_at,
+                "device_index": device_at,
+                "parameter_name": envelope["parameter_path"],
+                "breakpoints": breakpoints_mcp,
+            },
+            key=f"envelope:{envelope['id']}",
+            purpose=(
+                f"device_parameter {envelope['parameter_path']} on return "
+                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s) "
+                "(MCP gap)"
+            ),
+        ))
+
+
+def _emit_mixer_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """mixer_volume + mixer_pan emission."""
+    track_id = envelope["target_track_id"]
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+    )
+    if track_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): track "
+            f"{track_id} not linked; skipping"
+        )
+        return
+    tool = (
+        "write_mixer_volume_envelope" if envelope["target_kind"] == "mixer_volume"
+        else "write_mixer_pan_envelope"
+    )
+    plan.add(ToolCall(
+        tool=tool,
+        args={
+            "track_index": track_at,
+            "breakpoints": breakpoints_mcp,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"{envelope['target_kind']} on track {track_at}: "
+            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+        ),
+    ))
+
+
+def _emit_send_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """send_level emission — addressed by (track, return) pair."""
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track",
+        db_id=envelope["target_track_id"],
+    )
+    return_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="return",
+        db_id=envelope["target_send_return_id"],
+    )
+    if track_at is None or return_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): missing link "
+            f"(track={track_at}, return={return_at}); skipping"
+        )
+        return
+    plan.add(ToolCall(
+        tool="write_send_envelope",
+        args={
+            "track_index": track_at,
+            "return_index": return_at,
+            "breakpoints": breakpoints_mcp,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"send_level track {track_at} -> return {return_at}: "
+            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+        ),
+    ))
+
+
+# ---------------------------------------------------------------------------
 # Result application
 # ---------------------------------------------------------------------------
 
@@ -746,6 +1148,11 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
     "arrangement": ("arrangement", "arrangement_clip_index"),
     "return":      ("return",      "return_index"),
     "device":      ("device",      "device_index"),
+    # Chunk 4b: envelopes. The emulator returns an `envelope_index` so the
+    # planner can re-address the envelope on subsequent pushes (clear-and-
+    # rewrite vs. update-in-place). When the result dict omits the field
+    # (e.g. an emulator that no-ops), apply_push_results skips the link.
+    "envelope":    ("envelope",    "envelope_index"),
 }
 
 # Key kinds that have no DB binding to record but are valid acks — the planner

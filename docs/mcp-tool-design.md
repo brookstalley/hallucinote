@@ -505,27 +505,31 @@ Hallucinote's `sync/mcp_names.py` already exists for exactly this. The `ALIASES_
 
 The HOW that sits beneath the WHAT in §4–§9. Read this before §11 (Migration Plan) — the migration shape follows from the architectural decisions here.
 
-### 10.1 Greenfield, not a fork
+### 10.1 Greenfield code, monorepo layout
 
-The MCP server lives in a **new repository** named `hallucinote-mcp`, not as a renamed fork of `uisato/ableton-mcp-extended`. Reasoning:
+The MCP server is **fresh code in a new directory of this repo** (`hallucinote_mcp/`), not a separate repo and not a renamed fork of `uisato/ableton-mcp-extended`. Reasoning:
 
-- Project identity is clean from day one. Anyone landing on the repo sees our name, our README, our commits — no "fork of" badge or historical "Initial fork from..." commit to explain.
-- Infrastructure (Live Control Surface registration, UDP server, threading model, dispatcher pattern) is built around the new unified-tool architecture from the start, not retrofitted onto fork-shaped code.
-- "Tight integration with our core product" (Hallucinote) is a positioning choice. `hallucinote-mcp` declares the relationship; `live-mcp` would have stayed generic.
-- MIT attribution to upstream (`uisato/ableton-mcp-extended` + the great-grandparent `ahujasid/ableton-mcp`) is preserved in `NOTICE`/`LICENSE`/`README` as historical inspiration credit, per MIT license requirements. The *code* is rewritten; the *knowledge* (which Live API property maps to which conceptual operation) is disciplined-ported.
+- **Greenfield code, not greenfield repo.** Project identity comes from naming + README + package boundary — all achievable in a subdirectory. New code in a new directory is just as fresh as new code in a new repo.
+- **Tight coupling argues for monorepo.** Each Wave M chunk pairs MCP-side + Hallucinote-side work. Monorepo: one PR per chunk. Separate repos: two PRs per chunk + version pinning + drift risk. The user has explicitly framed `hallucinote-mcp` as "tight integration with the core product" — monorepo confirms that structurally.
+- **One CI pipeline catches integration regressions at PR time**, not later when a version pin gets bumped.
+- **Distribution is unaffected.** The `hallucinote_mcp/` subdirectory has its own `pyproject.toml` and is publishable to PyPI as `hallucinote-mcp` independently of the Hallucinote core. Standard multi-package monorepo layout.
+- **Infrastructure** (Live Control Surface registration, UDP server, threading model, dispatcher pattern) is built around the new unified-tool architecture from the start, not retrofitted onto fork-shaped code.
+- **MIT attribution** to upstream (`uisato/ableton-mcp-extended` + the great-grandparent `ahujasid/ableton-mcp`) is preserved in a root-level `NOTICE` file per MIT license requirements. The *code* is rewritten; the *knowledge* (which Live API property maps to which conceptual operation) is disciplined-ported.
 
-The old fork (`brookstalley/ableton-mcp-extended`) gets archived after Wave M completes, with a README pointing at the new project.
+The old fork (`brookstalley/ableton-mcp-extended`) gets archived after Wave M completes, with a README pointing at this repo's `hallucinote_mcp/` directory.
 
 ### 10.2 Both layers, both ours
 
-`hallucinote-mcp` ships two coordinated Python components in the same repo and package:
+The `hallucinote_mcp/` package (publishable as `hallucinote-mcp` on PyPI) ships two coordinated Python components:
 
 - **MCP server side** (`hallucinote_mcp/server.py`) — FastMCP-based. Exposes the 10 unified tools to MCP clients (Claude Desktop, Claude Code, etc.). One `@mcp.tool()` decorator per unified tool with `action` dispatch.
-- **Remote Script side** (`hallucinote_mcp/remote_script/__init__.py`) — installs into Ableton Live's `Remote Scripts` folder. Registers as a Control Surface, opens a UDP server, dispatches commands to the Live API. ~10 unified handlers, mirroring the MCP server side one-to-one.
+- **Remote Script side** (`hallucinote_mcp/remote_script/__init__.py`) — installs into Ableton Live's `Remote Scripts` folder via the `/ableton-install-mcp` skill. Registers as a Control Surface, opens a UDP server, dispatches commands to the Live API. ~10 unified handlers, mirroring the MCP server side one-to-one.
 - **Shared schema** (`hallucinote_mcp/schema.py`) — Python dataclasses defining every tool, every action, every parameter. Imported by *both* server + Remote Script. **Single source of truth.** No drift, no sync tests required.
 - **Wire protocol** — canonical message format both directions:
   - Request: `{tool: str, action: str, params: dict}`
   - Response: `{ok: bool, result?: any, error?: str, valid_actions?: list[str], hint?: str}`
+
+Both components live in the same package directory, share the same `pyproject.toml`, and ship together. Atomic releases by construction.
 
 ### 10.3 Declarative-first dispatch with handler escape hatches
 
@@ -638,18 +642,20 @@ Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexi
 
 ## 11. Migration Plan
 
-### Phase 0 — Repo bootstrap
+### Phase 0 — Package scaffold (M-0, in this repo)
 
-- Create the `hallucinote-mcp` repo (greenfield, not a rename).
-- Scaffold: `pyproject.toml`, `hallucinote_mcp/{server,schema,handlers,remote_script}/`, console-script entry points, install/uninstall mechanisms.
-- README, LICENSE (MIT), NOTICE (attribution to upstream + great-grandparent).
+- Create `hallucinote_mcp/` subdirectory at the repo root, alongside `src/hallucinote/` and `songs/`.
+- New `hallucinote_mcp/pyproject.toml` defines the publishable `hallucinote-mcp` package.
+- Scaffold inside the package: `server.py`, `schema.py`, `dispatcher.py`, `handlers/`, `remote_script/`, `skills/`.
+- Root-level `NOTICE` file with MIT attribution to upstream + great-grandparent.
 - Initial wire protocol + dispatcher infrastructure (no actions yet).
+- `pyproject.toml` workspace setup so editable install works for both `hallucinote` (existing core) and `hallucinote-mcp` (new package).
 
 ### Phase 1 — Vertical slice (M-1)
 
-- Implement `ableton_session` end-to-end (server + schema + Remote Script handler + tests).
+- Implement `ableton_session` end-to-end (server + schema + Remote Script handler + tests) in `hallucinote_mcp/`.
 - This is the architecture-validation slice — proves the full loop.
-- Hallucinote begins retargeting `mcp_names.ALIASES_TODAY` to canonical action shape.
+- **Same PR** retargets the relevant `mcp_names.ALIASES_TODAY` entries in `src/hallucinote/sync/` so Hallucinote drives the new surface immediately. Monorepo wins atomicity here.
 
 ### Phase 2 — Resources + prompts
 
@@ -660,18 +666,18 @@ Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexi
 ### Phase 3 — Remaining domains
 
 - M-2 through M-5 (track + return, clip + note, device + automation, arrangement + scene + browser).
-- Each chunk lands its handlers fresh in `hallucinote-mcp`.
+- Each chunk lands its handlers in `hallucinote_mcp/` AND retargets the corresponding `mcp_names.ALIASES_TODAY` entries — in one PR.
 - Gap-flagged setters (mute/solo/arm/color, master, returns) land as actions — they didn't have narrow tools to begin with; this is net-new capability via consolidation.
 
 ### Phase 4 — Hallucinote `.mcp.json` swap
 
-- When M-1's surface is functional in `hallucinote-mcp`, swap Hallucinote's `.mcp.json` to point at the new package.
+- When M-1's surface is functional in `hallucinote_mcp/`, update Hallucinote's `.mcp.json` to point at `./hallucinote_mcp/` (same-repo relative path) instead of `../ableton-mcp-extended/...`.
 - The old fork stays runnable on the user's machine in parallel during the migration, then gets archived.
 
 ### Phase 5 — Old fork archived
 
-- After Wave M completes, the `ableton-mcp-extended` fork gets archived on GitHub.
-- Archive README points at `hallucinote-mcp` for current development.
+- After Wave M completes, `brookstalley/ableton-mcp-extended` on GitHub gets archived.
+- Archive README points at this repo's `hallucinote_mcp/` directory.
 
 ### Phase 6 — Note + envelope pulls (Hallucinote-side)
 
@@ -683,7 +689,7 @@ Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexi
 
 ### 12.1 What changes
 
-- **`.mcp.json`**: path swaps from `../ableton-mcp-extended/...` to the installed `hallucinote-mcp` (either a sibling clone for `--dev` use or the pip-installed entry point).
+- **`.mcp.json`**: path swaps from `../ableton-mcp-extended/...` to `./hallucinote_mcp/` (same-repo relative path; works for `--dev` editable installs and pip-installed alike).
 - **`sync/mcp_names.py`**: shrinks from 27 entries to ~3-5 as unified tools land. The structure stays the same; the entries contract.
 - **`sync/push.py`**: `_DIRECT_MIXER_TOOLS` dictionary collapses — every mixer field becomes direct, dispatched via action on `ableton_track`. `plan_push_mix` emits ~30% fewer ToolCalls (combining mixer-property writes into batched-action shape if MCP supports it).
 - **`sync/push.py`**: `apply_push_results._ACK_ONLY_KINDS` shrinks for the same reason — fewer narrow keys to maintain.
@@ -724,7 +730,7 @@ Naming these so we don't reinvent them.
 
 **Resolved (kept here briefly so the rationale isn't lost):**
 
-- ~~Repo identity~~ → `hallucinote-mcp`, greenfield (new repo, not fork rename). MIT attribution preserved in NOTICE/LICENSE/README. Old fork archives at Wave M close.
+- ~~Repo identity~~ → `hallucinote-mcp` as a monorepo subdirectory (`hallucinote_mcp/`) in this repo, greenfield code. NOT a separate repo. NOT a fork rename. MIT attribution preserved in root-level `NOTICE`. Old fork archives at Wave M close with redirect to this repo.
 - ~~`ableton_help` as 10th tool~~ → Dropped. Server instructions + per-tool `action='help'` suffice. `ableton_scene` takes the slot.
 - ~~Architecture A (both layers) vs B (server-only)~~ → A. No existing users; cheaper to bite the bullet now than to retrofit later.
 - ~~Greenfield vs in-place rewrite~~ → Greenfield. Clean identity, infrastructure built around new architecture, knowledge disciplined-ported from upstream as historical reference.
@@ -753,7 +759,7 @@ These are the load-bearing choices, captured so we can revisit later if needed.
 | `ableton_note` exists even though blocked | Stable surface for agents; "blocked" responses teach the gap | Omit until gap #4 lands; problem: surprises agents who don't read the gap doc |
 | Aliases for one major version | Cordyceps practice; gives consumers time to migrate | Hard cutover (breaks Hallucinote at the moment of release) |
 | Errors carry valid_actions + example + hint | Cordyceps + Alpic both converge on this; measurable accuracy lift | Bare error string (status quo) |
-| Greenfield `hallucinote-mcp`, drop fork relationship | Clean project identity; no users to break; cheaper now than retrofit later. Architecture A (both server + Remote Script rewritten) lets infrastructure be built around new dispatch from day one. | In-place rename + squash of fork (less work but retains fork shape); Architecture B (server-only consolidation) — defers Remote Script work but creates transitional bugs |
+| Greenfield code in monorepo (`hallucinote_mcp/` directory in this repo), drop fork relationship | Greenfield code, not greenfield repo — separable decisions. Monorepo gives atomic cross-component PRs (M-N + H-N land together), one CI pipeline, no version-pinning drift. Tight coupling with Hallucinote justifies same-repo. Architecture A (both server + Remote Script rewritten) lets infrastructure be built around new dispatch from day one. | New separate repo (over-architected for tight coupling, adds coordination ceremony); in-place rename + squash of fork (less work but retains fork shape); Architecture B (server-only consolidation) — defers Remote Script work but creates transitional bugs |
 | Declarative-first dispatch with handler escape hatches | ~60-70% of Live ops are pure property/method calls; shared Python dataclass schema makes adding new ops a schema-edit, not a code-edit. Handler escape preserves expressiveness for complex cases. | Pure declarative (insufficient for snapshot/render/etc.); pure imperative (loses the "add new actions without touching dispatcher" property the user explicitly asked for) |
 | Repo name = `hallucinote-mcp` | "Tight integration with our core product" call. Binds MCP to product identity; signals "this is part of Hallucinote." | `live-mcp` (too generic, doesn't signal product binding); `hallucinote-live-bridge` (verbose) |
 

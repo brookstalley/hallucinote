@@ -26,6 +26,14 @@ RETURN_DELETED = "return_deleted"
 SEND_SET = "send_set"
 SEND_REMOVED = "send_removed"
 
+# Mix: device chains, devices, parameters
+DEVICE_CHAIN_CREATED = "device_chain_created"
+DEVICE_CHAIN_DELETED = "device_chain_deleted"
+DEVICE_CREATED = "device_created"
+DEVICE_DELETED = "device_deleted"
+DEVICE_PARAMETER_SET = "device_parameter_set"
+DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
+
 # Score: sections, tempo map, time-signature map, cue points
 SECTION_CREATED = "section_created"
 SECTION_UPDATED = "section_updated"

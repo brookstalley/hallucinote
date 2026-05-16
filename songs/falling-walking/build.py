@@ -213,8 +213,10 @@ def report(song_id: str) -> None:
                 mixer.append(f"p={t['pan']:+.2f}")
             mixer_str = f" [{', '.join(mixer)}]" if mixer else ""
             clips = Q.get_clips_for_track(conn, t["id"])
+            devs = Q.get_devices_for_track(conn, t["id"])
+            devs_str = f"  devs: {', '.join(d['display_name'] for d in devs)}" if devs else ""
             print(f"  track {t['track_index']:>2}  {t['name']:<16} "
-                  f"({t['kind']}, {len(clips)} clips){mixer_str}")
+                  f"({t['kind']}, {len(clips)} clips){mixer_str}{devs_str}")
             for c in clips:
                 notes = Q.get_notes_for_clip(conn, c["id"])
                 print(f"      slot {c['slot']}  {c['name']:<20} "
@@ -222,7 +224,9 @@ def report(song_id: str) -> None:
         returns = Q.get_returns_for_song(conn, song_id)
         print(f"returns: {len(returns)}")
         for r in returns:
-            print(f"  return {r['position']}  {r['name']:<12} v={r['volume']}")
+            devs = Q.get_devices_for_return(conn, r["id"])
+            devs_str = f"  devs: {', '.join(d['display_name'] for d in devs)}" if devs else ""
+            print(f"  return {r['position']}  {r['name']:<12} v={r['volume']}{devs_str}")
         sends = Q.get_sends_for_song(conn, song_id)
         if sends:
             print(f"sends: {len(sends)}")

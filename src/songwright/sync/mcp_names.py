@@ -48,6 +48,24 @@ ALIASES_TODAY: dict[str, str] = {
     # strip itself in Live's API.
     "set_master_volume": "_emulate_set_master_volume",
     "set_master_panning": "_emulate_set_master_panning",
+    # Chunk 4a: device chain construction. Canonical args:
+    #   load_device(track_index: int 1-based, position: int 1-based,
+    #               kind: str, preset_uri: str | null)
+    # MCP today: `load_instrument_or_effect(track_index, uri)` appends to the
+    # end of the chain — no `position` control and no precise `kind` selection.
+    # Emulation must order loads / use named presets to land in the right slot.
+    "load_device": "_emulate_load_device",
+    # Chunk 4a: same shape, but for return tracks. No MCP equivalent today.
+    "load_device_on_return": "_emulate_load_device_on_return",
+    # Chunk 4a: device parameter writes for tracks. Canonical args:
+    #   set_device_parameter(track_index, device_index: int 1-based,
+    #                        parameter_name: str, value: float 0.0-1.0).
+    # MCP today: `set_device_parameter` is registered but BROKEN per #17b
+    # (raises `No module named 'MCP_Server'`). Planner emits canonically;
+    # the agent / shim handles the broken state until the fork patches it.
+    "set_device_parameter": "_emulate_set_device_parameter",
+    # Chunk 4a: same shape, for return tracks. No MCP equivalent today.
+    "set_return_device_parameter": "_emulate_set_return_device_parameter",
     # NOTE on tools called directly (no alias entry needed):
     # - `create_cue_point(bar: int 1-based, beat: float 0-based, name: str)`.
     #   Planner output for this tool MUST match this signature.

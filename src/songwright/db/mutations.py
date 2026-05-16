@@ -1223,11 +1223,334 @@ def remove_send(
 
 
 # ---------------------------------------------------------------------------
+# Mix: device chains, devices, parameters
+# ---------------------------------------------------------------------------
+# Parent enforcement: `create_device_chain` accepts exactly one of three
+# parent kwargs. The schema CHECK also enforces this, but raising in Python
+# yields a clean error before the DB does. Top-level chains (track / return)
+# use position=0 by convention; rack chains use their position within the
+# parent rack device.
+
+
+def create_device_chain(
+    conn: sqlite3.Connection,
+    *,
+    parent_track_id: str | None = None,
+    parent_return_id: str | None = None,
+    parent_rack_device_id: str | None = None,
+    position: int = 0,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    parents = [
+        ("parent_track_id", parent_track_id),
+        ("parent_return_id", parent_return_id),
+        ("parent_rack_device_id", parent_rack_device_id),
+    ]
+    set_parents = [(k, v) for k, v in parents if v is not None]
+    if len(set_parents) != 1:
+        raise ValueError(
+            f"create_device_chain: exactly one parent kwarg required, "
+            f"got {[k for k, _ in set_parents]}"
+        )
+    chain_id = _uuid()
+    conn.execute(
+        """INSERT INTO device_chains
+               (id, parent_track_id, parent_return_id, parent_rack_device_id, position)
+           VALUES (?, ?, ?, ?, ?)""",
+        (chain_id, parent_track_id, parent_return_id, parent_rack_device_id, position),
+    )
+    # Resolve song_id for the event so audit queries find it via song.
+    song_id = _resolve_chain_song(
+        conn,
+        parent_track_id=parent_track_id,
+        parent_return_id=parent_return_id,
+        parent_rack_device_id=parent_rack_device_id,
+    )
+    _emit(
+        conn,
+        E.DEVICE_CHAIN_CREATED,
+        {
+            "chain_id": chain_id,
+            "parent_track_id": parent_track_id,
+            "parent_return_id": parent_return_id,
+            "parent_rack_device_id": parent_rack_device_id,
+            "position": position,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    return chain_id
+
+
+def _resolve_chain_song(
+    conn: sqlite3.Connection,
+    *,
+    parent_track_id: str | None,
+    parent_return_id: str | None,
+    parent_rack_device_id: str | None,
+) -> str | None:
+    """Walk a chain's parent up to its song_id. Nested rack chains recurse
+    through their parent device's chain until reaching a track or return."""
+    if parent_track_id is not None:
+        row = conn.execute(
+            "SELECT song_id FROM tracks WHERE id = ?", (parent_track_id,)
+        ).fetchone()
+        return row["song_id"] if row else None
+    if parent_return_id is not None:
+        row = conn.execute(
+            "SELECT song_id FROM returns WHERE id = ?", (parent_return_id,)
+        ).fetchone()
+        return row["song_id"] if row else None
+    if parent_rack_device_id is not None:
+        # Device -> its chain -> recurse on that chain's parent.
+        row = conn.execute(
+            """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
+               FROM devices d
+               JOIN device_chains dc ON dc.id = d.chain_id
+               WHERE d.id = ?""",
+            (parent_rack_device_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _resolve_chain_song(
+            conn,
+            parent_track_id=row["parent_track_id"],
+            parent_return_id=row["parent_return_id"],
+            parent_rack_device_id=row["parent_rack_device_id"],
+        )
+    return None
+
+
+def delete_device_chain(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    row = conn.execute(
+        """SELECT parent_track_id, parent_return_id, parent_rack_device_id
+           FROM device_chains WHERE id = ?""",
+        (chain_id,),
+    ).fetchone()
+    if row is None:
+        return
+    song_id = _resolve_chain_song(
+        conn,
+        parent_track_id=row["parent_track_id"],
+        parent_return_id=row["parent_return_id"],
+        parent_rack_device_id=row["parent_rack_device_id"],
+    )
+    conn.execute("DELETE FROM device_chains WHERE id = ?", (chain_id,))
+    _emit(
+        conn,
+        E.DEVICE_CHAIN_DELETED,
+        {"chain_id": chain_id},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+
+
+def create_device(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    position: int,
+    kind: str,
+    display_name: str,
+    preset_uri: str | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Create a device in `chain_id` at 1-based `position`. `kind` is Live's
+    class name (Compressor2, Eq8, DrumGroupDevice, ...); `display_name` is
+    the user-visible name (often == kind, may be a preset name)."""
+    if position < 1:
+        raise ValueError(f"device position {position} must be >= 1")
+    device_id = _uuid()
+    conn.execute(
+        """INSERT INTO devices (id, chain_id, position, kind, display_name, preset_uri)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (device_id, chain_id, position, kind, display_name, preset_uri),
+    )
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    _emit(
+        conn,
+        E.DEVICE_CREATED,
+        {
+            "device_id": device_id,
+            "chain_id": chain_id,
+            "position": position,
+            "kind": kind,
+            "display_name": display_name,
+            "preset_uri": preset_uri,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    return device_id
+
+
+def _resolve_device_song(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+) -> str | None:
+    row = conn.execute(
+        """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE d.id = ?""",
+        (device_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _resolve_chain_song(
+        conn,
+        parent_track_id=row["parent_track_id"],
+        parent_return_id=row["parent_return_id"],
+        parent_rack_device_id=row["parent_rack_device_id"],
+    )
+
+
+def delete_device(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    cur = conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+    if cur.rowcount == 0:
+        return
+    _emit(
+        conn,
+        E.DEVICE_DELETED,
+        {"device_id": device_id},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+
+
+def set_device_parameter(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    name: str,
+    value_display: str,
+    value_normalized: float | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Upsert a device parameter by (device_id, name). Returns parameter id.
+
+    `value_display` is always set (the human-readable form). `value_normalized`
+    is optional — discrete-enum parameters (e.g., Filter Type = "Lowpass")
+    have no continuous form.
+    """
+    if value_normalized is not None and not (0.0 <= value_normalized <= 1.0):
+        raise ValueError(
+            f"value_normalized {value_normalized} out of range [0.0, 1.0]"
+        )
+    existing = conn.execute(
+        "SELECT id FROM device_parameters WHERE device_id = ? AND name = ?",
+        (device_id, name),
+    ).fetchone()
+    if existing is None:
+        param_id = _uuid()
+        conn.execute(
+            """INSERT INTO device_parameters
+                   (id, device_id, name, value_display, value_normalized)
+               VALUES (?, ?, ?, ?, ?)""",
+            (param_id, device_id, name, value_display, value_normalized),
+        )
+    else:
+        param_id = existing["id"]
+        conn.execute(
+            """UPDATE device_parameters
+                  SET value_display = ?, value_normalized = ?
+                WHERE id = ?""",
+            (value_display, value_normalized, param_id),
+        )
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    _emit(
+        conn,
+        E.DEVICE_PARAMETER_SET,
+        {
+            "parameter_id": param_id,
+            "device_id": device_id,
+            "name": name,
+            "value_display": value_display,
+            "value_normalized": value_normalized,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    return param_id
+
+
+def remove_device_parameter(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    name: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    cur = conn.execute(
+        "DELETE FROM device_parameters WHERE device_id = ? AND name = ?",
+        (device_id, name),
+    )
+    if cur.rowcount == 0:
+        return
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    _emit(
+        conn,
+        E.DEVICE_PARAMETER_REMOVED,
+        {"device_id": device_id, "name": name},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection: sessions + links
 # ---------------------------------------------------------------------------
 
 # db_kind values currently used by the sync layer.
-ABLETON_LINK_KINDS = frozenset({"track", "clip", "arrangement", "note", "return"})
+ABLETON_LINK_KINDS = frozenset({"track", "clip", "arrangement", "note", "return", "device"})
 
 
 def create_ableton_session(

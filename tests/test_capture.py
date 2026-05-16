@@ -155,6 +155,182 @@ def test_replay_falling_walking_snapshot(conn):
     sends = Q.get_sends_for_song(conn, sid)
     assert len(sends) == 16
 
+    # Chunk 4a: device chains + devices + dialed params replayed.
+    # The 4 placeholder tracks ("1-MIDI", "2-MIDI", "3-Audio", "4-Audio") have
+    # no `devices` array; the 8 instrumented tracks each get one top-level
+    # chain. Returns A-Reverb and B-Delay also each get one chain. Total:
+    # 8 + 2 = 10 chains.
+    chains = conn.execute(
+        "SELECT COUNT(*) FROM device_chains"
+    ).fetchone()[0]
+    assert chains == 10
+
+    # Each instrumented track has 2-4 devices; returns have 1 device each.
+    # The falling-walking snapshot totals 25 device rows (verified by counting
+    # the snapshot file's `devices: [...]` array entries across all tracks +
+    # returns at capture time). If this number changes, the snapshot file
+    # changed too — update both.
+    devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+    assert devices == 25
+
+    # `01 Drums` carries 4 devices: Late Nite Kit (DrumGroupDevice), EQ Eight,
+    # Drum Buss, Precise (Compressor2).
+    drums = next(t for t in tracks if t["name"] == "01 Drums")
+    drum_devices = Q.get_devices_for_track(conn, drums["id"])
+    assert [d["display_name"] for d in drum_devices] == [
+        "Late Nite Kit", "EQ Eight", "Drum Buss", "Precise",
+    ]
+    assert [d["kind"] for d in drum_devices] == [
+        "DrumGroupDevice", "Eq8", "DrumBuss", "Compressor2",
+    ]
+
+    # `01 Drums` Late Nite Kit has 4 dialed parameters.
+    late_nite = drum_devices[0]
+    params = Q.get_device_parameters(conn, late_nite["id"])
+    assert {p["name"] for p in params} == {"Filter", "Delay", "Low Freq", "Hi Freq"}
+    low_freq = next(p for p in params if p["name"] == "Low Freq")
+    assert low_freq["value_display"] == "2.51 dB"
+    assert low_freq["value_normalized"] == pytest.approx(0.71)
+
+    # Discrete-enum params (Filter Type) have NULL value_normalized.
+    sub = next(t for t in tracks if t["name"] == "02 Sub Bass")
+    operator = Q.get_devices_for_track(conn, sub["id"])[0]
+    op_params = {p["name"]: p for p in Q.get_device_parameters(conn, operator["id"])}
+    assert op_params["Filter Type"]["value_display"] == "Lowpass"
+    assert op_params["Filter Type"]["value_normalized"] is None
+    # Continuous params still carry the normalized value.
+    assert op_params["Filter Freq"]["value_normalized"] == pytest.approx(0.93)
+
+
+# ---------- chunk 4a: device replay ----------
+
+
+def _snapshot_with_devices() -> dict:
+    return {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [
+            {
+                "index": 1, "name": "A-Reverb", "volume": 0.85, "panning": 0.0,
+                "devices": [{"index": 1, "name": "Reverb", "class": "Reverb"}],
+            },
+        ],
+        "tracks": [
+            {
+                "index": 5, "name": "01 Drums", "type": "midi",
+                "volume": 0.6, "panning": 0.0,
+                "sends": {"A-Reverb": 0.0},
+                "devices": [
+                    {
+                        "index": 1, "name": "Late Nite Kit",
+                        "class": "DrumGroupDevice",
+                        "guess_uri": "query:Drums#FileId_5418",
+                        "params_dialed": {
+                            "Filter": {"value": "1", "normalized": 0.01},
+                            "Filter Type": {"value": "Lowpass"},
+                        },
+                    },
+                    {"index": 2, "name": "EQ Eight", "class": "Eq8"},
+                ],
+            },
+        ],
+    }
+
+
+def test_replay_creates_top_level_chain_per_parent(conn):
+    sid = replay_capture(conn, _snapshot_with_devices(), song_name="t")
+    # 1 track chain + 1 return chain = 2 chains.
+    chains = conn.execute("SELECT * FROM device_chains").fetchall()
+    assert len(chains) == 2
+    # All top-level chains are position=0.
+    assert {c["position"] for c in chains} == {0}
+
+
+def test_replay_creates_devices_with_kind_and_display_name(conn):
+    sid = replay_capture(conn, _snapshot_with_devices(), song_name="t")
+    drums = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "01 Drums"
+    )
+    devices = Q.get_devices_for_track(conn, drums["id"])
+    assert [d["display_name"] for d in devices] == ["Late Nite Kit", "EQ Eight"]
+    assert [d["kind"] for d in devices] == ["DrumGroupDevice", "Eq8"]
+    assert devices[0]["preset_uri"] == "query:Drums#FileId_5418"
+    assert devices[1]["preset_uri"] is None
+
+
+def test_replay_creates_dialed_params(conn):
+    sid = replay_capture(conn, _snapshot_with_devices(), song_name="t")
+    drums = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "01 Drums"
+    )
+    late_nite = Q.get_devices_for_track(conn, drums["id"])[0]
+    params = {p["name"]: p for p in Q.get_device_parameters(conn, late_nite["id"])}
+    assert params["Filter"]["value_display"] == "1"
+    assert params["Filter"]["value_normalized"] == pytest.approx(0.01)
+    # Discrete-enum param carries display only.
+    assert params["Filter Type"]["value_display"] == "Lowpass"
+    assert params["Filter Type"]["value_normalized"] is None
+
+
+def test_replay_handles_track_with_no_devices(conn):
+    """The 4 placeholder tracks in falling-walking carry no `devices` field."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{"index": 1, "name": "empty", "type": "midi"}],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "empty")
+    assert Q.get_device_chains_for_track(conn, track["id"]) == []
+
+
+def test_replay_rejects_device_missing_class(conn):
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{"index": 1, "name": "X"}],  # no class
+        }],
+    }
+    with pytest.raises(ValueError, match="missing required keys"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_handles_explicit_null_normalized(conn):
+    """A future snapshot could ship `"normalized": null` explicitly (rather
+    than omitting the key) — that must still produce a NULL value_normalized
+    rather than raising on `float(None)`."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "X", "class": "Operator",
+                "params_dialed": {
+                    "Filter Type": {"value": "Lowpass", "normalized": None},
+                },
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    device = Q.get_devices_for_track(conn, track["id"])[0]
+    params = Q.get_device_parameters(conn, device["id"])
+    assert params[0]["value_normalized"] is None
+
+
+def test_replay_rejects_param_bad_shape(conn):
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "X", "class": "Eq8",
+                "params_dialed": {"Freq": "not-a-dict"},  # should be {value, normalized?}
+            }],
+        }],
+    }
+    with pytest.raises(ValueError, match="expected dict with 'value' key"):
+        replay_capture(conn, snap, song_name="t")
+
 
 # ---------- capture_plan / compile_snapshot ----------
 
@@ -167,6 +343,8 @@ def test_capture_plan_lists_expected_probes():
         "list_return_tracks",
         "get_track_info",
         "get_track_sends",
+        # Chunk 4a additions:
+        "get_device_parameters",  # MCP gap #17b; included for protocol completeness
     }
 
 

@@ -203,6 +203,104 @@ def get_sends_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.R
 
 
 # ---------------------------------------------------------------------------
+# Mix: device chains, devices, parameters
+# ---------------------------------------------------------------------------
+
+
+def get_device_chains_for_track(
+    conn: sqlite3.Connection,
+    track_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM device_chains
+           WHERE parent_track_id = ? ORDER BY position""",
+        (track_id,),
+    ).fetchall()
+
+
+def get_device_chains_for_return(
+    conn: sqlite3.Connection,
+    return_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM device_chains
+           WHERE parent_return_id = ? ORDER BY position""",
+        (return_id,),
+    ).fetchall()
+
+
+def get_device_chains_for_rack_device(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM device_chains
+           WHERE parent_rack_device_id = ? ORDER BY position""",
+        (device_id,),
+    ).fetchall()
+
+
+def get_devices_for_chain(
+    conn: sqlite3.Connection,
+    chain_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM devices
+           WHERE chain_id = ? ORDER BY position""",
+        (chain_id,),
+    ).fetchall()
+
+
+def get_devices_for_track(
+    conn: sqlite3.Connection,
+    track_id: str,
+) -> list[sqlite3.Row]:
+    """Convenience join across (top-level) chain → devices for a track. Does
+    NOT recurse into nested rack chains — those need a separate walk via
+    `get_device_chains_for_rack_device`.
+    """
+    return conn.execute(
+        """SELECT d.*, dc.position AS chain_position
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE dc.parent_track_id = ?
+           ORDER BY dc.position, d.position""",
+        (track_id,),
+    ).fetchall()
+
+
+def get_devices_for_return(
+    conn: sqlite3.Connection,
+    return_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT d.*, dc.position AS chain_position
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE dc.parent_return_id = ?
+           ORDER BY dc.position, d.position""",
+        (return_id,),
+    ).fetchall()
+
+
+def get_device(conn: sqlite3.Connection, device_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()
+
+
+def get_device_parameters(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM device_parameters
+           WHERE device_id = ? ORDER BY name""",
+        (device_id,),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection
 # ---------------------------------------------------------------------------
 

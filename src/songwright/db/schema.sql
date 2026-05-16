@@ -194,6 +194,81 @@ CREATE TABLE IF NOT EXISTS sends (
 
 CREATE INDEX IF NOT EXISTS idx_sends_return ON sends(to_return_id);
 
+-- =============================================================================
+-- Mix: device chains, devices, parameters
+-- =============================================================================
+-- Live's device model: each track/return/master carries a top-level device
+-- chain; rack devices (DrumGroupDevice, InstrumentGroupDevice, etc.) own one
+-- or more nested chains. We mirror that shape:
+--
+--   tracks/returns/master ─┐
+--                          ├─► device_chains ─► devices ─┐
+--                          │   (position=0 for top-level)│
+--                          │                             │
+--                          └─◄────── (rack devices) ◄────┘
+--
+-- `device_chains.parent_*` uses three nullable FKs with a CHECK that exactly
+-- one is set. Trade-off: query helpers must check the right column, BUT we
+-- get free FK enforcement + ON DELETE CASCADE for all three parent kinds.
+-- The alternative (generic `parent_kind`+`parent_id` polymorphic columns)
+-- would have required mutator-level cascade discipline and broken the
+-- chunk-1 invariant that deleting a track cascades to everything it owns.
+
+CREATE TABLE IF NOT EXISTS device_chains (
+    id                      TEXT PRIMARY KEY,
+    parent_track_id         TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+    parent_return_id        TEXT REFERENCES returns(id) ON DELETE CASCADE,
+    parent_rack_device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
+    position                INTEGER NOT NULL DEFAULT 0,
+    CHECK (
+        (parent_track_id IS NOT NULL)
+      + (parent_return_id IS NOT NULL)
+      + (parent_rack_device_id IS NOT NULL) = 1
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_chains_track  ON device_chains(parent_track_id);
+CREATE INDEX IF NOT EXISTS idx_device_chains_return ON device_chains(parent_return_id);
+CREATE INDEX IF NOT EXISTS idx_device_chains_rack   ON device_chains(parent_rack_device_id);
+
+-- Devices live in chains. `kind` is Live's class name (Compressor2, Eq8,
+-- DrumGroupDevice, InstrumentGroupDevice, etc.) — the source of truth for
+-- "what kind of device is this." `display_name` is the user-set name shown
+-- in Live (often equal to kind, but a renamed preset like "Late Nite Kit"
+-- keeps that string). `preset_uri` optional, for browser-reload paths.
+-- `position` is 1-based to match the snapshot's `"index"` field everywhere.
+
+CREATE TABLE IF NOT EXISTS devices (
+    id              TEXT PRIMARY KEY,
+    chain_id        TEXT NOT NULL REFERENCES device_chains(id) ON DELETE CASCADE,
+    position        INTEGER NOT NULL,
+    kind            TEXT NOT NULL,
+    display_name    TEXT NOT NULL,
+    preset_uri      TEXT,
+    UNIQUE(chain_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_chain ON devices(chain_id);
+
+-- Only *set* parameters are stored — defaults are implied by absence. This
+-- matches the snapshot convention (a Compressor with 30 params lists only
+-- the ~6 the user actually moved). `value_display` is the human-readable
+-- form ("1.17 kHz" / "Lowpass" / "-7.0 dB"); `value_normalized` is the
+-- 0.0–1.0 wire form. Discrete-enum params (Filter Type = "Lowpass") have
+-- NULL `value_normalized` — there's no continuous form to write.
+
+CREATE TABLE IF NOT EXISTS device_parameters (
+    id                  TEXT PRIMARY KEY,
+    device_id           TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    value_display       TEXT NOT NULL,
+    value_normalized    REAL CHECK (value_normalized IS NULL
+                                  OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
+    UNIQUE(device_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_parameters_device ON device_parameters(device_id);
+
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (
     id                  TEXT PRIMARY KEY,

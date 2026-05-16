@@ -165,6 +165,46 @@ Surfaced by chunk 3 of the DB-as-source-of-truth migration. The songwright push 
 
 ---
 
+## Priority 2 — Device push gaps (chunk 4a)
+
+Surfaced by chunk 4a of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively.
+
+### Device load with position + kind
+
+**Current state:** `load_instrument_or_effect(track_index, uri)` appends to the end of the chain — no `position` control. The agent has to load devices in the order they should appear and can't insert into a partially-built chain. There's no `kind`-driven load (you pass a browser URI, not a class name); selecting `Compressor2` vs `Compressor` requires knowing the right URI.
+
+**Required:**
+- `load_device(track_index: int, position: int 1-based, kind: str, preset_uri: str | null)` — load at a specific chain position. `kind` is Live's class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, etc.); `preset_uri` is optional for browser-preset variants. If `preset_uri` is null, load the default of `kind`.
+- `load_device_on_return(return_index: int, position: int 1-based, kind: str, preset_uri: str | null)` — same shape for return tracks (no MCP equivalent at all today).
+
+### Return-track device parameter writes
+
+**Current state:** `set_device_parameter` (when not broken by #17b) targets session tracks only. Return-track devices (reverb send, delay send) can't be programmatically configured.
+
+**Required:**
+- `set_return_device_parameter(return_index: int, device_index: int 1-based, parameter_name: str, value: float 0.0-1.0)` — mirrors `set_device_parameter` for returns.
+
+### Discrete-enum parameter writes
+
+**Current state:** Some device parameters are discrete enums — `Filter Type ∈ {Lowpass, Highpass, Bandpass, Notch, ...}`, `LFO Sync ∈ {Free, Sync}`, etc. `set_device_parameter` takes a `value: float 0.0-1.0` shape which doesn't work for these — there's no continuous form. Falling-walking's instrument captures show ~10% of dialed params are enums (Filter Type on Operator, Pickup Model on Electric, etc.).
+
+**Required:**
+- Either `set_device_enum_parameter(track_index, device_index, parameter_name, value: str)` — string value path — OR extend `set_device_parameter` to accept `value: str | float` and dispatch internally.
+- Capture-side: `get_device_parameters` should distinguish enum vs continuous params in its return shape so the agent knows which writer to use.
+
+### Nested-chain probe and push
+
+**Current state:** Rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`) own nested chains of devices. MCP exposes no way to probe or push these. The falling-walking snapshot's `_note` flags them: "Rack — internal chain instruments not captured. Reload by name from browser."
+
+**Required:**
+- `get_device_chains(track_index: int, device_index: int)` — for a rack device, return its nested chains: `[{chain_index, name, devices: [{position, kind, display_name, ...}, ...]}, ...]`.
+- `load_device_in_rack(track_index, parent_device_index, chain_index, position, kind, preset_uri?)` — load into a specific nested chain.
+- `set_rack_device_parameter(track_index, parent_device_index, chain_index, device_index, parameter_name, value)` — parameter writes inside nested chains.
+
+Realistically this is a sizable ask. Until it lands, songwright models nested chains in the schema (via `device_chains.parent_rack_device_id`) but capture/replay/push stay flat.
+
+---
+
 ## Priority 2 — Efficiency (10×+ round-trip wins)
 
 ### 7. Recursive browser tree

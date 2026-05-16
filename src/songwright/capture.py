@@ -1,13 +1,17 @@
 """Live-Ableton snapshot format and replay.
 
 The snapshot is a JSON document describing the mix layout of an Ableton set —
-tracks (with kind + mixer state), returns, sends, and the master strip. It is
-the seed mechanism for `build.py`: capture once (live Ableton -> snapshot.json),
-then replay into the DB through mutators.
+tracks (with kind + mixer state), returns, sends, the master strip, and (post
+chunk 4a) device chains with dialed parameters. It is the seed mechanism for
+`build.py`: capture once (live Ableton -> snapshot.json), then replay into the
+DB through mutators.
 
-Scope (chunk 3): tracks + returns + sends + master + mixer state. Devices and
-automation are out of scope; the format leaves room for them but replay ignores
-unknown keys.
+Scope (chunks 3 + 4a): tracks + returns + sends + master + mixer state +
+top-level device chains + dialed device parameters. Nested rack chains
+(`DrumGroupDevice` pads, `InstrumentGroupDevice` chains) are schema-supported
+but NOT yet populated by replay — the snapshot's `_note` flags them as
+"internal chain instruments not captured" and MCP gap #17b currently blocks
+deep probe. Automation envelopes (chunk 4b) remain out of scope.
 
 Snapshot shape (extends the existing `captured_session.json` prototype):
 
@@ -36,9 +40,11 @@ Snapshot shape (extends the existing `captured_session.json` prototype):
 
 Replay creates: returns (1 row per `returns[]`), tracks (1 row per `tracks[]`,
 plus a `kind='master'` row for `song.master`), sends (1 row per non-null entry
-in each track's `sends` map, keyed by return name). Notes/clips/devices fields
-on tracks are ignored — those are populated by later chunks or by build.py
-hand-authored sections.
+in each track's `sends` map, keyed by return name), top-level device chains
+(1 per track/return that has a `devices: [...]` array — chunk 4a), devices
+(1 row per array entry), device parameters (1 row per entry in each device's
+`params_dialed: {...}` map). `clips: [...]` on tracks is still ignored —
+populated by build.py hand-authored sections.
 
 Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
 MCP probes (`get_session_info`, `get_track_info`, `list_return_tracks`,
@@ -82,6 +88,56 @@ def _norm_bool(value: Any) -> int | None:
     if value is None:
         return None
     return 1 if value else 0
+
+
+def _replay_devices(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    devices_array: list[dict[str, Any]],
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Insert each entry of `devices_array` into the given chain, plus any
+    dialed parameters. Nested rack chains are not recursed — see module
+    docstring on the capture/MCP gap.
+    """
+    for d in devices_array:
+        if "index" not in d or "class" not in d:
+            raise ValueError(
+                f"snapshot device missing required keys (index, class): {d!r}"
+            )
+        device_id = M.create_device(
+            conn,
+            chain_id=chain_id,
+            position=int(d["index"]),
+            kind=d["class"],
+            display_name=d.get("name", d["class"]),
+            preset_uri=d.get("guess_uri"),
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        for name, p in (d.get("params_dialed") or {}).items():
+            if not isinstance(p, dict) or "value" not in p:
+                raise ValueError(
+                    f"snapshot param {name!r} on device {d.get('name')!r}: "
+                    f"expected dict with 'value' key, got {p!r}"
+                )
+            normalized = p.get("normalized")
+            M.set_device_parameter(
+                conn,
+                device_id=device_id,
+                name=name,
+                value_display=str(p["value"]),
+                value_normalized=(
+                    float(normalized) if normalized is not None else None
+                ),
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
 
 
 def _mixer_from_snapshot(t: dict[str, Any]) -> dict[str, Any]:
@@ -187,6 +243,22 @@ def replay_capture(
             reason=reason,
         )
         return_ids_by_name[r["name"]] = rid
+        if r.get("devices"):
+            return_chain_id = M.create_device_chain(
+                conn,
+                parent_return_id=rid,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+            _replay_devices(
+                conn,
+                chain_id=return_chain_id,
+                devices_array=r["devices"],
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
 
     track_ids_by_name: dict[str, str] = {}
     for t in snapshot.get("tracks") or []:
@@ -243,6 +315,22 @@ def replay_capture(
                 request_id=request_id,
                 reason=reason,
             )
+        if t.get("devices"):
+            track_chain_id = M.create_device_chain(
+                conn,
+                parent_track_id=tid,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+            _replay_devices(
+                conn,
+                chain_id=track_chain_id,
+                devices_array=t["devices"],
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
 
     return song_id
 
@@ -261,18 +349,31 @@ def capture_plan() -> list[dict[str, str]]:
     Returns a sequence of `{tool, purpose}` records. The agent executes each,
     accumulates the results, and hands them to `compile_snapshot`.
 
-    Probe sequence is intentionally minimal for chunk 3 — devices, clips, and
-    automation are out of scope and not probed.
+    Chunk 3 baseline: tempo/master/returns/tracks/sends. Chunk 4a adds device
+    probes — `get_track_info` already returns top-level device lists, but the
+    per-device parameter probe (`get_device_parameters`) is MCP gap #17b
+    (raises `No module named 'MCP_Server'`). Until that's patched, the agent
+    captures device chain identity (kind + display_name + position) but not
+    dialed parameters. Nested rack chains remain a separate MCP gap (see
+    docs/mcp-requirements.md, chunk-4 P2 section).
     """
     return [
         {"tool": "get_session_info",
          "purpose": "global state: tempo, signature, master volume/pan, track counts"},
         {"tool": "list_return_tracks",
-         "purpose": "return tracks: name + volume + pan per return"},
+         "purpose": "return tracks: name + volume + pan per return; "
+                    "chunk 4a: include each return's top-level device chain"},
         {"tool": "get_track_info",
-         "purpose": "per-track: name, type, volume, pan, mute/solo/arm (loop over tracks)"},
+         "purpose": "per-track: name, type, volume, pan, mute/solo/arm, "
+                    "top-level device chain (kind + display_name + position) "
+                    "— loop over tracks"},
         {"tool": "get_track_sends",
          "purpose": "per-track: sends map keyed by return name (loop over tracks)"},
+        {"tool": "get_device_parameters",
+         "purpose": "per-device: dialed parameter map "
+                    "(name -> {value, normalized}) — loop over each device. "
+                    "MCP gap #17b: currently raises, captures parameters "
+                    "only when patched"},
     ]
 
 

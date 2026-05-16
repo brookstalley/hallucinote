@@ -558,6 +558,181 @@ def plan_push_mix(
 
 
 # ---------------------------------------------------------------------------
+# Mix-half planner: device chains
+# ---------------------------------------------------------------------------
+
+
+def plan_push_devices(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan the push of device chains — instruments + effects on tracks/returns
+    plus their dialed parameters.
+
+    Strategy:
+      1. For each linked track / return, walk its top-level device chain in
+         position order.
+      2. For each device, check the `ableton_links` projection for a 'device'
+         binding. If missing, emit a (gap-flagged) `load_device` /
+         `load_device_on_return` and warn — parameter writes for that device
+         have to wait for a second pass after the link lands.
+      3. For each linked device, emit a `set_device_parameter` /
+         `set_return_device_parameter` per dialed param that carries a
+         continuous `value_normalized`. Discrete-enum params (Filter Type =
+         "Lowpass" etc.) have no normalized form — surface them as a warn
+         so the agent / UI knows the gap. Nested rack chains aren't pushed
+         in chunk 4a (snapshot doesn't capture them).
+    """
+    plan = PushPlan()
+    tracks = Q.get_tracks_for_song(conn, song_id)
+    returns = Q.get_returns_for_song(conn, song_id)
+
+    if not tracks and not returns:
+        plan.warn("no devices to push for this song")
+        return plan
+
+    for t in tracks:
+        if t["kind"] in ("master", "return"):
+            # Master + reserved 'return' track-row kinds don't carry devices
+            # via the tracks table. Real returns are handled below.
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"]
+        )
+        if track_at is None:
+            chains = Q.get_device_chains_for_track(conn, t["id"])
+            if chains:
+                plan.warn(
+                    f"track {t['name']!r} not linked in session — "
+                    f"{len(chains)} chain(s) skipped; create the track first"
+                )
+            continue
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            for device in Q.get_devices_for_chain(conn, chain["id"]):
+                _emit_device_calls(
+                    plan, conn,
+                    session_id=session_id,
+                    parent_kind="track",
+                    parent_at=track_at,
+                    parent_name=t["name"],
+                    device=device,
+                )
+
+    for r in returns:
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        )
+        if return_at is None:
+            chains = Q.get_device_chains_for_return(conn, r["id"])
+            if chains:
+                plan.warn(
+                    f"return {r['name']!r} not linked in session — "
+                    f"{len(chains)} chain(s) skipped; create the return first"
+                )
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            for device in Q.get_devices_for_chain(conn, chain["id"]):
+                _emit_device_calls(
+                    plan, conn,
+                    session_id=session_id,
+                    parent_kind="return",
+                    parent_at=return_at,
+                    parent_name=r["name"],
+                    device=device,
+                )
+
+    return plan
+
+
+def _emit_device_calls(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    parent_kind: str,         # 'track' | 'return'
+    parent_at: int,
+    parent_name: str,
+    device: sqlite3.Row,
+) -> None:
+    """Emit load + parameter calls for a single device. If the device isn't
+    yet linked in this session, emit the load and skip parameter writes —
+    the agent must call apply_push_results to record the new device_index
+    before parameters can be addressed."""
+    device_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="device", db_id=device["id"]
+    )
+    if device_at is None:
+        if parent_kind == "track":
+            tool = "load_device"
+            args = {
+                "track_index": parent_at,
+                "position": device["position"],
+                "kind": device["kind"],
+                "preset_uri": device["preset_uri"],
+            }
+        else:
+            tool = "load_device_on_return"
+            args = {
+                "return_index": parent_at,
+                "position": device["position"],
+                "kind": device["kind"],
+                "preset_uri": device["preset_uri"],
+            }
+        plan.add(ToolCall(
+            tool=tool,
+            args=args,
+            key=f"device:{device['id']}",
+            purpose=(
+                f"load {device['kind']} '{device['display_name']}' "
+                f"at position {device['position']} on {parent_kind} {parent_name!r} "
+                "(MCP gap — emulation needed)"
+            ),
+        ))
+        plan.warn(
+            f"device {device['display_name']!r} on {parent_kind} {parent_name!r} "
+            "not linked yet; rerun plan_push_devices after apply_push_results "
+            "records the device_index"
+        )
+        return
+
+    params = Q.get_device_parameters(conn, device["id"])
+    enum_skipped: list[str] = []
+    param_tool = (
+        "set_device_parameter" if parent_kind == "track"
+        else "set_return_device_parameter"
+    )
+    parent_arg = "track_index" if parent_kind == "track" else "return_index"
+    for p in params:
+        if p["value_normalized"] is None:
+            enum_skipped.append(p["name"])
+            continue
+        plan.add(ToolCall(
+            tool=param_tool,
+            args={
+                parent_arg: parent_at,
+                "device_index": device_at,
+                "parameter_name": p["name"],
+                "value": p["value_normalized"],
+            },
+            key=f"device_parameter:{device['id']}:{p['name']}",
+            purpose=(
+                f"{parent_name} / {device['display_name']} / "
+                f"{p['name']} = {p['value_display']} "
+                f"(normalized {p['value_normalized']:g})"
+            ),
+        ))
+    if enum_skipped:
+        plan.warn(
+            f"device {device['display_name']!r} on {parent_kind} {parent_name!r}: "
+            f"{len(enum_skipped)} enum-only param(s) skipped "
+            f"({', '.join(enum_skipped[:3])}{'...' if len(enum_skipped) > 3 else ''}) "
+            "— no normalized form, MCP can't write discrete enums"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Result application
 # ---------------------------------------------------------------------------
 
@@ -570,6 +745,7 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
     "clip":        ("clip",        "clip_index"),
     "arrangement": ("arrangement", "arrangement_clip_index"),
     "return":      ("return",      "return_index"),
+    "device":      ("device",      "device_index"),
 }
 
 # Key kinds that have no DB binding to record but are valid acks — the planner
@@ -595,6 +771,8 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "master_volume",         # set_master_volume (MCP gap)
     "master_pan",            # set_master_panning (MCP gap)
     "send",                  # set_track_send
+    # Chunk 4a (devices)
+    "device_parameter",      # set_device_parameter / set_return_device_parameter
 })
 
 

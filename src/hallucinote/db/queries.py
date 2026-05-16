@@ -412,3 +412,24 @@ def get_ableton_links_for_session(
         "SELECT * FROM ableton_links WHERE session_id = ?",
         (session_id,),
     ).fetchall()
+
+
+def get_db_id_by_ableton_index(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    db_kind: str,
+    ableton_index: int,
+) -> str | None:
+    """Reverse of `get_ableton_link`: given Ableton coordinates, return the db_id.
+
+    Used by pull-side sync to map an `(track_index, ...)` from an MCP probe back
+    onto the DB row whose mixer state we'll diff against. Returns None for
+    unlinked Ableton rows — pull treats those as "not ours, skip with warn."
+    """
+    row = conn.execute(
+        """SELECT db_id FROM ableton_links
+           WHERE session_id = ? AND db_kind = ? AND ableton_index = ?""",
+        (session_id, db_kind, ableton_index),
+    ).fetchone()
+    return row["db_id"] if row else None

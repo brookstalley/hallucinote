@@ -21,6 +21,7 @@ Conventions:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from typing import Any, Sequence
@@ -143,10 +144,14 @@ def create_request(
 TIMING_MODES = frozenset({"native", "grid"})
 
 
+_SLUG_RE = re.compile(r"[a-z0-9_-]+")
+
+
 def create_song(
     conn: sqlite3.Connection,
     *,
     name: str,
+    title: str | None = None,
     key: str | None = None,
     timing_mode: str = "native",
     actor: str = "system",
@@ -156,23 +161,35 @@ def create_song(
     """Create a song. Tempo and meter live in `tempo_map` / `time_signature_map`;
     add at least one point in each before pushing.
 
+    `name` is the song *slug* — filesystem-safe identifier matching the
+    song's directory and DB filename per the project convention
+    (`songs/<name>/<name>.db`). Lowercase letters, digits, hyphens, and
+    underscores only. `title` is the optional human-facing display name —
+    free-form text with spaces, capitals, punctuation.
+
     `timing_mode='native'` (default) renders bar positions through the maps,
     matching Live's tempo/meter. `'grid'` opts out — generators handle
     resolved positions internally for polytempic experiments.
     """
+    if not _SLUG_RE.fullmatch(name):
+        raise ValueError(
+            f"song name {name!r} must match [a-z0-9_-]+ — slugs only "
+            "(no spaces, no uppercase, no special chars). Use `title` for "
+            "the human-facing name."
+        )
     if timing_mode not in TIMING_MODES:
         raise ValueError(
             f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
         )
     sid = _uuid()
     conn.execute(
-        "INSERT INTO songs (id, name, key, timing_mode) VALUES (?, ?, ?, ?)",
-        (sid, name, key, timing_mode),
+        "INSERT INTO songs (id, name, title, key, timing_mode) VALUES (?, ?, ?, ?, ?)",
+        (sid, name, title, key, timing_mode),
     )
     _emit(
         conn,
         E.SONG_CREATED,
-        {"name": name, "key": key, "timing_mode": timing_mode},
+        {"name": name, "title": title, "key": key, "timing_mode": timing_mode},
         song_id=sid,
         actor=actor,
         request_id=request_id,

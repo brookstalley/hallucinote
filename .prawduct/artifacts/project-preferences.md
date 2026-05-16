@@ -45,7 +45,7 @@ Developer preferences for how code is written in this project. Captured during d
   - `pytest` — full suite (~0.2s, 31 tests)
   - `pytest -n0` — sequential (only works once `pytest-xdist` is installed)
   - `python songs/falling-walking/build.py [--reset]` — build the example song into its SQLite DB
-- **DB files**: per-song `*.db` files live next to their `build.py`. Gitignored.
+- **DB files (prescriptive)**: **one SQLite DB per song**, at exactly `songs/<slug>/<slug>.db`. The directory name, the DB filename, and `songs.name` (the slug) must all match. The slug is filesystem-safe: `[a-z0-9_-]+` (lowercase, digits, hyphens, underscores). Human-facing names with spaces / capitals / punctuation go in `songs.title`. No sidecar config files; the DB schema is the source of truth for song metadata. `*.db` is gitignored.
 
 ## Workflow
 
@@ -83,6 +83,7 @@ Each preference above should be enforced by one of three mechanisms — assign t
 | `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 |
 | Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | Promote to `ruff` (E, I, UP rules) when a linter is added |
 | Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 |
+| One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) |
 
 **Rule for adding a new preference:** assign a mechanism. If the preference can be expressed as "every file/function/config matches pattern X with named exceptions" → write a test. If a linter rule already exists for it → configure the linter. If it requires understanding intent → assign to Critic. Never leave a preference unassigned.
 

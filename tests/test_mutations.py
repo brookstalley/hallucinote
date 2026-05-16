@@ -46,9 +46,39 @@ def test_create_song_emits_event(conn):
     assert len(rows) == 1
     assert rows[0]["kind"] == E.SONG_CREATED
     payload = json.loads(rows[0]["payload_json"])
-    assert payload == {"name": "x", "key": "Dm", "timing_mode": "native"}
+    assert payload == {"name": "x", "title": None, "key": "Dm",
+                       "timing_mode": "native"}
     # song id is a 32-char UUID hex
     assert isinstance(sid, str) and len(sid) == 32 and all(c in "0123456789abcdef" for c in sid)
+
+
+def test_create_song_accepts_title(conn):
+    sid = M.create_song(conn, name="x", title="The Display Name", key="Dm")
+    row = Q.get_song(conn, sid)
+    assert row["title"] == "The Display Name"
+    assert row["name"] == "x"
+
+
+def test_create_song_rejects_uppercase_slug(conn):
+    with pytest.raises(ValueError, match=r"\[a-z0-9_-\]\+"):
+        M.create_song(conn, name="HasUpper")
+
+
+def test_create_song_rejects_spaces_in_slug(conn):
+    with pytest.raises(ValueError, match=r"\[a-z0-9_-\]\+"):
+        M.create_song(conn, name="has spaces")
+
+
+def test_create_song_rejects_special_chars_in_slug(conn):
+    with pytest.raises(ValueError, match=r"\[a-z0-9_-\]\+"):
+        M.create_song(conn, name="has,comma")
+
+
+def test_create_song_accepts_hyphen_and_underscore(conn):
+    sid1 = M.create_song(conn, name="hyphen-slug")
+    sid2 = M.create_song(conn, name="under_slug")
+    assert Q.get_song(conn, sid1)["name"] == "hyphen-slug"
+    assert Q.get_song(conn, sid2)["name"] == "under_slug"
 
 
 def test_create_track_emits_event_and_links_to_song(conn, song):

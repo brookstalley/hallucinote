@@ -1,4 +1,4 @@
-# Project State — Songwright
+# Project State — Hallucinote
 #
 # Single source of truth for all project decisions.
 # Read at session start to understand where things stand.
@@ -88,7 +88,7 @@ product_definition:
 
   # Product identity.
   product_identity:
-    name: "Songwright"
+    name: "Hallucinote"
     personality: null     # Brand personality, mood (null for internal tools)
     visual_preferences: null  # Look/feel preferences (null for non-visual products)
 

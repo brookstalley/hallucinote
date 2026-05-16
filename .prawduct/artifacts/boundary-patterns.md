@@ -1,4 +1,4 @@
-# Boundary Patterns — Songwright
+# Boundary Patterns — Hallucinote
 
 Contract surfaces where components interact. When changes cross these
 boundaries, the builder investigates consumer impact before completing the
@@ -6,7 +6,7 @@ chunk. The Critic verifies investigation occurred.
 
 ## Contract Surfaces
 
-### Database Schema (`src/songwright/db/schema.sql`)
+### Database Schema (`src/hallucinote/db/schema.sql`)
 
 - **Producer**: `db/connection.py` (init_db) materializes the schema.
 - **Consumers**: `db/mutations.py` (writes), `db/queries.py` (reads), test
@@ -20,7 +20,7 @@ When changing this surface:
 - Update every `songs/*/build.py` and any tool that opens the DB.
 - Re-run the full suite and rebuild falling-walking with `--reset` to verify.
 
-### Mutator API (`src/songwright/db/mutations.py`)
+### Mutator API (`src/hallucinote/db/mutations.py`)
 
 - **Producer**: `mutations.py` — the only sanctioned writer.
 - **Consumers**: `songs/*/build.py`, `sync/push.py`, agent code, future
@@ -40,7 +40,7 @@ When changing this surface:
   update each one. (Chunk 1 replaced three `link_*_to_ableton` mutators with
   one generic `link_db_to_ableton`; tests + sync updated together.)
 
-### Sync Planner / Result API (`src/songwright/sync/push.py`)
+### Sync Planner / Result API (`src/hallucinote/sync/push.py`)
 
 - **Producer**: `push.py` — pure-data plans, no side effects.
 - **Consumer**: the agent (executes MCP calls, then feeds results back).
@@ -58,7 +58,7 @@ When changing this surface:
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
 
-### Event Kinds + Payloads (`src/songwright/db/events.py`)
+### Event Kinds + Payloads (`src/hallucinote/db/events.py`)
 
 - **Producer**: `mutations.py` (every emitter is a mutator).
 - **Consumers**: `queries.get_events_for_*`, future replay/merge tooling, the

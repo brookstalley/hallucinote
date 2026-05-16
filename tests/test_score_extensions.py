@@ -7,8 +7,8 @@ import sqlite3
 
 import pytest
 
-from songwright.db import init_db, mutations as M, queries as Q
-from songwright.db import events as E
+from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import events as E
 
 
 @pytest.fixture

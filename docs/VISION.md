@@ -1,6 +1,6 @@
 # Vision
 
-Songwright is an LLM-native music composition and production environment. Ableton Live is the rendering engine.
+Hallucinote is an LLM-native music composition and production environment. Ableton Live is the rendering engine.
 
 The DB is the source of truth. Notes, durations, chords, automation values, effect timings, arrangement — everything lives in version-controlled rows with an append-only event log. Ableton is the speaker, not the score. Every change is bidirectional: edits in Ableton (live MIDI capture, automation drawn by hand, audio recorded against a click) flow back. The DB and Ableton agree, always.
 
@@ -32,7 +32,7 @@ Two bets, both unproven, both load-bearing:
 
 ## What
 
-- **DB-backed source of truth.** Schema in `src/songwright/db/schema.sql`. Mutators in `db/mutations.py` paired with an append-only event log. Every write a row, every write an event.
+- **DB-backed source of truth.** Schema in `src/hallucinote/db/schema.sql`. Mutators in `db/mutations.py` paired with an append-only event log. Every write a row, every write an event.
 
 - **Pure generators.** `generators/*` produce note arrays with semantic tags. No DB or MCP coupling. The library a human-or-LLM composes against.
 
@@ -46,13 +46,13 @@ Two bets, both unproven, both load-bearing:
 
 ## Non-goals
 
-- **A general DAW.** Ableton is the rendering engine. Songwright leans on it, does not compete with it.
+- **A general DAW.** Ableton is the rendering engine. Hallucinote leans on it, does not compete with it.
 
 - **A non-LLM authoring tool.** Anyone can write Python against the library. That is not who this is for. Every design choice favors the LLM workflow.
 
 - **A live performance system.** This is a composition and production tool. Performance happens downstream, in Ableton, with a rendered song.
 
-- **A walled garden.** No proprietary formats. SQLite, Python, git, standard MCP. If Songwright dies, your songs are still composable from the repo.
+- **A walled garden.** No proprietary formats. SQLite, Python, git, standard MCP. If Hallucinote dies, your songs are still composable from the repo.
 
 ## What this costs
 

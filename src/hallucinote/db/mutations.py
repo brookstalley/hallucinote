@@ -1,4 +1,4 @@
-"""All state-changing operations on the songwright DB.
+"""All state-changing operations on the hallucinote DB.
 
 Every function here:
   1. Performs its state change.
@@ -25,7 +25,7 @@ import sqlite3
 import uuid
 from typing import Any, Sequence
 
-from songwright.db import events as E
+from hallucinote.db import events as E
 
 NoteDict = dict[str, Any]
 

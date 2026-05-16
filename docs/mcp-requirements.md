@@ -101,7 +101,7 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 
 ## Priority 2 — Score-half push gaps (chunk 2)
 
-Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
+Surfaced by chunk 2 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
 
 ### Tempo automation at a (bar, beat)
 
@@ -120,7 +120,7 @@ Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push 
 
 ### Section markers (informational)
 
-**Current state:** Live has no first-class "section marker" concept distinct from cue points. Songwright's `sections` table is DB-only.
+**Current state:** Live has no first-class "section marker" concept distinct from cue points. Hallucinote's `sections` table is DB-only.
 
 **Required (nice-to-have):** If Live ever exposes named ranges (e.g., loop regions with labels) via MCP, we can mirror sections one-for-one. Until then, callers can mirror sections as `cue_points` for visibility. No MCP work required today.
 
@@ -128,7 +128,7 @@ Surfaced by chunk 2 of the DB-as-source-of-truth migration. The songwright push 
 
 ## Priority 2 — Mix-half push gaps (chunk 3)
 
-Surfaced by chunk 3 of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively. Volume/pan/sends are *already* callable and used directly by the planner.
+Surfaced by chunk 3 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively. Volume/pan/sends are *already* callable and used directly by the planner.
 
 ### Return-track creation
 
@@ -167,7 +167,7 @@ Surfaced by chunk 3 of the DB-as-source-of-truth migration. The songwright push 
 
 ## Priority 2 — Device push gaps (chunk 4a)
 
-Surfaced by chunk 4a of the DB-as-source-of-truth migration. The songwright push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively.
+Surfaced by chunk 4a of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively.
 
 ### Device load with position + kind
 
@@ -201,13 +201,13 @@ Surfaced by chunk 4a of the DB-as-source-of-truth migration. The songwright push
 - `load_device_in_rack(track_index, parent_device_index, chain_index, position, kind, preset_uri?)` — load into a specific nested chain.
 - `set_rack_device_parameter(track_index, parent_device_index, chain_index, device_index, parameter_name, value)` — parameter writes inside nested chains.
 
-Realistically this is a sizable ask. Until it lands, songwright models nested chains in the schema (via `device_chains.parent_rack_device_id`) but capture/replay/push stay flat.
+Realistically this is a sizable ask. Until it lands, hallucinote models nested chains in the schema (via `device_chains.parent_rack_device_id`) but capture/replay/push stay flat.
 
 ---
 
 ## Priority 2 — Automation envelope gaps (chunk 4b)
 
-Surfaced by chunk 4b. Songwright models seven envelope target families (`clip_cc`, `clip_pitch_bend`, `note_expression`, `device_parameter`, `mixer_volume`, `mixer_pan`, `send_level`) and the planner emits one canonical write call per envelope with breakpoints inline. MCP today exposes only `manage_clip_automation(track_index, clip_index, action, parameter_name)` — it creates an empty envelope on a single named parameter but has no breakpoint write surface. Every canonical name below is gap-flagged in `mcp_names.ALIASES_TODAY` and routes through an emulator that drives `manage_clip_automation` + low-level Live API calls per breakpoint.
+Surfaced by chunk 4b. Hallucinote models seven envelope target families (`clip_cc`, `clip_pitch_bend`, `note_expression`, `device_parameter`, `mixer_volume`, `mixer_pan`, `send_level`) and the planner emits one canonical write call per envelope with breakpoints inline. MCP today exposes only `manage_clip_automation(track_index, clip_index, action, parameter_name)` — it creates an empty envelope on a single named parameter but has no breakpoint write surface. Every canonical name below is gap-flagged in `mcp_names.ALIASES_TODAY` and routes through an emulator that drives `manage_clip_automation` + low-level Live API calls per breakpoint.
 
 Breakpoint payload shape (shared across all envelope writes):
 
@@ -439,14 +439,14 @@ Pragmatic estimate: `render_region` + `analyze_audio` is ~2 days of work against
 
 The upstream repo (`uisato/ableton-mcp-extended`) does not accept issues and may not engage with PRs. So:
 
-- **Primary**: every change lands in our fork (`brookstalley/ableton-mcp-extended`). Songwright depends on the fork. Iteration moves at our pace, no review gating, no design-discussion blocker.
+- **Primary**: every change lands in our fork (`brookstalley/ableton-mcp-extended`). Hallucinote depends on the fork. Iteration moves at our pace, no review gating, no design-discussion blocker.
 - **Secondary**: when a feature is stable + tested, cherry-pick onto a clean branch off `upstream/main` and offer it upstream. If the maintainer merges it, great — we delete our equivalent commits on the next sync. If they don't engage, we keep it in the fork forever.
 
 Implications vs. the previous "build trust, file issues first" plan:
 
 - **No issue-first gating** — file PRs at our discretion, expect no response
-- **No deprecation aliases for renames** — we control all consumers (just songwright), so clean breaking changes are fine in our fork
-- **Re-ordered priority**: ship what songwright needs first (note-level addressing, bulk arrangement ops, replace/delete), not what builds maintainer rapport
+- **No deprecation aliases for renames** — we control all consumers (just hallucinote), so clean breaking changes are fine in our fork
+- **Re-ordered priority**: ship what hallucinote needs first (note-level addressing, bulk arrangement ops, replace/delete), not what builds maintainer rapport
 - **Smaller PR count**: drops from 17 to 15 — some splits were political (separating delete/replace, splitting message-fix from rename) and no longer needed
 - **Cadence is "as fast as we want"**
 
@@ -454,7 +454,7 @@ Implications vs. the previous "build trust, file issues first" plan:
 
 ```
 upstream/main                   # read-only — sync source from uisato's repo
-origin/main                     # OUR canonical version — songwright runs from here, diverges from upstream
+origin/main                     # OUR canonical version — hallucinote runs from here, diverges from upstream
 origin/feat/<short-name>        # feature branches off origin/main, merge back when done
 origin/upstream/<feature-name>  # clean cherry-picks off upstream/main for upstream PR offerings
 ```
@@ -495,7 +495,7 @@ gh pr create --base main --repo uisato/ableton-mcp-extended
 
 The `upstream/<name>` branch convention makes PR-offering branches easy to spot and clean up later.
 
-**Songwright's `.mcp.json` runs the MCP server from `~/source/ableton-mcp-extended/MCP_Server/server.py`** — i.e., whatever's checked out at `origin/main` at runtime. Make sure `main` is the working branch; do feature work in branches and merge before relying on it from songwright.
+**Hallucinote's `.mcp.json` runs the MCP server from `~/source/ableton-mcp-extended/MCP_Server/server.py`** — i.e., whatever's checked out at `origin/main` at runtime. Make sure `main` is the working branch; do feature work in branches and merge before relying on it from hallucinote.
 
 ### Repo conventions to follow (for our own quality)
 
@@ -527,9 +527,9 @@ The `upstream/<name>` branch convention makes PR-offering branches easy to spot 
 
 ---
 
-### Wave 1 — Foundational (unblock songwright's DB direction)
+### Wave 1 — Foundational (unblock hallucinote's DB direction)
 
-These three give songwright everything it needs to move from "regenerate-and-replace whole clips" to "surgical, DB-backed authoring."
+These three give hallucinote everything it needs to move from "regenerate-and-replace whole clips" to "surgical, DB-backed authoring."
 
 #### PR A — Note-level addressing (4 tools)
 - **Branch**: `feat/note-level-addressing`
@@ -641,14 +641,14 @@ These three give songwright everything it needs to move from "regenerate-and-rep
 - **Title**: `feat: rename add_notes_to_clip to set_clip_notes`
 - **Why**: The tool name implies append; behavior is replace (calls `clip.set_notes(...)`). Causes silent data loss for callers expecting append. PR A's `append_notes` provides the real append path. This rename eliminates the misleading name.
 - **Files**: `MCP_Server/server.py`, `AbletonMCP_Remote_Script/__init__.py` (response message)
-- **Change**: Rename the tool. Update response: `"Set N notes on clip (replaced previous content)"`. **No deprecation alias** — songwright is the only consumer and we update it in lockstep.
+- **Change**: Rename the tool. Update response: `"Set N notes on clip (replaced previous content)"`. **No deprecation alias** — hallucinote is the only consumer and we update it in lockstep.
 - **Tests**: `tests/unit/test_track_commands.py::TestSetClipNotes` — assert new name works, assert response wording.
-- **Acceptance**: songwright uses `set_clip_notes` everywhere; `add_notes_to_clip` doesn't exist in our fork.
+- **Acceptance**: hallucinote uses `set_clip_notes` everywhere; `add_notes_to_clip` doesn't exist in our fork.
 - **Linked req**: #1
 - **Depends on**: PR A (so a real `append_notes` exists), PR C ideally (so `add_notes_to_arrangement_clip` gets renamed at the same time — call it `set_arrangement_clip_notes`)
 - **Estimated diff**: 30-50 lines + tests
 - **Upstream-likely?**: Low — breaking change. **Don't offer upstream as a single PR**; if offering, do an aliased version (separate branch) that keeps `add_notes_to_clip` as a deprecated alias.
-- **Note**: After landing, update songwright's `gen_notes.py` invocation pattern in `falling-walking.md` and any future song docs.
+- **Note**: After landing, update hallucinote's `gen_notes.py` invocation pattern in `falling-walking.md` and any future song docs.
 
 #### PR I — Fix `get_cue_points` returns numeric IDs instead of names
 - **Branch**: `fix/get-cue-points-names`
@@ -706,7 +706,7 @@ These three give songwright everything it needs to move from "regenerate-and-rep
 
 ### Wave 4 — Nice-to-have
 
-Land when bandwidth allows. None block songwright work.
+Land when bandwidth allows. None block hallucinote work.
 
 #### PR M — `get_session_devices_snapshot`
 - **Branch**: `feat/get-session-devices-snapshot`
@@ -770,7 +770,7 @@ Land when bandwidth allows. None block songwright work.
 
 ### Cadence
 
-Internal (fork): as fast as testing allows. Wave 1 unblocks the songwright DB direction, so do it first. Waves 2-4 are then quality-of-life and can be paced with songwright development needs.
+Internal (fork): as fast as testing allows. Wave 1 unblocks the hallucinote DB direction, so do it first. Waves 2-4 are then quality-of-life and can be paced with hallucinote development needs.
 
 Upstream offerings: queue them in a backlog and submit a few at a time. Order by `Upstream-likely`:
 
@@ -779,15 +779,15 @@ Upstream offerings: queue them in a backlog and submit a few at a time. Order by
 3. **Medium** (composite or bulk additions): PRs D, E, M
 4. **Low** (architectural or breaking): PRs A, B, H — submit after the easy ones land or just don't bother
 
-If the maintainer never engages, no behavior changes for us. Songwright keeps moving.
+If the maintainer never engages, no behavior changes for us. Hallucinote keeps moving.
 
-### Songwright impact / sequencing
+### Hallucinote impact / sequencing
 
-The Wave 1 PRs (A, B, C) are the unlock for the **DB-as-MIDI-source-of-truth** direction described above. Until they land in the fork, songwright iterates with the current "regenerate Python → set_clip_notes → delete-and-redup arrangement" pattern. After they land:
+The Wave 1 PRs (A, B, C) are the unlock for the **DB-as-MIDI-source-of-truth** direction described above. Until they land in the fork, hallucinote iterates with the current "regenerate Python → set_clip_notes → delete-and-redup arrangement" pattern. After they land:
 
 - `get_clip_notes` enables sync-back from manual Ableton edits → DB
 - `update_notes` / `delete_notes` enable surgical DB-driven mutations without rewriting whole clips
 - `batch_arrangement_layout` makes arrangement rebuilds cheap enough to do on every DB push
 - `add_notes_to_arrangement_clip` (exposed in PR C) eliminates the delete-and-redup cycle entirely for note-only updates
 
-Realistic sequencing: ship Wave 1 to fork over a few days. Then start the songwright DB schema + sync layer in parallel with Wave 2/3 PRs.
+Realistic sequencing: ship Wave 1 to fork over a few days. Then start the hallucinote DB schema + sync layer in parallel with Wave 2/3 PRs.

@@ -1,4 +1,4 @@
-"""Bridge between the songwright DB and Ableton (via MCP).
+"""Bridge between the hallucinote DB and Ableton (via MCP).
 
 Direction:
 - `push`: DB -> Ableton (this module). Produces a plan of MCP tool calls; the

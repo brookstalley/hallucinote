@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# FROZEN — do not edit; being ported to build.py via the songwright library. See docs/VISION.md.
+# FROZEN — do not edit; being ported to build.py via the hallucinote library. See docs/VISION.md.
 """
 Generate MIDI note arrays for falling-walking song clips. v2 - liveliness pass.
 

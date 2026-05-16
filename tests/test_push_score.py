@@ -7,8 +7,8 @@ import math
 
 import pytest
 
-from songwright.db import init_db, mutations as M
-from songwright.sync import push
+from hallucinote.db import init_db, mutations as M
+from hallucinote.sync import push
 
 
 @pytest.fixture

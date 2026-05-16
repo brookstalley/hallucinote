@@ -223,7 +223,7 @@ Cue points at every section. Form built from session clips via duplicate.
 
 - **Concept / decisions doc**: this file (`falling-walking.md` — sibling of `gen_notes.py` in this song's folder)
 - **Note generator script**: `gen_notes.py` (same folder as this doc) — the source of truth for every MIDI clip in the song. Edit this, regenerate with `python3 gen_notes.py <clip_name>` (prints JSON), then call `mcp__AbletonMCP__add_notes_to_clip` with the result. Running with no args prints note counts per clip.
-- **Repo location**: `~/source/songwright/songs/falling-walking/` — this song lives in the songwright repo. The MCP server it talks to lives at `~/source/ableton-mcp-extended/` (sibling repo).
+- **Repo location**: `~/source/hallucinote/songs/falling-walking/` — this song lives in the hallucinote repo. The MCP server it talks to lives at `~/source/ableton-mcp-extended/` (sibling repo).
 - **Ableton User Remote Scripts location on this machine**: `~/Music/Ableton/User Library/Remote Scripts/` — NOT the path documented in `INSTALLATION.md` (`~/Library/Preferences/Ableton/Live X.X.X/User Remote Scripts/`). The Library path appears to be ignored. AbletonMCP control surface is installed at the Music path.
 
 ### Track index mapping (1-based)

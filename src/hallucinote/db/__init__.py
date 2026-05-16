@@ -7,6 +7,6 @@ Discipline:
   without rewriting generators or sync code.
 """
 
-from songwright.db.connection import connect, init_db
+from hallucinote.db.connection import connect, init_db
 
 __all__ = ["connect", "init_db"]

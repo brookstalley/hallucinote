@@ -18,7 +18,7 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from songwright.db import mutations as M, queries as Q
+from hallucinote.db import mutations as M, queries as Q
 
 # Live's default meter when a song has no `time_signature_map` rows.
 _DEFAULT_NUMERATOR = 4
@@ -1156,7 +1156,7 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 }
 
 # Key kinds that have no DB binding to record but are valid acks — the planner
-# emits them and the agent reports success/failure, but songwright has nothing
+# emits them and the agent reports success/failure, but hallucinote has nothing
 # to write. Membership here is a contract: every key kind the planner emits
 # MUST appear in either `_LINK_KINDS` or `_ACK_ONLY_KINDS`, or
 # `apply_push_results` raises. This makes the dispatch surface auditable: when
@@ -1210,7 +1210,7 @@ def apply_push_results(
     new planner-emitted key kind can't silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
-    of truth for tool-side errors; songwright records nothing for them.
+    of truth for tool-side errors; hallucinote records nothing for them.
     """
     with conn:
         for r in results:

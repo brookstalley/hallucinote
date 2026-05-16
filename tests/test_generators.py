@@ -1,7 +1,7 @@
 """Smoke + tag-correctness tests for generators."""
 from __future__ import annotations
 
-from songwright.generators import drums, bass, harmony
+from hallucinote.generators import drums, bass, harmony
 
 
 def _has_tag(notes, tag):

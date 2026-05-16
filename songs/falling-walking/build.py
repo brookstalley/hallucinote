@@ -1,7 +1,7 @@
-"""Build falling-walking into a SQLite DB using the songwright layer.
+"""Build falling-walking into a SQLite DB using the hallucinote layer.
 
 Chunk 3 milestone: the mix layout (12 tracks, 2 returns, sends matrix, master)
-is seeded from `captured_session.json` via `songwright.capture.replay_capture`
+is seeded from `captured_session.json` via `hallucinote.capture.replay_capture`
 rather than being hand-authored in this file. Score data (tempo/meter/sections/
 cue points) and clip authoring still live here; later chunks will absorb more.
 
@@ -15,9 +15,9 @@ import argparse
 import json
 from pathlib import Path
 
-from songwright.capture import replay_capture
-from songwright.db import init_db, mutations as M, queries as Q
-from songwright.generators import bass, drums, harmony
+from hallucinote.capture import replay_capture
+from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.generators import bass, drums, harmony
 
 DB_PATH = Path(__file__).parent / "falling-walking.db"
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"

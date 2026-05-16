@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from songwright.db import init_db, mutations as M, queries as Q
-from songwright.sync import push
+from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.sync import push
 
 
 @pytest.fixture

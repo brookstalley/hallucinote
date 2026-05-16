@@ -1,4 +1,4 @@
-# songwright
+# hallucinote
 
 AI-assisted Ableton Live songwriting workflow. Houses song projects (concept docs + MIDI generators) and — eventually — a DB-backed intermediary for note-level authoring.
 

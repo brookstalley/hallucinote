@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from songwright.generators.primitives import TRESILLO_HITS
+from hallucinote.generators.primitives import TRESILLO_HITS
 
 NoteDict = dict[str, Any]
 

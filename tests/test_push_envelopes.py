@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from songwright.db import init_db, mutations as M
-from songwright.sync import push
+from hallucinote.db import init_db, mutations as M
+from hallucinote.sync import push
 
 
 @pytest.fixture
@@ -371,7 +371,7 @@ def test_apply_push_results_records_envelope_link(
         }],
         session_id=session,
     )
-    from songwright.db import queries as Q
+    from hallucinote.db import queries as Q
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="envelope", db_id=eid,
     ) == 7
@@ -394,7 +394,7 @@ def test_apply_push_results_envelope_without_index_skips_link(
         }],
         session_id=session,
     )
-    from songwright.db import queries as Q
+    from hallucinote.db import queries as Q
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="envelope", db_id=eid,
     ) is None

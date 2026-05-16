@@ -8,15 +8,15 @@ protocol and to serialize the assembled dict to disk.
 Workflow:
 
   1. Open the target Ableton set.
-  2. Have the agent run the probes listed by `songwright.capture.capture_plan()`:
+  2. Have the agent run the probes listed by `hallucinote.capture.capture_plan()`:
        - `get_session_info()`              -> tempo, signature, master, counts
        - `list_return_tracks()`            -> return tracks list
        - `get_track_info(track_index=N)`   -> for each main track
        - `get_track_sends(track_index=N)`  -> for each main track
   3. Agent assembles the per-track / per-return / session dicts and calls
-     `songwright.capture.compile_snapshot(...)`.
+     `hallucinote.capture.compile_snapshot(...)`.
   4. Agent writes the result to `songs/<name>/captured_session.json`.
-  5. `build.py` calls `songwright.capture.replay_capture(...)` to ingest.
+  5. `build.py` calls `hallucinote.capture.replay_capture(...)` to ingest.
 
 CLI usage is intentionally minimal — the heavy lifting is the agent's. This
 file primarily exists as the documented entry point and as a place to grow a
@@ -35,7 +35,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from songwright.capture import capture_plan  # noqa: E402
+from hallucinote.capture import capture_plan  # noqa: E402
 
 
 def main() -> int:

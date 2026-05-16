@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from songwright.generators.primitives import (
+from hallucinote.generators.primitives import (
     HAT_CLOSED,
     HAT_OPEN,
     KICK,

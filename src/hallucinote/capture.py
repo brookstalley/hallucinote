@@ -59,7 +59,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from songwright.db import mutations as M, queries as Q
+from hallucinote.db import mutations as M, queries as Q
 
 SNAPSHOT_FORMAT_VERSION = 1
 

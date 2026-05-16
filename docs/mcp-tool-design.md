@@ -584,27 +584,43 @@ No core dispatcher changes. No tool-registration boilerplate. The `action='help'
 
 This is the property the user asked for: **"add new Ableton commands without updating the Remote Script component."** True for the declarative cases (most). For imperative cases, you add a function in `handlers/` but never touch the dispatcher.
 
-### 10.5 Distribution
+### 10.5 Distribution + Install (LLM-mediated)
 
-Single Python package on PyPI: `pip install hallucinote-mcp`. Console scripts:
+Single Python package on PyPI: `pip install hallucinote-mcp`. **Install is LLM-mediated via a Claude Code skill shipped inside the package**, not a Python file-manipulation script. Reasoning: Claude Code is a hard dependency for the whole product; the install workflow is exactly the kind of "user-mediated, adaptive, platform-aware" task LLMs excel at; natural-language skill instructions are more durable than path-detection code that breaks on every Ableton update or OS quirk.
+
+**Console scripts** (minimal — just bootstrap + the running server):
 
 | Command | What it does |
 |---|---|
-| `hallucinote-mcp install` | Copies the Remote Script into `~/Music/Ableton/User Library/Remote Scripts/Hallucinote/` |
-| `hallucinote-mcp install --dev` | Symlinks instead (live updates on `git pull`) |
-| `hallucinote-mcp uninstall` | Symmetrical cleanup |
-| `hallucinote-mcp serve` | Starts the FastMCP server |
-| `hallucinote-mcp config` | Prints the MCP config snippet for `.mcp.json` / Claude Desktop |
+| `hallucinote-mcp register` | One-time bootstrap: copies the bundled skills (`ableton-install-mcp`, `ableton-uninstall-mcp`) into `~/.claude/skills/`. Optionally runs automatically as a pip post-install hook. |
+| `hallucinote-mcp serve` | Starts the FastMCP server (the runtime entry point used by `.mcp.json`). |
 
-User experience after `pip install`:
+**Skills shipped inside the package** (live at `hallucinote_mcp/skills/`):
+
+| Skill | What it does |
+|---|---|
+| `/ableton-install-mcp` | Detects OS (macOS / Windows), locates the Ableton User Library, copies (or symlinks for dev) the Remote Script into `<User Library>/Remote Scripts/Hallucinote/`, writes/updates the MCP config (`.mcp.json` or Claude Desktop config), prints the one-time Ableton preference click for the user. |
+| `/ableton-uninstall-mcp` | Symmetric cleanup: removes Remote Script directory, removes MCP config entry, tells the user the Ableton preference change to undo. |
+
+End-user experience:
 
 ```
-hallucinote-mcp install
-# Then open Ableton → Preferences → Link/Tempo/MIDI → Control Surface → "Hallucinote"
-# (one-time selection per Live install)
+pip install hallucinote-mcp          # post-install hook runs `hallucinote-mcp register` automatically
+# in Claude Code:
+/ableton-install-mcp                 # LLM-mediated, platform-aware install
+# in Ableton: Preferences → Link/Tempo/MIDI → Control Surface → "Hallucinote"
 ```
 
-That's the entire setup. The Remote Script install detail is hidden behind the installer.
+Three steps. The middle one is the LLM doing what would otherwise be 200 lines of cross-platform Python.
+
+**Skill naming convention.** `/ableton-*` for any skill that interacts with Ableton (installs the MCP, pulls state, eventually pushes / renders / analyzes). Groups with the existing `/ableton-pull` in Hallucinote's `.claude/skills/`. Future `/hallucinote-*` reserved for non-Ableton Hallucinote workflows (e.g., DB branching).
+
+**Why this is durable.**
+- Adapts to weird Ableton User Library locations (Live 11 vs 12, custom installs).
+- Windows path handling is genuinely messier than macOS — LLM mediation lets us recover gracefully from edge cases.
+- No `if sys.platform == ...` ladders to maintain.
+- Errors get diagnosed in natural language ("you don't have write permission to that folder; here's how to fix") rather than as exit codes.
+- One source of truth for the install procedure: the skill body.
 
 ### 10.6 Where the upstream learnings go
 

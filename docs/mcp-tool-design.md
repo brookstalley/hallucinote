@@ -160,18 +160,18 @@ Ten unified tools. Each has an `action` parameter (string enum), plus per-action
 
 | Tool | Scope | Action count (approx) |
 |---|---|---|
-| `ableton_session` | Global state, master strip, tempo, time signature, transport, view, song time, arrangement loop | ~12 |
+| `ableton_session` | Global state, master strip, tempo, time signature, transport, view, song time, arrangement loop, **snapshot/revert** | ~15 |
 | `ableton_track` | Track lifecycle, mixer state (volume/pan/mute/solo/arm/color), sends, name, info | ~10 |
 | `ableton_return` | Return-track lifecycle, mixer state, devices via cross-tool | ~6 |
-| `ableton_clip` | Session + arrangement clips: create, delete, fire/stop, rename, properties, duplicate-to-arrangement | ~10 |
+| `ableton_clip` | Session + arrangement clips: create, delete, fire/stop, rename, properties, duplicate-to-arrangement, **quantize, apply_groove, extract_groove** | ~13 |
 | `ableton_note` | Within-clip note operations: get, add, update, delete (note pull is gap #4) | ~5 |
 | `ableton_device` | Track + return devices: list, info, load, delete, enable/disable, parameter set, navigate preset, routing, sidechain | ~12 |
 | `ableton_automation` | Envelope CRUD across all seven target families (clip CC, pitch bend, note expression, device parameter, mixer volume/pan, send level) | ~10 |
 | `ableton_arrangement` | Arrangement layout, cue points (locators), loop region, view control | ~8 |
 | `ableton_browser` | Instruments, effects, drum kits, plugins. Search, list, fetch. | ~6 |
-| `ableton_help` | Meta: list tools, describe tool, list resources, list prompts. Returns navigational guidance. | ~4 |
+| `ableton_scene` | Session-view scenes: list, create, delete, rename, fire, info, set_tempo, set_signature, insert_at | ~9 |
 
-Total: ~83 actions in 10 tools. ~84% reduction in selection-space width.
+Total: ~94 actions in 10 tools. (Note: `ableton_help` was considered and dropped — server instructions + per-tool `action='help'` is sufficient. `ableton_scene` takes the slot.) ~84% reduction in selection-space width vs status quo.
 
 ### 4.2 Per-tool action breakdown (proposed)
 
@@ -189,6 +189,9 @@ Total: ~83 actions in 10 tools. ~84% reduction in selection-space width.
 | `stop` | — | `stop_playback` |
 | `seek` | `bar: int 1-based`, `beat: float 0-based` | `set_song_time` |
 | `set_arrangement_loop` | `enabled`, `start_bar`, `end_bar` | `set_arrangement_loop` |
+| `snapshot` | `name` | new — cordyceps-style state save (try-and-rollback workflow) |
+| `revert` | `name` | new — restore a snapshot by name |
+| `list_snapshots` | — | new — list saved snapshots for this session |
 
 #### `ableton_track`
 
@@ -230,6 +233,9 @@ Total: ~83 actions in 10 tools. ~84% reduction in selection-space width.
 | `set_property` | `track_index`, `clip_index`, `location`, `property: gain\|pitch\|warp\|loop_start\|loop_end\|muted\|color`, `value` | `set_arrangement_clip_property` (already action-style on one tool, generalized) |
 | `duplicate_to_arrangement` | `track_index`, `clip_index`, `start_bar` | `duplicate_clip_to_arrangement` |
 | `replace_notes` | `track_index`, `location`, `clip_index`, `notes` | `add_notes_to_clip` (renamed to reflect actual replace semantics — gap #1 resolved) |
+| `quantize` | `track_index`, `clip_index`, `location`, `grid: 1/4\|1/8\|1/16\|...`, `amount: 0.0-1.0`, `swing?` | new — MIDI editing primitive |
+| `apply_groove` | `track_index`, `clip_index`, `location`, `groove_name` | new — apply a groove pool template |
+| `extract_groove` | `track_index`, `clip_index`, `location`, `name` | new — sample the clip's groove into the groove pool |
 
 #### `ableton_note`
 
@@ -291,15 +297,24 @@ The seven-target envelope shape Hallucinote's `mcp_names.ALIASES_TODAY` already 
 
 Heavy candidates here for **conversion to resources** — see §5.
 
-#### `ableton_help`
+#### `ableton_scene`
 
-| Action | Args |
-|---|---|
-| `list_tools` | returns all 10 tools with one-line descriptions |
-| `describe_tool` | `tool_name` → returns the tool's action menu |
-| `list_resources` | returns resource URIs and descriptions |
-| `list_prompts` | returns prompt names and descriptions |
-| `welcome` | (zero-arg primer for new sessions) |
+Scenes are session-view "rows of clip slots" with their own tempo and time signature. A first-class Live concept that real songs use for verse/chorus/bridge structure in session-view performance workflows.
+
+| Action | Args | Replaces / Net new |
+|---|---|---|
+| `help` | — | — |
+| `list` | — | new |
+| `info` | `scene_index` | new |
+| `create` | `name?`, `insert_at?` (defaults to end) | new (Live API supports; not exposed today) |
+| `delete` | `scene_index` | new |
+| `rename` | `scene_index`, `name` | new |
+| `fire` | `scene_index` | new (fires all clips in the row) |
+| `set_tempo` | `scene_index`, `bpm` | new — per-scene tempo |
+| `set_signature` | `scene_index`, `numerator`, `denominator` | new — per-scene time signature |
+| `insert_at` | `index` | new — insert blank scene at index |
+
+(There is no `ableton_help` tool. Server instructions + per-tool `action='help'` cover discovery.)
 
 ---
 
@@ -566,7 +581,7 @@ Naming these so we don't reinvent them.
 
 ---
 
-## 13. Open Questions
+## 13. Open Questions (decisions needed)
 
 1. **Coordination with the AbletonMCP fork.** This redesign is upstream work on `ableton-mcp-extended`. Who owns the implementation timeline? Hallucinote can model the alias table around any cadence, but the migration needs a counterpart on the MCP side.
 2. **Backwards compat scope.** Phase 4 deprecation warnings live for how long? One minor release feels right for a single-user authoring tool; if there are other consumers, longer.
@@ -575,6 +590,9 @@ Naming these so we don't reinvent them.
 5. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
 6. **Should `ableton_help` itself be a tool, or just server instructions + per-tool help?** Cordyceps doesn't have a top-level help tool — it relies on initialize instructions + per-tool action='help'. We may not need `ableton_help` either; drop to 9 tools if so.
 7. **Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design. Should it instead be `ableton_track(action='create', instrument_uri=...)` with the load folded into create? Arguably yes — and the prompt becomes thinner. Worth a design pass during Phase 1.
+8. **Repo identity for the MCP fork.** The current MCP server lives at `brookstalley/ableton-mcp-extended` (fork of `uisato/ableton-mcp-extended`, MIT). After this redesign, the MCP Server side is effectively rewritten. **Need a new repo name** (e.g. `live-mcp`, `hallucinote-ableton-bridge`) plus a README rewrite that positions the project on its own terms while preserving the MIT attribution to upstream. See build plan §M-0. **Decision needed: new name.**
+9. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
+10. **Quantize on a stub clip.** `ableton_clip(action='quantize', amount=0.5, swing=0.16)` — should `swing` be a separate `swing` action, or always a parameter on `quantize`? Live treats them as separate operations in the UI but they compose cleanly. Lean toward folding.
 
 ---
 
@@ -603,6 +621,68 @@ Numbers we'll measure after Phase 5:
 - Server instructions token count: ≤500 tokens (initialize response)
 - Per-tool description size: ≤200 tokens (so 10 tools × 200 ≈ 2000 tokens total tool-definition cost, vs ~10,000+ today)
 - Agent task-success rate on a fixed benchmark (e.g., "create a sidechained synth bass"): measurable lift, not just feel. Baseline first, then measure post-migration.
+
+---
+
+## 16. Forward-Looking Surface — Tiers and Speculation
+
+The 10 tools above absorb every current capability plus the near-term additions (scene, snapshot, quantize/groove). This section captures everything else we'll plausibly want — bucketed by horizon — so the next contributor sees both the present and the runway.
+
+### Tier 1 — Already absorbed into the 10-tool design
+
+These are the near-term "we know we want this" additions, already folded into §4.2 above:
+
+- **Scenes** — `ableton_scene` (the 10th tool).
+- **Snapshot / revert** — actions on `ableton_session`.
+- **Quantize / apply_groove / extract_groove** — actions on `ableton_clip`.
+
+### Tier 2 — Add as actions when triggered (no new tool needed)
+
+Small action additions to existing tools. Each is cheap when the time comes; not blocking current work.
+
+| Capability | Where it lands | Trigger |
+|---|---|---|
+| Track grouping | `ableton_track(action='create', kind='group')`, `add_to_group`, `ungroup` | When a song wants drum/synth groups in the mix |
+| Track delay compensation | `ableton_track(action='set_property', property='track_delay_ms')` | Production-mix needs |
+| Freeze / flatten | `ableton_track(action='freeze' \| 'flatten' \| 'unfreeze')` | CPU-performance pressure on large songs |
+| Macros on racks | `ableton_device(action='set_macro', macro_index, value)` and `get_macros`, `assign_macro_to_parameter` | **Blocked by MCP nested-chain gap.** Land when that closes. |
+| Convert audio→MIDI | `ableton_clip(action='convert_to_midi', algorithm='harmony'\|'melody'\|'drums')` | Vision-aligned but not core |
+| Browser favorites | `ableton_browser(action='favorites')` (or resource) | Convenience |
+
+### Tier 3 — New tools, vision-driven, larger surface
+
+| New tool | Scope | Rough trigger |
+|---|---|---|
+| **`ableton_render`** | Audio bouncing — clip / region / track / arrangement to file. Async-shaped: returns a job handle, agent polls for completion + file path. | **Needed sooner than later (user-flagged).** Specifically: programmatic mix evaluation, A/B testing, "songs are testable." Plan separately when audio-analysis chunk approaches. |
+| **`ableton_analysis`** | Spectral readout, transient detection, level / loudness metering, peak/RMS over a region. Reads rendered audio. | **Needed sooner than later (user-flagged).** Pairs with render. The shape Vision wants for programmatic mix verification ("bass has a 230Hz peak"). |
+| **`ableton_project`** | `.als` lifecycle — open / save_as / close / list_recent. For "songs as git repos" branching workflows. | Multi-collaborator era, post-V1 |
+| **`ableton_routing`** (optional) | Track-level input/output routing (input source, input channel, monitor mode, output target). Could fold into `ableton_track(action='set_routing')` if signature stays manageable. | Recording / external-input workflows |
+
+### Tier 4 — Out of scope
+
+Anything below is intentionally not planned. Pasted here so future contributors see the line.
+
+- Programmatic MIDI controller mapping (Push 3, control surfaces)
+- Live's MIDI "capture" (record-what-you-just-played buffer)
+- Crossfader A/B assignment (DJ-style transitions)
+- Metronome / click-track properties (recording workflow)
+- Solo mode toggling (in-place vs cue)
+- Live Set lessons / info view
+- Audio interface settings
+- Computer keyboard MIDI input
+
+These are performance / configuration concerns; Hallucinote is authoring and production, not performance.
+
+### Audio rendering + analysis — user note
+
+The user has explicitly flagged **`ableton_render` + `ableton_analysis`** as "sooner than later, but not yet." Captured here as the next major design beat after the 10-tool surface lands. Rough sketch:
+
+- `ableton_render` returns a *job handle*. Render is async (seconds to minutes). Agent polls or uses a resource subscription. Output goes to a file path the agent can read.
+- `ableton_analysis` takes a file path (rendered output) and returns structured analysis: spectral peaks, RMS / LUFS, transient density, frequency-band energy distribution.
+- Together they enable: "render the chorus, compare to the verse, report whether the chorus is brighter."
+- Open question: does analysis live in this MCP, or in a separate `audio-analysis-mcp`? Probably separate — analysis is domain-agnostic (works on any audio file, not just Live output).
+
+A separate design pass will firm up the shape when that chunk approaches.
 
 ---
 

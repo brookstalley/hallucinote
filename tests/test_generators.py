@@ -116,3 +116,29 @@ def test_trip_hop_drum_pattern_respects_start_beat_for_fills():
         f"expected ghost kick at 31.5; got {[g['start_beats'] for g in ghosts]}"
 
 
+def test_trip_hop_drum_pattern_handles_non_bar_aligned_start_beat():
+    """Regression: non-bar-aligned start_beat must not truncate the ghost offsets.
+
+    Before the fix, the composer used `int(start_beat // 4)` to shift fill_bars,
+    which silently floored a 0.5-beat anacrusis to a full bar offset.
+    """
+    # 0.5-beat offset (an eighth-note anacrusis).
+    notes = drums.trip_hop_drum_pattern(4, start_beat=0.5, fill_bars=[3])
+    kick_ghosts = [n for n in notes
+                   if "ghost" in n["tags"] and "kick" in n["tags"]]
+    # Ghost kick should land at start_beat + 3*4.0 + 3.5 = 16.0, NOT 15.5
+    assert any(g["start_beats"] == 16.0 for g in kick_ghosts), \
+        f"expected ghost kick at 16.0 (0.5 + 12 + 3.5); got " \
+        f"{[g['start_beats'] for g in kick_ghosts]}"
+
+
+def test_ghost_drum_helpers_take_start_beat():
+    """ghost_kicks / ghost_snares / open_hat_lifts all honor start_beat."""
+    kicks = drums.ghost_kicks([0], start_beat=7.0)
+    assert kicks[0]["start_beats"] == 7.0 + 3.5  # 10.5
+    snares = drums.ghost_snares([0], start_beat=7.0)
+    assert snares[0]["start_beats"] == 7.0 + 3.75  # 10.75
+    lifts = drums.open_hat_lifts([0], start_beat=7.0)
+    assert lifts[0]["start_beats"] == 7.0 + 3.5  # 10.5
+
+

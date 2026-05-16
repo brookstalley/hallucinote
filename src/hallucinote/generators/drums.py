@@ -147,14 +147,19 @@ def bossa_shaker(
 def ghost_kicks(
     at_bars: Iterable[int],
     *,
+    start_beat: float = 0.0,
     offset_in_bar: float = 3.5,
     duration: float = 0.12,
     velocity: int = 50,
     pitch: int = KICK,
 ) -> list[NoteDict]:
-    """Sparse low-velocity kicks at specific bar indices. Use as garnish over kick_stumble."""
+    """Sparse low-velocity kicks at specific bar indices. Use as garnish over kick_stumble.
+
+    Bar indices are relative to `start_beat` — bar 0 lands at `start_beat`.
+    """
     return [
-        _note(pitch, b * 4.0 + offset_in_bar, duration, velocity, ["kick", "ghost"])
+        _note(pitch, start_beat + b * 4.0 + offset_in_bar, duration, velocity,
+              ["kick", "ghost"])
         for b in at_bars
     ]
 
@@ -162,14 +167,19 @@ def ghost_kicks(
 def ghost_snares(
     at_bars: Iterable[int],
     *,
+    start_beat: float = 0.0,
     offset_in_bar: float = 3.75,
     duration: float = 0.1,
     velocity: int = 38,
     pitch: int = SNARE,
 ) -> list[NoteDict]:
-    """Sparse low-velocity snares for texture. Tagged "snare" + "ghost"."""
+    """Sparse low-velocity snares for texture. Tagged "snare" + "ghost".
+
+    Bar indices are relative to `start_beat` — bar 0 lands at `start_beat`.
+    """
     return [
-        _note(pitch, b * 4.0 + offset_in_bar, duration, velocity, ["snare", "ghost"])
+        _note(pitch, start_beat + b * 4.0 + offset_in_bar, duration, velocity,
+              ["snare", "ghost"])
         for b in at_bars
     ]
 
@@ -177,14 +187,19 @@ def ghost_snares(
 def open_hat_lifts(
     at_bars: Iterable[int],
     *,
+    start_beat: float = 0.0,
     offset_in_bar: float = 3.5,
     duration: float = 0.4,
     velocity: int = 70,
     pitch: int = HAT_OPEN,
 ) -> list[NoteDict]:
-    """Open-hat lifts as drummer flourishes (mini-fill marks)."""
+    """Open-hat lifts as drummer flourishes (mini-fill marks).
+
+    Bar indices are relative to `start_beat` — bar 0 lands at `start_beat`.
+    """
     return [
-        _note(pitch, b * 4.0 + offset_in_bar, duration, velocity, ["hat", "open", "lift"])
+        _note(pitch, start_beat + b * 4.0 + offset_in_bar, duration, velocity,
+              ["hat", "open", "lift"])
         for b in at_bars
     ]
 
@@ -208,10 +223,7 @@ def trip_hop_drum_pattern(
     notes.extend(kick_stumble(bars, start_beat=start_beat))
     notes.extend(lazy_snare(bars, start_beat=start_beat))
     notes.extend(trip_hop_hats(bars, start_beat=start_beat, boost_bars=fill_bars))
-    # ghost_kicks / snares / lifts take bar indices; offset those by start_beat / 4
-    bar_offset = int(start_beat // 4)
-    shifted_fills = [b + bar_offset for b in fill_bars]
-    notes.extend(ghost_kicks(shifted_fills))
-    notes.extend(ghost_snares(shifted_fills))
-    notes.extend(open_hat_lifts(shifted_fills))
+    notes.extend(ghost_kicks(fill_bars, start_beat=start_beat))
+    notes.extend(ghost_snares(fill_bars, start_beat=start_beat))
+    notes.extend(open_hat_lifts(fill_bars, start_beat=start_beat))
     return notes

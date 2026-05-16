@@ -107,6 +107,10 @@ def sidechain_trigger(
         raise ValueError(
             f"duck_value ({duck_value}) must be <= rest_value ({rest_value})"
         )
+    if len(set(at_beats)) != len(at_beats):
+        raise ValueError(
+            "at_beats contains duplicate values; each hit must have a unique time"
+        )
 
     sorted_hits = sorted(float(b) for b in at_beats)
     breakpoints: list[dict] = []

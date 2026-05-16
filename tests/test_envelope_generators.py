@@ -183,6 +183,13 @@ def test_sidechain_trigger_rejects_negative_hit():
         sidechain_trigger(target_track_id="t1", at_beats=[1.0, -0.5])
 
 
+def test_sidechain_trigger_rejects_duplicate_hits():
+    # Same hit twice would produce two breakpoints at the same time, leaving the
+    # envelope value undefined at that instant.
+    with pytest.raises(ValueError, match="duplicate"):
+        sidechain_trigger(target_track_id="t1", at_beats=[4.0, 4.0])
+
+
 def test_sidechain_trigger_rejects_duck_above_rest():
     with pytest.raises(ValueError, match="duck_value"):
         sidechain_trigger(target_track_id="t1", at_beats=[0.0], duck_value=0.9, rest_value=0.5)

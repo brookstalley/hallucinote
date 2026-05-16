@@ -301,7 +301,7 @@ Cue points at every section. Form built from session clips via duplicate.
 1. **Sound design** — all synths are at default presets. The brief calls for: dark supersaw pad with grit, plucky synth bass with portamento, glassy steel-drum-y pluck, FM bell, square-wave chiptune lead. Use Wavetable/Operator parameter editing tools (not yet explored).
 2. **Effects chains** — no sidechain pump, no saturation, no reverb/delay, no distortion. The "powerful electronic" aesthetic depends on these.
 3. **Vocal chain** — no vocoder, no chiptune doubles. Vocals not recorded yet.
-4. **Automation** — no filter sweeps, volume rides, or send automation. Pad opens up for chorus only via patch design currently (not present).
+4. **Automation** — chunk 5 added two demonstration envelopes (verse-pad volume swell into the chorus + synth-bass kick-synced sidechain duck during the chorus). Still missing: filter sweeps, send automation, full chorus-arrival opens-up dynamics.
 5. **Tag transition** — currently has chorus-style first 2 bars + bossa-foreshadow last 2 bars, but no riser/sweep transition into bridge.
 
 ---

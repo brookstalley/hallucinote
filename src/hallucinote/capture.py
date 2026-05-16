@@ -50,9 +50,11 @@ in each track's `sends` map, keyed by return name), top-level device chains
 populated by build.py hand-authored sections.
 
 Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
-MCP probes (`get_session_info`, `get_track_info`, `list_return_tracks`,
-`get_track_sends`, `get_track_volume`) and assembles the dict via
-`compile_snapshot`. See `tools/capture.py` for the probe sequence.
+MCP probes (`ableton_session(action='info')`, `get_track_info`,
+`list_return_tracks`, `get_track_sends`, `get_track_volume`) and assembles
+the dict via `compile_snapshot`. The non-session-domain probes retarget to
+the unified surface in Wave M-2 onward. See `tools/capture.py` for the probe
+sequence.
 """
 from __future__ import annotations
 

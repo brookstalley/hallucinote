@@ -9,7 +9,7 @@ Workflow:
 
   1. Open the target Ableton set.
   2. Have the agent run the probes listed by `hallucinote.capture.capture_plan()`:
-       - `get_session_info()`              -> tempo, signature, master, counts
+       - `ableton_session(action='info')`  -> tempo, signature, master, counts
        - `list_return_tracks()`            -> return tracks list
        - `get_track_info(track_index=N)`   -> for each main track
        - `get_track_sends(track_index=N)`  -> for each main track

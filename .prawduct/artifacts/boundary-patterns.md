@@ -58,6 +58,32 @@ When changing this surface:
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
 
+### Pull Planner / Result API (`src/hallucinote/sync/pull.py` + `pull_cli.py`)
+
+- **Producer**: `pull.py` — pure-data `PullPlan`s, no side effects.
+- **Consumer**: the `/ableton-pull` skill (executes MCP read probes, normalizes
+  responses, calls back via `pull_cli`).
+- **Contract**:
+  - `plan_pull_mix` (and future `plan_pull_*`) take `song_id` + `session_id`,
+    walk `ableton_links` for linked rows, emit `PullCall` probes.
+  - `PullCall.key` is `"<kind>"` (global) or `"<kind>:<uuid>"` (per-row) —
+    dispatched by `_HANDLERS` in `apply_pull_results`.
+  - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
+    field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
+    doesn't churn events.
+  - Mutations use `actor='sync'` (matching push); pull-vs-push provenance
+    lives in the event `reason` field.
+  - `pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan`
+    emits the PullPlan, `apply` consumes plan + results and returns an
+    `ApplyResult` summary.
+
+When changing this surface:
+- New `PullCall` key kinds need a `_HANDLERS` entry AND an apply branch.
+- The normalized result shape per kind is documented in the `PullCall`
+  docstring; the skill is responsible for normalizing raw MCP responses to it.
+- Three-way merge is deferred. If you re-open conflict policy, update both
+  this doc and the pull.py module docstring together.
+
 ### Event Kinds + Payloads (`src/hallucinote/db/events.py`)
 
 - **Producer**: `mutations.py` (every emitter is a mutator).

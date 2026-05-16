@@ -169,6 +169,7 @@ def replay_capture(
     snapshot: dict[str, Any],
     *,
     song_name: str,
+    song_title: str | None = None,
     song_key: str | None = None,
     timing_mode: str = "native",
     actor: str = "sync",
@@ -195,6 +196,7 @@ def replay_capture(
     song_id = M.create_song(
         conn,
         name=song_name,
+        title=song_title,
         key=song_key,
         timing_mode=timing_mode,
         actor=actor,

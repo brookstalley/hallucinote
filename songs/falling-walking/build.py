@@ -727,7 +727,9 @@ def build(reset: bool = False) -> str:
         snapshot = json.loads(SNAPSHOT_PATH.read_text())
         song_id = replay_capture(
             conn, snapshot,
-            song_name="falling-walking", song_key="Dm",
+            song_name="falling-walking",
+            song_title="Falling, Walking",
+            song_key="Dm",
             actor="sync", reason="chunk-5 capture replay",
         )
 

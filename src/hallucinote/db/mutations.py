@@ -21,6 +21,7 @@ Conventions:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from typing import Any, Sequence
@@ -143,10 +144,14 @@ def create_request(
 TIMING_MODES = frozenset({"native", "grid"})
 
 
+_SLUG_RE = re.compile(r"[a-z0-9_-]+")
+
+
 def create_song(
     conn: sqlite3.Connection,
     *,
     name: str,
+    title: str | None = None,
     key: str | None = None,
     timing_mode: str = "native",
     actor: str = "system",
@@ -156,23 +161,35 @@ def create_song(
     """Create a song. Tempo and meter live in `tempo_map` / `time_signature_map`;
     add at least one point in each before pushing.
 
+    `name` is the song *slug* — filesystem-safe identifier matching the
+    song's directory and DB filename per the project convention
+    (`songs/<name>/<name>.db`). Lowercase letters, digits, hyphens, and
+    underscores only. `title` is the optional human-facing display name —
+    free-form text with spaces, capitals, punctuation.
+
     `timing_mode='native'` (default) renders bar positions through the maps,
     matching Live's tempo/meter. `'grid'` opts out — generators handle
     resolved positions internally for polytempic experiments.
     """
+    if not _SLUG_RE.fullmatch(name):
+        raise ValueError(
+            f"song name {name!r} must match [a-z0-9_-]+ — slugs only "
+            "(no spaces, no uppercase, no special chars). Use `title` for "
+            "the human-facing name."
+        )
     if timing_mode not in TIMING_MODES:
         raise ValueError(
             f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
         )
     sid = _uuid()
     conn.execute(
-        "INSERT INTO songs (id, name, key, timing_mode) VALUES (?, ?, ?, ?)",
-        (sid, name, key, timing_mode),
+        "INSERT INTO songs (id, name, title, key, timing_mode) VALUES (?, ?, ?, ?, ?)",
+        (sid, name, title, key, timing_mode),
     )
     _emit(
         conn,
         E.SONG_CREATED,
-        {"name": name, "key": key, "timing_mode": timing_mode},
+        {"name": name, "title": title, "key": key, "timing_mode": timing_mode},
         song_id=sid,
         actor=actor,
         request_id=request_id,
@@ -862,6 +879,53 @@ def add_tempo_point(
     return pid
 
 
+_TEMPO_POINT_FIELDS = {"tempo_bpm", "ramp"}
+
+
+def update_tempo_point(
+    conn: sqlite3.Connection,
+    *,
+    point_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial update of a tempo_map row. `changes` keys must be in
+    _TEMPO_POINT_FIELDS — `start_bar` is identity here, change it via
+    remove+add."""
+    bad = set(changes) - _TEMPO_POINT_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    if "tempo_bpm" in changes and changes["tempo_bpm"] <= 0:
+        raise ValueError(f"tempo_bpm must be positive, got {changes['tempo_bpm']}")
+    if "ramp" in changes and changes["ramp"] not in TEMPO_RAMP_KINDS:
+        raise ValueError(
+            f"invalid ramp {changes['ramp']!r}; "
+            f"expected one of {sorted(TEMPO_RAMP_KINDS)}"
+        )
+    row = conn.execute(
+        "SELECT song_id FROM tempo_map WHERE id = ?", (point_id,)
+    ).fetchone()
+    if row is None:
+        return
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [point_id]
+    conn.execute(f"UPDATE tempo_map SET {', '.join(sets)} WHERE id = ?", vals)
+    _emit(
+        conn,
+        E.TEMPO_POINT_UPDATED,
+        {"point_id": point_id, "changes": changes},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
 def remove_tempo_point(
     conn: sqlite3.Connection,
     *,
@@ -932,6 +996,54 @@ def add_time_signature_point(
     )
     _touch_song(conn, song_id)
     return pid
+
+
+_TIME_SIGNATURE_POINT_FIELDS = {"numerator", "denominator"}
+
+
+def update_time_signature_point(
+    conn: sqlite3.Connection,
+    *,
+    point_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial update of a time_signature_map row. `changes` keys must be in
+    _TIME_SIGNATURE_POINT_FIELDS — `start_bar` is identity here, change it
+    via remove+add."""
+    bad = set(changes) - _TIME_SIGNATURE_POINT_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    if "numerator" in changes and changes["numerator"] <= 0:
+        raise ValueError(f"numerator must be positive, got {changes['numerator']}")
+    if "denominator" in changes and changes["denominator"] <= 0:
+        raise ValueError(
+            f"denominator must be positive, got {changes['denominator']}"
+        )
+    row = conn.execute(
+        "SELECT song_id FROM time_signature_map WHERE id = ?", (point_id,)
+    ).fetchone()
+    if row is None:
+        return
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [point_id]
+    conn.execute(
+        f"UPDATE time_signature_map SET {', '.join(sets)} WHERE id = ?", vals
+    )
+    _emit(
+        conn,
+        E.TIME_SIGNATURE_POINT_UPDATED,
+        {"point_id": point_id, "changes": changes},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
 
 
 def remove_time_signature_point(

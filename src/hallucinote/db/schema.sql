@@ -11,13 +11,23 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS songs (
     id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,
+    name            TEXT NOT NULL UNIQUE
+                        CHECK (length(name) > 0
+                               AND name NOT GLOB '*[^a-z0-9_-]*'),
+    title           TEXT,
     key             TEXT,
     timing_mode     TEXT NOT NULL DEFAULT 'native'
                         CHECK (timing_mode IN ('native', 'grid')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+-- `name` is the song *slug* — filesystem-safe identifier matching the song's
+-- directory and DB filename: `songs/<name>/<name>.db`. Lowercase letters,
+-- digits, hyphens, and underscores only; no spaces or special characters.
+-- This is a prescriptive convention; see `.prawduct/artifacts/project-preferences.md`.
+-- `title` is the optional human-facing display name (free-form text). Tools
+-- that show song identity to users should prefer `title` when set, falling
+-- back to `name`.
 -- Tempo and time signature are no longer scalar columns; see tempo_map and
 -- time_signature_map for the multi-point automation that supplants them.
 -- `timing_mode='grid'` opts the song into pure-grid (polytempic) encoding

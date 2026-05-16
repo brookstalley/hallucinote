@@ -50,7 +50,10 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("BEGIN")
     try:
         yield
-    except BaseException:
+    except BaseException:  # prawduct:ok-broad-except
+        # Roll back on ANY exception — including KeyboardInterrupt / SystemExit /
+        # asyncio.CancelledError — then re-raise. The DB must not be left in a
+        # half-written state because the user hit Ctrl-C mid-batch.
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")

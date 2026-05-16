@@ -99,7 +99,7 @@ def test_insert_notes_returns_ids_and_emits_event(conn, clip):
     assert json.loads(ev["payload_json"])["count"] == 2
 
 
-def test_replace_clip_notes_is_atomic(conn, clip):
+def test_replace_clip_notes_swaps_full_note_set(conn, clip):
     M.insert_notes(conn, clip_id=clip, notes=[_make_note() for _ in range(5)])
     new_ids = M.replace_clip_notes(
         conn, clip_id=clip, notes=[_make_note(pitch=38), _make_note(pitch=42)]
@@ -114,6 +114,31 @@ def test_replace_clip_notes_is_atomic(conn, clip):
     assert last["kind"] == E.CLIP_NOTES_REPLACED
     p = json.loads(last["payload_json"])
     assert p["prev_count"] == 5 and p["new_count"] == 2
+
+
+def test_replace_clip_notes_rolls_back_on_failure(conn, clip):
+    """Mid-batch validation error must leave the prior notes intact and emit no event.
+
+    Regression for the "with conn:" no-op (autocommit mode) — previously the
+    DELETE committed before the INSERT raised, leaving the clip empty.
+    """
+    original = M.insert_notes(
+        conn, clip_id=clip, notes=[_make_note(pitch=40), _make_note(pitch=41)],
+    )
+    pre_event_count = len(_events(conn))
+    # Second note is malformed — `_normalize_note` will raise.
+    with pytest.raises(KeyError):
+        M.replace_clip_notes(
+            conn, clip_id=clip,
+            notes=[_make_note(pitch=50), {"start_beats": 0, "duration_beats": 1, "velocity": 80}],
+        )
+    # Original notes survive intact.
+    out = Q.get_notes_for_clip(conn, clip)
+    assert len(out) == 2
+    assert {n["id"] for n in out} == set(original)
+    assert {n["pitch"] for n in out} == {40, 41}
+    # No CLIP_NOTES_REPLACED event emitted for the failed call.
+    assert len(_events(conn)) == pre_event_count
 
 
 def test_update_note_partial(conn, clip):

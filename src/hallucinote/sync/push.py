@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
+from hallucinote.db.connection import transaction
 
 # Live's default meter when a song has no `time_signature_map` rows.
 _DEFAULT_NUMERATOR = 4
@@ -1212,7 +1213,7 @@ def apply_push_results(
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
     """
-    with conn:
+    with transaction(conn):
         for r in results:
             if not r.get("ok"):
                 continue

@@ -26,6 +26,7 @@ import uuid
 from typing import Any, Sequence
 
 from hallucinote.db import events as E
+from hallucinote.db.connection import transaction
 
 NoteDict = dict[str, Any]
 
@@ -444,7 +445,7 @@ def replace_clip_notes(
     reason: str | None = None,
 ) -> list[str]:
     """Atomic: delete every note for clip, insert fresh set. Single event emitted."""
-    with conn:  # transaction
+    with transaction(conn):
         prev_count = conn.execute(
             "SELECT COUNT(*) AS c FROM notes WHERE clip_id = ?", (clip_id,)
         ).fetchone()["c"]
@@ -1856,7 +1857,7 @@ def replace_breakpoints(
     Each breakpoint dict: {time_beats: float, value: float,
     curve_kind: 'linear'|'hold'|'fast'|'slow' (default 'linear')}.
     """
-    with conn:
+    with transaction(conn):
         prev_count = conn.execute(
             "SELECT COUNT(*) AS c FROM automation_breakpoints WHERE envelope_id = ?",
             (envelope_id,),

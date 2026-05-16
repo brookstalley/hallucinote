@@ -211,3 +211,46 @@ def test_apply_results_records_actor_sync_by_default(conn, session, track):
         "SELECT actor FROM events WHERE kind='ableton_link_set' ORDER BY seq"
     ).fetchall()
     assert [r["actor"] for r in rows] == ["sync"]
+
+
+def test_apply_results_rolls_back_on_mid_batch_failure(conn, session, track, clip):
+    """A mid-batch unknown-kind raise must undo every link applied so far.
+
+    Regression for the "with conn:" no-op (autocommit mode) — previously the
+    first track-link committed before the unknown-kind raised, leaving the
+    session half-updated.
+    """
+    pre_track_link = Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=track,
+    )
+    pre_clip_link = Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=clip,
+    )
+    assert pre_track_link is None and pre_clip_link is None
+
+    with pytest.raises(ValueError, match="unknown push result key kind"):
+        push.apply_push_results(
+            conn,
+            [
+                # This one would succeed in isolation.
+                {"key": f"track:{track}", "ok": True,
+                 "tool": "create_midi_track_with", "result": {"track_index": 5}},
+                # This raises mid-batch.
+                {"key": "frobnicate:abc123", "ok": True,
+                 "tool": "frobnicate", "result": {}},
+                # This never runs.
+                {"key": f"clip:{clip}", "ok": True,
+                 "tool": "replace_session_clip", "result": {"clip_index": 3}},
+            ],
+            session_id=session,
+        )
+
+    # Neither link landed.
+    assert (
+        Q.get_ableton_link(conn, session_id=session, db_kind="track", db_id=track)
+        is None
+    )
+    assert (
+        Q.get_ableton_link(conn, session_id=session, db_kind="clip", db_id=clip)
+        is None
+    )

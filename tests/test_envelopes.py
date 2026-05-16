@@ -300,7 +300,7 @@ def test_add_breakpoint_creates(conn, song, clip):
     assert bps[0]["curve_kind"] == "linear"
 
 
-def test_replace_breakpoints_is_atomic(conn, song, clip):
+def test_replace_breakpoints_swaps_full_set(conn, song, clip):
     eid = M.create_envelope(
         conn, song_id=song, target_kind="clip_cc",
         target_clip_id=clip, parameter_path="64",
@@ -320,6 +320,37 @@ def test_replace_breakpoints_is_atomic(conn, song, clip):
     # One BREAKPOINTS_REPLACED event regardless of N.
     replaces = [e for e in _events(conn) if e["kind"] == E.BREAKPOINTS_REPLACED]
     assert len(replaces) == 1
+
+
+def test_replace_breakpoints_rolls_back_on_failure(conn, song, clip):
+    """Mid-batch validation error must leave the prior breakpoints intact.
+
+    Regression for the "with conn:" no-op (autocommit mode) — previously the
+    DELETE committed before the invalid-curve INSERT raised, leaving the
+    envelope empty.
+    """
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="clip_cc",
+        target_clip_id=clip, parameter_path="64",
+    )
+    bid_a = M.add_breakpoint(conn, envelope_id=eid, time_beats=0.0, value=0.0)
+    bid_b = M.add_breakpoint(conn, envelope_id=eid, time_beats=1.0, value=0.5)
+    pre_event_count = len(_events(conn))
+    # Second breakpoint has an invalid curve_kind — `replace_breakpoints`
+    # validates inside the loop and raises after DELETE'ing the originals.
+    with pytest.raises(ValueError, match="curve_kind"):
+        M.replace_breakpoints(
+            conn, envelope_id=eid,
+            breakpoints=[
+                {"time_beats": 0.0, "value": 1.0, "curve_kind": "linear"},
+                {"time_beats": 2.0, "value": 0.0, "curve_kind": "exponential"},
+            ],
+        )
+    # Original breakpoints survive intact.
+    bps = Q.get_breakpoints(conn, eid)
+    assert {b["id"] for b in bps} == {bid_a, bid_b}
+    # No BREAKPOINTS_REPLACED event emitted for the failed call.
+    assert len(_events(conn)) == pre_event_count
 
 
 def test_remove_breakpoint(conn, song, clip):

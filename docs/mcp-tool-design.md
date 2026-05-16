@@ -392,22 +392,22 @@ Four layers, descending in granularity, mirroring cordyceps:
 
 ### 7.1 Server instructions (initialize)
 
-On `initialize`, AbletonMCP returns a primer:
+On `initialize`, `hallucinote-mcp` returns a primer:
 
 ```
-AbletonMCP — 10 tools, structured for low-context-cost agent interaction.
+hallucinote-mcp — 10 tools, structured for low-context-cost agent interaction.
 
 Tools:
-  ableton_session     — global state, master, transport, view, tempo, signature
+  ableton_session     — global state, master, transport, view, tempo, signature, snapshot
   ableton_track       — tracks: lifecycle, mixer state, sends
   ableton_return      — return tracks
-  ableton_clip        — session + arrangement clips
+  ableton_clip        — session + arrangement clips; quantize/groove
   ableton_note        — within-clip note operations (gap #4 blocked)
   ableton_device      — devices on tracks/returns
   ableton_automation  — envelopes (7 target families)
   ableton_arrangement — arrangement layout + cue points
   ableton_browser     — instruments, effects, plugins
-  ableton_help        — meta-discovery
+  ableton_scene       — session-view scenes (rows of clip slots + tempo + signature)
 
 Every tool: action='help' returns its full action menu.
 
@@ -500,51 +500,173 @@ Hallucinote's `sync/mcp_names.py` already exists for exactly this. The `ALIASES_
 
 ---
 
-## 10. Migration Plan
+## 10. Implementation Architecture
 
-### Phase 0 — Alignment (this doc)
+The HOW that sits beneath the WHAT in §4–§9. Read this before §11 (Migration Plan) — the migration shape follows from the architectural decisions here.
 
-- Land this doc on `develop`.
-- Open a tracking issue on `ableton-mcp-extended`.
-- Confirm with Hallucinote: which gap-flagged setters Hallucinote actively needs vs would-be-nice.
+### 10.1 Greenfield, not a fork
 
-### Phase 1 — Unified tool shells alongside narrow tools
+The MCP server lives in a **new repository** named `hallucinote-mcp`, not as a renamed fork of `uisato/ableton-mcp-extended`. Reasoning:
 
-- Implement `ableton_track`, `ableton_session`, `ableton_help` first (highest ROI; covers ~15 of the current tools).
-- Both old and new tools live in parallel. No removals yet.
-- Hallucinote's `mcp_names.ALIASES_TODAY` retargets to the new tools as they land.
+- Project identity is clean from day one. Anyone landing on the repo sees our name, our README, our commits — no "fork of" badge or historical "Initial fork from..." commit to explain.
+- Infrastructure (Live Control Surface registration, UDP server, threading model, dispatcher pattern) is built around the new unified-tool architecture from the start, not retrofitted onto fork-shaped code.
+- "Tight integration with our core product" (Hallucinote) is a positioning choice. `hallucinote-mcp` declares the relationship; `live-mcp` would have stayed generic.
+- MIT attribution to upstream (`uisato/ableton-mcp-extended` + the great-grandparent `ahujasid/ableton-mcp`) is preserved in `NOTICE`/`LICENSE`/`README` as historical inspiration credit, per MIT license requirements. The *code* is rewritten; the *knowledge* (which Live API property maps to which conceptual operation) is disciplined-ported.
 
-### Phase 2 — Resources + prompts
+The old fork (`brookstalley/ableton-mcp-extended`) gets archived after Wave M completes, with a README pointing at the new project.
 
-- Land the `ableton://browser/*` resources and the `ableton_help` tool.
-- Land the first three prompts (`create_midi_track_with_instrument`, `setup_sidechain_compression`, `build_return_bus`).
-- Update server `initialize` instructions.
+### 10.2 Both layers, both ours
 
-### Phase 3 — Remaining domains
+`hallucinote-mcp` ships two coordinated Python components in the same repo and package:
 
-- `ableton_clip`, `ableton_device`, `ableton_automation`, `ableton_arrangement`, `ableton_browser`, `ableton_return`.
-- Gap-flagged setters (mute/solo/arm/color, master, returns) land as actions on the new tools — they didn't have narrow tools to remove, so this is net-new capability via consolidation.
+- **MCP server side** (`hallucinote_mcp/server.py`) — FastMCP-based. Exposes the 10 unified tools to MCP clients (Claude Desktop, Claude Code, etc.). One `@mcp.tool()` decorator per unified tool with `action` dispatch.
+- **Remote Script side** (`hallucinote_mcp/remote_script/__init__.py`) — installs into Ableton Live's `Remote Scripts` folder. Registers as a Control Surface, opens a UDP server, dispatches commands to the Live API. ~10 unified handlers, mirroring the MCP server side one-to-one.
+- **Shared schema** (`hallucinote_mcp/schema.py`) — Python dataclasses defining every tool, every action, every parameter. Imported by *both* server + Remote Script. **Single source of truth.** No drift, no sync tests required.
+- **Wire protocol** — canonical message format both directions:
+  - Request: `{tool: str, action: str, params: dict}`
+  - Response: `{ok: bool, result?: any, error?: str, valid_actions?: list[str], hint?: str}`
 
-### Phase 4 — Deprecation warnings on narrow tools
+### 10.3 Declarative-first dispatch with handler escape hatches
 
-- Each old tool's response carries a deprecation note pointing at the unified equivalent.
-- Hallucinote planners verified emitting only canonical names.
+Most Live operations are one of three shapes:
 
-### Phase 5 — Removal
+| Shape | Example |
+|---|---|
+| Property read | `Live.Song.tempo` |
+| Property write | `Live.Song.tracks[i].mixer_device.volume.value = X` |
+| Method call | `Live.Song.tracks[i].clip_slots[j].create_clip(length)` |
 
-- After at least one minor release at Phase 4, narrow tools removed.
-- Hallucinote's `mcp_names.ALIASES_TODAY` drops to a handful (or empty).
+These are **declarative** — described by a navigation path + an operation kind + a value schema. The dispatcher reads the description and executes the op. No handler code needed.
 
-### Phase 6 — Note + envelope pulls
+Some operations need real Python — multi-step orchestration, custom validation (did-you-mean, fuzzy matching), Live API quirks (snapshot/revert, drum-rack probing), async patterns (rendering, when it lands). These get **handler functions**. The dispatcher routes to them per action.
 
-- Once `ableton_note` and `ableton_automation` are exposed, the MCP-gap-blocked Hallucinote chunks (note pull, envelope pull, device parameter pull) unblock and Hallucinote ships those wave-3 chunks.
+Schema entry shape:
+
+```python
+@dataclass
+class Action:
+    tool: str                       # e.g. "ableton_track"
+    name: str                       # e.g. "set_property"
+    description: str                # for action='help'
+    params_schema: dict[str, ParamSpec]
+    example: str                    # for action='help' and errors
+    tips: list[str] = field(default_factory=list)
+
+    # Exactly one of these is set:
+    declarative_op: LiveOp | None = None    # for the common cases
+    handler: Callable | None = None         # for imperative escape
+```
+
+`LiveOp` describes the path + operation + value mapping for declarative ops:
+
+```python
+@dataclass
+class LiveOp:
+    kind: Literal["property_read", "property_write", "method_call"]
+    target: str                     # navigation expr, e.g. "Live.Song.tracks[{track_index - 1}]"
+    property: str | dict[str, str] = ""   # path or per-enum-value map
+    method: str = ""
+    method_args: list[str] = field(default_factory=list)
+```
+
+Estimate: **~60-70% of actions are pure declarative**; the rest need handler functions. Both kinds live in the same shared schema module; the dispatcher treats them uniformly at the wire layer.
+
+### 10.4 Adding a new action is small
+
+The common workflow for landing a new Ableton capability:
+
+1. Add an `Action` entry to `hallucinote_mcp/schema.py`.
+2. If imperative: add a handler function in `hallucinote_mcp/handlers/`.
+3. (Optional) Add an example/tip to the schema for the agent.
+
+No core dispatcher changes. No tool-registration boilerplate. The `action='help'` output regenerates automatically from the schema.
+
+This is the property the user asked for: **"add new Ableton commands without updating the Remote Script component."** True for the declarative cases (most). For imperative cases, you add a function in `handlers/` but never touch the dispatcher.
+
+### 10.5 Distribution
+
+Single Python package on PyPI: `pip install hallucinote-mcp`. Console scripts:
+
+| Command | What it does |
+|---|---|
+| `hallucinote-mcp install` | Copies the Remote Script into `~/Music/Ableton/User Library/Remote Scripts/Hallucinote/` |
+| `hallucinote-mcp install --dev` | Symlinks instead (live updates on `git pull`) |
+| `hallucinote-mcp uninstall` | Symmetrical cleanup |
+| `hallucinote-mcp serve` | Starts the FastMCP server |
+| `hallucinote-mcp config` | Prints the MCP config snippet for `.mcp.json` / Claude Desktop |
+
+User experience after `pip install`:
+
+```
+hallucinote-mcp install
+# Then open Ableton → Preferences → Link/Tempo/MIDI → Control Surface → "Hallucinote"
+# (one-time selection per Live install)
+```
+
+That's the entire setup. The Remote Script install detail is hidden behind the installer.
+
+### 10.6 Where the upstream learnings go
+
+We're not throwing them away — we're absorbing them by **disciplined reference porting**. For each M-* chunk, the developer:
+
+1. Reads the new schema entries for that chunk's actions.
+2. References the upstream Remote Script (`uisato/ableton-mcp-extended` + `ahujasid/ableton-mcp`) to see how each Live API operation is currently implemented — which property paths, which type coercions, which threading patterns.
+3. Implements the new handler / declarative op in `hallucinote-mcp`'s style, encoding the same knowledge.
+
+Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexing convention, the device-routing probe) get re-implemented in `hallucinote-mcp`'s patterns. Same behavior, new shape.
+
+**This is not blank-slate.** It's clean-room *architecture* with intentional knowledge transfer.
 
 ---
 
-## 11. Hallucinote-Side Impact
+## 11. Migration Plan
 
-### 11.1 What changes
+### Phase 0 — Repo bootstrap
 
+- Create the `hallucinote-mcp` repo (greenfield, not a rename).
+- Scaffold: `pyproject.toml`, `hallucinote_mcp/{server,schema,handlers,remote_script}/`, console-script entry points, install/uninstall mechanisms.
+- README, LICENSE (MIT), NOTICE (attribution to upstream + great-grandparent).
+- Initial wire protocol + dispatcher infrastructure (no actions yet).
+
+### Phase 1 — Vertical slice (M-1)
+
+- Implement `ableton_session` end-to-end (server + schema + Remote Script handler + tests).
+- This is the architecture-validation slice — proves the full loop.
+- Hallucinote begins retargeting `mcp_names.ALIASES_TODAY` to canonical action shape.
+
+### Phase 2 — Resources + prompts
+
+- Land the `ableton://browser/*` resources.
+- Land the first three prompts.
+- Update `initialize` instructions.
+
+### Phase 3 — Remaining domains
+
+- M-2 through M-5 (track + return, clip + note, device + automation, arrangement + scene + browser).
+- Each chunk lands its handlers fresh in `hallucinote-mcp`.
+- Gap-flagged setters (mute/solo/arm/color, master, returns) land as actions — they didn't have narrow tools to begin with; this is net-new capability via consolidation.
+
+### Phase 4 — Hallucinote `.mcp.json` swap
+
+- When M-1's surface is functional in `hallucinote-mcp`, swap Hallucinote's `.mcp.json` to point at the new package.
+- The old fork stays runnable on the user's machine in parallel during the migration, then gets archived.
+
+### Phase 5 — Old fork archived
+
+- After Wave M completes, the `ableton-mcp-extended` fork gets archived on GitHub.
+- Archive README points at `hallucinote-mcp` for current development.
+
+### Phase 6 — Note + envelope pulls (Hallucinote-side)
+
+- Once `ableton_note` and `ableton_automation` are functional, the MCP-gap-blocked Hallucinote chunks (note pull, envelope pull, device parameter pull) unblock and ship.
+
+---
+
+## 12. Hallucinote-Side Impact
+
+### 12.1 What changes
+
+- **`.mcp.json`**: path swaps from `../ableton-mcp-extended/...` to the installed `hallucinote-mcp` (either a sibling clone for `--dev` use or the pip-installed entry point).
 - **`sync/mcp_names.py`**: shrinks from 22 entries to ~3-5 as unified tools land. The structure stays the same; the entries contract.
 - **`sync/push.py`**: `_DIRECT_MIXER_TOOLS` dictionary collapses — every mixer field becomes direct, dispatched via action on `ableton_track`. `plan_push_mix` emits ~30% fewer ToolCalls (combining mixer-property writes into batched-action shape if MCP supports it).
 - **`sync/push.py`**: `apply_push_results._ACK_ONLY_KINDS` shrinks for the same reason — fewer narrow keys to maintain.
@@ -552,12 +674,12 @@ Hallucinote's `sync/mcp_names.py` already exists for exactly this. The `ALIASES_
 - **`docs/mcp-requirements.md`**: most of the "P2" sections get marked resolved as the unified tools land. The gap doc shifts from "missing tools" to "missing capabilities" (e.g., note-level addressing, envelope read surface).
 - **`.claude/skills/ableton-pull/SKILL.md`**: simpler — the skill's `allowed-tools` list contracts to the 10 unified tools.
 
-### 11.2 What doesn't change
+### 12.2 What doesn't change
 
 - The DB schema. Pull and push semantics. Conflict policy. Generator API. Build governance.
 - The plan-and-apply architecture stays — only the call shape underneath changes.
 
-### 11.3 Estimated Hallucinote-side LOC delta
+### 12.3 Estimated Hallucinote-side LOC delta
 
 - ~200-line reduction in `sync/push.py` (consolidated emitters)
 - ~50-line reduction in `sync/pull.py`
@@ -567,7 +689,7 @@ Hallucinote's `sync/mcp_names.py` already exists for exactly this. The `ALIASES_
 
 ---
 
-## 12. Anti-Patterns Explicitly Rejected
+## 13. Anti-Patterns Explicitly Rejected
 
 Naming these so we don't reinvent them.
 
@@ -581,22 +703,28 @@ Naming these so we don't reinvent them.
 
 ---
 
-## 13. Open Questions (decisions needed)
+## 14. Open Questions (decisions needed)
 
-1. **Coordination with the AbletonMCP fork.** This redesign is upstream work on `ableton-mcp-extended`. Who owns the implementation timeline? Hallucinote can model the alias table around any cadence, but the migration needs a counterpart on the MCP side.
-2. **Backwards compat scope.** Phase 4 deprecation warnings live for how long? One minor release feels right for a single-user authoring tool; if there are other consumers, longer.
-3. **Note pull when gap #4 lands.** The `ableton_note` tool design here assumes note IDs become available. Validate against whatever shape the MCP gap fix actually delivers — adjust the action signatures before exposing them.
-4. **Drum-rack chains.** Cordyceps handles nested clusters carefully. AbletonMCP's nested rack chains (`InstrumentGroupDevice`, `DrumGroupDevice`) are the analog — should `ableton_device` action `info` recurse into chains, or is that a separate action `chain_info`? Lean toward recursive `info` with a depth parameter.
-5. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
-6. **Should `ableton_help` itself be a tool, or just server instructions + per-tool help?** Cordyceps doesn't have a top-level help tool — it relies on initialize instructions + per-tool action='help'. We may not need `ableton_help` either; drop to 9 tools if so.
-7. **Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design. Should it instead be `ableton_track(action='create', instrument_uri=...)` with the load folded into create? Arguably yes — and the prompt becomes thinner. Worth a design pass during Phase 1.
-8. **Repo identity for the MCP fork.** The current MCP server lives at `brookstalley/ableton-mcp-extended` (fork of `uisato/ableton-mcp-extended`, MIT). After this redesign, the MCP Server side is effectively rewritten. **Need a new repo name** (e.g. `live-mcp`, `hallucinote-ableton-bridge`) plus a README rewrite that positions the project on its own terms while preserving the MIT attribution to upstream. See build plan §M-0. **Decision needed: new name.**
-9. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
-10. **Quantize on a stub clip.** `ableton_clip(action='quantize', amount=0.5, swing=0.16)` — should `swing` be a separate `swing` action, or always a parameter on `quantize`? Live treats them as separate operations in the UI but they compose cleanly. Lean toward folding.
+**Resolved (kept here briefly so the rationale isn't lost):**
+
+- ~~Repo identity~~ → `hallucinote-mcp`, greenfield (new repo, not fork rename). MIT attribution preserved in NOTICE/LICENSE/README. Old fork archives at Wave M close.
+- ~~`ableton_help` as 10th tool~~ → Dropped. Server instructions + per-tool `action='help'` suffice. `ableton_scene` takes the slot.
+- ~~Architecture A (both layers) vs B (server-only)~~ → A. No existing users; cheaper to bite the bullet now than to retrofit later.
+- ~~Greenfield vs in-place rewrite~~ → Greenfield. Clean identity, infrastructure built around new architecture, knowledge disciplined-ported from upstream as historical reference.
+
+**Still open:**
+
+1. **Backwards compat scope.** Narrow tools (in the old fork) stay parallel through M-7; removed in M-8. Hallucinote is the only known consumer. Confirm this scope before M-1 begins.
+2. **Note pull when gap #4 lands.** The `ableton_note` tool design here assumes note IDs become available. Validate against whatever shape the MCP gap fix actually delivers — adjust the action signatures before exposing them.
+3. **Drum-rack chains.** Cordyceps handles nested clusters carefully. AbletonMCP's nested rack chains (`InstrumentGroupDevice`, `DrumGroupDevice`) are the analog — should `ableton_device` action `info` recurse into chains, or is that a separate action `chain_info`? Lean toward recursive `info` with a depth parameter.
+4. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
+5. **Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design. Should it instead be `ableton_track(action='create', instrument_uri=...)` with the load folded into create? Arguably yes — and the prompt becomes thinner. Worth a design pass during Phase 1.
+6. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
+7. **Quantize and swing folding.** `ableton_clip(action='quantize', amount=0.5, swing=0.16)` — should `swing` be a separate `swing` action, or always a parameter on `quantize`? Live treats them as separate operations in the UI but they compose cleanly. Lean toward folding.
 
 ---
 
-## 14. Decision Log
+## 15. Decision Log
 
 These are the load-bearing choices, captured so we can revisit later if needed.
 
@@ -608,10 +736,13 @@ These are the load-bearing choices, captured so we can revisit later if needed.
 | `ableton_note` exists even though blocked | Stable surface for agents; "blocked" responses teach the gap | Omit until gap #4 lands; problem: surprises agents who don't read the gap doc |
 | Aliases for one major version | Cordyceps practice; gives consumers time to migrate | Hard cutover (breaks Hallucinote at the moment of release) |
 | Errors carry valid_actions + example + hint | Cordyceps + Alpic both converge on this; measurable accuracy lift | Bare error string (status quo) |
+| Greenfield `hallucinote-mcp`, drop fork relationship | Clean project identity; no users to break; cheaper now than retrofit later. Architecture A (both server + Remote Script rewritten) lets infrastructure be built around new dispatch from day one. | In-place rename + squash of fork (less work but retains fork shape); Architecture B (server-only consolidation) — defers Remote Script work but creates transitional bugs |
+| Declarative-first dispatch with handler escape hatches | ~60-70% of Live ops are pure property/method calls; shared Python dataclass schema makes adding new ops a schema-edit, not a code-edit. Handler escape preserves expressiveness for complex cases. | Pure declarative (insufficient for snapshot/render/etc.); pure imperative (loses the "add new actions without touching dispatcher" property the user explicitly asked for) |
+| Repo name = `hallucinote-mcp` | "Tight integration with our core product" call. Binds MCP to product identity; signals "this is part of Hallucinote." | `live-mcp` (too generic, doesn't signal product binding); `hallucinote-live-bridge` (verbose) |
 
 ---
 
-## 15. Success Criteria
+## 16. Success Criteria
 
 Numbers we'll measure after Phase 5:
 
@@ -624,7 +755,7 @@ Numbers we'll measure after Phase 5:
 
 ---
 
-## 16. Forward-Looking Surface — Tiers and Speculation
+## 17. Forward-Looking Surface — Tiers and Speculation
 
 The 10 tools above absorb every current capability plus the near-term additions (scene, snapshot, quantize/groove). This section captures everything else we'll plausibly want — bucketed by horizon — so the next contributor sees both the present and the runway.
 

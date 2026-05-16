@@ -14,7 +14,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Formatting**: No formatter configured. Project follows PEP 8 spacing and ~88-col lines by convention. (Critic-enforced.)
 - **Linting**: None configured. Add ruff if/when style drift starts to matter. (Critic-enforced for now.)
 - **Type annotations**: Required on public functions. PEP 604 unions (`int | None`), `Sequence`/`Iterable` from `typing` for inputs, concrete `list[...]` for outputs. `from __future__ import annotations` at the top of every module.
-- **Imports**: Absolute (`from songwright.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
+- **Imports**: Absolute (`from hallucinote.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
 - **Docstrings**: Module docstrings stating intent + discipline. Function docstrings explain *why* and any non-obvious convention, not signatures (types carry that). One-liners are fine for trivial helpers.
 - **Comments**: Sparse. When present, they capture invariants, design rationale, or workarounds — not what the code does.
 
@@ -24,7 +24,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Style**: Descriptive function names (`test_replace_clip_notes_is_atomic`), assert-style, fixtures for shared setup. Helpers like `_make_note` for terse cases.
 - **Coverage expectations**: Happy path + key error paths. Event-emission paired with state change for every mutator. Cascades/FK behavior covered explicitly.
 - **Testing strategies**: Example-based currently. Hypothesis stanza is parked in `conftest.py` (commented) — turn it on for note-array transforms / serialization round-trips when those grow.
-- **Test location**: `tests/` mirrors `src/songwright/` modules (`test_mutations.py`, `test_push.py`, `test_generators.py`).
+- **Test location**: `tests/` mirrors `src/hallucinote/` modules (`test_mutations.py`, `test_push.py`, `test_generators.py`).
 - **Parallelization**: `pytest-xdist` is referenced by `conftest.py` (auto-groups by directory via `xdist_group`) but not currently installed; suite is ~0.2s so unnecessary. Install when the suite passes ~30s. The current setup produces a `PytestUnknownMarkWarning` until then.
 
 ## Architecture Patterns
@@ -32,7 +32,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Data modeling**: SQLite with raw schema in `db/schema.sql`. Rows surface as `sqlite3.Row` for reads; mutators take/return primitive dicts and ints. Dataclasses (`@dataclass`) for in-process value objects like `ToolCall` / `PushPlan`.
 - **Error handling**: Plain exceptions (`ValueError`, `KeyError`). No custom exception hierarchy. Never swallow exceptions silently — per CLAUDE.md Critical Rule, mark intentional broad catches with `# prawduct:ok-broad-except`.
 - **Async**: Sync throughout. SQLite WAL + `timeout=10.0`. No async planned — this is a single-user authoring tool.
-- **File organization**: Layer folders inside `src/songwright/`: `db/` (state + events + mutators + queries), `generators/` (pure musical building blocks), `sync/` (DB↔Ableton bridge). Song-specific builders live under `songs/<name>/build.py` and consume the library.
+- **File organization**: Layer folders inside `src/hallucinote/`: `db/` (state + events + mutators + queries), `generators/` (pure musical building blocks), `sync/` (DB↔Ableton bridge). Song-specific builders live under `songs/<name>/build.py` and consume the library.
 - **DB discipline (load-bearing)**: All writes go through `db.mutations`. Every mutator emits an `events` row in the same transaction. This is the seed for an eventual event-store flip — see `MEMORY.md`. **Never use raw SQL in callers** outside `db/`.
 - **Generators are pure**: `generators/*` functions take parameters and return `list[NoteDict]`. They never touch the DB or MCP. Persistence happens at the caller.
 - **Sync is a plan, not a side effect**: `sync.push` returns `PushPlan` / `ToolCall` objects. The agent executes; `apply_push_results` feeds outcomes back into the DB. Keeps the layer testable without Live running.
@@ -49,10 +49,14 @@ Developer preferences for how code is written in this project. Captured during d
 
 ## Workflow
 
-- **Branching**: feature-branches (default: feature-branches — create a branch for medium+ work, direct commits to protected branches only for trivial fixes; set to "direct" for solo projects where committing to main is OK)
-- **Protected branches**: main, develop (branches that should not receive direct commits unless branching is "direct")
-- **PR creation**: wait_for_user (default: wait_for_user — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes)
-- **PR merge**: wait_for_user (default: wait_for_user — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean)
+- **Branching model**: **gitflow** — `develop` is the primary integration branch; `main` is release-only.
+- **Branching**: feature-branches — every feature/fix branch is cut from `develop` and PR'd back to `develop`. Direct commits to protected branches only for trivial fixes (and only when `Branching` is `direct`, which it isn't here).
+- **Branch flow**:
+  - `feature/...` / `fix/...` / `refactor/...` → PR target: `develop`
+  - `develop` → `main`: release PRs only; cut periodically when a batch of work is ready to ship. No direct commits to `main`.
+- **Protected branches**: `main`, `develop` (no direct commits).
+- **PR creation**: `wait_for_user` (default — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes).
+- **PR merge**: `wait_for_user` (default — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean).
 
 ---
 

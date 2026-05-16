@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "AbletonMCP": {
-      "command": "python",
-      "args": ["/Users/brookstalley/source/ableton-mcp-extended/MCP_Server/server.py"]
+    "hallucinote-mcp": {
+      "command": "hallucinote-mcp",
+      "args": ["serve"]
     }
   }
 }

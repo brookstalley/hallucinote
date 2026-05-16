@@ -514,7 +514,7 @@ The MCP server is **fresh code in a new directory of this repo** (`hallucinote_m
 - **One CI pipeline catches integration regressions at PR time**, not later when a version pin gets bumped.
 - **Distribution is unaffected.** The `hallucinote_mcp/` subdirectory has its own `pyproject.toml` and is publishable to PyPI as `hallucinote-mcp` independently of the Hallucinote core. Standard multi-package monorepo layout.
 - **Infrastructure** (Live Control Surface registration, UDP server, threading model, dispatcher pattern) is built around the new unified-tool architecture from the start, not retrofitted onto fork-shaped code.
-- **MIT attribution** to upstream (`uisato/ableton-mcp-extended` + the great-grandparent `ahujasid/ableton-mcp`) is preserved in a root-level `NOTICE` file per MIT license requirements. The *code* is rewritten; the *knowledge* (which Live API property maps to which conceptual operation) is disciplined-ported.
+- **No source code is carried over from upstream.** No MIT attribution requirements apply because nothing from `uisato/ableton-mcp-extended` or `ahujasid/ableton-mcp` is copied — the codebase is a clean-room reimplementation from the Live API directly. The package README includes a short "thanks for proving the concept" line; that's it. No `NOTICE` file, no dual copyright.
 
 The old fork (`brookstalley/ableton-mcp-extended`) gets archived after Wave M completes, with a README pointing at this repo's `hallucinote_mcp/` directory.
 
@@ -592,12 +592,14 @@ This is the property the user asked for: **"add new Ableton commands without upd
 
 Single Python package on PyPI: `pip install hallucinote-mcp`. **Install is LLM-mediated via a Claude Code skill shipped inside the package**, not a Python file-manipulation script. Reasoning: Claude Code is a hard dependency for the whole product; the install workflow is exactly the kind of "user-mediated, adaptive, platform-aware" task LLMs excel at; natural-language skill instructions are more durable than path-detection code that breaks on every Ableton update or OS quirk.
 
-**Console scripts** (minimal — just bootstrap + the running server):
+**Console scripts** (minimal — just the running server; no install bootstrap):
 
 | Command | What it does |
 |---|---|
-| `hallucinote-mcp register` | One-time bootstrap: copies the bundled skills (`ableton-install-mcp`, `ableton-uninstall-mcp`) into `~/.claude/skills/`. Optionally runs automatically as a pip post-install hook. |
 | `hallucinote-mcp serve` | Starts the FastMCP server (the runtime entry point used by `.mcp.json`). |
+| `hallucinote-mcp version` | Prints the package version. |
+
+There is intentionally **no `register` console script and no post-install hook**. The user copies the bundled skill folder into `~/.claude/skills/` once (a one-line documented `cp -R`), and from then on the skill itself drives all installs/uninstalls/upgrades. The reasoning: post-install hooks are increasingly discouraged in modern Python packaging (uv ignores them, `pip install --no-deps` skips them, PEP 660 editable installs are inconsistent), and a register console script is functionally identical to a documented `cp -R`. The skill is the install primitive.
 
 **Skills shipped inside the package** (live at `hallucinote_mcp/skills/`):
 
@@ -626,17 +628,13 @@ Three steps. The middle one is the LLM doing what would otherwise be 200 lines o
 - Errors get diagnosed in natural language ("you don't have write permission to that folder; here's how to fix") rather than as exit codes.
 - One source of truth for the install procedure: the skill body.
 
-### 10.6 Where the upstream learnings go
+### 10.6 100% greenfield — Live API as the only reference
 
-We're not throwing them away — we're absorbing them by **disciplined reference porting**. For each M-* chunk, the developer:
+The codebase is written fresh from the Live Object Model documentation and direct experimentation against Live's Python embedding. We do **not** read upstream source code; we do not "disciplined-port" property paths or threading patterns. Whatever knowledge we need, we derive from Live's own API surface.
 
-1. Reads the new schema entries for that chunk's actions.
-2. References the upstream Remote Script (`uisato/ableton-mcp-extended` + `ahujasid/ableton-mcp`) to see how each Live API operation is currently implemented — which property paths, which type coercions, which threading patterns.
-3. Implements the new handler / declarative op in `hallucinote-mcp`'s style, encoding the same knowledge.
+This is a stricter discipline than "clean-room with reference" — it prevents accidental copyright inheritance and forces us to understand the Live API rather than transcribe someone else's understanding of it. Where upstream solved a problem we also need to solve (parameter naming, 1-based indexing, threading), we'll solve it independently. The result may end up similar in shape; that's convergent design, not derivation.
 
-Bug fixes that upstream has merged (the parameter-name fixes, the 1-based indexing convention, the device-routing probe) get re-implemented in `hallucinote-mcp`'s patterns. Same behavior, new shape.
-
-**This is not blank-slate.** It's clean-room *architecture* with intentional knowledge transfer.
+A short "thanks for proving the concept" line in the package README acknowledges the upstream projects without claiming any source-code lineage.
 
 ---
 

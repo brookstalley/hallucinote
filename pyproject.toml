@@ -18,5 +18,5 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "hallucinote_mcp/tests"]
 python_files = ["test_*.py"]

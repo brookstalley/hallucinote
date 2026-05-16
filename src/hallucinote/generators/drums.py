@@ -28,6 +28,7 @@ def _note(pitch: int, start: float, dur: float, vel: int, tags: list[str]) -> No
 def kick_stumble(
     bars: int,
     *,
+    start_beat: float = 0.0,
     strong_every: int = 4,
     accent_velocity: int = 118,
     base_velocity: int = 110,
@@ -40,7 +41,7 @@ def kick_stumble(
     """
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = b * 4.0
+        bs = start_beat + b * 4.0
         is_strong = b % strong_every == 0
         out.append(_note(pitch, bs, 0.25,
                          accent_velocity if is_strong else base_velocity,
@@ -57,6 +58,7 @@ def kick_stumble(
 def lazy_snare(
     bars: int,
     *,
+    start_beat: float = 0.0,
     pitch: int = SNARE,
     backbeat_velocity: int = 100,
     accent_velocity: int = 112,
@@ -65,7 +67,7 @@ def lazy_snare(
     """Laid-back 2 & 4. Tagged "snare" + "backbeat"."""
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = b * 4.0
+        bs = start_beat + b * 4.0
         out.append(_note(pitch, bs + 1.0 + lay_back, 0.25, backbeat_velocity,
                          ["snare", "backbeat"]))
         out.append(_note(pitch, bs + 3.0 + lay_back, 0.25, accent_velocity,
@@ -76,6 +78,7 @@ def lazy_snare(
 def trip_hop_hats(
     bars: int,
     *,
+    start_beat: float = 0.0,
     pitch: int = HAT_CLOSED,
     open_velocity: int = 80,
     ghost_velocity: int = 35,
@@ -90,7 +93,7 @@ def trip_hop_hats(
     boost = set(boost_bars)
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = b * 4.0
+        bs = start_beat + b * 4.0
         boosted = b in boost
         for i, t in enumerate([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]):
             if i % 2 == 0:
@@ -105,12 +108,13 @@ def trip_hop_hats(
 def tresillo_hats(
     bars: int,
     *,
+    start_beat: float = 0.0,
     pitch: int = HAT_CLOSED,
 ) -> list[NoteDict]:
     """Tresillo cell on closed hats. Used in chorus / calypso-feel sections."""
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = b * 4.0
+        bs = start_beat + b * 4.0
         for t, v in TRESILLO_HITS:
             # Translate the bass-side velocity profile to hat dynamics
             hat_vel = max(60, min(100, v - 5))
@@ -121,6 +125,7 @@ def tresillo_hats(
 def bossa_shaker(
     bars: int,
     *,
+    start_beat: float = 0.0,
     pitch: int = HAT_CLOSED,
     accent_velocity: int = 35,
     ghost_velocity: int = 24,
@@ -129,7 +134,7 @@ def bossa_shaker(
     """16th-note shaker with accent on every 4th 16th. Bars fade in via velocity."""
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = b * 4.0
+        bs = start_beat + b * 4.0
         for sixteenth in range(16):
             t = sixteenth * 0.25
             base = accent_velocity if sixteenth % 4 == 0 else ghost_velocity
@@ -192,6 +197,7 @@ def open_hat_lifts(
 def trip_hop_drum_pattern(
     bars: int,
     *,
+    start_beat: float = 0.0,
     fill_bars: Iterable[int] = (),
 ) -> list[NoteDict]:
     """Standard verse-style trip-hop drums for `bars` bars.
@@ -199,10 +205,13 @@ def trip_hop_drum_pattern(
     `fill_bars` get extra ghost garnish + boosted hat ghosts.
     """
     notes: list[NoteDict] = []
-    notes.extend(kick_stumble(bars))
-    notes.extend(lazy_snare(bars))
-    notes.extend(trip_hop_hats(bars, boost_bars=fill_bars))
-    notes.extend(ghost_kicks(fill_bars))
-    notes.extend(ghost_snares(fill_bars))
-    notes.extend(open_hat_lifts(fill_bars))
+    notes.extend(kick_stumble(bars, start_beat=start_beat))
+    notes.extend(lazy_snare(bars, start_beat=start_beat))
+    notes.extend(trip_hop_hats(bars, start_beat=start_beat, boost_bars=fill_bars))
+    # ghost_kicks / snares / lifts take bar indices; offset those by start_beat / 4
+    bar_offset = int(start_beat // 4)
+    shifted_fills = [b + bar_offset for b in fill_bars]
+    notes.extend(ghost_kicks(shifted_fills))
+    notes.extend(ghost_snares(shifted_fills))
+    notes.extend(open_hat_lifts(shifted_fills))
     return notes

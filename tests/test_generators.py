@@ -86,3 +86,33 @@ def test_tresillo_pluck_cycles():
     # Check pitches cycle through voicing
     pitches_first_bar = [n["pitch"] for n in notes[:6]]
     assert pitches_first_bar[0] == 62 and pitches_first_bar[3] == 62  # i % 3
+
+
+def test_drum_generators_respect_start_beat():
+    """All bar-based drum generators offset their start by `start_beat`."""
+    # kick_stumble — shifted bar 0 should land at start_beat.
+    notes = drums.kick_stumble(2, start_beat=16.0)
+    assert min(n["start_beats"] for n in notes) == 16.0
+    # lazy_snare
+    notes = drums.lazy_snare(2, start_beat=16.0)
+    assert min(n["start_beats"] for n in notes) >= 16.0
+    # trip_hop_hats
+    notes = drums.trip_hop_hats(1, start_beat=8.0)
+    assert min(n["start_beats"] for n in notes) == 8.0
+    # bossa_shaker
+    notes = drums.bossa_shaker(1, start_beat=12.0)
+    assert min(n["start_beats"] for n in notes) == 12.0
+    # tresillo_hats
+    notes = drums.tresillo_hats(1, start_beat=20.0)
+    assert min(n["start_beats"] for n in notes) == 20.0
+
+
+def test_trip_hop_drum_pattern_respects_start_beat_for_fills():
+    """The composer shifts fill_bars by start_beat too — ghosts land at the right bar."""
+    notes = drums.trip_hop_drum_pattern(4, start_beat=16.0, fill_bars=[3])
+    # Ghost kicks at bar index 3 should now be at beat 16 + 12 = 28, plus 3.5 = 31.5
+    ghosts = [n for n in notes if "ghost" in n["tags"] and "kick" in n["tags"]]
+    assert any(g["start_beats"] == 31.5 for g in ghosts), \
+        f"expected ghost kick at 31.5; got {[g['start_beats'] for g in ghosts]}"
+
+

@@ -2,7 +2,7 @@
 description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__AbletonMCP__get_session_info, mcp__AbletonMCP__get_track_info, mcp__AbletonMCP__list_return_tracks, mcp__AbletonMCP__get_track_sends, mcp__AbletonMCP__get_track_volume
+allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__AbletonMCP__get_session_info, mcp__AbletonMCP__get_track_info, mcp__AbletonMCP__list_return_tracks, mcp__AbletonMCP__get_track_sends, mcp__AbletonMCP__get_track_volume, mcp__AbletonMCP__get_cue_points
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
@@ -19,22 +19,27 @@ $ARGUMENTS
 Map the user's request — domain token OR natural language — onto one of these.
 
 **Available now (run these):**
-- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends.
+- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Free side-effect: also ingests global tempo + signature (they ride along in the same `get_session_info` probe).
+- `score-globals` — global tempo + global time signature ONLY (bar-1 rows in each map). Cheaper than `mix-state` if all you've changed is tempo or meter.
+- `cue-points` — arrangement cue point positions. **Names are NOT pulled** (MCP gap #13: `get_cue_points` returns numeric IDs, not the real names). Apply diffs name mismatches as warnings only.
 
 **MCP-gap-blocked (do NOT attempt — surface the gap and offer the closest available alternative):**
 - Notes / MIDI — blocked by MCP gap #4 (no note-level IDs). Pull-back of notes would be destructive (whole-clip rewrite); deferred until note-level addressing lands.
 - Automation envelopes — blocked by no MCP read surface for envelopes (see `docs/mcp-requirements.md` "Capture-side read").
 - Device parameter values — blocked by MCP gap #17b (`get_device_parameters` raises `No module named 'MCP_Server'`).
 - Nested rack chains — blocked by MCP nested-chain probe gap.
+- Per-arrangement (multi-point) tempo / signature changes — MCP read gap; only the global (bar-1) values are exposed via `get_session_info`.
 - Audio — out of scope; the schema doesn't model audio clips yet.
 
 **Natural-language mapping examples:**
 - "fader moves" / "mix tweaks" / "volume + pan" → `mix-state`
 - "send levels" / "reverb amounts" → `mix-state`
 - "mute / solo / arm changes" → `mix-state`
+- "tempo change" / "BPM" / "meter" / "time signature" → `score-globals` (or `mix-state` if you want master fader too)
+- "cue points" / "locators" / "arrangement markers" → `cue-points`
 - "midi notes" / "latest midi updates" → blocked. Explain gap #4. Do NOT run anything.
 - "device settings" / "compressor params" → blocked. Explain gap #17b.
-- "everything" → run every available domain in order (today: just `mix-state`).
+- "everything" → run every available domain in order: `mix-state`, then `cue-points`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
 
 If the request is ambiguous, ask one targeted question rather than guessing.
 
@@ -76,6 +81,7 @@ The result `result` MUST be the normalized shape `apply_pull_results` expects. T
 - `returns_list` → `[{"index": <1-based>, "name": <str>, "volume": <float>, "panning": <float>}, ...]`.
 - `track_info:<id>` → `{"name": <str>, "type": <str>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>, "arm": <bool>, "color": <int|null>}` (any field can be omitted; missing == "no probe data for this field" == do not change DB).
 - `track_sends:<id>` → `{"<return_name>": <float>, ...}`.
+- `cue_points_list` → `[{"position_bar": <float>, "name": <str|null>}, ...]` OR `[{"bar": <1-based int>, "beat": <float>, "name": <str|null>}, ...]`. Either shape is accepted; apply joins (bar, beat) → position_bar using the song's time signature map. Names are gap-flagged (#13) and not stored.
 
 If the MCP response shape doesn't match (e.g. `get_session_info` returns nested differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.
 

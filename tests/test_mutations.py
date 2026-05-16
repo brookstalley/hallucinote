@@ -81,6 +81,41 @@ def test_create_song_accepts_hyphen_and_underscore(conn):
     assert Q.get_song(conn, sid2)["name"] == "under_slug"
 
 
+def test_update_tempo_point_emits_update_event(conn, song):
+    pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    M.update_tempo_point(conn, point_id=pid, tempo_bpm=130.0)
+    rows = Q.get_tempo_map(conn, song)
+    assert len(rows) == 1
+    assert rows[0]["tempo_bpm"] == pytest.approx(130.0)
+    # Latest event should be TEMPO_POINT_UPDATED (not REMOVED + ADDED).
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.TEMPO_POINT_UPDATED
+
+
+def test_update_tempo_point_rejects_unknown_field(conn, song):
+    pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    with pytest.raises(ValueError, match="unsupported fields"):
+        M.update_tempo_point(conn, point_id=pid, start_bar=2.0)
+
+
+def test_update_tempo_point_rejects_non_positive_bpm(conn, song):
+    pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    with pytest.raises(ValueError, match="must be positive"):
+        M.update_tempo_point(conn, point_id=pid, tempo_bpm=-1)
+
+
+def test_update_time_signature_point_emits_update_event(conn, song):
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.update_time_signature_point(conn, point_id=pid, numerator=6, denominator=8)
+    rows = Q.get_time_signature_map(conn, song)
+    assert rows[0]["numerator"] == 6
+    assert rows[0]["denominator"] == 8
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.TIME_SIGNATURE_POINT_UPDATED
+
+
 def test_create_track_emits_event_and_links_to_song(conn, song):
     tid = M.create_track(conn, song_id=song, track_index=2, name="Bass")
     ev = _events(conn)[-1]

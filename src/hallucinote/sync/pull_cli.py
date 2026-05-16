@@ -17,9 +17,15 @@ DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
 `songs/<slug>/<slug>.db`. The `--db PATH` escape hatch exists for tests and
 non-standard layouts. Exactly one is required.
 
-`domain` is one of: mix-state. Future chunks add cue-points, devices,
-arrangement. Note pull, envelope pull, device-parameter pull, and nested
-rack pull are MCP-gap-blocked — they are not domains here.
+`domain` is one of:
+  - `mix-state`     — track + return + master mixer state + sends
+                      (also free-ride ingests global tempo + signature)
+  - `score-globals` — global tempo + signature only (bar-1 rows in each map)
+  - `cue-points`    — arrangement cue point positions (names gap-flagged)
+
+Future chunks add `devices` and `arrangement`. Note pull, envelope pull,
+device-parameter pull, and nested rack pull are MCP-gap-blocked — they are
+not domains here.
 """
 from __future__ import annotations
 
@@ -34,7 +40,9 @@ from hallucinote.sync import pull
 
 
 _DOMAINS = {
-    "mix-state": pull.plan_pull_mix,
+    "mix-state":     pull.plan_pull_mix,
+    "score-globals": pull.plan_pull_score_globals,
+    "cue-points":    pull.plan_pull_cue_points,
 }
 
 

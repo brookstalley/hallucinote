@@ -437,6 +437,220 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
 
 
 # ---------------------------------------------------------------------------
+# apply_pull_results — session_info / tempo (W3-2)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_session_tempo_adds_bar1_row_when_missing(conn, song, session):
+    results = [_result("session_info", {"tempo": 132.0})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    rows = Q.get_tempo_map(conn, song)
+    assert len(rows) == 1
+    assert rows[0]["start_bar"] == 1.0
+    assert rows[0]["tempo_bpm"] == pytest.approx(132.0)
+
+
+def test_apply_session_tempo_updates_existing_bar1_row(conn, song, session):
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    results = [_result("session_info", {"tempo": 130.0})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    rows = Q.get_tempo_map(conn, song)
+    assert len(rows) == 1  # still one row — updated in place, not add+remove
+    assert rows[0]["tempo_bpm"] == pytest.approx(130.0)
+
+
+def test_apply_session_tempo_idempotent_within_tolerance(conn, song, session):
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    results = [_result("session_info", {"tempo": 132.0005})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_session_tempo_leaves_other_points_untouched(conn, song, session):
+    """Multi-point tempo maps are MCP-gapped; pull must touch only bar-1."""
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    other_id = M.add_tempo_point(conn, song_id=song, start_bar=32.0,
+                                  tempo_bpm=140.0)
+    results = [_result("session_info", {"tempo": 130.0})]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    rows = Q.get_tempo_map(conn, song)
+    assert len(rows) == 2
+    other = next(r for r in rows if r["id"] == other_id)
+    assert other["tempo_bpm"] == pytest.approx(140.0)
+
+
+def test_apply_session_tempo_rejects_non_positive(conn, song, session):
+    results = [_result("session_info", {"tempo": -1})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert any("non-positive" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# apply_pull_results — session_info / signature (W3-2)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_session_signature_adds_bar1_row_when_missing(conn, song, session):
+    results = [_result("session_info", {"signature": "4/4"})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    rows = Q.get_time_signature_map(conn, song)
+    assert len(rows) == 1
+    assert rows[0]["numerator"] == 4
+    assert rows[0]["denominator"] == 4
+
+
+def test_apply_session_signature_updates_existing(conn, song, session):
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0,
+                               numerator=4, denominator=4)
+    results = [_result("session_info", {"signature": "6/8"})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    rows = Q.get_time_signature_map(conn, song)
+    assert len(rows) == 1
+    assert rows[0]["numerator"] == 6
+    assert rows[0]["denominator"] == 8
+
+
+def test_apply_session_signature_idempotent(conn, song, session):
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0,
+                               numerator=4, denominator=4)
+    results = [_result("session_info", {"signature": "4/4"})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_session_signature_parse_error_warns(conn, song, session):
+    results = [_result("session_info", {"signature": "garbage"})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert any("parse error" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# apply_pull_results — cue_points_list (W3-2)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_pull_cue_points_emits_single_probe(conn, song, session):
+    plan = pull.plan_pull_cue_points(conn, song_id=song, session_id=session)
+    assert [c.tool for c in plan.calls] == ["get_cue_points"]
+    assert plan.calls[0].key == "cue_points_list"
+
+
+def test_plan_pull_score_globals_emits_single_session_info_probe(conn, song, session):
+    """score-globals is the cheap subset of mix-state — one session_info probe."""
+    plan = pull.plan_pull_score_globals(conn, song_id=song, session_id=session)
+    assert [c.tool for c in plan.calls] == ["get_session_info"]
+    assert plan.calls[0].key == "session_info"
+
+
+def test_apply_cue_points_adds_new(conn, song, session):
+    results = [_result("cue_points_list", [
+        {"position_bar": 5.0, "name": "Verse"},
+        {"position_bar": 13.0, "name": "Chorus"},
+    ])]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 2
+    cues = Q.get_cue_points(conn, song)
+    assert len(cues) == 2
+    positions = sorted(c["position_bar"] for c in cues)
+    assert positions == [5.0, 13.0]
+
+
+def test_apply_cue_points_accepts_bar_beat_form(conn, song, session):
+    """Skill may pass either {position_bar} or {bar, beat}; apply joins (bar,
+    beat) -> position_bar via the song's time signature."""
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0,
+                               numerator=4, denominator=4)
+    results = [_result("cue_points_list", [
+        {"bar": 5, "beat": 2.0, "name": "Pickup"},
+    ])]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    cues = Q.get_cue_points(conn, song)
+    assert len(cues) == 1
+    # 4/4 -> beats_per_bar=4 -> position = 5 + 2/4 = 5.5
+    assert cues[0]["position_bar"] == pytest.approx(5.5)
+
+
+def test_apply_cue_points_drops_numeric_id_names(conn, song, session):
+    """MCP gap #13: names come back as numeric strings. Apply must NOT store
+    these — they'd clobber real names on later round-trips."""
+    results = [_result("cue_points_list", [
+        {"position_bar": 5.0, "name": "1"},
+        {"position_bar": 13.0, "name": "2"},
+    ])]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    cues = Q.get_cue_points(conn, song)
+    assert all(c["name"] is None for c in cues)
+
+
+def test_apply_cue_points_removes_db_cues_absent_from_ableton(conn, song, session):
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="Verse")
+    M.add_cue_point(conn, song_id=song, position_bar=13.0, name="Chorus")
+    # Ableton reports only one cue.
+    results = [_result("cue_points_list", [{"position_bar": 5.0}])]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    # 1 mutation: removed Chorus.
+    assert out.mutations == 1
+    cues = Q.get_cue_points(conn, song)
+    assert len(cues) == 1
+    assert cues[0]["position_bar"] == 5.0
+
+
+def test_apply_cue_points_position_match_is_no_op(conn, song, session):
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="Verse")
+    results = [_result("cue_points_list", [{"position_bar": 5.0, "name": "1"}])]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    # Name preserved.
+    assert Q.get_cue_points(conn, song)[0]["name"] == "Verse"
+
+
+def test_apply_cue_points_name_diff_warns_no_mutate(conn, song, session):
+    """If MCP gap #13 ever lifts and returns real names, a mismatch should be
+    surfaced as a warning — but apply still does NOT mutate the DB name from
+    pull data (writes go through the DB-authoritative path)."""
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="Verse")
+    results = [_result("cue_points_list",
+                       [{"position_bar": 5.0, "name": "VerseTakeTwo"}])]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert any("name mismatch" in w for w in out.warnings)
+    assert Q.get_cue_points(conn, song)[0]["name"] == "Verse"
+
+
+# ---------------------------------------------------------------------------
 # Round-trip: push -> mutate Ableton-side dict -> pull -> DB matches
 # ---------------------------------------------------------------------------
 

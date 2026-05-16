@@ -169,6 +169,53 @@ def plan_pull_mix(
     return plan
 
 
+def plan_pull_score_globals(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan a single `get_session_info` probe to pull the *global* score
+    parameters: tempo (bar 1) and time signature (bar 1) — plus master
+    volume/pan as a free side-effect (they share the same probe).
+
+    Multi-point tempo maps and per-arrangement signature changes are an MCP
+    read gap; this pulls only the global values.
+    """
+    plan = PullPlan()
+    plan.add(PullCall(
+        tool="get_session_info",
+        args={},
+        key="session_info",
+        purpose="pull global tempo + signature (+ master mixer state)",
+    ))
+    return plan
+
+
+def plan_pull_cue_points(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan a single `get_cue_points` probe.
+
+    Cue identity is `(position_bar)` with float-tolerance — matching by
+    position is the only stable handle today. Names are NOT pulled into the
+    DB: MCP gap #13 (`get_cue_points` returns numeric IDs, not names),
+    so any name returned would clobber real names. Apply diffs names as
+    *warnings* only.
+    """
+    plan = PullPlan()
+    plan.add(PullCall(
+        tool="get_cue_points",
+        args={},
+        key="cue_points_list",
+        purpose="pull arrangement cue points (positions only; names gap-flagged)",
+    ))
+    return plan
+
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
@@ -205,6 +252,17 @@ def _ints_differ(new: Any, existing: Any) -> bool:
     return int(new) != int(existing)
 
 
+def _parse_signature(s: Any) -> tuple[int, int]:
+    """Parse a `"N/D"` signature string. Raises ValueError on malformed input."""
+    parts = str(s).split("/")
+    if len(parts) != 2:
+        raise ValueError(f"expected 'N/D', got {s!r}")
+    num, den = int(parts[0]), int(parts[1])
+    if num <= 0 or den <= 0:
+        raise ValueError(f"signature {s!r}: numerator/denominator must be positive")
+    return num, den
+
+
 def _apply_session_info(
     conn: sqlite3.Connection,
     *,
@@ -216,11 +274,43 @@ def _apply_session_info(
     request_id: str | None,
     reason: str | None,
 ) -> None:
-    """Ingest master volume/pan. Tempo + signature pull lands in W3-2 — the
-    fields are present in `get_session_info` but their DB targets
-    (`tempo_map`, `time_signature_map`) need positional context we don't
-    have from a global probe alone."""
-    master_in = result.get("master") or {}
+    """Ingest fields from `get_session_info`: master volume/pan, plus the
+    *global* tempo + time signature (the bar-1 row in each map). Multi-point
+    tempo / signature maps are an MCP read gap — pull leaves any non-bar-1
+    rows untouched until per-point reads land."""
+    _apply_session_master(
+        conn, song_id=song_id, result=result, out=out,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    _apply_session_tempo(
+        conn, song_id=song_id, result=result, out=out,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    _apply_session_signature(
+        conn, song_id=song_id, result=result, out=out,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+
+
+def _apply_session_master(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest master volume/pan from `session_info.master`.
+
+    Contract: if the probe payload omits `master` entirely, this is a no-op —
+    no probe data is not a divergence. Counts/warnings reflect only the
+    fields the probe actually reported.
+    """
+    master_in = result.get("master")
+    if not master_in:
+        return
     master_row = next(
         (
             r for r in Q.get_tracks_for_song(conn, song_id)
@@ -260,6 +350,103 @@ def _apply_session_info(
     out.mutations += 1
     for k, v in changes.items():
         out.details.append(f"master {k}: {master_row[k]!r} -> {v!r}")
+
+
+def _apply_session_tempo(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Upsert the bar-1 tempo_map row from `session_info.tempo`. Per-arrangement
+    tempo points are an MCP read gap — multi-point maps stay untouched."""
+    tempo_in = result.get("tempo")
+    if tempo_in is None:
+        return
+    try:
+        bpm = float(tempo_in)
+    except (TypeError, ValueError):
+        out.warnings.append(f"session_info.tempo {tempo_in!r}: not a number; skipping")
+        return
+    if bpm <= 0:
+        out.warnings.append(f"session_info.tempo {bpm}: non-positive; skipping")
+        return
+    existing = next(
+        (r for r in Q.get_tempo_map(conn, song_id) if r["start_bar"] == 1.0),
+        None,
+    )
+    if existing is None:
+        M.add_tempo_point(
+            conn, song_id=song_id, start_bar=1.0, tempo_bpm=bpm, ramp="hold",
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(f"tempo: added bar-1 row at {bpm:g} bpm")
+        return
+    if not _floats_differ(bpm, existing["tempo_bpm"]):
+        out.no_ops += 1
+        return
+    M.update_tempo_point(
+        conn, point_id=existing["id"], tempo_bpm=bpm,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    out.mutations += 1
+    out.details.append(
+        f"tempo: {existing['tempo_bpm']:g} -> {bpm:g} bpm (bar 1)"
+    )
+
+
+def _apply_session_signature(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Upsert the bar-1 time_signature_map row from `session_info.signature`
+    (string `"N/D"`). Per-arrangement signature changes are an MCP read gap."""
+    sig_in = result.get("signature")
+    if sig_in is None:
+        return
+    try:
+        num, den = _parse_signature(sig_in)
+    except ValueError as e:
+        out.warnings.append(
+            f"session_info.signature {sig_in!r}: parse error ({e}); skipping"
+        )
+        return
+    existing = next(
+        (r for r in Q.get_time_signature_map(conn, song_id)
+         if r["start_bar"] == 1.0),
+        None,
+    )
+    if existing is None:
+        M.add_time_signature_point(
+            conn, song_id=song_id, start_bar=1.0, numerator=num, denominator=den,
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(f"signature: added bar-1 row at {num}/{den}")
+        return
+    if num == existing["numerator"] and den == existing["denominator"]:
+        out.no_ops += 1
+        return
+    M.update_time_signature_point(
+        conn, point_id=existing["id"], numerator=num, denominator=den,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    out.mutations += 1
+    out.details.append(
+        f"signature: {existing['numerator']}/{existing['denominator']} "
+        f"-> {num}/{den} (bar 1)"
+    )
 
 
 def _apply_returns_list(
@@ -496,12 +683,130 @@ def _apply_track_sends(
         )
 
 
+def _beats_per_bar(numerator: int, denominator: int) -> float:
+    """Inverse helper to `push._beats_per_bar`: Live counts a beat as a quarter
+    note regardless of meter, so beats-per-bar = numerator * (4 / denominator)."""
+    return numerator * (4.0 / denominator)
+
+
+def _join_bar_beat(
+    bar: int,
+    beat: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Inverse of `push._split_bar`: combine a 1-based bar int + 0-based beat
+    float into a fractional `position_bar` using the song's time-signature
+    map. Empty `ts_points` defaults to 4/4."""
+    num, den = (4, 4)
+    if ts_points:
+        # Use the latest signature at-or-before this bar.
+        chosen = ts_points[0]
+        for p in ts_points:
+            if p["start_bar"] <= bar:
+                chosen = p
+            else:
+                break
+        num, den = (chosen["numerator"], chosen["denominator"])
+    return float(bar) + (float(beat) / _beats_per_bar(num, den))
+
+
+def _is_numeric_id_name(s: Any) -> bool:
+    """MCP gap #13: `get_cue_points` returns numeric strings ('1', '2', ...)
+    instead of the real names. Detect so we don't clobber DB names with these."""
+    return isinstance(s, str) and s.isdigit()
+
+
+def _apply_cue_points_list(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    result: list[dict[str, Any]],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest Ableton's cue points by position.
+
+    Matching: `(position_bar)` with float tolerance. Names are not pulled
+    into the DB (MCP gap #13). Three diff classes:
+      - position present in Ableton, absent in DB -> add_cue_point
+      - position present in both -> no-op (with a name-mismatch warning if
+        the pulled name is non-numeric and differs from DB)
+      - position present in DB, absent in Ableton -> remove_cue_point
+    """
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    db_cues = list(Q.get_cue_points(conn, song_id))
+    # Round to fixed precision for tolerant matching (1/1000 of a bar — way
+    # finer than any musically meaningful cue placement).
+    pos_key = lambda pb: round(float(pb), 3)
+    db_by_pos: dict[float, sqlite3.Row] = {pos_key(c["position_bar"]): c for c in db_cues}
+    seen: set[float] = set()
+
+    for entry in result:
+        # Accept either {position_bar: float} or {bar: int, beat: float}.
+        if "position_bar" in entry:
+            position_bar = float(entry["position_bar"])
+        elif "bar" in entry:
+            position_bar = _join_bar_beat(
+                int(entry["bar"]), float(entry.get("beat", 0.0)), ts_points
+            )
+        else:
+            out.warnings.append(
+                f"cue_points_list entry missing position: {entry!r}"
+            )
+            continue
+        k = pos_key(position_bar)
+        seen.add(k)
+        existing = db_by_pos.get(k)
+        name_in = entry.get("name")
+        if existing is None:
+            # New from Ableton — add. Drop numeric-ID names (gap #13).
+            stored_name = None if _is_numeric_id_name(name_in) else name_in
+            M.add_cue_point(
+                conn, song_id=song_id, position_bar=position_bar,
+                name=stored_name,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            out.mutations += 1
+            out.details.append(
+                f"cue: added at bar {position_bar:g}"
+                + (f" (name={stored_name!r})" if stored_name else "")
+            )
+            continue
+        # Position matches. Flag name diffs but don't mutate (gap #13).
+        if (name_in
+            and not _is_numeric_id_name(name_in)
+            and name_in != existing["name"]):
+            out.warnings.append(
+                f"cue at bar {position_bar:g}: name mismatch "
+                f"(DB={existing['name']!r}, Ableton={name_in!r}); "
+                "names not pulled (MCP gap #13)"
+            )
+        out.no_ops += 1
+
+    # Removals: DB cues not seen in Ableton.
+    for c in db_cues:
+        if pos_key(c["position_bar"]) in seen:
+            continue
+        M.remove_cue_point(
+            conn, cue_id=c["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"cue: removed at bar {c['position_bar']:g}"
+            + (f" (was {c['name']!r})" if c["name"] else "")
+        )
+
+
 # Dispatch table: key kind -> (handler, expects-db-id)
 _HANDLERS = {
-    "session_info":  ("session_info",  False),
-    "returns_list":  ("returns_list",  False),
-    "track_info":    ("track_info",    True),
-    "track_sends":   ("track_sends",   True),
+    "session_info":     ("session_info",     False),
+    "returns_list":     ("returns_list",     False),
+    "track_info":       ("track_info",       True),
+    "track_sends":      ("track_sends",      True),
+    "cue_points_list":  ("cue_points_list",  False),
 }
 
 
@@ -583,6 +888,11 @@ def apply_pull_results(
                 _apply_track_sends(
                     conn, song_id=song_id, session_id=session_id,
                     track_id=db_id, result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "cue_points_list":
+                _apply_cue_points_list(
+                    conn, song_id=song_id, result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
 

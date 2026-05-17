@@ -377,6 +377,64 @@ def plan_pull_arrangement_clips(
     return plan
 
 
+def plan_pull_session_clips(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull per-track session-view clip-slot contents
+    (V1 close-out Chunk C).
+
+    Emits one ``ableton_clip(action='list', location='session',
+    track_index=N)`` per linked authoring track. The probe returns dense
+    per-slot entries — populated slots carry
+    ``{clip_index, empty: False, name, length}``; empty slots carry
+    ``{clip_index, empty: True}``. The apply layer diffs by slot
+    (``clips.slot``, which Ableton calls ``clip_index``), the most
+    stable identity available for session-view clips.
+
+    Skips `master` track rows: master has no session-view clip grid.
+    Real returns live in the `returns` table and don't appear in the
+    `tracks` iteration this planner walks.
+
+    Symmetric with `plan_pull_arrangement_clips`. The MCP read side
+    shipped in M+1-3a; this planner closes the sync-layer half so
+    edits made in Ableton's Session View round-trip back to the DB.
+    """
+    plan = PullPlan()
+    any_emitted = False
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"]
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}) not linked in session — "
+                "push it via plan_push_clip first, then re-run pull"
+            )
+            continue
+        any_emitted = True
+        plan.add(PullCall(
+            tool="ableton_clip",
+            args={
+                "action": "list",
+                "location": "session",
+                "track_index": track_at,
+            },
+            key=f"track_session_clips:{t['id']}",
+            purpose=f"pull session-view clip slots for track {t['name']!r}",
+        ))
+    if not any_emitted:
+        plan.warn(
+            "no tracks linked in this session — "
+            "session-clip pull will be empty"
+        )
+    return plan
+
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
@@ -1441,6 +1499,161 @@ def _apply_arrangement_clips_for_track(
         )
 
 
+def _apply_session_clips_for_track(
+    conn: sqlite3.Connection,
+    *,
+    result: dict[str, Any],
+    track_id: str,
+    song_id: str,
+    session_id: str,
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff session-view clip-slot contents on one track against the probe
+    payload (V1 close-out Chunk C).
+
+    Identity is slot-positional: matched by `clips.slot` (the 1-based
+    clip-slot index Ableton calls `clip_index`). Slots are the stablest
+    addressing Live exposes for session clips, so the diff is cleaner
+    than arrangement-clip's `(start_bar, end_bar)` matching.
+
+    Diff classes handled:
+      - slot populated in both DB and Ableton, name + length match -> no-op
+      - slot populated in both, name and/or length drift           -> `update_clip` with the drifted fields
+      - slot populated in DB only (Ableton slot empty)             -> `delete_clip`
+      - slot populated in Ableton only                             -> warn + skip
+        (V1 can't auto-create the DB clip from name + length alone;
+         note pull would let us fill in content, but distinguishing a
+         brand-new session clip from a moved-into-this-slot existing
+         clip is the same identity problem as the arrangement case)
+
+    Note content drift is NOT detected here — that's Chunk D's job
+    (note pull via stable-ID read). This planner only diffs the
+    container-level fields (`name`, `length`) the MCP read action
+    returns.
+
+    Defense-in-depth link check parallels `_apply_arrangement_clips_for_track`.
+    """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"track_session_clips for {track_id!r}: not linked in session; "
+            "skipping (the planner would not have emitted this)"
+        )
+        return
+
+    track_row = Q.get_track(conn, track_id)
+    if track_row is None:
+        out.warnings.append(
+            f"track_session_clips:{track_id} — DB row missing; skipping"
+        )
+        return
+
+    clips_in = result.get("clips")
+    if clips_in is None:
+        out.warnings.append(
+            f"track_session_clips for {track_id!r}: result missing "
+            "'clips' field"
+        )
+        return
+
+    db_by_slot: dict[int, sqlite3.Row] = {
+        int(c["slot"]): c for c in Q.get_clips_for_track(conn, track_id)
+    }
+    seen: set[int] = set()
+
+    for entry in clips_in:
+        slot_in = entry.get("clip_index")
+        if slot_in is None:
+            out.warnings.append(
+                f"track_session_clips for {track_id!r}: entry missing "
+                f"'clip_index': {entry!r}"
+            )
+            continue
+        slot = int(slot_in)
+        seen.add(slot)
+        empty = bool(entry.get("empty", False))
+        db_clip = db_by_slot.get(slot)
+
+        if empty:
+            # Ableton slot empty; if DB has a clip, delete it.
+            if db_clip is not None:
+                M.delete_clip(
+                    conn, clip_id=db_clip["id"],
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+                out.mutations += 1
+                out.details.append(
+                    f"track {track_row['name']!r}: session slot {slot} "
+                    f"cleared in Ableton -> deleted DB clip "
+                    f"(clip_id={db_clip['id'][:8]} {db_clip['name']!r})"
+                )
+            else:
+                out.no_ops += 1
+            continue
+
+        # Ableton slot populated.
+        if db_clip is None:
+            # Ableton has content the DB doesn't know about. Same V1
+            # limitation as the arrangement-clip case: positional
+            # matching can't distinguish a brand-new clip from a
+            # session-side move, and the MCP wire shape doesn't carry
+            # note content for auto-create.
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} has "
+                f"clip {entry.get('name')!r} (length {entry.get('length')}) "
+                "with no matching DB clip — V1 does not auto-add. "
+                "Mirror the change in DB (create the clip + author notes) "
+                "and re-run pull."
+            )
+            continue
+
+        # Both populated -> check for drift.
+        changes: dict[str, Any] = {}
+        name_in = entry.get("name")
+        if name_in is not None and name_in != db_clip["name"]:
+            changes["name"] = name_in
+        len_in = entry.get("length")
+        if _floats_differ(len_in, db_clip["length_beats"]):
+            changes["length_beats"] = float(len_in)
+        if changes:
+            M.update_clip(
+                conn, clip_id=db_clip["id"],
+                actor=actor, request_id=request_id, reason=reason,
+                **changes,
+            )
+            out.mutations += 1
+            out.details.append(
+                f"track {track_row['name']!r}: session slot {slot} updated "
+                f"(clip_id={db_clip['id'][:8]}): {changes!r}"
+            )
+        else:
+            out.no_ops += 1
+
+    # Slots present in DB but NOT reported by Ableton's dense list:
+    # treat as deletion. Ableton's `list` action returns every slot in
+    # the track range, so a "missing" slot means we have a DB clip at
+    # a slot index past Ableton's known range (the track was shortened
+    # in Live, or the DB rows reference indices that no longer exist).
+    for slot, db_clip in db_by_slot.items():
+        if slot in seen:
+            continue
+        M.delete_clip(
+            conn, clip_id=db_clip["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"track {track_row['name']!r}: session slot {slot} out of "
+            f"Ableton range -> deleted DB clip "
+            f"(clip_id={db_clip['id'][:8]} {db_clip['name']!r})"
+        )
+
+
 # Dispatch table: key kind -> (handler, expects-db-id)
 _HANDLERS = {
     "session_info":              ("session_info",              False),
@@ -1452,6 +1665,7 @@ _HANDLERS = {
     "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
     "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
+    "track_session_clips":       ("track_session_clips",       True),   # V1 close-out C
 }
 
 
@@ -1562,6 +1776,12 @@ def apply_pull_results(
                 )
             elif handler_name == "track_arrangement_clips":
                 _apply_arrangement_clips_for_track(
+                    conn, song_id=song_id, session_id=session_id,
+                    track_id=db_id, result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_session_clips":
+                _apply_session_clips_for_track(
                     conn, song_id=song_id, session_id=session_id,
                     track_id=db_id, result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,

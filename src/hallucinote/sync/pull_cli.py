@@ -30,9 +30,16 @@ non-standard layouts. Exactly one is required.
                           auto-create a `clips` row); name diffs not detected
                           (no `name` column on `arrangement_clips` — names
                           live on `clips.name`).
+  - `session-clips`     — per-track session-view clip-slot contents
+                          (slot, name, length). Ableton-only slots warn
+                          (same V1 limit as arrangement-clips). Note
+                          content drift is not detected here — that
+                          rides on the gap #4 partial resolution
+                          (note pull) when it lands.
 
-Note pull, envelope pull, device-parameter pull, and nested rack pull are
-MCP-gap-blocked — they are not domains here.
+Envelope pull, device-parameter pull, and nested rack pull are still
+MCP-gap-blocked — they are not domains here. Note pull is V1 scope
+but separate (Chunk D of the close-out plan).
 """
 from __future__ import annotations
 
@@ -52,6 +59,7 @@ _DOMAINS = {
     "cue-points":        pull.plan_pull_cue_points,
     "devices":           pull.plan_pull_devices,
     "arrangement-clips": pull.plan_pull_arrangement_clips,
+    "session-clips":     pull.plan_pull_session_clips,
 }
 
 

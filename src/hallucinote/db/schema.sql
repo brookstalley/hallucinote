@@ -112,17 +112,19 @@ CREATE INDEX IF NOT EXISTS idx_arrangement_clip ON arrangement(clip_id);
 -- Bar positions are REAL and 1-based across the codebase (matching Live's
 -- MCP tools — see docs/mcp-requirements.md). The first bar of a song is
 -- `bar = 1.0`. The sync layer splits fractional bar positions into
--- `(bar: int, beat: float)` for MCP at the boundary.
+-- `(bar: int, beat: float)` for MCP at the boundary. The 1-based invariant
+-- is enforced at the schema layer via per-table CHECK constraints below
+-- (J-6) and at the sync boundary by `sync.push._split_bar`.
 --
--- Section spans are half-open: `[start_bar, end_bar)`. A section running
--- bars 1..16 has start_bar=1, end_bar=16 (16 bars total — bars 1..15 are
--- inside; bar 16 is the next section's start).
+-- Section spans are half-open: `[start_bar, end_bar)`. A 16-bar section
+-- starting at bar 1 has start_bar=1, end_bar=17 — bars 1..16 inclusive
+-- are inside; bar 17 is the next section's start.
 
 CREATE TABLE IF NOT EXISTS sections (
     id              TEXT PRIMARY KEY,
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
-    start_bar       REAL NOT NULL,
+    start_bar       REAL NOT NULL CHECK (start_bar >= 1.0),
     end_bar         REAL NOT NULL,
     color           INTEGER,
     notes_md        TEXT,
@@ -134,7 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_sections_song ON sections(song_id);
 CREATE TABLE IF NOT EXISTS tempo_map (
     id              TEXT PRIMARY KEY,
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
-    start_bar       REAL NOT NULL,
+    start_bar       REAL NOT NULL CHECK (start_bar >= 1.0),
     tempo_bpm       REAL NOT NULL CHECK (tempo_bpm > 0),
     ramp            TEXT NOT NULL DEFAULT 'hold'
                         CHECK (ramp IN ('linear', 'hold')),
@@ -146,7 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_tempo_map_song ON tempo_map(song_id, start_bar);
 CREATE TABLE IF NOT EXISTS time_signature_map (
     id              TEXT PRIMARY KEY,
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
-    start_bar       REAL NOT NULL,
+    start_bar       REAL NOT NULL CHECK (start_bar >= 1.0),
     numerator       INTEGER NOT NULL CHECK (numerator > 0),
     denominator     INTEGER NOT NULL CHECK (denominator > 0),
     UNIQUE(song_id, start_bar)
@@ -158,7 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_time_signature_map_song
 CREATE TABLE IF NOT EXISTS cue_points (
     id              TEXT PRIMARY KEY,
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
-    position_bar    REAL NOT NULL,
+    position_bar    REAL NOT NULL CHECK (position_bar >= 1.0),
     name            TEXT,
     color           INTEGER
 );

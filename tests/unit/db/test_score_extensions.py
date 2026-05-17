@@ -83,8 +83,8 @@ def test_create_section_emits_event_and_returns_uuid(conn, song):
         conn,
         song_id=song,
         name="verse",
-        start_bar=0.0,
-        end_bar=16.0,
+        start_bar=1.0,
+        end_bar=17.0,
         color=0x4080FF,
         notes_md="four chord progression",
     )
@@ -98,7 +98,7 @@ def test_create_section_emits_event_and_returns_uuid(conn, song):
     assert last["kind"] == E.SECTION_CREATED
     payload = json.loads(last["payload_json"])
     assert payload["section_id"] == sid
-    assert payload["start_bar"] == 0.0 and payload["end_bar"] == 16.0
+    assert payload["start_bar"] == 1.0 and payload["end_bar"] == 17.0
 
 
 def test_create_section_rejects_inverted_span(conn, song):
@@ -107,30 +107,30 @@ def test_create_section_rejects_inverted_span(conn, song):
 
 
 def test_update_section_changes_fields_and_emits_event(conn, song):
-    sid = M.create_section(conn, song_id=song, name="verse", start_bar=0.0, end_bar=8.0)
-    M.update_section(conn, section_id=sid, end_bar=16.0, name="long-verse")
+    sid = M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=9.0)
+    M.update_section(conn, section_id=sid, end_bar=17.0, name="long-verse")
     row = Q.get_sections_for_song(conn, song)[0]
-    assert row["end_bar"] == 16.0 and row["name"] == "long-verse"
+    assert row["end_bar"] == 17.0 and row["name"] == "long-verse"
     last = _events(conn)[-1]
     assert last["kind"] == E.SECTION_UPDATED
     payload = json.loads(last["payload_json"])
-    assert payload["changes"] == {"end_bar": 16.0, "name": "long-verse"}
+    assert payload["changes"] == {"end_bar": 17.0, "name": "long-verse"}
 
 
 def test_update_section_rejects_inverted_resulting_span(conn, song):
-    sid = M.create_section(conn, song_id=song, name="v", start_bar=0.0, end_bar=8.0)
+    sid = M.create_section(conn, song_id=song, name="v", start_bar=1.0, end_bar=9.0)
     with pytest.raises(ValueError, match="must exceed start_bar"):
         M.update_section(conn, section_id=sid, start_bar=10.0)
 
 
 def test_update_section_rejects_unknown_field(conn, song):
-    sid = M.create_section(conn, song_id=song, name="v", start_bar=0.0, end_bar=8.0)
+    sid = M.create_section(conn, song_id=song, name="v", start_bar=1.0, end_bar=9.0)
     with pytest.raises(ValueError, match="unsupported fields"):
         M.update_section(conn, section_id=sid, bogus=1)
 
 
 def test_delete_section_emits_event(conn, song):
-    sid = M.create_section(conn, song_id=song, name="v", start_bar=0.0, end_bar=8.0)
+    sid = M.create_section(conn, song_id=song, name="v", start_bar=1.0, end_bar=9.0)
     M.delete_section(conn, section_id=sid)
     assert Q.get_sections_for_song(conn, song) == []
     last = _events(conn)[-1]
@@ -138,7 +138,7 @@ def test_delete_section_emits_event(conn, song):
 
 
 def test_section_delete_cascades_with_song(conn, song):
-    M.create_section(conn, song_id=song, name="v", start_bar=0.0, end_bar=8.0)
+    M.create_section(conn, song_id=song, name="v", start_bar=1.0, end_bar=9.0)
     conn.execute("DELETE FROM songs WHERE id=?", (song,))
     assert (
         conn.execute("SELECT COUNT(*) FROM sections WHERE song_id=?", (song,))
@@ -151,7 +151,7 @@ def test_section_delete_cascades_with_song(conn, song):
 
 
 def test_add_tempo_point_emits_event(conn, song):
-    pid = M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=132.0)
+    pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
     rows = Q.get_tempo_map(conn, song)
     assert len(rows) == 1 and rows[0]["tempo_bpm"] == 132.0 and rows[0]["ramp"] == "hold"
     last = _events(conn)[-1]
@@ -160,31 +160,31 @@ def test_add_tempo_point_emits_event(conn, song):
 
 
 def test_add_tempo_point_accepts_linear_ramp(conn, song):
-    M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=132.0)
-    M.add_tempo_point(conn, song_id=song, start_bar=16.0, tempo_bpm=80.0, ramp="linear")
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    M.add_tempo_point(conn, song_id=song, start_bar=17.0, tempo_bpm=80.0, ramp="linear")
     rows = Q.get_tempo_map(conn, song)
-    assert [r["start_bar"] for r in rows] == [0.0, 16.0]
+    assert [r["start_bar"] for r in rows] == [1.0, 17.0]
     assert rows[1]["ramp"] == "linear"
 
 
 def test_add_tempo_point_rejects_invalid_ramp(conn, song):
     with pytest.raises(ValueError, match="invalid ramp"):
-        M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=132.0, ramp="curve")
+        M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0, ramp="curve")
 
 
 def test_add_tempo_point_rejects_nonpositive_bpm(conn, song):
     with pytest.raises(ValueError, match="positive"):
-        M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=0.0)
+        M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=0.0)
 
 
 def test_tempo_map_unique_per_bar(conn, song):
-    M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=132.0)
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
     with pytest.raises(sqlite3.IntegrityError):
-        M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=100.0)
+        M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=100.0)
 
 
 def test_remove_tempo_point_emits_event(conn, song):
-    pid = M.add_tempo_point(conn, song_id=song, start_bar=0.0, tempo_bpm=132.0)
+    pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
     M.remove_tempo_point(conn, point_id=pid)
     assert Q.get_tempo_map(conn, song) == []
     last = _events(conn)[-1]
@@ -196,7 +196,7 @@ def test_remove_tempo_point_emits_event(conn, song):
 
 def test_add_time_signature_point_emits_event(conn, song):
     pid = M.add_time_signature_point(
-        conn, song_id=song, start_bar=0.0, numerator=4, denominator=4
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     rows = Q.get_time_signature_map(conn, song)
     assert len(rows) == 1 and rows[0]["numerator"] == 4 and rows[0]["denominator"] == 4
@@ -207,7 +207,7 @@ def test_add_time_signature_point_emits_event(conn, song):
 
 def test_add_time_signature_point_supports_compound_meter(conn, song):
     M.add_time_signature_point(
-        conn, song_id=song, start_bar=0.0, numerator=6, denominator=8
+        conn, song_id=song, start_bar=1.0, numerator=6, denominator=8
     )
     row = Q.get_time_signature_map(conn, song)[0]
     assert (row["numerator"], row["denominator"]) == (6, 8)
@@ -216,13 +216,13 @@ def test_add_time_signature_point_supports_compound_meter(conn, song):
 def test_add_time_signature_point_rejects_nonpositive(conn, song):
     with pytest.raises(ValueError, match="positive"):
         M.add_time_signature_point(
-            conn, song_id=song, start_bar=0.0, numerator=0, denominator=4
+            conn, song_id=song, start_bar=1.0, numerator=0, denominator=4
         )
 
 
 def test_remove_time_signature_point_emits_event(conn, song):
     pid = M.add_time_signature_point(
-        conn, song_id=song, start_bar=0.0, numerator=4, denominator=4
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     M.remove_time_signature_point(conn, point_id=pid)
     assert Q.get_time_signature_map(conn, song) == []
@@ -246,14 +246,14 @@ def test_add_cue_point_emits_event(conn, song):
 
 def test_cue_points_returned_in_order(conn, song):
     M.add_cue_point(conn, song_id=song, position_bar=16.0, name="b")
-    M.add_cue_point(conn, song_id=song, position_bar=0.0, name="a")
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="a")
     M.add_cue_point(conn, song_id=song, position_bar=8.0, name="middle")
     names = [r["name"] for r in Q.get_cue_points(conn, song)]
     assert names == ["a", "middle", "b"]
 
 
 def test_remove_cue_point_emits_event(conn, song):
-    pid = M.add_cue_point(conn, song_id=song, position_bar=0.0, name="start")
+    pid = M.add_cue_point(conn, song_id=song, position_bar=1.0, name="start")
     M.remove_cue_point(conn, cue_id=pid)
     assert Q.get_cue_points(conn, song) == []
     last = _events(conn)[-1]
@@ -265,12 +265,12 @@ def test_remove_cue_point_emits_event(conn, song):
 
 def test_score_tables_cascade_with_song(conn):
     sid = M.create_song(conn, name="cascading")
-    M.create_section(conn, song_id=sid, name="v", start_bar=0.0, end_bar=8.0)
-    M.add_tempo_point(conn, song_id=sid, start_bar=0.0, tempo_bpm=120.0)
+    M.create_section(conn, song_id=sid, name="v", start_bar=1.0, end_bar=9.0)
+    M.add_tempo_point(conn, song_id=sid, start_bar=1.0, tempo_bpm=120.0)
     M.add_time_signature_point(
-        conn, song_id=sid, start_bar=0.0, numerator=4, denominator=4
+        conn, song_id=sid, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_cue_point(conn, song_id=sid, position_bar=0.0, name="x")
+    M.add_cue_point(conn, song_id=sid, position_bar=1.0, name="x")
     conn.execute("DELETE FROM songs WHERE id=?", (sid,))
     for table in ("sections", "tempo_map", "time_signature_map", "cue_points"):
         cnt = conn.execute(

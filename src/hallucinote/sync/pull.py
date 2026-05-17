@@ -1296,6 +1296,7 @@ def _apply_arrangement_clips_for_track(
       - `(start, end)` in both DB and Ableton  -> no-op
       - `(start, end)` in DB only              -> `remove_arrangement_clip`
       - `(start, end)` in Ableton only         -> warn + skip
+      - duplicate `(start, end)` in DB         -> warn + first-row-wins
 
     Why warn-and-skip on Ableton-only: positional matching cannot tell
     a *new* placement (user drew/duplicated a clip) from a *moved*
@@ -1305,7 +1306,9 @@ def _apply_arrangement_clips_for_track(
     underlying `clips` row already exists but the apply layer has no way
     to know which DB row Ableton's placement came from. V1 takes no
     action either way; the user mirrors the change in DB and re-runs
-    pull on the next pass.
+    pull on the next pass. The remove `details` line carries the
+    removed row's `clip_id` prefix + `clip_name` so the user can
+    correlate the two halves of a move case manually.
 
     Renames not detected: the `arrangement_clips` table has no `name` column;
     display names live on `clips.name`. Manual renames of an arrangement
@@ -1346,13 +1349,29 @@ def _apply_arrangement_clips_for_track(
     def _pos_key(b: float) -> float:
         return round(float(b), 3)
 
-    db_rows = [
-        r for r in Q.get_arrangement_for_song(conn, song_id)
-        if r["track_id"] == track_id
-    ]
-    db_by_pos: dict[tuple[float, float], sqlite3.Row] = {
-        (_pos_key(r["start_bar"]), _pos_key(r["end_bar"])): r for r in db_rows
-    }
+    db_rows = Q.get_arrangement_for_track(conn, track_id)
+    # Build a positional lookup; warn on any duplicate (start_bar, end_bar)
+    # key because the dict would otherwise silently keep only the last row
+    # at that position and the diff would under-report. Exact-coincidence
+    # on the same track is rare in practice (Live permits overlap but two
+    # placements with identical start AND end bars is a user-authoring
+    # oddity); first-row-wins preserves the diff's no-op/remove behavior
+    # for the common case.
+    db_by_pos: dict[tuple[float, float], sqlite3.Row] = {}
+    for r in db_rows:
+        k = (_pos_key(r["start_bar"]), _pos_key(r["end_bar"]))
+        if k in db_by_pos:
+            kept = db_by_pos[k]
+            out.warnings.append(
+                f"track {track_row['name']!r}: duplicate arrangement-clip "
+                f"placements at bar {r['start_bar']:g}..{r['end_bar']:g} "
+                f"(keeping arrangement_clip_id={kept['id'][:8]} "
+                f"{kept['clip_name']!r}; the collision with "
+                f"arrangement_clip_id={r['id'][:8]} {r['clip_name']!r} "
+                f"will not round-trip cleanly — separate them or remove one)"
+            )
+            continue
+        db_by_pos[k] = r
     seen: set[tuple[float, float]] = set()
 
     for entry in clips_in:
@@ -1386,7 +1405,11 @@ def _apply_arrangement_clips_for_track(
             "a moved one) and re-run pull."
         )
 
-    # Removals: DB rows Ableton didn't report.
+    # Removals: DB rows Ableton didn't report. The detail line carries
+    # the clip_id prefix + clip_name so the user can correlate against
+    # the "Ableton-only placement" warnings above when a placement was
+    # moved (positional matching can't infer the move, but the breadcrumb
+    # lets the user join the two halves manually).
     for k, row in db_by_pos.items():
         if k in seen:
             continue
@@ -1397,7 +1420,8 @@ def _apply_arrangement_clips_for_track(
         out.mutations += 1
         out.details.append(
             f"track {track_row['name']!r}: arrangement placement at "
-            f"bar {row['start_bar']:g}..{row['end_bar']:g} removed"
+            f"bar {row['start_bar']:g}..{row['end_bar']:g} removed "
+            f"(arrangement_clip_id={row['id'][:8]} {row['clip_name']!r})"
         )
 
 

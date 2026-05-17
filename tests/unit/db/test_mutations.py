@@ -291,6 +291,33 @@ def test_arrangement_clip_lifecycle(conn, song, track, clip):
     assert kinds[-2:] == [E.ARRANGEMENT_CLIP_ADDED, E.ARRANGEMENT_CLIP_REMOVED]
 
 
+def test_get_arrangement_for_track_scopes_by_track(conn, song, track, clip):
+    """Per-track query returns only this track's rows and includes the
+    joined `clip_name`. Used by the pull-side apply path to avoid
+    scanning the whole song's arrangement on each call."""
+    # Second track on the same song with its own clip + placement.
+    other_track = M.create_track(conn, song_id=song, track_index=2, name="Other")
+    other_clip = M.create_clip(
+        conn, track_id=other_track, slot=1, length_beats=16.0, name="Other Clip"
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=3.0,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=other_track, clip_id=other_clip,
+        start_bar=5.0, end_bar=7.0,
+    )
+
+    rows = Q.get_arrangement_for_track(conn, track)
+    assert len(rows) == 1
+    assert rows[0]["track_id"] == track
+    assert rows[0]["clip_id"] == clip
+    # Join exposes the clip name so the pull-layer breadcrumb can use it
+    # without a second query.
+    assert "clip_name" in rows[0].keys()
+
+
 # ---------- foreign keys / cascades ----------
 
 

@@ -68,15 +68,41 @@ def get_notes_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[dict[str,
 
 def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
     """Return arrangement_clips rows joined with track + clip names. No Ableton
-    info — sync-time bindings come from `ableton_links` via `get_ableton_link`."""
+    info — sync-time bindings come from `ableton_links` via `get_ableton_link`.
+
+    Ordering: `(track_id, start_bar, id)` — the trailing `id` tiebreaker
+    makes the result deterministic when two placements share a position
+    (which is rare but valid; see `get_arrangement_for_track`)."""
     return conn.execute(
         """SELECT a.*, t.name AS track_name, c.name AS clip_name
            FROM arrangement_clips a
            JOIN tracks t ON t.id = a.track_id
            JOIN clips  c ON c.id = a.clip_id
            WHERE a.song_id = ?
-           ORDER BY a.track_id, a.start_bar""",
+           ORDER BY a.track_id, a.start_bar, a.id""",
         (song_id,),
+    ).fetchall()
+
+
+def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[sqlite3.Row]:
+    """Return arrangement_clips rows for one track, joined with clip name.
+
+    Shape differs from `get_arrangement_for_song` in one way: no
+    `track_name` column — callers that need this query already have the
+    track row in hand, so the join would be redundant.
+
+    Ordering: `(start_bar, id)`. The `id` tiebreaker makes the pull-side
+    duplicate-position detection deterministic per-DB (it doesn't matter
+    *which* row of a colliding pair the apply layer treats as the
+    keeper, but the choice must be stable across runs to keep tests +
+    debugging tractable)."""
+    return conn.execute(
+        """SELECT a.*, c.name AS clip_name
+           FROM arrangement_clips a
+           JOIN clips c ON c.id = a.clip_id
+           WHERE a.track_id = ?
+           ORDER BY a.start_bar, a.id""",
+        (track_id,),
     ).fetchall()
 
 

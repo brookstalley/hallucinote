@@ -6,6 +6,57 @@ Items grouped by **what unblocks the most workflow per fix**, not by implementat
 
 ---
 
+## Status as of Wave M-5 close (2026-05-17)
+
+The `hallucinote-mcp` greenfield server has now landed (Wave M-0 → M-5),
+and most of the gaps below are resolved by the unified 10-tool surface.
+This doc is preserved as the historical gap analysis that drove the
+Wave-M design; current status is annotated inline per section.
+
+**P1 status:** all six items resolved or repositioned.
+- #1 (gap #1 rename): ✓ resolved — `ableton_clip(action='replace_notes')`
+- #2 (delete + replace session clip): ✓ partial — `ableton_clip(action='delete', location='session')` works; `replace_session_clip` retarget is a backlog item.
+- #3 (arrangement note replace): ✓ resolved — `ableton_clip(action='replace_notes', location='arrangement')`.
+- #4 (note-level addressing): ◐ **partial** (V1 close-out Chunk D, 2026-05-17) — `ableton_note(action='list')` is functional via `clip.get_notes_extended()` and returns notes with Live's stable per-note IDs. The hallucinote sync layer's `clip-notes` pull diffs content per-note and emits precise update/insert/delete mutations. The add / update / delete write actions remain stubs (live-playback-continuity case is out of scope per `scope.never`); use `ableton_clip(action='replace_notes')` for whole-clip writes.
+- #5 (bulk arrangement ops): partial — `ableton_clip(action='duplicate_to_arrangement')` is per-call; bulk patterns remain agent-emulated.
+- #6 (`duplicate_clip_to_arrangement` returns identity): ✓ resolved — handler returns `arrangement_clip_index`.
+- #16 (sends): ✓ resolved — `ableton_track(action='set_send')` + `get_sends`.
+- #17 (sidechain): ✓ resolved (Compressor only) — `ableton_device(action='set_sidechain')`.
+- #17b (`get_device_parameters` broken): ✓ resolved — `ableton_device(action='get_parameters')` is greenfield code, the legacy fork's bug doesn't apply.
+
+**P2 score-half:** tempo / signature automation per (bar, beat) remains a
+hard MCP gap. `ableton_session(action='set_tempo')` and `set_signature`
+cover the global (bar-1) values; per-bar automation needs Live's
+arrangement-envelope API, which isn't reached by `ableton_automation`
+target_kinds (no `song_tempo` target). Backlog item.
+
+**P2 mix-half:** all five sub-sections resolved via Wave M-2's
+`ableton_track` / `ableton_return` collapse plus M-1's `set_master_property`.
+
+**P2 device-half:** resolved via Wave M-4's `ableton_device` consolidation.
+Nested-chain probe (sub-section "Nested-chain probe and push") remains
+blocked — backlog item under "Capture extension for nested rack chains."
+
+**P2 automation:** all seven envelope target families resolved via Wave
+M-4's `ableton_automation(action='write_envelope', target_kind=...)`
+collapse. Envelope read surface (list / get_envelope) remains blocked;
+gap-#4-style stubs cite the limitation.
+
+**Other:** gap #13 (cue point names) is resolved in the greenfield server
+— `ableton_arrangement(action='cue_list')` returns real names. The
+legacy-fork numeric-id detector in the pull layer stays as a defense
+against agent reformatting.
+
+The remaining V1.1+ wishlist is tracked in `.prawduct/backlog.md`:
+- Hallucinote-side quantize / swing / groove module (M-3 user direction).
+- Replace-session-clip retarget to atomic `ableton_clip(create, replace=True, notes=...)`.
+- Arrangement-level tempo / signature automation.
+- Note pull surface (gap #4 PARTIAL resolved 2026-05-17; surgical Ableton-side writes remain — `ableton_note(add/update/delete)`).
+- Audio render + analysis (`ableton_render`, `ableton_analysis`).
+- Nested rack chain probe.
+
+---
+
 ## Priority 1 — Iteration blockers (fix first)
 
 These force destructive workarounds or many-times-as-many round-trips.
@@ -96,6 +147,168 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 **Required:**
 - `set_compressor_sidechain(track_index, device_index, enabled: bool, source_track_index?: int, gain_db?: float)`
 - Or generally: `set_device_routing(track_index, device_index, routing_field, value)` — covering sidechain source on Compressor, MIDI input source on instruments, audio input source on Audio Effect Rack chains, etc.
+
+---
+
+## Priority 2 — Score-half push gaps (chunk 2)
+
+Surfaced by chunk 2 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
+
+### Tempo automation at a (bar, beat)
+
+**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement position, and no way to express linear ramps between points.
+
+**Required:**
+- `write_tempo_point(bar: int, beat: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope. `bar` is 1-based and `beat` is 0-based-within-bar, matching `create_cue_point`.
+- For single-point / `hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
+
+### Arrangement-level time signature changes
+
+**Current state:** No MCP tool writes meter-change events on the arrangement. The Live API exposes time-signature markers, but they're not surfaced.
+
+**Required:**
+- `write_time_signature_point(bar: int, beat: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline. `bar` 1-based, `beat` 0-based-within-bar.
+
+### Section markers (informational)
+
+**Current state:** Live has no first-class "section marker" concept distinct from cue points. Hallucinote's `sections` table is DB-only.
+
+**Required (nice-to-have):** If Live ever exposes named ranges (e.g., loop regions with labels) via MCP, we can mirror sections one-for-one. Until then, callers can mirror sections as `cue_points` for visibility. No MCP work required today.
+
+---
+
+## Priority 2 — Mix-half push gaps (chunk 3)
+
+Surfaced by chunk 3 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively. Volume/pan/sends are *already* callable and used directly by the planner.
+
+### Return-track creation
+
+**Current state:** No MCP tool creates a return track. `list_return_tracks`, `get_track_sends`, and `set_track_send` operate against existing returns only. Returns must be created in the Live UI before any send-driven mix work can land.
+
+**Required:**
+- `create_return_track(name: str)` — create a fresh return track at the end of the return list. Returns `{return_index: int}` (1-based). Mirrors `create_midi_track` for the return strip.
+
+### Per-track mute / solo / arm / color writes
+
+**Current state:** `set_track_volume` and `set_track_panning` exist; the rest of the per-track mixer state has no MCP tool. Mute/solo are essential for rough-mix iteration ("solo the drums and tell me if the kick is masked"); arm gates record passes; color is the lowest-bandwidth way to visually communicate role/section.
+
+**Required:**
+- `set_track_mute(track_index: int, value: bool)` — toggle mute on a session track.
+- `set_track_solo(track_index: int, value: bool)` — toggle solo.
+- `set_track_arm(track_index: int, value: bool)` — toggle record-arm.
+- `set_track_color(track_index: int, value: int)` — set track color (Live uses RGB ints).
+
+### Master-strip volume / pan writes
+
+**Current state:** Master volume/pan are reachable in the Live API via the master strip, but no MCP tool exposes writes to them. Without these, an agent can build the entire mix but can't set the final master fader.
+
+**Required:**
+- `set_master_volume(value: float)` — normalized 0.0–1.0 (0.85 = 0 dB), matching `set_track_volume`.
+- `set_master_panning(value: float)` — −1.0..+1.0, matching `set_track_panning`.
+
+### Return-track volume / pan writes
+
+**Current state:** `set_track_volume(track_index)` is for session tracks only (no return-track variant). Returns can be created (when the above lands) and their devices loaded, but the return fader can't be moved programmatically.
+
+**Required:**
+- `set_return_volume(return_index: int, value: float)` — normalized 0.0–1.0.
+- `set_return_panning(return_index: int, value: float)` — −1.0..+1.0.
+
+---
+
+## Priority 2 — Device push gaps (chunk 4a)
+
+Surfaced by chunk 4a of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags each as needing emulation until MCP supports them natively.
+
+### Device load with position + kind
+
+**Current state:** `load_instrument_or_effect(track_index, uri)` appends to the end of the chain — no `position` control. The agent has to load devices in the order they should appear and can't insert into a partially-built chain. There's no `kind`-driven load (you pass a browser URI, not a class name); selecting `Compressor2` vs `Compressor` requires knowing the right URI.
+
+**Required:**
+- `load_device(track_index: int, position: int 1-based, kind: str, preset_uri: str | null)` — load at a specific chain position. `kind` is Live's class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, etc.); `preset_uri` is optional for browser-preset variants. If `preset_uri` is null, load the default of `kind`.
+- `load_device_on_return(return_index: int, position: int 1-based, kind: str, preset_uri: str | null)` — same shape for return tracks (no MCP equivalent at all today).
+
+### Return-track device parameter writes
+
+**Current state:** `set_device_parameter` (when not broken by #17b) targets session tracks only. Return-track devices (reverb send, delay send) can't be programmatically configured.
+
+**Required:**
+- `set_return_device_parameter(return_index: int, device_index: int 1-based, parameter_name: str, value: float 0.0-1.0)` — mirrors `set_device_parameter` for returns.
+
+### Discrete-enum parameter writes
+
+**Current state:** Some device parameters are discrete enums — `Filter Type ∈ {Lowpass, Highpass, Bandpass, Notch, ...}`, `LFO Sync ∈ {Free, Sync}`, etc. `set_device_parameter` takes a `value: float 0.0-1.0` shape which doesn't work for these — there's no continuous form. Falling-walking's instrument captures show ~10% of dialed params are enums (Filter Type on Operator, Pickup Model on Electric, etc.).
+
+**Required:**
+- Either `set_device_enum_parameter(track_index, device_index, parameter_name, value: str)` — string value path — OR extend `set_device_parameter` to accept `value: str | float` and dispatch internally.
+- Capture-side: `get_device_parameters` should distinguish enum vs continuous params in its return shape so the agent knows which writer to use.
+
+### Nested-chain probe and push
+
+**Current state:** Rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`) own nested chains of devices. MCP exposes no way to probe or push these. The falling-walking snapshot's `_note` flags them: "Rack — internal chain instruments not captured. Reload by name from browser."
+
+**Required:**
+- `get_device_chains(track_index: int, device_index: int)` — for a rack device, return its nested chains: `[{chain_index, name, devices: [{position, kind, display_name, ...}, ...]}, ...]`.
+- `load_device_in_rack(track_index, parent_device_index, chain_index, position, kind, preset_uri?)` — load into a specific nested chain.
+- `set_rack_device_parameter(track_index, parent_device_index, chain_index, device_index, parameter_name, value)` — parameter writes inside nested chains.
+
+Realistically this is a sizable ask. Until it lands, hallucinote models nested chains in the schema (via `device_chains.parent_rack_device_id`) but capture/replay/push stay flat.
+
+---
+
+## Priority 2 — Automation envelope gaps (chunk 4b)
+
+Surfaced by chunk 4b. Hallucinote models seven envelope target families (`clip_cc`, `clip_pitch_bend`, `note_expression`, `device_parameter`, `mixer_volume`, `mixer_pan`, `send_level`) and the planner emits one canonical write call per envelope with breakpoints inline. MCP today exposes only `manage_clip_automation(track_index, clip_index, action, parameter_name)` — it creates an empty envelope on a single named parameter but has no breakpoint write surface. Every canonical name below is gap-flagged in `mcp_names.ALIASES_TODAY` and routes through an emulator that drives `manage_clip_automation` + low-level Live API calls per breakpoint.
+
+Breakpoint payload shape (shared across all envelope writes):
+
+```
+[{time_beats: float, value: float, curve_kind: 'linear'|'hold'|'fast'|'slow'}, ...]
+```
+
+Each write should return `{envelope_index: int}` so `apply_push_results` can record an `envelope:` link binding for clear-and-rewrite vs. update-in-place semantics on subsequent pushes.
+
+### Clip envelopes — CC and pitch bend
+
+**Current state:** `manage_clip_automation` operates on session/arrangement clips by `parameter_name` (e.g., `"volume"`, `"panning"`). MIDI CC envelopes per CC number and clip-level pitch bend envelopes are not exposed.
+
+**Required:**
+- `write_clip_cc_envelope(track_index, clip_index, cc_number: int 0-127, breakpoints)` — write a clip-scoped MIDI CC envelope. Replaces the existing envelope on that CC if one exists.
+- `write_clip_pitch_bend_envelope(track_index, clip_index, breakpoints)` — write the clip's pitch-bend envelope. `value` range -1.0 to +1.0 (mapped to MIDI -8192..+8191 at the boundary).
+
+### Per-note expression (MPE)
+
+**Current state:** No MCP surface for MPE / per-note envelopes. Live's Push 3 and any MPE controller can produce them at the UI layer, but they can't be written programmatically.
+
+**Required:**
+- `write_note_expression_envelope(track_index, clip_index, note_pitch: int, note_start_beats: float, axis: 'pitch'|'pressure'|'timbre', breakpoints)` — write a per-note expression envelope. Note is identified by `(pitch, start_beats)` within the clip rather than an opaque note ID, matching `add_notes_to_clip`'s in-band addressing. This is the schema path to microtonal — `axis='pitch'` with breakpoints in semitone offsets carries microtonal pitch bend per note.
+
+### Device parameter envelopes
+
+**Current state:** `manage_clip_automation` can target a parameter by name on a track's clip envelope, but device-parameter envelopes (the dialed parameter automation that appears in Live's device automation lane) are not exposed directly. Return-device parameter envelopes are entirely absent (same gap as #17b for static writes).
+
+**Required:**
+- `write_device_parameter_envelope(track_index, device_index: int 1-based, parameter_name: str, breakpoints)` — write a track-side device parameter envelope. Values 0.0-1.0 normalized.
+- `write_return_device_parameter_envelope(return_index, device_index: int 1-based, parameter_name: str, breakpoints)` — same shape for returns.
+
+### Mixer envelopes
+
+**Current state:** `manage_clip_automation` can create a clip-scoped `volume`/`panning` envelope. Track-strip (mixer-lane) volume/pan envelopes — the ones that run for the whole track rather than within a clip — aren't exposed. mute/solo/arm have no envelope at all.
+
+**Required:**
+- `write_mixer_volume_envelope(track_index, breakpoints)` — track-strip volume envelope. `value` range 0.0-1.0.
+- `write_mixer_pan_envelope(track_index, breakpoints)` — track-strip pan envelope. `value` range -1.0 to +1.0.
+
+### Send-level envelopes
+
+**Current state:** `set_track_send` writes a static level. Send automation is not exposed.
+
+**Required:**
+- `write_send_envelope(track_index, return_index, breakpoints)` — send-level envelope from one track to one return. `value` range 0.0-1.0.
+
+### Capture-side read
+
+All of the above are write-only gaps in the chunk-4b push. Chunk 4b's capture extension is **deferred** — `replay_capture` does not yet ingest envelopes from snapshots. A future pull-side wave will need read capability for each envelope kind: `get_clip_envelopes`, `get_note_expression_envelopes`, `get_device_envelopes`, `get_mixer_envelopes`, `get_send_envelopes`. Logged here so the gap is in one place.
 
 ---
 
@@ -277,14 +490,14 @@ Pragmatic estimate: `render_region` + `analyze_audio` is ~2 days of work against
 
 The upstream repo (`uisato/ableton-mcp-extended`) does not accept issues and may not engage with PRs. So:
 
-- **Primary**: every change lands in our fork (`brookstalley/ableton-mcp-extended`). Songwright depends on the fork. Iteration moves at our pace, no review gating, no design-discussion blocker.
+- **Primary**: every change lands in our fork (`brookstalley/ableton-mcp-extended`). Hallucinote depends on the fork. Iteration moves at our pace, no review gating, no design-discussion blocker.
 - **Secondary**: when a feature is stable + tested, cherry-pick onto a clean branch off `upstream/main` and offer it upstream. If the maintainer merges it, great — we delete our equivalent commits on the next sync. If they don't engage, we keep it in the fork forever.
 
 Implications vs. the previous "build trust, file issues first" plan:
 
 - **No issue-first gating** — file PRs at our discretion, expect no response
-- **No deprecation aliases for renames** — we control all consumers (just songwright), so clean breaking changes are fine in our fork
-- **Re-ordered priority**: ship what songwright needs first (note-level addressing, bulk arrangement ops, replace/delete), not what builds maintainer rapport
+- **No deprecation aliases for renames** — we control all consumers (just hallucinote), so clean breaking changes are fine in our fork
+- **Re-ordered priority**: ship what hallucinote needs first (note-level addressing, bulk arrangement ops, replace/delete), not what builds maintainer rapport
 - **Smaller PR count**: drops from 17 to 15 — some splits were political (separating delete/replace, splitting message-fix from rename) and no longer needed
 - **Cadence is "as fast as we want"**
 
@@ -292,7 +505,7 @@ Implications vs. the previous "build trust, file issues first" plan:
 
 ```
 upstream/main                   # read-only — sync source from uisato's repo
-origin/main                     # OUR canonical version — songwright runs from here, diverges from upstream
+origin/main                     # OUR canonical version — hallucinote runs from here, diverges from upstream
 origin/feat/<short-name>        # feature branches off origin/main, merge back when done
 origin/upstream/<feature-name>  # clean cherry-picks off upstream/main for upstream PR offerings
 ```
@@ -333,7 +546,7 @@ gh pr create --base main --repo uisato/ableton-mcp-extended
 
 The `upstream/<name>` branch convention makes PR-offering branches easy to spot and clean up later.
 
-**Songwright's `.mcp.json` runs the MCP server from `~/source/ableton-mcp-extended/MCP_Server/server.py`** — i.e., whatever's checked out at `origin/main` at runtime. Make sure `main` is the working branch; do feature work in branches and merge before relying on it from songwright.
+**Hallucinote's `.mcp.json` runs the MCP server from `~/source/ableton-mcp-extended/MCP_Server/server.py`** — i.e., whatever's checked out at `origin/main` at runtime. Make sure `main` is the working branch; do feature work in branches and merge before relying on it from hallucinote.
 
 ### Repo conventions to follow (for our own quality)
 
@@ -365,9 +578,9 @@ The `upstream/<name>` branch convention makes PR-offering branches easy to spot 
 
 ---
 
-### Wave 1 — Foundational (unblock songwright's DB direction)
+### Wave 1 — Foundational (unblock hallucinote's DB direction)
 
-These three give songwright everything it needs to move from "regenerate-and-replace whole clips" to "surgical, DB-backed authoring."
+These three give hallucinote everything it needs to move from "regenerate-and-replace whole clips" to "surgical, DB-backed authoring."
 
 #### PR A — Note-level addressing (4 tools)
 - **Branch**: `feat/note-level-addressing`
@@ -479,14 +692,14 @@ These three give songwright everything it needs to move from "regenerate-and-rep
 - **Title**: `feat: rename add_notes_to_clip to set_clip_notes`
 - **Why**: The tool name implies append; behavior is replace (calls `clip.set_notes(...)`). Causes silent data loss for callers expecting append. PR A's `append_notes` provides the real append path. This rename eliminates the misleading name.
 - **Files**: `MCP_Server/server.py`, `AbletonMCP_Remote_Script/__init__.py` (response message)
-- **Change**: Rename the tool. Update response: `"Set N notes on clip (replaced previous content)"`. **No deprecation alias** — songwright is the only consumer and we update it in lockstep.
+- **Change**: Rename the tool. Update response: `"Set N notes on clip (replaced previous content)"`. **No deprecation alias** — hallucinote is the only consumer and we update it in lockstep.
 - **Tests**: `tests/unit/test_track_commands.py::TestSetClipNotes` — assert new name works, assert response wording.
-- **Acceptance**: songwright uses `set_clip_notes` everywhere; `add_notes_to_clip` doesn't exist in our fork.
+- **Acceptance**: hallucinote uses `set_clip_notes` everywhere; `add_notes_to_clip` doesn't exist in our fork.
 - **Linked req**: #1
 - **Depends on**: PR A (so a real `append_notes` exists), PR C ideally (so `add_notes_to_arrangement_clip` gets renamed at the same time — call it `set_arrangement_clip_notes`)
 - **Estimated diff**: 30-50 lines + tests
 - **Upstream-likely?**: Low — breaking change. **Don't offer upstream as a single PR**; if offering, do an aliased version (separate branch) that keeps `add_notes_to_clip` as a deprecated alias.
-- **Note**: After landing, update songwright's `gen_notes.py` invocation pattern in `falling-walking.md` and any future song docs.
+- **Note**: After landing, update hallucinote's `gen_notes.py` invocation pattern in `falling-walking.md` and any future song docs.
 
 #### PR I — Fix `get_cue_points` returns numeric IDs instead of names
 - **Branch**: `fix/get-cue-points-names`
@@ -544,7 +757,7 @@ These three give songwright everything it needs to move from "regenerate-and-rep
 
 ### Wave 4 — Nice-to-have
 
-Land when bandwidth allows. None block songwright work.
+Land when bandwidth allows. None block hallucinote work.
 
 #### PR M — `get_session_devices_snapshot`
 - **Branch**: `feat/get-session-devices-snapshot`
@@ -608,7 +821,7 @@ Land when bandwidth allows. None block songwright work.
 
 ### Cadence
 
-Internal (fork): as fast as testing allows. Wave 1 unblocks the songwright DB direction, so do it first. Waves 2-4 are then quality-of-life and can be paced with songwright development needs.
+Internal (fork): as fast as testing allows. Wave 1 unblocks the hallucinote DB direction, so do it first. Waves 2-4 are then quality-of-life and can be paced with hallucinote development needs.
 
 Upstream offerings: queue them in a backlog and submit a few at a time. Order by `Upstream-likely`:
 
@@ -617,15 +830,15 @@ Upstream offerings: queue them in a backlog and submit a few at a time. Order by
 3. **Medium** (composite or bulk additions): PRs D, E, M
 4. **Low** (architectural or breaking): PRs A, B, H — submit after the easy ones land or just don't bother
 
-If the maintainer never engages, no behavior changes for us. Songwright keeps moving.
+If the maintainer never engages, no behavior changes for us. Hallucinote keeps moving.
 
-### Songwright impact / sequencing
+### Hallucinote impact / sequencing
 
-The Wave 1 PRs (A, B, C) are the unlock for the **DB-as-MIDI-source-of-truth** direction described above. Until they land in the fork, songwright iterates with the current "regenerate Python → set_clip_notes → delete-and-redup arrangement" pattern. After they land:
+The Wave 1 PRs (A, B, C) are the unlock for the **DB-as-MIDI-source-of-truth** direction described above. Until they land in the fork, hallucinote iterates with the current "regenerate Python → set_clip_notes → delete-and-redup arrangement" pattern. After they land:
 
 - `get_clip_notes` enables sync-back from manual Ableton edits → DB
 - `update_notes` / `delete_notes` enable surgical DB-driven mutations without rewriting whole clips
 - `batch_arrangement_layout` makes arrangement rebuilds cheap enough to do on every DB push
 - `add_notes_to_arrangement_clip` (exposed in PR C) eliminates the delete-and-redup cycle entirely for note-only updates
 
-Realistic sequencing: ship Wave 1 to fork over a few days. Then start the songwright DB schema + sync layer in parallel with Wave 2/3 PRs.
+Realistic sequencing: ship Wave 1 to fork over a few days. Then start the hallucinote DB schema + sync layer in parallel with Wave 2/3 PRs.

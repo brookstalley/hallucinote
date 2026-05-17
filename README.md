@@ -1,26 +1,53 @@
-# songwright
+# hallucinote
 
-AI-assisted Ableton Live songwriting workflow. Houses song projects (concept docs + MIDI generators) and — eventually — a DB-backed intermediary for note-level authoring.
+LLM-native music composition and production environment. Songs live as Python build scripts on top of a SQLite source-of-truth that authors clips, mix state, devices, and automation envelopes via mutator + event-emit, then syncs bidirectionally to Ableton Live through an in-repo MCP server.
 
 ## Status
 
-Pre-alpha. Currently a script-per-song layout with `gen_notes.py` files generating MIDI note arrays that are pushed into Ableton via the AbletonMCP server.
+Pre-alpha. The DB-as-source-of-truth migration is complete (chunks 1-5). Pull-side sync landed in Wave 3 (mix-state, score-globals, cue-points). Wave M closed the v1.0 surface of the in-repo MCP server (`hallucinote-mcp`) — 10 unified tools with action dispatch, replacing the legacy AbletonMCP fork dependency. Every clip flows through library generators → mutators → SQLite, with push planners emitting canonical MCP calls and pull diffing Ableton state back through the same mutator path.
 
 ## Layout
 
 ```
+src/hallucinote/             # the composition library
+  db/                        # schema.sql + mutations.py + queries.py + events.py
+  generators/                # pure musical primitives (notes + envelope generators)
+  sync/                      # plan_push_* + apply_push_results + pull — DB ↔ Ableton
+  capture.py                 # one-shot snapshot of a live Ableton session
+
+hallucinote_mcp/             # the in-repo MCP server (v1.0 surface)
+  src/hallucinote_mcp/       # 10 unified tools, action dispatch, install skill
+  tests/                     # MCP-plugin tests
+
 songs/
   falling-walking/
-    falling-walking.md   # song concept, decisions, agent context
-    gen_notes.py         # source of truth for every MIDI clip
+    falling-walking.md       # song concept, decisions, agent context
+    build.py                 # builds the song into SQLite via the library
+    captured_session.json    # initial Ableton snapshot used to seed the mix half
+    tests/                   # song-specific tests (build smoke, snapshot replay)
+
+tests/                       # platform/library tests
 docs/
-  mcp-requirements.md    # gaps in AbletonMCP that block this workflow
+  VISION.md                  # product vision
+  mcp-tool-design.md         # 10-tool architecture rationale
+  mcp-requirements.md        # outstanding MCP capabilities
 ```
+
+## Usage
+
+```
+pip install -e '.[dev]'
+pip install -e 'hallucinote_mcp[dev]'
+python songs/falling-walking/build.py --reset    # rebuild the song's SQLite DB
+pytest -n auto --dist loadgroup                  # full suite (see .prawduct/.test-evidence.json for current count)
+```
+
+Pushing to Ableton goes through the `plan_push_*` planners in `hallucinote.sync.push`, then `apply_push_results` writes the projection (`ableton_sessions` + `ableton_links` tables) back. Pulling pulls Ableton state into the DB via the standard mutator path — diffs are realized as events. See the `/ableton-pull` skill for the agent surface.
 
 ## Dependencies
 
-Talks to the [AbletonMCP](https://github.com/uisato/ableton-mcp-extended) server. Local dev assumes a sibling clone at `../ableton-mcp-extended/`. The `.mcp.json` in this repo points there.
+Talks to the in-repo `hallucinote-mcp` server (`hallucinote_mcp/`). The `.mcp.json` in this repo invokes the `hallucinote-mcp` console script that ships with the package; no sibling clone or external fork is required. The Remote Script for Ableton Live is installed via the package's install skill.
 
-## Future direction
+## Vision
 
-See `docs/mcp-requirements.md` § "Future direction — Database as MIDI source of truth" for the architecture this is heading toward.
+See `docs/VISION.md` for the product vision and `docs/mcp-tool-design.md` for the 10-tool MCP architecture rationale. `docs/mcp-requirements.md` tracks remaining capability gaps.

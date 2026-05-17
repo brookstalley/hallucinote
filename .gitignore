@@ -7,3 +7,40 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Songwright DB files (per-user, never committed)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Build artifacts
+build/
+dist/
+
+# uv lockfiles — project install path is `pip install -e`; uv.lock is
+# ambient when contributors use uv locally, not a tracked dependency lock.
+uv.lock
+
+# Ableton Live project directories — local DAW state, not source of truth.
+# Captured snapshots ARE source of truth (build.py replays them) and are
+# tracked explicitly per song at songs/<name>/captured_session.json.
+**/*.als
+**/*.flac
+**/* Project/
+
+# Prawduct session files
+.claude/settings.local.json
+.prawduct/.critic-findings.json
+.prawduct/.test-evidence.json
+.prawduct/.pr-reviews/
+.prawduct/.session-git-baseline
+.prawduct/.session-handoff.md
+.prawduct/.session-reflected
+.prawduct/.session-start
+.prawduct/.subagent-briefing.md
+.prawduct/.gates-waived
+.prawduct/reflections.md
+.prawduct/sync-manifest.json
+.prawduct/artifacts/build-plan.md
+.claude/scheduled_tasks.lock

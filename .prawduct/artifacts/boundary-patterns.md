@@ -1,0 +1,130 @@
+# Boundary Patterns — Hallucinote
+
+Contract surfaces where components interact. When changes cross these
+boundaries, the builder investigates consumer impact before completing the
+chunk. The Critic verifies investigation occurred.
+
+## Contract Surfaces
+
+### Database Schema (`src/hallucinote/db/schema.sql`)
+
+- **Producer**: `db/connection.py` (init_db) materializes the schema.
+- **Consumers**: `db/mutations.py` (writes), `db/queries.py` (reads), test
+  fixtures, every `songs/*/build.py`, `sync/*`, future capture/replay tools.
+- **Contract**: Table names, column names + types, FK + cascade rules, and
+  indexes. UUID identity (TEXT) is load-bearing — mutators generate ids in
+  Python via `_uuid()`.
+
+When changing this surface:
+- Update mutators **and** queries together.
+- Update every `songs/*/build.py` and any tool that opens the DB.
+- Re-run the full suite and rebuild falling-walking with `--reset` to verify.
+
+### Mutator API (`src/hallucinote/db/mutations.py`)
+
+- **Producer**: `mutations.py` — the only sanctioned writer.
+- **Consumers**: `songs/*/build.py`, `sync/push.py`, agent code, future
+  generator orchestration.
+- **Contract**:
+  - Keyword-only signatures, no positional args after `conn`.
+  - Every mutator accepts `actor='system'`, `request_id=None`, `reason=None`.
+  - Every mutator emits exactly one `events` row in the same transaction as
+    its state change. `_emit` is the only path; it assigns `seq` monotonically.
+  - Returns: new id (creates), list of new ids (bulk creates), or `None`
+    (updates/deletes).
+  - `actor` must be in `events.ACTORS`.
+
+When changing this surface:
+- Adding kwargs with defaults is non-breaking.
+- Renaming or removing a mutator breaks every caller — grep the repo and
+  update each one. (Chunk 1 replaced three `link_*_to_ableton` mutators with
+  one generic `link_db_to_ableton`; tests + sync updated together.)
+
+### Sync Planner / Result API (`src/hallucinote/sync/push.py`)
+
+- **Producer**: `push.py` — pure-data plans, no side effects.
+- **Consumer**: the agent (executes MCP calls, then feeds results back).
+- **Contract**:
+  - `plan_push_clip` / `plan_push_arrangement` take `session_id` and read
+    bindings from `ableton_links` via `Q.get_ableton_link`.
+  - `apply_push_results` takes `session_id` and writes bindings via
+    `M.link_db_to_ableton`.
+  - `ToolCall.key` is `"<kind>:<uuid>"` — the kind selects which link is
+    written when the result comes back.
+
+When changing this surface:
+- Any signature change breaks the agent integration. Document in the build
+  plan + chunk handoff.
+- New result kinds need both a planner emitter and an `apply_push_results`
+  branch.
+
+### Pull Planner / Result API (`src/hallucinote/sync/pull.py` + `pull_cli.py`)
+
+- **Producer**: `pull.py` — pure-data `PullPlan`s, no side effects.
+- **Consumer**: the `/ableton-pull` skill (executes MCP read probes, normalizes
+  responses, calls back via `pull_cli`).
+- **Contract**:
+  - `plan_pull_mix` (and future `plan_pull_*`) take `song_id` + `session_id`,
+    walk `ableton_links` for linked rows, emit `PullCall` probes.
+  - `PullCall.key` is `"<kind>"` (global) or `"<kind>:<uuid>"` (per-row) —
+    dispatched by `_HANDLERS` in `apply_pull_results`.
+  - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
+    field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
+    doesn't churn events.
+  - Mutations use `actor='sync'` (matching push); pull-vs-push provenance
+    lives in the event `reason` field.
+  - `pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan`
+    emits the PullPlan, `apply` consumes plan + results and returns an
+    `ApplyResult` summary.
+
+When changing this surface:
+- New `PullCall` key kinds need a `_HANDLERS` entry AND an apply branch.
+- The normalized result shape per kind is documented in the `PullCall`
+  docstring; the skill is responsible for normalizing raw MCP responses to it.
+- Three-way merge is deferred. If you re-open conflict policy, update both
+  this doc and the pull.py module docstring together.
+
+### Event Kinds + Payloads (`src/hallucinote/db/events.py`)
+
+- **Producer**: `mutations.py` (every emitter is a mutator).
+- **Consumers**: `queries.get_events_for_*`, future replay/merge tooling, the
+  audit-log UI (eventual).
+- **Contract**: Event-kind constants are append-only. Payload shapes are part
+  of the contract — they're how an event-store flip will reconstruct state.
+  Add new kinds; never silently rename or repurpose an existing kind.
+
+When changing this surface:
+- Removing a kind breaks any saved event log — coordinate with a migration
+  story.
+- Payload changes should be additive (new optional keys) until replay is
+  implemented.
+
+### Ableton Projection (`ableton_sessions` + `ableton_links`)
+
+- **Producer**: `mutations.create_ableton_session`, `mutations.link_db_to_ableton`.
+- **Consumer**: `sync/push.py` (read via `queries.get_ableton_link`).
+- **Contract**: Bindings are `(session_id, db_kind, db_id) -> ableton_index`.
+  `db_kind` ∈ `mutations.ABLETON_LINK_KINDS`. Multiple sessions per song are
+  intentional — a song can be bound to several Live sets without aliasing.
+
+When adding a new `db_kind`:
+- Extend `mutations.ABLETON_LINK_KINDS`.
+- Add a planner branch in `sync/push.py` that emits a `<kind>:<uuid>` key.
+- Add an `apply_push_results` branch that consumes the matching result shape.
+
+## Test Levels
+
+Tests fall into three categories that must stay disjoint: platform (the `hallucinote` library), MCP plugin (the `hallucinote-mcp` server), and song-specific. Platform and MCP tests must not load song data; song tests must not test platform/MCP behavior beyond what's incidental to the song.
+
+| Level | Exists | When to Run | Location |
+|-------|--------|-------------|----------|
+| Platform — unit (mutator + event round-trip) | yes | every change to mutations / schema | `tests/unit/db/test_mutations.py`, `tests/unit/db/test_score_extensions.py` |
+| Platform — unit (planner) | yes | every change to sync / link projection | `tests/unit/sync/test_push*.py`, `tests/unit/sync/test_pull.py`, `tests/unit/sync/test_mix.py` |
+| Platform — unit (generators) | yes | every change to generators | `tests/unit/generators/test_*.py` |
+| Platform — unit (capture / replay) | yes | every change to `hallucinote.capture` | `tests/unit/capture/test_capture.py` |
+| MCP — unit | yes | every change to `hallucinote_mcp/src/` | `hallucinote_mcp/tests/unit/test_*.py` |
+| MCP — integration (dispatcher round-trip) | yes | every change to dispatcher / wire / remote_script | `hallucinote_mcp/tests/integration/test_remote_script_server.py`, `test_skills_well_formed.py` |
+| MCP — integration (live Ableton push) | manual; gated on MCP capability | when a chunk delivers push of a new domain | invoked by hand |
+| Song — build smoke | yes (per song) | every schema or mutator change OR every change to that song | `songs/<slug>/tests/test_build.py` |
+| Song — snapshot shape (capture/replay/push planner against the song's `captured_session.json`) | yes (per song) | every schema / mutator / planner change OR every change to that song's snapshot | `songs/<slug>/tests/test_capture_replay.py`, `test_push_mix_snapshot.py` |
+| Song — consistency / mix hygiene | not yet (per-song; on-demand) | once a song requires it | `songs/<slug>/tests/test_*.py` |

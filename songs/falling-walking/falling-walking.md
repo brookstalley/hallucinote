@@ -221,9 +221,9 @@ Cue points at every section. Form built from session clips via duplicate.
 
 ### Where things live
 
-- **Concept / decisions doc**: this file (`falling-walking.md` — sibling of `gen_notes.py` in this song's folder)
-- **Note generator script**: `gen_notes.py` (same folder as this doc) — the source of truth for every MIDI clip in the song. Edit this, regenerate with `python3 gen_notes.py <clip_name>` (prints JSON), then call `mcp__AbletonMCP__add_notes_to_clip` with the result. Running with no args prints note counts per clip.
-- **Repo location**: `~/source/songwright/songs/falling-walking/` — this song lives in the songwright repo. The MCP server it talks to lives at `~/source/ableton-mcp-extended/` (sibling repo).
+- **Concept / decisions doc**: this file (`falling-walking.md` — sibling of `build.py` in this song's folder)
+- **Build script**: `build.py` (same folder as this doc) — the source of truth for every clip, arrangement entry, and envelope in the song. Run `python build.py --reset` to drop and rebuild the SQLite DB; push to Ableton via the hallucinote sync layer. The legacy `gen_notes.py` script was deleted in chunk 5 of the DB-as-source-of-truth migration.
+- **Repo location**: `~/source/hallucinote/songs/falling-walking/` — this song lives in the hallucinote repo. The MCP server it talks to is the in-repo `hallucinote_mcp/` package; `.mcp.json` invokes the `hallucinote-mcp` console script. No sibling clone or external fork is needed.
 - **Ableton User Remote Scripts location on this machine**: `~/Music/Ableton/User Library/Remote Scripts/` — NOT the path documented in `INSTALLATION.md` (`~/Library/Preferences/Ableton/Live X.X.X/User Remote Scripts/`). The Library path appears to be ignored. AbletonMCP control surface is installed at the Music path.
 
 ### Track index mapping (1-based)
@@ -240,33 +240,32 @@ Cue points at every section. Form built from session clips via duplicate.
 | 11  | 07 Bridge EP | Electric (Rhodes) |
 | 12  | 08 Chiptune Lead | Operator |
 
-### Session clip slot conventions
+### Session clip slot conventions (post-migration)
+
+`build.py` uses the same slot number for the same section across every track that participates in that section, so the Session view shows aligned columns per section.
 
 | Slot | Section |
 |------|---------|
-| 1 | Verse |
-| 2 | Chorus (regular, with 7ths) |
-| 3 | C3' twist (B♭maj7 swap) — pad/pluck/bell only |
-| 4 | Bridge |
-| 5 | Intro (16 bars) |
-| 6 | Tag (4 bars) |
-| 7 | Outro (8 bars) |
+| 1 | Intro |
+| 2 | Verse |
+| 3 | Chorus (with 7ths) |
+| 4 | Chorus C3' twist (B♭maj7 swap) |
+| 5 | Bridge |
+| 6 | Tag |
+| 7 | Outro |
 
 ### Arrangement bar positions
 
 | Bar | Section | Length |
 |-----|---------|--------|
-| 1   | Intro   | 16 |
-| 17  | V1      | 15 |
-| 32  | C1      | 8  |
-| 40  | V2      | 15 |
-| 55  | C2      | 8  |
-| 63  | Tag     | 4  |
-| 67  | Bridge  | 8  |
-| 75  | C3      | 8  |
-| 83  | C3'     | 8  |
-| 91  | Outro   | 8  |
-| 99  | (end)   | —  |
+| 1   | Intro          | 16 |
+| 17  | Verse          | 15 |
+| 32  | Chorus         | 8  |
+| 40  | Chorus C3'     | 8  |
+| 48  | Bridge         | 8  |
+| 56  | Tag            | 4  |
+| 60  | Outro          | 8  |
+| 68  | (end)          | —  |
 
 ### MIDI pitch reference (key D minor, B♭ major bridge)
 
@@ -278,7 +277,7 @@ Cue points at every section. Form built from session clips via duplicate.
 
 ### Tool quirks to know
 
-- **External plugins**: `mcp__AbletonMCP__list_external_plugins` returned "No external plugins were discovered" — only stock Ableton devices are available on this machine. Do not assume Serum/Massive/etc. work.
+- **External plugins**: `mcp__hallucinote-mcp__ableton_browser(action='plugins_list')` returned an empty list on this machine — only stock Ableton devices are available. Do not assume Serum/Massive/etc. work.
 - **Cue point names with apostrophes** errored ("Cue point already exists at this position: 1"). Use `C3 prime` instead of `C3'`. Display in `get_cue_points` shows numeric IDs not the names you set, but the names persist in the Ableton UI.
 - **Loaded instruments** show empty `Devices on track:` in tool response, but they ARE loaded — verify via Ableton UI if uncertain.
 - **`add_notes_to_clip`**: requires the clip to exist first (call `create_clip` separately). Within one parallel batch, do all `create_clip` calls first, then in next round all `add_notes_to_clip`.
@@ -302,7 +301,7 @@ Cue points at every section. Form built from session clips via duplicate.
 1. **Sound design** — all synths are at default presets. The brief calls for: dark supersaw pad with grit, plucky synth bass with portamento, glassy steel-drum-y pluck, FM bell, square-wave chiptune lead. Use Wavetable/Operator parameter editing tools (not yet explored).
 2. **Effects chains** — no sidechain pump, no saturation, no reverb/delay, no distortion. The "powerful electronic" aesthetic depends on these.
 3. **Vocal chain** — no vocoder, no chiptune doubles. Vocals not recorded yet.
-4. **Automation** — no filter sweeps, volume rides, or send automation. Pad opens up for chorus only via patch design currently (not present).
+4. **Automation** — chunk 5 added two demonstration envelopes (verse-pad volume swell into the chorus + synth-bass kick-synced sidechain duck during the chorus). Still missing: filter sweeps, send automation, full chorus-arrival opens-up dynamics.
 5. **Tag transition** — currently has chorus-style first 2 bars + bossa-foreshadow last 2 bars, but no riser/sweep transition into bridge.
 
 ---
@@ -332,14 +331,13 @@ Existing slots 1-7 unchanged in role. Added:
 - **Slot 5** track 9 — `Intro Arp` (NEW, foreshadowing arp)
 - **Slot 5** track 10 — `Intro Bell` (NEW, sparse high accents)
 
-### Iteration approach used
+### Iteration approach (post-migration)
 
-Confirmed working pattern for future iterations:
-1. **Edit `gen_notes.py`** with the new musical logic
-2. **Run `python3 gen_notes.py <clip_name>`** to print JSON to stdout
-3. **Call `mcp__AbletonMCP__add_notes_to_clip`** with the JSON — *despite the name, this REPLACES all notes in the clip via Live's `clip.set_notes()`*. Confirmed by reading the remote script source.
-4. For NEW clips: `create_clip` first (errors if slot occupied), then add notes
-5. **Arrangement clips do NOT auto-update** when session clips change — they're independent copies. Must `delete_arrangement_clip` (highest index first per track) and `duplicate_clip_to_arrangement` to propagate
+Working pattern after chunk 5:
+1. **Edit `build.py`** to adjust clip authoring / arrangement / envelopes.
+2. **Run `python songs/falling-walking/build.py --reset`** to rebuild the SQLite DB.
+3. **Push to Ableton** via the hallucinote sync layer (`plan_push_*` planners emit canonical MCP calls; `apply_push_results` writes the projection back).
+4. Arrangement entries live in the DB; push regenerates Live's arrangement from those entries.
 
 ---
 

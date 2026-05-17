@@ -14,7 +14,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Formatting**: No formatter configured. Project follows PEP 8 spacing and ~88-col lines by convention. (Critic-enforced.)
 - **Linting**: None configured. Add ruff if/when style drift starts to matter. (Critic-enforced for now.)
 - **Type annotations**: Required on public functions. PEP 604 unions (`int | None`), `Sequence`/`Iterable` from `typing` for inputs, concrete `list[...]` for outputs. `from __future__ import annotations` at the top of every module.
-- **Imports**: Absolute (`from songwright.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
+- **Imports**: Absolute (`from hallucinote.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
 - **Docstrings**: Module docstrings stating intent + discipline. Function docstrings explain *why* and any non-obvious convention, not signatures (types carry that). One-liners are fine for trivial helpers.
 - **Comments**: Sparse. When present, they capture invariants, design rationale, or workarounds — not what the code does.
 
@@ -23,16 +23,20 @@ Developer preferences for how code is written in this project. Captured during d
 - **Framework**: `pytest>=8.0`
 - **Style**: Descriptive function names (`test_replace_clip_notes_is_atomic`), assert-style, fixtures for shared setup. Helpers like `_make_note` for terse cases.
 - **Coverage expectations**: Happy path + key error paths. Event-emission paired with state change for every mutator. Cascades/FK behavior covered explicitly.
-- **Testing strategies**: Example-based currently. Hypothesis stanza is parked in `conftest.py` (commented) — turn it on for note-array transforms / serialization round-trips when those grow.
-- **Test location**: `tests/` mirrors `src/songwright/` modules (`test_mutations.py`, `test_push.py`, `test_generators.py`).
-- **Parallelization**: `pytest-xdist` is referenced by `conftest.py` (auto-groups by directory via `xdist_group`) but not currently installed; suite is ~0.2s so unnecessary. Install when the suite passes ~30s. The current setup produces a `PytestUnknownMarkWarning` until then.
+- **Testing strategies**: Example-based plus property-based via Hypothesis (enabled Wave M-4 for the first invariant-rich surface). `tests/conftest.py` registers `dev` (max_examples=20, default) and `ci` (max_examples=200, opt-in via `HYPOTHESIS_PROFILE=ci`) profiles. Active property tests: `tests/unit/generators/test_bar_beats_properties.py` (note-array transforms) and `hallucinote_mcp/tests/unit/test_envelope_properties.py` (envelope breakpoint validation). Extend Hypothesis coverage when a surface has clear named invariants worth fuzzing.
+- **Test location**: three categories, intentionally separated.
+  - **Platform / authoring** (`hallucinote` library) — `tests/unit/{db,sync,generators,capture}/` mirrors `src/hallucinote/` packages. NO song-specific code or data; use synthetic fixtures.
+  - **MCP plugin** (`hallucinote-mcp` package) — `hallucinote_mcp/tests/{unit,integration}/` mirrors the MCP package layout. NO song-specific code or data.
+  - **Song-specific** — `songs/<slug>/tests/test_*.py` lives alongside `build.py` and `captured_session.json` so each song is a self-contained unit (per `docs/VISION.md` "songs as git repos"). These tests assert song-level shape (e.g., that falling-walking's build produces the expected track count, well above a baseline note count, the expected sections in order) and may load that song's snapshot. The exact thresholds live in the test files — see them for current contract values. These tests never test platform behavior incidentally.
+  - Pytest discovers all three via `[tool.pytest.ini_options].testpaths = ["tests", "hallucinote_mcp/tests", "songs"]`. Song test dirs intentionally have no `__init__.py` (rootdir-discovered) so they don't collide with the platform `tests/` package namespace.
+- **Parallelization**: `pytest-xdist>=3.6` is declared in `[dev]` deps and installed. The auto-grouping in `conftest.py` assigns each test file an `xdist_group` based on its parent directory, so same-directory tests stay serial on one worker (preserving fixture isolation) and different directories fan out. Default invocation is serial; `pytest -n auto --dist loadgroup` opts into parallel (~5s vs ~10s serial as of post-J-2 baseline).
 
 ## Architecture Patterns
 
 - **Data modeling**: SQLite with raw schema in `db/schema.sql`. Rows surface as `sqlite3.Row` for reads; mutators take/return primitive dicts and ints. Dataclasses (`@dataclass`) for in-process value objects like `ToolCall` / `PushPlan`.
 - **Error handling**: Plain exceptions (`ValueError`, `KeyError`). No custom exception hierarchy. Never swallow exceptions silently — per CLAUDE.md Critical Rule, mark intentional broad catches with `# prawduct:ok-broad-except`.
 - **Async**: Sync throughout. SQLite WAL + `timeout=10.0`. No async planned — this is a single-user authoring tool.
-- **File organization**: Layer folders inside `src/songwright/`: `db/` (state + events + mutators + queries), `generators/` (pure musical building blocks), `sync/` (DB↔Ableton bridge). Song-specific builders live under `songs/<name>/build.py` and consume the library.
+- **File organization**: Layer folders inside `src/hallucinote/`: `db/` (state + events + mutators + queries), `generators/` (pure musical building blocks), `sync/` (DB↔Ableton bridge). Song-specific builders live under `songs/<name>/build.py` and consume the library.
 - **DB discipline (load-bearing)**: All writes go through `db.mutations`. Every mutator emits an `events` row in the same transaction. This is the seed for an eventual event-store flip — see `MEMORY.md`. **Never use raw SQL in callers** outside `db/`.
 - **Generators are pure**: `generators/*` functions take parameters and return `list[NoteDict]`. They never touch the DB or MCP. Persistence happens at the caller.
 - **Sync is a plan, not a side effect**: `sync.push` returns `PushPlan` / `ToolCall` objects. The agent executes; `apply_push_results` feeds outcomes back into the DB. Keeps the layer testable without Live running.
@@ -42,17 +46,22 @@ Developer preferences for how code is written in this project. Captured during d
 - **Key libraries**: stdlib only at runtime (`sqlite3`, `json`, `dataclasses`, `pathlib`). `pytest` for tests. AbletonMCP is an external dependency invoked by the agent, not imported.
 - **Dev commands**:
   - `source .venv/bin/activate` — required; package is installed editable into `.venv`
-  - `pytest` — full suite (~0.2s, 31 tests)
-  - `pytest -n0` — sequential (only works once `pytest-xdist` is installed)
+  - `pytest` — full suite (serial by default; under ~10s on the J-2 baseline)
+  - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (auto-grouped by test subdirectory per `tests/conftest.py`; roughly 1.6× faster)
+  - Current test count + timings: see `.prawduct/.test-evidence.json` (canonical; this prose intentionally avoids restating numbers that drift)
   - `python songs/falling-walking/build.py [--reset]` — build the example song into its SQLite DB
-- **DB files**: per-song `*.db` files live next to their `build.py`. Gitignored.
+- **DB files (prescriptive)**: **one SQLite DB per song**, at exactly `songs/<slug>/<slug>.db`. The directory name, the DB filename, and `songs.name` (the slug) must all match. The slug is filesystem-safe: `[a-z0-9_-]+` (lowercase, digits, hyphens, underscores). Human-facing names with spaces / capitals / punctuation go in `songs.title`. No sidecar config files; the DB schema is the source of truth for song metadata. `*.db` is gitignored.
 
 ## Workflow
 
-- **Branching**: feature-branches (default: feature-branches — create a branch for medium+ work, direct commits to protected branches only for trivial fixes; set to "direct" for solo projects where committing to main is OK)
-- **Protected branches**: main, develop (branches that should not receive direct commits unless branching is "direct")
-- **PR creation**: wait_for_user (default: wait_for_user — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes)
-- **PR merge**: wait_for_user (default: wait_for_user — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean)
+- **Branching model**: **gitflow** — `develop` is the primary integration branch; `main` is release-only.
+- **Branching**: feature-branches — every feature/fix branch is cut from `develop` and PR'd back to `develop`. Direct commits to protected branches only for trivial fixes (and only when `Branching` is `direct`, which it isn't here).
+- **Branch flow**:
+  - `feature/...` / `fix/...` / `refactor/...` → PR target: `develop`
+  - `develop` → `main`: release PRs only; cut periodically when a batch of work is ready to ship. No direct commits to `main`.
+- **Protected branches**: `main`, `develop` (no direct commits).
+- **PR creation**: `wait_for_user` (default — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes).
+- **PR merge**: `wait_for_user` (default — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean).
 
 ---
 
@@ -79,6 +88,7 @@ Each preference above should be enforced by one of three mechanisms — assign t
 | `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 |
 | Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | Promote to `ruff` (E, I, UP rules) when a linter is added |
 | Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 |
+| One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) |
 
 **Rule for adding a new preference:** assign a mechanism. If the preference can be expressed as "every file/function/config matches pattern X with named exceptions" → write a test. If a linter rule already exists for it → configure the linter. If it requires understanding intent → assign to Critic. Never leave a preference unassigned.
 

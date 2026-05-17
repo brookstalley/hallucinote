@@ -73,6 +73,13 @@ class FakeClip:
         self.envelopes_by_target[("note", pitch, start, axis)] = env
         return env
 
+    def automation_envelope_for(self, target) -> Any:
+        """Used by clear's _resolve_write_target. Returns the existing envelope
+        for a target if previously created; None otherwise.
+        """
+        key = target if isinstance(target, tuple) else id(target)
+        return self.envelopes_by_target.get(key)
+
 
 class FakeClipSlot:
     def __init__(self, clip: FakeClip | None = None):
@@ -434,6 +441,27 @@ def test_write_envelope_rejects_invalid_target_kind(loaded_actions):
 
 
 # ---------- clear / clear_all ----------
+
+
+def test_clear_clip_cc_requires_cc_number_symmetric_with_write(loaded_actions):
+    """clear with target_kind='clip_cc' must require cc_number the same way
+    write_envelope does — a silent default to CC 0 would be a contract-asymmetry
+    trap (clear on the wrong CC silently).
+    """
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "clip_cc",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                # NO cc_number — must error, not silently target CC 0
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "cc_number" in (resp.error or "")
 
 
 def test_clear_returns_no_op_when_no_envelope_exists(loaded_actions):

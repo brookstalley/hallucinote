@@ -1200,10 +1200,11 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
     "arrangement": ("arrangement", "arrangement_clip_index"),
     "return":      ("return",      "return_index"),
     "device":      ("device",      "device_index"),
-    # Chunk 4b: envelopes. The emulator returns an `envelope_index` so the
-    # planner can re-address the envelope on subsequent pushes (clear-and-
-    # rewrite vs. update-in-place). When the result dict omits the field
-    # (e.g. an emulator that no-ops), apply_push_results skips the link.
+    # Envelopes (Wave M-4: unified ableton_automation(action='write_envelope')).
+    # The handler returns an `envelope_index` so the planner can re-address
+    # the envelope on subsequent pushes (clear-and-rewrite vs. update-in-
+    # place). When the result dict omits the field, apply_push_results
+    # skips the link.
     "envelope":    ("envelope",    "envelope_index"),
 }
 

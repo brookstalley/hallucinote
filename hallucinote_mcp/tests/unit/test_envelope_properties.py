@@ -17,8 +17,6 @@ counts, NaN values (which Hypothesis tends to surface).
 """
 from __future__ import annotations
 
-import math
-
 import pytest
 from hypothesis import assume, given, strategies as st
 

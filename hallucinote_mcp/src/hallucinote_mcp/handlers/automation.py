@@ -602,7 +602,12 @@ def _resolve_write_target(
         if getter is None:
             return None
         if target_kind == "clip_cc":
-            return getter(_midi_cc_envelope_target(clip, int(cc_number or 0)))
+            if cc_number is None:
+                raise ValueError(
+                    "clear with target_kind='clip_cc' requires cc_number — "
+                    "matches write_envelope's requirement for the same kind"
+                )
+            return getter(_midi_cc_envelope_target(clip, int(cc_number)))
         if target_kind == "clip_pitch_bend":
             return getter(_midi_pitch_bend_envelope_target(clip))
         # note_expression

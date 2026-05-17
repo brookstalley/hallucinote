@@ -35,7 +35,7 @@ Tools:
   ableton_session     — global state, master, transport, view, tempo, signature, snapshot
   ableton_track       — tracks: lifecycle, mixer state, sends
   ableton_return      — return tracks
-  ableton_clip        — session + arrangement clips; quantize/groove
+  ableton_clip        — session + arrangement clips (lifecycle, set_property, replace_notes)
   ableton_note        — within-clip note operations (gap #4 blocked)
   ableton_device      — devices on tracks/returns
   ableton_automation  — envelopes (7 target families)
@@ -77,7 +77,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_session", "Global state, master, transport, view, tempo, signature, snapshot.")
     _register_tool(mcp, "ableton_track", "Tracks: lifecycle, mixer state, sends.")
     _register_tool(mcp, "ableton_return", "Return tracks: lifecycle, mixer state.")
-    _register_tool(mcp, "ableton_clip", "Session + arrangement clips; quantize/groove.")
+    _register_tool(mcp, "ableton_clip", "Session + arrangement clips: lifecycle, set_property, replace_notes. Timing transforms (quantize/swing/groove) deliberately live in Hallucinote — see design doc §6.2.")
     _register_tool(mcp, "ableton_note", "Within-clip note operations (gap #4 blocked).")
     _register_tool(mcp, "ableton_device", "Devices on tracks/returns: load, parameters, routing.")
     _register_tool(mcp, "ableton_automation", "Envelopes across seven target families.")

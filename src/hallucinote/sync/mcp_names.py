@@ -11,8 +11,6 @@ from __future__ import annotations
 
 # planner emits (canonical) -> currently-callable name
 ALIASES_TODAY: dict[str, str] = {
-    # PR H: rename
-    "set_clip_notes": "add_notes_to_clip",
     # PR C: not yet exposed at MCP layer (registered in remote script only)
     "set_arrangement_clip_notes": "add_notes_to_arrangement_clip",  # not exposed yet!
     # PR D: doesn't exist yet — must be emulated as delete_clip + create_clip + add_notes_to_clip
@@ -40,6 +38,9 @@ ALIASES_TODAY: dict[str, str] = {
     # return mixer state) dropped.
     # Master-strip volume/pan (Wave M-1) is at
     # ableton_session(action='set_master_property', ...).
+    # Wave M-3: in-place clip note replace (gap #1's renamed action) is now
+    # emitted directly as ableton_clip(action='replace_notes', ...). The
+    # `set_clip_notes` alias dropped here.
     # Chunk 4a: device chain construction. Canonical args:
     #   load_device(track_index: int 1-based, position: int 1-based,
     #               kind: str, preset_uri: str | null)

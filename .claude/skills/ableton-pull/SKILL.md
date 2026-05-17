@@ -2,7 +2,7 @@
 description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__AbletonMCP__get_cue_points
+allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
@@ -18,7 +18,8 @@ chunk-by-chunk. **What works under the current MCP setup:**
 
 - `score-globals` domain — fully retargeted. The single `ableton_session(action='info')` probe runs through `mcp__hallucinote-mcp__ableton_session`.
 - `mix-state` domain — **fully retargeted** as of Wave M-2. Session info routes through `ableton_session(action='info')`; the returns list routes through `ableton_return(action='list')`; per-track mixer + sends route through `ableton_track(action='info')` and `ableton_track(action='get_sends')`. All probes hit `mcp__hallucinote-mcp__*`.
-- `cue-points` domain — **blocked.** The `get_cue_points` probe needs M-5 (arrangement retarget).
+- `cue-points` domain — **blocked.** The `get_cue_points` probe needs M-5 (arrangement retarget). The legacy AbletonMCP server is uninstalled, so the skill cannot route there as a fallback.
+- `clip-notes` domain — **blocked by MCP gap #4.** The new `ableton_clip(action='replace_notes', ...)` action is a push-direction primitive only; pulling notes back requires stable per-note IDs (gap #4) which haven't landed yet.
 
 If the user asks for a blocked domain, surface this transitional state plainly. Do NOT attempt the legacy tool calls — they will fail with "tool not found."
 
@@ -85,7 +86,7 @@ For each `call` in `plan.calls`:
 - Look at `call.tool` and `call.args`.
 - Pick the MCP namespace to invoke from based on `call.tool`:
   - `call.tool` starts with `ableton_` → `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "info"}`). All mix-state and score-globals probes route here as of Wave M-2.
-  - Other `call.tool` values (today: `get_cue_points`) — those domains target the legacy AbletonMCP server, which is no longer installed. The cue-points domain is blocked until M-5.
+  - Other `call.tool` values (today: `get_cue_points`) — those domains target the legacy AbletonMCP server, which is no longer installed. The cue-points domain is blocked until M-5; the legacy tool name is not in this skill's allowed-tools so it cannot be invoked.
 - Capture the response. If the MCP call raises, mark the result as `{"key": ..., "ok": false, "tool": ..., "error": "<message>"}`.
 - On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
 

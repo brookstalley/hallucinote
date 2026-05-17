@@ -50,7 +50,7 @@ Uninstall is symmetric: `/ableton-uninstall-mcp`.
 | `ableton_session` | Global state, master, transport, view, tempo, signature, snapshot |
 | `ableton_track` | Tracks: lifecycle, mixer state, sends |
 | `ableton_return` | Return tracks |
-| `ableton_clip` | Session + arrangement clips; quantize / groove |
+| `ableton_clip` | Session + arrangement clips (lifecycle, set_property, replace_notes) |
 | `ableton_note` | Within-clip note operations |
 | `ableton_device` | Devices on tracks / returns |
 | `ableton_automation` | Envelopes across seven target families |

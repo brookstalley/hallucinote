@@ -256,10 +256,10 @@ technical_decisions:
       rationale: "Single-user, local. WAL gives readers + writers without blocking; the 10s timeout absorbs any short contention from concurrent build/test runs."
       alternatives_considered: "Postgres (overkill for single-user); DuckDB (analytical-first, weaker write story)."
       date: "2026-05-15"
-    - decision: "pytest + hypothesis (parked) for tests; pytest-xdist for parallelism"
-      rationale: "pytest is the de facto Python standard; hypothesis is staged in conftest.py (commented) for note-array transforms / serialization round-trips when those grow. xdist with directory-grouped distribution preserves fixture isolation."
+    - decision: "pytest + hypothesis (enabled Wave M-4) for tests; pytest-xdist for parallelism"
+      rationale: "pytest is the de facto Python standard. Hypothesis was enabled in Wave M-4 for the first invariant-rich surface (envelope breakpoints); `tests/conftest.py` registers `dev` (max_examples=20) and `ci` (max_examples=200) profiles. Property tests live at `tests/unit/generators/test_bar_beats_properties.py` and `hallucinote_mcp/tests/unit/test_envelope_properties.py`. xdist with directory-grouped distribution preserves fixture isolation."
       alternatives_considered: "unittest (too verbose for fixture-heavy code)."
-      date: "2026-05-15 (pytest), J-2 (xdist installed)"
+      date: "2026-05-15 (pytest), Wave M-4 (hypothesis enabled), J-2 (xdist installed)"
 
   data_model:
     - decision: "TEXT UUID primary keys (generated via `uuid.uuid4().hex`)"

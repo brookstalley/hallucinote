@@ -23,7 +23,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Framework**: `pytest>=8.0`
 - **Style**: Descriptive function names (`test_replace_clip_notes_is_atomic`), assert-style, fixtures for shared setup. Helpers like `_make_note` for terse cases.
 - **Coverage expectations**: Happy path + key error paths. Event-emission paired with state change for every mutator. Cascades/FK behavior covered explicitly.
-- **Testing strategies**: Example-based currently. Hypothesis stanza is parked in `conftest.py` (commented) — turn it on for note-array transforms / serialization round-trips when those grow.
+- **Testing strategies**: Example-based plus property-based via Hypothesis (enabled Wave M-4 for the first invariant-rich surface). `tests/conftest.py` registers `dev` (max_examples=20, default) and `ci` (max_examples=200, opt-in via `HYPOTHESIS_PROFILE=ci`) profiles. Active property tests: `tests/unit/generators/test_bar_beats_properties.py` (note-array transforms) and `hallucinote_mcp/tests/unit/test_envelope_properties.py` (envelope breakpoint validation). Extend Hypothesis coverage when a surface has clear named invariants worth fuzzing.
 - **Test location**: three categories, intentionally separated.
   - **Platform / authoring** (`hallucinote` library) — `tests/unit/{db,sync,generators,capture}/` mirrors `src/hallucinote/` packages. NO song-specific code or data; use synthetic fixtures.
   - **MCP plugin** (`hallucinote-mcp` package) — `hallucinote_mcp/tests/{unit,integration}/` mirrors the MCP package layout. NO song-specific code or data.

@@ -206,6 +206,155 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
         assert track.color == 12
 
 
+def test_planner_track_create_emit_validates_against_dispatcher(conn):
+    """Wave M-5: plan_push_clip's unlinked-track path now emits
+    ableton_track(action='create', kind='midi', name=..., instrument_uri?).
+    Pipe through the actual dispatcher against a fake context to lock the
+    cross-package wire contract.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+
+    sid = M.create_song(conn, name="m5-track-create-shape", title="M-5 track create")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    tid = M.create_track(
+        conn, song_id=sid, track_index=1, name="Lead",
+        instrument_uri="query:Operator#FileId_99",
+    )
+    cid = M.create_clip(conn, track_id=tid, slot=1, name="Pattern", length_beats=16.0)
+    # Note: track is intentionally NOT linked — push.plan_push_clip should
+    # emit the create call.
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=sess)
+    create_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_track" and c.args.get("action") == "create"
+    ]
+    assert len(create_calls) == 1, (
+        f"planner did not emit ableton_track(create): {plan.calls!r}"
+    )
+    call = create_calls[0]
+    assert call.args["kind"] == "midi"
+    assert call.args["name"] == "Lead"
+    assert call.args["instrument_uri"] == "query:Operator#FileId_99"
+
+    # Fake song with no tracks yet.
+    class _NewTrack:
+        def __init__(self):
+            self.name = ""
+            self.mixer_device = type("M", (), {
+                "volume": type("P", (), {"value": 0.85})(),
+                "panning": type("P", (), {"value": 0.0})(),
+                "sends": [],
+            })()
+            self.mute = False
+            self.solo = False
+            self.arm = False
+            self.color = None
+            self.has_midi_input = True
+            self.has_audio_input = False
+            self.is_foldable = False
+            self.is_grouped = False
+
+    class _Song:
+        def __init__(self):
+            self.tracks: list = []
+            self.return_tracks: list = []
+        def create_midi_track(self, insert_at: int) -> _NewTrack:
+            t = _NewTrack()
+            if insert_at == -1:
+                self.tracks.append(t)
+            else:
+                self.tracks.insert(insert_at, t)
+            return t
+        def create_audio_track(self, insert_at: int) -> _NewTrack:
+            t = _NewTrack()
+            t.has_midi_input = False
+            t.has_audio_input = True
+            if insert_at == -1:
+                self.tracks.append(t)
+            else:
+                self.tracks.insert(insert_at, t)
+            return t
+
+    class _Ctx:
+        def __init__(self): self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        args = dict(call.args)
+        action_name = args.pop("action")
+        resp = dispatch(
+            Request(tool=call.tool, action=action_name, params=args),
+            context=ctx,
+        )
+        assert resp.ok, (
+            f"track create call rejected by dispatcher: "
+            f"args={args}, err={resp.error!r}"
+        )
+        assert resp.result["track_index"] == 1
+        assert resp.result["kind"] == "midi"
+        assert resp.result["name"] == "Lead"
+        # instrument_uri round-trips as deferred (M-2 behavior preserved).
+        assert resp.result.get("instrument_uri_deferred") == "query:Operator#FileId_99"
+
+
+def test_planner_cue_list_pull_validates_against_dispatcher(conn):
+    """Wave M-5: cue-points pull flows through ableton_arrangement(action='cue_list').
+    Pipe the pull plan through the actual dispatcher against a fake context
+    and confirm the shape is accepted end-to-end.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+    from hallucinote.sync import pull
+
+    sid = M.create_song(conn, name="m5-cue-shape", title="M-5 cue shape")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    plan = pull.plan_pull_cue_points(conn, song_id=sid, session_id=sess)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_arrangement"
+    assert call.args == {"action": "cue_list"}
+
+    # Fake context that returns a cue list shape matching the handler.
+    class _Cue:
+        def __init__(self, time, name):
+            self.time = time
+            self.name = name
+
+    class _Song:
+        def __init__(self):
+            self.cue_points = (
+                _Cue(0.0, "Intro"),
+                _Cue(16.0, "Verse"),
+                _Cue(32.0, "Chorus"),
+            )
+
+    class _Ctx:
+        def __init__(self): self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        action_name = call.args["action"]
+        resp = dispatch(
+            Request(tool=call.tool, action=action_name),
+            context=ctx,
+        )
+        assert resp.ok, resp.error
+        cues = resp.result["cue_points"]
+        assert len(cues) == 3
+        # Names round-trip cleanly (legacy gap #13 doesn't apply in M-5+).
+        names = [c["name"] for c in cues]
+        assert names == ["Intro", "Verse", "Chorus"]
+
+
 def test_planner_envelope_emits_validate_against_dispatcher(conn):
     """Wave M-4: all seven envelope target families flow through one
     ableton_automation(action='write_envelope', target_kind=...) shape.

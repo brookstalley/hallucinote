@@ -5,7 +5,7 @@ the arrangement-loop region, and snapshot/revert (deferred — design doc §14.6
 
 Mostly declarative — the dispatcher reads each ``LiveOp`` and walks the
 ``Live.Song.Song`` graph. The handler functions (``info``,
-``set_master_property``, ``set_arrangement_loop``, ``seek``, ``set_signature``,
+``set_master_property``, ``seek``, ``set_signature``,
 plus the snapshot trio) live in ``handlers/session.py``.
 
 Importing this module registers all actions; happens once at server boot
@@ -241,34 +241,12 @@ register(
 
 
 # ---------------------------------------------------------------------------
-# Arrangement loop region
+# Arrangement loop region — moved to ableton_arrangement(action='set_loop') in
+# Wave M-5. The arrangement-loop concern belongs structurally on the
+# arrangement tool; the M-5 home also takes meter-agnostic beats (vs M-1's
+# bar-based shape). Per no-unnecessary-backwards-compat, this action is
+# dropped — agents should call ableton_arrangement(action='set_loop', ...).
 # ---------------------------------------------------------------------------
-
-register(
-    Action(
-        tool="ableton_session",
-        name="set_arrangement_loop",
-        description=(
-            "Toggle the arrangement loop on or off; optionally set the "
-            "(start_bar, end_bar) region at the same time."
-        ),
-        params=(
-            ParamSpec(name="enabled", type="bool"),
-            ParamSpec(name="start_bar", type="int", required=False, minimum=1),
-            ParamSpec(name="end_bar", type="int", required=False, minimum=2),
-        ),
-        handler=session_handlers.set_arrangement_loop_handler,
-        example=(
-            "ableton_session(action='set_arrangement_loop', enabled=True, "
-            "start_bar=9, end_bar=17)"
-        ),
-        tips=(
-            "Pass start_bar AND end_bar together, or neither. Live stores "
-            "the loop as (loop_start, loop_length); we compute length from "
-            "(end_bar - start_bar) using the current signature.",
-        ),
-    )
-)
 
 
 # ---------------------------------------------------------------------------

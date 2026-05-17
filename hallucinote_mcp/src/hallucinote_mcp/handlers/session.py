@@ -149,50 +149,9 @@ def set_master_property_handler(
 
 
 # ---------------------------------------------------------------------------
-# set_arrangement_loop
+# Arrangement loop — moved to ableton_arrangement(action='set_loop') in
+# Wave M-5. See handlers/arrangement.py.
 # ---------------------------------------------------------------------------
-
-
-def set_arrangement_loop_handler(
-    context: LiveContext,
-    *,
-    enabled: bool,
-    start_bar: int | None = None,
-    end_bar: int | None = None,
-) -> dict[str, Any]:
-    """Toggle the arrangement loop and optionally set its region.
-
-    Both ``start_bar`` and ``end_bar`` are 1-based bar numbers. Conversion to
-    Live's beat-based ``loop_start`` / ``loop_length`` uses the current
-    signature (sampled once at call time — multi-meter songs should
-    explicitly check the signature at the start_bar before relying on this
-    helper). For Live, a beat is always a quarter note regardless of meter.
-    """
-    song = context.song
-    song.loop = bool(enabled)
-
-    if start_bar is not None or end_bar is not None:
-        if start_bar is None or end_bar is None:
-            raise ValueError(
-                "set_arrangement_loop: start_bar and end_bar must be provided "
-                "together — Live stores them as one (start, length) pair"
-            )
-        if end_bar <= start_bar:
-            raise ValueError(
-                f"set_arrangement_loop: end_bar ({end_bar}) must be greater "
-                f"than start_bar ({start_bar})"
-            )
-        beats_per_bar = float(song.signature_numerator) * (
-            4.0 / float(song.signature_denominator)
-        )
-        song.loop_start = (start_bar - 1) * beats_per_bar
-        song.loop_length = (end_bar - start_bar) * beats_per_bar
-
-    return {
-        "enabled": bool(enabled),
-        "start_bar": start_bar,
-        "end_bar": end_bar,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +254,6 @@ def set_view_handler(context: LiveContext, *, view: str) -> dict[str, Any]:
 __all__ = [
     "info_handler",
     "set_master_property_handler",
-    "set_arrangement_loop_handler",
     "seek_handler",
     "set_signature_handler",
     "set_view_handler",

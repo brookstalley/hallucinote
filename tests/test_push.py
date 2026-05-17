@@ -54,10 +54,13 @@ def clip(conn, track):
 
 
 def test_plan_push_clip_creates_track_when_unlinked(conn, session, track, clip):
+    """Wave M-5: retargeted to unified ableton_track(action='create')."""
     plan = push.plan_push_clip(conn, clip_id=clip, session_id=session)
     assert len(plan.calls) == 1
     call = plan.calls[0]
-    assert call.tool == "create_midi_track_with"
+    assert call.tool == "ableton_track"
+    assert call.args["action"] == "create"
+    assert call.args["kind"] == "midi"
     assert call.args["name"] == "Drums"
     assert call.args["instrument_uri"] == "query:Drums#Kit_X"
     assert call.key == f"track:{track}"
@@ -114,8 +117,10 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
         conn, session_id=a, db_kind="track", db_id=track, ableton_index=4
     )
     plan_b = push.plan_push_clip(conn, clip_id=clip, session_id=b)
-    # Under session b, the track is still unlinked -> create call
-    assert plan_b.calls[0].tool == "create_midi_track_with"
+    # Under session b, the track is still unlinked -> create call.
+    # Wave M-5: unified ableton_track(action='create').
+    assert plan_b.calls[0].tool == "ableton_track"
+    assert plan_b.calls[0].args["action"] == "create"
 
 
 # --- arrangement ---
@@ -165,7 +170,7 @@ def test_apply_results_links_track_and_clip(conn, session, track, clip):
     push.apply_push_results(
         conn,
         [
-            {"key": f"track:{track}", "ok": True, "tool": "create_midi_track_with",
+            {"key": f"track:{track}", "ok": True, "tool": "ableton_track",
              "result": {"track_index": 5}},
             {"key": f"clip:{clip}", "ok": True, "tool": "replace_session_clip",
              "result": {"clip_index": 3}},
@@ -180,7 +185,7 @@ def test_apply_results_skips_failed_calls(conn, session, track):
     push.apply_push_results(
         conn,
         [
-            {"key": f"track:{track}", "ok": False, "tool": "create_midi_track_with",
+            {"key": f"track:{track}", "ok": False, "tool": "ableton_track",
              "error": "boom"},
         ],
         session_id=session,
@@ -209,7 +214,7 @@ def test_apply_results_records_actor_sync_by_default(conn, session, track):
     push.apply_push_results(
         conn,
         [
-            {"key": f"track:{track}", "ok": True, "tool": "create_midi_track_with",
+            {"key": f"track:{track}", "ok": True, "tool": "ableton_track",
              "result": {"track_index": 5}},
         ],
         session_id=session,
@@ -241,7 +246,7 @@ def test_apply_results_rolls_back_on_mid_batch_failure(conn, session, track, cli
             [
                 # This one would succeed in isolation.
                 {"key": f"track:{track}", "ok": True,
-                 "tool": "create_midi_track_with", "result": {"track_index": 5}},
+                 "tool": "ableton_track", "result": {"track_index": 5}},
                 # This raises mid-batch.
                 {"key": "frobnicate:abc123", "ok": True,
                  "tool": "frobnicate", "result": {}},
@@ -260,4 +265,29 @@ def test_apply_results_rolls_back_on_mid_batch_failure(conn, session, track, cli
     assert (
         Q.get_ableton_link(conn, session_id=session, db_kind="clip", db_id=clip)
         is None
+    )
+
+
+# ---------------------------------------------------------------------------
+# ALIASES_TODAY ceiling — locked at <=5 per Wave M-5 build plan
+# ---------------------------------------------------------------------------
+
+
+def test_aliases_today_at_or_below_ceiling():
+    """The build plan's M-5 goal was 'final alias table cleanup: <=5 entries
+    remain (only genuinely-not-ready things).' Lock the contraction so a
+    well-meaning future PR that adds a planner-canonical name without an
+    MCP-side implementation gets caught: any growth past 5 should be a
+    deliberate decision, not an accident.
+
+    Today's 4 entries are all genuine multi-step emulations or hard MCP
+    gaps (see mcp_names.py docstring + ALIASES_TODAY comments).
+    """
+    from hallucinote.sync.mcp_names import ALIASES_TODAY
+    assert len(ALIASES_TODAY) <= 5, (
+        f"ALIASES_TODAY grew to {len(ALIASES_TODAY)} entries — Wave M-5 set "
+        "the ceiling at 5. Either: (a) retarget the new alias to a unified "
+        "MCP action, OR (b) document why it's a genuine emulation and bump "
+        "the ceiling deliberately. Current entries: "
+        f"{sorted(ALIASES_TODAY.keys())}"
     )

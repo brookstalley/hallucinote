@@ -118,7 +118,7 @@ def _setup_sidechain_compression(
         f"`ableton_device(action='load', track_index={target_track}, "
         f"kind='Compressor2'"
         + (f", preset_uri={compressor_uri!r}" if compressor_uri else "")
-        + "). Capture the returned `device_index`.\n   "
+        + ")` — capture the returned `device_index`.\n   "
         + ("If a Compressor IS present at index N, use that device_index "
            "instead of loading a new one.")
         + "\n\n"
@@ -228,7 +228,11 @@ def _compose_section_pattern(
             f"Choose one of: {list(_PATTERN_KINDS)}, OR generate the notes "
             "directly via your own pattern library and skip this prompt."
         )]
-    start_beats_expr = f"(({start_bar} - 1) * 4)  # 4/4 assumption; convert via time-signature map for other meters"
+    # Pre-compute the bar→beats value so the call expression in the
+    # rendered template contains a literal float, not a comment-suffixed
+    # expression that would be invalid Python if an agent copy-pastes.
+    # The 4/4 assumption caveat lives in adjacent prose, not inside the call.
+    start_beats_value = (start_bar - 1) * 4
     text = (
         f"Workflow: compose a {bars}-bar {pattern_kind} pattern on track "
         f"{track_index}, placed at bar {start_bar} in the arrangement.\n\n"
@@ -243,8 +247,11 @@ def _compose_section_pattern(
         f"2. Create the arrangement clip with the notes in one call: "
         f"`ableton_clip(action='create', track_index={track_index}, "
         f"location='arrangement', kind='midi', "
-        f"start_beats={start_beats_expr}, length={bars * 4}.0, "
-        f"notes=<from step 1>)`. The atomic create-and-populate avoids the "
+        f"start_beats={start_beats_value}.0, length={bars * 4}.0, "
+        f"notes=<from step 1>)`. "
+        f"(start_beats={start_beats_value}.0 assumes 4/4 — for other "
+        "meters, convert bar→beats via the song's time-signature map "
+        "before the call.) The atomic create-and-populate avoids the "
         "two-call create-then-replace pattern.\n\n"
         f"3. (Optional) name the clip: "
         f"`ableton_clip(action='rename', track_index={track_index}, "

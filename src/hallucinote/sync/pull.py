@@ -52,6 +52,11 @@ class PullCall:
       - `track_info:<track_id>`  -> {name, type, volume, panning, mute?, solo?,
                                      arm?, color?, ...}  (mixer fields)
       - `track_sends:<track_id>` -> {<return_name>: level, ...}
+      - `track_arrangement_clips:<track_id>`
+                                 -> {track_index, location: 'arrangement',
+                                     clips: [{arrangement_clip_index, name,
+                                              start_beats, length}, ...]}
+                                    (W3-4 / M+1-3b — per-track placements)
     """
     tool: str
     args: dict[str, Any]
@@ -308,6 +313,62 @@ def plan_pull_devices(
         plan.warn(
             "no linked tracks or returns for this session — device-chain "
             "pull will be empty"
+        )
+    return plan
+
+
+def plan_pull_arrangement_clips(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull per-track arrangement-clip placements (W3-4 / M+1-3b).
+
+    Emits one ``ableton_clip(action='list', location='arrangement',
+    track_index=N)`` per linked authoring track. The probe returns dense
+    placements `{arrangement_clip_index, name, start_beats, length}`; the
+    apply layer converts beats -> bars via the song's time-signature map and
+    diffs positionally against `arrangement` table rows.
+
+    Skips `master` and `return` track kinds: returns have no arrangement
+    timeline, and master is reached via the master strip (no arrangement
+    clips of its own).
+
+    Per `docs/terminology.md`, this is exclusively about arrangement-clip
+    *placements* (rows in the legacy-named `arrangement` table).
+    Arrangement-VIEW state (loop region, view zoom) is a separate concern
+    with no DB home today (backlog).
+    """
+    plan = PullPlan()
+    any_emitted = False
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] in ("master", "return"):
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"]
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}) not linked in session — "
+                "push it via plan_push_clip first, then re-run pull"
+            )
+            continue
+        any_emitted = True
+        plan.add(PullCall(
+            tool="ableton_clip",
+            args={
+                "action": "list",
+                "location": "arrangement",
+                "track_index": track_at,
+            },
+            key=f"track_arrangement_clips:{t['id']}",
+            purpose=f"pull arrangement-clip placements for track {t['name']!r}",
+        ))
+    if not any_emitted:
+        plan.warn(
+            "no linked authoring tracks for this session — "
+            "arrangement-clip pull will be empty"
         )
     return plan
 
@@ -1202,16 +1263,149 @@ def _apply_devices_for_parent(
         )
 
 
+def _apply_arrangement_clips_for_track(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    track_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff arrangement-clip placements on one track against the probe payload
+    (W3-4 / M+1-3b).
+
+    Identity is positional: matched by `(start_bar, end_bar)` within bar-
+    epsilon tolerance. No `update_arrangement` mutator exists; any field
+    change becomes delete + add at the new position — parity with
+    `_apply_devices_for_parent` for the same "no stable per-element
+    identity" reason. Live's `ableton_link` for arrangement rows binds an
+    `arrangement_clip_index` but Live re-numbers those on any delete, so
+    the index isn't a stable handle for diff matching either.
+
+    Diff classes handled:
+      - `(start, end)` in both DB and Ableton  -> no-op
+      - `(start, end)` in DB only              -> `remove_arrangement`
+      - `(start, end)` in Ableton only         -> warn + skip
+
+    Why warn-and-skip on Ableton-only: positional matching cannot tell
+    a *new* placement (user drew/duplicated a clip) from a *moved*
+    placement (user dragged an existing one). For a new placement, the
+    MCP wire shape carries no DB `clip_id` and V1 can't auto-create a
+    `clips` row from name + length + start alone. For a move, the
+    underlying `clips` row already exists but the apply layer has no way
+    to know which DB row Ableton's placement came from. V1 takes no
+    action either way; the user mirrors the change in DB and re-runs
+    pull on the next pass.
+
+    Renames not detected: the `arrangement` table has no `name` column;
+    display names live on `clips.name`. Manual renames of an arrangement
+    clip in Live are silently lost by this apply. The user can rename via
+    the DB-side clip name (clips are shared across placements).
+
+    Defense-in-depth link check parallels `_apply_devices_for_parent`.
+    """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"track_arrangement_clips for {track_id!r}: not linked in session; "
+            "skipping (the planner would not have emitted this)"
+        )
+        return
+
+    track_row = Q.get_track(conn, track_id)
+    if track_row is None:
+        out.warnings.append(
+            f"track_arrangement_clips:{track_id} — DB row missing; skipping"
+        )
+        return
+
+    clips_in = result.get("clips")
+    if clips_in is None:
+        out.warnings.append(
+            f"track_arrangement_clips for {track_id!r}: result missing "
+            "'clips' field"
+        )
+        return
+
+    ts_points = Q.get_time_signature_map(conn, song_id)
+
+    # 1/1000 of a bar — same precision as `_apply_cue_points_list`. Finer
+    # than any musically meaningful placement.
+    def _pos_key(b: float) -> float:
+        return round(float(b), 3)
+
+    db_rows = [
+        r for r in Q.get_arrangement_for_song(conn, song_id)
+        if r["track_id"] == track_id
+    ]
+    db_by_pos: dict[tuple[float, float], sqlite3.Row] = {
+        (_pos_key(r["start_bar"]), _pos_key(r["end_bar"])): r for r in db_rows
+    }
+    seen: set[tuple[float, float]] = set()
+
+    for entry in clips_in:
+        sb_in = entry.get("start_beats")
+        len_in = entry.get("length")
+        if sb_in is None or len_in is None:
+            out.warnings.append(
+                f"track_arrangement_clips for {track_id!r}: entry missing "
+                f"start_beats or length: {entry!r}"
+            )
+            continue
+        start_bar = _beats_to_position_bar(float(sb_in), ts_points)
+        end_bar = _beats_to_position_bar(
+            float(sb_in) + float(len_in), ts_points
+        )
+        k = (_pos_key(start_bar), _pos_key(end_bar))
+        seen.add(k)
+        if k in db_by_pos:
+            out.no_ops += 1
+            continue
+        # Ableton has a placement at a (start, end) the DB doesn't
+        # know about. Could be a brand-new clip OR an existing
+        # placement the user moved — positional matching can't tell
+        # the two apart. V1 takes no action either way: it doesn't
+        # auto-create `clips` rows and doesn't infer moves.
+        out.warnings.append(
+            f"track {track_row['name']!r}: arrangement clip "
+            f"{entry.get('name')!r} at bar {start_bar:g}..{end_bar:g} "
+            "has no matching DB placement — V1 does not auto-add. "
+            "Mirror the change in DB (add a new placement, or re-add "
+            "a moved one) and re-run pull."
+        )
+
+    # Removals: DB rows Ableton didn't report.
+    for k, row in db_by_pos.items():
+        if k in seen:
+            continue
+        M.remove_arrangement(
+            conn, arrangement_id=row["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"track {track_row['name']!r}: arrangement placement at "
+            f"bar {row['start_bar']:g}..{row['end_bar']:g} removed"
+        )
+
+
 # Dispatch table: key kind -> (handler, expects-db-id)
 _HANDLERS = {
-    "session_info":     ("session_info",     False),
-    "returns_list":     ("returns_list",     False),
-    "return_info":      ("return_info",      True),   # Wave M-2: per-return mixer state
-    "track_info":       ("track_info",       True),
-    "track_sends":      ("track_sends",      True),
-    "cue_points_list":  ("cue_points_list",  False),
-    "track_devices":    ("track_devices",    True),   # W3-3: top-level chain
-    "return_devices":   ("return_devices",   True),   # W3-3: top-level chain
+    "session_info":              ("session_info",              False),
+    "returns_list":              ("returns_list",              False),
+    "return_info":               ("return_info",               True),   # Wave M-2: per-return mixer state
+    "track_info":                ("track_info",                True),
+    "track_sends":               ("track_sends",               True),
+    "cue_points_list":           ("cue_points_list",           False),
+    "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
+    "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
+    "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
 }
 
 
@@ -1318,6 +1512,12 @@ def apply_pull_results(
                     conn, session_id=session_id,
                     parent_kind="return", parent_id=db_id,
                     result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_arrangement_clips":
+                _apply_arrangement_clips_for_track(
+                    conn, song_id=song_id, session_id=session_id,
+                    track_id=db_id, result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
 

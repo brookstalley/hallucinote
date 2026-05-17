@@ -17,7 +17,7 @@ Wave-M design; current status is annotated inline per section.
 - #1 (gap #1 rename): ✓ resolved — `ableton_clip(action='replace_notes')`
 - #2 (delete + replace session clip): ✓ partial — `ableton_clip(action='delete', location='session')` works; `replace_session_clip` retarget is a backlog item.
 - #3 (arrangement note replace): ✓ resolved — `ableton_clip(action='replace_notes', location='arrangement')`.
-- #4 (note-level addressing): ✗ still blocked — `ableton_note` registers gap-#4 stubs; resolution awaits Live's underlying API.
+- #4 (note-level addressing): ◐ **partial** (V1 close-out Chunk D, 2026-05-17) — `ableton_note(action='list')` is functional via `clip.get_notes_extended()` and returns notes with Live's stable per-note IDs. The hallucinote sync layer's `clip-notes` pull diffs content per-note and emits precise update/insert/delete mutations. The add / update / delete write actions remain stubs (live-playback-continuity case is out of scope per `scope.never`); use `ableton_clip(action='replace_notes')` for whole-clip writes.
 - #5 (bulk arrangement ops): partial — `ableton_clip(action='duplicate_to_arrangement')` is per-call; bulk patterns remain agent-emulated.
 - #6 (`duplicate_clip_to_arrangement` returns identity): ✓ resolved — handler returns `arrangement_clip_index`.
 - #16 (sends): ✓ resolved — `ableton_track(action='set_send')` + `get_sends`.
@@ -51,7 +51,7 @@ The remaining V1.1+ wishlist is tracked in `.prawduct/backlog.md`:
 - Hallucinote-side quantize / swing / groove module (M-3 user direction).
 - Replace-session-clip retarget to atomic `ableton_clip(create, replace=True, notes=...)`.
 - Arrangement-level tempo / signature automation.
-- Note pull surface (gap #4 resolution).
+- Note pull surface (gap #4 PARTIAL resolved 2026-05-17; surgical Ableton-side writes remain — `ableton_note(add/update/delete)`).
 - Audio render + analysis (`ableton_render`, `ableton_analysis`).
 - Nested rack chain probe.
 

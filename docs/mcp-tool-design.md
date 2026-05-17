@@ -165,7 +165,7 @@ Ten unified tools. Each has an `action` parameter (string enum), plus per-action
 | `ableton_track` | Track lifecycle, mixer state (volume/pan/mute/solo/arm/color), sends, name, info | ~10 |
 | `ableton_return` | Return-track lifecycle, mixer state, devices via cross-tool | ~6 |
 | `ableton_clip` | Session + arrangement clips: create, delete, fire/stop, rename, properties, duplicate-to-arrangement, replace_notes. Note-timing transforms (quantize/swing/groove) deliberately live in Hallucinote — see §6.2. | ~9 |
-| `ableton_note` | Within-clip note operations: get, add, update, delete (note pull is gap #4) | ~5 |
+| `ableton_note` | Within-clip note operations: `list` is functional as of V1 close-out 2026-05-17 (returns notes with Live's stable per-note IDs via `clip.get_notes_extended()`); `add` / `update` / `delete` remain gap #4 (use `ableton_clip(action='replace_notes')` for whole-clip writes) | ~5 |
 | `ableton_device` | Track + return devices: list, info, load, delete, enable/disable, parameter set, navigate preset, routing, sidechain | ~12 |
 | `ableton_automation` | Envelope CRUD across all seven target families (clip CC, pitch bend, note expression, device parameter, mixer volume/pan, send level) | ~10 |
 | `ableton_arrangement` | Arrangement layout, cue points (locators), loop region, view control | ~8 |
@@ -248,7 +248,7 @@ Total: ~94 actions in 10 tools. (Note: `ableton_help` was considered and dropped
 | `update` | `track_index`, `clip_index`, `location`, `note_ids`, `changes` | new — gap #4 |
 | `delete` | `track_index`, `clip_index`, `location`, `note_ids` | new — gap #4 |
 
-Note pull/edit is structurally blocked until `get_clip_notes_extended` exposes stable note IDs (Hallucinote gap #4). The `ableton_note` tool exists with stubs returning a clear "blocked-by-gap-4" error until the underlying capability lands.
+V1 close-out 2026-05-17 partially resolved gap #4: `ableton_note(action='list')` is functional via `clip.get_notes_extended()` and returns notes with Live's stable per-note IDs (used by the hallucinote sync layer's `clip-notes` pull for precise diff attribution). Surgical Ableton-side writes (`add` / `update` / `delete`) remain stubs — use `ableton_clip(action='replace_notes')` for whole-clip writes (the math happens DB-side; one MCP call rewrites the clip and preserves all V1 compose-time capability).
 
 #### `ableton_device`
 
@@ -404,7 +404,7 @@ Tools:
   ableton_track       — tracks: lifecycle, mixer state, sends
   ableton_return      — return tracks
   ableton_clip        — session + arrangement clips (lifecycle, set_property, replace_notes)
-  ableton_note        — within-clip note operations (gap #4 blocked)
+  ableton_note        — within-clip note operations (list functional; add/update/delete gap #4)
   ableton_device      — devices on tracks/returns
   ableton_automation  — envelopes (7 target families)
   ableton_arrangement — arrangement layout + cue points

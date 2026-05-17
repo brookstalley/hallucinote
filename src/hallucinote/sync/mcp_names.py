@@ -24,7 +24,9 @@ History (per Wave M-* sessions in `.session-reflected`):
   ableton_clip(create, replace=True, notes=...)). One fewer round-trip per
   unlinked-clip push.
 
-Remaining 3 entries:
+The remaining `ALIASES_TODAY` entries are listed in the dict below — count
+is whatever's there. (Tests deliberately don't restate it so the count
+can't drift.)
 """
 from __future__ import annotations
 

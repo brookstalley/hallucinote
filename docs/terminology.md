@@ -81,7 +81,7 @@ entry confused these — that's what triggered this doc.
 | Concept | Definition | Where it lives |
 |---|---|---|
 | **Clip (definition)** | The musical content: notes / audio path / display name / length | DB `clips` table; addressed by `clips.id` |
-| **Clip placement** | An instance of a Clip in a session slot OR on the arrangement timeline | DB `arrangement` table (for arrangement placements); session-side: today the `clips` row carries `clip_index` directly (no separate placements table — a session clip IS a clip definition bound to one slot via `ableton_links`) |
+| **Clip placement** | An instance of a Clip in a session slot OR on the arrangement timeline | DB `arrangement` table (for arrangement placements); session-side: today the `clips` row carries the `slot` column directly (no separate placements table — a session clip IS a clip definition bound to one slot via `ableton_links`) |
 | **Live `Clip` object** | The Live API's runtime representation | `track.clip_slots[i].clip` or `track.arrangement_clips[i]` — no separation of definition vs. placement on Live's side |
 
 Our DB **splits** definition from arrangement-side placement (so one Clip

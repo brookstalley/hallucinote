@@ -1668,6 +1668,322 @@ def test_pull_cli_arrangement_clips_domain_emits_plan(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# plan_pull_session_clips + _apply_session_clips_for_track (V1 close-out C)
+# ---------------------------------------------------------------------------
+
+
+def _session_payload(*entries, track_index: int = 5) -> dict:
+    """Build an `ableton_clip(action='list', location='session')` payload.
+
+    Each entry is either ``("empty", slot)`` for an empty slot or
+    ``("populated", slot, name, length)`` for a populated one. Mirrors
+    the `list_handler` session branch shape so apply tests exercise the
+    real wire shape.
+    """
+    clips: list[dict] = []
+    for e in entries:
+        if e[0] == "empty":
+            clips.append({"clip_index": e[1], "empty": True})
+        elif e[0] == "populated":
+            _, slot, name, length = e
+            clips.append({
+                "clip_index": slot, "empty": False,
+                "name": name, "length": float(length),
+            })
+        else:
+            raise ValueError(f"unknown session entry kind: {e[0]!r}")
+    return {
+        "track_index": track_index,
+        "location": "session",
+        "clips": clips,
+    }
+
+
+def test_plan_pull_session_clips_emits_per_linked_track(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_session_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_clip"
+    assert c.args == {
+        "action": "list", "location": "session", "track_index": 5,
+    }
+    assert c.key == f"track_session_clips:{tid}"
+
+
+def test_plan_pull_session_clips_skips_unlinked_with_warning(
+    conn, song, session
+):
+    M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    plan = pull.plan_pull_session_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert plan.calls == []
+    assert any("not linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_session_clips_skips_master_kind(conn, song, session, master):
+    """Master tracks have no session-view clip grid in Live."""
+    _link_track(conn, session=session, db_id=master, ableton_index=0)
+    plan = pull.plan_pull_session_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert plan.calls == []
+
+
+def test_plan_pull_session_clips_args_match_mcp_list_action_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits must be a known
+    param on `ableton_clip(action='list')`. Mirrors the M+1-1 contract
+    test pattern; catches drift if the MCP surface renames the param."""
+    from hallucinote_mcp.actions import clip as _clip_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    list_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_clip" and a.name == "list"
+    )
+    schema_param_names = {p.name for p in list_action.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_session_clips(
+        conn, song_id=song, session_id=session
+    )
+    emitted = set(plan.calls[0].args) - {"action"}
+    unknown = emitted - schema_param_names
+    assert not unknown, (
+        f"planner emits args not in ableton_clip(list) schema: {unknown}; "
+        f"schema params: {schema_param_names}"
+    )
+
+
+def test_apply_session_clips_no_op_when_matched(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
+    M.create_clip(conn, track_id=tid, slot=3, length_beats=8.0, name="B")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(
+                ("populated", 1, "A", 16.0),
+                ("empty", 2),
+                ("populated", 3, "B", 8.0),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    # 2 populated matches + 1 empty matches DB-empty -> 3 no-ops.
+    assert out.no_ops == 3
+
+
+def test_apply_session_clips_deletes_db_clip_when_ableton_slot_empty(
+    conn, song, session
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_clip(conn, track_id=tid, slot=2, length_beats=8.0, name="DropMe")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("empty", 2)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_clip(conn, cid) is None
+    assert any("cleared in Ableton" in d for d in out.details)
+
+
+def test_apply_session_clips_updates_name_when_drifted(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="OldName")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 1, "NewName", 16.0)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_clip(conn, cid)["name"] == "NewName"
+
+
+def test_apply_session_clips_updates_length_when_drifted(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 1, "A", 8.0)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_clip(conn, cid)["length_beats"] == pytest.approx(8.0)
+
+
+def test_apply_session_clips_length_drift_below_epsilon_is_no_op(
+    conn, song, session
+):
+    """Float jitter parity with mix-state: a tiny length delta should
+    no-op rather than churn an event."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 1, "A", 16.0 + 1e-5)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_session_clips_warns_on_ableton_only_slot(conn, song, session):
+    """Same V1 limit as arrangement-clip: Ableton-only populated slot
+    warns + skips because the wire shape carries no note content for
+    auto-create and we can't infer moves."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 4, "MysteryClip", 12.0)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("no matching DB clip" in w and "MysteryClip" in w
+               for w in out.warnings)
+
+
+def test_apply_session_clips_deletes_db_clip_beyond_ableton_range(
+    conn, song, session
+):
+    """DB has a clip at slot 5 but Ableton's dense list only reports
+    slots 1..3 (track shortened in Live). The slot-5 DB row is
+    treated as out-of-range and deleted."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_clip(conn, track_id=tid, slot=5, length_beats=8.0, name="Stray")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(
+                ("empty", 1), ("empty", 2), ("empty", 3),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_clip(conn, cid) is None
+    assert any("out of Ableton range" in d for d in out.details)
+
+
+def test_apply_session_clips_emits_clip_updated_event(conn, song, session):
+    """Mutator discipline: name+length drift goes through `update_clip`
+    and emits a `clip_updated` event with actor=sync."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
+
+    pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 1, "A2", 8.0)),
+        )],
+        song_id=song, session_id=session, reason="test",
+    )
+    events = Q.get_events_for_song(conn, song)
+    updated = [e for e in events if e["kind"] == "clip_updated"]
+    assert updated, (
+        f"expected a clip_updated event; got {[e['kind'] for e in events]}"
+    )
+    assert updated[0]["actor"] == "sync"
+    assert updated[0]["reason"] == "test"
+
+
+def test_apply_session_clips_skips_when_track_unlinked(conn, song, session):
+    """Defense-in-depth link check parallels arrangement-clip apply."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("empty", 1)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    assert any("not linked" in w for w in out.warnings)
+
+
+def test_apply_session_clips_warns_on_missing_clips_field(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            {"track_index": 5, "location": "session"},  # no 'clips'
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("missing 'clips'" in w for w in out.warnings)
+
+
+def test_pull_cli_session_clips_domain_emits_plan(tmp_path):
+    """Smoke test: `session-clips` domain reaches the new planner via the
+    CLI dispatch and emits a plan (empty here — no linked tracks)."""
+    db_path = tmp_path / "session_clips_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_sess", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "session-clips", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "session-clips"
+    assert plan_dict["session_id"] == session_id
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
+
+
+# ---------------------------------------------------------------------------
 # Round-trip: push -> mutate Ableton-side dict -> pull -> DB matches
 # ---------------------------------------------------------------------------
 

@@ -374,6 +374,53 @@ def create_clip(
     return cid
 
 
+_CLIP_UPDATE_FIELDS = frozenset({"name", "length_beats", "section_role"})
+
+
+def update_clip(
+    conn: sqlite3.Connection,
+    *,
+    clip_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+    **changes: Any,
+) -> None:
+    """Partial update by id. `changes` keys must be in _CLIP_UPDATE_FIELDS.
+
+    Deliberately excludes `track_id` (moving a clip between tracks is
+    delete+create), `slot` (slot relocation is delete+create), and
+    `generator_call_json` (provenance — append-only-ish). Notes are
+    written via `replace_clip_notes` / `insert_notes`, not here.
+    """
+    bad = set(changes) - _CLIP_UPDATE_FIELDS
+    if bad:
+        raise ValueError(f"unsupported fields: {sorted(bad)}")
+    if not changes:
+        return
+    row = conn.execute(
+        """SELECT c.track_id, t.song_id FROM clips c
+           JOIN tracks t ON t.id = c.track_id WHERE c.id = ?""",
+        (clip_id,),
+    ).fetchone()
+    if row is None:
+        return
+    sets = [f"{k} = ?" for k in changes]
+    vals = list(changes.values()) + [clip_id]
+    conn.execute(f"UPDATE clips SET {', '.join(sets)} WHERE id = ?", vals)
+    _emit(
+        conn,
+        E.CLIP_UPDATED,
+        {"clip_id": clip_id, "track_id": row["track_id"], "changes": changes},
+        song_id=row["song_id"],
+        clip_id=clip_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
 def delete_clip(
     conn: sqlite3.Connection,
     *,

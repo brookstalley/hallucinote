@@ -137,6 +137,39 @@ def test_create_track_rejects_legacy_return_kind(conn, song):
         )
 
 
+def test_update_clip_persists_name_and_length_and_emits_event(conn, track):
+    cid = M.create_clip(
+        conn, track_id=track, slot=1, length_beats=16.0, name="Old",
+    )
+    M.update_clip(
+        conn, clip_id=cid, name="New", length_beats=8.0, actor="sync",
+    )
+    row = Q.get_clip(conn, cid)
+    assert row["name"] == "New"
+    assert row["length_beats"] == 8.0
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.CLIP_UPDATED
+    payload = json.loads(ev["payload_json"])
+    assert payload["clip_id"] == cid
+    assert payload["track_id"] == track
+    assert set(payload["changes"]) == {"name", "length_beats"}
+    assert ev["actor"] == "sync"
+
+
+def test_update_clip_rejects_unsupported_field(conn, track):
+    cid = M.create_clip(conn, track_id=track, slot=1, length_beats=8.0)
+    with pytest.raises(ValueError, match="unsupported fields"):
+        M.update_clip(conn, clip_id=cid, slot=2)  # slot is not mutable here
+
+
+def test_update_clip_no_changes_is_noop(conn, track):
+    cid = M.create_clip(conn, track_id=track, slot=1, length_beats=8.0, name="A")
+    before_count = len(_events(conn))
+    M.update_clip(conn, clip_id=cid)
+    # No write -> no event.
+    assert len(_events(conn)) == before_count
+
+
 def test_create_clip_with_generator_call(conn, track):
     cid = M.create_clip(
         conn,

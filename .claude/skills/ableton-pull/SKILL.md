@@ -36,12 +36,12 @@ Map the user's request — domain token OR natural language — onto one of thes
 - `score-globals` — global tempo + global time signature ONLY (bar-1 rows in each map). Cheaper than `mix-state` if all you've changed is tempo or meter.
 - `cue-points` — arrangement cue point positions + names. Gap #13 (legacy fork's numeric-only names) is resolved in the greenfield server; apply still treats name diffs as informational warnings since DB-side cue names are user-authoritative.
 - `devices` — top-level device chain on each linked track + return: positional diff of `(kind, display_name)` slots. Nested rack chains, per-device parameters, and `is_active` are NOT pulled (gap-blocked or not-yet-modeled — see below).
-- `arrangement-clips` — per-track arrangement-clip placements (start_bar / end_bar). Positional diff: matched pairs no-op, DB-only positions are removed, Ableton-only positions warn. Positional matching cannot distinguish a *moved* placement from a *new* one (Live exposes no stable per-clip identity), so V1 takes no action on Ableton-only positions either way: it does not auto-create `clips` rows, and it does not infer moves. Mirror the change in DB (re-add the moved placement, or create the new clip + placement) and re-run pull. Clip-name renames are NOT detected (the `arrangement` table has no `name` column; names live on `clips.name`).
+- `arrangement-clips` — per-track arrangement-clip placements (start_bar / end_bar). Positional diff: matched pairs no-op, DB-only positions are removed, Ableton-only positions warn. Positional matching cannot distinguish a *moved* placement from a *new* one (Live exposes no stable per-clip identity), so V1 takes no action on Ableton-only positions either way: it does not auto-create `clips` rows, and it does not infer moves. Mirror the change in DB (re-add the moved placement, or create the new clip + placement) and re-run pull. Clip-name renames are NOT detected here (the `arrangement_clips` table has no `name` column; names live on `clips.name` and round-trip via `session-clips` below).
+- `session-clips` — per-track session-view clip-slot contents (slot, name, length). Slot-positional diff: matched slots no-op (or `update_clip` if name/length drifted), Ableton-empty slots delete the DB clip at that slot, Ableton-only populated slots warn (same V1 limit as `arrangement-clips`: can't auto-create a clip from name + length alone). Note content drift is NOT detected here — that rides on the gap #4 partial resolution via the `note pull` Chunk D.
 
 **MCP-gap-blocked (do NOT attempt — surface the gap and offer the closest available alternative):**
-- Notes / MIDI — blocked by MCP gap #4 (no note-level IDs). Pull-back of notes would be destructive (whole-clip rewrite); deferred until note-level addressing lands.
 - Automation envelopes — blocked by no MCP read surface for envelopes (see `docs/mcp-requirements.md` "Capture-side read").
-- Device parameter values — blocked by MCP gap #17b (`get_device_parameters` raises `No module named 'MCP_Server'`). The `devices` domain pulls chain structure only; parameter values stay blocked.
+- Device parameter values — sync-layer not yet built. `ableton_device(action='get_parameters')` works in the greenfield server (the legacy fork's #17b bug doesn't apply); the `devices` domain pulls chain structure only and a parameter-value pull would be a separate planner. Tracked in backlog.
 - Nested rack chains — blocked by MCP nested-chain probe gap. The `devices` domain walks only top-level chains; devices flagged `can_have_chains=True` won't have their internal chains traversed.
 - Master-strip devices — separate planner (master is reached via `ableton_session`, not `ableton_track`); the `devices` domain skips master rows. Tracked as a backlog item.
 - Per-arrangement (multi-point) tempo / signature changes — MCP read gap; only the global (bar-1) values are exposed via `ableton_session(action='info')`.
@@ -55,9 +55,10 @@ Map the user's request — domain token OR natural language — onto one of thes
 - "cue points" / "locators" / "arrangement markers" → `cue-points`
 - "device chain edits" / "added/removed a plugin" / "moved the compressor" / "swapped the EQ" → `devices`
 - "arrangement edits" / "moved a clip in the arrangement" / "deleted a clip from the timeline" / "rearranged the song" → `arrangement-clips`
-- "midi notes" / "latest midi updates" → blocked. Explain gap #4. Do NOT run anything.
-- "device settings" / "compressor params" / "what's the threshold set to" → blocked (parameter values). Explain gap #17b. The `devices` domain pulls the chain structure but NOT the values.
-- "everything" → run every available domain in order: `mix-state`, then `cue-points`, then `devices`, then `arrangement-clips`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
+- "session-view edits" / "renamed a clip in Session View" / "cleared a slot" / "shortened a session clip" → `session-clips`
+- "midi notes" / "latest midi updates" → note pull is V1 scope but a separate domain (Chunk D of the V1 close-out). Until it lands, surface this and offer the structural domains that ARE available.
+- "device settings" / "compressor params" / "what's the threshold set to" → blocked (parameter values; sync-layer not built). The `devices` domain pulls the chain structure but NOT the values.
+- "everything" → run every available domain in order: `mix-state`, then `cue-points`, then `devices`, then `arrangement-clips`, then `session-clips`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
 
 If the request is ambiguous, ask one targeted question rather than guessing.
 

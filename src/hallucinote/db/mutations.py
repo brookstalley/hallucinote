@@ -234,7 +234,7 @@ def set_song_timing_mode(
 # ---------------------------------------------------------------------------
 
 
-TRACK_KINDS = frozenset({"midi", "audio", "return", "master", "group"})
+TRACK_KINDS = frozenset({"midi", "audio", "master", "group"})
 
 
 def create_track(
@@ -250,8 +250,10 @@ def create_track(
     reason: str | None = None,
 ) -> str:
     """Create a track. `kind` selects 'midi' (default), 'audio', 'master', or
-    'group'; 'return' is reserved (returns live in the `returns` table). Mixer
-    state lives on the row but is set separately via `set_track_mixer`."""
+    'group'. Real returns live in the `returns` table — the `'return'` kind
+    on a `tracks` row was dropped V1 close-out 2026-05-17 (schema CHECK
+    rejects). Mixer state lives on the row but is set separately via
+    `set_track_mixer`."""
     if kind not in TRACK_KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {sorted(TRACK_KINDS)}")
     tid = _uuid()

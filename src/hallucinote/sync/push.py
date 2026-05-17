@@ -514,11 +514,6 @@ def plan_push_mix(
                 ))
             continue
 
-        if t["kind"] == "return":
-            # 'return' kind on a `tracks` row is reserved; real returns live in
-            # `returns`. Skip silently — replay won't put rows here today.
-            continue
-
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]
         )
@@ -653,9 +648,9 @@ def plan_push_devices(
         return plan
 
     for t in tracks:
-        if t["kind"] in ("master", "return"):
-            # Master + reserved 'return' track-row kinds don't carry devices
-            # via the tracks table. Real returns are handled below.
+        if t["kind"] == "master":
+            # Master tracks don't carry devices via the tracks table; real
+            # returns are handled in the loop below.
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]

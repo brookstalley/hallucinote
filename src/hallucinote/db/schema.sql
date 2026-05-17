@@ -39,8 +39,12 @@ CREATE TABLE IF NOT EXISTS tracks (
     track_index             INTEGER NOT NULL,
     name                    TEXT NOT NULL,
     instrument_uri          TEXT,
+    -- 'return' was reserved historically but real returns live in the
+    -- `returns` table; the reservation was structurally dead code (no
+    -- code path created it, push/pull both skipped it). Dropped V1
+    -- close-out — misuse now surfaces as an integrity error.
     kind                    TEXT NOT NULL DEFAULT 'midi'
-                                CHECK (kind IN ('midi','audio','return','master','group')),
+                                CHECK (kind IN ('midi','audio','master','group')),
     -- Mixer state. Volume/pan use Live's normalized range (0.0–1.0) matching
     -- the captured_session.json convention; conversion to dB happens at the UI
     -- layer if needed. mute/solo/arm are 0/1 booleans. color is RGB int.
@@ -52,12 +56,12 @@ CREATE TABLE IF NOT EXISTS tracks (
     color                   INTEGER,
     UNIQUE(song_id, track_index)
 );
--- `kind` is the discriminator: 'midi' (default), 'audio', 'master', 'group',
--- and 'return' (reserved — returns currently live in the `returns` table for
--- their distinct shape). 'audio' and 'group' are valid in V1 but produce no
--- clip authoring; master tracks live here with `kind='master'` and are
--- special-cased in sync (Live's master is reached via the master strip, not
--- by track index).
+-- `kind` is the discriminator: 'midi' (default), 'audio', 'master', 'group'.
+-- Real returns live in the `returns` table (for their distinct shape); the
+-- legacy `'return'` reservation on this table was dropped V1 close-out
+-- 2026-05-17. 'audio' and 'group' are valid but produce no clip authoring;
+-- master tracks live here with `kind='master'` and are special-cased in
+-- sync (Live's master is reached via the master strip, not by track index).
 
 CREATE INDEX IF NOT EXISTS idx_tracks_song ON tracks(song_id);
 

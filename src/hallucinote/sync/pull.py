@@ -160,8 +160,8 @@ def plan_pull_mix(
 
     any_linked_track = False
     for t in tracks:
-        if t["kind"] in ("master", "return"):
-            # master is reached via session_info; return rows are reserved.
+        if t["kind"] == "master":
+            # master is reached via session_info, not the per-track probe.
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]
@@ -265,15 +265,17 @@ def plan_pull_devices(
       - ``is_active`` flag (no DB column today; the field rides along in
         the probe but apply currently ignores it)
 
-    Skips ``master`` and ``return`` track kinds in the ``tracks`` table the
-    same way ``plan_pull_mix`` does — returns are pulled via the separate
-    ``returns`` table, master via a future master-chain planner.
+    Skips ``master`` track rows in the ``tracks`` iteration the same way
+    ``plan_pull_mix`` does — master devices are reached via a future
+    master-chain planner. Real returns live in the separate ``returns``
+    table (the legacy ``tracks.kind='return'`` reservation was dropped
+    V1 close-out 2026-05-17).
     """
     plan = PullPlan()
     any_emitted = False
 
     for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] in ("master", "return"):
+        if t["kind"] == "master":
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]
@@ -331,9 +333,11 @@ def plan_pull_arrangement_clips(
     apply layer converts beats -> bars via the song's time-signature map and
     diffs positionally against `arrangement_clips` table rows.
 
-    Skips `master` and `return` track kinds: returns have no arrangement
-    timeline, and master is reached via the master strip (no arrangement
-    clips of its own).
+    Skips `master` track rows: master has no arrangement of its own.
+    Real returns live in the `returns` table and don't appear in the
+    `tracks` iteration this planner walks (the legacy
+    `tracks.kind='return'` reservation was dropped V1 close-out
+    2026-05-17).
 
     Per `docs/terminology.md`, this is exclusively about arrangement-clip
     *placements* (rows in the `arrangement_clips` table).
@@ -343,7 +347,7 @@ def plan_pull_arrangement_clips(
     plan = PullPlan()
     any_emitted = False
     for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] in ("master", "return"):
+        if t["kind"] == "master":
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]
@@ -1070,8 +1074,20 @@ def _apply_cue_points_list(
         elif "position_bar" in entry:
             position_bar = float(entry["position_bar"])
         elif "bar" in entry:
+            # Legacy fork shape — dormant since the legacy fork was retired
+            # in W3 / Wave M. Guard `bar < 1` because the new
+            # `cue_points.position_bar >= 1.0` CHECK (added J-6) would
+            # `IntegrityError` on `_join_bar_beat(0, ...)` → 0.0. Warn and
+            # skip rather than crashing the whole pull on bad upstream data.
+            bar_in = int(entry["bar"])
+            if bar_in < 1:
+                out.warnings.append(
+                    f"cue_points_list entry has legacy bar={bar_in!r} "
+                    "(< 1) — schema requires position_bar >= 1.0; skipping"
+                )
+                continue
             position_bar = _join_bar_beat(
-                int(entry["bar"]), float(entry.get("beat", 0.0)), ts_points
+                bar_in, float(entry.get("beat", 0.0)), ts_points
             )
         else:
             out.warnings.append(

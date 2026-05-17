@@ -43,9 +43,24 @@ def ret(conn, song):
 
 
 def _calls_by_tool(plan) -> dict[str, list]:
+    """Group calls by tool name. Pre-Wave-M-4 this was the only key; with
+    the unified tool collapse, callers usually want by (tool, action) —
+    use _calls_by_action.
+    """
     out: dict[str, list] = {}
     for c in plan.calls:
         out.setdefault(c.tool, []).append(c)
+    return out
+
+
+def _calls_by_action(plan) -> dict[str, list]:
+    """Group calls by their 'action' arg for the unified-tool surface.
+    Calls without an action key (legacy) end up under their tool name.
+    """
+    out: dict[str, list] = {}
+    for c in plan.calls:
+        key = c.args.get("action", c.tool)
+        out.setdefault(key, []).append(c)
     return out
 
 
@@ -85,15 +100,15 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
         display_name="Late Nite Kit", preset_uri="query:Drums#FileId_5418",
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    assert "load_device" in by_tool
-    load = by_tool["load_device"][0]
-    assert load.args == {
-        "track_index": 5,
-        "position": 1,
-        "kind": "DrumGroupDevice",
-        "preset_uri": "query:Drums#FileId_5418",
-    }
+    by_action = _calls_by_action(plan)
+    # Wave M-4: unified ableton_device(action='load') replaces load_device.
+    assert "load" in by_action
+    load = by_action["load"][0]
+    assert load.tool == "ableton_device"
+    assert load.args["track_index"] == 5
+    assert load.args["position"] == 1
+    assert load.args["kind"] == "DrumGroupDevice"
+    assert load.args["preset_uri"] == "query:Drums#FileId_5418"
     assert load.key == f"device:{did}"
     assert any("not linked" in n for n in plan.notes)
 
@@ -108,13 +123,13 @@ def test_plan_push_devices_skips_params_when_device_unlinked(
         value_display="1.17 kHz", value_normalized=0.59,
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    # Load emitted, but no set_device_parameter — device_index is unknown until apply.
-    assert "load_device" in by_tool
-    assert "set_device_parameter" not in by_tool
+    by_action = _calls_by_action(plan)
+    # Load emitted, but no set_parameter — device_index is unknown until apply.
+    assert "load" in by_action
+    assert "set_parameter" not in by_action
 
 
-# ---------- set_device_parameter for linked devices ----------
+# ---------- set_parameter for linked devices ----------
 
 
 def test_plan_push_devices_emits_params_for_linked_device(
@@ -135,16 +150,20 @@ def test_plan_push_devices_emits_params_for_linked_device(
     )
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    assert "load_device" not in by_tool  # already linked
-    calls = by_tool["set_device_parameter"]
+    by_action = _calls_by_action(plan)
+    assert "load" not in by_action  # already linked
+    calls = by_action["set_parameter"]
     assert len(calls) == 2
     by_param = {c.args["parameter_name"]: c for c in calls}
-    assert by_param["Freq"].args == {
-        "track_index": 5, "device_index": 2,
-        "parameter_name": "Freq", "value": pytest.approx(0.59),
-    }
-    assert by_param["Freq"].key == f"device_parameter:{did}:Freq"
+    freq = by_param["Freq"]
+    assert freq.tool == "ableton_device"
+    assert freq.args["track_index"] == 5
+    assert freq.args["device_index"] == 2
+    assert freq.args["parameter_name"] == "Freq"
+    # value is stringified on the wire (schema uniformity continuous + enum)
+    assert float(freq.args["value"]) == pytest.approx(0.59)
+    assert freq.args["value_type"] == "continuous"
+    assert freq.key == f"device_parameter:{did}:Freq"
 
 
 def test_plan_push_devices_warns_for_enum_only_params(
@@ -161,10 +180,10 @@ def test_plan_push_devices_warns_for_enum_only_params(
     )
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
+    by_action = _calls_by_action(plan)
     # Only the continuous param emits a call.
-    assert len(by_tool["set_device_parameter"]) == 1
-    assert by_tool["set_device_parameter"][0].args["parameter_name"] == "Filter Freq"
+    assert len(by_action["set_parameter"]) == 1
+    assert by_action["set_parameter"][0].args["parameter_name"] == "Filter Freq"
     # And the enum gets surfaced as a warn.
     assert any("enum-only" in n and "Filter Type" in n for n in plan.notes)
 
@@ -180,14 +199,17 @@ def test_plan_push_devices_emits_return_specific_tools(
     )
     cid = M.create_device_chain(conn, parent_return_id=ret)
     did = M.create_device(conn, chain_id=cid, position=1, kind="Reverb", display_name="Reverb")
-    # Unlinked device -> emits load_device_on_return.
+    # Unlinked device -> emits ableton_device(action='load', return_index=...).
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    assert "load_device_on_return" in by_tool
-    load = by_tool["load_device_on_return"][0]
-    assert load.args == {
-        "return_index": 1, "position": 1, "kind": "Reverb", "preset_uri": None,
-    }
+    by_action = _calls_by_action(plan)
+    assert "load" in by_action
+    load = by_action["load"][0]
+    assert load.tool == "ableton_device"
+    assert load.args["return_index"] == 1
+    assert load.args["position"] == 1
+    assert load.args["kind"] == "Reverb"
+    # preset_uri is omitted when None — keeps the wire shape minimal.
+    assert "preset_uri" not in load.args
 
     # Once linked, params use return_index, not track_index.
     M.set_device_parameter(conn, device_id=did, name="Decay",
@@ -196,13 +218,14 @@ def test_plan_push_devices_emits_return_specific_tools(
         conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    assert "set_return_device_parameter" in by_tool
-    param_call = by_tool["set_return_device_parameter"][0]
-    assert param_call.args == {
-        "return_index": 1, "device_index": 2,
-        "parameter_name": "Decay", "value": pytest.approx(0.6),
-    }
+    by_action = _calls_by_action(plan)
+    assert "set_parameter" in by_action
+    param_call = by_action["set_parameter"][0]
+    assert param_call.tool == "ableton_device"
+    assert param_call.args["return_index"] == 1
+    assert param_call.args["device_index"] == 2
+    assert param_call.args["parameter_name"] == "Decay"
+    assert float(param_call.args["value"]) == pytest.approx(0.6)
 
 
 # ---------- apply_push_results integration ----------
@@ -215,7 +238,7 @@ def test_apply_push_results_links_devices(conn, song, session, linked_track):
     push.apply_push_results(
         conn,
         [
-            {"key": f"device:{did}", "ok": True, "tool": "load_device",
+            {"key": f"device:{did}", "ok": True, "tool": "ableton_device",
              "result": {"device_index": 3}},
         ],
         session_id=session,
@@ -238,7 +261,7 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
         conn,
         [
             {"key": f"device_parameter:{did}:Freq", "ok": True,
-             "tool": "set_device_parameter", "result": {}},
+             "tool": "ableton_device", "result": {}},
         ],
         session_id=session,
     )
@@ -272,10 +295,15 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     M.create_device(conn, chain_id=rcid, position=1, kind="Reverb", display_name="Rev")
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
-    by_tool = _calls_by_tool(plan)
-    # EQ linked -> 1 set_device_parameter, no load. Comp unlinked -> 1 load_device.
-    # Return reverb unlinked -> 1 load_device_on_return.
-    assert len(by_tool.get("set_device_parameter", [])) == 1
-    assert len(by_tool.get("load_device", [])) == 1
-    assert by_tool["load_device"][0].args["kind"] == "Compressor2"
-    assert len(by_tool.get("load_device_on_return", [])) == 1
+    by_action = _calls_by_action(plan)
+    # EQ linked -> 1 set_parameter call; Comp unlinked -> 1 load (track-side);
+    # Return reverb unlinked -> 1 load (return-side). All three under the
+    # unified ableton_device tool.
+    assert len(by_action.get("set_parameter", [])) == 1
+    loads = by_action.get("load", [])
+    assert len(loads) == 2  # one for track-side Comp, one for return-side Reverb
+    by_target = {
+        ("track" if "track_index" in c.args else "return"): c for c in loads
+    }
+    assert by_target["track"].args["kind"] == "Compressor2"
+    assert by_target["return"].args["kind"] == "Reverb"

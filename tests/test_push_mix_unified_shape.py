@@ -206,6 +206,177 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
         assert track.color == 12
 
 
+def test_planner_envelope_emits_validate_against_dispatcher(conn):
+    """Wave M-4: all seven envelope target families flow through one
+    ableton_automation(action='write_envelope', target_kind=...) shape.
+    Pipe a track-level mixer_volume envelope through the actual dispatcher
+    against a fake context and confirm the shape is accepted end-to-end.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+
+    sid = M.create_song(conn, name="m4-shape-test", title="M-4 shape test")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=3
+    )
+    eid = M.create_envelope(
+        conn, song_id=sid, target_kind="mixer_volume", target_track_id=tid,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.5, "curve_kind": "linear"},
+            {"time_beats": 16.0, "value": 0.8, "curve_kind": "linear"},
+        ],
+    )
+    plan = push.plan_push_envelopes(conn, song_id=sid, session_id=sess)
+    write_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_automation"
+        and c.args.get("action") == "write_envelope"
+    ]
+    assert len(write_calls) == 1
+    assert write_calls[0].args["target_kind"] == "mixer_volume"
+
+    # Build a fake song with 3 tracks (so track_index=3 resolves) and a
+    # mixer that records envelope creation.
+    class _Param:
+        def __init__(self, v=0.0):
+            self.value = v
+            self.min = 0.0
+            self.max = 1.0
+            self.value_items = None
+
+    class _Envelope:
+        def __init__(self):
+            self.cleared = 0
+            self.calls = []
+        def clear(self): self.cleared += 1
+        def insert_step(self, t, dur, v): self.calls.append(("step", t, dur, v))
+        def add_segment(self, t, dur, s, e, c): self.calls.append(("seg", t, dur, s, e, c))
+
+    class _Mixer:
+        def __init__(self):
+            self.volume = _Param(0.5)
+            self.panning = _Param(0.0)
+            self.sends = []
+
+    class _Track:
+        def __init__(self):
+            self.mixer_device = _Mixer()
+            self.devices = []
+            self.clip_slots = []
+            self.arrangement_clips = []
+            self.envelopes = []
+        def create_automation_envelope(self, param):
+            env = _Envelope()
+            self.envelopes.append(env)
+            return env
+
+    class _Song:
+        def __init__(self):
+            self.tracks = [_Track(), _Track(), _Track()]  # index 3 = third
+            self.return_tracks = []
+
+    class _Ctx:
+        def __init__(self): self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        for call in write_calls:
+            args = dict(call.args)
+            action_name = args.pop("action")
+            resp = dispatch(
+                Request(tool=call.tool, action=action_name, params=args),
+                context=ctx,
+            )
+            assert resp.ok, (
+                f"planner-emitted call rejected by dispatcher: "
+                f"action={action_name}, args={args}, err={resp.error!r}"
+            )
+        # The mixer-volume envelope landed on track 3's track-level envelope
+        target = ctx.song.tracks[2]
+        assert len(target.envelopes) == 1
+        env = target.envelopes[0]
+        assert env.cleared == 1
+        # 2 breakpoints → 1 segment + 1 anchor step
+        kinds = [c[0] for c in env.calls]
+        assert kinds.count("seg") == 1
+        assert kinds.count("step") == 1
+
+
+def test_planner_device_load_emit_validates_against_dispatcher(conn):
+    """Wave M-4: device load flows through ableton_device(action='load')."""
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+
+    sid = M.create_song(conn, name="m4-dev-shape", title="M-4 device shape")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=1
+    )
+    cid = M.create_device_chain(conn, parent_track_id=tid)
+    M.create_device(conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp")
+    plan = push.plan_push_devices(conn, song_id=sid, session_id=sess)
+    load_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    ]
+    assert len(load_calls) == 1
+
+    class _Track:
+        def __init__(self):
+            self.devices = []
+            self.mixer_device = type("M", (), {
+                "volume": type("P", (), {"value": 0.5})(),
+                "panning": type("P", (), {"value": 0.0})(),
+                "sends": [],
+            })()
+        def load_device(self, *args, **kwargs):
+            self.devices.append(type("D", (), {
+                "name": kwargs.get("kind", args[0] if args else "Unknown"),
+                "class_name": kwargs.get("kind", args[0] if args else "Unknown"),
+                "is_active": True,
+                "parameters": (),
+                "can_have_chains": False,
+            })())
+
+    class _Song:
+        def __init__(self):
+            self.tracks = [_Track()]
+            self.return_tracks = []
+
+    class _Ctx:
+        def __init__(self): self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        for call in load_calls:
+            args = dict(call.args)
+            action_name = args.pop("action")
+            resp = dispatch(
+                Request(tool=call.tool, action=action_name, params=args),
+                context=ctx,
+            )
+            assert resp.ok, (
+                f"device load call rejected: action={action_name}, "
+                f"args={args}, err={resp.error!r}"
+            )
+        # The device landed on the (only) track.
+        assert len(ctx.song.tracks[0].devices) == 1
+
+
 def test_planner_replace_notes_emit_validates_against_dispatcher(conn):
     """Wave M-3: in-place clip note replace flows through
     ableton_clip(action='replace_notes', ...). Verifies the planner's shape

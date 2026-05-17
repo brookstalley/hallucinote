@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_PATH = REPO_ROOT / "songs" / "falling-walking" / "build.py"
 
 

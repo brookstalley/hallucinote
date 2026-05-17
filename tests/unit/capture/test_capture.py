@@ -137,7 +137,7 @@ def test_replay_falling_walking_snapshot(conn):
     import json
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[3]
     snap_path = repo_root / "songs" / "falling-walking" / "captured_session.json"
     snap = json.loads(snap_path.read_text())
     sid = replay_capture(conn, snap, song_name="fw", song_key="Dm")

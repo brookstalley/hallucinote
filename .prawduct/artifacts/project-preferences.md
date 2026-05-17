@@ -24,8 +24,8 @@ Developer preferences for how code is written in this project. Captured during d
 - **Style**: Descriptive function names (`test_replace_clip_notes_is_atomic`), assert-style, fixtures for shared setup. Helpers like `_make_note` for terse cases.
 - **Coverage expectations**: Happy path + key error paths. Event-emission paired with state change for every mutator. Cascades/FK behavior covered explicitly.
 - **Testing strategies**: Example-based currently. Hypothesis stanza is parked in `conftest.py` (commented) — turn it on for note-array transforms / serialization round-trips when those grow.
-- **Test location**: `tests/` mirrors `src/hallucinote/` modules (`test_mutations.py`, `test_push.py`, `test_generators.py`).
-- **Parallelization**: `pytest-xdist` is referenced by `conftest.py` (auto-groups by directory via `xdist_group`) but not currently installed; suite is ~0.2s so unnecessary. Install when the suite passes ~30s. The current setup produces a `PytestUnknownMarkWarning` until then.
+- **Test location**: `tests/unit/{db,sync,generators,capture}/` mirrors `src/hallucinote/` packages; `tests/integration/` holds end-to-end tests (e.g., `test_falling_walking_build.py`). `hallucinote_mcp/tests/{unit,integration}/` follows the same shape for the MCP package.
+- **Parallelization**: `pytest-xdist>=3.6` is declared in `[dev]` deps and installed. The auto-grouping in `conftest.py` assigns each test file an `xdist_group` based on its parent directory, so same-directory tests stay serial on one worker (preserving fixture isolation) and different directories fan out. Default invocation is serial; `pytest -n auto --dist loadgroup` opts into parallel (~5s vs ~10s serial as of post-J-2 baseline).
 
 ## Architecture Patterns
 

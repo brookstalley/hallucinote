@@ -311,7 +311,7 @@ def test_plan_push_mix_handles_falling_walking_snapshot(conn, session, tmp_path)
 
     from hallucinote.capture import replay_capture
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[3]
     snap = json.loads(
         (repo_root / "songs" / "falling-walking" / "captured_session.json").read_text()
     )

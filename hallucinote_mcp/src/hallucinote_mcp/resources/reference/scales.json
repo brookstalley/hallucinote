@@ -1,0 +1,23 @@
+{
+  "_doc": "Live's built-in scale dictionary. Names match Live's UI; intervals are semitones from the root. Used by agents to validate or pick a scale before writing notes / setting key.",
+  "scales": [
+    {"name": "Major",           "intervals": [0, 2, 4, 5, 7, 9, 11]},
+    {"name": "Minor",           "intervals": [0, 2, 3, 5, 7, 8, 10]},
+    {"name": "Dorian",          "intervals": [0, 2, 3, 5, 7, 9, 10]},
+    {"name": "Mixolydian",      "intervals": [0, 2, 4, 5, 7, 9, 10]},
+    {"name": "Lydian",          "intervals": [0, 2, 4, 6, 7, 9, 11]},
+    {"name": "Phrygian",        "intervals": [0, 1, 3, 5, 7, 8, 10]},
+    {"name": "Locrian",         "intervals": [0, 1, 3, 5, 6, 8, 10]},
+    {"name": "Harmonic Minor",  "intervals": [0, 2, 3, 5, 7, 8, 11]},
+    {"name": "Melodic Minor",   "intervals": [0, 2, 3, 5, 7, 9, 11]},
+    {"name": "Major Pentatonic","intervals": [0, 2, 4, 7, 9]},
+    {"name": "Minor Pentatonic","intervals": [0, 3, 5, 7, 10]},
+    {"name": "Blues",           "intervals": [0, 3, 5, 6, 7, 10]},
+    {"name": "Whole Tone",      "intervals": [0, 2, 4, 6, 8, 10]},
+    {"name": "Half-Whole Dim",  "intervals": [0, 1, 3, 4, 6, 7, 9, 10]},
+    {"name": "Whole-Half Dim",  "intervals": [0, 2, 3, 5, 6, 8, 9, 11]},
+    {"name": "Chromatic",       "intervals": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]}
+  ],
+  "_root_names": ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
+  "_usage": "For 'A Minor Pentatonic': root=9 (A), intervals=[0, 3, 5, 7, 10]. Note pitches relative to MIDI 60 (middle C): root_offset = (root_index - 0) for one octave, + 12*n for higher octaves."
+}

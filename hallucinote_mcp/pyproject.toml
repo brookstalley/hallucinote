@@ -30,7 +30,11 @@ where = ["src"]
 include = ["hallucinote_mcp*"]
 
 [tool.setuptools.package-data]
-hallucinote_mcp = ["skills/**/*.md"]
+hallucinote_mcp = [
+    "skills/**/*.md",
+    "resources/guides/*.md",
+    "resources/reference/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

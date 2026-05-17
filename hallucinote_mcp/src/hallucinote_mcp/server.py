@@ -45,13 +45,25 @@ Tools:
 
 Every tool: action='help' returns its full action menu.
 
+Resources (read via resources/read, no turn cost):
+  ableton://session/snapshot           — session + tracks + returns in one read
+  ableton://browser/{instruments,effects,drums}  — content library trees (depth 3)
+  ableton://plugins/installed          — flat VST/AU list
+  ableton://reference/{scales,device-params}     — static lookups
+  ableton://guides/{getting-started,conventions,error-recovery,gaps}
+                                       — agent-facing prose
+
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
+  - Time positions on the wire are BEATS, not bars (planner converts).
   - Note operations REPLACE the clip's full note array — there is no
     note-level addressing until gap #4 lands. To preserve manual edits,
     pull first, mutate, push.
-  - Cue point names round-trip as numeric IDs (gap #13). Names are
-    write-only-DB-side; do not trust pulled names.
+  - Cue point names round-trip cleanly in Wave M-5+ (legacy gap #13 does
+    not apply to this server).
+  - Quantize / swing / groove are NOT exposed as MCP actions — they live
+    in Hallucinote (DB-as-source-of-truth for timing). See
+    ableton://guides/gaps for details.
 """
 
 
@@ -70,6 +82,12 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     schema.register_help_actions()
 
     mcp = FastMCP(name=name, instructions=PRIMER)
+
+    # Wave M-6: register 11 resources (5 Live-backed + 2 reference + 4 guides).
+    # Done before tool registration so the resource URIs are visible to
+    # the client immediately on initialize.
+    from .resources import register_resources
+    register_resources(mcp)
 
     # Define the ten tool entry points. Each is a thin wrapper around the
     # shared dispatcher; the wrapper exists only so FastMCP can register a
@@ -153,6 +171,32 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     mcp.tool(name=tool_name, description=wrapper.__doc__)(wrapper)
 
 
+def registered_resource_uris(mcp: FastMCP) -> list[str]:
+    """Return the URIs of all resources registered on the FastMCP instance.
+
+    Symmetric to ``registered_tool_names`` but introspects the resource
+    manager. Used by tests to assert "the 11 expected URIs are wired."
+    """
+    for attr in ("_resource_manager", "resource_manager"):
+        manager = getattr(mcp, attr, None)
+        if manager is None:
+            continue
+        for store_attr in ("_resources", "resources"):
+            store = getattr(manager, store_attr, None)
+            if isinstance(store, dict):
+                # Each value may be a Resource object with `.uri`; keys
+                # may be either URIs or names depending on FastMCP version.
+                uris: list[str] = []
+                for k, v in store.items():
+                    uri = getattr(v, "uri", None) if v is not None else None
+                    uris.append(str(uri) if uri is not None else str(k))
+                return sorted(uris)
+    raise RuntimeError(
+        "Could not introspect FastMCP resource registry — FastMCP API may "
+        "have changed"
+    )
+
+
 def registered_tool_names(mcp: FastMCP) -> list[str]:
     """Return the names of all tools registered on the FastMCP instance.
 
@@ -180,4 +224,5 @@ __all__ = [
     "create_server",
     "handle_tool_call",
     "registered_tool_names",
+    "registered_resource_uris",
 ]

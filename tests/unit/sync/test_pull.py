@@ -771,6 +771,351 @@ def test_apply_cue_points_name_diff_warns_no_mutate(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# plan_pull_devices + _apply_devices_for_parent (W3-3)
+# ---------------------------------------------------------------------------
+
+
+def _devices_payload(*entries: tuple[int, str, str], parent_kind="track",
+                     parent_index=2) -> dict:
+    """Build an `ableton_device(action='list')` payload from
+    ``(device_index, class_name, name)`` tuples. Mirrors the
+    `list_handler` shape so the apply tests exercise the real wire shape.
+    """
+    addr = {f"{parent_kind}_index": parent_index}
+    return {
+        "parent_kind": parent_kind,
+        **addr,
+        "devices": [
+            {
+                "device_index": i, "name": n, "class_name": k,
+                "is_active": True,
+            }
+            for i, k, n in entries
+        ],
+    }
+
+
+def test_plan_pull_devices_emits_list_per_linked_track(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_device"
+    assert c.args == {"action": "list", "track_index": 5}
+    assert c.key == f"track_devices:{tid}"
+
+
+def test_plan_pull_devices_emits_list_per_linked_return(conn, song, session):
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_device"
+    assert c.args == {"action": "list", "return_index": 1}
+    assert c.key == f"return_devices:{rid}"
+
+
+def test_plan_pull_devices_skips_unlinked_with_warning(conn, song, session):
+    M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("not linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_devices_skips_master_and_return_kinds(
+    conn, song, session, master
+):
+    """Master and the reserved `kind='return'` track rows are not pulled
+    via `ableton_track` probes; master has its own future planner, and
+    return rows go through the dedicated `returns` table path."""
+    rt = M.create_track(
+        conn, song_id=song, track_index=99, name="ReservedReturn",
+        kind="return",
+    )
+    _link_track(conn, session=session, db_id=master, ableton_index=0)
+    _link_track(conn, session=session, db_id=rt, ableton_index=98)
+    plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+
+
+def test_plan_pull_devices_args_match_mcp_list_action_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits for the list probe
+    must be a known param on `ableton_device(action='list')`. Mirrors the
+    M+1-1 contract test pattern; catches drift if the MCP surface ever
+    renames the param or moves the action."""
+    from hallucinote_mcp.actions import device as _device_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    list_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_device" and a.name == "list"
+    )
+    schema_param_names = {p.name for p in list_action.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+
+    plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on ableton_device(list) schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_track_devices_creates_chain_and_devices_when_db_empty(
+    conn, song, session
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_devices:{tid}",
+            _devices_payload(
+                (1, "DrumGroupDevice", "808 Kit"),
+                (2, "Compressor2", "Glue"),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2
+    chains = Q.get_device_chains_for_track(conn, tid)
+    assert len(chains) == 1 and chains[0]["position"] == 0
+    devs = Q.get_devices_for_chain(conn, chains[0]["id"])
+    assert [(d["position"], d["kind"], d["display_name"]) for d in devs] == [
+        (1, "DrumGroupDevice", "808 Kit"),
+        (2, "Compressor2", "Glue"),
+    ]
+
+
+def test_apply_track_devices_no_op_when_identical(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor2", display_name="Glue")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}",
+                 _devices_payload((1, "Compressor2", "Glue")))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_track_devices_replaces_at_position_when_kind_changes(
+    conn, song, session
+):
+    """Different kind at same position -> delete + create at same slot.
+    Replacement is structurally a new device since per-device parameters
+    cascade off the old id; a hypothetical update_device wouldn't make
+    sense across kinds."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    old = M.create_device(conn, chain_id=chain_id, position=1,
+                          kind="Compressor2", display_name="Glue")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}",
+                 _devices_payload((1, "Eq8", "EQ8")))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert len(devs) == 1
+    assert devs[0]["kind"] == "Eq8"
+    assert devs[0]["display_name"] == "EQ8"
+    assert devs[0]["id"] != old  # new device, not in-place update
+
+
+def test_apply_track_devices_replaces_at_position_when_display_name_changes(
+    conn, song, session
+):
+    """Same kind, different display_name (user renamed a preset) — still
+    replace at the slot. Cheaper than a separate rename mutator and
+    correct given Live exposes no stable per-device identity."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Operator", display_name="Init")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}",
+                 _devices_payload((1, "Operator", "Soft Bell")))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert devs[0]["display_name"] == "Soft Bell"
+
+
+def test_apply_track_devices_deletes_db_devices_absent_from_ableton(
+    conn, song, session
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor2", display_name="Glue")
+    M.create_device(conn, chain_id=chain_id, position=2,
+                    kind="Eq8", display_name="EQ8")
+    M.create_device(conn, chain_id=chain_id, position=3,
+                    kind="Limiter", display_name="Limiter")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}",
+                 _devices_payload((1, "Compressor2", "Glue")))],
+        song_id=song, session_id=session,
+    )
+    # 2 deletes (positions 2 and 3), 1 no-op (position 1)
+    assert out.mutations == 2
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert [d["position"] for d in devs] == [1]
+
+
+def test_apply_track_devices_extends_chain_when_ableton_has_more(
+    conn, song, session
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor2", display_name="Glue")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}", _devices_payload(
+            (1, "Compressor2", "Glue"),
+            (2, "Eq8", "EQ8"),
+            (3, "Limiter", "Master Limiter"),
+        ))],
+        song_id=song, session_id=session,
+    )
+    # 1 no-op (pos 1), 2 inserts (pos 2 and 3)
+    assert out.mutations == 2
+    assert out.no_ops == 1
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert [(d["position"], d["kind"]) for d in devs] == [
+        (1, "Compressor2"), (2, "Eq8"), (3, "Limiter"),
+    ]
+
+
+def test_apply_track_devices_empty_ableton_empty_db_is_noop(
+    conn, song, session
+):
+    """No DB chain, no Ableton devices — don't create a stub chain row."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}", _devices_payload())],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_device_chains_for_track(conn, tid) == []
+
+
+def test_apply_track_devices_swap_within_chain(conn, song, session):
+    """Reorder = positional replacement, because Live's API exposes no
+    stable per-device identity. Verifies the delete-before-create order
+    doesn't trip the UNIQUE(chain_id, position) constraint, even when
+    every slot's kind changes."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Eq8", display_name="EQ8")
+    M.create_device(conn, chain_id=chain_id, position=2,
+                    kind="Compressor2", display_name="Glue")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}", _devices_payload(
+            (1, "Compressor2", "Glue"),
+            (2, "Eq8", "EQ8"),
+        ))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2  # two slot replacements
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert [(d["position"], d["kind"]) for d in devs] == [
+        (1, "Compressor2"), (2, "Eq8"),
+    ]
+
+
+def test_apply_return_devices_uses_return_chain(conn, song, session):
+    """Smoke test for the return path through the shared helper."""
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"return_devices:{rid}", _devices_payload(
+            (1, "Reverb", "Hall"),
+            parent_kind="return", parent_index=1,
+        ))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    chains = Q.get_device_chains_for_return(conn, rid)
+    assert len(chains) == 1
+    devs = Q.get_devices_for_chain(conn, chains[0]["id"])
+    assert devs[0]["kind"] == "Reverb"
+
+
+def test_apply_track_devices_skips_unlinked_track(conn, song, session):
+    """Hand-rolled results.json shouldn't route around the planner's
+    linkage guard. Parity with `_apply_track_info`/`_apply_return_info`."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    # NOT linked.
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_devices:{tid}", _devices_payload(
+            (1, "Compressor2", "Glue"),
+        ))],
+        song_id=song, session_id=session,
+    )
+    assert out.skipped_unlinked == 1
+    assert out.mutations == 0
+
+
+def test_apply_track_devices_missing_class_name_warns(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    payload = {
+        "parent_kind": "track", "track_index": 5,
+        "devices": [{"device_index": 1, "name": "?", "class_name": ""}],
+    }
+    out = pull.apply_pull_results(
+        conn, [_result(f"track_devices:{tid}", payload)],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("class_name" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
 # Round-trip: push -> mutate Ableton-side dict -> pull -> DB matches
 # ---------------------------------------------------------------------------
 
@@ -862,6 +1207,99 @@ def test_pull_cli_plan_and_apply_roundtrip(tmp_path):
     )
     summary = json.loads(p2.stdout)
     assert summary["mutations"] == 1
+
+
+def test_skill_allowed_tools_cover_every_planner_emitted_tool(
+    conn, song, session
+):
+    """Structural guard: every MCP tool a `_DOMAINS` planner can emit
+    must be listed in `.claude/skills/ableton-pull/SKILL.md`'s
+    `allowed-tools` frontmatter. Without that, the harness blocks the
+    probe even though the SKILL prose advertises the domain — same
+    class of bug Critic round 1 + round 2 each caught one layer deeper
+    on this chunk (planner unwired from `_DOMAINS`; then `_DOMAINS`
+    wired but tool not in allowed-tools).
+
+    Uses a minimal seeded DB (one linked track, one linked return) so
+    every planner emits its full set of probes.
+    """
+    from pathlib import Path
+    from hallucinote.sync import pull, pull_cli
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=2)
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+
+    emitted_tools: set[str] = set()
+    for planner in pull_cli._DOMAINS.values():
+        plan = planner(conn, song_id=song, session_id=session)
+        emitted_tools.update(c.tool for c in plan.calls)
+
+    skill_path = Path(__file__).resolve().parents[3] / ".claude" / "skills" \
+        / "ableton-pull" / "SKILL.md"
+    frontmatter_end = skill_path.read_text().find("\n---\n", 4)
+    assert frontmatter_end > 0, "SKILL.md missing closing frontmatter delimiter"
+    frontmatter = skill_path.read_text()[:frontmatter_end]
+    allowed_line = next(
+        ln for ln in frontmatter.splitlines() if ln.startswith("allowed-tools:")
+    )
+
+    missing = [
+        t for t in sorted(emitted_tools)
+        if f"mcp__hallucinote-mcp__{t}" not in allowed_line
+    ]
+    assert not missing, (
+        "SKILL.md `allowed-tools` is missing entries for tools the "
+        f"pull planners emit: {missing}. Add "
+        f"{', '.join('mcp__hallucinote-mcp__' + t for t in missing)} "
+        "to the allowed-tools frontmatter line."
+    )
+
+
+def test_pull_cli_domains_cover_every_public_planner():
+    """Structural guard: every `plan_pull_*` function on `pull` must be
+    reachable from the CLI's `_DOMAINS` table. The Critic caught the
+    M+1-2 miss where `plan_pull_devices` shipped without a CLI entry,
+    making the planner unreachable from the `/ableton-pull` skill;
+    this test prevents that class of bug going forward."""
+    from hallucinote.sync import pull, pull_cli
+
+    public_planners = {
+        getattr(pull, name) for name in dir(pull)
+        if name.startswith("plan_pull_") and callable(getattr(pull, name))
+    }
+    cli_planners = set(pull_cli._DOMAINS.values())
+    missing = public_planners - cli_planners
+    assert not missing, (
+        "plan_pull_* functions not reachable via pull_cli._DOMAINS: "
+        f"{sorted(p.__name__ for p in missing)}. Register them in "
+        "pull_cli._DOMAINS and update .claude/skills/ableton-pull/SKILL.md."
+    )
+
+
+def test_pull_cli_devices_domain_emits_plan(tmp_path):
+    """Smoke test: the `devices` domain reaches the new planner through
+    the CLI dispatch and emits a plan (empty here — no linked tracks)."""
+    db_path = tmp_path / "devices_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_devices", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "devices", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "devices"
+    assert plan_dict["session_id"] == session_id
+    # No linked tracks/returns → empty calls + a non-empty notes warning.
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
 
 
 def test_pull_cli_song_flag_resolves_canonical_path(tmp_path, monkeypatch):

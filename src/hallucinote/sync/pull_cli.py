@@ -22,8 +22,11 @@ non-standard layouts. Exactly one is required.
                       (also free-ride ingests global tempo + signature)
   - `score-globals` — global tempo + signature only (bar-1 rows in each map)
   - `cue-points`    — arrangement cue point positions (names gap-flagged)
+  - `devices`       — top-level device chain on each linked track + return
+                      (positional kind/display_name diff; nested rack
+                      chains and per-device parameters are gap-blocked)
 
-Future chunks add `devices` and `arrangement`. Note pull, envelope pull,
+Future chunks add `arrangement`. Note pull, envelope pull,
 device-parameter pull, and nested rack pull are MCP-gap-blocked — they are
 not domains here.
 """
@@ -43,6 +46,7 @@ _DOMAINS = {
     "mix-state":     pull.plan_pull_mix,
     "score-globals": pull.plan_pull_score_globals,
     "cue-points":    pull.plan_pull_cue_points,
+    "devices":       pull.plan_pull_devices,
 }
 
 

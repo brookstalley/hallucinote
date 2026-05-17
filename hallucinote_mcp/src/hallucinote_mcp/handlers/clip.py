@@ -46,6 +46,61 @@ def _resolve_track(context: LiveContext, track_index: int) -> Any:
     return song.tracks[track_index - 1]
 
 
+def list_handler(
+    context: LiveContext,
+    *,
+    track_index: int,
+    location: str,
+) -> dict[str, Any]:
+    """Per-track clip inventory.
+
+    Session: returns every slot (populated AND empty); the slot's 1-based
+    position doubles as ``clip_index`` for writes. Empty slots carry
+    ``{clip_index, empty: True}``; populated slots add ``name`` + ``length``.
+
+    Arrangement: returns every placed clip with ``arrangement_clip_index``
+    (1-based, ordered by ``track.arrangement_clips`` — Live's ordering),
+    plus ``name``, ``start_beats``, and ``length``. There are no "empty"
+    arrangement positions — ``arrangement_clips`` is dense.
+
+    Index naming follows ``docs/terminology.md``: session uses
+    ``clip_index`` (slot), arrangement uses the fully-qualified
+    ``arrangement_clip_index`` to keep the two senses unconfused at the
+    response shape.
+
+    Beats are returned raw; the Hallucinote sync layer converts to
+    bar-based song positions using the song's time-signature map.
+    """
+    _check_location(location)
+    track = _resolve_track(context, track_index)
+    clips_out: list[dict[str, Any]] = []
+    if location == "session":
+        for i, slot in enumerate(track.clip_slots, start=1):
+            clip = slot.clip
+            if clip is None:
+                clips_out.append({"clip_index": i, "empty": True})
+            else:
+                clips_out.append({
+                    "clip_index": i,
+                    "empty": False,
+                    "name": clip.name,
+                    "length": float(clip.length),
+                })
+    else:
+        for i, clip in enumerate(track.arrangement_clips, start=1):
+            clips_out.append({
+                "arrangement_clip_index": i,
+                "name": clip.name,
+                "start_beats": float(clip.start_time),
+                "length": float(clip.length),
+            })
+    return {
+        "track_index": track_index,
+        "location": location,
+        "clips": clips_out,
+    }
+
+
 def _resolve_clip(context: LiveContext, *, track_index: int, location: str, clip_index: int) -> Any:
     """Return the Live Clip object addressed by (track_index, location, clip_index).
 
@@ -635,6 +690,7 @@ def replace_notes_handler(
 
 
 __all__ = [
+    "list_handler",
     "create_handler",
     "delete_handler",
     "rename_handler",

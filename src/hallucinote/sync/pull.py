@@ -238,6 +238,80 @@ def plan_pull_cue_points(
     return plan
 
 
+def plan_pull_devices(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull the top-level device chain for each linked
+    track and return (Wave M+1-2 / W3-3).
+
+    Emits one ``ableton_device(action='list')`` per linked parent. The
+    ``list`` probe returns positional device identity (``device_index``,
+    ``class_name``, ``name``, ``is_active``) for the top-level chain
+    only — nested rack chains are not traversed (Live's API constraint,
+    tracked as gap #17b).
+
+    Out of scope (separate backlog items):
+      - Nested rack chains (gap #17b)
+      - Master-strip device chain (separate parent kind / planner)
+      - Per-device parameter values (gated on gap #17b)
+      - ``is_active`` flag (no DB column today; the field rides along in
+        the probe but apply currently ignores it)
+
+    Skips ``master`` and ``return`` track kinds in the ``tracks`` table the
+    same way ``plan_pull_mix`` does — returns are pulled via the separate
+    ``returns`` table, master via a future master-chain planner.
+    """
+    plan = PullPlan()
+    any_emitted = False
+
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] in ("master", "return"):
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"]
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}) not linked in session — "
+                "push it via plan_push_clip first, then re-run pull"
+            )
+            continue
+        any_emitted = True
+        plan.add(PullCall(
+            tool="ableton_device",
+            args={"action": "list", "track_index": track_at},
+            key=f"track_devices:{t['id']}",
+            purpose=f"pull device chain for track {t['name']!r}",
+        ))
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        )
+        if return_at is None:
+            plan.warn(
+                f"return {r['name']!r} ({r['id']}) not linked in session — skipping"
+            )
+            continue
+        any_emitted = True
+        plan.add(PullCall(
+            tool="ableton_device",
+            args={"action": "list", "return_index": return_at},
+            key=f"return_devices:{r['id']}",
+            purpose=f"pull device chain for return {r['name']!r}",
+        ))
+
+    if not any_emitted:
+        plan.warn(
+            "no linked tracks or returns for this session — device-chain "
+            "pull will be empty"
+        )
+    return plan
+
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
@@ -983,6 +1057,151 @@ def _apply_cue_points_list(
         )
 
 
+def _apply_devices_for_parent(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    parent_kind: str,
+    parent_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff one top-level device chain against the probe payload (W3-3).
+
+    Identity is *positional*: a (chain, position) slot holding a device
+    with the same ``(class_name, name)`` is a no-op; any mismatch is a
+    delete + create at that position (cleaner than a hypothetical
+    ``update_device`` since per-device parameter rows cascade and a
+    different kind at the same slot is structurally a different device).
+    Live's API exposes no stable per-device identity across moves, so
+    matching by position is the only stable shape.
+
+    Empty-chain handling: if both sides are empty, no-op (don't create
+    a stub chain row). If DB has a chain but Ableton is empty, all
+    devices are deleted and the empty chain row is kept (cheap and
+    avoids churn on the next push).
+
+    ``is_active`` from the probe is ignored — no DB column today
+    (tracked as a future schema extension; parity with
+    ``_apply_return_info`` dropping mute/solo until ``returns`` grows
+    those columns).
+    """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"{parent_kind}_devices for {parent_id!r}: not linked in session; "
+            "skipping (the planner would not have emitted this)"
+        )
+        return
+
+    devices_in = result.get("devices")
+    if devices_in is None:
+        out.warnings.append(
+            f"{parent_kind}_devices for {parent_id!r}: result missing "
+            "'devices' field"
+        )
+        return
+
+    if parent_kind == "track":
+        chains = Q.get_device_chains_for_track(conn, parent_id)
+        parent_kwarg = {"parent_track_id": parent_id}
+    elif parent_kind == "return":
+        chains = Q.get_device_chains_for_return(conn, parent_id)
+        parent_kwarg = {"parent_return_id": parent_id}
+    else:
+        raise ValueError(
+            f"_apply_devices_for_parent: unsupported parent_kind {parent_kind!r}"
+        )
+
+    top_chain = next((c for c in chains if c["position"] == 0), None)
+    if top_chain is None and not devices_in:
+        out.no_ops += 1
+        return
+    if top_chain is None:
+        chain_id = M.create_device_chain(
+            conn, position=0,
+            actor=actor, request_id=request_id, reason=reason,
+            **parent_kwarg,
+        )
+    else:
+        chain_id = top_chain["id"]
+
+    db_devices = list(Q.get_devices_for_chain(conn, chain_id))
+    db_by_position = {d["position"]: d for d in db_devices}
+
+    seen_positions: set[int] = set()
+    for entry in devices_in:
+        idx = entry.get("device_index")
+        if not isinstance(idx, int) or idx < 1:
+            out.warnings.append(
+                f"{parent_kind}_devices for {parent_id!r}: entry missing or "
+                f"invalid device_index: {entry!r}"
+            )
+            continue
+        kind_in = entry.get("class_name") or ""
+        if not kind_in:
+            out.warnings.append(
+                f"{parent_kind}_devices for {parent_id!r}: device at index "
+                f"{idx} missing class_name; skipping"
+            )
+            continue
+        name_in = entry.get("name") or ""
+        seen_positions.add(idx)
+
+        existing = db_by_position.get(idx)
+        if existing is not None:
+            if existing["kind"] == kind_in and existing["display_name"] == name_in:
+                out.no_ops += 1
+                continue
+            # Different device at the same slot — replace. Cascade clears
+            # any device_parameters rows; correct for "this slot now holds
+            # something else."
+            M.delete_device(
+                conn, device_id=existing["id"],
+                actor=actor, request_id=request_id, reason=reason,
+            )
+        M.create_device(
+            conn,
+            chain_id=chain_id,
+            position=idx,
+            kind=kind_in,
+            display_name=name_in,
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        if existing is not None:
+            out.details.append(
+                f"{parent_kind} device pos {idx}: "
+                f"{existing['kind']}/{existing['display_name']!r} -> "
+                f"{kind_in}/{name_in!r}"
+            )
+        else:
+            out.details.append(
+                f"{parent_kind} device pos {idx}: added {kind_in}/{name_in!r}"
+            )
+
+    # Removals: any DB row at a position Ableton didn't report. Iterating the
+    # pre-mutation snapshot is safe — we never re-process a position we
+    # already handled in the create/replace pass above.
+    for d in db_devices:
+        if d["position"] in seen_positions:
+            continue
+        M.delete_device(
+            conn, device_id=d["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"{parent_kind} device pos {d['position']}: "
+            f"removed {d['kind']}/{d['display_name']!r}"
+        )
+
+
 # Dispatch table: key kind -> (handler, expects-db-id)
 _HANDLERS = {
     "session_info":     ("session_info",     False),
@@ -991,6 +1210,8 @@ _HANDLERS = {
     "track_info":       ("track_info",       True),
     "track_sends":      ("track_sends",      True),
     "cue_points_list":  ("cue_points_list",  False),
+    "track_devices":    ("track_devices",    True),   # W3-3: top-level chain
+    "return_devices":   ("return_devices",   True),   # W3-3: top-level chain
 }
 
 
@@ -1083,6 +1304,20 @@ def apply_pull_results(
             elif handler_name == "cue_points_list":
                 _apply_cue_points_list(
                     conn, song_id=song_id, result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_devices":
+                _apply_devices_for_parent(
+                    conn, session_id=session_id,
+                    parent_kind="track", parent_id=db_id,
+                    result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "return_devices":
+                _apply_devices_for_parent(
+                    conn, session_id=session_id,
+                    parent_kind="return", parent_id=db_id,
+                    result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
 

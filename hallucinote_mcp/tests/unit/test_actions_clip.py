@@ -154,7 +154,7 @@ def loaded_actions():
 
 
 _EXPECTED_CLIP_ACTIONS = {
-    "help", "create", "delete", "rename", "fire", "stop",
+    "help", "list", "create", "delete", "rename", "fire", "stop",
     "set_property", "duplicate_to_arrangement", "replace_notes",
 }
 # Quantize / swing / groove are deliberately NOT actions on this tool — they're
@@ -162,7 +162,7 @@ _EXPECTED_CLIP_ACTIONS = {
 # note timing). See design doc §6.2.
 
 
-def test_clip_registers_nine_actions(loaded_actions):
+def test_clip_registers_ten_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_clip")}
     assert names == _EXPECTED_CLIP_ACTIONS
 
@@ -198,6 +198,180 @@ def test_clip_replace_notes_action_replaces_add_notes_to_clip_name(loaded_action
     desc = action.description.lower()
     assert "replace" in desc
     assert "gap #1" in desc
+
+
+# ---------- list ----------
+
+
+def test_list_session_returns_every_slot_with_empties(loaded_actions):
+    """Session list emits one entry per slot — empty slots carry
+    {clip_index, empty: True}; populated slots add name + length."""
+    track = FakeTrack(name="T1", slots=4)
+    track.clip_slots[0].clip = FakeClip(name="Verse", length=16.0)
+    track.clip_slots[2].clip = FakeClip(name="Chorus", length=8.0)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["track_index"] == 1
+    assert resp.result["location"] == "session"
+    clips = resp.result["clips"]
+    assert len(clips) == 4
+    assert clips[0] == {
+        "clip_index": 1, "empty": False, "name": "Verse", "length": 16.0,
+    }
+    assert clips[1] == {"clip_index": 2, "empty": True}
+    assert clips[2] == {
+        "clip_index": 3, "empty": False, "name": "Chorus", "length": 8.0,
+    }
+    assert clips[3] == {"clip_index": 4, "empty": True}
+
+
+def test_list_session_all_empty_track(loaded_actions):
+    track = FakeTrack(name="T1", slots=3)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["clips"] == [
+        {"clip_index": 1, "empty": True},
+        {"clip_index": 2, "empty": True},
+        {"clip_index": 3, "empty": True},
+    ]
+
+
+def test_list_arrangement_returns_placements_with_indices(loaded_actions):
+    """Arrangement list returns 1-based arrangement_clip_index, name,
+    start_beats, length — preserves order from track.arrangement_clips."""
+    arr = [
+        FakeArrangementClip(name="A", start_time=0.0, length=8.0),
+        FakeArrangementClip(name="B", start_time=8.0, length=8.0),
+        FakeArrangementClip(name="C", start_time=24.5, length=16.5),
+    ]
+    track = FakeTrack(name="T1", arrangement_clips=arr)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["track_index"] == 1
+    assert resp.result["location"] == "arrangement"
+    clips = resp.result["clips"]
+    assert len(clips) == 3
+    assert clips[0] == {
+        "arrangement_clip_index": 1, "name": "A",
+        "start_beats": 0.0, "length": 8.0,
+    }
+    assert clips[1] == {
+        "arrangement_clip_index": 2, "name": "B",
+        "start_beats": 8.0, "length": 8.0,
+    }
+    assert clips[2] == {
+        "arrangement_clip_index": 3, "name": "C",
+        "start_beats": 24.5, "length": 16.5,
+    }
+
+
+def test_list_arrangement_empty_track(loaded_actions):
+    track = FakeTrack(name="T1", arrangement_clips=[])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["clips"] == []
+
+
+def test_list_arrangement_preserves_float_fidelity(loaded_actions):
+    """Float positions / lengths round-trip without rounding."""
+    arr = [
+        FakeArrangementClip(
+            name="Fractional", start_time=1.3333333, length=2.6666667,
+        ),
+    ]
+    track = FakeTrack(name="T1", arrangement_clips=arr)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    clip = resp.result["clips"][0]
+    assert clip["start_beats"] == pytest.approx(1.3333333, rel=0, abs=1e-9)
+    assert clip["length"] == pytest.approx(2.6666667, rel=0, abs=1e-9)
+
+
+def test_list_out_of_range_track_index_errors(loaded_actions):
+    ctx = FakeCtx()  # default song has 3 tracks
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 99, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "track_index" in (resp.error or "")
+    assert "out of range" in (resp.error or "")
+
+
+def test_list_bad_location_errors(loaded_actions):
+    """The schema enum should reject before the handler sees it; either
+    way the request fails."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "bogus"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+
+
+def test_list_arrangement_index_is_arrangement_clip_index_not_clip_index(
+    loaded_actions,
+):
+    """Terminology contract: arrangement entries must use
+    'arrangement_clip_index', not 'clip_index'. See docs/terminology.md —
+    'clip_index' is reserved for session slots; arrangement placements use
+    the fully qualified name to keep the two senses unconfused.
+    """
+    arr = [FakeArrangementClip(name="A", start_time=0.0, length=4.0)]
+    track = FakeTrack(name="T1", arrangement_clips=arr)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    entry = resp.result["clips"][0]
+    assert "arrangement_clip_index" in entry
+    assert "clip_index" not in entry
 
 
 # ---------- create — session ----------

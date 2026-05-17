@@ -204,3 +204,87 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
         assert track.mixer_device.volume.value == pytest.approx(0.6)
         assert track.mixer_device.panning.value == pytest.approx(-0.2)
         assert track.color == 12
+
+
+def test_planner_replace_notes_emit_validates_against_dispatcher(conn):
+    """Wave M-3: in-place clip note replace flows through
+    ableton_clip(action='replace_notes', ...). Verifies the planner's shape
+    is what the unified dispatcher accepts.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+
+    sid = M.create_song(conn, name="m3-shape-test", title="M-3 shape test")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, name="Pattern", length_beats=16.0)
+    M.replace_clip_notes(
+        conn, clip_id=cid,
+        notes=[{
+            "pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+            "velocity": 100,
+        }],
+    )
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=2
+    )
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="clip", db_id=cid, ableton_index=1
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=sess)
+    replace_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_clip" and c.args.get("action") == "replace_notes"
+    ]
+    assert len(replace_calls) == 1, (
+        f"planner did not emit ableton_clip(replace_notes): {plan.calls!r}"
+    )
+
+    # Build a fake song with a single MIDI clip on track 2, slot 1.
+    class _Clip:
+        def __init__(self):
+            self.notes: tuple = ()
+            self.name = "Pattern"
+            self.length = 16.0
+            self.loop_start = 0.0
+            self.loop_end = 16.0
+            self.muted = False
+            self.color = 0
+        def set_notes(self, n): self.notes = tuple(n)
+
+    class _Slot:
+        def __init__(self, clip=None): self.clip = clip
+
+    class _Track:
+        def __init__(self):
+            self.clip_slots = [_Slot(_Clip())]
+            self.arrangement_clips = []
+
+    class _Song:
+        def __init__(self):
+            self.tracks = [_Track(), _Track()]  # index 2 = second track
+
+    class _Ctx:
+        def __init__(self): self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        for call in replace_calls:
+            args = dict(call.args)
+            action_name = args.pop("action")
+            resp = dispatch(
+                Request(tool=call.tool, action=action_name, params=args),
+                context=ctx,
+            )
+            assert resp.ok, (
+                f"planner-emitted call rejected by dispatcher: "
+                f"action={action_name}, args={args}, err={resp.error!r}"
+            )
+        # The notes round-tripped.
+        clip = ctx.song.tracks[1].clip_slots[0].clip
+        assert len(clip.notes) == 1
+        assert clip.notes[0][0] == 60  # pitch

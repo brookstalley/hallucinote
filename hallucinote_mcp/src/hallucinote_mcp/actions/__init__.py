@@ -15,6 +15,8 @@ from __future__ import annotations
 from . import session as session  # noqa: F401
 from . import track as track  # noqa: F401
 from . import return_ as return_  # noqa: F401
+from . import clip as clip  # noqa: F401
+from . import note as note  # noqa: F401
 
 
-__all__ = ["session", "track", "return_"]
+__all__ = ["session", "track", "return_", "clip", "note"]

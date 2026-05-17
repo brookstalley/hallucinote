@@ -85,7 +85,7 @@ def test_plan_push_clip_uses_replace_when_track_linked_clip_unlinked(
     assert "tags" not in n0
 
 
-def test_plan_push_clip_uses_set_clip_notes_when_already_linked(
+def test_plan_push_clip_uses_replace_notes_when_already_linked(
     conn, session, track, clip
 ):
     M.link_db_to_ableton(
@@ -95,8 +95,15 @@ def test_plan_push_clip_uses_set_clip_notes_when_already_linked(
         conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
     )
     plan = push.plan_push_clip(conn, clip_id=clip, session_id=session)
-    assert plan.calls[0].tool == "set_clip_notes"
-    assert "length" not in plan.calls[0].args
+    # Wave M-3: in-place note replace retargets to the unified clip tool.
+    call = plan.calls[0]
+    assert call.tool == "ableton_clip"
+    assert call.args["action"] == "replace_notes"
+    assert call.args["location"] == "session"
+    assert call.args["track_index"] == 2
+    assert call.args["clip_index"] == 1
+    # No `length` on in-place replace — that's a create-time field only.
+    assert "length" not in call.args
 
 
 def test_plan_push_clip_isolates_by_session(conn, song, track, clip):

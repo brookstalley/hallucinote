@@ -133,8 +133,11 @@ def plan_push_clip(
 
     Three cases:
       1. Track not yet linked in this session -> create_midi_track_with, then ...
-      2. Clip not yet linked in this session  -> replace_session_clip (atomic)
-      3. Clip already linked                  -> set_clip_notes (in-place)
+      2. Clip not yet linked in this session  -> replace_session_clip (atomic;
+         still a Hallucinote-canonical emulation pending a future M-* chunk
+         that retargets to ableton_clip(action='create', replace=True, ...)).
+      3. Clip already linked                  -> ableton_clip(action='replace_notes')
+         (in-place; gap #1's renamed action, unified via Wave M-3).
     """
     plan = PushPlan()
 
@@ -189,9 +192,11 @@ def plan_push_clip(
         ))
     else:
         plan.add(ToolCall(
-            tool="set_clip_notes",
+            tool="ableton_clip",
             args={
+                "action": "replace_notes",
                 "track_index": track_at,
+                "location": "session",
                 "clip_index": clip_at,
                 "notes": _notes_for_mcp(notes),
             },
@@ -764,8 +769,9 @@ def _emit_device_calls(
 # ---------------------------------------------------------------------------
 #
 # One ToolCall per envelope, breakpoints inline (same shape as
-# `set_clip_notes(notes=[...])`). Canonical names per target_kind below; all
-# of them are MCP gaps today and are flagged in `mcp_names.ALIASES_TODAY`.
+# `ableton_clip(action='replace_notes', notes=[...])`). Canonical names per
+# target_kind below; all of them are MCP gaps today and are flagged in
+# `mcp_names.ALIASES_TODAY`.
 #
 #   clip_cc           write_clip_cc_envelope(track_index, clip_index,
 #                                            cc_number, breakpoints)
@@ -1276,8 +1282,8 @@ def apply_push_results(
                 res = r.get("result") or {}
                 if result_field not in res:
                     # Tool ran but didn't return the binding field (e.g.
-                    # set_clip_notes for `clip:` keys — no new index to record).
-                    # Skip; nothing to link.
+                    # ableton_clip(action='replace_notes') for `clip:` keys —
+                    # no new index to record). Skip; nothing to link.
                     continue
                 M.link_db_to_ableton(
                     conn,

@@ -67,11 +67,11 @@ def get_notes_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[dict[str,
 
 
 def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
-    """Return arrangement rows joined with track + clip names. No Ableton info —
-    sync-time bindings come from `ableton_links` via `get_ableton_link`."""
+    """Return arrangement_clips rows joined with track + clip names. No Ableton
+    info — sync-time bindings come from `ableton_links` via `get_ableton_link`."""
     return conn.execute(
         """SELECT a.*, t.name AS track_name, c.name AS clip_name
-           FROM arrangement a
+           FROM arrangement_clips a
            JOIN tracks t ON t.id = a.track_id
            JOIN clips  c ON c.id = a.clip_id
            WHERE a.song_id = ?

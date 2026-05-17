@@ -171,13 +171,13 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
     assert plan_b.calls[0].args["action"] == "create"
 
 
-# --- arrangement ---
+# --- arrangement clips ---
 
 
 def test_plan_push_arrangement_skips_unlinked_and_warns(
     conn, song, session, track, clip
 ):
-    M.add_arrangement(
+    M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
@@ -195,7 +195,7 @@ def test_plan_push_arrangement_emits_batch_when_linked(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
     )
-    aid = M.add_arrangement(
+    aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
     )
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
@@ -208,7 +208,7 @@ def test_plan_push_arrangement_emits_batch_when_linked(
     assert ops[0]["track_index"] == 2
     assert ops[0]["clip_index"] == 1
     assert ops[0]["destination_bar"] == 1.0
-    assert ops[0]["key"] == f"arrangement:{aid}"
+    assert ops[0]["key"] == f"arrangement_clip:{aid}"
 
 
 # --- apply_push_results ---
@@ -241,19 +241,19 @@ def test_apply_results_skips_failed_calls(conn, session, track):
     assert Q.get_ableton_link(conn, session_id=session, db_kind="track", db_id=track) is None
 
 
-def test_apply_results_links_arrangement(conn, song, session, track, clip):
-    aid = M.add_arrangement(conn, song_id=song, track_id=track, clip_id=clip,
-                            start_bar=1.0, end_bar=16.0)
+def test_apply_results_links_arrangement_clip(conn, song, session, track, clip):
+    aid = M.add_arrangement_clip(conn, song_id=song, track_id=track, clip_id=clip,
+                                 start_bar=1.0, end_bar=16.0)
     push.apply_push_results(
         conn,
         [
-            {"key": f"arrangement:{aid}", "ok": True, "tool": "batch_arrangement_layout",
+            {"key": f"arrangement_clip:{aid}", "ok": True, "tool": "batch_arrangement_layout",
              "result": {"arrangement_clip_index": 0}},
         ],
         session_id=session,
     )
     assert (
-        Q.get_ableton_link(conn, session_id=session, db_kind="arrangement", db_id=aid)
+        Q.get_ableton_link(conn, session_id=session, db_kind="arrangement_clip", db_id=aid)
         == 0
     )
 

@@ -261,14 +261,14 @@ def plan_push_arrangement(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            plan.warn(f"arrangement {row['id']}: track not linked in this session — skipping")
+            plan.warn(f"arrangement_clip {row['id']}: track not linked in this session — skipping")
             continue
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
             plan.warn(
-                f"arrangement {row['id']}: clip {row['clip_id']} not linked in this session — skipping"
+                f"arrangement_clip {row['id']}: clip {row['clip_id']} not linked in this session — skipping"
             )
             continue
         track_indices_seen.add(track_at)
@@ -277,7 +277,7 @@ def plan_push_arrangement(
             "track_index": track_at,
             "clip_index": clip_at,
             "destination_bar": row["start_bar"],
-            "key": f"arrangement:{row['id']}",
+            "key": f"arrangement_clip:{row['id']}",
         })
 
     # Clear pass: caller-controlled. Conservative default — assume agent wipes
@@ -1219,17 +1219,17 @@ def _emit_send_envelope(
 # success. Each entry maps the `ToolCall.key` prefix to (db_kind, result field
 # the agent's result dict must carry).
 _LINK_KINDS: dict[str, tuple[str, str]] = {
-    "track":       ("track",       "track_index"),
-    "clip":        ("clip",        "clip_index"),
-    "arrangement": ("arrangement", "arrangement_clip_index"),
-    "return":      ("return",      "return_index"),
-    "device":      ("device",      "device_index"),
+    "track":            ("track",            "track_index"),
+    "clip":             ("clip",             "clip_index"),
+    "arrangement_clip": ("arrangement_clip", "arrangement_clip_index"),
+    "return":           ("return",           "return_index"),
+    "device":           ("device",           "device_index"),
     # Envelopes (Wave M-4: unified ableton_automation(action='write_envelope')).
     # The handler returns an `envelope_index` so the planner can re-address
     # the envelope on subsequent pushes (clear-and-rewrite vs. update-in-
     # place). When the result dict omits the field, apply_push_results
     # skips the link.
-    "envelope":    ("envelope",    "envelope_index"),
+    "envelope":         ("envelope",         "envelope_index"),
 }
 
 # Key kinds that have no DB binding to record but are valid acks — the planner
@@ -1241,7 +1241,7 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # Chunk 2 (score)
-    "arrangement_batch",     # batch_arrangement_layout outer envelope; inner ops carry `arrangement:` keys
+    "arrangement_batch",     # batch_arrangement_layout outer envelope; inner ops carry `arrangement_clip:` keys
     "tempo_point",           # write_tempo_point
     "time_signature_point",  # write_time_signature_point
     "cue_point",             # create_cue_point

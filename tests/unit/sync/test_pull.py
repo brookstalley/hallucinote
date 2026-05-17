@@ -1199,8 +1199,8 @@ def _arr_payload(*entries: tuple[float, float, str], track_index: int = 5) -> di
 
 def _seed_arrangement_row(conn, *, song_id, track_id, slot, start_bar, end_bar,
                           length_beats=None, clip_name=None):
-    """Create a clips row + arrangement row in one shot. Returns the
-    arrangement_id so a test can assert on its presence/absence."""
+    """Create a clips row + arrangement_clips row in one shot. Returns the
+    arrangement_clip_id so a test can assert on its presence/absence."""
     if length_beats is None:
         # Default to 4 beats per bar of span. The exact value doesn't matter
         # for the diff tests — the clips row needs *some* length_beats.
@@ -1209,7 +1209,7 @@ def _seed_arrangement_row(conn, *, song_id, track_id, slot, start_bar, end_bar,
         conn, track_id=track_id, slot=slot,
         length_beats=length_beats, name=clip_name,
     )
-    return M.add_arrangement(
+    return M.add_arrangement_clip(
         conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
         start_bar=start_bar, end_bar=end_bar,
     )
@@ -1317,7 +1317,7 @@ def test_apply_arrangement_clips_no_op_when_identical(conn, song, session):
 def test_apply_arrangement_clips_removes_db_placement_absent_in_ableton(
     conn, song, session
 ):
-    """DB has a placement Ableton doesn't -> remove_arrangement +
+    """DB has a placement Ableton doesn't -> remove_arrangement_clip +
     mutation count + detail line."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
@@ -1496,11 +1496,11 @@ def test_apply_arrangement_clips_missing_clips_field_warns(conn, song, session):
     assert any("missing 'clips'" in w for w in out.warnings)
 
 
-def test_apply_arrangement_clips_emits_arrangement_removed_event(
+def test_apply_arrangement_clips_emits_arrangement_clip_removed_event(
     conn, song, session
 ):
-    """Mutator discipline: each remove goes through `remove_arrangement`
-    and emits an `arrangement.removed` event with actor=sync."""
+    """Mutator discipline: each remove goes through `remove_arrangement_clip`
+    and emits an `arrangement_clip_removed` event with actor=sync."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     _seed_arrangement_row(
@@ -1514,9 +1514,9 @@ def test_apply_arrangement_clips_emits_arrangement_removed_event(
         song_id=song, session_id=session, reason="test",
     )
     events = Q.get_events_for_song(conn, song)
-    removed = [e for e in events if e["kind"] == "arrangement_removed"]
+    removed = [e for e in events if e["kind"] == "arrangement_clip_removed"]
     assert removed, (
-        f"expected an arrangement_removed event; "
+        f"expected an arrangement_clip_removed event; "
         f"got {[e['kind'] for e in events]}"
     )
     assert removed[0]["actor"] == "sync"

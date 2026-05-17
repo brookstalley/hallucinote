@@ -275,20 +275,20 @@ def test_update_notes_by_tag_requires_one_arg(conn, clip):
         M.update_notes_by_tag(conn, clip_id=clip, tag="x", velocity_delta=1, velocity_set=2)
 
 
-# ---------- arrangement ----------
+# ---------- arrangement clips ----------
 
 
-def test_arrangement_lifecycle(conn, song, track, clip):
-    aid = M.add_arrangement(
+def test_arrangement_clip_lifecycle(conn, song, track, clip):
+    aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
     rows = Q.get_arrangement_for_song(conn, song)
     assert len(rows) == 1 and rows[0]["id"] == aid
 
-    M.remove_arrangement(conn, arrangement_id=aid)
+    M.remove_arrangement_clip(conn, arrangement_clip_id=aid)
     assert Q.get_arrangement_for_song(conn, song) == []
     kinds = [r["kind"] for r in _events(conn)]
-    assert kinds[-2:] == [E.ARRANGEMENT_ADDED, E.ARRANGEMENT_REMOVED]
+    assert kinds[-2:] == [E.ARRANGEMENT_CLIP_ADDED, E.ARRANGEMENT_CLIP_REMOVED]
 
 
 # ---------- foreign keys / cascades ----------

@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS idx_notes_clip ON notes(clip_id);
 CREATE INDEX IF NOT EXISTS idx_notes_clip_start ON notes(clip_id, start_beats);
 
-CREATE TABLE IF NOT EXISTS arrangement (
+CREATE TABLE IF NOT EXISTS arrangement_clips (
     id                          TEXT PRIMARY KEY,
     song_id                     TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     track_id                    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -98,9 +98,9 @@ CREATE TABLE IF NOT EXISTS arrangement (
     end_bar                     REAL NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_arrangement_song ON arrangement(song_id);
-CREATE INDEX IF NOT EXISTS idx_arrangement_track ON arrangement(track_id);
-CREATE INDEX IF NOT EXISTS idx_arrangement_clip ON arrangement(clip_id);
+CREATE INDEX IF NOT EXISTS idx_arrangement_clips_song ON arrangement_clips(song_id);
+CREATE INDEX IF NOT EXISTS idx_arrangement_clips_track ON arrangement_clips(track_id);
+CREATE INDEX IF NOT EXISTS idx_arrangement_clips_clip ON arrangement_clips(clip_id);
 
 -- =============================================================================
 -- Score: sections, tempo map, time-signature map, cue points

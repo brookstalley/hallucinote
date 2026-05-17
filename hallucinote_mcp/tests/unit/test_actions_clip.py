@@ -505,7 +505,7 @@ def test_create_arrangement_midi_clip(loaded_actions):
         context=ctx,
     )
     assert resp.ok is True
-    assert resp.result["clip_index"] == 1
+    assert resp.result["arrangement_clip_index"] == 1
     assert resp.result["start_beats"] == 16.0
     arr = ctx.song.tracks[0].arrangement_clips
     assert len(arr) == 1

@@ -329,14 +329,14 @@ def plan_pull_arrangement_clips(
     track_index=N)`` per linked authoring track. The probe returns dense
     placements `{arrangement_clip_index, name, start_beats, length}`; the
     apply layer converts beats -> bars via the song's time-signature map and
-    diffs positionally against `arrangement` table rows.
+    diffs positionally against `arrangement_clips` table rows.
 
     Skips `master` and `return` track kinds: returns have no arrangement
     timeline, and master is reached via the master strip (no arrangement
     clips of its own).
 
     Per `docs/terminology.md`, this is exclusively about arrangement-clip
-    *placements* (rows in the legacy-named `arrangement` table).
+    *placements* (rows in the `arrangement_clips` table).
     Arrangement-VIEW state (loop region, view zoom) is a separate concern
     with no DB home today (backlog).
     """
@@ -1294,7 +1294,7 @@ def _apply_arrangement_clips_for_track(
 
     Diff classes handled:
       - `(start, end)` in both DB and Ableton  -> no-op
-      - `(start, end)` in DB only              -> `remove_arrangement`
+      - `(start, end)` in DB only              -> `remove_arrangement_clip`
       - `(start, end)` in Ableton only         -> warn + skip
 
     Why warn-and-skip on Ableton-only: positional matching cannot tell
@@ -1307,7 +1307,7 @@ def _apply_arrangement_clips_for_track(
     action either way; the user mirrors the change in DB and re-runs
     pull on the next pass.
 
-    Renames not detected: the `arrangement` table has no `name` column;
+    Renames not detected: the `arrangement_clips` table has no `name` column;
     display names live on `clips.name`. Manual renames of an arrangement
     clip in Live are silently lost by this apply. The user can rename via
     the DB-side clip name (clips are shared across placements).
@@ -1390,8 +1390,8 @@ def _apply_arrangement_clips_for_track(
     for k, row in db_by_pos.items():
         if k in seen:
             continue
-        M.remove_arrangement(
-            conn, arrangement_id=row["id"],
+        M.remove_arrangement_clip(
+            conn, arrangement_clip_id=row["id"],
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1

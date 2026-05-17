@@ -50,13 +50,11 @@ Three related concepts the word "arrangement" can mean:
 |---|---|---|
 | **Arrangement View** | Live's linear timeline view, as a UI surface | Live UI |
 | **Arrangement view state** (a.k.a. "arrangement-view metadata") | View-level state: loop region, follow mode, zoom, total length | Live API `Live.Song.Song.loop_*`, etc.; MCP `ableton_arrangement(action='info'/'set_loop'/'control_view')` |
-| **Arrangement clip** (a.k.a. "arrangement-clip placement") | A `Clip` placed at `(start_time, end_time)` on a track's timeline | Live API `track.arrangement_clips[i]`; DB `arrangement` table; sync link kind `"arrangement"` |
+| **Arrangement clip** (a.k.a. "arrangement-clip placement") | A `Clip` placed at `(start_time, end_time)` on a track's timeline | Live API `track.arrangement_clips[i]`; DB `arrangement_clips` table; sync link kind `"arrangement_clip"` |
 
-**The DB `arrangement` table holds arrangement clip placements.** Each row is
-one Clip placed on one track at one time range:
-`(song_id, track_id, clip_id, start_bar, end_bar)`. The table name is
-**legacy and misleading** — it should be `arrangement_clips`. See
-"Recommended renames" below.
+**The DB `arrangement_clips` table holds arrangement clip placements.** Each
+row is one Clip placed on one track at one time range:
+`(song_id, track_id, clip_id, start_bar, end_bar)`.
 
 **The MCP tool `ableton_arrangement(…)`** addresses the Arrangement *View* —
 its scope is view state + cue points + view controls + loop + arrangement-level
@@ -91,7 +89,7 @@ them. The sync layer reconciles by:
 - **Session clips**: 1:1 binding via `ableton_links` between `clips.id` and
   `(session, track_index, clip_index)` where `clip_index` is the 1-based slot.
 - **Arrangement clips**: 1:1 binding via `ableton_links` between an
-  *arrangement-table row* (`arrangement.id`) and
+  *arrangement-clips-table row* (`arrangement_clips.id`) and
   `(session, track_index, arrangement_clip_index)`.
 
 ### Index-name conventions
@@ -108,15 +106,15 @@ them. The sync layer reconciles by:
 
 `clip_index` is **only** the session-slot index. For arrangement placements,
 always use the fully qualified `arrangement_clip_index`. The codebase
-already follows this — `push.py:1221–1224` `_LINK_KINDS` distinguishes the
-`"clip"` (session) and `"arrangement"` (arrangement) kinds with the matching
-field names.
+already follows this — `push.py` `_LINK_KINDS` distinguishes the
+`"clip"` (session) and `"arrangement_clip"` (arrangement) kinds with the
+matching field names.
 
 ## Layer-by-layer name map
 
 | Concept | Live API | MCP tool / action | DB table | Mutator(s) | Event kind | Link kind |
 |---|---|---|---|---|---|---|
-| Arrangement clip placement | `track.arrangement_clips[i]` | `ableton_clip(action='list', location='arrangement', …)` | `arrangement` (legacy name; should be `arrangement_clips`) | `add_arrangement` / `remove_arrangement` | `ARRANGEMENT_ADDED` / `ARRANGEMENT_REMOVED` | `arrangement` |
+| Arrangement clip placement | `track.arrangement_clips[i]` | `ableton_clip(action='list', location='arrangement', …)` | `arrangement_clips` | `add_arrangement_clip` / `remove_arrangement_clip` | `ARRANGEMENT_CLIP_ADDED` / `ARRANGEMENT_CLIP_REMOVED` | `arrangement_clip` |
 | Session-view clip slot | `track.clip_slots[i].clip` | `ableton_clip(location='session', …)` | `clips` (with link to slot via `ableton_links`) | `create_clip` / `delete_clip` / `replace_clip_notes` | `CLIP_CREATED` / `CLIP_DELETED` / `CLIP_NOTES_REPLACED` | `clip` |
 | Arrangement-view metadata | `Live.Song.Song.{loop_*, view, …}` | `ableton_arrangement(action='info'/'set_loop'/'control_view')` | — (no single DB home; tempo/sig live in maps; loop has no DB home today) | — | — | — |
 | Set-level state (the Live document) | `Live.Song.Song.{tempo, signature, master_track, transport}` | `ableton_session(action='info'/'set_tempo'/'set_signature'/'play'/'stop'/'seek'/'snapshot'/'set_master_property')` | varies (`tempo_map`, `time_signature_map`, master via `tracks(kind='master')`) | `set_master_*`, tempo/sig-map mutators | various | — |
@@ -135,23 +133,17 @@ field names.
 - **"clip_index"** alone is **session-only** — never use it for arrangement
   placements.
 
-## Recommended renames
+## Completed rename: `arrangement` → `arrangement_clip`
 
-Carrying the legacy DB name + bare-word "arrangement" inside `_LINK_KINDS`
-forward is not free — it caused M+1-3's mis-plan and will keep biting. The
-renames below are recommended but **not required** for terminology to be
-clear (this doc pins meaning). Tracked as separate scope so the M+1 wave can
-proceed without bundling the rename.
+Shipped 2026-05-17. The DB table, mutators, event kinds, link kind, and
+arg/payload name all carry the `arrangement_clip` form now. The MCP-side
+`location='arrangement'` enum value is **deliberately unchanged** — it
+names Live's Arrangement *View*, not our DB.
 
-| Current | Recommended | Rationale | Blast radius |
-|---|---|---|---|
-| DB table `arrangement` | `arrangement_clips` | Each row is a placement; plural matches other tables (`clips`, `notes`, `tracks`, `returns`, `sends`). | schema.sql + 5 sites in mutations.py/queries.py + index names; FKs cascade unchanged; single migration |
-| Mutator `add_arrangement` / `remove_arrangement` | `add_arrangement_clip` / `remove_arrangement_clip` | Disambiguates the operation. | mutations.py + tests + callers in sync layer |
-| Event kind `ARRANGEMENT_ADDED` / `ARRANGEMENT_REMOVED` | `ARRANGEMENT_CLIP_ADDED` / `ARRANGEMENT_CLIP_REMOVED` | Same. | events constants + handlers + tests |
-| Link kind name `"arrangement"` (in `_LINK_KINDS`, `_RESOLVERS`, etc.) | `"arrangement_clip"` | Same. | push.py + pull.py + any code that switches on kind |
-| Argument / variable name `arrangement_id` | `arrangement_clip_id` | Same. | mutations.py + every caller |
-
-This is a **backlog item**, not in-wave scope. Filing it.
+For any song DB created before this commit, run
+`python tools/migrate_arrangement_clip.py <path/to/song.db>` — idempotent,
+single transaction, rewrites the table + indexes + event-row `kind` values
++ `payload_json.arrangement_id` keys + `ableton_links.db_kind` rows.
 
 ## Where to add new term mappings
 

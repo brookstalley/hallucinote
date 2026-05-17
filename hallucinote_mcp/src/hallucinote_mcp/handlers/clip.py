@@ -336,11 +336,14 @@ def create_handler(
     if location == "session":
         result["clip_index"] = clip_index
     else:
-        # Compute the 1-based arrangement index after the create.
+        # Compute the 1-based arrangement index after the create. The result
+        # field is `arrangement_clip_index` (not `clip_index`) so the
+        # Hallucinote apply layer's `_LINK_KINDS["arrangement_clip"]` can
+        # read it to record the `ableton_links` binding.
         track = _resolve_track(context, track_index)
         for i, c in enumerate(track.arrangement_clips, start=1):
             if c is clip:
-                result["clip_index"] = i
+                result["arrangement_clip_index"] = i
                 break
         result["start_beats"] = float(start_beats) if start_beats is not None else None
     if audio_path is not None:

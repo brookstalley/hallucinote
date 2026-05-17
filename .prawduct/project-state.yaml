@@ -205,5 +205,6 @@ build_state:
 # =============================================================================
 # CHANGE LOG
 # =============================================================================
-# Change log is in .prawduct/change-log.md (separate file to reduce merge conflicts).
-# See that file for format and instructions.
+# Retired in J-3 (2026-05-17). The hallucinote_mcp/CHANGELOG.md, the per-chunk
+# Status section in .prawduct/artifacts/build-plan.md, and the reflections trail
+# at .prawduct/.session-reflected cover the same ground with less drift risk.

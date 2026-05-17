@@ -266,3 +266,28 @@ def test_apply_results_rolls_back_on_mid_batch_failure(conn, session, track, cli
         Q.get_ableton_link(conn, session_id=session, db_kind="clip", db_id=clip)
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# ALIASES_TODAY ceiling — locked at <=5 per Wave M-5 build plan
+# ---------------------------------------------------------------------------
+
+
+def test_aliases_today_at_or_below_ceiling():
+    """The build plan's M-5 goal was 'final alias table cleanup: <=5 entries
+    remain (only genuinely-not-ready things).' Lock the contraction so a
+    well-meaning future PR that adds a planner-canonical name without an
+    MCP-side implementation gets caught: any growth past 5 should be a
+    deliberate decision, not an accident.
+
+    Today's 4 entries are all genuine multi-step emulations or hard MCP
+    gaps (see mcp_names.py docstring + ALIASES_TODAY comments).
+    """
+    from hallucinote.sync.mcp_names import ALIASES_TODAY
+    assert len(ALIASES_TODAY) <= 5, (
+        f"ALIASES_TODAY grew to {len(ALIASES_TODAY)} entries — Wave M-5 set "
+        "the ceiling at 5. Either: (a) retarget the new alias to a unified "
+        "MCP action, OR (b) document why it's a genuine emulation and bump "
+        "the ceiling deliberately. Current entries: "
+        f"{sorted(ALIASES_TODAY.keys())}"
+    )

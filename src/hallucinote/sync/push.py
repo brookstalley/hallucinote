@@ -132,7 +132,8 @@ def plan_push_clip(
     """Plan the push of a single session clip (track + notes) to Ableton.
 
     Three cases:
-      1. Track not yet linked in this session -> create_midi_track_with, then ...
+      1. Track not yet linked in this session -> ableton_track(action='create',
+         kind='midi', name=...) — Wave M-5 retarget from create_midi_track_with.
       2. Clip not yet linked in this session  -> replace_session_clip (atomic;
          still a Hallucinote-canonical emulation pending a future M-* chunk
          that retargets to ableton_clip(action='create', replace=True, ...)).

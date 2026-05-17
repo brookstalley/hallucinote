@@ -1,8 +1,6 @@
 """ableton_arrangement schema + handler behavior."""
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from hallucinote_mcp import schema

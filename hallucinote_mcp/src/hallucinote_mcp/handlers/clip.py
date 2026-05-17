@@ -145,7 +145,7 @@ def create_handler(
     kind: str,
     length: float,
     clip_index: int | None = None,
-    start_bar: float | None = None,
+    start_beats: float | None = None,
     name: str | None = None,
     notes: list[dict[str, Any]] | None = None,
     audio_path: str | None = None,
@@ -160,12 +160,12 @@ def create_handler(
       errors if the slot already holds a clip; pass ``replace=True`` to
       delete-then-create atomically (the most common Hallucinote iteration
       shape — gap #2's resolution path).
-    - **arrangement**: ``start_bar`` is required and is converted to beats
-      via the song's current signature heuristic (``(start_bar - 1) * 4``
-      assumes 4/4; arrangement-clip placement in non-4/4 meters is handled
-      by Live's own conversion, which we honor by passing the bar-derived
-      beat directly). Calls ``track.create_midi_clip(start_beats, length)``
-      or ``create_audio_clip``.
+    - **arrangement**: ``start_beats`` is required (Live counts arrangement
+      time in beats). The Hallucinote planner converts bar-based song
+      positions to beats using its time-signature map before emit; the MCP
+      layer stays meter-agnostic. Calls
+      ``track.create_midi_clip(start_beats, length)`` or
+      ``create_audio_clip``.
 
     ``audio_path`` is reserved for the future audio-clip ingest story;
     today it's recorded in the result as ``audio_path_deferred`` if
@@ -217,19 +217,17 @@ def create_handler(
         clip = slot.clip
     else:
         # arrangement
-        if start_bar is None:
+        if start_beats is None:
             raise ValueError(
-                "create: location='arrangement' requires start_bar "
-                "(1-based, fractional allowed)"
+                "create: location='arrangement' requires start_beats "
+                "(float, >= 0). The Hallucinote planner converts bar-based "
+                "song positions to beats via the song's time-signature map "
+                "before emit; MCP stays meter-agnostic."
             )
-        if start_bar < 1:
-            raise ValueError(f"start_bar {start_bar} must be >= 1 (1-based)")
+        if start_beats < 0:
+            raise ValueError(f"start_beats {start_beats} must be >= 0")
         track = _resolve_track(context, track_index)
-        # Live counts arrangement time in beats; bar -> beats is meter-
-        # dependent. We use the simple 4-beats-per-bar assumption matching
-        # the rest of the planner's bar math (cue points, tempo points use
-        # the same convention via ``_split_bar`` in the Hallucinote layer).
-        start_beats = (float(start_bar) - 1.0) * 4.0
+        sb = float(start_beats)
         if kind == "midi":
             create_fn = getattr(track, "create_midi_clip", None)
             if create_fn is None:
@@ -237,7 +235,7 @@ def create_handler(
                     f"track {track_index} does not expose create_midi_clip "
                     f"(not a MIDI track, or older Live build)"
                 )
-            create_fn(start_beats, float(length))
+            create_fn(sb, float(length))
         else:
             create_fn = getattr(track, "create_audio_clip", None)
             if create_fn is None:
@@ -245,14 +243,20 @@ def create_handler(
                     f"track {track_index} does not expose create_audio_clip "
                     f"(not an audio track, or older Live build)"
                 )
-            create_fn(start_beats, float(length))
+            create_fn(sb, float(length))
         # Find the new clip — Live appends, so it should be the last one,
         # but we scan defensively for the one matching our (start_beats,
         # length) since arrangement_clips ordering is implementation detail.
+        # Break on first hit so a (highly unlikely) duplicate match doesn't
+        # silently pick the wrong one.
         new_clip = None
         for c in track.arrangement_clips:
-            if abs(float(c.start_time) - start_beats) < 1e-6 and abs(float(c.length) - float(length)) < 1e-6:
+            if (
+                abs(float(c.start_time) - sb) < 1e-6
+                and abs(float(c.length) - float(length)) < 1e-6
+            ):
                 new_clip = c
+                break
         if new_clip is None:
             raise RuntimeError(
                 "create: could not locate the newly-created arrangement clip; "
@@ -283,7 +287,7 @@ def create_handler(
             if c is clip:
                 result["clip_index"] = i
                 break
-        result["start_bar"] = float(start_bar) if start_bar is not None else None
+        result["start_beats"] = float(start_beats) if start_beats is not None else None
     if audio_path is not None:
         # Reserved for future audio ingest; round-trips so the planner can
         # see we received it.
@@ -509,16 +513,17 @@ def duplicate_to_arrangement_handler(
     *,
     track_index: int,
     clip_index: int,
-    start_bar: float,
+    start_beats: float,
 ) -> dict[str, Any]:
-    """Copy a session clip into the arrangement at ``start_bar``.
+    """Copy a session clip into the arrangement at ``start_beats``.
 
-    Live exposes ``track.duplicate_clip_to_arrangement(clip, destination_time)``
-    where destination_time is in beats. Returns the new arrangement clip's
-    1-based index.
+    Live's ``track.duplicate_clip_to_arrangement(clip, destination_time)``
+    takes beats. The Hallucinote planner converts from bar-based song
+    positions using its time-signature map before emit; the MCP layer
+    stays meter-agnostic. Returns the new arrangement clip's 1-based index.
     """
-    if start_bar < 1:
-        raise ValueError(f"start_bar {start_bar} must be >= 1 (1-based)")
+    if start_beats < 0:
+        raise ValueError(f"start_beats {start_beats} must be >= 0")
     track = _resolve_track(context, track_index)
     slots = track.clip_slots
     if clip_index < 1 or clip_index > len(slots):
@@ -533,7 +538,7 @@ def duplicate_to_arrangement_handler(
             f"nothing to duplicate"
         )
     source_clip = slot.clip
-    destination_beats = (float(start_bar) - 1.0) * 4.0
+    dest_beats = float(start_beats)
     duplicate_fn = getattr(track, "duplicate_clip_to_arrangement", None)
     if duplicate_fn is None:
         raise NotImplementedError(
@@ -541,11 +546,14 @@ def duplicate_to_arrangement_handler(
             f"duplicate_clip_to_arrangement — older Live build, or the API "
             f"has moved"
         )
-    duplicate_fn(source_clip, destination_beats)
-    # The new arrangement clip is whichever one starts at destination_beats.
+    duplicate_fn(source_clip, dest_beats)
+    # The new arrangement clip is whichever one starts at dest_beats.
+    # Break on first hit — under unlikely overlap (two clips at the same
+    # beat) we don't want to silently pick the wrong one; first-hit-then-stop
+    # is the closest-to-deterministic behavior the API gives us.
     new_index: int | None = None
     for i, c in enumerate(track.arrangement_clips, start=1):
-        if abs(float(c.start_time) - destination_beats) < 1e-6:
+        if abs(float(c.start_time) - dest_beats) < 1e-6:
             new_index = i
             break
     if new_index is None:
@@ -557,7 +565,7 @@ def duplicate_to_arrangement_handler(
         "track_index": track_index,
         "source_clip_index": clip_index,
         "arrangement_clip_index": new_index,
-        "start_bar": float(start_bar),
+        "start_beats": dest_beats,
     }
 
 
@@ -604,208 +612,29 @@ def replace_notes_handler(
 
 
 # ---------------------------------------------------------------------------
-# quantize / apply_groove / extract_groove
+# Quantize / swing / groove are deliberately NOT MCP actions.
 # ---------------------------------------------------------------------------
-
-
-# Mapping wire grid string -> Live's quantize grid constant. Live exposes
-# Live.Song.Quantization with values like Q_QUARTER, Q_EIGHTH, etc. We use
-# string keys on the wire so the agent doesn't need to import Live constants.
 #
-# Exported (no leading underscore) so the schema layer can import this as the
-# single source of truth for the enum — see ``actions/clip.py``. The schema's
-# ``ParamSpec.enum`` validation is what actually rejects bad grids at dispatch
-# time; the handler-side check below is a defensive guard for direct handler
-# calls (mainly from tests that bypass the dispatcher).
-QUANTIZE_GRIDS: tuple[str, ...] = (
-    "1/4", "1/8", "1/8t", "1/16", "1/16t", "1/32", "1/32t",
-)
-
-
-def quantize_handler(
-    context: LiveContext,
-    *,
-    track_index: int,
-    location: str,
-    clip_index: int,
-    grid: str,
-    amount: float,
-    swing: float | None = None,
-) -> dict[str, Any]:
-    """Quantize a clip's notes to a grid.
-
-    Live's ``clip.quantize(grid, amount)`` snaps notes to the grid by
-    ``amount`` (0.0 = no change, 1.0 = full snap). ``swing`` (when
-    supported) shifts the off-grid hits — applied via
-    ``song.swing_amount`` before the quantize call if provided.
-    """
-    if grid not in QUANTIZE_GRIDS:
-        raise ValueError(
-            f"quantize: grid {grid!r} not supported; valid grids are "
-            f"{list(QUANTIZE_GRIDS)}"
-        )
-    if not (0.0 <= float(amount) <= 1.0):
-        raise ValueError(
-            f"quantize: amount {amount} out of range [0.0, 1.0]"
-        )
-    if swing is not None and not (0.0 <= float(swing) <= 1.0):
-        raise ValueError(
-            f"quantize: swing {swing} out of range [0.0, 1.0]"
-        )
-    clip = _resolve_clip(
-        context, track_index=track_index, location=location, clip_index=clip_index
-    )
-    quantize_fn = getattr(clip, "quantize", None)
-    if quantize_fn is None:
-        raise NotImplementedError(
-            f"clip at (track={track_index}, {location}, {clip_index}) does not "
-            f"expose quantize() — older Live build or non-MIDI clip"
-        )
-    # Apply swing via the song-level setting if provided. Per-clip swing
-    # isn't a Live concept; the global setting is applied for the duration
-    # of this call. We restore the prior value to keep the action
-    # side-effect-free at the session level.
-    song = context.song
-    prior_swing: float | None = None
-    if swing is not None:
-        prior_swing = float(getattr(song, "swing_amount", 0.0))
-        song.swing_amount = float(swing)
-    try:
-        quantize_fn(_grid_to_live(grid), float(amount))
-    finally:
-        if swing is not None and prior_swing is not None:
-            song.swing_amount = prior_swing
-    return {
-        "track_index": track_index,
-        "location": location,
-        "clip_index": clip_index,
-        "grid": grid,
-        "amount": float(amount),
-        "swing": float(swing) if swing is not None else None,
-    }
-
-
-def _grid_to_live(grid: str) -> Any:
-    """Translate a wire grid string to Live's quantize constant.
-
-    Live exposes ``Live.Song.Quantization.Q_QUARTER`` etc. inside the Remote
-    Script context. We import it lazily so the action surface tests don't
-    require the Live module — handlers running outside Live (fake context)
-    receive the string and the fake clip's ``quantize`` method can match
-    on it.
-    """
-    try:
-        from Live.Song import Quantization  # type: ignore[import]
-    except ImportError:
-        # Running outside Live (tests, dev). Return the string as a sentinel
-        # so handlers can still be exercised; real Live calls go through the
-        # import path above.
-        return grid
-    mapping = {
-        "1/4":   Quantization.q_quarter,
-        "1/8":   Quantization.q_eight,
-        "1/8t":  Quantization.q_eight_triplet,
-        "1/16":  Quantization.q_sixteenth,
-        "1/16t": Quantization.q_sixteenth_triplet,
-        "1/32":  Quantization.q_thirtysecond,
-        "1/32t": Quantization.q_thirtysecond_triplet,
-    }
-    return mapping[grid]
-
-
-def apply_groove_handler(
-    context: LiveContext,
-    *,
-    track_index: int,
-    location: str,
-    clip_index: int,
-    groove_name: str,
-) -> dict[str, Any]:
-    """Apply a named groove from the Groove Pool to a clip.
-
-    Live's Groove Pool is at ``song.groove_pool.grooves``; each groove has
-    a ``.name``. Clips have a ``.groove`` property settable to a groove
-    object.
-    """
-    clip = _resolve_clip(
-        context, track_index=track_index, location=location, clip_index=clip_index
-    )
-    pool = getattr(context.song, "groove_pool", None)
-    if pool is None:
-        raise NotImplementedError(
-            "song.groove_pool not available; older Live build (the Groove "
-            "Pool API was added in Live 9)"
-        )
-    target_groove = None
-    for g in pool.grooves:
-        if g.name == groove_name:
-            target_groove = g
-            break
-    if target_groove is None:
-        available = [g.name for g in pool.grooves]
-        raise ValueError(
-            f"apply_groove: no groove named {groove_name!r} in the Groove "
-            f"Pool; available: {available}"
-        )
-    clip.groove = target_groove
-    return {
-        "track_index": track_index,
-        "location": location,
-        "clip_index": clip_index,
-        "groove_name": groove_name,
-    }
-
-
-def extract_groove_handler(
-    context: LiveContext,
-    *,
-    track_index: int,
-    location: str,
-    clip_index: int,
-    name: str,
-) -> dict[str, Any]:
-    """Sample a clip's timing into a new groove in the Groove Pool.
-
-    Live exposes ``clip.extract_groove()`` which adds a groove to the pool
-    derived from the clip's note timing. The new groove's name is taken
-    from ``name`` (renamed after extraction).
-    """
-    clip = _resolve_clip(
-        context, track_index=track_index, location=location, clip_index=clip_index
-    )
-    extract_fn = getattr(clip, "extract_groove", None)
-    if extract_fn is None:
-        raise NotImplementedError(
-            f"clip at (track={track_index}, {location}, {clip_index}) does not "
-            f"expose extract_groove() — older Live build or non-MIDI clip"
-        )
-    pool = getattr(context.song, "groove_pool", None)
-    if pool is None:
-        raise NotImplementedError(
-            "song.groove_pool not available; older Live build (the Groove "
-            "Pool API was added in Live 9)"
-        )
-    pool_size_before = len(pool.grooves)
-    extract_fn()
-    # The new groove is appended to the pool. Rename it to the caller's
-    # requested name so subsequent apply_groove calls can find it.
-    if len(pool.grooves) <= pool_size_before:
-        raise RuntimeError(
-            "extract_groove: Live's extract_groove() did not add a groove to "
-            "the pool; this is a Live API behavior change"
-        )
-    new_groove = pool.grooves[pool_size_before]
-    new_groove.name = name
-    return {
-        "track_index": track_index,
-        "location": location,
-        "clip_index": clip_index,
-        "groove_name": name,
-    }
+# Note-timing transforms (quantize, swing, groove templates) are pure-math
+# operations on a note array. The Hallucinote DB is the source of truth for
+# notes; doing the math in Python/SQL space and pushing the already-grooved
+# array via ``ableton_clip(action='replace_notes', ...)`` is uniformly
+# better than Live's per-clip ``quantize()`` / ``Groove Pool`` round-trip:
+#
+#   - **Testability.** A pure function ``quantize(notes, grid, amount, swing)``
+#     can be unit-tested against fixtures. Live's ``clip.quantize()`` is a
+#     black box.
+#   - **Cross-DAW portability.** The same DB row drives Live, a future Logic
+#     exporter, an OSC engine, or a humanized print. Live-side compute would
+#     have to be re-implemented per target.
+#   - **Groove templates as DB rows.** A `grooves` table is portable across
+#     songs, version-controlled with the rest of the project, and immune to
+#     Live's per-set Groove Pool isolation.
+#
+# The Hallucinote-side quantize/groove module is tracked in `.prawduct/backlog.md`.
 
 
 __all__ = [
-    "QUANTIZE_GRIDS",
     "create_handler",
     "delete_handler",
     "rename_handler",
@@ -814,7 +643,4 @@ __all__ = [
     "set_property_handler",
     "duplicate_to_arrangement_handler",
     "replace_notes_handler",
-    "quantize_handler",
-    "apply_groove_handler",
-    "extract_groove_handler",
 ]

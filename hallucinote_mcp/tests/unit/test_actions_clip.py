@@ -42,22 +42,12 @@ class FakeClip:
             self.gain = 0.0
             self.pitch_coarse = 0
             self.warping = True
-        # Tracking
-        self.quantize_calls: list[tuple[Any, float]] = []
-        self.extract_groove_calls = 0
-        self.groove: Any = None
 
     def set_notes(self, notes_tuple: tuple[tuple[int, float, float, int, bool], ...]) -> None:
         self.notes = tuple(notes_tuple)
 
     def fire(self) -> None:  # not used directly on clip; clip_slot.fire fires
         pass
-
-    def quantize(self, grid: Any, amount: float) -> None:
-        self.quantize_calls.append((grid, amount))
-
-    def extract_groove(self) -> None:
-        self.extract_groove_calls += 1
 
 
 class FakeClipSlot:
@@ -130,30 +120,13 @@ class FakeTrack:
         self.stop_all_clips_calls += 1
 
 
-class FakeGroove:
-    def __init__(self, name: str):
-        self.name = name
-
-
-class FakeGroovePool:
-    def __init__(self, names: list[str] | None = None):
-        self.grooves: list[FakeGroove] = [FakeGroove(n) for n in (names or [])]
-
-
 class FakeSong:
-    def __init__(
-        self,
-        tracks: list[FakeTrack] | None = None,
-        *,
-        groove_pool: FakeGroovePool | None = None,
-    ):
+    def __init__(self, tracks: list[FakeTrack] | None = None):
         self.tracks = tracks if tracks is not None else [
             FakeTrack(name="Drums"),
             FakeTrack(name="Bass", kind="audio"),
             FakeTrack(name="Lead"),
         ]
-        self.groove_pool = groove_pool if groove_pool is not None else FakeGroovePool()
-        self.swing_amount: float = 0.0
         self.return_tracks: list[Any] = []
 
 
@@ -183,13 +156,31 @@ def loaded_actions():
 _EXPECTED_CLIP_ACTIONS = {
     "help", "create", "delete", "rename", "fire", "stop",
     "set_property", "duplicate_to_arrangement", "replace_notes",
-    "quantize", "apply_groove", "extract_groove",
 }
+# Quantize / swing / groove are deliberately NOT actions on this tool — they're
+# pure-math timing transforms owned by Hallucinote (DB is source of truth for
+# note timing). See design doc §6.2.
 
 
-def test_clip_registers_twelve_actions(loaded_actions):
+def test_clip_registers_nine_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_clip")}
     assert names == _EXPECTED_CLIP_ACTIONS
+
+
+def test_clip_does_not_expose_timing_transforms(loaded_actions):
+    """quantize / apply_groove / extract_groove must NOT be MCP actions.
+
+    These are pure-math operations on a note array; Hallucinote owns the
+    compute (DB-as-source-of-truth) and pushes pre-grooved notes via
+    replace_notes. Locking the surface here so a well-meaning future PR
+    that "adds the obvious quantize action" gets caught by CI.
+    """
+    for name in ("quantize", "swing", "apply_groove", "extract_groove"):
+        assert schema.get("ableton_clip", name) is None, (
+            f"ableton_clip(action={name!r}) is intentionally not exposed — "
+            "see design doc §6.2. Implement in Hallucinote-space and push "
+            "via ableton_clip(action='replace_notes', ...)."
+        )
 
 
 def test_clip_help_lists_all_actions(loaded_actions):
@@ -334,20 +325,20 @@ def test_create_arrangement_midi_clip(loaded_actions):
             tool="ableton_clip", action="create",
             params={
                 "track_index": 1, "location": "arrangement",
-                "kind": "midi", "length": 16.0, "start_bar": 5.0,
+                "kind": "midi", "length": 16.0, "start_beats": 16.0,
             },
         ),
         context=ctx,
     )
     assert resp.ok is True
     assert resp.result["clip_index"] == 1
-    assert resp.result["start_bar"] == 5.0
+    assert resp.result["start_beats"] == 16.0
     arr = ctx.song.tracks[0].arrangement_clips
     assert len(arr) == 1
-    assert arr[0].start_time == (5.0 - 1.0) * 4.0  # bar -> beats, 4/4 assumed
+    assert arr[0].start_time == 16.0
 
 
-def test_create_arrangement_clip_missing_start_bar_errors(loaded_actions):
+def test_create_arrangement_clip_missing_start_beats_errors(loaded_actions):
     ctx = FakeCtx()
     resp = dispatch(
         Request(
@@ -360,7 +351,7 @@ def test_create_arrangement_clip_missing_start_bar_errors(loaded_actions):
         context=ctx,
     )
     assert resp.ok is False
-    assert "start_bar" in (resp.error or "")
+    assert "start_beats" in (resp.error or "")
 
 
 # ---------- create — generic validation ----------
@@ -555,7 +546,13 @@ def test_set_property_writes_each_midi_field(loaded_actions, property_name, valu
 
 
 def test_set_property_audio_property_on_midi_clip_errors(loaded_actions):
-    """Audio-only properties (gain) should surface a teaching error on MIDI clips."""
+    """Audio-only properties (gain) should surface a teaching error on MIDI clips.
+
+    The handler's NotImplementedError message explicitly names the
+    audio-only properties — agents reading the error should learn what
+    works on which kind of clip. Assert that specific contract, not a
+    softer alternative.
+    """
     ctx = FakeCtx()
     ctx.song.tracks[0].clip_slots[0].clip = FakeClip(kind="midi")
     resp = dispatch(
@@ -569,7 +566,13 @@ def test_set_property_audio_property_on_midi_clip_errors(loaded_actions):
         context=ctx,
     )
     assert resp.ok is False
-    assert "audio-only" in (resp.error or "").lower() or "gain" in (resp.error or "")
+    err = (resp.error or "").lower()
+    assert "audio-only" in err, (
+        f"error message should explicitly cite the audio-only restriction "
+        f"(teaching contract); got {resp.error!r}"
+    )
+    assert "gain" in err  # names the offending property
+    assert "pitch" in err and "warp" in err  # lists the family for context
 
 
 def test_set_property_audio_property_on_audio_clip_works(loaded_actions):
@@ -725,16 +728,16 @@ def test_duplicate_to_arrangement(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_clip", action="duplicate_to_arrangement",
-            params={"track_index": 1, "clip_index": 1, "start_bar": 9.0},
+            params={"track_index": 1, "clip_index": 1, "start_beats": 32.0},
         ),
         context=ctx,
     )
     assert resp.ok is True
     assert resp.result["arrangement_clip_index"] == 1
-    assert resp.result["start_bar"] == 9.0
+    assert resp.result["start_beats"] == 32.0
     track = ctx.song.tracks[0]
     assert len(track.duplicate_calls) == 1
-    assert track.duplicate_calls[0][1] == (9.0 - 1.0) * 4.0
+    assert track.duplicate_calls[0][1] == 32.0
 
 
 def test_duplicate_from_empty_slot_errors(loaded_actions):
@@ -742,142 +745,12 @@ def test_duplicate_from_empty_slot_errors(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_clip", action="duplicate_to_arrangement",
-            params={"track_index": 1, "clip_index": 1, "start_bar": 5.0},
+            params={"track_index": 1, "clip_index": 1, "start_beats": 16.0},
         ),
         context=ctx,
     )
     assert resp.ok is False
     assert "empty" in (resp.error or "")
-
-
-# ---------- quantize ----------
-
-
-def test_quantize_calls_live_with_grid_and_amount(loaded_actions):
-    ctx = FakeCtx()
-    clip = FakeClip()
-    ctx.song.tracks[0].clip_slots[0].clip = clip
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="quantize",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "grid": "1/16", "amount": 0.75,
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    assert len(clip.quantize_calls) == 1
-    grid_arg, amount_arg = clip.quantize_calls[0]
-    # Outside Live, _grid_to_live returns the wire string as a sentinel.
-    assert grid_arg == "1/16"
-    assert amount_arg == 0.75
-
-
-def test_quantize_applies_and_restores_swing(loaded_actions):
-    ctx = FakeCtx()
-    ctx.song.swing_amount = 0.1
-    clip = FakeClip()
-    ctx.song.tracks[0].clip_slots[0].clip = clip
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="quantize",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "grid": "1/8", "amount": 1.0, "swing": 0.3,
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    # swing was restored to its prior value.
-    assert ctx.song.swing_amount == 0.1
-
-
-def test_quantize_rejects_invalid_grid(loaded_actions):
-    ctx = FakeCtx()
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="quantize",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "grid": "1/3", "amount": 1.0,
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is False
-    # Enum kicks in at validation time.
-    assert "not in enum" in (resp.error or "")
-
-
-# ---------- apply_groove / extract_groove ----------
-
-
-def test_apply_groove_assigns_pool_groove(loaded_actions):
-    ctx = FakeCtx(FakeSong(groove_pool=FakeGroovePool(names=["Verse", "Chorus"])))
-    clip = FakeClip()
-    ctx.song.tracks[0].clip_slots[0].clip = clip
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="apply_groove",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "groove_name": "Verse",
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    assert clip.groove is not None
-    assert clip.groove.name == "Verse"
-
-
-def test_apply_groove_unknown_name_errors_with_available(loaded_actions):
-    ctx = FakeCtx(FakeSong(groove_pool=FakeGroovePool(names=["Verse"])))
-    ctx.song.tracks[0].clip_slots[0].clip = FakeClip()
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="apply_groove",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "groove_name": "Chorus",
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is False
-    assert "Chorus" in (resp.error or "")
-    # Error lists what IS available — teaching contract.
-    assert "Verse" in (resp.error or "")
-
-
-def test_extract_groove_appends_and_renames(loaded_actions):
-    pool = FakeGroovePool(names=["Existing"])
-    ctx = FakeCtx(FakeSong(groove_pool=pool))
-    clip = FakeClip()
-    ctx.song.tracks[0].clip_slots[0].clip = clip
-    # FakeClip's extract_groove only bumps the call counter; emulate Live's
-    # side-effect by appending a fresh groove to the pool when extract is called.
-    real_extract = clip.extract_groove
-    def patched_extract():
-        real_extract()
-        pool.grooves.append(FakeGroove("unnamed-extracted"))
-    clip.extract_groove = patched_extract
-    resp = dispatch(
-        Request(
-            tool="ableton_clip", action="extract_groove",
-            params={
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "name": "Verse Swing",
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    assert len(pool.grooves) == 2
-    assert pool.grooves[1].name == "Verse Swing"
 
 
 # ---------- run_on_main discipline ----------

@@ -1,13 +1,12 @@
 """``ableton_clip`` action schema.
 
-Twelve actions covering the full session + arrangement clip lifecycle:
+Nine actions covering the full session + arrangement clip lifecycle:
 
   - **Lifecycle**: create, delete, rename, duplicate_to_arrangement
   - **Transport (session)**: fire, stop
   - **Mix-state**: set_property (gain / pitch / warp / loop_start / loop_end /
     muted / color)
   - **Notes**: replace_notes (gap #1's renamed action — see design doc §8.2)
-  - **Timing**: quantize, apply_groove, extract_groove
   - **Help**: dispatcher-special, generated from this registry
 
 All non-help actions are handlers because they branch on ``location``
@@ -15,11 +14,16 @@ All non-help actions are handlers because they branch on ``location``
 contexts through different navigation paths (clip_slots vs arrangement_clips).
 A pure declarative op would need two ``target`` shapes per action; a handler
 keeps it readable.
+
+**Quantize / swing / groove are deliberately NOT actions here.** The
+Hallucinote DB is the source of truth for note timing; quantize, swing, and
+groove templates are pure-math transforms computed in Python/SQL space and
+pushed via ``replace_notes`` already-grooved. See design doc §6.2 for the
+rationale (testability, cross-DAW portability, DB-row groove templates).
 """
 from __future__ import annotations
 
 from ..handlers import clip as clip_handlers
-from ..handlers.clip import QUANTIZE_GRIDS as _QUANTIZE_GRIDS
 from ..schema import Action, ParamSpec, register
 
 
@@ -57,10 +61,12 @@ register(
         name="create",
         description=(
             "Create a clip in session or arrangement view. Session: pick a "
-            "slot via clip_index (1-based). Arrangement: place at start_bar. "
-            "Pass notes for atomic create-and-populate (single round-trip). "
-            "Pass replace=True (session only) to delete the existing slot's "
-            "clip before creating, in one call."
+            "slot via clip_index (1-based). Arrangement: place at start_beats "
+            "(Live counts arrangement time in beats; the Hallucinote planner "
+            "converts from bar-based song positions). Pass notes for atomic "
+            "create-and-populate (single round-trip). Pass replace=True "
+            "(session only) to delete the existing slot's clip before "
+            "creating, in one call."
         ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1),
@@ -80,13 +86,15 @@ register(
                 description="Required for location='session' (the 1-based slot).",
             ),
             ParamSpec(
-                name="start_bar",
+                name="start_beats",
                 type="float",
                 required=False,
-                minimum=1.0,
+                minimum=0.0,
                 description=(
-                    "Required for location='arrangement' (1-based bar; "
-                    "fractional allowed for mid-bar placement)."
+                    "Required for location='arrangement'. Beats from the "
+                    "song's start. The Hallucinote planner converts from "
+                    "bar-based positions using the song's time-signature "
+                    "map; MCP stays meter-agnostic."
                 ),
             ),
             ParamSpec(
@@ -270,9 +278,10 @@ register(
         tool="ableton_clip",
         name="duplicate_to_arrangement",
         description=(
-            "Copy a session clip into the arrangement at start_bar. The "
+            "Copy a session clip into the arrangement at start_beats. The "
             "source clip stays in the session; a new arrangement clip "
-            "appears at the bar."
+            "appears at the given beat. The Hallucinote planner converts "
+            "from bar-based song positions; MCP stays meter-agnostic."
         ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1),
@@ -282,12 +291,12 @@ register(
                 minimum=1,
                 description="1-based session slot of the source clip.",
             ),
-            ParamSpec(name="start_bar", type="float", minimum=1.0),
+            ParamSpec(name="start_beats", type="float", minimum=0.0),
         ),
         handler=clip_handlers.duplicate_to_arrangement_handler,
         example=(
             "ableton_clip(action='duplicate_to_arrangement', track_index=2, "
-            "clip_index=1, start_bar=5.0)"
+            "clip_index=1, start_beats=16.0)"
         ),
         tips=(
             "Returns {arrangement_clip_index} — capture for subsequent "
@@ -335,88 +344,6 @@ register(
             "This REPLACES the entire note array — there is no append. "
             "True per-note operations are gated on MCP gap #4 (see "
             "ableton_note).",
-        ),
-    )
-)
-
-
-# ---------------------------------------------------------------------------
-# Quantize / groove
-# ---------------------------------------------------------------------------
-
-register(
-    Action(
-        tool="ableton_clip",
-        name="quantize",
-        description=(
-            "Snap a clip's notes to a grid. amount=1.0 is full snap; 0.0 is "
-            "no change. Optional swing shifts off-grid hits via Live's "
-            "global swing_amount (restored after the call)."
-        ),
-        params=(
-            ParamSpec(name="track_index", type="int", minimum=1),
-            ParamSpec(name="location", type="str", enum=_LOCATION_ENUM),
-            ParamSpec(name="clip_index", type="int", minimum=1),
-            ParamSpec(name="grid", type="str", enum=_QUANTIZE_GRIDS),
-            ParamSpec(name="amount", type="float", minimum=0.0, maximum=1.0),
-            ParamSpec(
-                name="swing", type="float", required=False, minimum=0.0,
-                maximum=1.0,
-                description=(
-                    "Optional. Applied via song.swing_amount for the "
-                    "duration of the quantize call; restored afterward."
-                ),
-            ),
-        ),
-        handler=clip_handlers.quantize_handler,
-        example=(
-            "ableton_clip(action='quantize', track_index=2, "
-            "location='session', clip_index=1, grid='1/16', amount=0.8)"
-        ),
-    )
-)
-
-register(
-    Action(
-        tool="ableton_clip",
-        name="apply_groove",
-        description=(
-            "Apply a named Groove Pool groove to a clip. Use "
-            "ableton_clip(action='extract_groove') first to populate the "
-            "pool from another clip."
-        ),
-        params=(
-            ParamSpec(name="track_index", type="int", minimum=1),
-            ParamSpec(name="location", type="str", enum=_LOCATION_ENUM),
-            ParamSpec(name="clip_index", type="int", minimum=1),
-            ParamSpec(name="groove_name", type="str"),
-        ),
-        handler=clip_handlers.apply_groove_handler,
-        example=(
-            "ableton_clip(action='apply_groove', track_index=2, "
-            "location='session', clip_index=1, groove_name='Verse Swing')"
-        ),
-    )
-)
-
-register(
-    Action(
-        tool="ableton_clip",
-        name="extract_groove",
-        description=(
-            "Sample a clip's note timing into a new groove in the Groove "
-            "Pool. The new groove is renamed to the provided 'name'."
-        ),
-        params=(
-            ParamSpec(name="track_index", type="int", minimum=1),
-            ParamSpec(name="location", type="str", enum=_LOCATION_ENUM),
-            ParamSpec(name="clip_index", type="int", minimum=1),
-            ParamSpec(name="name", type="str"),
-        ),
-        handler=clip_handlers.extract_groove_handler,
-        example=(
-            "ableton_clip(action='extract_groove', track_index=2, "
-            "location='session', clip_index=1, name='Verse Swing')"
         ),
     )
 )

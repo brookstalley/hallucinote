@@ -226,17 +226,18 @@ Total: ~94 actions in 10 tools. (Note: `ableton_help` was considered and dropped
 | Action | Args | Replaces |
 |---|---|---|
 | `help` | — | — |
-| `create` | `track_index`, `location: session\|arrangement`, `clip_index?`, `start_bar?`, `length`, `name?`, `kind: midi\|audio`, `audio_path?` | `create_clip`, `create_arrangement_midi_clip`, `create_arrangement_audio_clip` |
+| `create` | `track_index`, `location: session\|arrangement`, `clip_index?`, `start_beats?`, `length`, `name?`, `kind: midi\|audio`, `audio_path?`, `notes?`, `replace?` | `create_clip`, `create_arrangement_midi_clip`, `create_arrangement_audio_clip` |
 | `delete` | `track_index`, `location`, `clip_index` | `delete_arrangement_clip` (+ gap for session) |
 | `rename` | `track_index`, `clip_index`, `location`, `name` | `set_clip_name` |
 | `fire` | `track_index`, `clip_index` | `fire_clip` |
 | `stop` | `track_index`, `clip_index` | `stop_clip` |
 | `set_property` | `track_index`, `clip_index`, `location`, `property: gain\|pitch\|warp\|loop_start\|loop_end\|muted\|color`, `value` | `set_arrangement_clip_property` (already action-style on one tool, generalized) |
-| `duplicate_to_arrangement` | `track_index`, `clip_index`, `start_bar` | `duplicate_clip_to_arrangement` |
+| `duplicate_to_arrangement` | `track_index`, `clip_index`, `start_beats` | `duplicate_clip_to_arrangement` |
 | `replace_notes` | `track_index`, `location`, `clip_index`, `notes` | `add_notes_to_clip` (renamed to reflect actual replace semantics — gap #1 resolved) |
-| `quantize` | `track_index`, `clip_index`, `location`, `grid: 1/4\|1/8\|1/16\|...`, `amount: 0.0-1.0`, `swing?` | new — MIDI editing primitive |
-| `apply_groove` | `track_index`, `clip_index`, `location`, `groove_name` | new — apply a groove pool template |
-| `extract_groove` | `track_index`, `clip_index`, `location`, `name` | new — sample the clip's groove into the groove pool |
+
+**Quantize / swing / groove are deliberately NOT MCP actions.** The Hallucinote DB is the source of truth for note timing (see §10.2). Quantization, swing, and groove templates are pure-math transformations of a note array — Hallucinote owns the compute, writes the result to the `notes` table, and pushes the already-grooved/quantized note array via `ableton_clip(action='replace_notes', ...)`. Rationale: (a) Live's quantize is a black box we can't unit-test; (b) keeping the timing math in our space gives uniform behavior across all DAW targets (a future-Logic exporter gets the same swing for free); (c) groove templates as DB rows are portable across songs and round-trippable, unlike Live's per-set Groove Pool. M-3 ships no `quantize` / `apply_groove` / `extract_groove` actions. The Hallucinote-side quantize/groove module is tracked in the backlog.
+
+`create` accepts an optional `notes` list (atomic create-and-populate, one round-trip for the common iteration shape) and an optional `replace=True` (session-only) that deletes the existing slot's clip before creating — gap-#2's atomic resolution path. `start_beats` is a float (Live counts arrangement time in beats); the Hallucinote planner converts from bar-based song positions using its time-signature map before emit.
 
 #### `ableton_note`
 

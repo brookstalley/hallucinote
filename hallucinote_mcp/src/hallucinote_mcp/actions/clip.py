@@ -1,7 +1,8 @@
 """``ableton_clip`` action schema.
 
-Nine actions covering the full session + arrangement clip lifecycle:
+Ten actions covering the full session + arrangement clip lifecycle:
 
+  - **Read**: list (per-track inventory, both locations)
   - **Lifecycle**: create, delete, rename, duplicate_to_arrangement
   - **Transport (session)**: fire, stop
   - **Mix-state**: set_property (gain / pitch / warp / loop_start / loop_end /
@@ -47,6 +48,40 @@ register(
             "params, examples, and tips."
         ),
         example="ableton_clip(action='help')",
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Read: list
+# ---------------------------------------------------------------------------
+
+register(
+    Action(
+        tool="ableton_clip",
+        name="list",
+        description=(
+            "Per-track clip inventory. Session: every slot, populated or "
+            "empty; the 1-based slot position doubles as clip_index. "
+            "Arrangement: every placed clip, with arrangement_clip_index, "
+            "name, start_beats, length. Wire stays beats-based; the "
+            "Hallucinote sync layer converts to bar-based song positions."
+        ),
+        params=(
+            ParamSpec(name="track_index", type="int", minimum=1),
+            ParamSpec(name="location", type="str", enum=_LOCATION_ENUM),
+        ),
+        handler=clip_handlers.list_handler,
+        example=(
+            "ableton_clip(action='list', track_index=2, "
+            "location='arrangement')"
+        ),
+        tips=(
+            "Session entries include {empty: True} for unpopulated slots — "
+            "the slot itself always exists.",
+            "Arrangement returns are dense (no empty positions); use the "
+            "1-based 'arrangement_clip_index' for subsequent writes.",
+        ),
     )
 )
 

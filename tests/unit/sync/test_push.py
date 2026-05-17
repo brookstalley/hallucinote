@@ -68,16 +68,23 @@ def test_plan_push_clip_creates_track_when_unlinked(conn, session, track, clip):
     assert any("track" in n for n in plan.notes)
 
 
-def test_plan_push_clip_uses_replace_when_track_linked_clip_unlinked(
+def test_plan_push_clip_emits_atomic_create_when_track_linked_clip_unlinked(
     conn, session, track, clip
 ):
+    """Wave M+1-1: planner emits the atomic single-call create with
+    replace=True (instead of the prior 3-step `replace_session_clip`
+    emulation). One round-trip instead of three; same end state."""
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
     plan = push.plan_push_clip(conn, clip_id=clip, session_id=session)
     assert len(plan.calls) == 1
     call = plan.calls[0]
-    assert call.tool == "replace_session_clip"
+    assert call.tool == "ableton_clip"
+    assert call.args["action"] == "create"
+    assert call.args["location"] == "session"
+    assert call.args["kind"] == "midi"
+    assert call.args["replace"] is True
     assert call.args["track_index"] == 2
     assert call.args["clip_index"] == 1
     assert call.args["length"] == 16.0
@@ -86,6 +93,47 @@ def test_plan_push_clip_uses_replace_when_track_linked_clip_unlinked(
     n0 = call.args["notes"][0]
     assert "start_time" in n0 and "duration" in n0
     assert "tags" not in n0
+
+
+def test_plan_push_clip_args_match_mcp_create_action_schema(
+    conn, session, track, clip
+):
+    """Structural contract: every arg the planner emits for the unlinked-clip
+    case must be a known param on `ableton_clip(action='create')`, and every
+    required param on that action must be present in the planner's args
+    (with `action` itself satisfying the dispatch). Catches drift in either
+    direction — schema rename, schema removes a param, planner forgets a
+    required param.
+
+    Per the "Sync planner discipline" learning: a directly-callable tool
+    (no alias) trusts the planner to match the real signature."""
+    from hallucinote_mcp.actions import clip as _clip_actions  # noqa: F401 — registers
+    from hallucinote_mcp.schema import all_actions
+
+    create_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_clip" and a.name == "create"
+    )
+    schema_param_names = {p.name for p in create_action.params}
+    required_param_names = {
+        p.name for p in create_action.params if getattr(p, "required", True)
+    }
+
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    call = push.plan_push_clip(conn, clip_id=clip, session_id=session).calls[0]
+    emitted = set(call.args.keys()) - {"action"}
+
+    unknown = emitted - schema_param_names
+    assert not unknown, (
+        f"planner emitted args not on ableton_clip(create) schema: {sorted(unknown)}"
+    )
+    missing_required = required_param_names - emitted
+    assert not missing_required, (
+        "planner missing required ableton_clip(create) params: "
+        f"{sorted(missing_required)}"
+    )
 
 
 def test_plan_push_clip_uses_replace_notes_when_already_linked(
@@ -172,7 +220,7 @@ def test_apply_results_links_track_and_clip(conn, session, track, clip):
         [
             {"key": f"track:{track}", "ok": True, "tool": "ableton_track",
              "result": {"track_index": 5}},
-            {"key": f"clip:{clip}", "ok": True, "tool": "replace_session_clip",
+            {"key": f"clip:{clip}", "ok": True, "tool": "ableton_clip",
              "result": {"clip_index": 3}},
         ],
         session_id=session,
@@ -252,7 +300,7 @@ def test_apply_results_rolls_back_on_mid_batch_failure(conn, session, track, cli
                  "tool": "frobnicate", "result": {}},
                 # This never runs.
                 {"key": f"clip:{clip}", "ok": True,
-                 "tool": "replace_session_clip", "result": {"clip_index": 3}},
+                 "tool": "ableton_clip", "result": {"clip_index": 3}},
             ],
             session_id=session,
         )
@@ -280,8 +328,9 @@ def test_aliases_today_at_or_below_ceiling():
     MCP-side implementation gets caught: any growth past 5 should be a
     deliberate decision, not an accident.
 
-    Today's 4 entries are all genuine multi-step emulations or hard MCP
-    gaps (see mcp_names.py docstring + ALIASES_TODAY comments).
+    Each remaining entry is a genuine multi-step emulation or hard MCP
+    gap; see `mcp_names.py` docstring + per-entry comments for the
+    canonical inventory (don't restate the count here — that's drift bait).
     """
     from hallucinote.sync.mcp_names import ALIASES_TODAY
     assert len(ALIASES_TODAY) <= 5, (

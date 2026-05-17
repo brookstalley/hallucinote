@@ -20,18 +20,16 @@ History (per Wave M-* sessions in `.session-reflected`):
   (unified ableton_clip(delete, location='session')), create_midi_track_with
   (unified ableton_track(create, kind='midi', name=...)). The planner now
   emits the unified shapes directly.
+- M+1-1: dropped replace_session_clip (atomic single-call retarget to
+  ableton_clip(create, replace=True, notes=...)). One fewer round-trip per
+  unlinked-clip push.
 
-Remaining 4 entries (≤5 target met):
+Remaining 3 entries:
 """
 from __future__ import annotations
 
 # planner emits (canonical) -> currently-callable name
 ALIASES_TODAY: dict[str, str] = {
-    # Multi-step emulation: atomic replace of a session clip (delete +
-    # create + replace_notes). The MCP surface supports the single-call
-    # path via ableton_clip(action='create', replace=True, notes=...) —
-    # retarget tracked in backlog.
-    "replace_session_clip": "_emulate_replace_session_clip",
     # Multi-step emulation: bulk arrangement build. Decomposes into
     # multiple ableton_clip(action='delete', location='arrangement') and
     # ableton_clip(action='duplicate_to_arrangement', ...) calls. No

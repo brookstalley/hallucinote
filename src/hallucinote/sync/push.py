@@ -138,9 +138,10 @@ def plan_push_clip(
     Three cases:
       1. Track not yet linked in this session -> ableton_track(action='create',
          kind='midi', name=...) — Wave M-5 retarget from create_midi_track_with.
-      2. Clip not yet linked in this session  -> replace_session_clip (atomic;
-         still a Hallucinote-canonical emulation pending a future M-* chunk
-         that retargets to ableton_clip(action='create', replace=True, ...)).
+      2. Clip not yet linked in this session  -> ableton_clip(action='create',
+         location='session', kind='midi', replace=True, notes=...) — atomic
+         single-call create+populate, Wave M+1-1 retarget that replaced the
+         3-step `replace_session_clip` emulation.
       3. Clip already linked                  -> ableton_clip(action='replace_notes')
          (in-place; gap #1's renamed action, unified via Wave M-3).
     """
@@ -192,14 +193,23 @@ def plan_push_clip(
         return plan
 
     if clip_at is None:
+        # Wave M+1-1: atomic single-call create+populate. `replace=True`
+        # makes the handler delete an occupied slot before creating, so the
+        # planner doesn't have to know the slot's current state. The handler
+        # returns `clip_index`, which `_LINK_KINDS["clip"]` reads to record
+        # the binding via the generic apply path.
         plan.add(ToolCall(
-            tool="replace_session_clip",
+            tool="ableton_clip",
             args={
+                "action": "create",
+                "location": "session",
+                "kind": "midi",
                 "track_index": track_at,
                 "clip_index": clip["slot"],
                 "length": clip["length_beats"],
                 "name": clip["name"],
                 "notes": _notes_for_mcp(notes),
+                "replace": True,
             },
             key=f"clip:{clip_id}",
             purpose=f"create+populate session clip slot {clip['slot']} on track {track_at}",

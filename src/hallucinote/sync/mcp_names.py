@@ -1,69 +1,53 @@
 """Tool-name aliases bridging current AbletonMCP surface to post-Wave-1 names.
 
-Until MCP Wave 1 ships, the planner emits the *new* names (per docs/mcp-requirements.md
-PRs A/C/D/G/H) and the agent / shim resolves them via this table to whatever is
-actually callable today.
+Post-Wave-M-5 (2026-05-17): the unified hallucinote-mcp surface absorbs
+nearly every Hallucinote-canonical name. Only the genuinely-blocked
+multi-step emulators remain in this table.
 
-When the MCP server in our fork ships the renamed tools, drop the right column
-and have the planner emit the canonical names directly.
+Each remaining entry resolves to an `_emulate_*` placeholder — the agent
+recognizes that prefix as a signal to decompose into multiple unified-tool
+calls (since the operation is intrinsically multi-step, not a single Live
+primitive). The table contracts as the orchestration prose moves into
+explicit planner-side decomposition.
+
+History (per Wave M-* sessions in `.session-reflected`):
+- M-1: dropped master volume / pan aliases (unified ableton_session).
+- M-2: dropped 8 entries — track + return mixer state + return creation.
+- M-3: dropped set_clip_notes (unified ableton_clip(replace_notes)).
+- M-4: dropped 12 entries — 4 device load/param + 8 envelope writes.
+- M-5: dropped 3 entries — set_arrangement_clip_notes (unified
+  ableton_clip(replace_notes, location='arrangement')), delete_session_clip
+  (unified ableton_clip(delete, location='session')), create_midi_track_with
+  (unified ableton_track(create, kind='midi', name=...)). The planner now
+  emits the unified shapes directly.
+
+Remaining 4 entries (≤5 target met):
 """
 from __future__ import annotations
 
 # planner emits (canonical) -> currently-callable name
 ALIASES_TODAY: dict[str, str] = {
-    # PR C: not yet exposed at MCP layer (registered in remote script only)
-    "set_arrangement_clip_notes": "add_notes_to_arrangement_clip",  # not exposed yet!
-    # PR D: doesn't exist yet — must be emulated as delete_clip + create_clip + add_notes_to_clip
+    # Multi-step emulation: atomic replace of a session clip (delete +
+    # create + replace_notes). The MCP surface supports the single-call
+    # path via ableton_clip(action='create', replace=True, notes=...) —
+    # retarget tracked in backlog.
     "replace_session_clip": "_emulate_replace_session_clip",
-    "delete_session_clip": "_emulate_delete_session_clip",
-    # PR G: create_midi_track currently doesn't accept name/instrument_uri
-    # — must follow with set_track_name + load_instrument_or_effect
-    "create_midi_track_with": "_emulate_create_midi_track_with",
-    # PR B: doesn't exist yet — agent must loop through ops manually
+    # Multi-step emulation: bulk arrangement build. Decomposes into
+    # multiple ableton_clip(action='delete', location='arrangement') and
+    # ableton_clip(action='duplicate_to_arrangement', ...) calls. No
+    # single primitive on the MCP side; agent orchestrates.
     "batch_arrangement_layout": "_emulate_batch_arrangement_layout",
-    # Chunk 2: tempo automation per (bar, beat) — only `set_tempo` exists today
-    # (global, single value, no ramp). Canonical args:
-    #   {bar: int 1-based, beat: float 0-based-within-bar, bpm: float, ramp: str}.
-    # Single-point/hold-ramp maps can emulate via set_tempo; multi-point /
-    # linear ramps are a hard MCP gap.
+    # Tempo automation per (bar, beat) — Live exposes the global
+    # `Song.tempo` and per-bar automation envelopes, but not a single
+    # "set tempo at this bar" primitive. The emulator decomposes into
+    # ableton_session(action='set_tempo') for single-point + envelope
+    # writes for ramps; multi-point ramps remain a hard MCP gap until
+    # the envelope read surface lands.
     "write_tempo_point": "_emulate_write_tempo_point",
-    # Chunk 2: arrangement-level meter changes are not exposed by MCP at all.
+    # Arrangement-level meter changes — no Live API primitive exists.
     # Canonical args: {bar, beat, numerator: int, denominator: int}.
+    # Hard MCP gap; emulator no-ops with a warn.
     "write_time_signature_point": "_emulate_write_time_signature_point",
-    # Wave M-2: track + return mixer state and return creation are now
-    # emitted directly by the planner as ableton_track(action='set_property',
-    # ...), ableton_return(action='set_property', ...), and
-    # ableton_return(action='create', name=...). The eight aliases that used
-    # to live here (create_return_track, set_track_mute / solo / arm / color,
-    # return mixer state) dropped.
-    # Master-strip volume/pan (Wave M-1) is at
-    # ableton_session(action='set_master_property', ...).
-    # Wave M-3: in-place clip note replace (gap #1's renamed action) is now
-    # emitted directly as ableton_clip(action='replace_notes', ...). The
-    # `set_clip_notes` alias dropped here.
-    # Wave M-4: device load + parameter writes for tracks AND returns are
-    # now emitted directly by the planner as
-    # ableton_device(action='load', track_index|return_index, kind, ...) and
-    # ableton_device(action='set_parameter', track_index|return_index,
-    #                device_index, parameter_name, value, value_type).
-    # The four aliases that used to live here (load_device,
-    # load_device_on_return, set_device_parameter,
-    # set_return_device_parameter) dropped.
-    #
-    # Wave M-4: automation envelope writes are unified under
-    # ableton_automation(action='write_envelope', target_kind=...). The
-    # eight aliases that used to live here (write_clip_cc_envelope,
-    # write_clip_pitch_bend_envelope, write_note_expression_envelope,
-    # write_device_parameter_envelope, write_return_device_parameter_envelope,
-    # write_mixer_volume_envelope, write_mixer_pan_envelope,
-    # write_send_envelope) dropped.
-    # NOTE on tools called directly (no alias entry needed):
-    # - `create_cue_point(bar: int 1-based, beat: float 0-based, name: str)`.
-    #   Planner output for this tool MUST match this signature.
-    # - `set_track_volume(track_index: int 1-based, volume: float 0.0-1.0)`.
-    # - `set_track_panning(track_index: int 1-based, panning: float -1.0..1.0)`.
-    # - `set_track_send(track_index: int 1-based, return_index: int 1-based,
-    #     value: float 0.0-1.0)`.
 }
 
 

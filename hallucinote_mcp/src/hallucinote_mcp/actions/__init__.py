@@ -19,6 +19,12 @@ from . import clip as clip  # noqa: F401
 from . import note as note  # noqa: F401
 from . import device as device  # noqa: F401
 from . import automation as automation  # noqa: F401
+from . import arrangement as arrangement  # noqa: F401
+from . import scene as scene  # noqa: F401
+from . import browser as browser  # noqa: F401
 
 
-__all__ = ["session", "track", "return_", "clip", "note", "device", "automation"]
+__all__ = [
+    "session", "track", "return_", "clip", "note",
+    "device", "automation", "arrangement", "scene", "browser",
+]

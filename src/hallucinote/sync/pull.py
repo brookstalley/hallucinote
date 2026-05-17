@@ -219,20 +219,21 @@ def plan_pull_cue_points(
     song_id: str,
     session_id: str,
 ) -> PullPlan:
-    """Plan a single `get_cue_points` probe.
+    """Plan a single `ableton_arrangement(action='cue_list')` probe.
 
-    Cue identity is `(position_bar)` with float-tolerance — matching by
-    position is the only stable handle today. Names are NOT pulled into the
-    DB: MCP gap #13 (`get_cue_points` returns numeric IDs, not names),
-    so any name returned would clobber real names. Apply diffs names as
-    *warnings* only.
+    Wave M-5: retargeted from the legacy fork's `get_cue_points` to the
+    unified arrangement tool. Cue identity is `(position_beats)` with
+    float-tolerance — matching by position is the only stable handle.
+    Names round-trip cleanly in the greenfield server (gap #13 doesn't
+    apply); apply layer still treats name diffs as informational since
+    DB-side cue names are user-authoritative.
     """
     plan = PullPlan()
     plan.add(PullCall(
-        tool="get_cue_points",
-        args={},
+        tool="ableton_arrangement",
+        args={"action": "cue_list"},
         key="cue_points_list",
-        purpose="pull arrangement cue points (positions only; names gap-flagged)",
+        purpose="pull arrangement cue points (position_beats + names)",
     ))
     return plan
 
@@ -827,9 +828,62 @@ def _join_bar_beat(
 
 
 def _is_numeric_id_name(s: Any) -> bool:
-    """MCP gap #13: `get_cue_points` returns numeric strings ('1', '2', ...)
-    instead of the real names. Detect so we don't clobber DB names with these."""
+    """MCP gap #13 (legacy fork): `get_cue_points` returned numeric strings
+    ('1', '2', ...) instead of the real names. The greenfield M-5 server's
+    `ableton_arrangement(action='cue_list')` returns real names, but the
+    detector stays as a defense against any agent-layer reformatting that
+    might re-introduce numeric IDs.
+    """
     return isinstance(s, str) and s.isdigit()
+
+
+def _beats_to_position_bar(
+    beats: float, ts_points: list[sqlite3.Row]
+) -> float:
+    """Walk the time-signature map to convert a beats-from-song-start
+    position into a fractional bar position.
+
+    Wave M-5: the wire format for cue positions is now `position_beats`
+    (meter-agnostic, per principle 2). The DB stores `position_bar`. This
+    helper bridges. For songs with no ts_points the assumption is 4/4
+    throughout — same convention as the rest of the planner's bar math.
+    """
+    if not ts_points:
+        # 4/4 fallback: 4 beats per bar, 1-based.
+        return 1.0 + (float(beats) / 4.0)
+    # Sort ts points by start_bar to walk forward.
+    points = sorted(ts_points, key=lambda r: float(r["start_bar"]))
+    # The first ts point should be at bar 1; if not, prepend a synthetic 4/4 at bar 1.
+    if float(points[0]["start_bar"]) > 1.0 + 1e-9:
+        first_bpb = 4.0  # 4/4 default for bars before the first explicit ts
+    else:
+        first_bpb = _beats_per_bar(
+            int(points[0]["numerator"]), int(points[0]["denominator"])
+        )
+
+    cumulative_beats = 0.0
+    current_bar = 1.0
+    current_bpb = first_bpb
+
+    for i, point in enumerate(points):
+        point_bar = float(point["start_bar"])
+        # Beats consumed up to this ts boundary (in the *previous* meter)
+        bars_in_section = point_bar - current_bar
+        beats_in_section = bars_in_section * current_bpb
+        if cumulative_beats + beats_in_section > float(beats) - 1e-9:
+            # Target beat is in this section.
+            remaining = float(beats) - cumulative_beats
+            return current_bar + (remaining / current_bpb)
+        # Cross into the next section.
+        cumulative_beats += beats_in_section
+        current_bar = point_bar
+        current_bpb = _beats_per_bar(
+            int(point["numerator"]), int(point["denominator"])
+        )
+
+    # Beyond the last ts point — extrapolate in the current meter.
+    remaining = float(beats) - cumulative_beats
+    return current_bar + (remaining / current_bpb)
 
 
 def _apply_cue_points_list(
@@ -844,12 +898,18 @@ def _apply_cue_points_list(
 ) -> None:
     """Ingest Ableton's cue points by position.
 
-    Matching: `(position_bar)` with float tolerance. Names are not pulled
-    into the DB (MCP gap #13). Three diff classes:
-      - position present in Ableton, absent in DB -> add_cue_point
-      - position present in both -> no-op (with a name-mismatch warning if
-        the pulled name is non-numeric and differs from DB)
+    Matching: `(position_bar)` with float tolerance. Three diff classes:
+      - position present in Ableton, absent in DB -> add_cue_point (the
+        Ableton-side name IS stored on add, since Wave M-5's
+        ableton_arrangement(action='cue_list') returns real names rather
+        than the legacy fork's numeric IDs)
+      - position present in both -> no-op (with a name-mismatch warning
+        if the pulled name differs from DB; DB names are user-authoritative
+        so pulls do not overwrite them)
       - position present in DB, absent in Ableton -> remove_cue_point
+
+    The numeric-ID-name detector stays as a defense against agent-layer
+    reformatting that might re-introduce the legacy fork's numeric shape.
     """
     ts_points = Q.get_time_signature_map(conn, song_id)
     db_cues = list(Q.get_cue_points(conn, song_id))
@@ -860,8 +920,15 @@ def _apply_cue_points_list(
     seen: set[float] = set()
 
     for entry in result:
-        # Accept either {position_bar: float} or {bar: int, beat: float}.
-        if "position_bar" in entry:
+        # Accept three shapes (Wave M-5 adds position_beats):
+        #   {position_beats: float}            (greenfield arrangement.cue_list)
+        #   {position_bar: float}              (legacy / pre-normalized)
+        #   {bar: int, beat: float}            (legacy fork shape)
+        if "position_beats" in entry:
+            position_bar = _beats_to_position_bar(
+                float(entry["position_beats"]), ts_points
+            )
+        elif "position_bar" in entry:
             position_bar = float(entry["position_bar"])
         elif "bar" in entry:
             position_bar = _join_bar_beat(

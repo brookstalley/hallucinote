@@ -647,9 +647,33 @@ def test_apply_session_signature_parse_error_warns(conn, song, session):
 
 
 def test_plan_pull_cue_points_emits_single_probe(conn, song, session):
+    """Wave M-5: retargeted to ableton_arrangement(action='cue_list')."""
     plan = pull.plan_pull_cue_points(conn, song_id=song, session_id=session)
-    assert [c.tool for c in plan.calls] == ["get_cue_points"]
-    assert plan.calls[0].key == "cue_points_list"
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_arrangement"
+    assert call.args == {"action": "cue_list"}
+    assert call.key == "cue_points_list"
+
+
+def test_apply_cue_points_accepts_position_beats(conn, song, session):
+    """Wave M-5: cue_list returns position_beats. Apply must convert via
+    the song's time-signature map to position_bar for DB storage.
+    """
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0,
+                               numerator=4, denominator=4)
+    # 4/4: bar 5 = beats 16; bar 5 + 2 beats = beats 18 → position_bar 5.5
+    results = [_result("cue_points_list", [
+        {"position_beats": 16.0, "name": "Verse"},
+        {"position_beats": 18.0, "name": "Pickup"},
+    ])]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    cues = sorted(Q.get_cue_points(conn, song), key=lambda c: c["position_bar"])
+    assert len(cues) == 2
+    assert cues[0]["position_bar"] == pytest.approx(5.0)
+    assert cues[1]["position_bar"] == pytest.approx(5.5)
+    # Names round-trip in Wave M-5+.
+    assert cues[0]["name"] == "Verse"
 
 
 def test_plan_pull_score_globals_emits_single_session_info_probe(conn, song, session):

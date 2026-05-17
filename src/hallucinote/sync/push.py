@@ -158,19 +158,28 @@ def plan_push_clip(
     )
 
     if track_at is None:
+        # Wave M-5: retargeted to the unified ableton_track(action='create')
+        # shape. instrument_uri remains schema-stable but deferred (M-2's
+        # behavior); the planner's caller should follow with a device-load
+        # call via ableton_device(action='load') if an instrument was named.
+        create_args: dict[str, Any] = {
+            "action": "create",
+            "kind": "midi",
+            "name": track_row["name"],
+        }
+        if track_row["instrument_uri"]:
+            # Round-trips in result as `instrument_uri_deferred`; agent
+            # follows up with ableton_device(action='load') separately.
+            create_args["instrument_uri"] = track_row["instrument_uri"]
         plan.add(ToolCall(
-            tool="create_midi_track_with",
-            args={
-                "name": track_row["name"],
-                "instrument_uri": track_row["instrument_uri"],
-                "index": -1,
-            },
+            tool="ableton_track",
+            args=create_args,
             key=f"track:{track_row['id']}",
             purpose=f"create track '{track_row['name']}' (db track_id={track_row['id']})",
         ))
         plan.warn(
             f"track {track_row['id']} has no ableton link in session {session_id} yet — "
-            f"after create_midi_track_with returns, call apply_push_results to record it."
+            f"after ableton_track(action='create') returns, call apply_push_results to record it."
         )
         # Subsequent calls in this plan can't run until we know the new track index.
         # The agent should execute the track-creation, capture the result, call

@@ -6,6 +6,57 @@ Items grouped by **what unblocks the most workflow per fix**, not by implementat
 
 ---
 
+## Status as of Wave M-5 close (2026-05-17)
+
+The `hallucinote-mcp` greenfield server has now landed (Wave M-0 → M-5),
+and most of the gaps below are resolved by the unified 10-tool surface.
+This doc is preserved as the historical gap analysis that drove the
+Wave-M design; current status is annotated inline per section.
+
+**P1 status:** all six items resolved or repositioned.
+- #1 (gap #1 rename): ✓ resolved — `ableton_clip(action='replace_notes')`
+- #2 (delete + replace session clip): ✓ partial — `ableton_clip(action='delete', location='session')` works; `replace_session_clip` retarget is a backlog item.
+- #3 (arrangement note replace): ✓ resolved — `ableton_clip(action='replace_notes', location='arrangement')`.
+- #4 (note-level addressing): ✗ still blocked — `ableton_note` registers gap-#4 stubs; resolution awaits Live's underlying API.
+- #5 (bulk arrangement ops): partial — `ableton_clip(action='duplicate_to_arrangement')` is per-call; bulk patterns remain agent-emulated.
+- #6 (`duplicate_clip_to_arrangement` returns identity): ✓ resolved — handler returns `arrangement_clip_index`.
+- #16 (sends): ✓ resolved — `ableton_track(action='set_send')` + `get_sends`.
+- #17 (sidechain): ✓ resolved (Compressor only) — `ableton_device(action='set_sidechain')`.
+- #17b (`get_device_parameters` broken): ✓ resolved — `ableton_device(action='get_parameters')` is greenfield code, the legacy fork's bug doesn't apply.
+
+**P2 score-half:** tempo / signature automation per (bar, beat) remains a
+hard MCP gap. `ableton_session(action='set_tempo')` and `set_signature`
+cover the global (bar-1) values; per-bar automation needs Live's
+arrangement-envelope API, which isn't reached by `ableton_automation`
+target_kinds (no `song_tempo` target). Backlog item.
+
+**P2 mix-half:** all five sub-sections resolved via Wave M-2's
+`ableton_track` / `ableton_return` collapse plus M-1's `set_master_property`.
+
+**P2 device-half:** resolved via Wave M-4's `ableton_device` consolidation.
+Nested-chain probe (sub-section "Nested-chain probe and push") remains
+blocked — backlog item under "Capture extension for nested rack chains."
+
+**P2 automation:** all seven envelope target families resolved via Wave
+M-4's `ableton_automation(action='write_envelope', target_kind=...)`
+collapse. Envelope read surface (list / get_envelope) remains blocked;
+gap-#4-style stubs cite the limitation.
+
+**Other:** gap #13 (cue point names) is resolved in the greenfield server
+— `ableton_arrangement(action='cue_list')` returns real names. The
+legacy-fork numeric-id detector in the pull layer stays as a defense
+against agent reformatting.
+
+The remaining V1.1+ wishlist is tracked in `.prawduct/backlog.md`:
+- Hallucinote-side quantize / swing / groove module (M-3 user direction).
+- Replace-session-clip retarget to atomic `ableton_clip(create, replace=True, notes=...)`.
+- Arrangement-level tempo / signature automation.
+- Note pull surface (gap #4 resolution).
+- Audio render + analysis (`ableton_render`, `ableton_analysis`).
+- Nested rack chain probe.
+
+---
+
 ## Priority 1 — Iteration blockers (fix first)
 
 These force destructive workarounds or many-times-as-many round-trips.

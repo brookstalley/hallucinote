@@ -132,11 +132,12 @@ _EXPECTED_ACTIONS = {
     "play",
     "stop",
     "seek",
-    "set_arrangement_loop",
     "snapshot",
     "revert",
     "list_snapshots",
 }
+# Wave M-5: set_arrangement_loop dropped from ableton_session; the canonical
+# home is ableton_arrangement(action='set_loop') — see test_actions_arrangement.
 
 
 def test_session_registers_all_thirteen_actions(loaded_session_actions):
@@ -402,68 +403,20 @@ def test_seek_with_implicit_beat_zero(loaded_session_actions):
     assert ctx.song.current_song_time == pytest.approx(32.0)
 
 
-# ---------- set_arrangement_loop ----------
+# set_arrangement_loop: deprecated in Wave M-5 — see
+# test_actions_arrangement.py::set_loop tests for the canonical home.
 
 
-def test_set_arrangement_loop_toggles_enabled_only(loaded_session_actions):
-    ctx = FakeLiveContext()
-    resp = dispatch(
-        Request(
-            tool="ableton_session",
-            action="set_arrangement_loop",
-            params={"enabled": True},
-        ),
-        context=ctx,
+def test_session_no_longer_exposes_set_arrangement_loop(loaded_session_actions):
+    """Wave M-5: ableton_session(action='set_arrangement_loop') was dropped;
+    the canonical home is ableton_arrangement(action='set_loop'). Lock the
+    absence so a well-meaning future PR doesn't silently re-register it.
+    """
+    assert schema.get("ableton_session", "set_arrangement_loop") is None, (
+        "set_arrangement_loop must NOT be on ableton_session — see Wave M-5 "
+        "decision. Use ableton_arrangement(action='set_loop', enabled=...) "
+        "with beats (not bars) per the meter-agnostic-wire principle."
     )
-    assert resp.ok is True
-    assert ctx.song.loop is True
-    # No region given → start/length should retain their defaults
-    assert ctx.song.loop_length == 4.0
-
-
-def test_set_arrangement_loop_sets_region_with_signature(loaded_session_actions):
-    ctx = FakeLiveContext()
-    resp = dispatch(
-        Request(
-            tool="ableton_session",
-            action="set_arrangement_loop",
-            params={"enabled": True, "start_bar": 9, "end_bar": 17},
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    # bar 9 → 8 bars elapsed → 32 beats at 4/4
-    assert ctx.song.loop_start == pytest.approx(32.0)
-    # 17 - 9 = 8 bars long → 32 beats
-    assert ctx.song.loop_length == pytest.approx(32.0)
-
-
-def test_set_arrangement_loop_rejects_one_sided_region(loaded_session_actions):
-    ctx = FakeLiveContext()
-    resp = dispatch(
-        Request(
-            tool="ableton_session",
-            action="set_arrangement_loop",
-            params={"enabled": True, "start_bar": 9},
-        ),
-        context=ctx,
-    )
-    assert resp.ok is False
-    assert "must be provided together" in (resp.error or "")
-
-
-def test_set_arrangement_loop_rejects_inverted_region(loaded_session_actions):
-    ctx = FakeLiveContext()
-    resp = dispatch(
-        Request(
-            tool="ableton_session",
-            action="set_arrangement_loop",
-            params={"enabled": True, "start_bar": 9, "end_bar": 9},
-        ),
-        context=ctx,
-    )
-    assert resp.ok is False
-    assert "greater than start_bar" in (resp.error or "")
 
 
 # ---------- set_view ----------

@@ -1984,6 +1984,420 @@ def test_pull_cli_session_clips_domain_emits_plan(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# plan_pull_notes_for_clips + _apply_notes_for_clip (V1 close-out D — gap #4)
+# ---------------------------------------------------------------------------
+
+
+def _notes_payload(*notes, track_index=5, clip_index=1):
+    """Build an `ableton_note(action='list')` payload from
+    ``(note_id, pitch, start_time, duration, velocity, mute)`` tuples.
+
+    Mirrors the real `list_handler` shape (V1 close-out D)."""
+    return {
+        "track_index": track_index,
+        "location": "session",
+        "clip_index": clip_index,
+        "notes": [
+            {
+                "note_id": nid, "pitch": p, "start_time": st,
+                "duration": dur, "velocity": vel, "mute": bool(mute),
+            }
+            for (nid, p, st, dur, vel, mute) in notes
+        ],
+    }
+
+
+def _link_clip(conn, *, session, db_id, ableton_index):
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip",
+        db_id=db_id, ableton_index=ableton_index,
+    )
+
+
+def test_plan_pull_notes_emits_per_linked_clip(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=2, length_beats=8.0, name="A")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=2)
+
+    plan = pull.plan_pull_notes_for_clips(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_note"
+    assert c.args == {
+        "action": "list", "track_index": 5,
+        "location": "session", "clip_index": 2,
+    }
+    assert c.key == f"clip_notes:{cid}"
+
+
+def test_plan_pull_notes_skips_unlinked_track_with_warning(
+    conn, song, session
+):
+    """Clip is linked but its track isn't — skip + warn."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+
+    plan = pull.plan_pull_notes_for_clips(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("track" in n.lower() and "not" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_notes_warns_when_no_clips_linked(conn, song, session):
+    plan = pull.plan_pull_notes_for_clips(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("no clips linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_notes_args_match_mcp_list_action_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits must be a known
+    param on `ableton_note(action='list')`. Mirrors the M+1-1 pattern."""
+    from hallucinote_mcp.actions import note as _note_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    list_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_note" and a.name == "list"
+    )
+    schema_param_names = {p.name for p in list_action.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    plan = pull.plan_pull_notes_for_clips(
+        conn, song_id=song, session_id=session,
+    )
+    emitted = set(plan.calls[0].args) - {"action"}
+    unknown = emitted - schema_param_names
+    assert not unknown, (
+        f"planner emits args not in ableton_note(list) schema: {unknown}; "
+        f"schema params: {schema_param_names}"
+    )
+
+
+def test_apply_notes_no_op_when_matched(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+        {"pitch": 64, "start_beats": 1.0, "duration_beats": 0.5, "velocity": 80, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload(
+                (101, 60, 0.0, 1.0, 100, False),
+                (102, 64, 1.0, 0.5, 80, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 2
+
+
+def test_apply_notes_updates_velocity_and_preserves_uuid(
+    conn, song, session
+):
+    """Common compose-time edit: same notes, different velocities. The
+    DB-side note UUID is preserved because match is content-based on
+    (pitch, start, duration) — velocity changes don't affect the key."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    [nid] = M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 0.0, 1.0, 75, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    notes = Q.get_notes_for_clip(conn, cid)
+    assert len(notes) == 1
+    # UUID preserved.
+    assert notes[0]["id"] == nid
+    assert notes[0]["velocity"] == 75
+
+
+def test_apply_notes_updates_mute_when_drifted(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    [nid] = M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 0.0, 1.0, 100, True)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    notes = Q.get_notes_for_clip(conn, cid)
+    assert notes[0]["id"] == nid
+    assert notes[0]["mute"] == 1
+
+
+def test_apply_notes_inserts_ableton_only_notes(conn, song, session):
+    """Ableton has a note the DB doesn't — insert (UUID assigned)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload(
+                (101, 60, 0.0, 1.0, 100, False),
+                (102, 62, 0.5, 1.0, 90, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # One mutation = the batched insert; out.no_ops is 0 because neither
+    # note had a DB match to no-op against.
+    assert out.mutations == 1
+    notes = Q.get_notes_for_clip(conn, cid)
+    assert len(notes) == 2
+    pitches = sorted(n["pitch"] for n in notes)
+    assert pitches == [60, 62]
+
+
+def test_apply_notes_deletes_db_notes_absent_from_ableton(
+    conn, song, session
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+        {"pitch": 62, "start_beats": 0.5, "duration_beats": 1.0, "velocity": 90, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 0.0, 1.0, 100, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    # One mutation = the batched delete of the bp 62 note.
+    assert out.mutations == 1
+    notes = Q.get_notes_for_clip(conn, cid)
+    assert len(notes) == 1
+    assert notes[0]["pitch"] == 60
+
+
+def test_apply_notes_handles_mixed_diff(conn, song, session):
+    """One match, one velocity update, one insert, one delete in a
+    single call — covers all four diff classes against the same clip."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},  # match
+        {"pitch": 62, "start_beats": 1.0, "duration_beats": 1.0, "velocity": 90, "mute": 0},   # update vel
+        {"pitch": 64, "start_beats": 2.0, "duration_beats": 1.0, "velocity": 80, "mute": 0},   # delete
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload(
+                (101, 60, 0.0, 1.0, 100, False),  # match
+                (102, 62, 1.0, 1.0, 75, False),   # velocity drift
+                (103, 67, 3.0, 1.0, 100, False),  # insert
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # mutations: 1 update + 1 insert (batched) + 1 delete (batched) = 3.
+    assert out.mutations == 3
+    assert out.no_ops == 1
+    notes = sorted(Q.get_notes_for_clip(conn, cid), key=lambda n: n["pitch"])
+    pitches = [n["pitch"] for n in notes]
+    assert pitches == [60, 62, 67]
+
+
+def test_apply_notes_warns_on_duplicate_ableton_key(conn, song, session):
+    """Two Ableton notes at identical (pitch, start, duration) — first
+    entry wins for the diff; subsequent entry surfaces a warning so the
+    user can differentiate the upstream duplication."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload(
+                (101, 60, 0.0, 1.0, 100, False),  # matches DB - no-op
+                (102, 60, 0.0, 1.0, 80, False),   # duplicate Ableton entry
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert any("duplicate Ableton notes" in w for w in out.warnings)
+    # No insert / update / delete — the duplicate is ignored and the
+    # first entry's match already no-opped.
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_notes_warns_on_duplicate_db_key(conn, song, session):
+    """Two DB notes at identical (pitch, start, duration) — warn +
+    first-wins, mirroring the arrangement-clip collision handling."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 80, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 0.0, 1.0, 100, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    # Ableton confirms one note at that position; first-wins no-ops. The
+    # second DB row falls out of the diff (not seen by Ableton) — but it's
+    # never added to `db_by_key`, so it's not classed as "to delete"
+    # either. It just sits there, surfaced via the collision warning.
+    assert out.mutations == 0
+    assert any("duplicate notes" in w for w in out.warnings)
+
+
+def test_apply_notes_skips_when_clip_unlinked(conn, song, session):
+    """Defense-in-depth link check parallels arrangement-clip apply."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"clip_notes:{cid}", _notes_payload())],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    assert any("not linked" in w for w in out.warnings)
+
+
+def test_apply_notes_warns_on_missing_notes_field(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            {"track_index": 5, "location": "session", "clip_index": 1},
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("missing 'notes'" in w for w in out.warnings)
+
+
+def test_apply_notes_emits_note_updated_event(conn, song, session):
+    """Mutator discipline: velocity drift goes through `update_note` and
+    emits a `note_updated` event with actor=sync.
+
+    Queries the events table by `clip_id` rather than `get_events_for_song`
+    because note mutators (insert_notes / update_note / delete_notes)
+    don't set the song_id column on their emitted events — they're
+    scoped via clip_id. Filing the omission for a future structural fix
+    is one option, but the events ARE emitted and ARE attributable.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100, "mute": 0},
+    ])
+
+    pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 0.0, 1.0, 75, False)),
+        )],
+        song_id=song, session_id=session, reason="test",
+    )
+    rows = conn.execute(
+        "SELECT kind, actor, reason FROM events WHERE clip_id = ? AND kind = 'note_updated' ORDER BY seq",
+        (cid,),
+    ).fetchall()
+    assert rows, "expected a note_updated event scoped to the clip"
+    assert rows[0]["actor"] == "sync"
+    assert rows[0]["reason"] == "test"
+
+
+def test_pull_cli_clip_notes_domain_emits_plan(tmp_path):
+    """Smoke test: `clip-notes` domain reaches the planner via the CLI
+    dispatch and emits a plan (empty here — no linked clips)."""
+    db_path = tmp_path / "clip_notes_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_notes", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "clip-notes", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "clip-notes"
+    assert plan_dict["session_id"] == session_id
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
+
+
+# ---------------------------------------------------------------------------
 # Round-trip: push -> mutate Ableton-side dict -> pull -> DB matches
 # ---------------------------------------------------------------------------
 

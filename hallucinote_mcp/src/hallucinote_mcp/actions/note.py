@@ -54,9 +54,12 @@ register(
         tool="ableton_note",
         name="list",
         description=(
-            "[BLOCKED — MCP gap #4] Read the clip's notes WITH stable IDs. "
-            "Once gap #4 lands, returns "
-            "[{id, pitch, start_time, duration, velocity, mute}, ...]."
+            "Read the clip's notes WITH Live's stable per-note IDs. "
+            "Returns {track_index, location, clip_index, notes: "
+            "[{note_id, pitch, start_time, duration, velocity, mute}, ...]}. "
+            "note_id is stable within a Live session but expires on any "
+            "note-write — use it for diff attribution within a single "
+            "pull pass, never store it across writes."
         ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1),
@@ -69,9 +72,10 @@ register(
             "location='session', clip_index=1)"
         ),
         tips=(
-            "Currently raises a teaching error citing MCP gap #4. To pull "
-            "all notes destructively, capture via the Live UI or wait for "
-            "gap #4 resolution.",
+            "Used by the hallucinote sync layer's note pull to attribute "
+            "DB note changes against Ableton-side edits. To replace ALL "
+            "notes on a clip, use ableton_clip(action='replace_notes'); "
+            "surgical Ableton-side writes are still gap-#4-blocked.",
         ),
     )
 )

@@ -33,13 +33,20 @@ non-standard layouts. Exactly one is required.
   - `session-clips`     — per-track session-view clip-slot contents
                           (slot, name, length). Ableton-only slots warn
                           (same V1 limit as arrangement-clips). Note
-                          content drift is not detected here — that
-                          rides on the gap #4 partial resolution
-                          (note pull) when it lands.
+                          content drift is NOT detected here — use
+                          `clip-notes` for that.
+  - `clip-notes`        — per-clip note pull (gap #4 partial). Emits
+                          one `ableton_note(action='list')` per linked
+                          clip, content-diffs against DB notes
+                          (matched by pitch + start + duration within
+                          1/1000 of a beat). Velocity / mute drift
+                          updates DB notes in place (UUID preserved);
+                          new notes insert; missing notes delete. A
+                          note whose pitch/start/duration moves
+                          surfaces as delete + insert (UUID rotates).
 
 Envelope pull, device-parameter pull, and nested rack pull are still
-MCP-gap-blocked — they are not domains here. Note pull is V1 scope
-but separate (Chunk D of the close-out plan).
+MCP-gap-blocked — they are not domains here.
 """
 from __future__ import annotations
 
@@ -60,6 +67,7 @@ _DOMAINS = {
     "devices":           pull.plan_pull_devices,
     "arrangement-clips": pull.plan_pull_arrangement_clips,
     "session-clips":     pull.plan_pull_session_clips,
+    "clip-notes":        pull.plan_pull_notes_for_clips,
 }
 
 

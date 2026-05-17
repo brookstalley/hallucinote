@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -429,3 +430,43 @@ def test_event_id_is_uuid_hex(conn):
     M.create_song(conn, name="x")
     eid = conn.execute("SELECT id FROM events").fetchone()["id"]
     assert isinstance(eid, str) and len(eid) == 32
+
+
+# ---------- M+1-4: returns mute/solo ----------
+
+
+def test_create_return_defaults_mute_solo_to_null(conn, song):
+    """Schema doesn't supply a DEFAULT for mute/solo (nullable, like
+    tracks.mute/solo/arm). Brand-new return rows are NULL until the user
+    explicitly sets the field."""
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    row = Q.get_return(conn, rid)
+    assert row["mute"] is None
+    assert row["solo"] is None
+
+
+def test_update_return_accepts_mute_solo_and_persists(conn, song):
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.update_return(conn, return_id=rid, mute=1, solo=0)
+    row = Q.get_return(conn, rid)
+    assert row["mute"] == 1
+    assert row["solo"] == 0
+
+
+def test_update_return_mute_solo_emits_return_updated_event(conn, song):
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.update_return(conn, return_id=rid, mute=1, reason="test")
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert payload["changes"] == {"mute": 1}
+
+
+def test_returns_schema_check_rejects_out_of_range_mute(conn, song):
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE returns SET mute = 2 WHERE id = ?", (rid,))
+
+
+def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE returns SET solo = -1 WHERE id = ?", (rid,))

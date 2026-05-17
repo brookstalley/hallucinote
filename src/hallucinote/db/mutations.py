@@ -1187,7 +1187,7 @@ def create_return(
     return rid
 
 
-_RETURN_FIELDS = {"name", "position", "volume", "pan", "color"}
+_RETURN_FIELDS = {"name", "position", "volume", "pan", "mute", "solo", "color"}
 
 
 def update_return(

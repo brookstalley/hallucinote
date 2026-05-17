@@ -244,6 +244,62 @@ def test_apply_return_info_skips_unlinked_return(conn, song, session):
     assert row["volume"] == pytest.approx(0.85)  # unchanged
 
 
+def test_apply_return_info_ingests_mute_and_solo(conn, song, session):
+    """M+1-4: return-track mute/solo now round-trip. Asymmetric-None
+    handling: DB-side NULL + Ableton-side True/False both count as a
+    real change (matches `tracks.mute`/`solo`/`arm` semantics)."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+                "mute": True, "solo": False,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_return(conn, rid)
+    assert row["mute"] == 1
+    assert row["solo"] == 0
+
+
+def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
+    """Once DB-side mute/solo match the Ableton state, re-applying the
+    same probe is a no-op."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    M.update_return(conn, return_id=rid, mute=1, solo=0)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+                "mute": True, "solo": False,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
 def test_apply_return_info_ingests_mixer_state(conn, song, session):
     """Wave M-2: the per-return info probe carries the mixer state that
     used to live in the returns_list payload. Diffed and applied via

@@ -699,12 +699,11 @@ def _apply_return_info(
 
     Probe shape: ``{return_index, name, color, volume, panning, mute, solo}``.
 
-    We ingest only the fields the DB models today — ``name`` / ``volume`` /
-    ``panning`` (DB column ``pan``) / ``color``. ``mute`` and ``solo`` are
-    intentionally dropped: the ``returns`` table has no columns for them
-    (see ``db/schema.sql`` returns table + ``_RETURN_FIELDS``). Round-trip
-    of return mute/solo is therefore a known gap; close it by growing the
-    schema before re-enabling.
+    All six fields are ingested as of M+1-4 (when ``returns`` gained
+    nullable ``mute`` / ``solo`` columns); ``mute``/``solo`` follow the
+    same nullable-bool pattern as ``tracks.mute``/``solo``/``arm``
+    (None on DB means "user never set it" -> a real value from Ableton
+    counts as a change).
 
     Link verification is defense-in-depth: even though the planner only emits
     ``return_info`` for linked returns, a hand-rolled results.json could route
@@ -738,6 +737,11 @@ def _apply_return_info(
         changes["volume"] = float(result["volume"])
     if pan_in is not None and _floats_differ(pan_in, ret_row["pan"]):
         changes["pan"] = float(pan_in)
+    for bool_field in ("mute", "solo"):
+        if bool_field in result:
+            new = _bool_db(result[bool_field])
+            if new is not None and new != ret_row[bool_field]:
+                changes[bool_field] = new
     if "color" in result and result["color"] is not None and (
         ret_row["color"] is None or int(result["color"]) != int(ret_row["color"])
     ):
@@ -1146,9 +1150,11 @@ def _apply_devices_for_parent(
     avoids churn on the next push).
 
     ``is_active`` from the probe is ignored — no DB column today
-    (tracked as a future schema extension; parity with
-    ``_apply_return_info`` dropping mute/solo until ``returns`` grows
-    those columns).
+    (tracked as a future schema extension). The mute/solo parity
+    reference that used to live here was retired in M+1-4 when
+    ``returns`` grew nullable ``mute``/``solo`` columns; the device
+    chain's missing ``is_active`` column is now the sole remaining
+    "schema doesn't model this yet" gap on the per-device-row level.
     """
     if Q.get_ableton_link(
         conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,

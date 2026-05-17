@@ -339,12 +339,13 @@ def test_capture_plan_lists_expected_probes():
     plan = capture_plan()
     tools = {p["tool"] for p in plan}
     assert tools == {
-        "get_session_info",
-        "list_return_tracks",
-        "get_track_info",
-        "get_track_sends",
+        # Session-domain probe under the unified surface (Wave M-1 retarget):
+        "ableton_session(action='info')",
+        "list_return_tracks",  # retargets in M-2
+        "get_track_info",      # retargets in M-2
+        "get_track_sends",     # retargets in M-2
         # Chunk 4a additions:
-        "get_device_parameters",  # MCP gap #17b; included for protocol completeness
+        "get_device_parameters",  # MCP gap #17b; retargets in M-4
     }
 
 

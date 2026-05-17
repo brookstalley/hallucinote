@@ -113,15 +113,16 @@ def plan_pull_mix(
     in V1 (the agent could create-then-link them in a follow-up, but the
     Ableton side has no DB-discovery mechanism we can rely on yet).
 
-    Emits one `get_session_info` + one `list_return_tracks` globally, plus one
-    `get_track_info` and one `get_track_sends` per linked track.
+    Emits one `ableton_session(action='info')` + one `list_return_tracks`
+    globally, plus one `get_track_info` and one `get_track_sends` per linked
+    track. (The latter three retarget to the unified surface in Wave M-2.)
     """
     plan = PullPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
 
     plan.add(PullCall(
-        tool="get_session_info",
-        args={},
+        tool="ableton_session",
+        args={"action": "info"},
         key="session_info",
         purpose="pull tempo / signature / master volume+pan",
     ))
@@ -175,17 +176,17 @@ def plan_pull_score_globals(
     song_id: str,
     session_id: str,
 ) -> PullPlan:
-    """Plan a single `get_session_info` probe to pull the *global* score
-    parameters: tempo (bar 1) and time signature (bar 1) — plus master
-    volume/pan as a free side-effect (they share the same probe).
+    """Plan a single `ableton_session(action='info')` probe to pull the
+    *global* score parameters: tempo (bar 1) and time signature (bar 1) —
+    plus master volume/pan as a free side-effect (they share the same probe).
 
     Multi-point tempo maps and per-arrangement signature changes are an MCP
     read gap; this pulls only the global values.
     """
     plan = PullPlan()
     plan.add(PullCall(
-        tool="get_session_info",
-        args={},
+        tool="ableton_session",
+        args={"action": "info"},
         key="session_info",
         purpose="pull global tempo + signature (+ master mixer state)",
     ))
@@ -274,10 +275,10 @@ def _apply_session_info(
     request_id: str | None,
     reason: str | None,
 ) -> None:
-    """Ingest fields from `get_session_info`: master volume/pan, plus the
-    *global* tempo + time signature (the bar-1 row in each map). Multi-point
-    tempo / signature maps are an MCP read gap — pull leaves any non-bar-1
-    rows untouched until per-point reads land."""
+    """Ingest fields from `ableton_session(action='info')`: master volume /
+    pan, plus the *global* tempo + time signature (the bar-1 row in each map).
+    Multi-point tempo / signature maps are an MCP read gap — pull leaves any
+    non-bar-1 rows untouched until per-point reads land."""
     _apply_session_master(
         conn, song_id=song_id, result=result, out=out,
         actor=actor, request_id=request_id, reason=reason,

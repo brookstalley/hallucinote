@@ -61,7 +61,12 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
     """
-    # Ensure help actions exist on every tool before we wire the dispatcher.
+    # Importing the actions package registers every tool's actions on the
+    # shared schema registry. Each chunk's module imports happen here so a
+    # missing action is caught at server boot, not first call.
+    from . import actions  # noqa: F401  (side-effect import)
+
+    # Fill in help actions for any tool that didn't already register one.
     schema.register_help_actions()
 
     mcp = FastMCP(name=name, instructions=PRIMER)

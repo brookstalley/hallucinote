@@ -88,8 +88,14 @@ def test_reverse_link_missing_returns_none(conn, session):
 
 def test_plan_pull_mix_emits_global_probes(conn, song, session):
     plan = pull.plan_pull_mix(conn, song_id=song, session_id=session)
+    # Under Wave M-1, session-info is probed via the unified ableton_session
+    # tool. list_return_tracks retargets in M-2.
+    session_info_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_session" and c.args.get("action") == "info"
+    ]
+    assert len(session_info_calls) == 1
     tools = [c.tool for c in plan.calls]
-    assert "get_session_info" in tools
     assert "list_return_tracks" in tools
 
 
@@ -368,7 +374,7 @@ def test_apply_unknown_kind_raises(conn, song, session):
 
 def test_apply_failed_result_is_warning_not_error(conn, song, session):
     results = [
-        {"key": "session_info", "ok": False, "tool": "get_session_info",
+        {"key": "session_info", "ok": False, "tool": "ableton_session",
          "error": "MCP timeout"},
     ]
     out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
@@ -560,10 +566,13 @@ def test_plan_pull_cue_points_emits_single_probe(conn, song, session):
 
 
 def test_plan_pull_score_globals_emits_single_session_info_probe(conn, song, session):
-    """score-globals is the cheap subset of mix-state — one session_info probe."""
+    """score-globals is the cheap subset of mix-state — one ableton_session probe."""
     plan = pull.plan_pull_score_globals(conn, song_id=song, session_id=session)
-    assert [c.tool for c in plan.calls] == ["get_session_info"]
-    assert plan.calls[0].key == "session_info"
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_session"
+    assert call.args == {"action": "info"}
+    assert call.key == "session_info"
 
 
 def test_apply_cue_points_adds_new(conn, song, session):
@@ -721,11 +730,14 @@ def test_pull_cli_plan_and_apply_roundtrip(tmp_path):
     assert plan_dict["song_id"] == song_id
     assert plan_dict["session_id"] == session_id
     assert plan_dict["domain"] == "mix-state"
-    assert any(c["tool"] == "get_session_info" for c in plan_dict["calls"])
+    assert any(
+        c["tool"] == "ableton_session" and c["args"].get("action") == "info"
+        for c in plan_dict["calls"]
+    )
 
     # Hand-roll a results file with a master volume change.
     results_path.write_text(json.dumps([
-        {"key": "session_info", "ok": True, "tool": "get_session_info",
+        {"key": "session_info", "ok": True, "tool": "ableton_session",
          "result": {"master": {"volume": 0.7, "panning": 0.0}}},
         {"key": "returns_list", "ok": True, "tool": "list_return_tracks",
          "result": []},

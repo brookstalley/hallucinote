@@ -168,6 +168,22 @@ def test_execute_declarative_indexed_walk():
     assert execute_declarative(op, {"track_index": 2}, root) == "bass"
 
 
+def test_execute_declarative_property_write_with_custom_value_param():
+    """LiveOp.value_param lets a declarative property_write read its value from
+    a domain-friendly param name (e.g. ``bpm`` for ``set_tempo``) without
+    forcing a handler. Added in M-1.
+    """
+    root = FakeNode(tempo=120.0)
+    op = LiveOp(
+        kind="property_write",
+        target="song",
+        property="tempo",
+        value_param="bpm",
+    )
+    execute_declarative(op, {"bpm": 145.5}, root)
+    assert root.tempo == 145.5
+
+
 # ---------- dispatch (top-level) ----------
 
 

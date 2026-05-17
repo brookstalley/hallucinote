@@ -1,0 +1,18 @@
+"""Action registration.
+
+Importing this package as a side effect registers all actions on every
+unified tool. The server's ``create_server`` does this exactly once at boot;
+tests use the ``isolated_registry`` fixture to avoid cross-contamination.
+
+The split into one module per tool keeps each domain navigable and lets a
+chunk land its actions without touching the others.
+"""
+from __future__ import annotations
+
+# Each import below triggers the module's ``schema.register(...)`` calls as a
+# side effect. Order doesn't matter — actions only depend on the schema types,
+# not on each other.
+from . import session as session  # noqa: F401
+
+
+__all__ = ["session"]

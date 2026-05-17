@@ -164,7 +164,7 @@ Ten unified tools. Each has an `action` parameter (string enum), plus per-action
 | `ableton_session` | Global state, master strip, tempo, time signature, transport, view, song time, arrangement loop, **snapshot/revert** | ~15 |
 | `ableton_track` | Track lifecycle, mixer state (volume/pan/mute/solo/arm/color), sends, name, info | ~10 |
 | `ableton_return` | Return-track lifecycle, mixer state, devices via cross-tool | ~6 |
-| `ableton_clip` | Session + arrangement clips: create, delete, fire/stop, rename, properties, duplicate-to-arrangement, **quantize, apply_groove, extract_groove** | ~13 |
+| `ableton_clip` | Session + arrangement clips: create, delete, fire/stop, rename, properties, duplicate-to-arrangement, replace_notes. Note-timing transforms (quantize/swing/groove) deliberately live in Hallucinote — see §6.2. | ~9 |
 | `ableton_note` | Within-clip note operations: get, add, update, delete (note pull is gap #4) | ~5 |
 | `ableton_device` | Track + return devices: list, info, load, delete, enable/disable, parameter set, navigate preset, routing, sidechain | ~12 |
 | `ableton_automation` | Envelope CRUD across all seven target families (clip CC, pitch bend, note expression, device parameter, mixer volume/pan, send level) | ~10 |
@@ -403,7 +403,7 @@ Tools:
   ableton_session     — global state, master, transport, view, tempo, signature, snapshot
   ableton_track       — tracks: lifecycle, mixer state, sends
   ableton_return      — return tracks
-  ableton_clip        — session + arrangement clips; quantize/groove
+  ableton_clip        — session + arrangement clips (lifecycle, set_property, replace_notes)
   ableton_note        — within-clip note operations (gap #4 blocked)
   ableton_device      — devices on tracks/returns
   ableton_automation  — envelopes (7 target families)
@@ -742,7 +742,7 @@ Naming these so we don't reinvent them.
 4. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
 5. **Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design. Should it instead be `ableton_track(action='create', instrument_uri=...)` with the load folded into create? Arguably yes — and the prompt becomes thinner. Worth a design pass during Phase 1.
 6. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
-7. **Quantize and swing folding.** `ableton_clip(action='quantize', amount=0.5, swing=0.16)` — should `swing` be a separate `swing` action, or always a parameter on `quantize`? Live treats them as separate operations in the UI but they compose cleanly. Lean toward folding.
+7. ~~**Quantize and swing folding.**~~ **RESOLVED (Wave M-3, 2026-05-17).** Quantize, swing, and groove operations are NOT MCP actions. They are pure-math transforms of a note array that live in Hallucinote (Python/SQL space) where the DB-as-source-of-truth makes them testable, cross-DAW portable, and round-trippable as DB-row templates. Pre-grooved notes push via `ableton_clip(action='replace_notes', ...)`. See §6.2.
 
 ---
 
@@ -779,7 +779,7 @@ Numbers we'll measure after Phase 5:
 
 ## 17. Forward-Looking Surface — Tiers and Speculation
 
-The 10 tools above absorb every current capability plus the near-term additions (scene, snapshot, quantize/groove). This section captures everything else we'll plausibly want — bucketed by horizon — so the next contributor sees both the present and the runway.
+The 10 tools above absorb every current capability plus the near-term additions (scene, snapshot). Note-timing transforms (quantize/swing/groove) deliberately live in Hallucinote, not the MCP — see §6.2. This section captures everything else we'll plausibly want — bucketed by horizon — so the next contributor sees both the present and the runway.
 
 ### Tier 1 — Already absorbed into the 10-tool design
 
@@ -787,7 +787,7 @@ These are the near-term "we know we want this" additions, already folded into §
 
 - **Scenes** — `ableton_scene` (the 10th tool).
 - **Snapshot / revert** — actions on `ableton_session`.
-- **Quantize / apply_groove / extract_groove** — actions on `ableton_clip`.
+- **Quantize / apply_groove / extract_groove** — NOT actions on `ableton_clip`. They live in Hallucinote-side timing math (DB-as-source-of-truth); see §6.2. Backlog item tracks the Python/SQL implementation.
 
 ### Tier 2 — Add as actions when triggered (no new tool needed)
 

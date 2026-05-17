@@ -112,7 +112,7 @@ class FakeTrack:
         copy = FakeArrangementClip(
             name=source.name, length=source.length, start_time=destination_beats
         )
-        # Carry over notes so downstream apply_groove / quantize sees them.
+        # Live's duplicate copies the source's note array; mirror that.
         copy.notes = source.notes
         self.arrangement_clips.append(copy)
 

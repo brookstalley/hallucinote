@@ -223,7 +223,7 @@ Cue points at every section. Form built from session clips via duplicate.
 
 - **Concept / decisions doc**: this file (`falling-walking.md` — sibling of `build.py` in this song's folder)
 - **Build script**: `build.py` (same folder as this doc) — the source of truth for every clip, arrangement entry, and envelope in the song. Run `python build.py --reset` to drop and rebuild the SQLite DB; push to Ableton via the hallucinote sync layer. The legacy `gen_notes.py` script was deleted in chunk 5 of the DB-as-source-of-truth migration.
-- **Repo location**: `~/source/hallucinote/songs/falling-walking/` — this song lives in the hallucinote repo. The MCP server it talks to lives at `~/source/ableton-mcp-extended/` (sibling repo).
+- **Repo location**: `~/source/hallucinote/songs/falling-walking/` — this song lives in the hallucinote repo. The MCP server it talks to is the in-repo `hallucinote_mcp/` package; `.mcp.json` invokes the `hallucinote-mcp` console script. No sibling clone or external fork is needed.
 - **Ableton User Remote Scripts location on this machine**: `~/Music/Ableton/User Library/Remote Scripts/` — NOT the path documented in `INSTALLATION.md` (`~/Library/Preferences/Ableton/Live X.X.X/User Remote Scripts/`). The Library path appears to be ignored. AbletonMCP control surface is installed at the Music path.
 
 ### Track index mapping (1-based)
@@ -277,7 +277,7 @@ Cue points at every section. Form built from session clips via duplicate.
 
 ### Tool quirks to know
 
-- **External plugins**: `mcp__AbletonMCP__list_external_plugins` returned "No external plugins were discovered" — only stock Ableton devices are available on this machine. Do not assume Serum/Massive/etc. work.
+- **External plugins**: `mcp__hallucinote-mcp__ableton_browser(action='plugins_list')` returned an empty list on this machine — only stock Ableton devices are available. Do not assume Serum/Massive/etc. work.
 - **Cue point names with apostrophes** errored ("Cue point already exists at this position: 1"). Use `C3 prime` instead of `C3'`. Display in `get_cue_points` shows numeric IDs not the names you set, but the names persist in the Ableton UI.
 - **Loaded instruments** show empty `Devices on track:` in tool response, but they ARE loaded — verify via Ableton UI if uncertain.
 - **`add_notes_to_clip`**: requires the clip to exist first (call `create_clip` separately). Within one parallel batch, do all `create_clip` calls first, then in next round all `add_notes_to_clip`.

@@ -23,9 +23,13 @@ Developer preferences for how code is written in this project. Captured during d
 - **Framework**: `pytest>=8.0`
 - **Style**: Descriptive function names (`test_replace_clip_notes_is_atomic`), assert-style, fixtures for shared setup. Helpers like `_make_note` for terse cases.
 - **Coverage expectations**: Happy path + key error paths. Event-emission paired with state change for every mutator. Cascades/FK behavior covered explicitly.
-- **Testing strategies**: Example-based currently. Hypothesis stanza is parked in `conftest.py` (commented) — turn it on for note-array transforms / serialization round-trips when those grow.
-- **Test location**: `tests/` mirrors `src/hallucinote/` modules (`test_mutations.py`, `test_push.py`, `test_generators.py`).
-- **Parallelization**: `pytest-xdist` is referenced by `conftest.py` (auto-groups by directory via `xdist_group`) but not currently installed; suite is ~0.2s so unnecessary. Install when the suite passes ~30s. The current setup produces a `PytestUnknownMarkWarning` until then.
+- **Testing strategies**: Example-based plus property-based via Hypothesis (enabled Wave M-4 for the first invariant-rich surface). `tests/conftest.py` registers `dev` (max_examples=20, default) and `ci` (max_examples=200, opt-in via `HYPOTHESIS_PROFILE=ci`) profiles. Active property tests: `tests/unit/generators/test_bar_beats_properties.py` (note-array transforms) and `hallucinote_mcp/tests/unit/test_envelope_properties.py` (envelope breakpoint validation). Extend Hypothesis coverage when a surface has clear named invariants worth fuzzing.
+- **Test location**: three categories, intentionally separated.
+  - **Platform / authoring** (`hallucinote` library) — `tests/unit/{db,sync,generators,capture}/` mirrors `src/hallucinote/` packages. NO song-specific code or data; use synthetic fixtures.
+  - **MCP plugin** (`hallucinote-mcp` package) — `hallucinote_mcp/tests/{unit,integration}/` mirrors the MCP package layout. NO song-specific code or data.
+  - **Song-specific** — `songs/<slug>/tests/test_*.py` lives alongside `build.py` and `captured_session.json` so each song is a self-contained unit (per `docs/VISION.md` "songs as git repos"). These tests assert song-level shape (e.g., that falling-walking's build produces the expected track count, well above a baseline note count, the expected sections in order) and may load that song's snapshot. The exact thresholds live in the test files — see them for current contract values. These tests never test platform behavior incidentally.
+  - Pytest discovers all three via `[tool.pytest.ini_options].testpaths = ["tests", "hallucinote_mcp/tests", "songs"]`. Song test dirs intentionally have no `__init__.py` (rootdir-discovered) so they don't collide with the platform `tests/` package namespace.
+- **Parallelization**: `pytest-xdist>=3.6` is declared in `[dev]` deps and installed. The auto-grouping in `conftest.py` assigns each test file an `xdist_group` based on its parent directory, so same-directory tests stay serial on one worker (preserving fixture isolation) and different directories fan out. Default invocation is serial; `pytest -n auto --dist loadgroup` opts into parallel (~5s vs ~10s serial as of post-J-2 baseline).
 
 ## Architecture Patterns
 
@@ -42,8 +46,9 @@ Developer preferences for how code is written in this project. Captured during d
 - **Key libraries**: stdlib only at runtime (`sqlite3`, `json`, `dataclasses`, `pathlib`). `pytest` for tests. AbletonMCP is an external dependency invoked by the agent, not imported.
 - **Dev commands**:
   - `source .venv/bin/activate` — required; package is installed editable into `.venv`
-  - `pytest` — full suite (~0.2s, 31 tests)
-  - `pytest -n0` — sequential (only works once `pytest-xdist` is installed)
+  - `pytest` — full suite (serial by default; under ~10s on the J-2 baseline)
+  - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (auto-grouped by test subdirectory per `tests/conftest.py`; roughly 1.6× faster)
+  - Current test count + timings: see `.prawduct/.test-evidence.json` (canonical; this prose intentionally avoids restating numbers that drift)
   - `python songs/falling-walking/build.py [--reset]` — build the example song into its SQLite DB
 - **DB files (prescriptive)**: **one SQLite DB per song**, at exactly `songs/<slug>/<slug>.db`. The directory name, the DB filename, and `songs.name` (the slug) must all match. The slug is filesystem-safe: `[a-z0-9_-]+` (lowercase, digits, hyphens, underscores). Human-facing names with spaces / capitals / punctuation go in `songs.title`. No sidecar config files; the DB schema is the source of truth for song metadata. `*.db` is gitignored.
 

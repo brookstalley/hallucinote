@@ -98,6 +98,10 @@ def _split_bar(
     Matches the `(bar: int 1-based, beat: float 0-based-within-bar)` shape that
     Live's MCP tools use throughout. `bar_pos=4.5` in 4/4 -> (4, 2.0).
     """
+    if bar_pos < 1.0:
+        raise ValueError(
+            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
+        )
     bar_int = int(bar_pos)
     frac = bar_pos - bar_int
     num, den = _meter_at_bar(bar_pos, ts_points)

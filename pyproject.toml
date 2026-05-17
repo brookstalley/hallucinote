@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.6",
     "hypothesis>=6.0",
 ]
 
@@ -19,5 +20,11 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "hallucinote_mcp/tests"]
+testpaths = ["tests", "hallucinote_mcp/tests", "songs"]
 python_files = ["test_*.py"]
+# `testpaths = ["songs"]` makes pytest discover any `songs/<slug>/tests/test_*.py`
+# automatically — per-song test suites live alongside their `build.py` so the
+# song stays a self-contained unit (per docs/VISION.md "songs as git repos").
+# Song test dirs intentionally have NO `__init__.py` (rootdir-discovered),
+# which keeps them from colliding with the platform `tests/` package
+# namespace under pytest's default `prepend` import mode.

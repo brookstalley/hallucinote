@@ -39,6 +39,13 @@ def test_split_bar_empty_map_defaults_to_4_4():
     assert push._split_bar(8.0, []) == (8, 0.0)
 
 
+def test_split_bar_rejects_below_one():
+    with pytest.raises(ValueError, match="1-based bar convention"):
+        push._split_bar(0.0, [])
+    with pytest.raises(ValueError, match="1-based bar convention"):
+        push._split_bar(0.999, [])
+
+
 def test_split_bar_single_4_4_point(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
@@ -196,7 +203,7 @@ def test_plan_push_cue_points_nameless_emits_empty_string(conn, song):
 
 
 def test_plan_push_sections_emits_no_calls(conn, song):
-    M.create_section(conn, song_id=song, name="verse", start_bar=0.0, end_bar=16.0)
+    M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=17.0)
     plan = push.plan_push_sections(conn, song_id=song)
     assert plan.calls == []
     assert any("DB-only" in n for n in plan.notes)

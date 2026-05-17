@@ -140,12 +140,27 @@ def test_candidate_user_libraries_linux_returns_single_path(fake_home, monkeypat
 
 
 def test_candidate_user_libraries_windows_plain_documents(fake_home, monkeypatch):
-    """No OneDrive env vars — only plain Documents and home/OneDrive guess."""
+    """No OneDrive env vars and no OneDrive dir on disk — plain Documents
+    is the only candidate. The unconditional `home/OneDrive/Documents`
+    probe was removed (V1 close-out 2026-05-17) so systems that
+    uninstalled OneDrive don't surface a stale empty dir."""
     monkeypatch.setattr(sys, "platform", "win32")
     cands = candidate_user_libraries()
-    # Should include both home/OneDrive/Documents (guess) and home/Documents.
-    assert fake_home / "OneDrive" / "Documents" / "Ableton" / "User Library" in cands
     assert fake_home / "Documents" / "Ableton" / "User Library" in cands
+    # No OneDrive signal (env or disk) -> the OneDrive path is NOT in cands.
+    assert fake_home / "OneDrive" / "Documents" / "Ableton" / "User Library" not in cands
+
+
+def test_candidate_user_libraries_windows_onedrive_dir_existing_is_probed(
+    fake_home, monkeypatch
+):
+    """When `<home>/OneDrive/Documents` exists on disk (e.g., user has
+    OneDrive installed but the env var isn't exported into this shell),
+    the candidate IS added — disk existence is a sufficient signal."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    (fake_home / "OneDrive" / "Documents").mkdir(parents=True)
+    cands = candidate_user_libraries()
+    assert fake_home / "OneDrive" / "Documents" / "Ableton" / "User Library" in cands
 
 
 def test_candidate_user_libraries_windows_with_onedrive_env(fake_home, monkeypatch):
@@ -164,11 +179,15 @@ def test_candidate_user_libraries_windows_distinct_userprofile(fake_home, monkey
     """USERPROFILE pointing somewhere other than Path.home() is still probed.
 
     Rare but real on corp images where the OS shell folder is redirected.
+    The OneDrive variant under USERPROFILE is added when the OneDrive env
+    var is set (any OneDrive signal applies to all probed bases) — without
+    the env var or an existing dir, only plain Documents shows up.
     """
     monkeypatch.setattr(sys, "platform", "win32")
     alt_profile = fake_home / "alt_profile"
     alt_profile.mkdir()
     monkeypatch.setenv("USERPROFILE", str(alt_profile))
+    monkeypatch.setenv("OneDrive", str(fake_home / "OneDrive_Acme"))
     cands = candidate_user_libraries()
     assert alt_profile / "Documents" / "Ableton" / "User Library" in cands
     assert alt_profile / "OneDrive" / "Documents" / "Ableton" / "User Library" in cands
@@ -571,6 +590,22 @@ def test_malformed_mcp_config_files_empty_when_all_valid(fake_home, tmp_path):
     assert malformed_mcp_config_files(tmp_path) == []
 
 
+def test_malformed_mcp_config_files_treats_non_utf8_as_malformed(
+    fake_home, tmp_path
+):
+    """A config written in a non-UTF-8 encoding raises `UnicodeDecodeError`
+    (a `ValueError` subclass, not `OSError`). Previously this propagated
+    and crashed preflight; now it's surfaced as 'malformed' so the user
+    gets a single actionable signal instead of a stack trace."""
+    glob = fake_home / ".claude.json"
+    # 0x80 isn't valid UTF-8 lead byte → forces UnicodeDecodeError on read.
+    glob.write_bytes(b'\x80{"mcpServers": {}}')
+    assert malformed_mcp_config_files(tmp_path) == [glob]
+    # And `_read_json`'s consumers shouldn't crash either — the entry
+    # scanner returns empty rather than raising.
+    assert existing_mcp_config_files(tmp_path) == []
+
+
 def test_existing_finds_valid_global_when_local_is_malformed(fake_home, tmp_path):
     """Mixed state — local malformed, global has the entry.
 
@@ -584,3 +619,37 @@ def test_existing_finds_valid_global_when_local_is_malformed(fake_home, tmp_path
     found = existing_mcp_config_files(tmp_path)
     assert found == [MCPConfigEntry(glob, ("mcpServers", "hallucinote-mcp"))]
     assert malformed_mcp_config_files(tmp_path) == [tmp_path / ".mcp.json"]
+
+
+def test_existing_finds_per_project_entry_via_resolved_cwd(fake_home, tmp_path):
+    """`claude mcp add` records the project key as whatever cwd-string
+    was active at registration time, which may differ from a later
+    invocation's cwd by symlink resolution (macOS /var vs /private/var,
+    Windows path-case). `existing_mcp_config_files` must probe BOTH
+    cwd-as-given and `cwd.resolve()` so the registration isn't
+    silently orphaned."""
+    # Real per-project directory.
+    real_proj = tmp_path / "real_proj"
+    real_proj.mkdir()
+    # A symlink that resolves to `real_proj` — caller passes the symlink
+    # path as `cwd`; the config was registered under the resolved path.
+    sym_proj = tmp_path / "sym_proj"
+    sym_proj.symlink_to(real_proj)
+    # Global config has the entry under the RESOLVED path.
+    resolved_key = str(real_proj.resolve())
+    glob = fake_home / ".claude.json"
+    _write_json(glob, {
+        "projects": {
+            resolved_key: {
+                "mcpServers": {"hallucinote-mcp": {"command": "hallucinote-mcp"}},
+            },
+        },
+    })
+    # Query via the symlinked path — must still find the entry under the
+    # resolved key and must not double-report it.
+    found = existing_mcp_config_files(sym_proj)
+    assert len(found) == 1
+    assert found[0].path == glob
+    assert found[0].json_pointer == (
+        "projects", resolved_key, "mcpServers", "hallucinote-mcp",
+    )

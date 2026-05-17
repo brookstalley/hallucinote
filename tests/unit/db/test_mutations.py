@@ -126,6 +126,17 @@ def test_create_track_emits_event_and_links_to_song(conn, song):
     assert payload["track_index"] == 2
 
 
+def test_create_track_rejects_legacy_return_kind(conn, song):
+    """'return' is no longer a valid `tracks.kind` — real returns live in
+    the `returns` table. Both the Python TRACK_KINDS guard and the schema
+    CHECK reject it; the mutator's pre-INSERT check fires first."""
+    with pytest.raises(ValueError, match="invalid kind"):
+        M.create_track(
+            conn, song_id=song, track_index=99, name="LegacyReturn",
+            kind="return",
+        )
+
+
 def test_create_clip_with_generator_call(conn, track):
     cid = M.create_clip(
         conn,

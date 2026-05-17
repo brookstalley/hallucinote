@@ -82,10 +82,12 @@ def _windows_documents_candidates() -> list[pathlib.Path]:
 
     # Explicit OneDrive env vars set by the OneDrive client — most reliable
     # signal of where Documents currently lives.
+    onedrive_env_active = False
     for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
         val = os.environ.get(var)
         if val:
             _add(pathlib.Path(val) / "Documents")
+            onedrive_env_active = True
 
     bases: list[pathlib.Path] = [pathlib.Path.home()]
     user_profile = os.environ.get("USERPROFILE")
@@ -95,7 +97,13 @@ def _windows_documents_candidates() -> list[pathlib.Path]:
             bases.append(up)
 
     for base in bases:
-        _add(base / "OneDrive" / "Documents")  # OneDrive without env var set
+        # Probe `<base>/OneDrive/Documents` only if OneDrive is signalled —
+        # by env var (active install) or by the directory existing on
+        # disk. Avoids surfacing a stale empty dir on systems that
+        # uninstalled OneDrive.
+        candidate_od = base / "OneDrive" / "Documents"
+        if onedrive_env_active or candidate_od.exists():
+            _add(candidate_od)
         _add(base / "Documents")               # plain Documents
 
     return out
@@ -227,16 +235,23 @@ def live_is_running() -> bool | None:
         return None
     if sys.platform == "win32":
         try:
+            # `tasklist /FI "IMAGENAME eq <pattern>"` doesn't support glob
+            # wildcards in `eq` mode — the filter would silently match
+            # nothing while the substring check below carries the actual
+            # detection. Drop the (no-op) filter and substring-match the
+            # full process list instead.
             out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq Ableton Live*"],
+                ["tasklist"],
                 capture_output=True, text=True, timeout=5,
             )
         except (FileNotFoundError, subprocess.SubprocessError):
             return None
         if out.returncode != 0:
             return None
-        # tasklist prints "INFO: No tasks are running..." when nothing matches.
-        return "Ableton" in out.stdout and "No tasks" not in out.stdout
+        # Live's process image is "Ableton Live <edition>.exe" (Suite,
+        # Standard, etc.) — substring match is the structurally correct
+        # detection without leaning on the tasklist filter.
+        return "Ableton Live" in out.stdout
     return None
 
 
@@ -297,12 +312,16 @@ def _read_json(path: pathlib.Path) -> dict | None:
 
     Distinguishing "missing" from "malformed" is done by the callers that
     care — :func:`malformed_mcp_config_files` does its own parse.
+
+    `UnicodeDecodeError` (a `ValueError` subclass, not an `OSError`) needs
+    its own clause: a config file written in a non-UTF-8 encoding is a
+    "malformed" case from our perspective, not a crash one.
     """
     if not path.exists():
         return None
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     return loaded if isinstance(loaded, dict) else None
 
@@ -351,7 +370,18 @@ def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfig
     whether to fix or overwrite.
     """
     cwd = cwd if cwd is not None else pathlib.Path.cwd()
-    cwd_str = str(cwd)
+    # `claude mcp add` records the project key as whatever cwd string was
+    # active at the time, which may differ from the current invocation's
+    # cwd by symlink resolution (macOS `/var` vs `/private/var`) or
+    # Windows path-case. Try both the as-given and the resolved form so a
+    # cwd-shape mismatch doesn't silently orphan an existing registration.
+    cwd_candidates: list[str] = [str(cwd)]
+    try:
+        resolved = str(cwd.resolve())
+    except OSError:
+        resolved = None
+    if resolved is not None and resolved not in cwd_candidates:
+        cwd_candidates.append(resolved)
     out: list[MCPConfigEntry] = []
 
     # .mcp.json — top-level only (project files don't nest scopes).
@@ -372,14 +402,17 @@ def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfig
             out.append(MCPConfigEntry(global_path, ("mcpServers", "hallucinote-mcp")))
         projects = data.get("projects")
         if isinstance(projects, dict):
-            project = projects.get(cwd_str)
-            if isinstance(project, dict):
+            for cwd_key in cwd_candidates:
+                project = projects.get(cwd_key)
+                if not isinstance(project, dict):
+                    continue
                 proj_servers = project.get("mcpServers")
                 if isinstance(proj_servers, dict) and "hallucinote-mcp" in proj_servers:
                     out.append(MCPConfigEntry(
                         global_path,
-                        ("projects", cwd_str, "mcpServers", "hallucinote-mcp"),
+                        ("projects", cwd_key, "mcpServers", "hallucinote-mcp"),
                     ))
+                    break  # don't double-report the same registration
     return out
 
 
@@ -398,7 +431,10 @@ def malformed_mcp_config_files(cwd: pathlib.Path | None = None) -> list[pathlib.
             continue
         try:
             json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # UnicodeDecodeError covers configs written in a non-UTF-8
+            # encoding — treat them the same as JSON parse failures so
+            # the user gets a single "malformed config" surface.
             out.append(path)
         except OSError:
             continue

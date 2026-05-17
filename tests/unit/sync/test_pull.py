@@ -772,6 +772,26 @@ def test_apply_cue_points_accepts_bar_beat_form(conn, song, session):
     assert cues[0]["position_bar"] == pytest.approx(5.5)
 
 
+def test_apply_cue_points_legacy_bar_zero_warns_and_skips(conn, song, session):
+    """Regression gate: the legacy `{bar, beat}` branch (dormant since the
+    legacy fork was retired) used to call `_join_bar_beat(0, ...)` -> 0.0
+    and crash on the `cue_points.position_bar >= 1.0` CHECK added in J-6.
+    Now: warn + skip. Mirrors the broader engineering-rigor preference for
+    structural degradation rather than crash on bad upstream data."""
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0,
+                               numerator=4, denominator=4)
+    out = pull.apply_pull_results(
+        conn,
+        [_result("cue_points_list", [
+            {"bar": 0, "beat": 0.0, "name": "ShouldNotLand"},
+        ])],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("legacy bar=0" in w for w in out.warnings)
+    assert Q.get_cue_points(conn, song) == []
+
+
 def test_apply_cue_points_drops_numeric_id_names(conn, song, session):
     """MCP gap #13: names come back as numeric strings. Apply must NOT store
     these — they'd clobber real names on later round-trips."""
@@ -881,18 +901,13 @@ def test_plan_pull_devices_skips_unlinked_with_warning(conn, song, session):
     assert any("not linked" in n.lower() for n in plan.notes)
 
 
-def test_plan_pull_devices_skips_master_and_return_kinds(
+def test_plan_pull_devices_skips_master_kind(
     conn, song, session, master
 ):
-    """Master and the reserved `kind='return'` track rows are not pulled
-    via `ableton_track` probes; master has its own future planner, and
-    return rows go through the dedicated `returns` table path."""
-    rt = M.create_track(
-        conn, song_id=song, track_index=99, name="ReservedReturn",
-        kind="return",
-    )
+    """Master track rows are not pulled via the per-track `ableton_device`
+    probe; master has its own (future) probe path. Real returns are
+    iterated separately in plan_pull_devices via the `returns` table."""
     _link_track(conn, session=session, db_id=master, ableton_index=0)
-    _link_track(conn, session=session, db_id=rt, ableton_index=98)
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
     assert plan.calls == []
 
@@ -1241,18 +1256,14 @@ def test_plan_pull_arrangement_clips_skips_unlinked_with_warning(
     assert any("not linked" in n.lower() for n in plan.notes)
 
 
-def test_plan_pull_arrangement_clips_skips_master_and_return_kinds(
+def test_plan_pull_arrangement_clips_skips_master_kind(
     conn, song, session, master
 ):
-    """Master and the reserved `kind='return'` track rows are not pulled
-    for arrangement clips — master has no arrangement of its own, and
-    return rows have no arrangement timeline in Live."""
-    rt = M.create_track(
-        conn, song_id=song, track_index=99, name="ReservedReturn",
-        kind="return",
-    )
+    """Master track rows are not pulled for arrangement clips — master
+    has no arrangement of its own. Real returns live in the `returns`
+    table and don't appear in the `tracks` iteration the arrangement-
+    clip planner walks."""
     _link_track(conn, session=session, db_id=master, ableton_index=0)
-    _link_track(conn, session=session, db_id=rt, ableton_index=98)
     plan = pull.plan_pull_arrangement_clips(
         conn, song_id=song, session_id=session
     )

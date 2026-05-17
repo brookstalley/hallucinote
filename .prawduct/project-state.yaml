@@ -5,6 +5,12 @@
 #
 # Fields start as null and are filled during discovery.
 # Partially-populated state is normal throughout discovery.
+#
+# Backfilled in J-5 (2026-05-17) from existing artifacts (VISION.md,
+# mcp-tool-design.md, project-preferences.md, boundary-patterns.md,
+# build-plan history). Project predated framework discovery, so this is
+# `source: inferred` rather than `discovery`. Surface gaps in
+# `open_questions` for user ratification.
 
 # =============================================================================
 # CLASSIFICATION
@@ -15,43 +21,89 @@ classification:
   # Product domain. Values: utility, social, marketplace, productivity, b2b,
   # content, automation, developer-tool, education, health, finance,
   # entertainment, communication. May be multiple for hybrid products.
-  domain: null
+  domain: [developer-tool, entertainment]
 
   # Structural characteristics — architectural facts that determine what KINDS
   # of artifacts a product needs. These are a small, stable set (6) that drive
   # artifact generation. null = not applicable.
   structural:
     # User-facing interface. modality: screen|terminal|voice|spatial|minimal; platform: mobile|web|desktop|cross-platform
-    has_human_interface: null
+    has_human_interface:
+      modality: terminal
+      platform: desktop
     # Runs without user interaction. trigger: scheduled|event-driven|always-on
     runs_unattended: null
     # Exposes or consumes APIs. consumers: internal|external|both
-    exposes_programmatic_interface: null
+    exposes_programmatic_interface:
+      consumers: internal
     # Multiple distinct user types. parties: [list of distinct user types]
     has_multiple_party_types: null
     # Handles sensitive information. categories: [PII, financial, health, etc.]; regulatory: [list]
     handles_sensitive_data: null
     # Multiple processes or services communicating at runtime. topology: monolith-with-workers|client-server|microservices|pipeline
-    multi_process_distributed: null
+    multi_process_distributed:
+      topology: client-server
 
   # Domain-specific characteristics — what makes THIS product unique in its domain.
   # Dynamically identified, not from a predefined list.
   # Each: { characteristic: string, implications: [string] }
-  domain_characteristics: []
+  domain_characteristics:
+    - characteristic: "LLM-native composition (structure-first, not pixels)"
+      implications:
+        - "Every read/write surface is reachable by an MCP-capable agent"
+        - "Semantic tags (ghost/downbeat, section roles, generator provenance) ride alongside the data"
+        - "Diffs describe musical intent, not byte deltas"
+    - characteristic: "DB-as-source-of-truth with append-only event log"
+      implications:
+        - "Mutator-only writes; raw SQL in callers is a discipline violation"
+        - "Every state change pairs with an event row in the same transaction"
+        - "Future event-store flip is the architectural seed already planted"
+    - characteristic: "Bidirectional sync with Ableton Live"
+      implications:
+        - "Push: plan_push_* emits canonical MCP calls; apply_push_results records the projection"
+        - "Pull: PullPlan probes the surface, normalizes, mutates via the standard mutator path (Ableton-authoritative under V1 conflict policy)"
+        - "Bindings live in ableton_sessions + ableton_links — projection separated from core rows"
+    - characteristic: "Songs as git repos (forkable, diffable, reproducible)"
+      implications:
+        - "A song = `songs/<slug>/` directory with build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored)"
+        - "Cross-song reuse goes through shared kit/groove/template tables (memory: project_cross_song_reuse)"
+        - "DB schema is the source of truth for song metadata; no sidecar config files"
 
   # Risk and complexity profile.
   risk_profile:
     # Overall risk: low, medium, high.
     # Drives discovery depth (low: 5-8 questions, medium: 8-15, high: 15-25).
-    overall: null
+    overall: low
     # Specific risk factors identified during classification.
     # Each: { factor, level (low/medium/high), rationale }
-    factors: []
+    factors:
+      - factor: "Single-user, local-only deployment"
+        level: low
+        rationale: "No production service, no multi-tenant concerns, no PII"
+      - factor: "Schema migrations as the suite grows"
+        level: medium
+        rationale: "DB is the contract — drift here is expensive. Mutator+event discipline keeps an event-store flip cheap; ad-hoc schema edits could lock it out"
+      - factor: "MCP-layer dependency on Ableton's embedded Python + Remote Script ABI"
+        level: medium
+        rationale: "Live's Remote Script API is undocumented and version-sensitive; gap-#4 (note-level addressing) and a handful of envelope reads remain Live-API-blocked"
+      - factor: "LLM-as-composer effectiveness is an unproven bet"
+        level: medium
+        rationale: "VISION.md names structure-unlocks-competence as load-bearing; product success depends on it being true at depth"
 
   # Prior art surfaced during discovery (via web search or domain knowledge).
   # Informational — informs scope decisions, not a gate.
   # Each: { name, url (optional), relevance, relationship (alternative|complement|reference) }
-  prior_art: []
+  prior_art:
+    - name: "AbletonMCP / ableton-mcp-extended"
+      url: "https://github.com/uisato/ableton-mcp-extended"
+      relevance: "Original 52-tool MCP surface that hallucinote-mcp greenfields away from (Wave M)"
+      relationship: reference
+    - name: "Cordyceps (Claude ↔ Grasshopper)"
+      relevance: "Action-dispatch + discovery-layered tool design refined through real bugs; copied near-verbatim in docs/mcp-tool-design.md §2"
+      relationship: reference
+    - name: "MCP tool-count research (Anthropic, Speakeasy, Copilot)"
+      relevance: "Empirical sweet spots: effectiveness degrades past ~25 tools, collapses past ~50. Drove the 52→10 consolidation decision (docs/mcp-tool-design.md §1.2)"
+      relationship: reference
 
 # =============================================================================
 # PRODUCT DEFINITION
@@ -60,10 +112,14 @@ classification:
 
 product_definition:
   # One-sentence description of what this product is and why it exists.
-  vision: null
+  vision: "LLM-native music composition and production environment where the DB is the source of truth and Ableton Live is the rendering engine."
 
   # Measurable success criteria. What does "this worked" look like?
-  goals: []
+  goals:
+    - "Move composers up the ladder of abstraction: an LLM can take a musical idea (e.g. 'bassline weaving between two drum parts at 95 and 100 BPM') and build it end-to-end against the DB"
+    - "Songs are forkable: branch a chorus variant, A/B against main, throw it away — diffable and reviewable like code"
+    - "Bulk operations become one-liners: humanize backbeats, sidechain pad notes, transpose tagged notes — accessible without scripting career"
+    - "Songs are testable: structural assertions (bass-kick alignment, pan completeness, master-limiter presence) ride with the song"
 
   # Who uses this product and what they need.
   users:
@@ -73,18 +129,76 @@ product_definition:
     #   technical_level: none | basic | intermediate | advanced
     #   primary_needs: [string]
     #   constraints: [string]
-    personas: []
+    personas:
+      - name: "LLM-collaborating composer"
+        description: "The human author working through an LLM agent (Claude Code) to compose, arrange, and produce songs. Technical depth varies; the LLM mediates the structured access."
+        technical_level: intermediate
+        primary_needs:
+          - "Structured access to every musical surface (notes, automation, devices, arrangement)"
+          - "Reliable bidirectional sync with Ableton — edits in the DAW round-trip back without loss"
+          - "Bulk operations the LLM can express as one-liners"
+        constraints:
+          - "Single-user authoring; no multi-user concurrency"
+          - "Local deployment; no cloud dependency"
+      - name: "The LLM agent itself"
+        description: "Claude Code (or equivalent MCP-capable agent) is a first-class consumer. The 10-tool surface and discovery primitives (resources, prompts) are designed for its context-cost economics."
+        technical_level: advanced
+        primary_needs:
+          - "Low-context-cost tool surface (~10 unified tools, not 52 narrow ones)"
+          - "Self-service discovery (resources for static reads, prompts for multi-step recipes)"
+          - "Error responses that teach (canonical-form hints when actions fail)"
+        constraints:
+          - "Tool-count research caps effective surface around 25; 52 collapsed empirically"
 
   # Core user flows (UI), operations (API), or pipeline stages (automation).
   # Each: { name, description, steps (optional), priority (must-have/nice-to-have) }
-  core_flows: []
+  core_flows:
+    - name: "Compose via generators → mutators → DB"
+      description: "Pure generators produce note arrays with semantic tags; song build.py persists them via mutators; events emit alongside."
+      priority: must-have
+    - name: "Push DB → Ableton"
+      description: "plan_push_* emits a PushPlan of canonical MCP calls; agent executes; apply_push_results writes the projection (ableton_sessions + ableton_links)."
+      priority: must-have
+    - name: "Pull Ableton → DB"
+      description: "PullPlan probes the live surface; the /ableton-pull skill normalizes responses; apply_pull_results diffs and mutates (Ableton-authoritative under V1)."
+      priority: must-have
+    - name: "Capture initial snapshot"
+      description: "hallucinote.capture takes a one-shot snapshot of a live Ableton session to seed the DB's mix half on song creation."
+      priority: must-have
+    - name: "Build the example song"
+      description: "`python songs/falling-walking/build.py --reset` is the end-to-end smoke + canary for the whole stack."
+      priority: must-have
 
   # Scope decisions.
   scope:
-    v1: []                # Must have for initial release
-    accommodate: []       # Design for but don't build yet
-    later: []             # Not needed for v1 to be useful
-    never: []             # Explicitly out of scope. Each: { item, rationale }
+    v1:
+      - "DB schema + mutator API + queries (TEXT UUID identity; paired state-change + event-emit)"
+      - "Push planners: clip, score, mix, devices, automation, arrangement, cue points"
+      - "Pull planners: mix-state (W3-1), cue points + score globals (W3-2)"
+      - "hallucinote-mcp v1.0: 10 unified action-dispatch tools (ableton_session/track/return/clip/note/device/automation/arrangement/scene/browser) + resources + prompts + install skill"
+      - "falling-walking as the canary song (681-test gate)"
+    accommodate:
+      - "Multi-song workspace: cross-song shared kits, groove templates, instrument presets (project memory: cross-song reuse)"
+      - "Event-store flip: schema and mutator discipline already seed it"
+    later:
+      - "Pull-side sync follow-on: W3-3 (device chains via ableton_device(action='info')) + W3-4 (arrangement layout via ableton_arrangement(action='info'))"
+      - "Note pull (gated on gap-#4 note-level addressing in Live's API)"
+      - "Envelope pull (gated on Live's envelope read surface)"
+      - "Hallucinote-side quantize / swing / groove module (DB-side pure-math, not Live's Groove Pool)"
+      - "Audio render + analysis (ableton_render + ableton_analysis — Wave M+1 candidate)"
+      - "Event replay function (replay(events) → state) + cross-DB merge tooling — useful after event-store flip"
+      - "Track routing: sidechain, parallel busses, input/output routing config"
+      - "Group tracks (tracks.parent_track_id + Live group semantics)"
+      - "Audio clips: clip kind discriminator, file references, warp metadata"
+    never:
+      - item: "A general DAW competing with Ableton"
+        rationale: "Ableton is the rendering engine; Hallucinote leans on it, doesn't replace it"
+      - item: "A non-LLM authoring tool"
+        rationale: "Every design choice favors the LLM workflow; humans can write Python against the library but they're not the target"
+      - item: "A live performance system"
+        rationale: "Composition + production tool only; performance happens downstream in Ableton"
+      - item: "A walled garden / proprietary formats"
+        rationale: "SQLite + Python + git + standard MCP. If Hallucinote dies, songs are still composable from the repo"
 
   # Product identity.
   product_identity:
@@ -92,14 +206,14 @@ product_definition:
     personality: null     # Brand personality, mood (null for internal tools)
     visual_preferences: null  # Look/feel preferences (null for non-visual products)
 
-  platform: null          # Where this runs (web, mobile, CLI, etc.)
+  platform: "CLI + local MCP server (Python; SQLite; Ableton Live Remote Script on macOS today)"
 
   # Non-functional requirements, calibrated to risk.
   nonfunctional:
-    performance: null
-    scalability: null
-    uptime: null
-    cost_constraints: null
+    performance: "Test suite ~9.4s serial / ~5.6s parallel (681 tests, pytest-xdist with directory-grouped distribution). Push/pull latency bounded by MCP round-trips, not Hallucinote's planner cost."
+    scalability: "Not applicable — single-user authoring. Songs are independent; no shared-state concerns."
+    uptime: "Not applicable — no always-on component."
+    cost_constraints: "Zero monthly cost target — local-only deployment, no cloud services, no paid APIs."
 
   regulatory: []          # Each: { regulation, applicability, impact }
   cost_estimates: []      # Each: { item, estimated_monthly_cost, notes }
@@ -111,10 +225,66 @@ product_definition:
 # Each: { decision, rationale, alternatives_considered, date }
 
 technical_decisions:
-  architecture: []
-  technology: []
-  data_model: []
-  integrations: []
+  architecture:
+    - decision: "DB-as-source-of-truth with append-only event log; mutator-only writes"
+      rationale: "Every state change pairs with an event row in the same transaction. The event log seeds a future event-store flip without requiring a rewrite — the schema is the *materialized state* of a stream we'll replay later (project memory: architecture_db)."
+      alternatives_considered: "DAW-project-as-source-of-truth (the AbletonMCP fork's implicit model); pure event store from day one (premature for current single-user scale)."
+      date: "2026-05-15 (chunks 1-5 migration)"
+    - decision: "Plan-based sync (not side-effect sync)"
+      rationale: "sync.push returns PushPlan / ToolCall objects; the agent executes the plan and feeds results back via apply_push_results. Keeps the sync layer testable without Live running and reorder-safe across MCP retries."
+      alternatives_considered: "Direct MCP invocation from sync — would couple tests to a live MCP server; rejected as a long-term posture."
+      date: "2026-05-15 (chunks 1-5)"
+    - decision: "10 unified MCP tools with action dispatch (greenfield as `hallucinote-mcp`)"
+      rationale: "Tool-count research caps effective LLM tool selection around 25; AbletonMCP's 52-tool surface measurably degraded the model. Consolidating into ableton_session/track/return/clip/note/device/automation/arrangement/scene/browser keeps capability while cutting the selection space."
+      alternatives_considered: "Continue extending AbletonMCP narrow-setter-by-narrow-setter; rejected because each new capability would add to the 52-tool problem rather than solving it."
+      date: "2026-05-16 (Wave M design merged; v1.0 surface closed at M-7)"
+    - decision: "Bidirectional sync with Ableton-authoritative conflict policy (V1)"
+      rationale: "PullPlan + apply_pull_results path is Ableton-authoritative under the V1 conflict policy; field-level diffs tolerate _FLOAT_EPS jitter so display rounding doesn't churn events. Three-way merge deferred until cross-collaborator merges become real."
+      alternatives_considered: "DB-authoritative (rejected — punishes manual edits in Ableton); three-way merge (deferred — premature without multi-collaborator workflows)."
+      date: "2026-05-16 (Wave 3 pull-side sync)"
+
+  technology:
+    - decision: "Python 3.10+ stdlib-only runtime for the hallucinote library"
+      rationale: "Reduces dependency surface; library is the durable component (songs depend on it). Python 3.10+ for PEP 604 unions and modern typing."
+      alternatives_considered: "Rust core for performance — premature; SQLite WAL is already faster than any musical I/O bottleneck."
+      date: "2026-05-15"
+    - decision: "`mcp>=1.0` for the hallucinote-mcp server"
+      rationale: "Standard MCP transport; hallucinote_mcp/pyproject.toml declares it as the only runtime dep."
+      alternatives_considered: "Custom JSON-RPC — would diverge from the agent ecosystem."
+      date: "2026-05-16"
+    - decision: "SQLite WAL with `timeout=10.0`"
+      rationale: "Single-user, local. WAL gives readers + writers without blocking; the 10s timeout absorbs any short contention from concurrent build/test runs."
+      alternatives_considered: "Postgres (overkill for single-user); DuckDB (analytical-first, weaker write story)."
+      date: "2026-05-15"
+    - decision: "pytest + hypothesis (parked) for tests; pytest-xdist for parallelism"
+      rationale: "pytest is the de facto Python standard; hypothesis is staged in conftest.py (commented) for note-array transforms / serialization round-trips when those grow. xdist with directory-grouped distribution preserves fixture isolation."
+      alternatives_considered: "unittest (too verbose for fixture-heavy code)."
+      date: "2026-05-15 (pytest), J-2 (xdist installed)"
+
+  data_model:
+    - decision: "TEXT UUID primary keys (generated via `uuid.uuid4().hex`)"
+      rationale: "Aligns with future cross-DB merge stories — UUIDs don't collide across forks. Generated in Python (`_uuid()` helper) so mutators don't depend on DB autoincrement."
+      alternatives_considered: "INTEGER PRIMARY KEY (rejected — would collide across cross-collaborator merges)."
+      date: "2026-05-15 (chunk 1)"
+    - decision: "Paired state-change + event-emit in the same transaction"
+      rationale: "Every mutator calls `_emit` exactly once in the same DB transaction as its state write. The event row carries `actor`, `reason`, `request_id`, `seq` (monotonic). This is the load-bearing invariant for a future event-store flip."
+      alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
+      date: "2026-05-15"
+    - decision: "ableton_sessions + ableton_links projection separation"
+      rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
+      alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
+      date: "2026-05-15 (chunk 1)"
+
+  integrations:
+    - decision: "Greenfield `hallucinote-mcp` v1.0 as the MCP layer (in-repo, replacing AbletonMCP fork)"
+      rationale: "The AbletonMCP / ableton-mcp-extended fork drove the original design but its 52-tool surface hit the model-effectiveness ceiling. Wave M migrated to a greenfield 10-tool surface with action dispatch + resources + prompts; the fork is no longer a runtime dependency."
+      alternatives_considered: "Continue patching the fork; rejected for the same reason the consolidation happened."
+      date: "2026-05-16 (Wave M close)"
+    - decision: "Ableton Remote Script for in-Live integration"
+      rationale: "Live's embedded Python is the only path to live session control. The Remote Script runs inside Live, the hallucinote-mcp server runs outside, UDP carries the wire protocol."
+      alternatives_considered: "Max for Live (heavier; not all users have it); OSC-only (lower-level than needed)."
+      date: "2026-05-16"
+
   operational: []
 
 # =============================================================================
@@ -125,12 +295,18 @@ technical_decisions:
 # Each: { decision, rationale, date }
 
 design_decisions:
-  information_architecture: []
+  information_architecture:
+    - decision: "Layered folders inside src/hallucinote/: db/ (state+events+mutators+queries), generators/ (pure musical primitives), sync/ (DB↔Ableton bridge), capture.py (snapshot)"
+      rationale: "Each layer has a clean dependency direction: generators have no DB or MCP coupling; sync produces plans, not side effects; mutators are the only sanctioned writers."
+      date: "2026-05-15"
+    - decision: "Songs as self-contained units under songs/<slug>/"
+      rationale: "A song = build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored). Tests live next to the song so the directory is forkable as a unit."
+      date: "2026-05-17 (J-2b)"
   interaction_patterns: []
   accessibility_approach: null
-  error_handling_approach: null
-  observability_approach: null    # Signal types, correlation context, sensitive data filtering, operational model
-  infrastructure_dependencies: null  # External services (DB, queue, auth, APIs), mock boundaries, integration test strategy
+  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale. Never silently swallow exceptions — every catch logs context."
+  observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
+  infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. No external services. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
 
 # =============================================================================
@@ -144,7 +320,19 @@ design_decisions:
 #   waiting_on: "user" | "research"
 #   priority: high | medium | low
 
-open_questions: []
+open_questions:
+  - question: "Are the V1 success criteria captured in `product_definition.goals` the right ones for ratification, or should one of them split into measurable sub-goals before being treated as a release gate?"
+    blocking: "Treating any 'develop → main' release PR as a v1.0 release gate rather than just a merge"
+    waiting_on: user
+    priority: medium
+  - question: "Cost estimates are recorded as zero (local-only). If/when audio render or analysis lands in `ableton_render` / `ableton_analysis`, will compute live locally or shift to a hosted model — and if hosted, what's the monthly ceiling?"
+    blocking: "Pricing-aware decisions in the audio-render backlog item"
+    waiting_on: user
+    priority: low
+  - question: "Should `ableton_help` (from docs/mcp-tool-design.md §4.1) ship as an 11th tool, or stay folded into prompts + resources as it does today? The design doc lists 10; the schema.py registry has 10 (`scene` shipped instead of `help`)."
+    blocking: "Future MCP surface expansion (or contraction) decisions"
+    waiting_on: user
+    priority: low
 
 # =============================================================================
 # USER EXPERTISE PROFILE
@@ -153,12 +341,30 @@ open_questions: []
 # Drives vocabulary, explanation depth, and involvement calibration.
 
 user_expertise:
-  product_thinking: null      # none | basic | intermediate | advanced
-  technical_depth: null
-  design_sensibility: null
-  domain_knowledge: null
-  operational_awareness: null
-  evidence: []                # Each: { dimension, signal, inferred_from }
+  product_thinking: advanced
+  technical_depth: advanced
+  design_sensibility: intermediate
+  domain_knowledge: advanced
+  operational_awareness: intermediate
+  evidence:
+    - dimension: technical_depth
+      signal: "Discusses ABI considerations, gitflow nuance, schema CHECK semantics, threading-discipline subtleties unprompted"
+      inferred_from: "Conversation history across Wave 3 / Wave M build cycles"
+    - dimension: technical_depth
+      signal: "Identified J-2's category-boundary miss (platform vs MCP vs song tests conflated) before the Critic could catch it"
+      inferred_from: "J-2b session reflection"
+    - dimension: domain_knowledge
+      signal: "Distinguishes Live's Groove Pool from DB-side groove templates; understands Remote Script threading model; reasons about clip.quantize() vs computed-in-DB tradeoffs"
+      inferred_from: "Wave M-3 user pivot on the quantize/swing/groove backlog item"
+    - dimension: product_thinking
+      signal: "Framed the 50-tool problem empirically (Anthropic / Speakeasy / Copilot research) before committing to the 10-tool consolidation"
+      inferred_from: "docs/mcp-tool-design.md §1.2"
+    - dimension: product_thinking
+      signal: "Refused PyPI publish for a private project; chose declarative-first dispatch for maintainability over micro-perf"
+      inferred_from: "Wave M scaffolding decisions"
+    - dimension: operational_awareness
+      signal: "Expects significant codebase growth (memory: feedback_engineering_rigor) and prefers structural fixes over patches"
+      inferred_from: "User memory + repeated 'don't paper over' framing in feedback"
 
 # =============================================================================
 # BUILD PREFERENCES
@@ -167,9 +373,9 @@ user_expertise:
 # tooling). Optional — only when the user expresses preferences.
 
 build_preferences:
-  file_path: null             # Path to project-preferences.md (relative to .prawduct/)
-  last_updated: null
-  source: null                # discovery | inferred | iteration
+  file_path: "artifacts/project-preferences.md"
+  last_updated: "2026-05-17 (J-2b refresh)"
+  source: inferred
 
 # =============================================================================
 # HEALTH CHECK
@@ -178,8 +384,8 @@ build_preferences:
 # accumulating staleness signals, not by a fixed cadence.
 
 health_check:
-  last_full_check: null
-  last_check_findings: null
+  last_full_check: "2026-05-17 (Janitor wave: J-1 VCS hygiene + J-2/J-2b test infra + J-3 docs refresh + J-4 backlog reshape)"
+  last_check_findings: "VCS: clean (4 local + 2 remote branches post-J-1). Test infra: 681 passing serial+parallel; three-category test boundary restored in J-2b. Docs: post-Wave-M reality reflected (J-3). Backlog: 5 stale items pruned, 4 added (J-4). Outstanding: J-5 (this backfill) + J-6 (1-based bar CHECK constraints)."
 
 # =============================================================================
 # ARTIFACT MANIFEST
@@ -192,7 +398,39 @@ artifact_manifest:
   #   file_path: string (relative to project root)
   #   version: integer
   #   depends_on: [artifact names]
-  artifacts: []
+  artifacts:
+    - name: project-preferences
+      file_path: .prawduct/artifacts/project-preferences.md
+      version: 3
+      depends_on: []
+    - name: boundary-patterns
+      file_path: .prawduct/artifacts/boundary-patterns.md
+      version: 3
+      depends_on: [project-preferences]
+    - name: build-plan
+      file_path: .prawduct/artifacts/build-plan.md
+      version: 1
+      depends_on: [project-preferences, boundary-patterns]
+    - name: vision
+      file_path: docs/VISION.md
+      version: 1
+      depends_on: []
+    - name: mcp-tool-design
+      file_path: docs/mcp-tool-design.md
+      version: 1
+      depends_on: [vision]
+    - name: mcp-requirements
+      file_path: docs/mcp-requirements.md
+      version: 2
+      depends_on: [vision, mcp-tool-design]
+    - name: learnings
+      file_path: .prawduct/learnings.md
+      version: 1
+      depends_on: []
+    - name: backlog
+      file_path: .prawduct/backlog.md
+      version: 2
+      depends_on: []
 
 # =============================================================================
 # BUILD STATE
@@ -200,7 +438,7 @@ artifact_manifest:
 # Runtime tracking during building. Updated after each chunk.
 
 build_state:
-  source_root: null           # Where source code lives (e.g., "src/")
+  source_root: "src/hallucinote/"
 
 # =============================================================================
 # CHANGE LOG

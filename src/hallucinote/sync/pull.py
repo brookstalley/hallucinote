@@ -561,10 +561,29 @@ def _apply_return_info(
     """Wave M-2: ingest per-return mixer state from
     ``ableton_return(action='info', return_index=N)``.
 
-    Shape: ``{return_index, name, color, volume, panning, mute, solo}``.
-    We diff each present field against the DB row and emit the union of
-    changes through ``update_return``.
+    Probe shape: ``{return_index, name, color, volume, panning, mute, solo}``.
+
+    We ingest only the fields the DB models today — ``name`` / ``volume`` /
+    ``panning`` (DB column ``pan``) / ``color``. ``mute`` and ``solo`` are
+    intentionally dropped: the ``returns`` table has no columns for them
+    (see ``db/schema.sql`` returns table + ``_RETURN_FIELDS``). Round-trip
+    of return mute/solo is therefore a known gap; close it by growing the
+    schema before re-enabling.
+
+    Link verification is defense-in-depth: even though the planner only emits
+    ``return_info`` for linked returns, a hand-rolled results.json could route
+    around that guard. We re-check the link the same way ``_apply_track_info``
+    does.
     """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="return", db_id=return_id
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"return_info for return_id={return_id!r}: not linked in session; skipping"
+        )
+        return
+
     ret_row = Q.get_return(conn, return_id)
     if ret_row is None:
         out.warnings.append(
@@ -572,13 +591,17 @@ def _apply_return_info(
         )
         return
 
+    # Accept `panning` (the new shape) OR `pan` (legacy) for symmetry with
+    # `_apply_session_master` and `_apply_track_info`.
+    pan_in = result.get("panning", result.get("pan"))
+
     changes: dict[str, Any] = {}
     if "name" in result and result["name"] != ret_row["name"]:
         changes["name"] = result["name"]
     if "volume" in result and _floats_differ(result["volume"], ret_row["volume"]):
         changes["volume"] = float(result["volume"])
-    if "panning" in result and _floats_differ(result["panning"], ret_row["pan"]):
-        changes["pan"] = float(result["panning"])
+    if pan_in is not None and _floats_differ(pan_in, ret_row["pan"]):
+        changes["pan"] = float(pan_in)
     if "color" in result and result["color"] is not None and (
         ret_row["color"] is None or int(result["color"]) != int(ret_row["color"])
     ):

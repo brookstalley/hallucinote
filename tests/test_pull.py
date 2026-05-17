@@ -220,6 +220,30 @@ def test_apply_returns_list_accepts_wrapped_shape_from_unified_surface(conn, son
     assert out.mutations == 0
 
 
+def test_apply_return_info_skips_unlinked_return(conn, song, session):
+    """Defense-in-depth: if a hand-rolled results.json routes a return_info
+    payload to a return that isn't linked in this session, the apply layer
+    reports it as ``skipped_unlinked`` rather than writing.
+    """
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+    )
+    # Deliberately NOT linked.
+    results = [{
+        "key": f"return_info:{rid}",
+        "ok": True,
+        "tool": "ableton_return",
+        "result": {"return_index": 1, "name": "A-Reverb", "volume": 0.6},
+    }]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    row = Q.get_return(conn, rid)
+    assert row["volume"] == pytest.approx(0.85)  # unchanged
+
+
 def test_apply_return_info_ingests_mixer_state(conn, song, session):
     """Wave M-2: the per-return info probe carries the mixer state that
     used to live in the returns_list payload. Diffed and applied via

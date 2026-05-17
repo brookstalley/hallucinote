@@ -246,3 +246,20 @@ def test_set_property_enforces_volume_range(loaded_actions):
     )
     assert resp.ok is False
     assert "out of range" in (resp.error or "")
+
+
+@pytest.mark.parametrize("bad_value", [-1.5, 1.5])
+def test_set_property_enforces_panning_range(loaded_actions, bad_value):
+    """Symmetric to track panning range — out-of-range pan values fail with
+    a teaching error instead of Live's silent clamp."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="set_property",
+            params={"return_index": 1, "property": "panning", "value": bad_value},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "out of range" in (resp.error or "")

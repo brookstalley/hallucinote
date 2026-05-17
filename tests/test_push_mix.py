@@ -248,14 +248,12 @@ def test_apply_push_results_accepts_chunk3_keys_as_acks(conn, song, session):
              "result": {}},
             {"key": f"master_pan:{tid}", "ok": True, "tool": "ableton_session",
              "result": {}},
-            # Wave M-2: return mixer ack-only keys.
+            # Wave M-2: return mixer ack-only keys. Only volume / pan / color
+            # are live today — the DB's returns table has no mute / solo
+            # columns yet (backlog item: "Return-track mute/solo round-trip").
             {"key": f"return_volume:fake_rid", "ok": True, "tool": "ableton_return",
              "result": {}},
             {"key": f"return_pan:fake_rid", "ok": True, "tool": "ableton_return",
-             "result": {}},
-            {"key": f"return_mute:fake_rid", "ok": True, "tool": "ableton_return",
-             "result": {}},
-            {"key": f"return_solo:fake_rid", "ok": True, "tool": "ableton_return",
              "result": {}},
             {"key": f"return_color:fake_rid", "ok": True, "tool": "ableton_return",
              "result": {}},

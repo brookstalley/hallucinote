@@ -28,42 +28,38 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools for Ableton Live, structured for
-low-context-cost agent interaction.
+hallucinote-mcp — 10 unified tools + 11 resources + 5 prompts for Ableton
+Live, structured for low-context-cost agent interaction.
 
-Tools:
-  ableton_session     — global state, master, transport, view, tempo, signature, snapshot
-  ableton_track       — tracks: lifecycle, mixer state, sends
-  ableton_return      — return tracks
-  ableton_clip        — session + arrangement clips (lifecycle, set_property, replace_notes)
-  ableton_note        — within-clip note operations (gap #4 blocked)
-  ableton_device      — devices on tracks/returns
-  ableton_automation  — envelopes (7 target families)
-  ableton_arrangement — arrangement layout + cue points
-  ableton_scene       — session-view scenes (rows of clip slots + tempo + signature)
-  ableton_browser     — instruments, effects, plugins
-
-Every tool: action='help' returns its full action menu.
+Tools (call action='help' on any tool for its action menu):
+  ableton_session       global state, master, transport, view, tempo, signature
+  ableton_track         tracks: lifecycle, mixer state, sends
+  ableton_return        return tracks
+  ableton_clip          session + arrangement clips, replace_notes
+  ableton_note          per-note ops (gap #4 blocked — read ableton://guides/gaps)
+  ableton_device        devices on tracks/returns; set_parameter handles enums
+  ableton_automation    envelopes (7 target_kinds via write_envelope)
+  ableton_arrangement   arrangement layout + cue points (beats not bars)
+  ableton_scene         session-view scenes + per-scene tempo/signature
+  ableton_browser       instruments, effects, plugins
 
 Resources (read via resources/read, no turn cost):
-  ableton://session/snapshot           — session + tracks + returns in one read
-  ableton://browser/{instruments,effects,drums}  — content library trees (depth 3)
-  ableton://plugins/installed          — flat VST/AU list
-  ableton://reference/{scales,device-params}     — static lookups
+  ableton://session/snapshot          session+tracks+returns in one read
+  ableton://browser/{instruments,effects,drums}  + ableton://plugins/installed
+  ableton://reference/{scales,device-params}     static lookups
   ableton://guides/{getting-started,conventions,error-recovery,gaps}
-                                       — agent-facing prose
+
+Prompts (invoke via prompts/get for multi-step workflow templates):
+  create_midi_track_with_instrument, setup_sidechain_compression,
+  build_return_bus, humanize_clip_velocity, compose_section_pattern
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
-  - Time positions on the wire are BEATS, not bars (planner converts).
-  - Note operations REPLACE the clip's full note array — there is no
-    note-level addressing until gap #4 lands. To preserve manual edits,
-    pull first, mutate, push.
-  - Cue point names round-trip cleanly in Wave M-5+ (legacy gap #13 does
-    not apply to this server).
-  - Quantize / swing / groove are NOT exposed as MCP actions — they live
-    in Hallucinote (DB-as-source-of-truth for timing). See
-    ableton://guides/gaps for details.
+  - Time positions on the wire are BEATS, not bars.
+  - Note ops REPLACE the clip's full note array (no per-note addressing).
+  - Quantize/swing/groove/humanize are NOT MCP actions — Hallucinote
+    owns the math; push the result via replace_notes. See
+    ableton://guides/gaps for the full DB-as-source-of-truth rationale.
 """
 
 
@@ -88,6 +84,10 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     # the client immediately on initialize.
     from .resources import register_resources
     register_resources(mcp)
+
+    # Wave M-7: register 5 workflow prompts.
+    from .prompts import register_prompts
+    register_prompts(mcp)
 
     # Define the ten tool entry points. Each is a thin wrapper around the
     # shared dispatcher; the wrapper exists only so FastMCP can register a
@@ -171,6 +171,27 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     mcp.tool(name=tool_name, description=wrapper.__doc__)(wrapper)
 
 
+def registered_prompt_names(mcp: FastMCP) -> list[str]:
+    """Return the names of all prompts registered on the FastMCP instance.
+
+    Symmetric to ``registered_tool_names`` / ``registered_resource_uris``
+    but introspects the prompt manager. Used by tests to assert "the 5
+    expected prompts are wired."
+    """
+    for attr in ("_prompt_manager", "prompt_manager"):
+        manager = getattr(mcp, attr, None)
+        if manager is None:
+            continue
+        for store_attr in ("_prompts", "prompts"):
+            store = getattr(manager, store_attr, None)
+            if isinstance(store, dict):
+                return sorted(store.keys())
+    raise RuntimeError(
+        "Could not introspect FastMCP prompt registry — FastMCP API may "
+        "have changed"
+    )
+
+
 def registered_resource_uris(mcp: FastMCP) -> list[str]:
     """Return the URIs of all resources registered on the FastMCP instance.
 
@@ -225,4 +246,5 @@ __all__ = [
     "handle_tool_call",
     "registered_tool_names",
     "registered_resource_uris",
+    "registered_prompt_names",
 ]

@@ -151,6 +151,7 @@ def test_plan_push_mix_emits_return_set_property_for_linked_returns(conn, song, 
     assert all(c.args.get("action") != "create" for c in return_calls)
     # One set_property per non-null mixer field on the return.
     set_props = [c for c in return_calls if c.args.get("action") == "set_property"]
+    # mute/solo were not set on this return -> nullable schema -> not emitted.
     assert {c.args["property"] for c in set_props} == {"volume", "panning"}
     vol = next(c for c in set_props if c.args["property"] == "volume")
     assert vol.args == {
@@ -159,6 +160,60 @@ def test_plan_push_mix_emits_return_set_property_for_linked_returns(conn, song, 
         "property": "volume",
         "value": 0.6,
     }
+
+
+def test_plan_push_mix_emits_return_mute_solo_when_set(conn, song, session):
+    """M+1-4: once mute/solo are set on a return, the planner emits a
+    set_property call per field with the canonical `return_mute:<id>` /
+    `return_solo:<id>` key (matches the `track_*` parity surfaced in
+    `_ACK_ONLY_KINDS`)."""
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.update_return(conn, return_id=rid, mute=1, solo=0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=1
+    )
+    plan = push.plan_push_mix(conn, song_id=song, session_id=session)
+    set_props = [
+        c for c in plan.calls
+        if c.tool == "ableton_return"
+        and c.args.get("action") == "set_property"
+    ]
+    by_prop = {c.args["property"]: c for c in set_props}
+    assert "mute" in by_prop and by_prop["mute"].args["value"] == 1
+    assert "solo" in by_prop and by_prop["solo"].args["value"] == 0
+    assert by_prop["mute"].key == f"return_mute:{rid}"
+    assert by_prop["solo"].key == f"return_solo:{rid}"
+
+
+def test_apply_push_results_accepts_return_mute_and_solo_acks(
+    conn, song, session
+):
+    """M+1-4: `return_mute` and `return_solo` are ack-only kinds —
+    `apply_push_results` accepts them without raising
+    (no `ableton_links` binding to record; DB-side state is already
+    correct as the push originated from DB)."""
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.update_return(conn, return_id=rid, mute=1, solo=0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=1
+    )
+    # Should not raise — verifies `return_mute` / `return_solo` membership
+    # in `_ACK_ONLY_KINDS`.
+    push.apply_push_results(
+        conn,
+        [
+            {"key": f"return_mute:{rid}", "ok": True,
+             "tool": "ableton_return", "result": {"value": 1}},
+            {"key": f"return_solo:{rid}", "ok": True,
+             "tool": "ableton_return", "result": {"value": 0}},
+        ],
+        session_id=session,
+    )
+    # DB state unchanged (ack-only does not re-write).
+    from hallucinote.db import queries as Q
+    row = Q.get_return(conn, rid)
+    assert row["mute"] == 1
+    assert row["solo"] == 0
 
 
 def test_plan_push_mix_sends_require_both_links(conn, song, session):

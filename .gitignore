@@ -18,6 +18,10 @@ venv/
 build/
 dist/
 
+# uv lockfiles — project install path is `pip install -e`; uv.lock is
+# ambient when contributors use uv locally, not a tracked dependency lock.
+uv.lock
+
 # Ableton Live project directories — local DAW state, not source of truth.
 # Captured snapshots ARE source of truth (build.py replays them) and are
 # tracked explicitly per song at songs/<name>/captured_session.json.

@@ -2,7 +2,7 @@
 description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device
+allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
@@ -36,6 +36,7 @@ Map the user's request — domain token OR natural language — onto one of thes
 - `score-globals` — global tempo + global time signature ONLY (bar-1 rows in each map). Cheaper than `mix-state` if all you've changed is tempo or meter.
 - `cue-points` — arrangement cue point positions + names. Gap #13 (legacy fork's numeric-only names) is resolved in the greenfield server; apply still treats name diffs as informational warnings since DB-side cue names are user-authoritative.
 - `devices` — top-level device chain on each linked track + return: positional diff of `(kind, display_name)` slots. Nested rack chains, per-device parameters, and `is_active` are NOT pulled (gap-blocked or not-yet-modeled — see below).
+- `arrangement-clips` — per-track arrangement-clip placements (start_bar / end_bar). Positional diff: matched pairs no-op, DB-only positions are removed, Ableton-only positions warn. Positional matching cannot distinguish a *moved* placement from a *new* one (Live exposes no stable per-clip identity), so V1 takes no action on Ableton-only positions either way: it does not auto-create `clips` rows, and it does not infer moves. Mirror the change in DB (re-add the moved placement, or create the new clip + placement) and re-run pull. Clip-name renames are NOT detected (the `arrangement` table has no `name` column; names live on `clips.name`).
 
 **MCP-gap-blocked (do NOT attempt — surface the gap and offer the closest available alternative):**
 - Notes / MIDI — blocked by MCP gap #4 (no note-level IDs). Pull-back of notes would be destructive (whole-clip rewrite); deferred until note-level addressing lands.
@@ -53,9 +54,10 @@ Map the user's request — domain token OR natural language — onto one of thes
 - "tempo change" / "BPM" / "meter" / "time signature" → `score-globals` (or `mix-state` if you want master fader too)
 - "cue points" / "locators" / "arrangement markers" → `cue-points`
 - "device chain edits" / "added/removed a plugin" / "moved the compressor" / "swapped the EQ" → `devices`
+- "arrangement edits" / "moved a clip in the arrangement" / "deleted a clip from the timeline" / "rearranged the song" → `arrangement-clips`
 - "midi notes" / "latest midi updates" → blocked. Explain gap #4. Do NOT run anything.
 - "device settings" / "compressor params" / "what's the threshold set to" → blocked (parameter values). Explain gap #17b. The `devices` domain pulls the chain structure but NOT the values.
-- "everything" → run every available domain in order: `mix-state`, then `cue-points`, then `devices`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
+- "everything" → run every available domain in order: `mix-state`, then `cue-points`, then `devices`, then `arrangement-clips`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
 
 If the request is ambiguous, ask one targeted question rather than guessing.
 
@@ -101,6 +103,7 @@ The result `result` MUST be the normalized shape `apply_pull_results` expects. T
 - `track_sends:<id>` (from `ableton_track(action='get_sends', track_index=N)`) — the raw probe returns `{"track_index": <int>, "sends": [{"return_index": <int>, "return_name": <str>, "value": <float>}, ...]}`. The apply layer wants `{"<return_name>": <float>, ...}`. Reshape: `{s["return_name"]: s["value"] for s in result["sends"]}`.
 - `cue_points_list` (from `ableton_arrangement(action='cue_list')`) — the raw probe returns `{"cue_points": [{"cue_index": <int>, "position_beats": <float>, "name": <str>}, ...]}`. **Normalize** before adding to results: unwrap the `cue_points` list. The apply layer accepts three position shapes (`{position_beats}`, `{position_bar}`, `{bar, beat}`); the new beats-based shape converts via the song's time-signature map to `position_bar` for DB storage. Names round-trip cleanly in M-5+; name diffs surface as informational warnings without overwriting DB names.
 - `track_devices:<id>` and `return_devices:<id>` (from `ableton_device(action='list', track_index=N)` or `(return_index=N)`) — the raw probe returns `{"parent_kind": "track"|"return", "track_index"|"return_index": <int>, "devices": [{"device_index": <1-based>, "name": <str>, "class_name": <str>, "is_active": <bool>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_devices_for_parent`) reads `devices[*].class_name` as the DB's `kind` and `devices[*].name` as `display_name`, diffs positionally against the top-level chain, and ignores `is_active` until the schema grows the column. Nested rack chains are NOT traversed (no recursion in the probe; that's a separate gap).
+- `track_arrangement_clips:<id>` (from `ableton_clip(action='list', location='arrangement', track_index=N)`) — the raw probe returns `{"track_index": <int>, "location": "arrangement", "clips": [{"arrangement_clip_index": <1-based>, "name": <str>, "start_beats": <float>, "length": <float>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_arrangement_clips_for_track`) converts each `start_beats` and `start_beats + length` to fractional bar positions via the song's time-signature map and diffs positionally by `(start_bar, end_bar)`. DB-only placements are removed; Ableton-only placements warn (V1 cannot auto-create a `clips` row from a manually-drawn arrangement clip). Name diffs are NOT detected (the `arrangement` table has no `name` column).
 
 If the MCP response shape doesn't match (e.g. `ableton_session(action='info')` returns nested data differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.
 

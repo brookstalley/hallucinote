@@ -116,7 +116,7 @@ field names.
 
 | Concept | Live API | MCP tool / action | DB table | Mutator(s) | Event kind | Link kind |
 |---|---|---|---|---|---|---|
-| Arrangement clip placement | `track.arrangement_clips[i]` | (no read action today — see M+1-3a) | `arrangement` (legacy name; should be `arrangement_clips`) | `add_arrangement` / `remove_arrangement` | `ARRANGEMENT_ADDED` / `ARRANGEMENT_REMOVED` | `arrangement` |
+| Arrangement clip placement | `track.arrangement_clips[i]` | `ableton_clip(action='list', location='arrangement', …)` | `arrangement` (legacy name; should be `arrangement_clips`) | `add_arrangement` / `remove_arrangement` | `ARRANGEMENT_ADDED` / `ARRANGEMENT_REMOVED` | `arrangement` |
 | Session-view clip slot | `track.clip_slots[i].clip` | `ableton_clip(location='session', …)` | `clips` (with link to slot via `ableton_links`) | `create_clip` / `delete_clip` / `replace_clip_notes` | `CLIP_CREATED` / `CLIP_DELETED` / `CLIP_NOTES_REPLACED` | `clip` |
 | Arrangement-view metadata | `Live.Song.Song.{loop_*, view, …}` | `ableton_arrangement(action='info'/'set_loop'/'control_view')` | — (no single DB home; tempo/sig live in maps; loop has no DB home today) | — | — | — |
 | Set-level state (the Live document) | `Live.Song.Song.{tempo, signature, master_track, transport}` | `ableton_session(action='info'/'set_tempo'/'set_signature'/'play'/'stop'/'seek'/'snapshot'/'set_master_property')` | varies (`tempo_map`, `time_signature_map`, master via `tracks(kind='master')`) | `set_master_*`, tempo/sig-map mutators | various | — |

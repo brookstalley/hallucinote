@@ -1256,17 +1256,15 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "track_arm",
     "track_color",
     # Wave M-2 return-track mixer state — ack-only (no binding to record;
-    # the return's index is already known once linked). The DB's `returns`
-    # table only stores volume / pan / color, so the planner can never emit
-    # `return_mute` or `return_solo` keys today. Listed below only for
-    # parity-of-shape with `track_*` keys when/if the schema grows.
+    # the return's index is already known once linked). All five fields go
+    # through ableton_return(set_property) with the same shape as the
+    # track equivalents. `return_mute`/`return_solo` enabled M+1-4 with
+    # the schema growing nullable mute/solo columns.
     "return_volume",
     "return_pan",
+    "return_mute",
+    "return_solo",
     "return_color",
-    # When the `returns` table gains mute/solo columns, also enable these
-    # and grow `_apply_return_info` to ingest them:
-    # "return_mute",
-    # "return_solo",
     # Master is reached via ableton_session(set_master_property) — M-1.
     "master_volume",
     "master_pan",

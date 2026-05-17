@@ -18,17 +18,21 @@ DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
 non-standard layouts. Exactly one is required.
 
 `domain` is one of:
-  - `mix-state`     — track + return + master mixer state + sends
-                      (also free-ride ingests global tempo + signature)
-  - `score-globals` — global tempo + signature only (bar-1 rows in each map)
-  - `cue-points`    — arrangement cue point positions (names gap-flagged)
-  - `devices`       — top-level device chain on each linked track + return
-                      (positional kind/display_name diff; nested rack
-                      chains and per-device parameters are gap-blocked)
+  - `mix-state`         — track + return + master mixer state + sends
+                          (also free-ride ingests global tempo + signature)
+  - `score-globals`     — global tempo + signature only (bar-1 rows in each map)
+  - `cue-points`        — arrangement cue point positions (names gap-flagged)
+  - `devices`           — top-level device chain on each linked track + return
+                          (positional kind/display_name diff; nested rack
+                          chains and per-device parameters are gap-blocked)
+  - `arrangement-clips` — per-track arrangement-clip placements (start/end
+                          bars). Ableton-only placements warn (V1 cannot
+                          auto-create a `clips` row); name diffs not detected
+                          (no `name` column on `arrangement` — names live on
+                          `clips.name`).
 
-Future chunks add `arrangement`. Note pull, envelope pull,
-device-parameter pull, and nested rack pull are MCP-gap-blocked — they are
-not domains here.
+Note pull, envelope pull, device-parameter pull, and nested rack pull are
+MCP-gap-blocked — they are not domains here.
 """
 from __future__ import annotations
 
@@ -43,10 +47,11 @@ from hallucinote.sync import pull
 
 
 _DOMAINS = {
-    "mix-state":     pull.plan_pull_mix,
-    "score-globals": pull.plan_pull_score_globals,
-    "cue-points":    pull.plan_pull_cue_points,
-    "devices":       pull.plan_pull_devices,
+    "mix-state":         pull.plan_pull_mix,
+    "score-globals":     pull.plan_pull_score_globals,
+    "cue-points":        pull.plan_pull_cue_points,
+    "devices":           pull.plan_pull_devices,
+    "arrangement-clips": pull.plan_pull_arrangement_clips,
 }
 
 

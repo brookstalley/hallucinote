@@ -182,6 +182,13 @@ CREATE TABLE IF NOT EXISTS returns (
     position        INTEGER NOT NULL,
     volume          REAL CHECK (volume IS NULL OR (volume >= 0.0 AND volume <= 1.0)),
     pan             REAL CHECK (pan IS NULL OR (pan >= -1.0 AND pan <= 1.0)),
+    -- mute/solo: nullable bool (matches tracks.mute/solo/arm + returns.volume/pan).
+    -- Nullable means "user never set this" -> planner skips emission; once set,
+    -- 0/1 round-trip via update_return + _apply_return_info. Migration note:
+    -- existing song DBs need `build.py --reset` to pick up these columns
+    -- (single-user local context; songs are regenerable). See M+1-4.
+    mute            INTEGER CHECK (mute IS NULL OR mute IN (0, 1)),
+    solo            INTEGER CHECK (solo IS NULL OR solo IN (0, 1)),
     color           INTEGER,
     UNIQUE(song_id, position)
 );

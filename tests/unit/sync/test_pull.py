@@ -244,6 +244,62 @@ def test_apply_return_info_skips_unlinked_return(conn, song, session):
     assert row["volume"] == pytest.approx(0.85)  # unchanged
 
 
+def test_apply_return_info_ingests_mute_and_solo(conn, song, session):
+    """M+1-4: return-track mute/solo now round-trip. Asymmetric-None
+    handling: DB-side NULL + Ableton-side True/False both count as a
+    real change (matches `tracks.mute`/`solo`/`arm` semantics)."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+                "mute": True, "solo": False,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_return(conn, rid)
+    assert row["mute"] == 1
+    assert row["solo"] == 0
+
+
+def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
+    """Once DB-side mute/solo match the Ableton state, re-applying the
+    same probe is a no-op."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    M.update_return(conn, return_id=rid, mute=1, solo=0)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+                "mute": True, "solo": False,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
 def test_apply_return_info_ingests_mixer_state(conn, song, session):
     """Wave M-2: the per-return info probe carries the mixer state that
     used to live in the returns_list payload. Diffed and applied via
@@ -1113,6 +1169,420 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
     )
     assert out.mutations == 0
     assert any("class_name" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# plan_pull_arrangement_clips + _apply_arrangement_clips_for_track (W3-4 / M+1-3b)
+# ---------------------------------------------------------------------------
+
+
+def _arr_payload(*entries: tuple[float, float, str], track_index: int = 5) -> dict:
+    """Build an `ableton_clip(action='list', location='arrangement')` payload
+    from ``(start_beats, length, name)`` tuples. Mirrors the
+    `list_handler` arrangement branch shape so apply tests exercise the
+    real wire shape (including the `length` field — NOT `end_beats`).
+    """
+    return {
+        "track_index": track_index,
+        "location": "arrangement",
+        "clips": [
+            {
+                "arrangement_clip_index": i,
+                "name": name,
+                "start_beats": sb,
+                "length": ln,
+            }
+            for i, (sb, ln, name) in enumerate(entries, start=1)
+        ],
+    }
+
+
+def _seed_arrangement_row(conn, *, song_id, track_id, slot, start_bar, end_bar,
+                          length_beats=None, clip_name=None):
+    """Create a clips row + arrangement row in one shot. Returns the
+    arrangement_id so a test can assert on its presence/absence."""
+    if length_beats is None:
+        # Default to 4 beats per bar of span. The exact value doesn't matter
+        # for the diff tests — the clips row needs *some* length_beats.
+        length_beats = (end_bar - start_bar) * 4.0
+    clip_id = M.create_clip(
+        conn, track_id=track_id, slot=slot,
+        length_beats=length_beats, name=clip_name,
+    )
+    return M.add_arrangement(
+        conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
+        start_bar=start_bar, end_bar=end_bar,
+    )
+
+
+def test_plan_pull_arrangement_clips_emits_per_linked_track(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_arrangement_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_clip"
+    assert c.args == {
+        "action": "list", "location": "arrangement", "track_index": 5,
+    }
+    assert c.key == f"track_arrangement_clips:{tid}"
+
+
+def test_plan_pull_arrangement_clips_skips_unlinked_with_warning(
+    conn, song, session
+):
+    M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    plan = pull.plan_pull_arrangement_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert plan.calls == []
+    assert any("not linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_arrangement_clips_skips_master_and_return_kinds(
+    conn, song, session, master
+):
+    """Master and the reserved `kind='return'` track rows are not pulled
+    for arrangement clips — master has no arrangement of its own, and
+    return rows have no arrangement timeline in Live."""
+    rt = M.create_track(
+        conn, song_id=song, track_index=99, name="ReservedReturn",
+        kind="return",
+    )
+    _link_track(conn, session=session, db_id=master, ableton_index=0)
+    _link_track(conn, session=session, db_id=rt, ableton_index=98)
+    plan = pull.plan_pull_arrangement_clips(
+        conn, song_id=song, session_id=session
+    )
+    assert plan.calls == []
+
+
+def test_plan_pull_arrangement_clips_args_match_mcp_list_action_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits for the
+    arrangement-clip list probe must be a known param on
+    `ableton_clip(action='list')`. Same pattern as the M+1-2 device
+    contract test."""
+    from hallucinote_mcp.actions import clip as _clip_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    list_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_clip" and a.name == "list"
+    )
+    schema_param_names = {p.name for p in list_action.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    plan = pull.plan_pull_arrangement_clips(
+        conn, song_id=song, session_id=session
+    )
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on ableton_clip(list) schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_arrangement_clips_no_op_when_identical(conn, song, session):
+    """Same (start_bar, end_bar) on both sides -> no-op. Default song
+    has no time-signature map, so 4/4 fallback applies: start_beats=0
+    is bar 1.0; start_beats + length=8 is bar 3.0 (2 bars of 4 beats).
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload((0.0, 8.0, "Verse")),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_arrangement_clips_removes_db_placement_absent_in_ableton(
+    conn, song, session
+):
+    """DB has a placement Ableton doesn't -> remove_arrangement +
+    mutation count + detail line."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    arr_id = _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0, clip_name="Verse",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload(),  # empty
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    # Confirm the row is gone.
+    rows = [
+        r for r in Q.get_arrangement_for_song(conn, song)
+        if r["id"] == arr_id
+    ]
+    assert rows == []
+    assert any("removed" in d for d in out.details)
+
+
+def test_apply_arrangement_clips_warns_for_ableton_only_placement(
+    conn, song, session
+):
+    """Ableton has a placement DB doesn't -> warn + skip (V1 cannot
+    auto-create a clips row). The DB stays untouched."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload((0.0, 8.0, "Mystery")),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("no matching DB placement" in w for w in out.warnings)
+    # No DB rows for this track.
+    assert [
+        r for r in Q.get_arrangement_for_song(conn, song)
+        if r["track_id"] == tid
+    ] == []
+
+
+def test_apply_arrangement_clips_move_is_remove_plus_warn(conn, song, session):
+    """A "move" (DB has placement at bars 1..3; Ableton has it at 5..7)
+    is structurally `remove_at_old + warn_at_new` since positional
+    matching can't distinguish a move from an unrelated delete+add. This
+    documents the V1 limitation honestly — the user can recreate the DB
+    placement at the new position. Parity with the device-chain
+    delete+create pattern for "no stable identity" cases."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0, clip_name="Verse",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload((16.0, 8.0, "Verse")),  # moved 4 bars later
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1  # the remove
+    assert any("no matching DB placement" in w for w in out.warnings)
+    # Old row is gone.
+    rows_for_track = [
+        r for r in Q.get_arrangement_for_song(conn, song)
+        if r["track_id"] == tid
+    ]
+    assert rows_for_track == []
+
+
+def test_apply_arrangement_clips_float_jitter_within_tolerance_is_no_op(
+    conn, song, session
+):
+    """1e-6 wobble in start_beats must NOT register as a change. The
+    apply matches at 1/1000 of a bar precision."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            # start_beats=1e-7 -> bar 1.000000025; end_beats ≈ 8.0000001 -> bar ≈ 3.0
+            _arr_payload((1e-7, 8.0 - 1e-7, "Verse")),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_arrangement_clips_unlinked_track_skips_with_warning(
+    conn, song, session
+):
+    """Defense in depth: a hand-rolled results.json for an unlinked
+    track must skip with a warning, not mutate. Parity with
+    `_apply_devices_for_parent`."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    # NOT linked.
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload(),  # would remove the row if it ran
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.skipped_unlinked == 1
+    assert out.mutations == 0
+    # Row still there.
+    assert len([
+        r for r in Q.get_arrangement_for_song(conn, song)
+        if r["track_id"] == tid
+    ]) == 1
+
+
+def test_apply_arrangement_clips_entry_missing_start_or_length_warns(
+    conn, song, session
+):
+    """Malformed entry with no start_beats / length must warn + skip,
+    not crash. Defensive against MCP wire-shape drift."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    payload = {
+        "track_index": 5,
+        "location": "arrangement",
+        "clips": [
+            {"arrangement_clip_index": 1, "name": "Broken"},  # no fields
+        ],
+    }
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_arrangement_clips:{tid}", payload)],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("missing start_beats or length" in w for w in out.warnings)
+
+
+def test_apply_arrangement_clips_missing_clips_field_warns(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            {"track_index": 5, "location": "arrangement"},  # no 'clips'
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("missing 'clips'" in w for w in out.warnings)
+
+
+def test_apply_arrangement_clips_emits_arrangement_removed_event(
+    conn, song, session
+):
+    """Mutator discipline: each remove goes through `remove_arrangement`
+    and emits an `arrangement.removed` event with actor=sync."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0,
+    )
+
+    pull.apply_pull_results(
+        conn,
+        [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
+        song_id=song, session_id=session, reason="test",
+    )
+    events = Q.get_events_for_song(conn, song)
+    removed = [e for e in events if e["kind"] == "arrangement_removed"]
+    assert removed, (
+        f"expected an arrangement_removed event; "
+        f"got {[e['kind'] for e in events]}"
+    )
+    assert removed[0]["actor"] == "sync"
+    assert removed[0]["reason"] == "test"
+
+
+def test_apply_arrangement_clips_mixed_diff_states(conn, song, session):
+    """One DB row that matches, one DB row that's gone in Ableton, and
+    one Ableton row with no DB equivalent — exercises all three diff
+    classes in a single call."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    keep_id = _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0, clip_name="A",
+    )
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=2,
+        start_bar=5.0, end_bar=7.0, clip_name="B",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload(
+                (0.0, 8.0, "A"),     # matches bars 1..3 -> no-op
+                (32.0, 8.0, "C"),    # bars 9..11 in 4/4 -> Ableton-only -> warn
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.no_ops == 1
+    assert out.mutations == 1  # the bars 5..7 remove
+    assert any("no matching DB placement" in w for w in out.warnings)
+    # The bars 1..3 placement survived.
+    surviving = [
+        r for r in Q.get_arrangement_for_song(conn, song)
+        if r["track_id"] == tid
+    ]
+    assert len(surviving) == 1
+    assert surviving[0]["id"] == keep_id
+
+
+def test_pull_cli_arrangement_clips_domain_emits_plan(tmp_path):
+    """Smoke test: the `arrangement-clips` domain reaches the new
+    planner through the CLI dispatch and emits a plan (empty here —
+    no linked tracks)."""
+    db_path = tmp_path / "arrangement_clips_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_arr", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "arrangement-clips", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "arrangement-clips"
+    assert plan_dict["session_id"] == session_id
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
 
 
 # ---------------------------------------------------------------------------

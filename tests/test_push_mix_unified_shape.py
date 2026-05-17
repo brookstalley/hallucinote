@@ -1,10 +1,14 @@
-"""Cross-cut test: planner-emitted session-domain shape passes dispatcher validation.
+"""Cross-cut test: planner-emitted shape passes dispatcher validation.
 
-Wave M-1 retargeted `set_master_volume` / `set_master_panning` from narrow tool
-names to `ableton_session(action='set_master_property', ...)`. This test
-verifies the contract: the planner's ToolCall args, fed verbatim into the
-hallucinote-mcp dispatcher's request shape, validate cleanly. Catches drift
-between the Hallucinote-side emitter and the MCP-side action schema.
+Wave M-1 retargeted master mixer state to `ableton_session(action='set_master_property', ...)`.
+Wave M-2 added per-track mixer state via `ableton_track(action='set_property', ...)`,
+return mixer state via `ableton_return(action='set_property', ...)`, sends via
+`ableton_track(action='set_send', ...)`, and return creation via
+`ableton_return(action='create', ...)`.
+
+This test verifies the contract: the planner's ToolCall args, fed verbatim into
+the hallucinote-mcp dispatcher's request shape, validate cleanly. Catches
+drift between the Hallucinote-side emitter and the MCP-side action schema.
 """
 from __future__ import annotations
 
@@ -88,3 +92,115 @@ def test_planner_master_emit_validates_against_dispatcher(setup_master, conn):
             )
         assert ctx.song.master_track.mixer_device.volume.value == pytest.approx(0.72)
         assert ctx.song.master_track.mixer_device.panning.value == pytest.approx(-0.3)
+
+
+def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
+    """Wave M-2: track mixer properties, return create, return mixer, and sends
+    all flow through ableton_track / ableton_return action schemas.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.testing import isolated_actions
+    from hallucinote_mcp.wire import Request
+
+    # Set up a song with a linked track + an unlinked return that should
+    # trigger the create-return emit + a linked return for the property writes.
+    sid = M.create_song(conn, name="m2-shape-test", title="M-2 shape test")
+    sess = M.create_ableton_session(conn, song_id=sid, name="test")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+    M.set_track_mixer(
+        conn, track_id=tid, volume=0.6, pan=-0.2,
+        mute=0, solo=0, arm=0, color=12,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=1
+    )
+    rid = M.create_return(conn, song_id=sid, name="A-Reverb", position=1)
+    # First pass: return is unlinked → planner emits create.
+    plan = push.plan_push_mix(conn, song_id=sid, session_id=sess)
+    track_property_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_track"
+        and c.args.get("action") == "set_property"
+    ]
+    create_return_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_return"
+        and c.args.get("action") == "create"
+    ]
+    # All 6 properties (volume, panning, mute, solo, arm, color) emitted.
+    assert {c.args["property"] for c in track_property_calls} == {
+        "volume", "panning", "mute", "solo", "arm", "color"
+    }
+    assert len(create_return_calls) == 1
+    assert create_return_calls[0].args == {"action": "create", "name": "A-Reverb"}
+
+    # Build a fake song with one track + one return slot so the dispatcher
+    # can actually execute the planner's calls.
+    class _Param:
+        def __init__(self, value=0.0): self.value = value
+
+    class _Send:
+        def __init__(self, value=0.0): self.value = value
+
+    class _Mixer:
+        def __init__(self):
+            self.volume = _Param()
+            self.panning = _Param()
+            self.sends = [_Send()]
+
+    class _Track:
+        def __init__(self, name="Drums"):
+            self.name = name
+            self.mixer_device = _Mixer()
+            self.mute = False
+            self.solo = False
+            self.arm = False
+            self.color = 0
+            self.has_midi_input = True
+            self.has_audio_input = False
+            self.is_foldable = False
+            self.is_grouped = False
+
+    class _Return:
+        def __init__(self, name="A-Reverb"):
+            self.name = name
+            self.mixer_device = _Mixer()
+            self.mute = False
+            self.solo = False
+            self.color = 0
+
+    class _Song:
+        def __init__(self):
+            self.tracks = [_Track()]
+            self.return_tracks = [_Return()]
+
+        def create_return_track(self):
+            new = _Return(name="New")
+            self.return_tracks.append(new)
+            return new
+
+    class _Ctx:
+        def __init__(self):
+            self._song = _Song()
+        @property
+        def song(self): return self._song
+        def run_on_main(self, fn): return fn()
+
+    with isolated_actions():
+        ctx = _Ctx()
+        for call in plan.calls:
+            args = dict(call.args)
+            action_name = args.pop("action")
+            resp = dispatch(
+                Request(tool=call.tool, action=action_name, params=args),
+                context=ctx,
+            )
+            assert resp.ok, (
+                f"planner-emitted call rejected by dispatcher: "
+                f"tool={call.tool}, action={action_name}, args={args}, err={resp.error!r}"
+            )
+        # Round-trip values landed on the fake.
+        track = ctx.song.tracks[0]
+        assert track.mixer_device.volume.value == pytest.approx(0.6)
+        assert track.mixer_device.panning.value == pytest.approx(-0.2)
+        assert track.color == 12

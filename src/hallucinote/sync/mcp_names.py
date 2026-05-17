@@ -32,21 +32,14 @@ ALIASES_TODAY: dict[str, str] = {
     # Chunk 2: arrangement-level meter changes are not exposed by MCP at all.
     # Canonical args: {bar, beat, numerator: int, denominator: int}.
     "write_time_signature_point": "_emulate_write_time_signature_point",
-    # Chunk 3: return-track creation is not exposed by MCP. Canonical args:
-    #   {name: str}. Emulation must create the track via the Live UI/API and
-    #   return its 1-based `return_index`.
-    "create_return_track": "_emulate_create_return_track",
-    # Chunk 3: per-track mute/solo/arm and color writes are not exposed by MCP.
-    # Canonical args: {track_index: int 1-based, value: bool|int}. Today these
-    # are manual-knob operations.
-    "set_track_mute": "_emulate_set_track_mute",
-    "set_track_solo": "_emulate_set_track_solo",
-    "set_track_arm": "_emulate_set_track_arm",
-    "set_track_color": "_emulate_set_track_color",
-    # NOTE: master-strip volume/pan writes (formerly `set_master_volume` /
-    # `set_master_panning`) are now emitted directly by the planner as
-    # `ableton_session(action='set_master_property', property=..., value=...)`.
-    # Wave M-1 retargeted these — no alias entry needed.
+    # Wave M-2: track + return mixer state and return creation are now
+    # emitted directly by the planner as ableton_track(action='set_property',
+    # ...), ableton_return(action='set_property', ...), and
+    # ableton_return(action='create', name=...). The eight aliases that used
+    # to live here (create_return_track, set_track_mute / solo / arm / color,
+    # return mixer state) dropped.
+    # Master-strip volume/pan (Wave M-1) is at
+    # ableton_session(action='set_master_property', ...).
     # Chunk 4a: device chain construction. Canonical args:
     #   load_device(track_index: int 1-based, position: int 1-based,
     #               kind: str, preset_uri: str | null)

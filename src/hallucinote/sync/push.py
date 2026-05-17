@@ -411,12 +411,18 @@ def plan_push_sections(
 # ---------------------------------------------------------------------------
 
 
-# Mixer fields that have a direct, callable MCP tool today. mute/solo/arm/color
-# require emulation (see mcp_names.ALIASES_TODAY).
-_DIRECT_MIXER_TOOLS = {
-    "volume": ("set_track_volume", "volume"),
-    "pan":    ("set_track_panning", "panning"),
-}
+# Wave M-2 collapsed the per-property mixer surface to a single
+# ableton_track(action='set_property', property=..., value=...) emitter. No
+# more dict of tool-name lookups; all 6 properties go through the same shape.
+# DB column → action property name (only 'pan' → 'panning' differs).
+_MIXER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("volume",  "volume"),
+    ("pan",     "panning"),
+    ("mute",    "mute"),
+    ("solo",    "solo"),
+    ("arm",     "arm"),
+    ("color",   "color"),
+)
 
 
 def plan_push_mix(
@@ -425,14 +431,21 @@ def plan_push_mix(
     song_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan the push of mix state — track volume/pan/sends + return tracks + master.
+    """Plan the push of mix state — track mixer + return tracks + master + sends.
+
+    Under Wave M-2, every per-track mixer write emits a single unified
+    ``ableton_track(action='set_property', property=..., value=...)`` call —
+    the mute/solo/arm/color "MCP gap" disappears because the new surface
+    exposes them all. Master mixer state goes through ``ableton_session``
+    (Wave M-1). Returns go through ``ableton_return``.
 
     Pre-conditions (planner warns; doesn't fix):
-      - Tracks/returns that aren't yet linked in this session are flagged as a
-        create step. Track creation lives in `plan_push_clip`; for returns,
-        this planner emits the (gap-flagged) `create_return_track` call.
-      - mute/solo/arm/color/master writes are MCP gaps today — calls are
-        emitted under canonical names so the alias table tracks the gap.
+      - Tracks not yet linked in this session are flagged. Track creation
+        lives in ``plan_push_clip``; the agent typically pushes clips first
+        to create+link tracks, then pushes mix state.
+      - Unlinked returns are emitted as ``ableton_return(action='create')``
+        with the recorded name; apply records the new return_index when the
+        call returns.
     """
     plan = PushPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -443,11 +456,11 @@ def plan_push_mix(
         plan.warn("no mix state to push for this song")
         return plan
 
-    # ---- Tracks: volume / pan via direct MCP tools, mute/solo/arm/color via gap-flagged emulation
+    # ---- Tracks: every mixer field goes through ableton_track(set_property).
     for t in tracks:
         if t["kind"] == "master":
-            # Master strip: no track_index. Under the unified surface, master
-            # mixer state lives at ableton_session(action='set_master_property').
+            # Master strip: no track_index. Master mixer state lives at
+            # ableton_session(action='set_master_property') (Wave M-1).
             if t["volume"] is not None:
                 plan.add(ToolCall(
                     tool="ableton_session",
@@ -487,59 +500,62 @@ def plan_push_mix(
             )
             continue
 
-        for mixer_field, (tool, arg) in _DIRECT_MIXER_TOOLS.items():
-            value = t[mixer_field]
+        for db_field, property_name in _MIXER_FIELDS:
+            value = t[db_field]
             if value is None:
                 continue
             plan.add(ToolCall(
-                tool=tool,
-                args={"track_index": track_at, arg: value},
-                key=f"track_{mixer_field}:{t['id']}",
-                purpose=f"set {t['name']} {mixer_field} to {value:g}",
+                tool="ableton_track",
+                args={
+                    "action": "set_property",
+                    "track_index": track_at,
+                    "property": property_name,
+                    "value": value,
+                },
+                key=f"track_{db_field}:{t['id']}",
+                purpose=f"set {t['name']} {property_name} to {value}",
             ))
 
-        # mute/solo/arm/color are gap-flagged.
-        for mixer_field, gap_tool in (
-            ("mute", "set_track_mute"),
-            ("solo", "set_track_solo"),
-            ("arm",  "set_track_arm"),
-            ("color", "set_track_color"),
-        ):
-            value = t[mixer_field]
-            if value is None:
-                continue
-            plan.add(ToolCall(
-                tool=gap_tool,
-                args={"track_index": track_at, "value": value},
-                key=f"track_{mixer_field}:{t['id']}",
-                purpose=f"set {t['name']} {mixer_field} to {value} (MCP gap)",
-            ))
-
-    # ---- Returns: create unlinked, then push volume/pan (currently no MCP for return mixer state)
+    # ---- Returns: create unlinked, then push mixer state.
     for r in returns:
         return_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="return", db_id=r["id"]
         )
         if return_at is None:
             plan.add(ToolCall(
-                tool="create_return_track",
-                args={"name": r["name"]},
+                tool="ableton_return",
+                args={"action": "create", "name": r["name"]},
                 key=f"return:{r['id']}",
-                purpose=f"create return track '{r['name']}' (MCP gap — emulation needed)",
+                purpose=f"create return track '{r['name']}'",
             ))
             plan.warn(
-                f"return {r['name']!r} not linked yet; apply_push_results will record "
-                "the new return_index when create_return_track returns"
+                f"return {r['name']!r} not linked yet; apply_push_results will "
+                "record the new return_index when the call returns"
             )
+            continue
 
-    if returns:
-        plan.warn(
-            "return-track volume/pan writes are not in scope — set_track_volume "
-            "operates on session tracks only. Track this as an MCP gap if return "
-            "mixer state needs programmatic push."
-        )
+        for db_field, property_name in _MIXER_FIELDS:
+            # Returns have no 'arm' — schema enum on ableton_return excludes it.
+            if property_name == "arm":
+                continue
+            if db_field not in r.keys():
+                continue
+            value = r[db_field]
+            if value is None:
+                continue
+            plan.add(ToolCall(
+                tool="ableton_return",
+                args={
+                    "action": "set_property",
+                    "return_index": return_at,
+                    "property": property_name,
+                    "value": value,
+                },
+                key=f"return_{db_field}:{r['id']}",
+                purpose=f"set return '{r['name']}' {property_name} to {value}",
+            ))
 
-    # ---- Sends: cross product of (linked track) x (linked return)
+    # ---- Sends: cross product of (linked track) x (linked return).
     for s in sends:
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=s["from_track_id"]
@@ -554,8 +570,9 @@ def plan_push_mix(
             )
             continue
         plan.add(ToolCall(
-            tool="set_track_send",
+            tool="ableton_track",
             args={
+                "action": "set_send",
                 "track_index": track_at,
                 "return_index": return_at,
                 "value": s["level"],
@@ -1178,16 +1195,27 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "tempo_point",           # write_tempo_point
     "time_signature_point",  # write_time_signature_point
     "cue_point",             # create_cue_point
-    # Chunk 3 (mix)
-    "track_volume",          # set_track_volume
-    "track_pan",             # set_track_panning
-    "track_mute",            # set_track_mute (MCP gap)
-    "track_solo",            # set_track_solo (MCP gap)
-    "track_arm",             # set_track_arm (MCP gap)
-    "track_color",           # set_track_color (MCP gap)
-    "master_volume",         # set_master_volume (MCP gap)
-    "master_pan",            # set_master_panning (MCP gap)
-    "send",                  # set_track_send
+    # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
+    # ableton_track(action='set_property') call. The key prefixes here stay
+    # the same (volume/pan/mute/solo/arm/color) so apply matches by what the
+    # planner emits, but the underlying tool is now uniform.
+    "track_volume",
+    "track_pan",
+    "track_mute",
+    "track_solo",
+    "track_arm",
+    "track_color",
+    # Wave M-2 return-track mixer state — six new keys, all ack-only (no
+    # binding to record; the return's index is already known once linked).
+    "return_volume",
+    "return_pan",
+    "return_mute",
+    "return_solo",
+    "return_color",
+    # Master is reached via ableton_session(set_master_property) — M-1.
+    "master_volume",
+    "master_pan",
+    "send",
     # Chunk 4a (devices)
     "device_parameter",      # set_device_parameter / set_return_device_parameter
 })

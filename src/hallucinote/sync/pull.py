@@ -113,9 +113,11 @@ def plan_pull_mix(
     in V1 (the agent could create-then-link them in a follow-up, but the
     Ableton side has no DB-discovery mechanism we can rely on yet).
 
-    Emits one `ableton_session(action='info')` + one `list_return_tracks`
-    globally, plus one `get_track_info` and one `get_track_sends` per linked
-    track. (The latter three retarget to the unified surface in Wave M-2.)
+    Emits one ``ableton_session(action='info')`` + one
+    ``ableton_return(action='list')`` globally, plus one
+    ``ableton_track(action='info')`` and one ``ableton_track(action='get_sends')``
+    per linked track. All five domain probes use the unified surface as of
+    Wave M-2.
     """
     plan = PullPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -127,11 +129,29 @@ def plan_pull_mix(
         purpose="pull tempo / signature / master volume+pan",
     ))
     plan.add(PullCall(
-        tool="list_return_tracks",
-        args={},
+        tool="ableton_return",
+        args={"action": "list"},
         key="returns_list",
-        purpose="pull return-track mixer state (name/volume/pan per return)",
+        purpose="pull return-track index (name + index per return)",
     ))
+
+    # The returns_list probe under the unified surface returns only
+    # {return_index, name, color} per return — no mixer state. To populate
+    # the apply layer's full per-return contract (name + volume + panning),
+    # we follow the list with one ableton_return(action='info') per linked
+    # return. The apply layer reads these by the `return_info:<id>` key.
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        )
+        if return_at is None:
+            continue
+        plan.add(PullCall(
+            tool="ableton_return",
+            args={"action": "info", "return_index": return_at},
+            key=f"return_info:{r['id']}",
+            purpose=f"pull mixer state for return '{r['name']}'",
+        ))
 
     any_linked_track = False
     for t in tracks:
@@ -149,14 +169,14 @@ def plan_pull_mix(
             continue
         any_linked_track = True
         plan.add(PullCall(
-            tool="get_track_info",
-            args={"track_index": track_at},
+            tool="ableton_track",
+            args={"action": "info", "track_index": track_at},
             key=f"track_info:{t['id']}",
             purpose=f"pull mixer state for {t['name']}",
         ))
         plan.add(PullCall(
-            tool="get_track_sends",
-            args={"track_index": track_at},
+            tool="ableton_track",
+            args={"action": "get_sends", "track_index": track_at},
             key=f"track_sends:{t['id']}",
             purpose=f"pull sends for {t['name']}",
         ))
@@ -461,12 +481,28 @@ def _apply_returns_list(
     request_id: str | None,
     reason: str | None,
 ) -> None:
-    """Ingest per-return volume/pan. Each entry uses its 1-based `index` as
-    the Ableton return index; reverse-lookup finds the DB return id."""
-    for entry in result:
-        idx = entry.get("index")
+    """Ingest per-return mixer state from a returns-list result.
+
+    Under Wave M-2, the canonical shape is the new unified
+    ``ableton_return(action='list')`` payload — wrapped as
+    ``{"returns": [...]}`` — which only carries identity (``return_index``,
+    ``name``, ``color``). Mixer state arrives separately via per-return
+    ``return_info`` probes. For backward compat the handler also accepts
+    the legacy flat-list / ``index``-keyed shape (with optional
+    ``volume`` / ``panning`` fields) so the skill's normalization path
+    can be retired incrementally.
+    """
+    # Accept either the new wrapped shape or the legacy bare list.
+    entries = result.get("returns") if isinstance(result, dict) else result
+    if entries is None:
+        out.warnings.append("returns_list result missing 'returns' field")
+        return
+    for entry in entries:
+        idx = entry.get("return_index", entry.get("index"))
         if idx is None:
-            out.warnings.append(f"returns_list entry missing 'index': {entry!r}")
+            out.warnings.append(
+                f"returns_list entry missing 'return_index'/'index': {entry!r}"
+            )
             continue
         ret_id = Q.get_db_id_by_ableton_index(
             conn, session_id=session_id, db_kind="return", ableton_index=int(idx)
@@ -509,6 +545,62 @@ def _apply_returns_list(
             out.details.append(
                 f"return {ret_row['name']!r} {k}: {ret_row[k]!r} -> {v!r}"
             )
+
+
+def _apply_return_info(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    return_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Wave M-2: ingest per-return mixer state from
+    ``ableton_return(action='info', return_index=N)``.
+
+    Shape: ``{return_index, name, color, volume, panning, mute, solo}``.
+    We diff each present field against the DB row and emit the union of
+    changes through ``update_return``.
+    """
+    ret_row = Q.get_return(conn, return_id)
+    if ret_row is None:
+        out.warnings.append(
+            f"link points at missing return row {return_id!r}; skipping"
+        )
+        return
+
+    changes: dict[str, Any] = {}
+    if "name" in result and result["name"] != ret_row["name"]:
+        changes["name"] = result["name"]
+    if "volume" in result and _floats_differ(result["volume"], ret_row["volume"]):
+        changes["volume"] = float(result["volume"])
+    if "panning" in result and _floats_differ(result["panning"], ret_row["pan"]):
+        changes["pan"] = float(result["panning"])
+    if "color" in result and result["color"] is not None and (
+        ret_row["color"] is None or int(result["color"]) != int(ret_row["color"])
+    ):
+        changes["color"] = int(result["color"])
+
+    if not changes:
+        out.no_ops += 1
+        return
+
+    M.update_return(
+        conn,
+        return_id=return_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+        **changes,
+    )
+    out.mutations += 1
+    for k, v in changes.items():
+        out.details.append(
+            f"return {ret_row['name']!r} {k}: {ret_row[k]!r} -> {v!r}"
+        )
 
 
 def _apply_track_info(
@@ -805,6 +897,7 @@ def _apply_cue_points_list(
 _HANDLERS = {
     "session_info":     ("session_info",     False),
     "returns_list":     ("returns_list",     False),
+    "return_info":      ("return_info",      True),   # Wave M-2: per-return mixer state
     "track_info":       ("track_info",       True),
     "track_sends":      ("track_sends",      True),
     "cue_points_list":  ("cue_points_list",  False),
@@ -876,6 +969,12 @@ def apply_pull_results(
             elif handler_name == "returns_list":
                 _apply_returns_list(
                     conn, song_id=song_id, session_id=session_id,
+                    result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "return_info":
+                _apply_return_info(
+                    conn, session_id=session_id, return_id=db_id,
                     result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )

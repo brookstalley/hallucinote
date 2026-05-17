@@ -2,7 +2,7 @@
 description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__AbletonMCP__get_track_info, mcp__AbletonMCP__list_return_tracks, mcp__AbletonMCP__get_track_sends, mcp__AbletonMCP__get_track_volume, mcp__AbletonMCP__get_cue_points
+allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__AbletonMCP__get_cue_points
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
@@ -17,7 +17,7 @@ Wave M is migrating from the legacy AbletonMCP fork (52 narrow tools) to
 chunk-by-chunk. **What works under the current MCP setup:**
 
 - `score-globals` domain — fully retargeted. The single `ableton_session(action='info')` probe runs through `mcp__hallucinote-mcp__ableton_session`.
-- `mix-state` domain — **partially** retargeted. The session-info probe works (via the new server); the `list_return_tracks` / `get_track_info` / `get_track_sends` probes target the legacy AbletonMCP server which is no longer installed. They will land in M-2 (track + return retargets). Until then, running `mix-state` reports the legacy probes as `ok=false` and apply ingests only the master + tempo + signature side-effects.
+- `mix-state` domain — **fully retargeted** as of Wave M-2. Session info routes through `ableton_session(action='info')`; the returns list routes through `ableton_return(action='list')`; per-track mixer + sends route through `ableton_track(action='info')` and `ableton_track(action='get_sends')`. All probes hit `mcp__hallucinote-mcp__*`.
 - `cue-points` domain — **blocked.** The `get_cue_points` probe needs M-5 (arrangement retarget).
 
 If the user asks for a blocked domain, surface this transitional state plainly. Do NOT attempt the legacy tool calls — they will fail with "tool not found."
@@ -84,17 +84,18 @@ For each `call` in `plan.calls`:
 
 - Look at `call.tool` and `call.args`.
 - Pick the MCP namespace to invoke from based on `call.tool`:
-  - `call.tool == "ableton_session"` → `mcp__hallucinote-mcp__ableton_session` with `**call.args` (the args include `action`, e.g. `{"action": "info"}`). This is the new unified shape introduced in Wave M-1; more domains will move here in M-2 onward.
-  - Any other `call.tool` (today: `list_return_tracks`, `get_track_info`, `get_track_sends`, `get_cue_points`) → `mcp__AbletonMCP__<call.tool>` with `**call.args`. These domains haven't been retargeted yet and still use the legacy AbletonMCP server.
+  - `call.tool` starts with `ableton_` → `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "info"}`). All mix-state and score-globals probes route here as of Wave M-2.
+  - Other `call.tool` values (today: `get_cue_points`) — those domains target the legacy AbletonMCP server, which is no longer installed. The cue-points domain is blocked until M-5.
 - Capture the response. If the MCP call raises, mark the result as `{"key": ..., "ok": false, "tool": ..., "error": "<message>"}`.
 - On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
 
 The result `result` MUST be the normalized shape `apply_pull_results` expects. Today:
 
 - `session_info` (from `ableton_session(action='info')`) — the raw probe returns `{"tempo": <float>, "signature": {"numerator": <int>, "denominator": <int>}, "master": {"volume": <float>, "panning": <float>}, ...}`. **Normalize** before adding to results: convert `signature` to the legacy `"<n>/<d>"` string form that the apply layer currently expects. Future apply work can accept the structured form directly; for now keep the skill responsible for the translation.
-- `returns_list` → `[{"index": <1-based>, "name": <str>, "volume": <float>, "panning": <float>}, ...]`.
-- `track_info:<id>` → `{"name": <str>, "type": <str>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>, "arm": <bool>, "color": <int|null>}` (any field can be omitted; missing == "no probe data for this field" == do not change DB).
-- `track_sends:<id>` → `{"<return_name>": <float>, ...}`.
+- `returns_list` (from `ableton_return(action='list')`) — the raw probe returns `{"returns": [{"return_index": <1-based>, "name": <str>, "color": <int|null>}, ...]}`. Pass it through as the result payload — the apply layer accepts the wrapped shape natively as of Wave M-2 (and still accepts the legacy bare-list shape for backward compat). The per-return mixer state (volume, panning, mute, solo, color) is pulled separately via `ableton_return(action='info', return_index=...)` probes — see `return_info` below.
+- `return_info:<id>` (from `ableton_return(action='info', return_index=N)`) — the raw probe returns `{"return_index": <int>, "name": <str>, "color": <int|null>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>}`. Pass it through unchanged. The apply layer (`_apply_return_info`) diffs each field against the DB row and emits the union of changes through `update_return`.
+- `track_info:<id>` (from `ableton_track(action='info', track_index=N)`) — the raw probe returns `{"track_index": <int>, "name": <str>, "kind": <"midi"|"audio"|"group">, "color": <int|null>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>, "arm": <bool>}`. The apply layer's keys are slightly different: it wants `type` (not `kind`). Rename `kind` → `type` before adding to results; everything else passes through.
+- `track_sends:<id>` (from `ableton_track(action='get_sends', track_index=N)`) — the raw probe returns `{"track_index": <int>, "sends": [{"return_index": <int>, "return_name": <str>, "value": <float>}, ...]}`. The apply layer wants `{"<return_name>": <float>, ...}`. Reshape: `{s["return_name"]: s["value"] for s in result["sends"]}`.
 - `cue_points_list` → `[{"position_bar": <float>, "name": <str|null>}, ...]` OR `[{"bar": <1-based int>, "beat": <float>, "name": <str|null>}, ...]`. Either shape is accepted; apply joins (bar, beat) → position_bar using the song's time signature map. Names are gap-flagged (#13) and not stored.
 
 If the MCP response shape doesn't match (e.g. `ableton_session(action='info')` returns nested data differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.

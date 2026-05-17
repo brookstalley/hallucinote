@@ -87,19 +87,22 @@ def test_reverse_link_missing_returns_none(conn, session):
 
 
 def test_plan_pull_mix_emits_global_probes(conn, song, session):
+    """Wave M-2: every domain probe routes through the unified surface."""
     plan = pull.plan_pull_mix(conn, song_id=song, session_id=session)
-    # Under Wave M-1, session-info is probed via the unified ableton_session
-    # tool. list_return_tracks retargets in M-2.
     session_info_calls = [
         c for c in plan.calls
         if c.tool == "ableton_session" and c.args.get("action") == "info"
     ]
     assert len(session_info_calls) == 1
-    tools = [c.tool for c in plan.calls]
-    assert "list_return_tracks" in tools
+    return_list_calls = [
+        c for c in plan.calls
+        if c.tool == "ableton_return" and c.args.get("action") == "list"
+    ]
+    assert len(return_list_calls) == 1
 
 
 def test_plan_pull_mix_emits_per_linked_track_probes(conn, song, session):
+    """Per-track probes route through ableton_track(action='info'/'get_sends')."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     plan = pull.plan_pull_mix(conn, song_id=song, session_id=session)
@@ -107,7 +110,11 @@ def test_plan_pull_mix_emits_per_linked_track_probes(conn, song, session):
     assert f"track_info:{tid}" in keys
     assert f"track_sends:{tid}" in keys
     info_call = next(c for c in plan.calls if c.key == f"track_info:{tid}")
-    assert info_call.args == {"track_index": 5}
+    assert info_call.tool == "ableton_track"
+    assert info_call.args == {"action": "info", "track_index": 5}
+    sends_call = next(c for c in plan.calls if c.key == f"track_sends:{tid}")
+    assert sends_call.tool == "ableton_track"
+    assert sends_call.args == {"action": "get_sends", "track_index": 5}
 
 
 def test_plan_pull_mix_warns_for_unlinked_tracks(conn, song, session):
@@ -189,6 +196,86 @@ def test_apply_returns_list_skips_unlinked_returns(conn, song, session):
     )
     assert out.mutations == 0
     assert out.skipped_unlinked == 1
+
+
+def test_apply_returns_list_accepts_wrapped_shape_from_unified_surface(conn, song, session):
+    """Wave M-2: ableton_return(action='list') returns {"returns": [...]} with
+    only identity fields. The apply layer accepts the wrapper natively (no
+    skill-side normalization needed)."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    # New shape: wrapped dict + return_index instead of index. Mixer state
+    # NOT included — comes via per-return ableton_return(action='info').
+    results = [_result("returns_list", {
+        "returns": [
+            {"return_index": 1, "name": "A-Reverb", "color": None},
+        ],
+    })]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    # No volume/panning in the list payload → no diff → no mutations.
+    assert out.mutations == 0
+
+
+def test_apply_return_info_skips_unlinked_return(conn, song, session):
+    """Defense-in-depth: if a hand-rolled results.json routes a return_info
+    payload to a return that isn't linked in this session, the apply layer
+    reports it as ``skipped_unlinked`` rather than writing.
+    """
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+    )
+    # Deliberately NOT linked.
+    results = [{
+        "key": f"return_info:{rid}",
+        "ok": True,
+        "tool": "ableton_return",
+        "result": {"return_index": 1, "name": "A-Reverb", "volume": 0.6},
+    }]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    row = Q.get_return(conn, rid)
+    assert row["volume"] == pytest.approx(0.85)  # unchanged
+
+
+def test_apply_return_info_ingests_mixer_state(conn, song, session):
+    """Wave M-2: the per-return info probe carries the mixer state that
+    used to live in the returns_list payload. Diffed and applied via
+    update_return."""
+    rid = M.create_return(
+        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    results = [
+        # Note the key kind 'return_info' — the planner emits return_info:<db_id>.
+        {
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1,
+                "name": "A-Reverb",
+                "color": None,
+                "volume": 0.6,
+                "panning": -0.1,
+                "mute": False,
+                "solo": False,
+            },
+        }
+    ]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    row = Q.get_return(conn, rid)
+    assert row["volume"] == pytest.approx(0.6)
+    assert row["pan"] == pytest.approx(-0.1)
 
 
 # ---------------------------------------------------------------------------

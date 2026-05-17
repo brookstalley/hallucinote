@@ -603,19 +603,22 @@ def plan_push_devices(
     """Plan the push of device chains — instruments + effects on tracks/returns
     plus their dialed parameters.
 
-    Strategy:
+    Strategy (Wave M-4: unified ableton_device tool):
       1. For each linked track / return, walk its top-level device chain in
          position order.
       2. For each device, check the `ableton_links` projection for a 'device'
-         binding. If missing, emit a (gap-flagged) `load_device` /
-         `load_device_on_return` and warn — parameter writes for that device
-         have to wait for a second pass after the link lands.
-      3. For each linked device, emit a `set_device_parameter` /
-         `set_return_device_parameter` per dialed param that carries a
-         continuous `value_normalized`. Discrete-enum params (Filter Type =
-         "Lowpass" etc.) have no normalized form — surface them as a warn
-         so the agent / UI knows the gap. Nested rack chains aren't pushed
-         in chunk 4a (snapshot doesn't capture them).
+         binding. If missing, emit `ableton_device(action='load', ...)` with
+         the parent-addressing (`track_index` OR `return_index`) and warn —
+         parameter writes for that device have to wait for a second pass
+         after the link lands.
+      3. For each linked device, emit
+         `ableton_device(action='set_parameter', ...)` per dialed param
+         that carries a continuous `value_normalized` (`value_type='continuous'`,
+         value stringified on the wire for schema uniformity between
+         continuous and enum). Discrete-enum params (Filter Type = "Lowpass"
+         etc.) have no normalized form — surface them as a warn so the
+         agent / UI knows the gap. Nested rack chains aren't pushed in
+         chunk 4a (snapshot doesn't capture them).
     """
     plan = PushPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -695,31 +698,29 @@ def _emit_device_calls(
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device["id"]
     )
+    parent_arg = "track_index" if parent_kind == "track" else "return_index"
     if device_at is None:
-        if parent_kind == "track":
-            tool = "load_device"
-            args = {
-                "track_index": parent_at,
-                "position": device["position"],
-                "kind": device["kind"],
-                "preset_uri": device["preset_uri"],
-            }
-        else:
-            tool = "load_device_on_return"
-            args = {
-                "return_index": parent_at,
-                "position": device["position"],
-                "kind": device["kind"],
-                "preset_uri": device["preset_uri"],
-            }
+        # Wave M-4: unified ableton_device(action='load') replaces the
+        # legacy fork's load_device / load_device_on_return narrow tools.
+        # The handler accepts a Live device class name as `kind` and an
+        # optional Live browser URI as `preset_uri`. Position routing is
+        # supported when set.
+        load_args = {
+            parent_arg: parent_at,
+            "action": "load",
+            "kind": device["kind"],
+        }
+        if device["preset_uri"] is not None:
+            load_args["preset_uri"] = device["preset_uri"]
+        if device["position"] is not None:
+            load_args["position"] = int(device["position"])
         plan.add(ToolCall(
-            tool=tool,
-            args=args,
+            tool="ableton_device",
+            args=load_args,
             key=f"device:{device['id']}",
             purpose=(
                 f"load {device['kind']} '{device['display_name']}' "
-                f"at position {device['position']} on {parent_kind} {parent_name!r} "
-                "(MCP gap — emulation needed)"
+                f"at position {device['position']} on {parent_kind} {parent_name!r}"
             ),
         ))
         plan.warn(
@@ -731,22 +732,23 @@ def _emit_device_calls(
 
     params = Q.get_device_parameters(conn, device["id"])
     enum_skipped: list[str] = []
-    param_tool = (
-        "set_device_parameter" if parent_kind == "track"
-        else "set_return_device_parameter"
-    )
-    parent_arg = "track_index" if parent_kind == "track" else "return_index"
     for p in params:
         if p["value_normalized"] is None:
             enum_skipped.append(p["name"])
             continue
+        # Wave M-4: unified ableton_device(action='set_parameter') replaces
+        # set_device_parameter / set_return_device_parameter narrow tools.
+        # value goes on the wire as a string so enum and continuous share
+        # one type (handler coerces back per value_type).
         plan.add(ToolCall(
-            tool=param_tool,
+            tool="ableton_device",
             args={
+                "action": "set_parameter",
                 parent_arg: parent_at,
                 "device_index": device_at,
                 "parameter_name": p["name"],
-                "value": p["value_normalized"],
+                "value": str(p["value_normalized"]),
+                "value_type": "continuous",
             },
             key=f"device_parameter:{device['id']}:{p['name']}",
             purpose=(
@@ -768,38 +770,42 @@ def _emit_device_calls(
 # Mix-half planner: automation envelopes
 # ---------------------------------------------------------------------------
 #
-# One ToolCall per envelope, breakpoints inline (same shape as
-# `ableton_clip(action='replace_notes', notes=[...])`). Canonical names per
-# target_kind below; all of them are MCP gaps today and are flagged in
-# `mcp_names.ALIASES_TODAY`.
+# Wave M-4: all seven envelope target families flow through one unified
+# tool: `ableton_automation(action='write_envelope', target_kind=...)`.
+# One ToolCall per envelope, breakpoints inline.
 #
-#   clip_cc           write_clip_cc_envelope(track_index, clip_index,
-#                                            cc_number, breakpoints)
-#   clip_pitch_bend   write_clip_pitch_bend_envelope(track_index, clip_index,
-#                                                    breakpoints)
-#   note_expression   write_note_expression_envelope(track_index, clip_index,
-#                                                    note_pitch, note_start_beats,
-#                                                    axis, breakpoints)
-#   device_parameter  write_device_parameter_envelope(track_index,
-#                                                     device_index,
-#                                                     parameter_name, breakpoints)
-#                     write_return_device_parameter_envelope(return_index,
-#                                                            device_index,
-#                                                            parameter_name,
-#                                                            breakpoints)
-#   mixer_volume      write_mixer_volume_envelope(track_index, breakpoints)
-#   mixer_pan         write_mixer_pan_envelope(track_index, breakpoints)
-#   send_level        write_send_envelope(track_index, return_index, breakpoints)
+#   target_kind='clip_cc'           track_index, location='session', clip_index,
+#                                   cc_number, breakpoints
+#   target_kind='clip_pitch_bend'   track_index, location='session', clip_index,
+#                                   breakpoints
+#   target_kind='note_expression'   track_index, location='session', clip_index,
+#                                   note_pitch, note_start_beats, axis,
+#                                   breakpoints
+#   target_kind='device_parameter'  (track_index | return_index), device_index,
+#                                   parameter_name, breakpoints
+#   target_kind='mixer_volume'      track_index, breakpoints
+#   target_kind='mixer_pan'         track_index, breakpoints
+#   target_kind='send_level'        track_index, return_index, breakpoints
 #
-# Breakpoint shape (inline list): {time_beats, value, curve_kind}.
+# Breakpoint shape (inline list): {time_beats, value, curve}. The DB stores
+# `curve_kind`; the wire field is `curve` to match the MCP-side handler's
+# enum naming. The rename happens in `_breakpoints_for_mcp`.
 
 
 def _breakpoints_for_mcp(bps: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """Convert DB breakpoint rows to the wire shape that
+    ``ableton_automation(action='write_envelope')`` expects.
+
+    Field renames: ``curve_kind`` → ``curve`` (the MCP-side handler uses
+    ``curve`` to match its enum naming). DB-side keeps ``curve_kind`` since
+    it disambiguates from other "kind" columns; the rename happens at the
+    wire boundary.
+    """
     return [
         {
             "time_beats": float(bp["time_beats"]),
             "value": float(bp["value"]),
-            "curve_kind": bp["curve_kind"],
+            "curve": bp["curve_kind"],
         }
         for bp in bps
     ]
@@ -922,9 +928,12 @@ def _emit_clip_envelope(
         # Mutator validated parameter_path as an int in [0,127] at create time.
         cc_number = int(envelope["parameter_path"])
         plan.add(ToolCall(
-            tool="write_clip_cc_envelope",
+            tool="ableton_automation",
             args={
+                "action": "write_envelope",
+                "target_kind": "clip_cc",
                 "track_index": track_at,
+                "location": "session",
                 "clip_index": clip_at,
                 "cc_number": cc_number,
                 "breakpoints": breakpoints_mcp,
@@ -932,21 +941,24 @@ def _emit_clip_envelope(
             key=f"envelope:{envelope['id']}",
             purpose=(
                 f"clip_cc CC{cc_number} on clip {clip_at}: "
-                f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+                f"{len(breakpoints_mcp)} breakpoint(s)"
             ),
         ))
     else:
         plan.add(ToolCall(
-            tool="write_clip_pitch_bend_envelope",
+            tool="ableton_automation",
             args={
+                "action": "write_envelope",
+                "target_kind": "clip_pitch_bend",
                 "track_index": track_at,
+                "location": "session",
                 "clip_index": clip_at,
                 "breakpoints": breakpoints_mcp,
             },
             key=f"envelope:{envelope['id']}",
             purpose=(
                 f"clip_pitch_bend on clip {clip_at}: "
-                f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+                f"{len(breakpoints_mcp)} breakpoint(s)"
             ),
         ))
 
@@ -983,9 +995,12 @@ def _emit_note_expression_envelope(
         )
         return
     plan.add(ToolCall(
-        tool="write_note_expression_envelope",
+        tool="ableton_automation",
         args={
+            "action": "write_envelope",
+            "target_kind": "note_expression",
             "track_index": track_at,
+            "location": "session",
             "clip_index": clip_at,
             "note_pitch": note_row["pitch"],
             "note_start_beats": float(note_row["start_beats"]),
@@ -996,7 +1011,7 @@ def _emit_note_expression_envelope(
         purpose=(
             f"note_expression {envelope['parameter_path']} on note "
             f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}: "
-            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+            f"{len(breakpoints_mcp)} breakpoint(s)"
         ),
     ))
 
@@ -1048,8 +1063,10 @@ def _emit_device_parameter_envelope(
             )
             return
         plan.add(ToolCall(
-            tool="write_device_parameter_envelope",
+            tool="ableton_automation",
             args={
+                "action": "write_envelope",
+                "target_kind": "device_parameter",
                 "track_index": parent_at,
                 "device_index": device_at,
                 "parameter_name": envelope["parameter_path"],
@@ -1058,8 +1075,7 @@ def _emit_device_parameter_envelope(
             key=f"envelope:{envelope['id']}",
             purpose=(
                 f"device_parameter {envelope['parameter_path']} on track "
-                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s) "
-                "(MCP gap)"
+                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s)"
             ),
         ))
     else:
@@ -1076,8 +1092,10 @@ def _emit_device_parameter_envelope(
             )
             return
         plan.add(ToolCall(
-            tool="write_return_device_parameter_envelope",
+            tool="ableton_automation",
             args={
+                "action": "write_envelope",
+                "target_kind": "device_parameter",
                 "return_index": parent_at,
                 "device_index": device_at,
                 "parameter_name": envelope["parameter_path"],
@@ -1086,8 +1104,7 @@ def _emit_device_parameter_envelope(
             key=f"envelope:{envelope['id']}",
             purpose=(
                 f"device_parameter {envelope['parameter_path']} on return "
-                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s) "
-                "(MCP gap)"
+                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s)"
             ),
         ))
 
@@ -1111,20 +1128,20 @@ def _emit_mixer_envelope(
             f"{track_id} not linked; skipping"
         )
         return
-    tool = (
-        "write_mixer_volume_envelope" if envelope["target_kind"] == "mixer_volume"
-        else "write_mixer_pan_envelope"
-    )
+    # Wave M-4: mixer_volume / mixer_pan collapse into one
+    # ableton_automation(action='write_envelope', target_kind=...) shape.
     plan.add(ToolCall(
-        tool=tool,
+        tool="ableton_automation",
         args={
+            "action": "write_envelope",
+            "target_kind": envelope["target_kind"],
             "track_index": track_at,
             "breakpoints": breakpoints_mcp,
         },
         key=f"envelope:{envelope['id']}",
         purpose=(
             f"{envelope['target_kind']} on track {track_at}: "
-            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+            f"{len(breakpoints_mcp)} breakpoint(s)"
         ),
     ))
 
@@ -1153,8 +1170,10 @@ def _emit_send_envelope(
         )
         return
     plan.add(ToolCall(
-        tool="write_send_envelope",
+        tool="ableton_automation",
         args={
+            "action": "write_envelope",
+            "target_kind": "send_level",
             "track_index": track_at,
             "return_index": return_at,
             "breakpoints": breakpoints_mcp,
@@ -1228,7 +1247,7 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "master_pan",
     "send",
     # Chunk 4a (devices)
-    "device_parameter",      # set_device_parameter / set_return_device_parameter
+    "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
 })
 
 

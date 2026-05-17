@@ -49,30 +49,29 @@ def pytest_report_header(config):
 
 
 # =============================================================================
-# Property-based testing with Hypothesis (uncomment when needed)
+# Property-based testing with Hypothesis
 # =============================================================================
 #
-# Uncomment this section if your project uses property-based testing.
-# Applicable when: mathematical operations, data transformations,
-# serialization round-trips, parsing, or complex input validation.
+# Enabled in Wave M-4 for envelope-breakpoint validation (the first place in
+# the codebase with a clear domain + named invariants that benefits from
+# generative testing). See `hallucinote_mcp/tests/unit/test_envelope_properties.py`.
 #
-# Install: pip install hypothesis
 # Docs: https://hypothesis.readthedocs.io/
-#
-# from hypothesis import settings, HealthCheck
-#
-# # CI profile: more examples, stricter deadlines
-# settings.register_profile(
-#     "ci",
-#     max_examples=200,
-#     suppress_health_check=[HealthCheck.too_slow],
-# )
-#
-# # Dev profile: fast feedback during development
-# settings.register_profile(
-#     "dev",
-#     max_examples=20,
-# )
-#
-# # Default to dev; CI sets HYPOTHESIS_PROFILE=ci
-# settings.load_profile("dev")
+
+from hypothesis import settings, HealthCheck
+
+# CI profile: more examples, stricter deadlines
+settings.register_profile(
+    "ci",
+    max_examples=200,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
+# Dev profile: fast feedback during development
+settings.register_profile(
+    "dev",
+    max_examples=20,
+)
+
+# Default to dev; CI sets HYPOTHESIS_PROFILE=ci
+settings.load_profile("dev")

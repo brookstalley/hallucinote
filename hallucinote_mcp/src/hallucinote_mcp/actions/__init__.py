@@ -17,6 +17,8 @@ from . import track as track  # noqa: F401
 from . import return_ as return_  # noqa: F401
 from . import clip as clip  # noqa: F401
 from . import note as note  # noqa: F401
+from . import device as device  # noqa: F401
+from . import automation as automation  # noqa: F401
 
 
-__all__ = ["session", "track", "return_", "clip", "note"]
+__all__ = ["session", "track", "return_", "clip", "note", "device", "automation"]

@@ -41,54 +41,22 @@ ALIASES_TODAY: dict[str, str] = {
     # Wave M-3: in-place clip note replace (gap #1's renamed action) is now
     # emitted directly as ableton_clip(action='replace_notes', ...). The
     # `set_clip_notes` alias dropped here.
-    # Chunk 4a: device chain construction. Canonical args:
-    #   load_device(track_index: int 1-based, position: int 1-based,
-    #               kind: str, preset_uri: str | null)
-    # MCP today: `load_instrument_or_effect(track_index, uri)` appends to the
-    # end of the chain — no `position` control and no precise `kind` selection.
-    # Emulation must order loads / use named presets to land in the right slot.
-    "load_device": "_emulate_load_device",
-    # Chunk 4a: same shape, but for return tracks. No MCP equivalent today.
-    "load_device_on_return": "_emulate_load_device_on_return",
-    # Chunk 4a: device parameter writes for tracks. Canonical args:
-    #   set_device_parameter(track_index, device_index: int 1-based,
-    #                        parameter_name: str, value: float 0.0-1.0).
-    # MCP today: `set_device_parameter` is registered but BROKEN per #17b
-    # (raises `No module named 'MCP_Server'`). Planner emits canonically;
-    # the agent / shim handles the broken state until the fork patches it.
-    "set_device_parameter": "_emulate_set_device_parameter",
-    # Chunk 4a: same shape, for return tracks. No MCP equivalent today.
-    "set_return_device_parameter": "_emulate_set_return_device_parameter",
-    # Chunk 4b: automation envelope writes. Today MCP exposes only
-    # `manage_clip_automation(track_index, clip_index, action, parameter_name)`
-    # which creates an empty envelope on a single named parameter; it has no
-    # breakpoint write surface. The canonical names below carry the full
-    # (target, breakpoints) shape and expect the emulator to drive
-    # `manage_clip_automation` + low-level Live API calls per breakpoint.
-    # All canonical args use 1-based indices; breakpoints is a list of dicts:
-    #   [{time_beats: float, value: float, curve_kind: 'linear'|'hold'|'fast'|'slow'}, ...].
-    # The result dict should carry `envelope_index: int` so apply_push_results
-    # can record an `envelope:` link binding.
-    "write_clip_cc_envelope": "_emulate_write_clip_cc_envelope",
-    # write_clip_cc_envelope(track_index, clip_index, cc_number: int, breakpoints)
-    "write_clip_pitch_bend_envelope": "_emulate_write_clip_pitch_bend_envelope",
-    # write_clip_pitch_bend_envelope(track_index, clip_index, breakpoints)
-    "write_note_expression_envelope": "_emulate_write_note_expression_envelope",
-    # write_note_expression_envelope(track_index, clip_index, note_pitch: int,
-    #                                note_start_beats: float,
-    #                                axis: 'pitch'|'pressure'|'timbre', breakpoints)
-    "write_device_parameter_envelope": "_emulate_write_device_parameter_envelope",
-    # write_device_parameter_envelope(track_index, device_index, parameter_name, breakpoints)
-    "write_return_device_parameter_envelope":
-        "_emulate_write_return_device_parameter_envelope",
-    # write_return_device_parameter_envelope(return_index, device_index,
-    #                                        parameter_name, breakpoints)
-    "write_mixer_volume_envelope": "_emulate_write_mixer_volume_envelope",
-    # write_mixer_volume_envelope(track_index, breakpoints)
-    "write_mixer_pan_envelope": "_emulate_write_mixer_pan_envelope",
-    # write_mixer_pan_envelope(track_index, breakpoints)
-    "write_send_envelope": "_emulate_write_send_envelope",
-    # write_send_envelope(track_index, return_index, breakpoints)
+    # Wave M-4: device load + parameter writes for tracks AND returns are
+    # now emitted directly by the planner as
+    # ableton_device(action='load', track_index|return_index, kind, ...) and
+    # ableton_device(action='set_parameter', track_index|return_index,
+    #                device_index, parameter_name, value, value_type).
+    # The four aliases that used to live here (load_device,
+    # load_device_on_return, set_device_parameter,
+    # set_return_device_parameter) dropped.
+    #
+    # Wave M-4: automation envelope writes are unified under
+    # ableton_automation(action='write_envelope', target_kind=...). The
+    # eight aliases that used to live here (write_clip_cc_envelope,
+    # write_clip_pitch_bend_envelope, write_note_expression_envelope,
+    # write_device_parameter_envelope, write_return_device_parameter_envelope,
+    # write_mixer_volume_envelope, write_mixer_pan_envelope,
+    # write_send_envelope) dropped.
     # NOTE on tools called directly (no alias entry needed):
     # - `create_cue_point(bar: int 1-based, beat: float 0-based, name: str)`.
     #   Planner output for this tool MUST match this signature.

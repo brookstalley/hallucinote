@@ -1,12 +1,21 @@
 """Path helpers for the install / uninstall skills.
 
-The skills ask Python "where are you installed?" and copy files based on the
-answer. Centralizing the path knowledge here keeps the skill bodies from
-hardcoding package internals and makes future renames a one-place change.
+The skills ask Python "where are you installed, where's Live, what's already on
+disk?" and copy files based on the answers. Centralizing this here keeps the
+skill bodies from hardcoding package internals and makes the detection logic
+testable.
+
+Scope: read-only detection and path math. No filesystem mutation — the skills
+do the copying / editing themselves, the helpers just hand them the answers.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
 import pathlib
+import shutil
+import subprocess
 import sys
 
 
@@ -20,6 +29,8 @@ REMOTE_SCRIPT_EXCLUDE: tuple[str, ...] = (
     "__pycache__",      # bytecode caches; never relevant on install
 )
 
+
+# --- Package introspection -------------------------------------------------
 
 def package_root() -> pathlib.Path:
     """Filesystem path to the installed ``hallucinote_mcp`` package."""
@@ -48,31 +59,97 @@ def remote_script_stub_text() -> str:
     )
 
 
-def default_user_library() -> pathlib.Path:
-    """Best-effort User Library location for the running platform.
+# --- User Library detection ------------------------------------------------
 
-    Used only as a starting hint for the install skill; the user can override.
+def _windows_documents_candidates() -> list[pathlib.Path]:
+    """Plausible Documents folders on Windows, most likely first.
+
+    OneDrive redirection is the default on modern Windows 10/11 installs —
+    Documents may resolve to ``%OneDrive%\\Documents`` rather than
+    ``%USERPROFILE%\\Documents``. Some users opt out, some are mid-migration
+    with both folders simultaneously populated. We probe all of them in a
+    deterministic order so the install skill can pick the one Live is
+    actually writing to.
     """
-    home = pathlib.Path.home()
+    seen: set[str] = set()
+    out: list[pathlib.Path] = []
+
+    def _add(p: pathlib.Path) -> None:
+        key = str(p).lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+
+    # Explicit OneDrive env vars set by the OneDrive client — most reliable
+    # signal of where Documents currently lives.
+    for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        val = os.environ.get(var)
+        if val:
+            _add(pathlib.Path(val) / "Documents")
+
+    bases: list[pathlib.Path] = [pathlib.Path.home()]
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        up = pathlib.Path(user_profile)
+        if up not in bases:
+            bases.append(up)
+
+    for base in bases:
+        _add(base / "OneDrive" / "Documents")  # OneDrive without env var set
+        _add(base / "Documents")               # plain Documents
+
+    return out
+
+
+def candidate_user_libraries() -> list[pathlib.Path]:
+    """All plausible User Library paths for this platform, in priority order.
+
+    The install / uninstall skills use this to *probe* — if a candidate
+    exists on disk it's treated as the User Library; otherwise the skill
+    falls back to asking the user. The first entry is the canonical
+    platform default (used when none of the candidates exist on disk).
+    """
     if sys.platform == "darwin":
-        return home / "Music" / "Ableton" / "User Library"
+        return [pathlib.Path.home() / "Music" / "Ableton" / "User Library"]
     if sys.platform == "win32":
-        return home / "Documents" / "Ableton" / "User Library"
-    # Linux: Ableton Live doesn't officially ship for Linux, but Bitwig users
-    # sometimes ask. Best guess.
-    return home / "Ableton" / "User Library"
+        return [
+            doc / "Ableton" / "User Library"
+            for doc in _windows_documents_candidates()
+        ]
+    # Linux: Live doesn't officially ship for Linux. Best guess for Wine /
+    # CrossOver users; the skill warns rather than promising it works.
+    return [pathlib.Path.home() / "Ableton" / "User Library"]
 
 
-def remote_script_install_dir(user_library: pathlib.Path) -> pathlib.Path:
-    """``<User Library>/Remote Scripts/Hallucinote``."""
-    return user_library / "Remote Scripts" / "Hallucinote"
+def default_user_library() -> pathlib.Path:
+    """Best-effort User Library — first existing candidate, else platform default.
+
+    The install skill uses this as the initial guess. The user can override
+    if they've moved their User Library via Live's Preferences → Library
+    → Location of User Library.
+    """
+    candidates = candidate_user_libraries()
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return candidates[0]
 
 
-def describe_install_layout(user_library: pathlib.Path) -> str:
+def remote_script_install_dir(user_library: pathlib.Path | str) -> pathlib.Path:
+    """``<User Library>/Remote Scripts/Hallucinote``.
+
+    Accepts ``str`` too — the install skill body interpolates user-typed
+    paths into ``python -c`` invocations, so strings come in naturally.
+    """
+    return pathlib.Path(user_library) / "Remote Scripts" / "Hallucinote"
+
+
+def describe_install_layout(user_library: pathlib.Path | str) -> str:
     """Human-readable summary of what the install will create.
 
     Used by the install skill to preview the layout before touching the
-    filesystem.
+    filesystem. Accepts ``str`` for the same reason as
+    :func:`remote_script_install_dir`.
     """
     target = remote_script_install_dir(user_library)
     return (
@@ -82,11 +159,267 @@ def describe_install_layout(user_library: pathlib.Path) -> str:
     )
 
 
+# --- Ableton Live detection ------------------------------------------------
+
+def _live_preferences_root() -> pathlib.Path | None:
+    """Root directory containing per-version Live preferences (or None)."""
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library" / "Preferences" / "Ableton"
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return None
+        return pathlib.Path(appdata) / "Ableton"
+    return None
+
+
+def installed_live_versions() -> list[str]:
+    """List installed Live versions, e.g. ``["11.3.21", "12.0.5"]``.
+
+    Inferred from per-version preference directories (``Live X.Y.Z/``), which
+    Live creates on first launch. An empty list means either no Live install
+    or Live has never been launched on this machine — the skill asks in that
+    case rather than guessing.
+    """
+    root = _live_preferences_root()
+    if root is None or not root.exists():
+        return []
+    versions: list[str] = []
+    prefix = "Live "
+    for child in root.iterdir():
+        if child.is_dir() and child.name.startswith(prefix):
+            versions.append(child.name[len(prefix):])
+    versions.sort()
+    return versions
+
+
+def live_log_path(version: str) -> pathlib.Path | None:
+    """Path to Live's ``Log.txt`` for the given version, if locatable.
+
+    Used by the install skill's troubleshooting section so the agent can
+    point at the exact log rather than describing where it lives.
+    """
+    root = _live_preferences_root()
+    if root is None:
+        return None
+    return root / f"Live {version}" / "Log.txt"
+
+
+def live_is_running() -> bool | None:
+    """``True`` if Live appears to be running, ``False`` if not, ``None`` if unknown.
+
+    Best-effort: ``pgrep`` on macOS, ``tasklist`` on Windows. If the probe
+    fails (binary missing, timeout, permission denied), returns ``None``
+    rather than guessing — the skill treats ``None`` as "ask the user".
+    """
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["pgrep", "-i", "-f", "Ableton Live"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError):
+            return None
+        if out.returncode == 0:
+            return bool(out.stdout.strip())
+        if out.returncode == 1:
+            return False
+        return None
+    if sys.platform == "win32":
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Ableton Live*"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError):
+            return None
+        if out.returncode != 0:
+            return None
+        # tasklist prints "INFO: No tasks are running..." when nothing matches.
+        return "Ableton" in out.stdout and "No tasks" not in out.stdout
+    return None
+
+
+# --- hallucinote-mcp command + MCP config detection -----------------------
+
+def hallucinote_mcp_command() -> tuple[pathlib.Path | None, bool]:
+    """Locate the ``hallucinote-mcp`` console script and report whether it's on PATH.
+
+    Returns ``(path, on_path)``:
+      - ``(Path, True)``  — found via ``shutil.which``; the MCP config can
+        use the bare command name.
+      - ``(Path, False)`` — found only in a venv's ``bin`` / ``Scripts`` dir
+        that isn't on the user's PATH; the MCP config must use the absolute
+        path or Claude Code won't be able to launch the server.
+      - ``(None, False)`` — not found anywhere; the install skill must stop
+        and tell the user to ``pip install hallucinote-mcp``.
+
+    The tri-state matters because the previous "Path | None" return
+    couldn't distinguish the venv-fallback case, leading the install skill
+    to write a bare command into the config even when only an absolute
+    path would resolve.
+    """
+    found = shutil.which("hallucinote-mcp")
+    if found:
+        return pathlib.Path(found).resolve(), True
+
+    exe_dir = pathlib.Path(sys.executable).parent
+    bin_name = "hallucinote-mcp.exe" if sys.platform == "win32" else "hallucinote-mcp"
+
+    # Unix venvs put console scripts next to python; Windows venvs use
+    # Scripts/ next to python.exe.
+    candidates = [exe_dir / bin_name]
+    if sys.platform == "win32":
+        candidates.append(exe_dir / "Scripts" / bin_name)
+    else:
+        # Some Python installs (e.g., Homebrew) keep scripts in ../bin
+        candidates.append(exe_dir.parent / "bin" / bin_name)
+
+    for cand in candidates:
+        if cand.exists():
+            return cand.resolve(), False
+    return None, False
+
+
+def mcp_config_global_path() -> pathlib.Path:
+    """``~/.claude.json`` — global Claude Code config."""
+    return pathlib.Path.home() / ".claude.json"
+
+
+def mcp_config_local_path(cwd: pathlib.Path | None = None) -> pathlib.Path:
+    """``.mcp.json`` in ``cwd`` (defaults to the current working directory)."""
+    base = cwd if cwd is not None else pathlib.Path.cwd()
+    return base / ".mcp.json"
+
+
+def _read_json(path: pathlib.Path) -> dict | None:
+    """Parse a JSON file, returning ``None`` if missing or malformed.
+
+    Distinguishing "missing" from "malformed" is done by the callers that
+    care — :func:`malformed_mcp_config_files` does its own parse.
+    """
+    if not path.exists():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+@dataclasses.dataclass(frozen=True)
+class MCPConfigEntry:
+    """A located ``hallucinote-mcp`` entry inside a config file.
+
+    ``json_pointer`` is the chain of keys to walk to reach the entry. The
+    uninstall skill deletes the entry by walking the pointer; the install
+    skill uses it to detect which scope an existing entry lives in before
+    asking whether to replace.
+
+    Examples:
+        - ``("mcpServers", "hallucinote-mcp")`` — top-level entry in
+          ``.mcp.json`` or in the global ``~/.claude.json``.
+        - ``("projects", "/path/to/proj", "mcpServers", "hallucinote-mcp")``
+          — per-project entry that ``claude mcp add`` writes to the global
+          config when the user uses the default ``local`` scope.
+    """
+
+    path: pathlib.Path
+    json_pointer: tuple[str, ...]
+
+    def as_dict(self) -> dict:
+        return {"path": str(self.path), "json_pointer": list(self.json_pointer)}
+
+
+def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfigEntry]:
+    """Located ``hallucinote-mcp`` entries across all known config scopes.
+
+    Used by the uninstall skill to find every place we need to edit
+    without asking the user. Scans:
+
+    - ``.mcp.json`` in ``cwd`` (``mcpServers.hallucinote-mcp``).
+    - ``~/.claude.json`` top-level (``mcpServers.hallucinote-mcp``) — used
+      when the user opted into global scope during install.
+    - ``~/.claude.json`` per-project
+      (``projects.<cwd>.mcpServers.hallucinote-mcp``) — the default scope
+      written by ``claude mcp add``. A previous version missed this and
+      would silently orphan the registration.
+
+    Each hit is a :class:`MCPConfigEntry` carrying the file path and the
+    JSON pointer to walk. Malformed files are skipped — surface them via
+    :func:`malformed_mcp_config_files` separately so the user can decide
+    whether to fix or overwrite.
+    """
+    cwd = cwd if cwd is not None else pathlib.Path.cwd()
+    cwd_str = str(cwd)
+    out: list[MCPConfigEntry] = []
+
+    # .mcp.json — top-level only (project files don't nest scopes).
+    local_path = mcp_config_local_path(cwd)
+    data = _read_json(local_path)
+    if isinstance(data, dict):
+        servers = data.get("mcpServers")
+        if isinstance(servers, dict) and "hallucinote-mcp" in servers:
+            out.append(MCPConfigEntry(local_path, ("mcpServers", "hallucinote-mcp")))
+
+    # ~/.claude.json — top-level entry plus the per-project scope that
+    # ``claude mcp add`` (the CLI) writes to by default.
+    global_path = mcp_config_global_path()
+    data = _read_json(global_path)
+    if isinstance(data, dict):
+        servers = data.get("mcpServers")
+        if isinstance(servers, dict) and "hallucinote-mcp" in servers:
+            out.append(MCPConfigEntry(global_path, ("mcpServers", "hallucinote-mcp")))
+        projects = data.get("projects")
+        if isinstance(projects, dict):
+            project = projects.get(cwd_str)
+            if isinstance(project, dict):
+                proj_servers = project.get("mcpServers")
+                if isinstance(proj_servers, dict) and "hallucinote-mcp" in proj_servers:
+                    out.append(MCPConfigEntry(
+                        global_path,
+                        ("projects", cwd_str, "mcpServers", "hallucinote-mcp"),
+                    ))
+    return out
+
+
+def malformed_mcp_config_files(cwd: pathlib.Path | None = None) -> list[pathlib.Path]:
+    """Config files that exist but failed to parse as JSON.
+
+    Surfaced by both skills so the user can fix them before we proceed —
+    overwriting a malformed config could destroy hand-edited state. Only
+    JSON-decode failures are reported; unreadable files (permission errors)
+    surface later as the actual write attempt fails.
+    """
+    cwd = cwd if cwd is not None else pathlib.Path.cwd()
+    out: list[pathlib.Path] = []
+    for path in (mcp_config_local_path(cwd), mcp_config_global_path()):
+        if not path.exists():
+            continue
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            out.append(path)
+        except OSError:
+            continue
+    return out
+
+
 __all__ = [
+    "MCPConfigEntry",
     "REMOTE_SCRIPT_EXCLUDE",
-    "package_root",
-    "remote_script_stub_text",
+    "candidate_user_libraries",
     "default_user_library",
-    "remote_script_install_dir",
     "describe_install_layout",
+    "existing_mcp_config_files",
+    "hallucinote_mcp_command",
+    "installed_live_versions",
+    "live_is_running",
+    "live_log_path",
+    "malformed_mcp_config_files",
+    "mcp_config_global_path",
+    "mcp_config_local_path",
+    "package_root",
+    "remote_script_install_dir",
+    "remote_script_stub_text",
 ]

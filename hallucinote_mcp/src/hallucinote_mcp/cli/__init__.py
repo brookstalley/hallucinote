@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
         from .serve import run_serve
 
         return run_serve(rest)
+    if command == "preflight":
+        from .preflight import run_preflight
+
+        return run_preflight(rest)
     if command == "version":
         from .. import __version__
 
@@ -50,6 +54,7 @@ def _print_help(out=None) -> None:
         "\n"
         "Commands:\n"
         "  serve              Start the FastMCP server (used by .mcp.json)\n"
+        "  preflight          Print install / uninstall detection report (JSON)\n"
         "  version            Print the package version\n"
         "  help               Show this message\n"
         "\n"

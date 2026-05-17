@@ -669,7 +669,7 @@ def _arrange_section(conn, song_id: str, tracks: dict[str, str],
                      clips: dict[str, str], *, start_bar: float, end_bar: float) -> None:
     """Place every clip in `clips` on its track between start_bar and end_bar."""
     for track_name, clip_id in clips.items():
-        M.add_arrangement(
+        M.add_arrangement_clip(
             conn, song_id=song_id,
             track_id=tracks[track_name], clip_id=clip_id,
             start_bar=start_bar, end_bar=end_bar,

@@ -642,11 +642,11 @@ def update_notes_by_tag(
 
 
 # ---------------------------------------------------------------------------
-# Arrangement
+# Arrangement clips
 # ---------------------------------------------------------------------------
 
 
-def add_arrangement(
+def add_arrangement_clip(
     conn: sqlite3.Connection,
     *,
     song_id: str,
@@ -660,15 +660,15 @@ def add_arrangement(
 ) -> str:
     aid = _uuid()
     conn.execute(
-        """INSERT INTO arrangement (id, song_id, track_id, clip_id, start_bar, end_bar)
+        """INSERT INTO arrangement_clips (id, song_id, track_id, clip_id, start_bar, end_bar)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (aid, song_id, track_id, clip_id, start_bar, end_bar),
     )
     _emit(
         conn,
-        E.ARRANGEMENT_ADDED,
+        E.ARRANGEMENT_CLIP_ADDED,
         {
-            "arrangement_id": aid,
+            "arrangement_clip_id": aid,
             "track_id": track_id,
             "clip_id": clip_id,
             "start_bar": start_bar,
@@ -683,24 +683,24 @@ def add_arrangement(
     return aid
 
 
-def remove_arrangement(
+def remove_arrangement_clip(
     conn: sqlite3.Connection,
     *,
-    arrangement_id: str,
+    arrangement_clip_id: str,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> None:
     row = conn.execute(
-        "SELECT song_id, clip_id FROM arrangement WHERE id = ?", (arrangement_id,)
+        "SELECT song_id, clip_id FROM arrangement_clips WHERE id = ?", (arrangement_clip_id,)
     ).fetchone()
     if row is None:
         return
-    conn.execute("DELETE FROM arrangement WHERE id = ?", (arrangement_id,))
+    conn.execute("DELETE FROM arrangement_clips WHERE id = ?", (arrangement_clip_id,))
     _emit(
         conn,
-        E.ARRANGEMENT_REMOVED,
-        {"arrangement_id": arrangement_id},
+        E.ARRANGEMENT_CLIP_REMOVED,
+        {"arrangement_clip_id": arrangement_clip_id},
         song_id=row["song_id"],
         clip_id=row["clip_id"],
         actor=actor,
@@ -2022,7 +2022,7 @@ def replace_breakpoints(
 
 # db_kind values currently used by the sync layer.
 ABLETON_LINK_KINDS = frozenset({
-    "track", "clip", "arrangement", "note", "return", "device", "envelope",
+    "track", "clip", "arrangement_clip", "note", "return", "device", "envelope",
 })
 
 

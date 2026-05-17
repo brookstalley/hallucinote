@@ -28,8 +28,8 @@ non-standard layouts. Exactly one is required.
   - `arrangement-clips` — per-track arrangement-clip placements (start/end
                           bars). Ableton-only placements warn (V1 cannot
                           auto-create a `clips` row); name diffs not detected
-                          (no `name` column on `arrangement` — names live on
-                          `clips.name`).
+                          (no `name` column on `arrangement_clips` — names
+                          live on `clips.name`).
 
 Note pull, envelope pull, device-parameter pull, and nested rack pull are
 MCP-gap-blocked — they are not domains here.

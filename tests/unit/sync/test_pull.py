@@ -1199,8 +1199,8 @@ def _arr_payload(*entries: tuple[float, float, str], track_index: int = 5) -> di
 
 def _seed_arrangement_row(conn, *, song_id, track_id, slot, start_bar, end_bar,
                           length_beats=None, clip_name=None):
-    """Create a clips row + arrangement row in one shot. Returns the
-    arrangement_id so a test can assert on its presence/absence."""
+    """Create a clips row + arrangement_clips row in one shot. Returns the
+    arrangement_clip_id so a test can assert on its presence/absence."""
     if length_beats is None:
         # Default to 4 beats per bar of span. The exact value doesn't matter
         # for the diff tests — the clips row needs *some* length_beats.
@@ -1209,7 +1209,7 @@ def _seed_arrangement_row(conn, *, song_id, track_id, slot, start_bar, end_bar,
         conn, track_id=track_id, slot=slot,
         length_beats=length_beats, name=clip_name,
     )
-    return M.add_arrangement(
+    return M.add_arrangement_clip(
         conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
         start_bar=start_bar, end_bar=end_bar,
     )
@@ -1317,7 +1317,7 @@ def test_apply_arrangement_clips_no_op_when_identical(conn, song, session):
 def test_apply_arrangement_clips_removes_db_placement_absent_in_ableton(
     conn, song, session
 ):
-    """DB has a placement Ableton doesn't -> remove_arrangement +
+    """DB has a placement Ableton doesn't -> remove_arrangement_clip +
     mutation count + detail line."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
@@ -1496,11 +1496,11 @@ def test_apply_arrangement_clips_missing_clips_field_warns(conn, song, session):
     assert any("missing 'clips'" in w for w in out.warnings)
 
 
-def test_apply_arrangement_clips_emits_arrangement_removed_event(
+def test_apply_arrangement_clips_emits_arrangement_clip_removed_event(
     conn, song, session
 ):
-    """Mutator discipline: each remove goes through `remove_arrangement`
-    and emits an `arrangement.removed` event with actor=sync."""
+    """Mutator discipline: each remove goes through `remove_arrangement_clip`
+    and emits an `arrangement_clip_removed` event with actor=sync."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     _seed_arrangement_row(
@@ -1514,9 +1514,9 @@ def test_apply_arrangement_clips_emits_arrangement_removed_event(
         song_id=song, session_id=session, reason="test",
     )
     events = Q.get_events_for_song(conn, song)
-    removed = [e for e in events if e["kind"] == "arrangement_removed"]
+    removed = [e for e in events if e["kind"] == "arrangement_clip_removed"]
     assert removed, (
-        f"expected an arrangement_removed event; "
+        f"expected an arrangement_clip_removed event; "
         f"got {[e['kind'] for e in events]}"
     )
     assert removed[0]["actor"] == "sync"
@@ -1559,6 +1559,77 @@ def test_apply_arrangement_clips_mixed_diff_states(conn, song, session):
     ]
     assert len(surviving) == 1
     assert surviving[0]["id"] == keep_id
+
+
+def test_apply_arrangement_clips_warns_on_duplicate_db_position(
+    conn, song, session
+):
+    """Two DB placements at identical (start_bar, end_bar) on the same
+    track surface as a warning (first-row-wins for the diff). The diff
+    still proceeds: the kept row no-ops against the matching Ableton
+    placement and the colliding row's `clip_name` appears in the warning
+    so the user can find it."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    # Two placements at identical bars 1..3 — exact-coincidence is the
+    # collision case the dict-build would otherwise silently collapse.
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0, clip_name="First",
+    )
+    _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=2,
+        start_bar=1.0, end_bar=3.0, clip_name="Second",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload((0.0, 8.0, "Whatever")),  # matches bars 1..3
+        )],
+        song_id=song, session_id=session,
+    )
+    # Apply did NOT remove either row (Ableton confirms one placement at
+    # those bars; first-row-wins means it's a no-op for the kept row).
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    # Warning surfaces the collision so the user can act. Both clip
+    # names appear in the message — the test doesn't pin which one wins
+    # (the query's `(start_bar, id)` ordering makes the choice stable
+    # per-DB but the choice is arbitrary from a user POV; either way
+    # the collision must be fixed manually).
+    collisions = [w for w in out.warnings if "duplicate arrangement-clip" in w]
+    assert len(collisions) == 1
+    assert "'First'" in collisions[0]
+    assert "'Second'" in collisions[0]
+
+
+def test_apply_arrangement_clips_remove_detail_includes_clip_breadcrumb(
+    conn, song, session
+):
+    """Remove `details` line carries clip_id prefix + clip_name so a user
+    chasing a *moved* placement (which surfaces as remove + Ableton-only
+    warning) can correlate the two halves by clip name."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    arr_id = _seed_arrangement_row(
+        conn, song_id=song, track_id=tid, slot=1,
+        start_bar=1.0, end_bar=3.0, clip_name="Verse Hook",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload(),  # empty -> the DB row is removed
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    detail = out.details[0]
+    assert f"arrangement_clip_id={arr_id[:8]}" in detail
+    assert "'Verse Hook'" in detail
 
 
 def test_pull_cli_arrangement_clips_domain_emits_plan(tmp_path):

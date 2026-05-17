@@ -61,9 +61,9 @@ NOTE_UPDATED = "note_updated"
 NOTES_DELETED = "notes_deleted"
 NOTES_BULK_UPDATED = "notes_bulk_updated"
 
-# Arrangement
-ARRANGEMENT_ADDED = "arrangement_added"
-ARRANGEMENT_REMOVED = "arrangement_removed"
+# Arrangement clips
+ARRANGEMENT_CLIP_ADDED = "arrangement_clip_added"
+ARRANGEMENT_CLIP_REMOVED = "arrangement_clip_removed"
 
 # Provenance
 REQUEST_CREATED = "request_created"

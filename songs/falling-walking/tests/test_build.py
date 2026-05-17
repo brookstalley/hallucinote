@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-BUILD_PATH = REPO_ROOT / "songs" / "falling-walking" / "build.py"
+SONG_ROOT = Path(__file__).resolve().parents[1]
+BUILD_PATH = SONG_ROOT / "build.py"
 
 
 @pytest.fixture

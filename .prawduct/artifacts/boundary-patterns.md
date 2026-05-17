@@ -114,14 +114,17 @@ When adding a new `db_kind`:
 
 ## Test Levels
 
+Tests fall into three categories that must stay disjoint: platform (the `hallucinote` library), MCP plugin (the `hallucinote-mcp` server), and song-specific. Platform and MCP tests must not load song data; song tests must not test platform/MCP behavior beyond what's incidental to the song.
+
 | Level | Exists | When to Run | Location |
 |-------|--------|-------------|----------|
-| Unit (mutator + event round-trip) | yes | every change to mutations / schema | `tests/unit/db/test_mutations.py`, `tests/unit/db/test_score_extensions.py` |
-| Unit (planner) | yes | every change to sync / link projection | `tests/unit/sync/test_push*.py`, `tests/unit/sync/test_pull.py`, `tests/unit/sync/test_mix.py` |
-| Unit (generators) | yes | every change to generators | `tests/unit/generators/test_*.py` |
-| Unit (capture / replay) | yes | every change to `hallucinote.capture` | `tests/unit/capture/test_capture.py` |
-| Unit (MCP server) | yes | every change to `hallucinote_mcp/src/` | `hallucinote_mcp/tests/unit/test_*.py` |
-| Integration (build.py against DB) | yes (`test_falling_walking_build.py`) + smoke via `python songs/falling-walking/build.py --reset` | every schema or mutator change | `tests/integration/test_falling_walking_build.py`, `songs/falling-walking/build.py` |
-| Integration (MCP dispatcher round-trip) | yes | every change to dispatcher / wire / remote_script | `hallucinote_mcp/tests/integration/test_remote_script_server.py`, `test_skills_well_formed.py` |
-| Integration (live Ableton push) | manual; gated on MCP capability | when a chunk delivers push of a new domain | invoked by hand |
-| Song tests (consistency / mix completeness) | not yet | once a song requires it | `songs/<name>/tests/` (planned) |
+| Platform — unit (mutator + event round-trip) | yes | every change to mutations / schema | `tests/unit/db/test_mutations.py`, `tests/unit/db/test_score_extensions.py` |
+| Platform — unit (planner) | yes | every change to sync / link projection | `tests/unit/sync/test_push*.py`, `tests/unit/sync/test_pull.py`, `tests/unit/sync/test_mix.py` |
+| Platform — unit (generators) | yes | every change to generators | `tests/unit/generators/test_*.py` |
+| Platform — unit (capture / replay) | yes | every change to `hallucinote.capture` | `tests/unit/capture/test_capture.py` |
+| MCP — unit | yes | every change to `hallucinote_mcp/src/` | `hallucinote_mcp/tests/unit/test_*.py` |
+| MCP — integration (dispatcher round-trip) | yes | every change to dispatcher / wire / remote_script | `hallucinote_mcp/tests/integration/test_remote_script_server.py`, `test_skills_well_formed.py` |
+| MCP — integration (live Ableton push) | manual; gated on MCP capability | when a chunk delivers push of a new domain | invoked by hand |
+| Song — build smoke | yes (per song) | every schema or mutator change OR every change to that song | `songs/<slug>/tests/test_build.py` |
+| Song — snapshot shape (capture/replay/push planner against the song's `captured_session.json`) | yes (per song) | every schema / mutator / planner change OR every change to that song's snapshot | `songs/<slug>/tests/test_capture_replay.py`, `test_push_mix_snapshot.py` |
+| Song — consistency / mix hygiene | not yet (per-song; on-demand) | once a song requires it | `songs/<slug>/tests/test_*.py` |

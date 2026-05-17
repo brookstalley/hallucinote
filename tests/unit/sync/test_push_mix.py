@@ -299,57 +299,6 @@ def test_plan_push_mix_empty_song_warns(conn, song, session):
     assert any("no mix state" in n for n in plan.notes)
 
 
-def test_plan_push_mix_handles_falling_walking_snapshot(conn, session, tmp_path):
-    """End-to-end: replay falling-walking snapshot, link everything, plan push.
-
-    Verifies the planner shape doesn't blow up on the real song. With 12 tracks
-    (some empty) + 2 returns + 16 sends + 1 master, the linked plan should emit
-    plausible numbers of set_track_volume / set_track_send calls.
-    """
-    import json
-    from pathlib import Path
-
-    from hallucinote.capture import replay_capture
-
-    repo_root = Path(__file__).resolve().parents[3]
-    snap = json.loads(
-        (repo_root / "songs" / "falling-walking" / "captured_session.json").read_text()
-    )
-    # New song in this conn — use the existing session fixture's song.
-    new_sid = replay_capture(conn, snap, song_name="fw", song_key="Dm")
-    new_session = M.create_ableton_session(conn, song_id=new_sid, name="draft")
-
-    # Link all tracks (by track_index) and returns (by position) so the planner
-    # has full coverage.
-    from hallucinote.db import queries as Q
-    for t in Q.get_tracks_for_song(conn, new_sid):
-        if t["kind"] != "master":
-            M.link_db_to_ableton(
-                conn, session_id=new_session, db_kind="track",
-                db_id=t["id"], ableton_index=t["track_index"],
-            )
-    for r in Q.get_returns_for_song(conn, new_sid):
-        M.link_db_to_ableton(
-            conn, session_id=new_session, db_kind="return",
-            db_id=r["id"], ableton_index=r["position"],
-        )
-
-    plan = push.plan_push_mix(conn, song_id=new_sid, session_id=new_session)
-    track_calls = [c for c in plan.calls if c.tool == "ableton_track"]
-    vol_calls = [
-        c for c in track_calls
-        if c.args.get("action") == "set_property"
-        and c.args.get("property") == "volume"
-    ]
-    send_calls = [c for c in track_calls if c.args.get("action") == "set_send"]
-    # 8 audible + 4 empty tracks all have volume set -> ≥8 set_property volume calls.
-    assert len(vol_calls) >= 8
-    # 16 sends from 8 audible tracks × 2 returns
-    assert len(send_calls) == 16
-    # Master uses the unified ableton_session tool (M-1 retarget).
-    session_calls = [c for c in plan.calls if c.tool == "ableton_session"]
-    master_props = [
-        c for c in session_calls
-        if c.args.get("action") == "set_master_property"
-    ]
-    assert any(c.args.get("property") == "volume" for c in master_props)
+# Song-specific shape tests (falling-walking snapshot end-to-end) live at
+# `songs/falling-walking/tests/test_push_mix_snapshot.py`. This file holds only
+# platform-level planner tests that use synthetic fixtures.

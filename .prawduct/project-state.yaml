@@ -172,20 +172,27 @@ product_definition:
   # Scope decisions.
   scope:
     v1:
+      # `scope.v1` is the intent for the v1.0 release surface — it lists
+      # what's IN scope, regardless of shipped status. For current ship
+      # status see `git log` + `.prawduct/.test-evidence.json` + the
+      # build-plan in `.prawduct/artifacts/build-plan.md`.
       - "DB schema + mutator API + queries (TEXT UUID identity; paired state-change + event-emit)"
       - "Push planners: clip, score, mix, devices, automation, arrangement, cue points"
-      - "Pull planners: mix-state (W3-1), cue points + score globals (W3-2)"
-      - "hallucinote-mcp v1.0: 10 unified action-dispatch tools (ableton_session/track/return/clip/note/device/automation/arrangement/scene/browser) + resources + prompts + install skill"
+      - "Pull planners: mix-state (W3-1), cue points + score globals (W3-2), device chains (W3-3 / M+1-2), arrangement-clip placements (W3-4 / M+1-3b), and — added during V1 close-out scoping 2026-05-17 — session-view clip slots"
+      - "Note pull via stable-ID read + whole-clip write (gap #4 partial resolution — added during V1 close-out scoping 2026-05-17). Read uses Live's `clip.get_notes_extended()`; per-note diff happens DB-side; push reuses `ableton_clip(action='replace_notes')`. Playback-continuity caveat (Live may retrigger a clip on mid-playback `set_notes`) is acceptable because live performance is in `scope.never`. (Not yet shipped — Chunk D of the close-out plan.)"
+      - "hallucinote-mcp v1.0: 10 unified action-dispatch tools (ableton_session/track/return/clip/note/device/automation/arrangement/scene/browser) + resources + prompts + install skill. `ableton_help` stays folded into prompts + resources (V1 close-out decision 2026-05-17 — not a separate 11th tool)."
       - "falling-walking as the canary song — its build + snapshot tests gate every push planner / mutator change (see `.prawduct/.test-evidence.json` for current suite count)"
     accommodate:
       - "Multi-song workspace: cross-song shared kits, groove templates, instrument presets (project memory: cross-song reuse)"
       - "Event-store flip: schema and mutator discipline already seed it"
+      - "App-layer multi-user concurrency: per project memory `feedback_app_layer_concurrency`, when multi-user lands it solves at the DB / event-store layer, not at the MCP wire shape. No per-element MCP locking, no per-element write surfaces solely for multi-party concerns."
     later:
-      - "Pull-side sync follow-on: W3-3 (device chains via ableton_device(action='info')) + W3-4 (arrangement layout via ableton_arrangement(action='info'))"
-      - "Note pull (gated on gap-#4 note-level addressing in Live's API)"
-      - "Envelope pull (gated on Live's envelope read surface)"
+      - "Envelope pull (blocked on `hallucinote-mcp` envelope read surface — backlog)"
+      - "Nested rack chain probe + push (blocked on `hallucinote-mcp` `get_device_chains` — backlog)"
+      - "Tempo / signature automation at (bar, beat) (blocked on Live arrangement-envelope target_kind — backlog)"
+      - "Device-parameter pull (sync-layer not yet built — backlog. `ableton_device(action='get_parameters')` is fine in the greenfield server; the legacy fork's #17b bug doesn't apply)"
       - "Hallucinote-side quantize / swing / groove module (DB-side pure-math, not Live's Groove Pool)"
-      - "Audio render + analysis (ableton_render + ableton_analysis — Wave M+1 candidate)"
+      - "Audio render + analysis (ableton_render + ableton_analysis)"
       - "Event replay function (replay(events) → state) + cross-DB merge tooling — useful after event-store flip"
       - "Track routing: sidechain, parallel busses, input/output routing config"
       - "Group tracks (tracks.parent_track_id + Live group semantics)"
@@ -320,19 +327,15 @@ design_decisions:
 #   waiting_on: "user" | "research"
 #   priority: high | medium | low
 
-open_questions:
-  - question: "Are the V1 success criteria captured in `product_definition.goals` the right ones for ratification, or should one of them split into measurable sub-goals before being treated as a release gate?"
-    blocking: "Treating any 'develop → main' release PR as a v1.0 release gate rather than just a merge"
-    waiting_on: user
-    priority: medium
-  - question: "Cost estimates are recorded as zero (local-only). If/when audio render or analysis lands in `ableton_render` / `ableton_analysis`, will compute live locally or shift to a hosted model — and if hosted, what's the monthly ceiling?"
-    blocking: "Pricing-aware decisions in the audio-render backlog item"
-    waiting_on: user
-    priority: low
-  - question: "Should `ableton_help` (from docs/mcp-tool-design.md §4.1) ship as an 11th tool, or stay folded into prompts + resources as it does today? The design doc lists 10; the schema.py registry has 10 (`scene` shipped instead of `help`)."
-    blocking: "Future MCP surface expansion (or contraction) decisions"
-    waiting_on: user
-    priority: low
+open_questions: []
+
+# Closed during the V1 close-out scoping (2026-05-17):
+# - V1 success criteria ratification: the four `product_definition.goals`
+#   are accepted as-is for the release gate; no sub-goal split needed.
+# - Cost ceiling for hosted audio render/analysis: no cost controls for
+#   now. Re-open if/when `ableton_render` or hosted-analysis work scopes.
+# - `ableton_help` as 11th tool: NO. Help stays folded into prompts +
+#   resources. The 10-tool surface is the V1 shape.
 
 # =============================================================================
 # USER EXPERTISE PROFILE

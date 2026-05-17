@@ -46,8 +46,9 @@ Developer preferences for how code is written in this project. Captured during d
 - **Key libraries**: stdlib only at runtime (`sqlite3`, `json`, `dataclasses`, `pathlib`). `pytest` for tests. AbletonMCP is an external dependency invoked by the agent, not imported.
 - **Dev commands**:
   - `source .venv/bin/activate` — required; package is installed editable into `.venv`
-  - `pytest` — full suite (~9.4s, 681 tests; serial by default)
-  - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (~5.6s; auto-grouped by test subdirectory per `tests/conftest.py`)
+  - `pytest` — full suite (serial by default; under ~10s on the J-2 baseline)
+  - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (auto-grouped by test subdirectory per `tests/conftest.py`; roughly 1.6× faster)
+  - Current test count + timings: see `.prawduct/.test-evidence.json` (canonical; this prose intentionally avoids restating numbers that drift)
   - `python songs/falling-walking/build.py [--reset]` — build the example song into its SQLite DB
 - **DB files (prescriptive)**: **one SQLite DB per song**, at exactly `songs/<slug>/<slug>.db`. The directory name, the DB filename, and `songs.name` (the slug) must all match. The slug is filesystem-safe: `[a-z0-9_-]+` (lowercase, digits, hyphens, underscores). Human-facing names with spaces / capitals / punctuation go in `songs.title`. No sidecar config files; the DB schema is the source of truth for song metadata. `*.db` is gitignored.
 

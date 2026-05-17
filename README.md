@@ -39,7 +39,7 @@ docs/
 pip install -e '.[dev]'
 pip install -e 'hallucinote_mcp[dev]'
 python songs/falling-walking/build.py --reset    # rebuild the song's SQLite DB
-pytest -n auto --dist loadgroup                  # full suite (~681 tests)
+pytest -n auto --dist loadgroup                  # full suite (see .prawduct/.test-evidence.json for current count)
 ```
 
 Pushing to Ableton goes through the `plan_push_*` planners in `hallucinote.sync.push`, then `apply_push_results` writes the projection (`ableton_sessions` + `ableton_links` tables) back. Pulling pulls Ableton state into the DB via the standard mutator path — diffs are realized as events. See the `/ableton-pull` skill for the agent surface.

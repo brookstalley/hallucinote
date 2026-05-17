@@ -176,7 +176,7 @@ product_definition:
       - "Push planners: clip, score, mix, devices, automation, arrangement, cue points"
       - "Pull planners: mix-state (W3-1), cue points + score globals (W3-2)"
       - "hallucinote-mcp v1.0: 10 unified action-dispatch tools (ableton_session/track/return/clip/note/device/automation/arrangement/scene/browser) + resources + prompts + install skill"
-      - "falling-walking as the canary song (681-test gate)"
+      - "falling-walking as the canary song — its build + snapshot tests gate every push planner / mutator change (see `.prawduct/.test-evidence.json` for current suite count)"
     accommodate:
       - "Multi-song workspace: cross-song shared kits, groove templates, instrument presets (project memory: cross-song reuse)"
       - "Event-store flip: schema and mutator discipline already seed it"
@@ -210,7 +210,7 @@ product_definition:
 
   # Non-functional requirements, calibrated to risk.
   nonfunctional:
-    performance: "Test suite ~9.4s serial / ~5.6s parallel (681 tests, pytest-xdist with directory-grouped distribution). Push/pull latency bounded by MCP round-trips, not Hallucinote's planner cost."
+    performance: "Test suite under ~10s serial / faster parallel (pytest-xdist with directory-grouped distribution); current counts + timings live in `.prawduct/.test-evidence.json`. Push/pull latency bounded by MCP round-trips, not Hallucinote's planner cost."
     scalability: "Not applicable — single-user authoring. Songs are independent; no shared-state concerns."
     uptime: "Not applicable — no always-on component."
     cost_constraints: "Zero monthly cost target — local-only deployment, no cloud services, no paid APIs."
@@ -384,8 +384,8 @@ build_preferences:
 # accumulating staleness signals, not by a fixed cadence.
 
 health_check:
-  last_full_check: "2026-05-17 (Janitor wave: J-1 VCS hygiene + J-2/J-2b test infra + J-3 docs refresh + J-4 backlog reshape)"
-  last_check_findings: "VCS: clean (4 local + 2 remote branches post-J-1). Test infra: 681 passing serial+parallel; three-category test boundary restored in J-2b. Docs: post-Wave-M reality reflected (J-3). Backlog: 5 stale items pruned, 4 added (J-4). Outstanding: J-5 (this backfill) + J-6 (1-based bar CHECK constraints)."
+  last_full_check: "2026-05-17 (Janitor wave: J-1 VCS hygiene + J-2/J-2b test infra + J-3 docs refresh + J-4 backlog reshape + J-5 project-state.yaml backfill + J-6 1-based bar CHECK enforcement). Wave closed."
+  last_check_findings: "VCS: clean (4 local + 2 remote branches post-J-1). Test infra: three-category test boundary restored in J-2b; pytest-xdist with directory-grouped distribution. Docs: post-Wave-M reality reflected (J-3). Backlog: pruned + reshaped (J-4). State: this file backfilled in J-5. Schema invariants: 1-based bar convention now enforced via CHECK constraints on the four score-half tables + a sync.push._split_bar runtime guard (J-6). Current suite count + timings: `.prawduct/.test-evidence.json`."
 
 # =============================================================================
 # ARTIFACT MANIFEST

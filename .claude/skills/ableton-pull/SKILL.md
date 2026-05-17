@@ -31,7 +31,7 @@ If the user asks for a blocked domain, surface this transitional state plainly. 
 Map the user's request — domain token OR natural language — onto one of these.
 
 **Available now (run these):**
-- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Free side-effect: also ingests global tempo + signature (they ride along in the same `get_session_info` probe).
+- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Free side-effect: also ingests global tempo + signature (they ride along in the same `ableton_session(action='info')` probe).
 - `score-globals` — global tempo + global time signature ONLY (bar-1 rows in each map). Cheaper than `mix-state` if all you've changed is tempo or meter.
 - `cue-points` — arrangement cue point positions. **Names are NOT pulled** (MCP gap #13: `get_cue_points` returns numeric IDs, not the real names). Apply diffs name mismatches as warnings only.
 
@@ -40,7 +40,7 @@ Map the user's request — domain token OR natural language — onto one of thes
 - Automation envelopes — blocked by no MCP read surface for envelopes (see `docs/mcp-requirements.md` "Capture-side read").
 - Device parameter values — blocked by MCP gap #17b (`get_device_parameters` raises `No module named 'MCP_Server'`).
 - Nested rack chains — blocked by MCP nested-chain probe gap.
-- Per-arrangement (multi-point) tempo / signature changes — MCP read gap; only the global (bar-1) values are exposed via `get_session_info`.
+- Per-arrangement (multi-point) tempo / signature changes — MCP read gap; only the global (bar-1) values are exposed via `ableton_session(action='info')`.
 - Audio — out of scope; the schema doesn't model audio clips yet.
 
 **Natural-language mapping examples:**
@@ -97,7 +97,7 @@ The result `result` MUST be the normalized shape `apply_pull_results` expects. T
 - `track_sends:<id>` → `{"<return_name>": <float>, ...}`.
 - `cue_points_list` → `[{"position_bar": <float>, "name": <str|null>}, ...]` OR `[{"bar": <1-based int>, "beat": <float>, "name": <str|null>}, ...]`. Either shape is accepted; apply joins (bar, beat) → position_bar using the song's time signature map. Names are gap-flagged (#13) and not stored.
 
-If the MCP response shape doesn't match (e.g. `get_session_info` returns nested differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.
+If the MCP response shape doesn't match (e.g. `ableton_session(action='info')` returns nested data differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.
 
 Write the results array to `/tmp/ableton-pull-results.json`.
 

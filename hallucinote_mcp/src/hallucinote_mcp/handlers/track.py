@@ -169,10 +169,15 @@ def create_handler(
 
 
 def delete_handler(context: LiveContext, *, track_index: int) -> dict[str, Any]:
-    """Delete a track. Live's API takes the Track object, not the index."""
+    """Delete a track. Live 12.4's ``Song.delete_track`` takes a 0-based int
+    (the C++ signature is ``delete_track(TPyHandle<ASong>, int)`` — passing a
+    Track wrapper raises ``ArgumentError``). ``_resolve_track`` still runs so
+    out-of-range indices surface as a teaching error before we touch Live's
+    API, but the C++ side only sees the int.
+    """
     song = context.song
-    track = _resolve_track(context, track_index)
-    song.delete_track(track)
+    _resolve_track(context, track_index)  # range check + teaching error
+    song.delete_track(track_index - 1)
     return {"deleted_track_index": track_index}
 
 

@@ -49,9 +49,19 @@ class FakeSong:
         self.return_tracks.append(new_ret)
         return new_ret
 
-    def delete_return_track(self, ret: FakeReturn) -> None:
-        self._deleted.append(ret)
-        self.return_tracks.remove(ret)
+    def delete_return_track(self, index_0based: int) -> None:
+        # Live 12.4's C++ signature is delete_return_track(int). Passing the
+        # ReturnTrack wrapper raises ArgumentError at the C++ boundary. We
+        # mirror that strictly here so handler bugs that pass a wrapper
+        # fail at test time, not in production (Wave-2 W2-3 root cause).
+        if not isinstance(index_0based, int) or isinstance(index_0based, bool):
+            raise TypeError(
+                "Song.delete_return_track(int) — got "
+                f"{type(index_0based).__name__}; Live's C++ signature "
+                f"rejects wrapper objects"
+            )
+        self._deleted.append(self.return_tracks[index_0based])
+        del self.return_tracks[index_0based]
 
 
 class FakeCtx:
@@ -229,6 +239,27 @@ def test_delete_return_removes(loaded_actions):
     assert resp.ok is True
     assert resp.result["deleted_return_index"] == 2
     assert target not in ctx.song.return_tracks
+
+
+def test_delete_return_passes_int_to_live_api(loaded_actions):
+    """Regression for Wave-2 W2-3: ``Song.delete_return_track`` must receive
+    a 0-based int, not the ReturnTrack wrapper. The tightened FakeSong
+    raises TypeError on a wrapper, so this test passes only when the
+    handler does the right thing.
+    """
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="delete",
+            params={"return_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, (
+        f"return.delete handler regressed to passing a ReturnTrack wrapper. "
+        f"Response: {resp.to_dict()}"
+    )
 
 
 def test_delete_return_raises_if_live_api_missing(loaded_actions):

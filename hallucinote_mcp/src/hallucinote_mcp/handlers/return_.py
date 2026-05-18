@@ -107,15 +107,21 @@ def create_handler(
 def delete_handler(
     context: LiveContext, *, return_index: int
 ) -> dict[str, Any]:
+    """Delete a return track. Live 12.4's ``Song.delete_return_track`` takes a
+    0-based int (the C++ signature is ``delete_return_track(TPyHandle<ASong>,
+    int)`` — passing a Track wrapper raises ``ArgumentError``). The
+    ``_resolve_return`` call still runs so out-of-range indices surface as a
+    teaching error before we touch Live's API.
+    """
     song = context.song
-    ret = _resolve_return(context, return_index)
+    _resolve_return(context, return_index)  # range check + teaching error
     delete_fn = getattr(song, "delete_return_track", None)
     if delete_fn is None:
         raise NotImplementedError(
             "Live does not expose Song.delete_return_track() in this version. "
             "Remove the return manually in Ableton."
         )
-    delete_fn(ret)
+    delete_fn(return_index - 1)
     return {"deleted_return_index": return_index}
 
 

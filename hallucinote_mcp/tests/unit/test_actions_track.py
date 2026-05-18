@@ -68,9 +68,19 @@ class FakeSong:
         self._deleted_tracks: list[FakeTrack] = []
         self._created_tracks: list[FakeTrack] = []
 
-    def delete_track(self, track: FakeTrack) -> None:
-        self._deleted_tracks.append(track)
-        self.tracks.remove(track)
+    def delete_track(self, index_0based: int) -> None:
+        # Live 12.4's C++ signature is delete_track(int). Passing the Track
+        # wrapper raises ArgumentError at the C++ boundary. We mirror that
+        # strictly here so handler bugs that pass a wrapper fail at test
+        # time, not in production (Wave-2 W2-2 root cause).
+        if not isinstance(index_0based, int) or isinstance(index_0based, bool):
+            raise TypeError(
+                "Song.delete_track(int) — got "
+                f"{type(index_0based).__name__}; Live's C++ signature "
+                f"rejects wrapper objects"
+            )
+        self._deleted_tracks.append(self.tracks[index_0based])
+        del self.tracks[index_0based]
 
     def create_midi_track(self, insert_at: int = -1) -> FakeTrack:
         t = FakeTrack(name="Midi", kind="midi")
@@ -357,6 +367,23 @@ def test_delete_removes_track(loaded_actions):
     assert resp.result["deleted_track_index"] == 2
     assert target in ctx.song._deleted_tracks
     assert target not in ctx.song.tracks
+
+
+def test_delete_passes_int_to_live_api(loaded_actions):
+    """Regression for Wave-2 W2-2 / Wave-1 B-23: ``Song.delete_track`` must
+    receive a 0-based int, not the Track wrapper. The tightened FakeSong
+    raises TypeError on a wrapper, so this test passes only when the
+    handler does the right thing. Lock in the contract explicitly.
+    """
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(tool="ableton_track", action="delete", params={"track_index": 3}),
+        context=ctx,
+    )
+    assert resp.ok is True, (
+        f"delete handler regressed to passing a Track wrapper. "
+        f"Response: {resp.to_dict()}"
+    )
 
 
 def test_rename_via_declarative_path(loaded_actions):

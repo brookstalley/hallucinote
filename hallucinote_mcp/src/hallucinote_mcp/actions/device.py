@@ -152,10 +152,16 @@ register(
         tool="ableton_device",
         name="load",
         description=(
-            "Load a device onto a track or return chain. 'kind' is the Live "
-            "device class name (e.g. 'Compressor2', 'Operator'). 'preset_uri' "
-            "is an optional Live browser URI for a specific preset/.adv. "
-            "'position' optionally moves the new device to a chain slot."
+            "Load a device onto a track or return chain via Live's browser. "
+            "'kind' is the Live device class / display name (e.g. "
+            "'Compressor2', 'Operator', 'Reverb'). 'preset_uri' is the "
+            "preferred selector — pass the canonical browser URI captured "
+            "via ableton_browser(action='at_path', ...) to load a specific "
+            "preset, instrument, or plugin. With 'kind' only, the handler "
+            "walks the instrument / audio_effect / midi_effect / drum roots "
+            "for the first loadable node whose display name matches. The "
+            "device appears at the END of the destination's device chain; "
+            "Live 12.4 has no public reorder API."
         ),
         params=(
             *_parent_addressing_specs(),
@@ -163,24 +169,18 @@ register(
                 name="kind",
                 type="str",
                 description=(
-                    "Live device class name. See the design doc + Live's "
-                    "browser categories for the supported set."
+                    "Live device class / display name. Required even when "
+                    "preset_uri is given (used for the response payload)."
                 ),
             ),
             ParamSpec(
                 name="preset_uri",
                 type="str",
                 required=False,
-                description="Optional Live browser URI for a specific preset.",
-            ),
-            ParamSpec(
-                name="position",
-                type="int",
-                required=False,
-                minimum=1,
                 description=(
-                    "Optional 1-based chain slot. Live appends by default; "
-                    "if set, the device is moved to this slot after load."
+                    "Canonical Live browser URI for a specific preset / "
+                    "instrument / plugin. Preferred over kind-only matching "
+                    "for anything beyond built-in Live device classes."
                 ),
             ),
         ),
@@ -190,7 +190,9 @@ register(
         ),
         tips=(
             "Returns {device_index, name, kind} — capture device_index for "
-            "subsequent parameter writes.",
+            "subsequent parameter writes. To target a specific preset, "
+            "resolve its URI with ableton_browser(action='at_path', ...) "
+            "and pass it as preset_uri.",
         ),
     )
 )

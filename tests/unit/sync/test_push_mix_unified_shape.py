@@ -489,24 +489,66 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
                 "panning": type("P", (), {"value": 0.0})(),
                 "sends": [],
             })()
-        def load_device(self, *args, **kwargs):
-            self.devices.append(type("D", (), {
-                "name": kwargs.get("kind", args[0] if args else "Unknown"),
-                "class_name": kwargs.get("kind", args[0] if args else "Unknown"),
+
+    class _View:
+        def __init__(self): self.selected_track = None
+
+    class _Item:
+        def __init__(self, name, uri):
+            self.name = name
+            self.uri = uri
+            self.is_loadable = True
+            self.is_folder = False
+            self.children = ()
+
+    class _Root:
+        def __init__(self, name): self.name = name; self.children = []
+        is_loadable = False; is_folder = True; uri = ""
+
+    class _Browser:
+        def __init__(self, song):
+            self._song = song
+            self.instruments = _Root("Instruments")
+            self.audio_effects = _Root("Audio Effects")
+            self.midi_effects = _Root("MIDI Effects")
+            self.drums = _Root("Drums")
+            self.plugins = _Root("Plug-Ins")
+            self.samples = _Root("Samples")
+            self.user_library = _Root("User Library")
+            self.packs = _Root("Packs")
+            # Pre-populate with the Compressor2 the planner is about to load.
+            self.audio_effects.children.append(
+                _Item("Compressor2", "query:Compressor2")
+            )
+
+        def load_item(self, item):
+            target = self._song.view.selected_track
+            new_dev = type("D", (), {
+                "name": item.name,
+                "class_name": item.name,
                 "is_active": True,
                 "parameters": (),
                 "can_have_chains": False,
-            })())
+            })()
+            target.devices.append(new_dev)
+
+    class _Application:
+        def __init__(self, song): self.browser = _Browser(song)
 
     class _Song:
         def __init__(self):
             self.tracks = [_Track()]
             self.return_tracks = []
+            self.view = _View()
 
     class _Ctx:
-        def __init__(self): self._song = _Song()
+        def __init__(self):
+            self._song = _Song()
+            self._application = _Application(self._song)
         @property
         def song(self): return self._song
+        @property
+        def application(self): return self._application
         def run_on_main(self, fn): return fn()
 
     with isolated_actions():

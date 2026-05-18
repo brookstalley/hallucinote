@@ -722,8 +722,12 @@ def _emit_device_calls(
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.
         # The handler accepts a Live device class name as `kind` and an
-        # optional Live browser URI as `preset_uri`. Position routing is
-        # supported when set.
+        # optional Live browser URI as `preset_uri`. Live 12.4 has no
+        # public reorder API — devices always land at the END of the
+        # destination chain, so the planner does not emit `position`.
+        # If the DB chain order needs to be enforced, push devices in the
+        # order they appear in the chain (position-asc) and Live's
+        # tail-append will match.
         load_args = {
             parent_arg: parent_at,
             "action": "load",
@@ -731,8 +735,6 @@ def _emit_device_calls(
         }
         if device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
-        if device["position"] is not None:
-            load_args["position"] = int(device["position"])
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,

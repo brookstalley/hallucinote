@@ -1309,6 +1309,43 @@ def _emit_note_expression_envelope(
             f"{len(breakpoints_mcp)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=breakpoints_mcp)
+
+
+_LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})
+
+
+def _warn_lossy_curve_hints(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """Emit one warn per envelope when any breakpoint carries a curve
+    hint Live 12.4 cannot apply.
+
+    Live 12.4 exposes only ``Envelope.insert_step``; the MCP handler
+    converts every breakpoint to a stepped region (see
+    ``hallucinote_mcp/src/hallucinote_mcp/handlers/automation.py::_write_breakpoints_as_steps``).
+    Curves ``linear`` / ``fast`` / ``slow`` are recorded in the DB
+    faithfully but discarded on push — the MCP handler returns a note
+    after the fact (``_stepped_envelope_note``). Surfacing the same
+    truth at plan time lets the user see round-trip lossiness BEFORE
+    dispatch instead of discovering it in MCP responses.
+
+    Only ``hold`` (and absent) curves are preserved on push. Dedup is
+    per-envelope: many lossy breakpoints in one envelope produce one
+    warn, not N.
+    """
+    if not any(bp.get("curve") in _LOSSY_CURVE_HINTS for bp in breakpoints_mcp):
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): Live 12.4 "
+        "applies all envelope curves as steps (Envelope.insert_step); "
+        "'linear'/'fast'/'slow' curve hints are recorded in the DB but "
+        "lossy on push. Use 'hold' to model the same behavior the DB "
+        "stores."
+    )
 
 
 def _warn_extra_placements(
@@ -1441,6 +1478,7 @@ def _emit_device_parameter_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 
@@ -1511,6 +1549,7 @@ def _emit_mixer_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 
@@ -1583,6 +1622,7 @@ def _emit_send_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 

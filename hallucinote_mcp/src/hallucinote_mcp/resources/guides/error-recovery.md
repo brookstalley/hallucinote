@@ -120,25 +120,33 @@ A full Claude Code restart works too, but `/mcp` alone is sufficient
 because it relaunches the MCP server subprocess.
 
 ### `Hallucinote MCP version mismatch: MCP server side reports X, Remote Script side is Y`
-Both halves are speaking the handshake, but they disagree. Whichever side
-is older is the one to refresh.
+Both halves are speaking the handshake, but they disagree. Versions are
+of the form `0.1.0+<12-hex-fingerprint>` — the base segment is the pip
+package's semver, the suffix is a content hash over the files that
+define the wire surface (actions, handlers, dispatcher, schema, wire,
+remote_script). Drift in EITHER side flips the fingerprint, so
+"different versions" doesn't tell you which side is older — just
+that the two source trees diverge.
 
-**If the Remote Script side is older (`Remote Script side is Y` where
-`Y < X`)** — the common case, because the pip side updates more freely:
+**The recovery is almost always the same path: refresh the Remote
+Script side**, because the MCP server side updates more freely (every
+pip install / editable-install reload) while the Remote Script side
+only updates when explicitly reinstalled:
+
 1. `/ableton-install-mcp` — re-runs the install, refreshing the vendored
    copy in Live's User Library.
 2. Fully quit Live (⌘Q / Alt+F4) and reopen it. **Live caches Control
    Surface modules at startup**, so a restart is required — `/mcp` alone
    does nothing for this branch, because the staleness is inside Live.
 
-**If the MCP server side is older (`MCP server side reports X` where
-`X < Y`)** — less common, but happens if you reinstall the Remote Script
-without upgrading the pip package:
-1. `pip install -U hallucinote-mcp`
+**If the MCP server side is the one that's behind** (rare — happens
+when the Remote Script was installed from a newer working tree than
+the pip-installed package):
+1. `pip install -U hallucinote-mcp` (or reinstall from source).
 2. `/mcp` in Claude Code to respawn the server.
 
-The error message names both versions so you can tell which side is the
-stale one without guessing.
+The error message names both versions so you can copy them into a bug
+report if the symptom persists after reinstall + restart.
 
 ## Gap-blocked actions (intentional)
 

@@ -186,9 +186,19 @@ def test_plan_push_arrangement_skips_unlinked_and_warns(
     assert any("track" in n.lower() for n in plan.notes)
 
 
-def test_plan_push_arrangement_emits_batch_when_linked(
+def test_plan_push_arrangement_emits_one_duplicate_per_arrangement_clip(
     conn, song, session, track, clip
 ):
+    """W3-D: planner emits N ``ableton_clip(duplicate_to_arrangement, …)``
+    calls directly — one per arrangement_clips row. No more emulator
+    batch wrapper; no agent-side decomposition burden.
+
+    ``destination_bar`` (1-based) is converted to ``start_beats`` (cumulative
+    beats from song start) via the meter-aware walker.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
@@ -201,14 +211,66 @@ def test_plan_push_arrangement_emits_batch_when_linked(
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
     assert len(plan.calls) == 1
     call = plan.calls[0]
-    assert call.tool == "batch_arrangement_layout"
-    ops = call.args["operations"]
-    assert len(ops) == 1
-    assert ops[0]["op"] == "duplicate"
-    assert ops[0]["track_index"] == 2
-    assert ops[0]["clip_index"] == 1
-    assert ops[0]["destination_bar"] == 1.0
-    assert ops[0]["key"] == f"arrangement_clip:{aid}"
+    assert call.tool == "ableton_clip"
+    assert call.args == {
+        "action": "duplicate_to_arrangement",
+        "track_index": 2,
+        "clip_index": 1,
+        "start_beats": 0.0,  # bar 1 -> beat 0
+    }
+    assert call.key == f"arrangement_clip:{aid}"
+    # Pre-clear hygiene warning still surfaces.
+    assert any("clear existing arrangement clips" in n for n in plan.notes)
+
+
+def test_plan_push_arrangement_converts_bar_to_beats_per_meter(
+    conn, song, session, track, clip
+):
+    """Bars convert with meter awareness. Bar 17 in 4/4 → 64 beats."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=17.0, end_bar=33.0,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls[0].args["start_beats"] == 64.0
+
+
+def test_plan_push_arrangement_multiple_clips_emit_separate_calls(
+    conn, song, session, track, clip
+):
+    """Three arrangement placements → three independent duplicate calls.
+    Verifies the planner doesn't accidentally collapse them into one."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
+    )
+    for bar in (1.0, 17.0, 33.0):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=bar, end_bar=bar + 16.0,
+        )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 3
+    beats = [c.args["start_beats"] for c in plan.calls]
+    assert sorted(beats) == [0.0, 64.0, 128.0]
+    # Each call has a distinct arrangement_clip:{db_id} key.
+    keys = {c.key for c in plan.calls}
+    assert len(keys) == 3
+    assert all(k.startswith("arrangement_clip:") for k in keys)
 
 
 # --- apply_push_results ---
@@ -242,12 +304,14 @@ def test_apply_results_skips_failed_calls(conn, session, track):
 
 
 def test_apply_results_links_arrangement_clip(conn, song, session, track, clip):
+    """W3-D: per-call duplicate result carries `arrangement_clip_index`
+    on the unified `ableton_clip(duplicate_to_arrangement)` tool."""
     aid = M.add_arrangement_clip(conn, song_id=song, track_id=track, clip_id=clip,
                                  start_bar=1.0, end_bar=16.0)
     push.apply_push_results(
         conn,
         [
-            {"key": f"arrangement_clip:{aid}", "ok": True, "tool": "batch_arrangement_layout",
+            {"key": f"arrangement_clip:{aid}", "ok": True, "tool": "ableton_clip",
              "result": {"arrangement_clip_index": 0}},
         ],
         session_id=session,
@@ -256,6 +320,52 @@ def test_apply_results_links_arrangement_clip(conn, song, session, track, clip):
         Q.get_ableton_link(conn, session_id=session, db_kind="arrangement_clip", db_id=aid)
         == 0
     )
+
+
+def test_apply_results_accepts_cue_batch_ack(conn, song, session):
+    """W3-B introduced `cue_batch:{song_id}` as the single-key result of
+    the batched cue creation call. Apply must recognize the kind and
+    treat it as ack-only (no DB binding to record — cue indexes aren't
+    tracked in `ableton_links`)."""
+    push.apply_push_results(
+        conn,
+        [
+            {"key": f"cue_batch:{song}", "ok": True, "tool": "ableton_arrangement",
+             "result": {"cue_count": 3,
+                        "cues": [{"cue_index": 1, "position_beats": 0.0, "name": "intro"}]}},
+        ],
+        session_id=session,
+    )
+    # No exception = test passes (the bug pre-fix was unknown-kind raise).
+
+
+def test_apply_results_rejects_obsolete_arrangement_batch_key(conn, song, session):
+    """W3-D dropped the `arrangement_batch:` kind. A stale caller that
+    still emits it must FAIL LOUDLY rather than silently no-op, so the
+    drift surfaces at the boundary."""
+    with pytest.raises(ValueError, match="unknown push result key kind 'arrangement_batch'"):
+        push.apply_push_results(
+            conn,
+            [
+                {"key": f"arrangement_batch:{song}", "ok": True,
+                 "tool": "batch_arrangement_layout", "result": {}},
+            ],
+            session_id=session,
+        )
+
+
+def test_apply_results_rejects_obsolete_cue_point_key(conn, song, session):
+    """W3-B dropped the per-cue `cue_point:` kind in favor of batched
+    `cue_batch:`. A stale caller emitting `cue_point:` must FAIL LOUDLY."""
+    with pytest.raises(ValueError, match="unknown push result key kind 'cue_point'"):
+        push.apply_push_results(
+            conn,
+            [
+                {"key": "cue_point:abc123", "ok": True,
+                 "tool": "create_cue_point", "result": {}},
+            ],
+            session_id=session,
+        )
 
 
 def test_apply_results_records_actor_sync_by_default(conn, session, track):

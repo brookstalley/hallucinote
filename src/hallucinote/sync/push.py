@@ -290,15 +290,33 @@ def plan_push_arrangement(
     song_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan rebuilding the arrangement for a song.
+    """Plan the arrangement build for a song.
 
-    Strategy: clear all existing arrangement clips for the involved tracks,
-    then duplicate session clips into the arrangement at their target bars.
-    Single batch_arrangement_layout call.
+    Strategy: for each ``arrangement_clips`` row, emit one
+    ``ableton_clip(action='duplicate_to_arrangement', track_index,
+    clip_index, start_beats)`` call. The agent / push-skill is responsible
+    for executing them — they're reorder-safe within the planner output
+    (each call addresses an independent (track, slot, position) triple)
+    and Live's underlying API handles them serially.
 
-    Pre-conditions (planner asserts and warns; doesn't fix):
-      - All tracks involved have a `track` link in this session
-      - All clips involved have a `clip` link in this session
+    Pre-conditions (planner warns; doesn't fix):
+      - All involved tracks have a ``track`` link in this session.
+      - All involved session clips have a ``clip`` link in this session.
+
+    Position conversion: each row's 1-based fractional ``start_bar`` is
+    converted to cumulative beats from song start via
+    :func:`_position_bar_to_beats`. The agent doesn't see bars; the MCP
+    surface is meter-agnostic (beats throughout).
+
+    Clear pass: not emitted here. The agent / push-skill should wipe
+    existing arrangement clips on the involved tracks before running the
+    plan. Adding explicit delete ops requires probing Live first (no DB
+    knowledge of what's currently in the arrangement) — out of scope for
+    pure-DB planners; see W3-I.
+
+    Returns N decomposed calls. Each call's result must carry
+    ``arrangement_clip_index`` so :func:`apply_push_results` can record
+    the binding under the ``arrangement_clip:{db_id}`` key.
     """
     plan = PushPlan()
     arr_rows = Q.get_arrangement_for_song(conn, song_id)
@@ -306,46 +324,56 @@ def plan_push_arrangement(
         plan.warn("no arrangement rows for this song")
         return plan
 
-    operations: list[dict[str, Any]] = []
-    track_indices_seen: set[int] = set()
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    if not ts_points:
+        plan.warn(
+            "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
+        )
 
+    emitted = 0
+    track_indices_seen: set[int] = set()
     for row in arr_rows:
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            plan.warn(f"arrangement_clip {row['id']}: track not linked in this session — skipping")
+            plan.warn(
+                f"arrangement_clip {row['id']}: track {row['track_id']} not linked "
+                "in this session — skipping"
+            )
             continue
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
             plan.warn(
-                f"arrangement_clip {row['id']}: clip {row['clip_id']} not linked in this session — skipping"
+                f"arrangement_clip {row['id']}: clip {row['clip_id']} not linked "
+                "in this session — skipping"
             )
             continue
         track_indices_seen.add(track_at)
-        operations.append({
-            "op": "duplicate",
-            "track_index": track_at,
-            "clip_index": clip_at,
-            "destination_bar": row["start_bar"],
-            "key": f"arrangement_clip:{row['id']}",
-        })
-
-    # Clear pass: caller-controlled. Conservative default — assume agent wipes
-    # arrangement clips on listed tracks before this batch runs. We could add
-    # explicit delete ops here once the planner knows what's currently in the
-    # arrangement (requires a get_arrangement_info pre-call).
-    if operations:
         plan.add(ToolCall(
-            tool="batch_arrangement_layout",
-            args={"operations": operations},
-            key=f"arrangement_batch:{song_id}",
-            purpose=f"rebuild arrangement: {len(operations)} duplicates "
-                    f"across {len(track_indices_seen)} tracks",
+            tool="ableton_clip",
+            args={
+                "action": "duplicate_to_arrangement",
+                "track_index": track_at,
+                "clip_index": clip_at,
+                "start_beats": _position_bar_to_beats(row["start_bar"], ts_points),
+            },
+            key=f"arrangement_clip:{row['id']}",
+            purpose=(
+                f"duplicate session slot {clip_at} on track {track_at} → "
+                f"arrangement bar {row['start_bar']:g}"
+            ),
         ))
-    plan.warn("planner does not yet emit pre-clear ops — agent must clear target tracks first")
+        emitted += 1
+
+    if emitted:
+        plan.warn(
+            "agent must clear existing arrangement clips on the involved tracks "
+            "before running these duplicates (planner emits no pre-clear ops "
+            "because it has no DB knowledge of Live's current arrangement state)"
+        )
     return plan
 
 
@@ -1314,11 +1342,13 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
-    # Chunk 2 (score)
-    "arrangement_batch",     # batch_arrangement_layout outer envelope; inner ops carry `arrangement_clip:` keys
-    "tempo_point",           # write_tempo_point
-    "time_signature_point",  # write_time_signature_point
-    "cue_point",             # create_cue_point
+    # Chunk 2 (score). W3-D dropped `arrangement_batch` (the planner now
+    # emits N `arrangement_clip:` calls directly; each has its own
+    # binding via _LINK_KINDS). W3-B dropped per-cue `cue_point` in
+    # favor of the single batched `cue_batch:` key.
+    "cue_batch",             # ableton_arrangement(cue_create_batch) — handler returns list of per-cue results
+    "tempo_point",           # write_tempo_point (emulator placeholder)
+    "time_signature_point",  # write_time_signature_point (emulator placeholder)
     # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
     # ableton_track(action='set_property') call. The key prefixes here stay
     # the same (volume/pan/mute/solo/arm/color) so apply matches by what the

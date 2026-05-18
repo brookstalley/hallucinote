@@ -333,18 +333,6 @@ def _check_call_shape(call) -> str | None:
     )
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "W3-A introduces the canary with 2 known drift cases pending fixes:\n"
-        "  1. plan_push_cue_points emits stale `create_cue_point` "
-        "(W3-B fixes; switch to ableton_arrangement(cue_create_batch)).\n"
-        "  2. plan_push_arrangement emits `_emulate_batch_arrangement_layout` "
-        "(W3-D fixes; decomposes into N ableton_clip(duplicate_to_arrangement)).\n"
-        "Remove this xfail marker in W3-D once both land — the canary should be "
-        "GREEN going forward as the contract that prevents future drift."
-    ),
-)
 def test_every_planner_emit_passes_dispatcher_validation(conn, synthetic_song):
     """The canary. Every ToolCall every planner emits must:
       - Name-resolve to either schema.TOOLS or KNOWN_EMULATORS.

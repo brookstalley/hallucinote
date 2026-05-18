@@ -124,16 +124,34 @@ def test_build_push_planners_run_without_error(build_module):
                 db_id=return_db_id, ableton_index=i,
             )
 
-        # Session-required planners (now satisfied — every track is linked).
+        # Session-required planners that don't depend on clip links: mix,
+        # devices, envelopes.
         for fn in (push.plan_push_mix, push.plan_push_devices,
-                   push.plan_push_envelopes, push.plan_push_arrangement):
+                   push.plan_push_envelopes):
             plan = fn(conn, song_id=song_id, session_id=session_id)
             assert plan is not None
 
         # plan_push_clip on every clip should emit at least one call.
+        # Simulate apply by linking each clip at a synthetic slot so the
+        # downstream arrangement planner (now strict post-W3-F-followup)
+        # has all the links it needs.
+        slot_counter: dict[str, int] = {}
         for t in Q.get_tracks_for_song(conn, song_id):
             for c in Q.get_clips_for_track(conn, t["id"]):
                 plan = push.plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
                 assert plan.calls, f"plan_push_clip({c['name']}) emitted no calls"
+                # Link the clip at its DB slot — matches what the agent
+                # would record after running the create call.
+                M.link_db_to_ableton(
+                    conn, session_id=session_id, db_kind="clip",
+                    db_id=c["id"], ableton_index=c["slot"],
+                )
+
+        # plan_push_arrangement is strict (W3-F follow-up): tracks AND
+        # clips must be linked. With the loop above, they are.
+        arrangement_plan = push.plan_push_arrangement(
+            conn, song_id=song_id, session_id=session_id,
+        )
+        assert arrangement_plan is not None
     finally:
         conn.close()

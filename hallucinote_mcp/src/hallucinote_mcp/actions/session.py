@@ -232,6 +232,12 @@ register(
             ParamSpec(name="beat", type="float", required=False, minimum=0.0),
         ),
         handler=session_handlers.seek_handler,
+        # W3-F follow-up: seek_handler acquires live_state_lock, which is
+        # an RLock shared with worker-thread cue handlers. Pre-fix state
+        # (default main-thread wrapping) deadlocked when main-thread seek
+        # tried to acquire a lock held by a worker-thread cue_create.
+        # Every live_state_lock taker must be on the worker thread.
+        runs_on_worker=True,
         example="ableton_session(action='seek', bar=5, beat=2.0)",
         tips=(
             "Bar 1 is the song's start. Beats inside a bar count from 0 "

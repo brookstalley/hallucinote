@@ -294,6 +294,10 @@ register(
             ),
         ),
         handler=arrangement_handlers.cue_jump_handler,
+        # W3-F follow-up: cue_jump_handler acquires live_state_lock,
+        # same RLock as the worker-thread cue handlers. Must be on
+        # the worker thread to avoid cross-thread deadlock.
+        runs_on_worker=True,
         example=(
             "ableton_arrangement(action='cue_jump', direction='next')"
         ),

@@ -278,16 +278,33 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
 # --- arrangement clips ---
 
 
-def test_plan_push_arrangement_skips_unlinked_and_warns(
+def test_plan_push_arrangement_raises_on_unlinked_track(
     conn, song, session, track, clip
 ):
+    """W3-F follow-up (Critic warning): plan_push_arrangement is now
+    strict on unlinked tracks/clips — same discipline as plan_push_clip
+    post-W3-C. Silent skip would leave Live with a half-built
+    arrangement; the strict raise points at the missing pre-pass."""
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    # Track unlinked -> no batch op emitted, only warnings
-    assert plan.calls == []
-    assert any("track" in n.lower() for n in plan.notes)
+    with pytest.raises(ValueError, match="plan_push_song_tracks.*first"):
+        push.plan_push_arrangement(conn, song_id=song, session_id=session)
+
+
+def test_plan_push_arrangement_raises_on_unlinked_clip(
+    conn, song, session, track, clip
+):
+    """When track IS linked but the session clip isn't, the error
+    points at the clip-create phase instead."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
+    )
+    with pytest.raises(ValueError, match="clip-create phase"):
+        push.plan_push_arrangement(conn, song_id=song, session_id=session)
 
 
 def test_plan_push_arrangement_emits_one_duplicate_per_arrangement_clip(

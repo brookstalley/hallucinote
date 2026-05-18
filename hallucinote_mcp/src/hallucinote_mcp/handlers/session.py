@@ -172,19 +172,28 @@ def seek_handler(
     eventually settles to the target — so reporting what we wrote is the
     honest answer.
 
-    Holds ``context.live_state_lock`` around the write so it serializes
-    against in-flight ``cue_create`` / ``cue_delete`` operations (B-21).
-    Without the lock, a seek issued in parallel with a cue op could
-    clobber the cue handler's playhead position mid-window.
+    **Threading (W3-F follow-up):** Registered with ``runs_on_worker=True``.
+    Holds ``context.live_state_lock`` around the write to serialize
+    against in-flight ``cue_create`` / ``cue_create_batch`` /
+    ``cue_delete`` (B-21). The lock is a ``threading.RLock`` — its
+    cross-thread acquire semantics REQUIRE all lock takers be on the
+    same kind of thread (worker), otherwise we deadlock against
+    worker-thread holders. Pre-fix state (main-thread seek_handler
+    acquiring a lock held by worker-thread cue_create) was the
+    deadlock that the Critic caught.
     """
-    song = context.song
-    beats_per_bar = float(song.signature_numerator) * (
-        4.0 / float(song.signature_denominator)
-    )
-    song_time = (bar - 1) * beats_per_bar + beat
-    with context.live_state_lock:
+    def _compute_and_seek_on_main() -> float:
+        song = context.song
+        beats_per_bar = float(song.signature_numerator) * (
+            4.0 / float(song.signature_denominator)
+        )
+        song_time = (bar - 1) * beats_per_bar + beat
         song.current_song_time = song_time
-    return {"bar": bar, "beat": beat, "song_time": float(song_time)}
+        return float(song_time)
+
+    with context.live_state_lock:
+        song_time = context.run_on_main(_compute_and_seek_on_main)
+    return {"bar": bar, "beat": beat, "song_time": song_time}
 
 
 # ---------------------------------------------------------------------------

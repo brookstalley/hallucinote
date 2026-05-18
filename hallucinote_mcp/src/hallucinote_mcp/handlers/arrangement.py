@@ -20,10 +20,14 @@ for the new MCP server's lifetime.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 from ..dispatcher import LiveContext
+
+
+logger = logging.getLogger(__name__)
 
 
 # How long the cue handlers wait in wall-clock time for
@@ -70,6 +74,65 @@ _CUE_SETTLE_POLL_S = 0.05
 _CUE_SETTLE_TOLERANCE_BEATS = 0.001  # ~1ms in beats; matches Live's quantization
 
 
+def _wait_for_song_time_on_worker(
+    context: LiveContext,
+    target_beats: float,
+    *,
+    max_wait_s: float = _CUE_SETTLE_TIMEOUT_S,
+    poll_interval_s: float = _CUE_SETTLE_POLL_S,
+    on_timeout: "Any | None" = None,
+) -> None:
+    """Block on the worker thread until ``context.song.current_song_time``
+    settles to ``target_beats`` (within :data:`_CUE_SETTLE_TOLERANCE_BEATS`).
+
+    Caller invariant: runs on the WORKER (TCP-listener) thread. Each
+    poll is its own main-thread bout via ``context.run_on_main``.
+    Between polls, ``time.sleep`` on the worker thread frees Live's
+    main thread to pump the audio-thread → mirror propagation event
+    that actually advances the mirror.
+
+    ``on_timeout`` is an optional zero-arg callable that runs as a
+    final main-thread bout immediately before ``TimeoutError`` is
+    raised — useful for cleanup like restoring the prior playhead
+    position. Its own exceptions are logged-and-swallowed (the primary
+    TimeoutError must propagate as the actionable signal).
+
+    The seek write itself is NOT done here — call sites typically
+    fold the write into a validation+capture bout so a race-window
+    between validation and seek isn't possible. Use
+    :func:`_seek_and_wait_on_worker` when you want both in one call.
+    """
+    target = round(float(target_beats), 6)
+    deadline = time.monotonic() + max_wait_s
+    while True:
+        def _read_position_on_main() -> float:
+            return round(
+                float(getattr(context.song, "current_song_time", -1.0)), 6,
+            )
+
+        actual = context.run_on_main(_read_position_on_main)
+        if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
+            return
+        if time.monotonic() >= deadline:
+            if on_timeout is not None:
+                try:
+                    context.run_on_main(on_timeout)
+                except Exception as cleanup_exc:  # prawduct:ok-broad-except — cleanup; primary timeout must propagate
+                    logger.warning(
+                        "on_timeout cleanup failed (%s: %s); transport may "
+                        "be parked at the in-flight target. Primary timeout "
+                        "follows.",
+                        type(cleanup_exc).__name__, cleanup_exc,
+                    )
+            raise TimeoutError(
+                f"playhead seek to beat {target} did not settle within "
+                f"{max_wait_s}s (last observed current_song_time={actual}). "
+                "Live's audio thread may be unresponsive — stop transport "
+                "and retry, or check if Live is busy with another operation."
+            )
+        time.sleep(poll_interval_s)
+
+
 def _seek_and_wait_on_worker(
     context: LiveContext,
     target_beats: float,
@@ -80,40 +143,20 @@ def _seek_and_wait_on_worker(
     """Write ``current_song_time = target_beats`` and BLOCK on the
     worker thread until Live's main-thread mirror reflects the write.
 
-    Caller invariant: runs on the WORKER (TCP-listener) thread. Each
-    Live read+write goes through ``context.run_on_main(fn)``. Between
-    polls, ``time.sleep`` on the worker thread lets Live's main thread
-    pump the audio-thread → mirror propagation event.
-
-    Raises ``TimeoutError`` if the mirror hasn't reached the target
-    within ``max_wait_s`` (the worker keeps polling for the full
-    duration; the deadline is wall-clock-bounded so a permanently-
-    stalled Live surfaces cleanly).
+    Thin orchestration over :func:`_wait_for_song_time_on_worker` —
+    sequences a main-thread seek bout, then delegates the wait.
+    Useful when the call site has no pre-seek validation or capture
+    state to manage; cue handlers combine the seek into their
+    validation bout instead and call the wait helper directly.
     """
-    target = round(float(target_beats), 6)
-
     def _seek_on_main() -> None:
         context.song.current_song_time = float(target_beats)
 
     context.run_on_main(_seek_on_main)
-
-    deadline = time.monotonic() + max_wait_s
-    actual = -1.0
-    while True:
-        def _read_position_on_main() -> float:
-            return round(float(getattr(context.song, "current_song_time", -1.0)), 6)
-
-        actual = context.run_on_main(_read_position_on_main)
-        if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
-            return
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"playhead seek to beat {target} did not settle within "
-                f"{max_wait_s}s (last observed current_song_time={actual}). "
-                "Live's audio thread may be unresponsive — stop transport "
-                "and retry, or check if Live is busy with another operation."
-            )
-        time.sleep(poll_interval_s)
+    _wait_for_song_time_on_worker(
+        context, target_beats,
+        max_wait_s=max_wait_s, poll_interval_s=poll_interval_s,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -392,38 +435,21 @@ def _create_one_cue_locked(
 
     # ---- Bout 2: worker-thread settle wait ----
     #
-    # The seek (issued in bout 1) is queued for the audio thread.
-    # ``_seek_and_wait_on_worker`` polls the main-thread mirror; between
+    # The seek (issued in bout 1) is queued for the audio thread. The
+    # wait helper polls the main-thread mirror via run_on_main; between
     # polls the main thread is free to pump the audio-thread → mirror
     # propagation event. THIS is the W3-F fix vs. W2-F's main-thread
     # tight-poll which deadlocked the propagation it was waiting for.
     target = round(float(position_beats), 6)
-    deadline = time.monotonic() + _CUE_SETTLE_TIMEOUT_S
-    while True:
-        def _read_mirror() -> float:
-            return round(
-                float(getattr(context.song, "current_song_time", -1.0)), 6,
-            )
 
-        actual = context.run_on_main(_read_mirror)
-        if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
-            break
-        if time.monotonic() >= deadline:
-            # Best-effort restore the playhead — don't leave the
-            # transport parked at the in-flight target on timeout.
-            def _restore_after_timeout() -> None:
-                context.song.current_song_time = prior
-            try:
-                context.run_on_main(_restore_after_timeout)
-            except Exception:  # prawduct:ok-broad-except — error-path cleanup; we MUST raise the timeout, not the cleanup failure
-                pass
-            raise TimeoutError(
-                f"playhead seek to beat {target} did not settle within "
-                f"{_CUE_SETTLE_TIMEOUT_S}s (last observed current_song_time={actual}). "
-                "Live's audio thread may be unresponsive — stop transport "
-                "and retry, or check if Live is busy with another operation."
-            )
-        time.sleep(_CUE_SETTLE_POLL_S)
+    def _restore_on_timeout() -> None:
+        # Cleanup bout: restore the prior playhead so a timeout doesn't
+        # leave Live parked at the in-flight target.
+        context.song.current_song_time = prior
+
+    _wait_for_song_time_on_worker(
+        context, target, on_timeout=_restore_on_timeout,
+    )
 
     # ---- Bout 3: toggle (main thread) ----
     def _toggle_at_settled_playhead() -> None:
@@ -670,27 +696,8 @@ def cue_delete_handler(
         context.run_on_main(_seek)
 
         try:
-            # ---- Worker-thread settle wait ----
-            deadline = time.monotonic() + _CUE_SETTLE_TIMEOUT_S
-            while True:
-                def _read_mirror() -> float:
-                    return round(
-                        float(getattr(context.song, "current_song_time", -1.0)),
-                        6,
-                    )
-                actual = context.run_on_main(_read_mirror)
-                if abs(actual - target_pos_key) < _CUE_SETTLE_TOLERANCE_BEATS:
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"playhead seek to beat {target_pos_key} did not "
-                        f"settle within {_CUE_SETTLE_TIMEOUT_S}s "
-                        f"(last observed current_song_time={actual}). "
-                        "Live's audio thread may be unresponsive — stop "
-                        "transport and retry, or check if Live is busy with "
-                        "another operation."
-                    )
-                time.sleep(_CUE_SETTLE_POLL_S)
+            # ---- Worker-thread settle wait (shared helper) ----
+            _wait_for_song_time_on_worker(context, target_pos_key)
 
             # ---- Bout 3: toggle (main thread) ----
             def _toggle() -> None:
@@ -732,8 +739,13 @@ def cue_delete_handler(
                 context.song.current_song_time = prior
             try:
                 context.run_on_main(_restore)
-            except Exception:  # prawduct:ok-broad-except — cleanup; primary exception takes precedence
-                pass
+            except Exception as restore_exc:  # prawduct:ok-broad-except — cleanup; primary exception takes precedence
+                logger.warning(
+                    "cue_delete: playhead restore failed (%s: %s); "
+                    "transport may be parked at the cue's position. "
+                    "Primary cue_delete outcome takes precedence.",
+                    type(restore_exc).__name__, restore_exc,
+                )
 
     return {"deleted_cue_index": cue_index}
 
@@ -777,59 +789,70 @@ def cue_jump_handler(
     """Jump the playhead to a cue. Either ``direction`` ('next'|'previous')
     relative to current position, or ``name`` to jump to a specific cue.
     Exactly one of the two must be provided.
+
+    **Threading (W3-F follow-up):** Registered with ``runs_on_worker=True``
+    because this handler acquires ``context.live_state_lock`` and the
+    lock is an ``RLock`` shared with worker-thread holders
+    (``cue_create`` etc.). Pre-fix state ran on the main thread,
+    deadlocking against worker-thread cue ops. Pure-Python validation
+    runs on the worker; each Live touch is marshaled through
+    ``run_on_main``.
     """
     if (direction is None) == (name is None):
         raise ValueError(
             "cue_jump: provide exactly one of direction (next|previous) OR name"
         )
-    song = context.song
     if direction is not None:
         if direction not in _JUMP_DIRECTIONS:
             raise ValueError(
                 f"direction {direction!r} not in {list(_JUMP_DIRECTIONS)}"
             )
-        fn = getattr(
-            song, "jump_to_next_cue" if direction == "next" else "jump_to_prev_cue",
-            None,
-        )
-        if fn is None:
-            raise NotImplementedError(
-                f"Live does not expose jump_to_{direction}_cue in this version"
+
+        def _jump_by_direction_on_main() -> float:
+            song = context.song
+            fn = getattr(
+                song,
+                "jump_to_next_cue" if direction == "next" else "jump_to_prev_cue",
+                None,
             )
-        # jump_to_{next,prev}_cue mutates current_song_time on Live's side,
-        # so it falls under the same parallel-safety contract as cue_create /
-        # cue_delete / seek (B-21). Holding live_state_lock here keeps the
-        # contract honest.
-        with context.live_state_lock:
+            if fn is None:
+                raise NotImplementedError(
+                    f"Live does not expose jump_to_{direction}_cue in this version"
+                )
             fn()
-            position_after = float(getattr(song, "current_song_time", 0.0))
+            return float(getattr(song, "current_song_time", 0.0))
+
+        with context.live_state_lock:
+            position_after = context.run_on_main(_jump_by_direction_on_main)
         return {
             "direction": direction,
             "position_beats": position_after,
         }
+
     # name path
-    target = None
-    for cue in getattr(song, "cue_points", ()):
-        if getattr(cue, "name", "") == name:
-            target = cue
-            break
-    if target is None:
-        available = [
-            getattr(c, "name", "") for c in getattr(song, "cue_points", ())
-        ]
-        raise ValueError(
-            f"cue_jump: no cue named {name!r}; available: {available}"
-        )
-    jumper = getattr(target, "jump", None)
-    # Both paths write current_song_time (either Live's CuePoint.jump() does
-    # it internally, or we set it directly). Same B-21 race surface as the
-    # direction path above.
-    with context.live_state_lock:
+    def _jump_by_name_on_main() -> float:
+        song = context.song
+        target = None
+        for cue in getattr(song, "cue_points", ()):
+            if getattr(cue, "name", "") == name:
+                target = cue
+                break
+        if target is None:
+            available = [
+                getattr(c, "name", "") for c in getattr(song, "cue_points", ())
+            ]
+            raise ValueError(
+                f"cue_jump: no cue named {name!r}; available: {available}"
+            )
+        jumper = getattr(target, "jump", None)
         if jumper is not None:
             jumper()
         else:
             song.current_song_time = float(getattr(target, "time", 0.0))
-        position_after = float(getattr(song, "current_song_time", 0.0))
+        return float(getattr(song, "current_song_time", 0.0))
+
+    with context.live_state_lock:
+        position_after = context.run_on_main(_jump_by_name_on_main)
     return {
         "name": name,
         "position_beats": position_after,

@@ -382,9 +382,16 @@ def plan_push_arrangement(
     (each call addresses an independent (track, slot, position) triple)
     and Live's underlying API handles them serially.
 
-    Pre-conditions (planner warns; doesn't fix):
-      - All involved tracks have a ``track`` link in this session.
-      - All involved session clips have a ``clip`` link in this session.
+    Pre-conditions (strict — raises with actionable error if violated,
+    matching :func:`plan_push_clip`'s strict-contract discipline post-W3-C):
+      - Every involved track has a ``track`` link in this session.
+      - Every involved session clip has a ``clip`` link in this session.
+
+    Strict raise rather than warn+skip: a song-wide arrangement push
+    with unlinked elements means the caller skipped a phase
+    (plan_push_song_tracks / clip-create) — silently building a partial
+    arrangement would leave Live in a wrong state that's hard to
+    detect downstream. The error message points at the missing phase.
 
     Position conversion: each row's 1-based fractional ``start_bar`` is
     converted to cumulative beats from song start via
@@ -413,28 +420,30 @@ def plan_push_arrangement(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
         )
 
-    emitted = 0
-    track_indices_seen: set[int] = set()
     for row in arr_rows:
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            plan.warn(
-                f"arrangement_clip {row['id']}: track {row['track_id']} not linked "
-                "in this session — skipping"
+            raise ValueError(
+                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
+                f"references track {row['track_id']!r}, which is not linked "
+                f"in session {session_id!r}. Run plan_push_song_tracks(conn, "
+                f"song_id=..., session_id=...) first, apply_push_results, "
+                f"then re-run plan_push_arrangement."
             )
-            continue
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
-            plan.warn(
-                f"arrangement_clip {row['id']}: clip {row['clip_id']} not linked "
-                "in this session — skipping"
+            raise ValueError(
+                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
+                f"references session clip {row['clip_id']!r}, which is not "
+                f"linked in session {session_id!r}. Run the clip-create "
+                f"phase (plan_push_clip per clip OR the master orchestrator's "
+                f"clip phase), apply_push_results, then re-run "
+                f"plan_push_arrangement."
             )
-            continue
-        track_indices_seen.add(track_at)
         plan.add(ToolCall(
             tool="ableton_clip",
             args={
@@ -449,9 +458,8 @@ def plan_push_arrangement(
                 f"arrangement bar {row['start_bar']:g}"
             ),
         ))
-        emitted += 1
 
-    if emitted:
+    if plan.calls:
         plan.warn(
             "agent must clear existing arrangement clips on the involved tracks "
             "before running these duplicates (planner emits no pre-clear ops "

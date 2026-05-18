@@ -203,6 +203,20 @@ subpackages are reachable through the Remote Script import chain
 that Live walks at startup. Trimming either would break the Control
 Surface load.
 
+**Implication for development**: server-side action/handler changes
+are ALSO Live-side changes, because the Control Surface re-imports
+these packages from Live's User Library copy at startup. After
+editing any `actions/*.py` or `handlers/*.py`, you must:
+
+1. Run `/ableton-install-mcp` to refresh Live's vendored copy.
+2. Fully quit and reopen Live (Live caches Control Surface modules
+   at startup; `/mcp` alone doesn't refresh the Live-side copy).
+3. `/mcp` to respawn the server subprocess.
+
+The MCP server's version-mismatch check fires loudly if these halves
+drift — it fingerprints the whole `hallucinote_mcp` package and
+refuses to dispatch.
+
 Other subpackages (e.g. `prompts/`, `resources/`, `skills/`, plus
 `testing.py`) come along for the ride — Live ignores anything it doesn't
 load, and stripping them per-release would create a drift surface. The

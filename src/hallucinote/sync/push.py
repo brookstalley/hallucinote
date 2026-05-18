@@ -108,6 +108,59 @@ def _split_bar(
     return bar_int, frac * _beats_per_bar(num, den)
 
 
+def _position_bar_to_beats(
+    bar_pos: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Convert a 1-based fractional bar position to cumulative beats from song start.
+
+    Live's arrangement time is measured in BEATS (quarter notes) regardless of
+    meter — `position_beats` on every ableton_arrangement / ableton_clip
+    arrangement-side action. Inverse-ish of :func:`_split_bar`: that returns
+    ``(bar_int, beat_within_bar)``; this returns the total beats from bar 1's
+    downbeat to the requested fractional bar.
+
+    Walks the time_signature_map so meter changes accumulate correctly. Bars
+    before ``ts_points[0].start_bar`` use ``ts_points[0]``'s meter (matches
+    :func:`_meter_at_bar`'s fallback). Empty map → 4/4 throughout.
+
+    Examples (in 4/4):
+      - ``bar_pos=1.0`` -> 0.0
+      - ``bar_pos=17.0`` -> 64.0    (16 bars × 4 beats)
+      - ``bar_pos=17.5`` -> 66.0    (16 bars × 4 + half-bar = 2 beats)
+    """
+    if bar_pos < 1.0:
+        raise ValueError(
+            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
+        )
+    if not ts_points:
+        return (bar_pos - 1.0) * _beats_per_bar(
+            _DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR,
+        )
+
+    beats = 0.0
+    current_bar = 1.0
+    current_bpb = _beats_per_bar(
+        ts_points[0]["numerator"], ts_points[0]["denominator"],
+    )
+
+    for p in ts_points:
+        change_at = float(p["start_bar"])
+        if change_at <= current_bar:
+            # Already at or past this point's bar (the canonical case for
+            # ts_points[0] when its start_bar == 1.0). Adopt this point's
+            # meter; nothing to accumulate.
+            current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
+            continue
+        if bar_pos < change_at:
+            return beats + (bar_pos - current_bar) * current_bpb
+        beats += (change_at - current_bar) * current_bpb
+        current_bar = change_at
+        current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
+
+    return beats + (bar_pos - current_bar) * current_bpb
+
+
 def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """DB notes carry tags + extra fields; MCP wants the bare quartet."""
     return [
@@ -388,12 +441,30 @@ def plan_push_cue_points(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `create_cue_point` calls for every row in `cue_points`.
+    """Emit a single batched ``ableton_arrangement(cue_create_batch)`` call.
 
-    Live's MCP `create_cue_point(bar, beat, name)` is callable today, with
-    `bar` 1-based int and `beat` 0-based float within that bar. The planner
-    splits each row's fractional `position_bar` accordingly using the song's
-    time_signature_map.
+    Live's MCP exposes per-cue ``ableton_arrangement(action='cue_create',
+    position_beats=…, name=…)`` and a batched ``cue_create_batch`` that
+    submits multiple cues in one round-trip. The batch is strictly more
+    efficient (one TCP exchange instead of N) and matches the underlying
+    Live API's per-cue settle cost, so the planner emits the batch form.
+
+    Position conversion: each row's 1-based fractional ``position_bar`` is
+    converted to cumulative beats from song start via
+    :func:`_position_bar_to_beats`, walking the song's time_signature_map.
+    Cues at bar 1.0 → ``position_beats=0.0``; downstream meter changes
+    accumulate correctly.
+
+    Sequencing precondition (W3-I): cue creation must run AFTER
+    arrangement-clip placement, because Live's ``set_or_delete_cue`` is
+    clamped to ``[0, song.last_event_time]``. The agent / push-skill is
+    responsible for phase order; this planner emits no internal warn —
+    a cue past the arrangement's extent surfaces as a teaching error
+    from the handler at execution time.
+
+    Result key: ``cue_batch:{song_id}``. The batch handler returns a list
+    of per-cue results; ``apply_push_results`` consumes it via the
+    existing batched-result path.
     """
     plan = PushPlan()
     rows = Q.get_cue_points(conn, song_id)
@@ -403,16 +474,22 @@ def plan_push_cue_points(
     ts_points = Q.get_time_signature_map(conn, song_id)
     if not ts_points:
         plan.warn(
-            "no time_signature_map; assuming 4/4 for cue-point bar/beat split"
+            "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
-    for r in rows:
-        bar, beat = _split_bar(r["position_bar"], ts_points)
-        plan.add(ToolCall(
-            tool="create_cue_point",
-            args={"bar": bar, "beat": beat, "name": r["name"] or ""},
-            key=f"cue_point:{r['id']}",
-            purpose=f"create cue point '{r['name'] or ''}' at bar {r['position_bar']:g}",
-        ))
+
+    cues = [
+        {
+            "position_beats": _position_bar_to_beats(r["position_bar"], ts_points),
+            "name": r["name"] or "",
+        }
+        for r in rows
+    ]
+    plan.add(ToolCall(
+        tool="ableton_arrangement",
+        args={"action": "cue_create_batch", "cues": cues},
+        key=f"cue_batch:{song_id}",
+        purpose=f"create {len(cues)} cue point(s) in one batched call",
+    ))
     return plan
 
 

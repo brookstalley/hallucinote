@@ -183,19 +183,33 @@ def control_view_handler(
             f"track_index {track_index} out of range [1, {len(song.tracks)}]"
         )
     track = song.tracks[track_index - 1]
+    # Live 12.4: only foldable tracks (Group tracks, Drum/Instrument racks
+    # exposed at track level) accept collapse/expand. Writing fold_state to
+    # a regular MIDI / audio track raises a raw ``RuntimeError: This Track
+    # can not be collapsed``. Pre-check ``is_foldable`` so we surface a
+    # teaching error before reaching Live's raw exception (Wave-1 B-13).
+    if not bool(getattr(track, "is_foldable", False)):
+        track_name = getattr(track, "name", f"track {track_index}")
+        hint = (
+            "Create a group containing the tracks you want to collapse "
+            "before calling this action."
+            if action_kind == "collapse_track"
+            else "Only group tracks have a foldable state to expand."
+        )
+        raise ValueError(
+            f"{action_kind!r}: track {track_index} ({track_name!r}) is not "
+            "a foldable track; only group tracks (and rack-typed tracks) "
+            f"can be collapsed or expanded. {hint}"
+        )
     is_collapsed = (action_kind == "collapse_track")
-    # Per Live's API, the property is `is_showing_chains` (rack) or
-    # `arrangement_track_height` (display height). We expose a uniform
-    # collapsed/expanded affordance via the `fold_state` attribute when
-    # present; otherwise fall through to setting display height.
     if hasattr(track, "fold_state"):
         track.fold_state = 1 if is_collapsed else 0
     elif hasattr(track, "is_folded"):
         track.is_folded = is_collapsed
     else:
         raise NotImplementedError(
-            f"track {track_index} does not support collapse/expand in this "
-            "Live version"
+            f"track {track_index} reports is_foldable but exposes neither "
+            "fold_state nor is_folded; Live API surface unexpected"
         )
     return {"action_kind": action_kind, "track_index": track_index}
 

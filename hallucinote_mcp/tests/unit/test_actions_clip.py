@@ -29,6 +29,10 @@ class FakeClip:
         self.length = length
         self.start_time = start_time
         self._kind = kind
+        # Live exposes ``clip.is_midi_clip`` as the kind discriminator;
+        # mirror it here so handlers that pre-check the kind (Wave-2 W2-C
+        # / B-26) hit our fake faithfully.
+        self.is_midi_clip = (kind == "midi")
         # MIDI-style notes-storage; mirrors what set_notes() takes.
         self.notes: tuple[tuple[int, float, float, int, bool], ...] = ()
         # Properties handler exercises these attributes.

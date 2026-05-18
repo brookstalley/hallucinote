@@ -170,10 +170,16 @@ def get_parameters_handler(
         if detail == "full":
             entry["min"] = float(getattr(p, "min", 0.0))
             entry["max"] = float(getattr(p, "max", 1.0))
-            items = tuple(getattr(p, "value_items", ()) or ())
-            entry["is_enum"] = bool(items)
-            if items:
-                entry["value_items"] = list(items)
+            # Live raises ``RuntimeError: Only quantized parameters have
+            # value items`` on continuous-parameter ``value_items`` access.
+            # Guard via ``is_quantized`` before reading.
+            if bool(getattr(p, "is_quantized", False)):
+                items = tuple(getattr(p, "value_items", ()) or ())
+                entry["is_enum"] = bool(items)
+                if items:
+                    entry["value_items"] = list(items)
+            else:
+                entry["is_enum"] = False
         params_out.append(entry)
     result: dict[str, Any] = {
         "device_index": device_index,
@@ -444,18 +450,58 @@ def _set_active(
     return_index: int | None,
     is_active: bool,
 ) -> dict[str, Any]:
+    """Toggle a device's active/bypass state.
+
+    Live 12.4 exposes ``device.is_active`` as READ-ONLY on at least
+    Compressor / CompressorDevice — direct attribute writes raise
+    ``AttributeError: property of 'CompressorDevice' object has no
+    setter``. The writable surface is the "Device On" parameter (always
+    ``device.parameters[0]`` by Live convention). Write to that
+    parameter's ``value``; fall back to ``is_active`` only if no
+    Device-On parameter is found (defensive — should never happen for a
+    real Live device).
+    """
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
     )
     dev = _resolve_device(parent, device_index)
-    dev.is_active = is_active
-    result: dict[str, Any] = {
+    target_value = 1.0 if is_active else 0.0
+
+    # Prefer the Device-On parameter (the writable surface on Live 12.4).
+    params = getattr(dev, "parameters", ())
+    device_on = None
+    if params:
+        first = params[0]
+        if getattr(first, "name", "") == "Device On":
+            device_on = first
+    if device_on is not None:
+        device_on.value = target_value
+        return {
+            "device_index": device_index,
+            "is_active": is_active,
+            "parent_kind": kind,
+            **_parent_address(kind, idx),
+        }
+
+    # Fallback: direct attribute write. On Live 12.4 CompressorDevice this
+    # raises; surface a teaching error rather than the raw AttributeError.
+    try:
+        dev.is_active = is_active
+    except AttributeError as exc:
+        raise NotImplementedError(
+            f"device(action='{'enable' if is_active else 'disable'}'): the "
+            f"device at index {device_index} exposes neither a 'Device On' "
+            f"parameter nor a writable 'is_active' attribute "
+            f"(class={type(dev).__name__}). Original error: {exc}. "
+            "Live API surface for this device class doesn't support "
+            "enable/disable from the Remote Script."
+        ) from exc
+    return {
         "device_index": device_index,
         "is_active": is_active,
         "parent_kind": kind,
+        **_parent_address(kind, idx),
     }
-    result.update(_parent_address(kind, idx))
-    return result
 
 
 def enable_handler(
@@ -537,6 +583,14 @@ def set_parameter_handler(
         )
 
     if value_type == "enum":
+        # Live raises RuntimeError on continuous-parameter value_items access
+        # (Wave-2 W2-9). Guard via is_quantized — when False, the parameter
+        # has no enum items by definition.
+        if not bool(getattr(target_param, "is_quantized", False)):
+            raise ValueError(
+                f"parameter {parameter_name!r} is not an enum parameter "
+                f"(is_quantized=False); use value_type='continuous'"
+            )
         items = tuple(getattr(target_param, "value_items", ()) or ())
         if not items:
             raise ValueError(

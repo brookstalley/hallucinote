@@ -29,14 +29,25 @@ class FakeParam:
         self.value = value
         self.min = min
         self.max = max
-        self.value_items = value_items
+        # Live 12.4 raises ``RuntimeError: Only quantized parameters have
+        # value items`` when ``value_items`` is read on a continuous
+        # parameter. Mirror that strictly so handlers that read it
+        # unguarded fail at test time (Wave-2 W2-9 root cause).
+        self.is_quantized = value_items is not None
+        self._value_items = value_items
         self._str_for_value = lambda v: f"{v:.2f}"
 
+    @property
+    def value_items(self) -> tuple[str, ...]:
+        if not self.is_quantized:
+            raise RuntimeError("Only quantized parameters have value items")
+        return self._value_items or ()
+
     def str_for_value(self, v: float) -> str:
-        if self.value_items:
+        if self.is_quantized and self._value_items:
             idx = int(v)
-            if 0 <= idx < len(self.value_items):
-                return self.value_items[idx]
+            if 0 <= idx < len(self._value_items):
+                return self._value_items[idx]
         return self._str_for_value(v)
 
 
@@ -676,6 +687,9 @@ def test_delete_removes_device(loaded_actions):
 
 
 def test_enable_disable_toggle_is_active(loaded_actions):
+    """Fallback path: device without a 'Device On' parameter falls through
+    to the direct is_active attribute write. Preserves the prior contract.
+    """
     dev = FakeDevice("X")
     track = FakeTrack("T1", devices=[dev])
     ctx = FakeCtx(FakeSong(tracks=[track]))
@@ -695,6 +709,49 @@ def test_enable_disable_toggle_is_active(loaded_actions):
         context=ctx,
     )
     assert r2.ok and dev.is_active is True
+
+
+def test_enable_disable_uses_device_on_parameter(loaded_actions):
+    """Wave-2 W2-C / B-12: Live 12.4 exposes ``is_active`` as read-only on
+    at least CompressorDevice. The writable surface is the 'Device On'
+    parameter at parameters[0]. The handler must write there, not to the
+    raw attribute. Verified by asserting the parameter's value changed
+    AND the (deliberately untouched) is_active mock stayed at its
+    initial state to prove the param path won.
+    """
+    device_on = FakeParam("Device On", value=1.0, value_items=("Off", "On"))
+    dev = FakeDevice(
+        "Comp", parameters=[device_on, FakeParam("Threshold", 0.5)],
+    )
+    track = FakeTrack("T1", devices=[dev])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    initial_is_active = dev.is_active
+
+    r1 = dispatch(
+        Request(
+            tool="ableton_device", action="disable",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert r1.ok
+    assert device_on.value == 0.0, (
+        f"disable should have written 0.0 to the 'Device On' parameter "
+        f"(got {device_on.value})"
+    )
+    # is_active stayed at its mock-initial value — the handler did NOT
+    # fall back to the read-only attribute.
+    assert dev.is_active == initial_is_active
+
+    r2 = dispatch(
+        Request(
+            tool="ableton_device", action="enable",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert r2.ok
+    assert device_on.value == 1.0
 
 
 # ---------- set_parameter ----------

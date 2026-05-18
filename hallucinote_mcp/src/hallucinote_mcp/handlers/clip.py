@@ -523,6 +523,9 @@ _CLIP_PROPERTIES: dict[str, tuple[str, Any, tuple[float, float] | None]] = {
 }
 
 
+_AUDIO_ONLY_CLIP_PROPERTIES: frozenset[str] = frozenset({"gain", "pitch", "warp"})
+
+
 def set_property_handler(
     context: LiveContext,
     *,
@@ -545,14 +548,28 @@ def set_property_handler(
         )
     attr, coercer, bounds = _CLIP_PROPERTIES[property]
     coerced = coercer(value)
+    clip = _resolve_clip(
+        context, track_index=track_index, location=location, clip_index=clip_index
+    )
+    # Pre-check: audio-only properties (gain / pitch / warp) on a MIDI clip
+    # bubble Live's raw "X is only available for Audio Clips" RuntimeError.
+    # Surface a teaching error instead (Wave-1 B-26). Done BEFORE the
+    # bounds check so users with a bad value on the wrong clip kind get
+    # the kind-mismatch message (more actionable) instead of "out of range".
+    if property in _AUDIO_ONLY_CLIP_PROPERTIES and bool(
+        getattr(clip, "is_midi_clip", False)
+    ):
+        raise ValueError(
+            f"set_property: property {property!r} is audio-only "
+            f"({sorted(_AUDIO_ONLY_CLIP_PROPERTIES)}); the clip at "
+            f"(track={track_index}, {location}, {clip_index}) is a MIDI "
+            f"clip. These properties only apply to audio clips."
+        )
     if bounds is not None and not (bounds[0] <= float(coerced) <= bounds[1]):
         raise ValueError(
             f"set_property: value {value} for {property!r} is out of range "
             f"{list(bounds)}"
         )
-    clip = _resolve_clip(
-        context, track_index=track_index, location=location, clip_index=clip_index
-    )
     if not hasattr(clip, attr):
         raise NotImplementedError(
             f"clip at (track={track_index}, {location}, {clip_index}) does not "

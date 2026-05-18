@@ -43,9 +43,14 @@ class FakeApplication:
 
 
 class FakeTrack:
-    def __init__(self, name: str = "T"):
+    def __init__(self, name: str = "T", *, is_foldable: bool = False):
         self.name = name
         self.fold_state = 0
+        # Live 12.4: only group tracks (and rack-typed tracks) accept
+        # collapse/expand. Writing fold_state on a regular track raises
+        # ``RuntimeError: This Track can not be collapsed``. Mirror that
+        # by defaulting is_foldable=False (Wave-2 W2-C / B-13 root cause).
+        self.is_foldable = is_foldable
 
 
 class FakeSong:
@@ -283,7 +288,9 @@ def test_control_view_collapse_requires_track_index(loaded_actions):
 
 
 def test_control_view_collapse_track(loaded_actions):
-    ctx = FakeCtx()
+    """collapse_track works on FOLDABLE tracks (group/rack)."""
+    foldable_track = FakeTrack(name="Group A", is_foldable=True)
+    ctx = FakeCtx(FakeSong(tracks=[foldable_track]))
     resp = dispatch(
         Request(
             tool="ableton_arrangement", action="control_view",
@@ -293,6 +300,24 @@ def test_control_view_collapse_track(loaded_actions):
     )
     assert resp.ok is True
     assert ctx.song.tracks[0].fold_state == 1
+
+
+def test_control_view_collapse_non_foldable_track_teaches(loaded_actions):
+    """Wave-2 W2-C / B-13: collapse_track on a non-foldable track must
+    surface a teaching error pointing at the group-track workaround,
+    not Live's raw RuntimeError.
+    """
+    ctx = FakeCtx()  # default tracks have is_foldable=False
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="control_view",
+            params={"action_kind": "collapse_track", "track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "not a foldable track" in (resp.error or "")
+    assert "group" in (resp.error or "").lower()
 
 
 # ---------- cue_list / cue_create / cue_delete / cue_jump ----------

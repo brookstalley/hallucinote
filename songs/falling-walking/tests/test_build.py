@@ -97,7 +97,34 @@ def test_build_push_planners_run_without_error(build_module):
             plan = fn(conn, song_id=song_id)
             assert plan is not None
 
-        # Session-required planners.
+        # W3-C song-level pre-pass: emits one create per unique unlinked
+        # track / return. Validate count + simulate apply.
+        tracks_plan = push.plan_push_song_tracks(conn, song_id=song_id, session_id=session_id)
+        non_master_tracks = [
+            t for t in Q.get_tracks_for_song(conn, song_id) if t["kind"] != "master"
+        ]
+        assert len(tracks_plan.calls) == len(non_master_tracks), (
+            f"plan_push_song_tracks must emit exactly one call per unique unlinked "
+            f"non-master track ({len(non_master_tracks)} expected, {len(tracks_plan.calls)} got)"
+        )
+        # Simulate apply: link every track at its declared track_index so the
+        # downstream planners can run.
+        for i, c in enumerate(tracks_plan.calls, start=1):
+            track_db_id = c.key.partition(":")[2]
+            M.link_db_to_ableton(
+                conn, session_id=session_id, db_kind="track",
+                db_id=track_db_id, ableton_index=i,
+            )
+
+        returns_plan = push.plan_push_song_returns(conn, song_id=song_id, session_id=session_id)
+        for i, c in enumerate(returns_plan.calls, start=1):
+            return_db_id = c.key.partition(":")[2]
+            M.link_db_to_ableton(
+                conn, session_id=session_id, db_kind="return",
+                db_id=return_db_id, ableton_index=i,
+            )
+
+        # Session-required planners (now satisfied — every track is linked).
         for fn in (push.plan_push_mix, push.plan_push_devices,
                    push.plan_push_envelopes, push.plan_push_arrangement):
             plan = fn(conn, song_id=song_id, session_id=session_id)

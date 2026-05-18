@@ -180,23 +180,125 @@ def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def plan_push_song_tracks(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Pre-pass: emit one ``ableton_track(action='create')`` call per
+    unique unlinked non-master track for this song.
+
+    W3-C — replaces the per-clip track-create emit that
+    :func:`plan_push_clip` used to do. A song with 8 tracks and 32 clips
+    used to produce 32 ``ableton_track(create)`` calls (with identical
+    ``key=track:{track_id}`` values for each track), all of which had to
+    be deduplicated by the agent. This planner emits exactly N calls for
+    N unique unlinked tracks — dedupe is structural, not behavioral.
+
+    Caller flow:
+        1. ``plan = plan_push_song_tracks(conn, song_id, session_id)``
+        2. Agent executes ``plan.calls`` (parallelizable — each is
+           independent), captures results.
+        3. ``apply_push_results(conn, results, session_id=session_id)``
+           records each new ``track_index`` via ``ableton_links``.
+        4. Now :func:`plan_push_clip`, :func:`plan_push_arrangement`,
+           and :func:`plan_push_mix` can run — every track they touch
+           is linked.
+
+    Master tracks are skipped: master has no Live-side "create" — it
+    exists implicitly in every Live set and is reached via
+    ``ableton_session(set_master_property)``.
+
+    Returns an empty plan when every non-master track is already linked
+    (idempotent — safe to re-run after partial pushes).
+    """
+    plan = PushPlan()
+    tracks = Q.get_tracks_for_song(conn, song_id)
+    for t in tracks:
+        if t["kind"] == "master":
+            continue
+        existing = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if existing is not None:
+            continue
+        create_args: dict[str, Any] = {
+            "action": "create",
+            "kind": t["kind"],
+            "name": t["name"],
+        }
+        if t["instrument_uri"]:
+            # Round-trips in the result as `instrument_uri_deferred`; agent
+            # follows up with ableton_device(action='load') separately.
+            create_args["instrument_uri"] = t["instrument_uri"]
+        plan.add(ToolCall(
+            tool="ableton_track",
+            args=create_args,
+            key=f"track:{t['id']}",
+            purpose=(
+                f"create unlinked track '{t['name']}' "
+                f"(kind={t['kind']}, db_id={t['id']})"
+            ),
+        ))
+    return plan
+
+
+def plan_push_song_returns(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Pre-pass: emit one ``ableton_return(action='create')`` call per
+    unique unlinked return for this song.
+
+    Mirror of :func:`plan_push_song_tracks` for return tracks. The same
+    dedupe-at-the-planner-level rationale applies: returns are
+    referenced by sends and by send_level envelopes — without a
+    song-level pre-pass, every per-element planner would re-emit the
+    create. Idempotent across re-runs.
+    """
+    plan = PushPlan()
+    returns = Q.get_returns_for_song(conn, song_id)
+    for r in returns:
+        existing = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if existing is not None:
+            continue
+        plan.add(ToolCall(
+            tool="ableton_return",
+            args={"action": "create", "name": r["name"]},
+            key=f"return:{r['id']}",
+            purpose=f"create unlinked return '{r['name']}' (db_id={r['id']})",
+        ))
+    return plan
+
+
 def plan_push_clip(
     conn: sqlite3.Connection,
     *,
     clip_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan the push of a single session clip (track + notes) to Ableton.
+    """Plan the push of a single session clip to Ableton.
 
-    Three cases:
-      1. Track not yet linked in this session -> ableton_track(action='create',
-         kind='midi', name=...) — Wave M-5 retarget from create_midi_track_with.
-      2. Clip not yet linked in this session  -> ableton_clip(action='create',
-         location='session', kind='midi', replace=True, notes=...) — atomic
-         single-call create+populate, Wave M+1-1 retarget that replaced the
-         3-step `replace_session_clip` emulation.
-      3. Clip already linked                  -> ableton_clip(action='replace_notes')
+    Two cases (W3-C narrowed from three; track-creation moved to
+    :func:`plan_push_song_tracks`):
+      1. Clip not yet linked  -> ``ableton_clip(action='create',
+         location='session', kind=…, replace=True, notes=…)``  — atomic
+         single-call create+populate (Wave M+1-1).
+      2. Clip already linked  -> ``ableton_clip(action='replace_notes')``
          (in-place; gap #1's renamed action, unified via Wave M-3).
+
+    Precondition (W3-C — strict): the clip's track must already be
+    linked in this session. Run :func:`plan_push_song_tracks` first to
+    create+link all unlinked tracks, ``apply_push_results``, then call
+    this planner. The strict raise replaces the prior silent-redundant-
+    emit behavior that produced N duplicate ``ableton_track(create)``
+    calls for N clips on the same unlinked track (32 calls for an
+    8-track / 32-clip song; one per CLIP, not one per TRACK).
     """
     plan = PushPlan()
 
@@ -217,33 +319,14 @@ def plan_push_clip(
     )
 
     if track_at is None:
-        # Wave M-5: retargeted to the unified ableton_track(action='create')
-        # shape. instrument_uri remains schema-stable but deferred (M-2's
-        # behavior); the planner's caller should follow with a device-load
-        # call via ableton_device(action='load') if an instrument was named.
-        create_args: dict[str, Any] = {
-            "action": "create",
-            "kind": "midi",
-            "name": track_row["name"],
-        }
-        if track_row["instrument_uri"]:
-            # Round-trips in result as `instrument_uri_deferred`; agent
-            # follows up with ableton_device(action='load') separately.
-            create_args["instrument_uri"] = track_row["instrument_uri"]
-        plan.add(ToolCall(
-            tool="ableton_track",
-            args=create_args,
-            key=f"track:{track_row['id']}",
-            purpose=f"create track '{track_row['name']}' (db track_id={track_row['id']})",
-        ))
-        plan.warn(
-            f"track {track_row['id']} has no ableton link in session {session_id} yet — "
-            f"after ableton_track(action='create') returns, call apply_push_results to record it."
+        raise ValueError(
+            f"plan_push_clip: track {track_row['id']!r} ('{track_row['name']}') "
+            f"is not linked in session {session_id!r}. Call "
+            f"plan_push_song_tracks(conn, song_id=..., session_id=...) first "
+            f"to create and link any unlinked tracks (one call per unique "
+            f"track, not per clip), apply_push_results, then re-run "
+            f"plan_push_clip."
         )
-        # Subsequent calls in this plan can't run until we know the new track index.
-        # The agent should execute the track-creation, capture the result, call
-        # apply_push_results, then re-plan to pick up the now-linked track.
-        return plan
 
     if clip_at is None:
         # Wave M+1-1: atomic single-call create+populate. `replace=True`

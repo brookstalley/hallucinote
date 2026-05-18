@@ -120,12 +120,21 @@ def synthetic_song(conn) -> dict:
         conn, song_id=song_id, name="intro", start_bar=1.0, end_bar=5.0,
     )
 
-    # One MIDI track + one return + one send (mix planner).
+    # Two MIDI tracks + two returns. Only ONE of each will be linked
+    # so plan_push_song_tracks / plan_push_song_returns have an unlinked
+    # entry to emit. The other gets linked so plan_push_clip and
+    # plan_push_mix can run against a satisfied precondition.
     track_id = M.create_track(
         conn, song_id=song_id, track_index=1, name="Lead", kind="midi",
     )
+    M.create_track(
+        conn, song_id=song_id, track_index=2, name="Unlinked", kind="midi",
+    )
     return_id = M.create_return(
         conn, song_id=song_id, name="A-Reverb", position=1, volume=0.85,
+    )
+    M.create_return(
+        conn, song_id=song_id, name="B-Unlinked", position=2,
     )
     M.set_send_level(
         conn, from_track_id=track_id, to_return_id=return_id, level=0.3,
@@ -194,6 +203,20 @@ def _plan_clip(conn, *, song_id, session_id, clip_id, **_):
 
 
 _ALL_PLANNERS: tuple[PlannerEntry, ...] = (
+    PlannerEntry(
+        name="plan_push_song_tracks",
+        invoke=lambda conn, **kw: push.plan_push_song_tracks(
+            conn, song_id=kw["song_id"], session_id=kw["session_id"],
+        ),
+        must_emit_calls=True,
+    ),
+    PlannerEntry(
+        name="plan_push_song_returns",
+        invoke=lambda conn, **kw: push.plan_push_song_returns(
+            conn, song_id=kw["song_id"], session_id=kw["session_id"],
+        ),
+        must_emit_calls=True,
+    ),
     PlannerEntry(
         name="plan_push_tempo_map",
         invoke=lambda conn, **kw: push.plan_push_tempo_map(conn, song_id=kw["song_id"]),

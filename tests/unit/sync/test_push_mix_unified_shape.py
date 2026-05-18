@@ -207,10 +207,10 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
 
 
 def test_planner_track_create_emit_validates_against_dispatcher(conn):
-    """Wave M-5: plan_push_clip's unlinked-track path now emits
-    ableton_track(action='create', kind='midi', name=..., instrument_uri?).
-    Pipe through the actual dispatcher against a fake context to lock the
-    cross-package wire contract.
+    """W3-C: track creation moved out of plan_push_clip into the
+    song-level pre-pass plan_push_song_tracks. Pipe its emit through the
+    actual dispatcher against a fake context to lock the cross-package
+    wire contract for the new pre-pass shape.
     """
     from hallucinote_mcp.dispatcher import dispatch
     from hallucinote_mcp.testing import isolated_actions
@@ -218,20 +218,19 @@ def test_planner_track_create_emit_validates_against_dispatcher(conn):
 
     sid = M.create_song(conn, name="m5-track-create-shape", title="M-5 track create")
     sess = M.create_ableton_session(conn, song_id=sid, name="test")
-    tid = M.create_track(
+    M.create_track(
         conn, song_id=sid, track_index=1, name="Lead",
         instrument_uri="query:Operator#FileId_99",
     )
-    cid = M.create_clip(conn, track_id=tid, slot=1, name="Pattern", length_beats=16.0)
-    # Note: track is intentionally NOT linked — push.plan_push_clip should
+    # The track is intentionally NOT linked — plan_push_song_tracks should
     # emit the create call.
-    plan = push.plan_push_clip(conn, clip_id=cid, session_id=sess)
+    plan = push.plan_push_song_tracks(conn, song_id=sid, session_id=sess)
     create_calls = [
         c for c in plan.calls
         if c.tool == "ableton_track" and c.args.get("action") == "create"
     ]
     assert len(create_calls) == 1, (
-        f"planner did not emit ableton_track(create): {plan.calls!r}"
+        f"plan_push_song_tracks did not emit ableton_track(create): {plan.calls!r}"
     )
     call = create_calls[0]
     assert call.args["kind"] == "midi"

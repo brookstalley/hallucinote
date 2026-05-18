@@ -53,19 +53,123 @@ def clip(conn, track):
 # --- planning ---
 
 
-def test_plan_push_clip_creates_track_when_unlinked(conn, session, track, clip):
-    """Wave M-5: retargeted to unified ableton_track(action='create')."""
-    plan = push.plan_push_clip(conn, clip_id=clip, session_id=session)
+def test_plan_push_clip_raises_when_track_not_linked(conn, session, clip):
+    """W3-C: plan_push_clip is strict on track-link precondition. The
+    old behavior — silently emit a per-clip ableton_track(create) — was
+    a footgun (8-track / 32-clip songs produced 32 redundant create
+    calls). The strict raise forces callers onto the correct flow:
+    plan_push_song_tracks → apply → plan_push_clip."""
+    with pytest.raises(ValueError, match="plan_push_song_tracks.*first"):
+        push.plan_push_clip(conn, clip_id=clip, session_id=session)
+
+
+# --- plan_push_song_tracks (W3-C pre-pass) ---
+
+
+def test_plan_push_song_tracks_emits_one_call_per_unique_unlinked_track(
+    conn, song, session
+):
+    """Headline: an N-track song with M clips/track produces N calls
+    (the unique-track count), not N×M. Dedupe is structural."""
+    # 3 tracks, no links, each with multiple clips.
+    track_ids = []
+    for i in (1, 2, 3):
+        tid = M.create_track(
+            conn, song_id=song, track_index=i, name=f"T{i}", kind="midi",
+        )
+        track_ids.append(tid)
+        for slot in (1, 2, 3, 4):
+            M.create_clip(conn, track_id=tid, slot=slot, name=f"T{i}-c{slot}", length_beats=4.0)
+
+    plan = push.plan_push_song_tracks(conn, song_id=song, session_id=session)
+
+    assert len(plan.calls) == 3, "one create call per unique unlinked track (3 tracks, NOT 12 clips)"
+    keys = sorted(c.key for c in plan.calls)
+    assert keys == sorted(f"track:{tid}" for tid in track_ids)
+    for call in plan.calls:
+        assert call.tool == "ableton_track"
+        assert call.args["action"] == "create"
+        assert call.args["kind"] == "midi"
+
+
+def test_plan_push_song_tracks_skips_master(conn, song, session):
+    """Master is not a Live-side createable surface. The mutator allows
+    creating a kind='master' row in `tracks` (Hallucinote's projection);
+    push must not try to ableton_track(create) it."""
+    M.create_track(conn, song_id=song, track_index=0, name="Master", kind="master")
+    plan = push.plan_push_song_tracks(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+
+
+def test_plan_push_song_tracks_skips_already_linked(conn, song, session):
+    """Idempotent: re-running after a partial push doesn't re-emit
+    creates for tracks now linked."""
+    tid_a = M.create_track(conn, song_id=song, track_index=1, name="A", kind="midi")
+    tid_b = M.create_track(conn, song_id=song, track_index=2, name="B", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid_a, ableton_index=1,
+    )
+
+    plan = push.plan_push_song_tracks(conn, song_id=song, session_id=session)
     assert len(plan.calls) == 1
-    call = plan.calls[0]
-    assert call.tool == "ableton_track"
-    assert call.args["action"] == "create"
-    assert call.args["kind"] == "midi"
-    assert call.args["name"] == "Drums"
-    assert call.args["instrument_uri"] == "query:Drums#Kit_X"
-    assert call.key == f"track:{track}"
-    # Should warn that we need to re-plan after track is linked
-    assert any("track" in n for n in plan.notes)
+    assert plan.calls[0].key == f"track:{tid_b}"
+
+
+def test_plan_push_song_tracks_isolates_by_session(conn, song):
+    """A track linked under session A is still unlinked under session B —
+    plan_push_song_tracks must respect the session boundary."""
+    a = M.create_ableton_session(conn, song_id=song, name="A")
+    b = M.create_ableton_session(conn, song_id=song, name="B")
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Solo", kind="midi")
+    M.link_db_to_ableton(conn, session_id=a, db_kind="track", db_id=tid, ableton_index=4)
+
+    plan_a = push.plan_push_song_tracks(conn, song_id=song, session_id=a)
+    assert plan_a.calls == []
+    plan_b = push.plan_push_song_tracks(conn, song_id=song, session_id=b)
+    assert len(plan_b.calls) == 1
+    assert plan_b.calls[0].key == f"track:{tid}"
+
+
+def test_plan_push_song_tracks_propagates_instrument_uri(conn, song, session):
+    """When a DB track has an instrument_uri, the create call carries it
+    so apply_push_results can record the agent's follow-up device load."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Op",
+        instrument_uri="query:Synths#Operator", kind="midi",
+    )
+    plan = push.plan_push_song_tracks(conn, song_id=song, session_id=session)
+    assert plan.calls[0].args["instrument_uri"] == "query:Synths#Operator"
+
+
+def test_plan_push_song_tracks_no_calls_when_empty_song(conn, song, session):
+    """Vacuously-correct empty case."""
+    plan = push.plan_push_song_tracks(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert plan.notes == []
+
+
+# --- plan_push_song_returns (W3-C pre-pass) ---
+
+
+def test_plan_push_song_returns_emits_one_call_per_unique_unlinked(conn, song, session):
+    rid_a = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid_b = M.create_return(conn, song_id=song, name="B-Delay", position=2)
+    plan = push.plan_push_song_returns(conn, song_id=song, session_id=session)
+    assert {c.key for c in plan.calls} == {f"return:{rid_a}", f"return:{rid_b}"}
+    for c in plan.calls:
+        assert c.tool == "ableton_return"
+        assert c.args["action"] == "create"
+
+
+def test_plan_push_song_returns_skips_already_linked(conn, song, session):
+    rid_a = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid_b = M.create_return(conn, song_id=song, name="B-Delay", position=2)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid_a, ableton_index=1,
+    )
+    plan = push.plan_push_song_returns(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert plan.calls[0].key == f"return:{rid_b}"
 
 
 def test_plan_push_clip_emits_atomic_create_when_track_linked_clip_unlinked(
@@ -158,17 +262,17 @@ def test_plan_push_clip_uses_replace_notes_when_already_linked(
 
 
 def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
-    """Linking in session A doesn't affect planning under session B."""
+    """Linking in session A doesn't satisfy plan_push_clip under session B.
+    Post-W3-C: the strict raise must fire — wrong-session links are
+    indistinguishable from missing links."""
     a = M.create_ableton_session(conn, song_id=song, name="a")
     b = M.create_ableton_session(conn, song_id=song, name="b")
     M.link_db_to_ableton(
         conn, session_id=a, db_kind="track", db_id=track, ableton_index=4
     )
-    plan_b = push.plan_push_clip(conn, clip_id=clip, session_id=b)
-    # Under session b, the track is still unlinked -> create call.
-    # Wave M-5: unified ableton_track(action='create').
-    assert plan_b.calls[0].tool == "ableton_track"
-    assert plan_b.calls[0].args["action"] == "create"
+    # Under session b, the track is still unlinked → strict raise.
+    with pytest.raises(ValueError, match="plan_push_song_tracks.*first"):
+        push.plan_push_clip(conn, clip_id=clip, session_id=b)
 
 
 # --- arrangement clips ---

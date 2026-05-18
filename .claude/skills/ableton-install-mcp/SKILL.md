@@ -185,14 +185,23 @@ After copying, the tree should contain at minimum:
     dispatcher.py
     client.py
     install_paths.py
-    actions/                      # action registry (side-effect imports)
-    handlers/                     # action implementations
+    actions/                      # action registry — required
+    handlers/                     # action implementations — required
     remote_script/
       __init__.py
       _control_surface.py
       server.py
       dispatch.py
 ```
+
+`actions/` and `handlers/` are **required**, not "comes along for the
+ride." `remote_script/_control_surface.py` does
+`from .. import actions as _actions` at module load — a side-effect
+import that populates the Live-side action registry. Each module under
+`actions/` then imports its counterpart from `handlers/`. So both
+subpackages are reachable through the Remote Script import chain
+that Live walks at startup. Trimming either would break the Control
+Surface load.
 
 Other subpackages (e.g. `prompts/`, `resources/`, `skills/`, plus
 `testing.py`) come along for the ride — Live ignores anything it doesn't

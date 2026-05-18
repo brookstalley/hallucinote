@@ -310,8 +310,13 @@ def write_envelope_handler(
             clip_index=clip_index,
         )
         target = _midi_cc_envelope_target(clip, int(cc_number))
-        clip.clear_envelope(target)
-        envelope = clip.create_automation_envelope(target)
+        try:
+            clip.clear_envelope(target)
+            envelope = clip.create_automation_envelope(target)
+        except TypeError as exc:
+            # Boost.Python's ArgumentError subclasses TypeError; the
+            # tuple sentinel triggers it.
+            raise _translate_envelope_target_error("clip_cc", exc) from exc
         non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "clip_pitch_bend":
         clip = _require_clip(
@@ -319,8 +324,11 @@ def write_envelope_handler(
             clip_index=clip_index,
         )
         target = _midi_pitch_bend_envelope_target(clip)
-        clip.clear_envelope(target)
-        envelope = clip.create_automation_envelope(target)
+        try:
+            clip.clear_envelope(target)
+            envelope = clip.create_automation_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "note_expression":
         if note_pitch is None or note_start_beats is None or axis is None:
@@ -348,6 +356,26 @@ def write_envelope_handler(
         if clip_index is None or location is None:
             raise NotImplementedError(
                 _TRACK_LEVEL_GAP_HINT.format(target_kind=target_kind)
+            )
+        # Wave-2 W2-10: empirical Live 12.4 — mixer / pan / send / device_parameter
+        # envelopes are addressable on SESSION clips only. Arrangement clips
+        # reject these targets with RuntimeError("Not a session clip or
+        # parameter belongs to another track."). Surface the gap with a
+        # teaching error pointing at the session-clip path rather than
+        # letting Live's raw error reach the caller.
+        if location == "arrangement":
+            raise NotImplementedError(
+                f"target_kind={target_kind!r} on an arrangement clip is "
+                "not supported by Live 12.4's LOM — Clip.create_automation_"
+                "envelope() rejects mixer / pan / send / device_parameter "
+                "targets unless the clip is a session clip. Author the "
+                "envelope on a session clip first (location='session'), "
+                "then ableton_clip(action='duplicate_to_arrangement') to "
+                "place a copy in the arrangement. The arrangement clip "
+                "inherits the envelope.\n"
+                "Track-level arrangement automation creation isn't exposed "
+                "on Live 12.4 either — see ableton://guides/gaps for the "
+                "broader LOM gap."
             )
         if target_kind == "device_parameter":
             if device_index is None or parameter_name is None:
@@ -463,7 +491,10 @@ def clear_handler(
             clip_index=clip_index,
         )
         target = _midi_cc_envelope_target(clip, int(cc_number))
-        clip.clear_envelope(target)
+        try:
+            clip.clear_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_cc", exc) from exc
         return {"target_kind": target_kind, "cleared": True}
     if target_kind == "clip_pitch_bend":
         clip = _require_clip(
@@ -471,7 +502,10 @@ def clear_handler(
             clip_index=clip_index,
         )
         target = _midi_pitch_bend_envelope_target(clip)
-        clip.clear_envelope(target)
+        try:
+            clip.clear_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         return {"target_kind": target_kind, "cleared": True}
     if target_kind == "note_expression":
         # Live 12.4 has no documented per-axis clear for note-expression
@@ -490,6 +524,20 @@ def clear_handler(
     if clip_index is None or location is None:
         raise NotImplementedError(
             _TRACK_LEVEL_GAP_HINT.format(target_kind=target_kind)
+        )
+    # Wave-2 W2-10: Live 12.4 also rejects clear_envelope for these targets
+    # on arrangement clips (same root cause as write — Clip's create / clear
+    # path only accepts session-clip-owned mixer / pan / send / parameter
+    # envelopes). Mirror write_envelope's arrangement guard so the
+    # symmetric clear path surfaces the same teaching error.
+    if location == "arrangement":
+        raise NotImplementedError(
+            f"clear with target_kind={target_kind!r} on an arrangement clip "
+            "is not supported by Live 12.4's LOM — symmetric with "
+            "write_envelope's gap. Author the envelope on a session clip "
+            "first; clear it via location='session' if you need to remove "
+            "it. To remove ALL envelopes from an arrangement clip, use "
+            "action='clear_all' on the clip-owning track."
         )
     if target_kind == "device_parameter":
         if device_index is None or parameter_name is None:
@@ -655,12 +703,19 @@ def _require_parent(
 
 
 def _midi_cc_envelope_target(clip: Any, cc_number: int) -> Any:
-    """Build the Live envelope target for a clip-CC envelope."""
+    """Build the Live envelope target for a clip-CC envelope.
+
+    Live 12.4 may not expose ``Clip.envelope_target_for_cc`` — the
+    canonical factory name is uncertain (Ableton's Remote Script LOM is
+    undocumented for this surface). The fallback returns a tuple
+    sentinel that the test fakes recognize; real Live will reject it
+    at the typed boundary (``clip.clear_envelope`` /
+    ``clip.create_automation_envelope``) and the caller surfaces the
+    teaching error via ``_translate_envelope_target_error``.
+    """
     factory = getattr(clip, "envelope_target_for_cc", None)
     if factory is not None:
         return factory(int(cc_number))
-    # Fallback for older / mock APIs: return a structural sentinel that the
-    # test fakes recognize.
     return ("cc", int(cc_number))
 
 
@@ -669,6 +724,32 @@ def _midi_pitch_bend_envelope_target(clip: Any) -> Any:
     if factory is not None:
         return factory()
     return ("pitch_bend",)
+
+
+def _translate_envelope_target_error(target_kind: str, exc: Exception) -> Exception:
+    """Convert Live's raw ArgumentError on envelope-target writes to a
+    teaching NotImplementedError.
+
+    Live 12.4 raises ``ArgumentError: Python argument types ... did not
+    match C++ signature: clear_envelope(TPyHandle<AClip>,
+    TPyHandle<ATimeableValue>)`` when the handler passes a tuple sentinel
+    (our fallback when the factory method isn't exposed). Wave-2 W2-10
+    captured this empirically for ``clip_pitch_bend``; the same applies
+    to ``clip_cc``. Surface a teaching error pointing at the LOM gap.
+    """
+    msg = str(exc)
+    if "ATimeableValue" in msg or "TimeableValue" in msg:
+        return NotImplementedError(
+            f"target_kind={target_kind!r}: Live 12.4's LOM doesn't expose "
+            f"a public factory for this clip envelope target — the handler "
+            f"passes a structural sentinel that Live's typed boundary "
+            f"rejects with ArgumentError. Workaround for clip_cc: encode "
+            f"the CC as a MIDI control-change event via "
+            f"ableton_clip(action='replace_notes'). For clip_pitch_bend: "
+            f"author it manually in Live's clip envelope editor. Original "
+            f"error: {exc}"
+        )
+    return exc
 
 
 __all__ = [

@@ -304,6 +304,80 @@ def test_write_envelope_clip_pitch_bend(loaded_actions):
     assert ("pitch_bend",) in clip.envelopes_by_target
 
 
+def test_write_envelope_mixer_volume_on_arrangement_clip_teaches(loaded_actions):
+    """Wave-2 W2-10: Live 12.4's Clip.create_automation_envelope rejects
+    mixer/pan/send/device_parameter targets on arrangement clips with
+    "Not a session clip or parameter belongs to another track." The
+    handler now surfaces a teaching error explaining the session-clip
+    workaround instead of letting Live's raw RuntimeError reach the
+    caller.
+    """
+    ctx, _ = _track_with_clip()
+    # Also add an arrangement clip to the same track so _resolve_clip
+    # can find it under location='arrangement'.
+    ctx.song.tracks[0].arrangement_clips = (
+        ctx.song.tracks[0].clip_slots[0].clip,
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "arrangement", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.5},
+                    {"time_beats": 16.0, "value": 0.9},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "arrangement clip" in err.lower()
+    assert "session" in err.lower()  # the workaround is mentioned
+    assert "duplicate_to_arrangement" in err
+
+
+def test_write_envelope_clip_cc_translates_typed_boundary_error(loaded_actions):
+    """Wave-2 W2-10: real Live's Clip.clear_envelope rejects the tuple
+    sentinel with ``ArgumentError: ... TPyHandle<ATimeableValue>``. The
+    handler now catches that error and surfaces a teaching
+    NotImplementedError pointing at the LOM gap + workaround.
+
+    Simulated via a FakeClip whose clear_envelope mimics Live's typed
+    rejection.
+    """
+    ctx, clip = _track_with_clip()
+
+    def _typed_reject(target):
+        raise TypeError(
+            "ArgumentError: Python argument types in "
+            "Clip.clear_envelope(Clip, tuple) did not match C++ "
+            "signature: clear_envelope(TPyHandle<AClip>, "
+            "TPyHandle<ATimeableValue>)"
+        )
+
+    clip.clear_envelope = _typed_reject  # noqa: SLF001 — test override
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "clip_cc",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "cc_number": 7,
+                "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "clip_cc" in err
+    assert "LOM" in err  # mentions the API gap
+    assert "replace_notes" in err  # suggests the workaround
+
+
 def test_write_envelope_note_expression(loaded_actions):
     ctx, clip = _track_with_clip()
     resp = dispatch(
@@ -690,6 +764,69 @@ def test_clear_clip_cc_calls_clip_clear_envelope(loaded_actions):
     assert resp.ok is True
     assert resp.result["cleared"] is True
     assert ("cc", 7) in clip.clear_envelope_calls
+
+
+def test_clear_clip_cc_translates_typed_boundary_error(loaded_actions):
+    """Wave-2 W2-10 sibling of the write-side test: clear_handler also
+    wraps Live's typed-boundary ArgumentError on the tuple sentinel
+    via _translate_envelope_target_error. Mirror the write test so
+    the symmetric path stays covered against future refactors.
+    """
+    ctx, clip = _track_with_clip()
+
+    def _typed_reject(target):
+        raise TypeError(
+            "ArgumentError: Python argument types in "
+            "Clip.clear_envelope(Clip, tuple) did not match C++ "
+            "signature: clear_envelope(TPyHandle<AClip>, "
+            "TPyHandle<ATimeableValue>)"
+        )
+
+    clip.clear_envelope = _typed_reject  # noqa: SLF001 — test override
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "clip_cc",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "cc_number": 7,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "clip_cc" in err
+    assert "LOM" in err
+    assert "replace_notes" in err
+
+
+def test_clear_mixer_volume_arrangement_clip_raises_teaching_error(loaded_actions):
+    """Wave-2 W2-10 / Critic W2-E #3: write_envelope rejects arrangement
+    location for mixer/pan/send/device_parameter; clear must symmetrically
+    surface the same teaching error rather than reaching Live's raw
+    rejection.
+    """
+    ctx, _ = _track_with_clip()
+    ctx.song.tracks[0].arrangement_clips = (
+        ctx.song.tracks[0].clip_slots[0].clip,
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1,
+                "location": "arrangement",
+                "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "arrangement clip" in err
+    assert "session" in err.lower()
 
 
 def test_clear_mixer_volume_without_clip_raises_teaching_error(loaded_actions):

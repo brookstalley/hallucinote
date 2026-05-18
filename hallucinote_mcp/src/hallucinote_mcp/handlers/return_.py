@@ -116,7 +116,12 @@ def create_handler(
             "the planner will skip the create step once the return is linked."
         )
     new_return = create_fn()
-    if name:
+    # Use `is not None` rather than truthy `if name:` so an empty-string
+    # name request is honored consistently with the `requested_name`
+    # comparison below (which uses identity, not truthy). Empty name
+    # passed through means "explicitly clear the name to ''"; Live's
+    # prefix logic still runs and produces e.g. "C-".
+    if name is not None:
         new_return.name = name
     # ``Song.create_return_track()`` always appends to the end of
     # ``return_tracks``. The new 1-based index is therefore deterministic.
@@ -210,6 +215,7 @@ __all__ = [
     "list_handler",
     "info_handler",
     "create_handler",
+    "rename_handler",
     "delete_handler",
     "set_property_handler",
 ]

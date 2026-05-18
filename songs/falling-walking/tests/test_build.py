@@ -97,16 +97,61 @@ def test_build_push_planners_run_without_error(build_module):
             plan = fn(conn, song_id=song_id)
             assert plan is not None
 
-        # Session-required planners.
+        # W3-C song-level pre-pass: emits one create per unique unlinked
+        # track / return. Validate count + simulate apply.
+        tracks_plan = push.plan_push_song_tracks(conn, song_id=song_id, session_id=session_id)
+        non_master_tracks = [
+            t for t in Q.get_tracks_for_song(conn, song_id) if t["kind"] != "master"
+        ]
+        assert len(tracks_plan.calls) == len(non_master_tracks), (
+            f"plan_push_song_tracks must emit exactly one call per unique unlinked "
+            f"non-master track ({len(non_master_tracks)} expected, {len(tracks_plan.calls)} got)"
+        )
+        # Simulate apply: link every track at its declared track_index so the
+        # downstream planners can run.
+        for i, c in enumerate(tracks_plan.calls, start=1):
+            track_db_id = c.key.partition(":")[2]
+            M.link_db_to_ableton(
+                conn, session_id=session_id, db_kind="track",
+                db_id=track_db_id, ableton_index=i,
+            )
+
+        returns_plan = push.plan_push_song_returns(conn, song_id=song_id, session_id=session_id)
+        for i, c in enumerate(returns_plan.calls, start=1):
+            return_db_id = c.key.partition(":")[2]
+            M.link_db_to_ableton(
+                conn, session_id=session_id, db_kind="return",
+                db_id=return_db_id, ableton_index=i,
+            )
+
+        # Session-required planners that don't depend on clip links: mix,
+        # devices, envelopes.
         for fn in (push.plan_push_mix, push.plan_push_devices,
-                   push.plan_push_envelopes, push.plan_push_arrangement):
+                   push.plan_push_envelopes):
             plan = fn(conn, song_id=song_id, session_id=session_id)
             assert plan is not None
 
         # plan_push_clip on every clip should emit at least one call.
+        # Simulate apply by linking each clip at a synthetic slot so the
+        # downstream arrangement planner (now strict post-W3-F-followup)
+        # has all the links it needs.
+        slot_counter: dict[str, int] = {}
         for t in Q.get_tracks_for_song(conn, song_id):
             for c in Q.get_clips_for_track(conn, t["id"]):
                 plan = push.plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
                 assert plan.calls, f"plan_push_clip({c['name']}) emitted no calls"
+                # Link the clip at its DB slot — matches what the agent
+                # would record after running the create call.
+                M.link_db_to_ableton(
+                    conn, session_id=session_id, db_kind="clip",
+                    db_id=c["id"], ableton_index=c["slot"],
+                )
+
+        # plan_push_arrangement is strict (W3-F follow-up): tracks AND
+        # clips must be linked. With the loop above, they are.
+        arrangement_plan = push.plan_push_arrangement(
+            conn, song_id=song_id, session_id=session_id,
+        )
+        assert arrangement_plan is not None
     finally:
         conn.close()

@@ -1,6 +1,7 @@
 """ableton_device schema + handler behavior."""
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -28,14 +29,25 @@ class FakeParam:
         self.value = value
         self.min = min
         self.max = max
-        self.value_items = value_items
+        # Live 12.4 raises ``RuntimeError: Only quantized parameters have
+        # value items`` when ``value_items`` is read on a continuous
+        # parameter. Mirror that strictly so handlers that read it
+        # unguarded fail at test time (Wave-2 W2-9 root cause).
+        self.is_quantized = value_items is not None
+        self._value_items = value_items
         self._str_for_value = lambda v: f"{v:.2f}"
 
+    @property
+    def value_items(self) -> tuple[str, ...]:
+        if not self.is_quantized:
+            raise RuntimeError("Only quantized parameters have value items")
+        return self._value_items or ()
+
     def str_for_value(self, v: float) -> str:
-        if self.value_items:
+        if self.is_quantized and self._value_items:
             idx = int(v)
-            if 0 <= idx < len(self.value_items):
-                return self.value_items[idx]
+            if 0 <= idx < len(self._value_items):
+                return self._value_items[idx]
         return self._str_for_value(v)
 
 
@@ -73,30 +85,90 @@ class FakeTrack:
         self.name = name
         self.devices = list(devices or [])
         self.mixer_device = FakeMixer()
-        self._loaded: list[tuple[str, str | None]] = []
         self._deleted: list[int] = []
-        self._moved: list[tuple[FakeDevice, int]] = []
-
-    def load_device(self, *args, **kwargs):
-        """Modern-ish API: accept kind + preset_uri kwargs."""
-        kind = kwargs.get("kind", args[0] if args else None)
-        preset = kwargs.get("preset_uri")
-        new_dev = FakeDevice(name=kind or "Loaded", class_name=kind or "Loaded")
-        self.devices.append(new_dev)
-        self._loaded.append((kind or "", preset))
 
     def delete_device(self, index_0based: int) -> None:
         self._deleted.append(index_0based)
         del self.devices[index_0based]
 
-    def move_device(self, device: FakeDevice, new_index_0based: int) -> None:
-        self._moved.append((device, new_index_0based))
-        self.devices.remove(device)
-        self.devices.insert(new_index_0based, device)
-
 
 class FakeReturn(FakeTrack):
     pass
+
+
+class FakeBrowserItem:
+    """Mirrors Live's ``BrowserItem`` for tests.
+
+    Live's real BrowserItem exposes ``name``, ``uri``, ``is_loadable``,
+    ``is_folder``, ``children``. Browser walks recurse through children;
+    ``application.browser.load_item(item)`` requires ``is_loadable`` and
+    loads the item onto the track currently set as
+    ``song.view.selected_track``.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        uri: str = "",
+        is_loadable: bool = True,
+        children: tuple["FakeBrowserItem", ...] = (),
+    ):
+        self.name = name
+        self.uri = uri
+        self.is_loadable = is_loadable
+        self.is_folder = not is_loadable
+        self.children = tuple(children)
+
+
+class FakeBrowserRoot(FakeBrowserItem):
+    """Browser root with a mutable children list — tests populate it."""
+
+    def __init__(self, name: str):
+        super().__init__(name, is_loadable=False, children=())
+        self.children: list[FakeBrowserItem] = []
+
+
+class FakeBrowser:
+    """Mirrors Live 12.4 browser behavior for device-load tests.
+
+    ``load_item(item)`` appends a fresh device to whatever track is
+    currently set as ``song.view.selected_track``. Tests populate
+    ``audio_effects.children``, ``drums.children``, etc. with
+    ``FakeBrowserItem`` instances and then call the load action.
+    """
+
+    def __init__(self, song: "FakeSong"):
+        self._song = song
+        self.instruments = FakeBrowserRoot("Instruments")
+        self.audio_effects = FakeBrowserRoot("Audio Effects")
+        self.midi_effects = FakeBrowserRoot("MIDI Effects")
+        self.drums = FakeBrowserRoot("Drums")
+        self.plugins = FakeBrowserRoot("Plug-Ins")
+        self.samples = FakeBrowserRoot("Samples")
+        self.user_library = FakeBrowserRoot("User Library")
+        self.packs = FakeBrowserRoot("Packs")
+        self.load_calls: list[FakeBrowserItem] = []
+
+    def load_item(self, item: FakeBrowserItem) -> None:
+        self.load_calls.append(item)
+        target = self._song.view.selected_track
+        if target is None:
+            raise RuntimeError(
+                "FakeBrowser.load_item called with no selected_track set"
+            )
+        new_dev = FakeDevice(name=item.name, class_name=item.name)
+        target.devices.append(new_dev)
+
+
+class FakeApplication:
+    def __init__(self, song: "FakeSong"):
+        self.browser = FakeBrowser(song)
+
+
+class FakeSongView:
+    def __init__(self) -> None:
+        self.selected_track: Any = None
 
 
 class FakeSong:
@@ -107,20 +179,46 @@ class FakeSong:
     ):
         self.tracks = tracks or [FakeTrack("T1"), FakeTrack("T2")]
         self.return_tracks = returns or [FakeReturn("A-Rev")]
+        self.view = FakeSongView()
 
 
 class FakeCtx:
     def __init__(self, song: FakeSong | None = None):
         self._song = song or FakeSong()
+        self._application = FakeApplication(self._song)
         self.run_on_main_calls = 0
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self) -> FakeSong:
         return self._song
 
+    @property
+    def application(self) -> FakeApplication:
+        return self._application
+
+    @property
+    def live_state_lock(self) -> threading.RLock:
+        return self._live_state_lock
+
     def run_on_main(self, fn):
         self.run_on_main_calls += 1
         return fn()
+
+
+def _add_browser_item(
+    ctx: FakeCtx,
+    root: str,
+    name: str,
+    *,
+    uri: str = "",
+    is_loadable: bool = True,
+) -> FakeBrowserItem:
+    """Helper: append a leaf BrowserItem under one of the browser roots."""
+    item = FakeBrowserItem(name, uri=uri, is_loadable=is_loadable)
+    getattr(ctx.application.browser, root).children.append(item)
+    return item
+
 
 
 @pytest.fixture()
@@ -248,6 +346,8 @@ def test_get_parameters_summary_vs_full(loaded_actions):
 
 def test_load_appends_to_chain(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
@@ -259,24 +359,10 @@ def test_load_appends_to_chain(loaded_actions):
     assert resp.result["device_index"] == 1
     assert resp.result["kind"] == "Compressor2"
     assert len(ctx.song.tracks[0].devices) == 1
-
-
-def test_load_at_position_moves_device(loaded_actions):
-    track = FakeTrack("T1", devices=[
-        FakeDevice("A"), FakeDevice("B"), FakeDevice("C"),
-    ])
-    ctx = FakeCtx(FakeSong(tracks=[track]))
-    resp = dispatch(
-        Request(
-            tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "EQ8", "position": 2},
-        ),
-        context=ctx,
-    )
-    assert resp.ok is True
-    assert resp.result["device_index"] == 2
-    # New device sits at slot 2 (between A and B)
-    assert [d.name for d in track.devices] == ["A", "EQ8", "B", "C"]
+    # Destination selection is how Live routes load_item.
+    assert ctx.song.view.selected_track is ctx.song.tracks[0]
+    # And the browser saw exactly one load_item call.
+    assert len(ctx.application.browser.load_calls) == 1
 
 
 def test_load_on_return(loaded_actions):
@@ -284,6 +370,7 @@ def test_load_on_return(loaded_actions):
         tracks=[FakeTrack("T1")],
         returns=[FakeReturn("Rev")],
     ))
+    _add_browser_item(ctx, "audio_effects", "Reverb", uri="query:Reverb")
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
@@ -294,6 +381,295 @@ def test_load_on_return(loaded_actions):
     assert resp.ok is True
     assert resp.result["parent_kind"] == "return"
     assert resp.result["return_index"] == 1
+    assert len(ctx.song.return_tracks[0].devices) == 1
+    assert ctx.song.view.selected_track is ctx.song.return_tracks[0]
+
+
+def test_load_appends_to_existing_chain(loaded_actions):
+    """Live appends to the END; existing devices stay in place."""
+    track = FakeTrack("T1", devices=[FakeDevice("A"), FakeDevice("B")])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "EQ8", uri="query:EQ8")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "EQ8"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["device_index"] == 3
+    assert [d.name for d in track.devices] == ["A", "B", "EQ8"]
+
+
+def test_load_with_preset_uri_finds_by_uri_in_nested_folder(loaded_actions):
+    """preset_uri match walks the full tree, including non-default roots."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # The falling-walking kit lives a few levels deep under Drums.
+    kit_leaf = FakeBrowserItem(
+        "My Kit", uri="query:Drums#FileId_5418", is_loadable=True,
+    )
+    kit_folder = FakeBrowserItem(
+        "Kits", is_loadable=False, children=(kit_leaf,),
+    )
+    ctx.application.browser.drums.children.append(kit_folder)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "DrumGroupDevice",
+                "preset_uri": "query:Drums#FileId_5418",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["preset_uri"] == "query:Drums#FileId_5418"
+    assert ctx.application.browser.load_calls[0].uri == \
+        "query:Drums#FileId_5418"
+    # The newly-appended device takes the BrowserItem's display name.
+    assert ctx.song.tracks[0].devices[0].name == "My Kit"
+
+
+def test_load_preset_uri_searches_plugins_root(loaded_actions):
+    """preset_uri can resolve under plugins / user_library — kind-only cannot."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    plugin = FakeBrowserItem(
+        "Serum", uri="query:VST3#serum.vst3", is_loadable=True,
+    )
+    ctx.application.browser.plugins.children.append(plugin)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Serum",
+                "preset_uri": "query:VST3#serum.vst3",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert ctx.application.browser.load_calls[0].uri == \
+        "query:VST3#serum.vst3"
+
+
+def test_load_translates_class_name_to_display_name(loaded_actions):
+    """Wave-2 W2-7: real Live exposes ``device.class_name='Compressor2'`` but
+    the browser indexes it as ``'Compressor'``. Capture → push reaches the
+    handler with the class name; the handler falls back to the
+    device_names translation table when the direct name match misses.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Browser exposes ONLY the display name "Compressor" — no node named
+    # "Compressor2" exists. Without translation, this load would fail.
+    _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Compressor")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, (
+        f"Expected translation 'Compressor2' → 'Compressor' to succeed. "
+        f"Response: {resp.to_dict()}"
+    )
+    # The result preserves the requested kind (caller's identity).
+    assert resp.result["kind"] == "Compressor2"
+    # And the device IS loaded.
+    assert len(ctx.song.tracks[0].devices) == 1
+
+
+def test_load_translates_drum_group_device_to_drum_rack(loaded_actions):
+    """Sample table coverage: DrumGroupDevice → Drum Rack — exercised by
+    every drum kit push (falling-walking has one).
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "DrumGroupDevice"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["kind"] == "DrumGroupDevice"
+
+
+def test_load_passes_through_unmapped_class_name(loaded_actions):
+    """For names not in the translation table (third-party plugins,
+    Live built-ins that match in both name spaces), the original behavior
+    is preserved — direct display-name match.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Reverb", uri="query:Reverb")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Reverb"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["kind"] == "Reverb"
+
+
+def test_load_unknown_kind_error_mentions_translation(loaded_actions):
+    """When the translation table has a mapping but the browser still lacks
+    the translated node, the error reports BOTH the original kind and the
+    translated display name so the user knows we tried both paths.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # No "Compressor" or "Compressor2" node in the browser.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "Compressor2" in (resp.error or "")
+    assert "Compressor" in (resp.error or "")  # translated form mentioned
+    assert "device_names" in (resp.error or "")  # hint at the table
+
+
+def test_load_unknown_kind_errors_with_browser_hint(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "NoSuchDevice"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "no loadable browser item" in (resp.error or "")
+    assert "NoSuchDevice" in (resp.error or "")
+    assert "ableton_browser" in (resp.error or "")  # the recovery hint
+
+
+def test_load_unknown_preset_uri_errors(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Compressor2",
+                "preset_uri": "query:Nonexistent",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "query:Nonexistent" in (resp.error or "")
+
+
+def test_load_skips_non_loadable_folder_with_same_name(loaded_actions):
+    """A folder named 'Compressor2' must NOT match — only is_loadable nodes."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    decoy_folder = FakeBrowserItem(
+        "Compressor2", is_loadable=False,
+        children=(FakeBrowserItem(
+            "Compressor2", uri="query:Compressor2", is_loadable=True,
+        ),),
+    )
+    ctx.application.browser.audio_effects.children.append(decoy_folder)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # The matched item is the loadable leaf, not the folder.
+    assert ctx.application.browser.load_calls[0].is_loadable is True
+
+
+def test_load_preset_uri_must_match_loadable_node(loaded_actions):
+    """A non-loadable folder with a matching uri must NOT be picked —
+    browser.load_item only accepts loadable BrowserItems. Without this
+    gate, an empty preset_uri would resolve to a root and crash later
+    with a misleading "did not append" error."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    folder = FakeBrowserItem(
+        "Vendor", uri="query:vendor", is_loadable=False,
+        children=(FakeBrowserItem(
+            "Synth", uri="query:vendor#synth", is_loadable=True,
+        ),),
+    )
+    ctx.application.browser.plugins.children.append(folder)
+    # preset_uri targets the FOLDER, not the leaf — should fail to resolve.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Synth",
+                "preset_uri": "query:vendor",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "query:vendor" in (resp.error or "")
+    # And no load_item was called.
+    assert ctx.application.browser.load_calls == []
+
+
+def test_load_position_param_is_unknown(loaded_actions):
+    """Live 12.4 has no Track.move_device — position is not in V1 schema."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Compressor2", "position": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "position" in (resp.error or "")
+    assert "unknown" in (resp.error or "").lower()
+
+
+def test_load_without_application_errors(loaded_actions):
+    """Missing application.browser surfaces a teaching error, not a crash."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx._application = None
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "application" in (resp.error or "").lower()
+
+
+def test_load_no_chain_growth_is_runtime_error(loaded_actions):
+    """If Live silently no-ops (e.g. instrument on master), we surface it."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    # Replace the browser's load_item with a no-op that doesn't grow the chain.
+    ctx.application.browser.load_item = lambda item: \
+        ctx.application.browser.load_calls.append(item)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "did not append" in (resp.error or "")
 
 
 def test_delete_removes_device(loaded_actions):
@@ -311,6 +687,9 @@ def test_delete_removes_device(loaded_actions):
 
 
 def test_enable_disable_toggle_is_active(loaded_actions):
+    """Fallback path: device without a 'Device On' parameter falls through
+    to the direct is_active attribute write. Preserves the prior contract.
+    """
     dev = FakeDevice("X")
     track = FakeTrack("T1", devices=[dev])
     ctx = FakeCtx(FakeSong(tracks=[track]))
@@ -330,6 +709,49 @@ def test_enable_disable_toggle_is_active(loaded_actions):
         context=ctx,
     )
     assert r2.ok and dev.is_active is True
+
+
+def test_enable_disable_uses_device_on_parameter(loaded_actions):
+    """Wave-2 W2-C / B-12: Live 12.4 exposes ``is_active`` as read-only on
+    at least CompressorDevice. The writable surface is the 'Device On'
+    parameter at parameters[0]. The handler must write there, not to the
+    raw attribute. Verified by asserting the parameter's value changed
+    AND the (deliberately untouched) is_active mock stayed at its
+    initial state to prove the param path won.
+    """
+    device_on = FakeParam("Device On", value=1.0, value_items=("Off", "On"))
+    dev = FakeDevice(
+        "Comp", parameters=[device_on, FakeParam("Threshold", 0.5)],
+    )
+    track = FakeTrack("T1", devices=[dev])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    initial_is_active = dev.is_active
+
+    r1 = dispatch(
+        Request(
+            tool="ableton_device", action="disable",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert r1.ok
+    assert device_on.value == 0.0, (
+        f"disable should have written 0.0 to the 'Device On' parameter "
+        f"(got {device_on.value})"
+    )
+    # is_active stayed at its mock-initial value — the handler did NOT
+    # fall back to the read-only attribute.
+    assert dev.is_active == initial_is_active
+
+    r2 = dispatch(
+        Request(
+            tool="ableton_device", action="enable",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert r2.ok
+    assert device_on.value == 1.0
 
 
 # ---------- set_parameter ----------

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import device_names
 from ..dispatcher import LiveContext
 
 
@@ -169,10 +170,16 @@ def get_parameters_handler(
         if detail == "full":
             entry["min"] = float(getattr(p, "min", 0.0))
             entry["max"] = float(getattr(p, "max", 1.0))
-            items = tuple(getattr(p, "value_items", ()) or ())
-            entry["is_enum"] = bool(items)
-            if items:
-                entry["value_items"] = list(items)
+            # Live raises ``RuntimeError: Only quantized parameters have
+            # value items`` on continuous-parameter ``value_items`` access.
+            # Guard via ``is_quantized`` before reading.
+            if bool(getattr(p, "is_quantized", False)):
+                items = tuple(getattr(p, "value_items", ()) or ())
+                entry["is_enum"] = bool(items)
+                if items:
+                    entry["value_items"] = list(items)
+            else:
+                entry["is_enum"] = False
         params_out.append(entry)
     result: dict[str, Any] = {
         "device_index": device_index,
@@ -188,6 +195,125 @@ def get_parameters_handler(
 # ---------------------------------------------------------------------------
 
 
+_BROWSER_LOAD_ROOTS: tuple[str, ...] = (
+    "instruments",
+    "audio_effects",
+    "midi_effects",
+    "drums",
+)
+
+_BROWSER_URI_ROOTS: tuple[str, ...] = _BROWSER_LOAD_ROOTS + (
+    "plugins",
+    "samples",
+    "user_library",
+    "packs",
+)
+
+_BROWSER_WALK_DEPTH = 8
+
+
+def _walk_for_uri(node: Any, target_uri: str, depth_left: int) -> Any:
+    # Gate on is_loadable so an empty / folder URI doesn't resolve to a
+    # non-loadable node and produce a misleading "did not append" error
+    # later. browser.load_item requires a loadable BrowserItem.
+    if (
+        bool(getattr(node, "is_loadable", False))
+        and getattr(node, "uri", None) == target_uri
+    ):
+        return node
+    if depth_left <= 0:
+        return None
+    for child in getattr(node, "children", ()) or ():
+        match = _walk_for_uri(child, target_uri, depth_left - 1)
+        if match is not None:
+            return match
+    return None
+
+
+def _walk_for_name(node: Any, name: str, depth_left: int) -> Any:
+    if (
+        bool(getattr(node, "is_loadable", False))
+        and str(getattr(node, "name", "")) == name
+    ):
+        return node
+    if depth_left <= 0:
+        return None
+    for child in getattr(node, "children", ()) or ():
+        match = _walk_for_name(child, name, depth_left - 1)
+        if match is not None:
+            return match
+    return None
+
+
+def _find_browser_item(
+    browser: Any, *, kind: str, preset_uri: str | None
+) -> Any:
+    """Resolve a BrowserItem to hand to ``browser.load_item``.
+
+    With ``preset_uri``: walk every root (including plugins / packs / user
+    library) looking for an exact ``uri`` match. With ``kind`` only:
+    walk the built-in roots, matching on the first ``is_loadable`` node
+    whose ``name`` equals ``kind``. If that fails, try a second pass with
+    ``kind`` translated through the class-name → display-name table
+    (``device_names``) — Live exposes built-ins under two name spaces
+    (``device.class_name`` returns ``Compressor2`` / ``Eq8`` /
+    ``StereoGain``, but the browser indexes them as ``Compressor`` /
+    ``EQ Eight`` / ``Utility``), and captured songs reach the planner
+    with the class name.
+
+    Agents loading non-built-in devices (plugins, presets) should always
+    pass ``preset_uri`` — captured via
+    ``ableton_browser(action='at_path', ...)`` — which is the
+    unambiguous load contract.
+    """
+    if preset_uri is not None:
+        for root_name in _BROWSER_URI_ROOTS:
+            root_node = getattr(browser, root_name, None)
+            if root_node is None:
+                continue
+            match = _walk_for_uri(root_node, preset_uri, _BROWSER_WALK_DEPTH)
+            if match is not None:
+                return match
+        return None
+
+    # Pass 1: direct name match (third-party plugins + Live built-ins
+    # whose class name matches the browser display name).
+    for root_name in _BROWSER_LOAD_ROOTS:
+        root_node = getattr(browser, root_name, None)
+        if root_node is None:
+            continue
+        match = _walk_for_name(root_node, kind, _BROWSER_WALK_DEPTH)
+        if match is not None:
+            return match
+
+    # Pass 2: try the class-name → display-name translation.
+    translated = device_names.class_name_to_display(kind)
+    if translated is not None and translated != kind:
+        for root_name in _BROWSER_LOAD_ROOTS:
+            root_node = getattr(browser, root_name, None)
+            if root_node is None:
+                continue
+            match = _walk_for_name(root_node, translated, _BROWSER_WALK_DEPTH)
+            if match is not None:
+                return match
+    return None
+
+
+def _refresh_parent(
+    context: LiveContext, *, parent_kind: str, parent_idx: int
+) -> Any:
+    """Re-read the parent track after a Live mutation.
+
+    Live 12.x re-wraps API objects on every property access (B-1). The
+    parent reference captured before ``browser.load_item`` may point to
+    a stale wrapper whose ``devices`` collection doesn't reflect the new
+    chain. Re-resolving from ``song`` returns the fresh wrapper.
+    """
+    if parent_kind == "track":
+        return context.song.tracks[parent_idx - 1]
+    return context.song.return_tracks[parent_idx - 1]
+
+
 def load_handler(
     context: LiveContext,
     *,
@@ -195,64 +321,83 @@ def load_handler(
     preset_uri: str | None = None,
     track_index: int | None = None,
     return_index: int | None = None,
-    position: int | None = None,
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
 
-    ``kind`` is the Live device class name (e.g. ``'Compressor2'``,
-    ``'Operator'``). ``preset_uri`` is an optional Live browser URI for
-    a specific preset/.adv file; if omitted, Live's default for that kind
-    is loaded.
-
-    ``position`` is the 1-based slot in the chain where the new device
-    should sit. Live's API loads via browser-URI and the device appears
-    at the chain's tail by default; if ``position`` is set, the handler
-    moves the new device into place. Returns the new ``device_index``.
+    ``kind`` is the Live device class / display name (e.g. ``'Compressor2'``,
+    ``'Operator'``). ``preset_uri`` is the optional, canonical Live browser
+    URI for a specific preset — pass it when you need a specific
+    instrument or preset, captured from
+    ``ableton_browser(action='at_path', ...)``. The handler resolves the
+    URI (preferred) or the name (fallback) to a ``BrowserItem``, selects
+    the destination track via ``song.view.selected_track = parent``, and
+    calls ``application.browser.load_item(item)`` — the path Live 12.4
+    exposes for programmatic device loading. The new device appears at
+    the tail of the destination's top-level device chain; Live 12.4
+    exposes no public re-ordering API, so the position is fixed.
     """
     parent, parent_kind, parent_idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
     )
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
-    chain_before = list(parent.devices)
-    # Live's modern API exposes load via the song's view; the legacy fork
-    # used `track.load_device(browser_uri)`. We prefer the modern path,
-    # falling back to the legacy method if available.
-    loader = getattr(parent, "load_device", None)
-    if loader is None:
+
+    application = getattr(context, "application", None)
+    if application is None:
         raise NotImplementedError(
-            f"{parent_kind} does not expose load_device — older Live build "
-            "or unsupported track type (master / group)"
+            "LiveContext.application is unreachable — browser cannot be "
+            "opened for device load"
         )
-    loader(kind=kind, preset_uri=preset_uri) if _loader_accepts_kwargs(loader) \
-        else loader(preset_uri or kind)
-    chain_after = list(parent.devices)
-    if len(chain_after) <= len(chain_before):
+    browser = getattr(application, "browser", None)
+    if browser is None:
+        raise NotImplementedError(
+            "application.browser not exposed in this Live version"
+        )
+
+    item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+    if item is None:
+        if preset_uri is not None:
+            criteria = f"preset_uri={preset_uri!r}"
+        else:
+            translated = device_names.class_name_to_display(kind)
+            if translated is not None and translated != kind:
+                criteria = (
+                    f"kind={kind!r} (also tried translated display name "
+                    f"{translated!r} via device_names)"
+                )
+            else:
+                criteria = f"kind={kind!r}"
+        raise ValueError(
+            f"no loadable browser item found for {criteria}; verify via "
+            "ableton_browser(action='tree', ...) or pass preset_uri from "
+            "ableton_browser(action='at_path', ...)"
+        )
+
+    view = getattr(context.song, "view", None)
+    if view is None:
+        raise NotImplementedError(
+            "song.view not exposed — cannot select destination track for "
+            "browser.load_item"
+        )
+
+    chain_before = len(parent.devices)
+    view.selected_track = parent
+    browser.load_item(item)
+
+    # Re-resolve the parent — Live re-wraps Track objects on every property
+    # access, and `browser.load_item` may invalidate the captured wrapper.
+    fresh_parent = _refresh_parent(
+        context, parent_kind=parent_kind, parent_idx=parent_idx
+    )
+    chain_after = list(fresh_parent.devices)
+    if len(chain_after) <= chain_before:
         raise RuntimeError(
             f"load: Live did not append a device on {parent_kind} "
-            f"{parent_idx} after load_device({kind!r}); this may be a "
-            "browser-URI miss or an unsupported device kind"
+            f"{parent_idx} after browser.load_item; the item may not be "
+            f"loadable on this parent (e.g. instrument on a return)"
         )
     new_device = chain_after[-1]
     new_index = len(chain_after)
-    # Optional re-position. Live's API exposes
-    # `track.devices` as immutable in some versions; movement is via
-    # `move_device` if present, else a documented limitation.
-    if position is not None:
-        if position < 1 or position > new_index:
-            raise IndexError(
-                f"position {position} out of range [1, {new_index}]"
-            )
-        if position != new_index:
-            mover = getattr(parent, "move_device", None)
-            if mover is None:
-                raise NotImplementedError(
-                    f"{parent_kind} does not expose move_device — the device "
-                    f"was loaded at position {new_index}; manual reordering "
-                    "via Live is required"
-                )
-            mover(new_device, position - 1)
-            new_index = position
     result: dict[str, Any] = {
         "device_index": new_index,
         "kind": kind,
@@ -263,22 +408,6 @@ def load_handler(
     if preset_uri is not None:
         result["preset_uri"] = preset_uri
     return result
-
-
-def _loader_accepts_kwargs(loader: Any) -> bool:
-    """Heuristic: does ``loader`` accept keyword args (modern API) or only
-    positional (legacy)? We can't introspect Live's C-implemented methods
-    reliably; this falls back to positional on uncertainty.
-    """
-    try:
-        import inspect
-        sig = inspect.signature(loader)
-        return any(
-            p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD)
-            for p in sig.parameters.values()
-        )
-    except (TypeError, ValueError):
-        return False
 
 
 def delete_handler(
@@ -321,18 +450,58 @@ def _set_active(
     return_index: int | None,
     is_active: bool,
 ) -> dict[str, Any]:
+    """Toggle a device's active/bypass state.
+
+    Live 12.4 exposes ``device.is_active`` as READ-ONLY on at least
+    Compressor / CompressorDevice — direct attribute writes raise
+    ``AttributeError: property of 'CompressorDevice' object has no
+    setter``. The writable surface is the "Device On" parameter (always
+    ``device.parameters[0]`` by Live convention). Write to that
+    parameter's ``value``; fall back to ``is_active`` only if no
+    Device-On parameter is found (defensive — should never happen for a
+    real Live device).
+    """
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
     )
     dev = _resolve_device(parent, device_index)
-    dev.is_active = is_active
-    result: dict[str, Any] = {
+    target_value = 1.0 if is_active else 0.0
+
+    # Prefer the Device-On parameter (the writable surface on Live 12.4).
+    params = getattr(dev, "parameters", ())
+    device_on = None
+    if params:
+        first = params[0]
+        if getattr(first, "name", "") == "Device On":
+            device_on = first
+    if device_on is not None:
+        device_on.value = target_value
+        return {
+            "device_index": device_index,
+            "is_active": is_active,
+            "parent_kind": kind,
+            **_parent_address(kind, idx),
+        }
+
+    # Fallback: direct attribute write. On Live 12.4 CompressorDevice this
+    # raises; surface a teaching error rather than the raw AttributeError.
+    try:
+        dev.is_active = is_active
+    except AttributeError as exc:
+        raise NotImplementedError(
+            f"device(action='{'enable' if is_active else 'disable'}'): the "
+            f"device at index {device_index} exposes neither a 'Device On' "
+            f"parameter nor a writable 'is_active' attribute "
+            f"(class={type(dev).__name__}). Original error: {exc}. "
+            "Live API surface for this device class doesn't support "
+            "enable/disable from the Remote Script."
+        ) from exc
+    return {
         "device_index": device_index,
         "is_active": is_active,
         "parent_kind": kind,
+        **_parent_address(kind, idx),
     }
-    result.update(_parent_address(kind, idx))
-    return result
 
 
 def enable_handler(
@@ -414,6 +583,14 @@ def set_parameter_handler(
         )
 
     if value_type == "enum":
+        # Live raises RuntimeError on continuous-parameter value_items access
+        # (Wave-2 W2-9). Guard via is_quantized — when False, the parameter
+        # has no enum items by definition.
+        if not bool(getattr(target_param, "is_quantized", False)):
+            raise ValueError(
+                f"parameter {parameter_name!r} is not an enum parameter "
+                f"(is_quantized=False); use value_type='continuous'"
+            )
         items = tuple(getattr(target_param, "value_items", ()) or ())
         if not items:
             raise ValueError(

@@ -32,14 +32,29 @@ _MAX_MESSAGE_BYTES = 16 * 1024 * 1024  # 16 MiB — generous; guards runaway pre
 
 @dataclass(frozen=True)
 class Request:
-    """Canonical request shape."""
+    """Canonical request shape.
+
+    ``server_version`` carries the MCP server's ``hallucinote_mcp.__version__``
+    so the Live-side handler can detect a stale Remote Script and surface a
+    clear recovery action instead of the agent decoding "unknown action"
+    errors caused by version drift. Empty means the sender didn't populate
+    it; the Live side treats that as "MCP server too old to handshake".
+    """
 
     tool: str
     action: str
     params: dict[str, Any] = field(default_factory=dict)
+    server_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"tool": self.tool, "action": self.action, "params": dict(self.params)}
+        out: dict[str, Any] = {
+            "tool": self.tool,
+            "action": self.action,
+            "params": dict(self.params),
+        }
+        if self.server_version:
+            out["server_version"] = self.server_version
+        return out
 
     @classmethod
     def from_dict(cls, obj: dict[str, Any]) -> "Request":
@@ -48,13 +63,16 @@ class Request:
         tool = obj.get("tool")
         action = obj.get("action")
         params = obj.get("params", {})
+        server_version = obj.get("server_version", "")
         if not isinstance(tool, str):
             raise ValueError("request.tool must be a string")
         if not isinstance(action, str):
             raise ValueError("request.action must be a string")
         if not isinstance(params, dict):
             raise ValueError("request.params must be an object")
-        return cls(tool=tool, action=action, params=params)
+        if not isinstance(server_version, str):
+            raise ValueError("request.server_version must be a string")
+        return cls(tool=tool, action=action, params=params, server_version=server_version)
 
 
 @dataclass(frozen=True)
@@ -123,6 +141,71 @@ def error(
         example=example,
         hint=hint,
     )
+
+
+# ---------------------------------------------------------------------------
+# Version handshake
+# ---------------------------------------------------------------------------
+
+
+def check_version_compat(
+    request_version: str, local_version: str
+) -> Response | None:
+    """Compare the version reported by the MCP server side to the local
+    ``hallucinote_mcp.__version__`` on the Remote Script side.
+
+    Returns ``None`` when the versions match (caller proceeds to dispatch).
+    Returns a structured ``Response`` error when they don't — naming both
+    versions and pointing to the recovery action. Strict equality on
+    purpose: any version drift can change the wire shape, action surface,
+    or handler logic, and the cost of a false positive (re-run install) is
+    tiny compared to the cost of a false negative (silent "unknown action"
+    errors that take minutes to diagnose — the exact failure mode that
+    motivated this check).
+
+    Three branches:
+
+    * **match**: ``request_version == local_version`` → ``None``.
+    * **missing**: ``request_version`` is empty → the MCP server didn't
+      send the field at all, so it predates this handshake. The user
+      should upgrade the pip package.
+    * **mismatch**: both set but different → typically the Remote Script
+      is stale (the MCP server side updates more freely; the Remote Script
+      requires a re-copy plus Live restart). The user should re-run
+      ``/ableton-install-mcp`` and restart Live.
+    """
+    if not request_version:
+        return error(
+            "Hallucinote MCP version handshake missing: the installed "
+            f"hallucinote-mcp package didn't send its version. "
+            f"Remote Script side is running {local_version}. The MCP server "
+            f"side is likely older than {local_version} and predates the "
+            f"version handshake.",
+            hint=(
+                "Upgrade the MCP server side — `pip install -U "
+                "hallucinote-mcp` — then run `/mcp` in Claude Code to "
+                "respawn the server (a full Claude Code restart works too "
+                "but isn't necessary)."
+            ),
+        )
+    if request_version != local_version:
+        return error(
+            f"Hallucinote MCP version mismatch: MCP server side reports "
+            f"{request_version}, Remote Script side is {local_version}. "
+            f"These two halves run in different Python processes and must "
+            f"match — drift means the action surface or wire shape may "
+            f"differ.",
+            hint=(
+                "If the Remote Script side is stale (the common case): "
+                "run `/ableton-install-mcp` to refresh the vendored copy "
+                "in Live's User Library, then fully quit and reopen Live "
+                "(Live caches Control Surface modules at startup, so a "
+                "restart is required — `/mcp` alone won't help). If the "
+                "MCP server side is stale: `pip install -U hallucinote-mcp` "
+                "then run `/mcp` in Claude Code to respawn it."
+            ),
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +319,7 @@ __all__ = [
     "Response",
     "ok",
     "error",
+    "check_version_compat",
     "FrameError",
     "encode_message",
     "decode_messages",

@@ -8,6 +8,7 @@ actions module (or calls the targeted registration) inside that isolation.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -57,7 +58,15 @@ class FakeApplication:
 
 
 class FakeSong:
-    """Quacks like ``Live.Song.Song`` for the session-action surface."""
+    """Quacks like ``Live.Song.Song`` for the session-action surface.
+
+    Note: Live's actual ``Song`` does NOT expose ``get_application`` — the
+    Application is reached via ``Live.Application.get_application()``
+    (module-level) and surfaced to handlers via ``LiveContext.application``.
+    This fake mirrors the real Song surface and intentionally does NOT
+    define ``get_application``; tests that need the Application reach it
+    via ``ctx.application``.
+    """
 
     def __init__(self):
         self.tempo = 120.0
@@ -74,13 +83,8 @@ class FakeSong:
         self.scenes: list[Any] = [object(), object()]
         self.view = None  # info_handler tolerates absent view
 
-        self._application = FakeApplication()
-
         self.play_called = 0
         self.stop_called = 0
-
-    def get_application(self):
-        return self._application
 
     def start_playing(self):
         self.play_called += 1
@@ -92,19 +96,45 @@ class FakeSong:
 
 
 class FakeLiveContext:
-    """Synchronous LiveContext stub for tests."""
+    """Synchronous LiveContext stub for tests.
 
-    def __init__(self, song: FakeSong | None = None):
+    Owns the FakeApplication (the Application object lives on the context,
+    not the Song — symmetric to the real LiveContext Protocol). Tests that
+    want to drive a missing-Application scenario can construct
+    ``FakeLiveContext(application=None)`` or pass an object whose
+    ``view`` access raises.
+    """
+
+    _MISSING = object()  # sentinel — distinguishes "not given" from "None"
+
+    def __init__(
+        self,
+        song: FakeSong | None = None,
+        application: Any = _MISSING,
+    ):
         self._song = song if song is not None else FakeSong()
+        self._application = (
+            FakeApplication() if application is FakeLiveContext._MISSING else application
+        )
         self.run_on_main_calls = 0
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self) -> FakeSong:
         return self._song
 
+    @property
+    def application(self) -> Any:
+        return self._application
+
+    @property
+    def live_state_lock(self):
+        return self._live_state_lock
+
     def run_on_main(self, fn):
         self.run_on_main_calls += 1
         return fn()
+
 
 
 @pytest.fixture()
@@ -140,7 +170,7 @@ _EXPECTED_ACTIONS = {
 # home is ableton_arrangement(action='set_loop') — see test_actions_arrangement.
 
 
-def test_session_registers_all_thirteen_actions(loaded_session_actions):
+def test_session_registers_expected_actions(loaded_session_actions):
     names = {a.name for a in schema.actions_for("ableton_session")}
     assert names == _EXPECTED_ACTIONS
 
@@ -174,14 +204,15 @@ def test_info_returns_structured_snapshot(loaded_session_actions):
 def test_info_focused_view_reports_unknown_when_application_unreachable(
     loaded_session_actions,
 ):
-    """If ``song.get_application()`` raises, the field returns 'unknown' rather
+    """If ``context.application`` raises, the field returns 'unknown' rather
     than leaking unrelated state (the bug the Critic caught in M-1 round-1)."""
 
-    class _BadSong(FakeSong):
-        def get_application(self):
+    class _RaisingApp:
+        @property
+        def view(self):
             raise RuntimeError("no application")
 
-    ctx = FakeLiveContext(song=_BadSong())
+    ctx = FakeLiveContext(application=_RaisingApp())
     resp = dispatch(Request(tool="ableton_session", action="info"), context=ctx)
     assert resp.ok is True
     assert resp.result["focused_view"] == "unknown"
@@ -204,6 +235,12 @@ def test_set_tempo_writes_song_tempo(loaded_session_actions):
     )
     assert resp.ok is True
     assert ctx.song.tempo == 132.0
+    # Wave-2 W2-D / B-15: result_template echoes the input bpm so callers
+    # get a confirming response shape instead of result=None.
+    assert resp.result == {"tempo": 132.0}, (
+        f"set_tempo should return {{tempo: bpm}} via result_template; "
+        f"got {resp.result!r}"
+    )
 
 
 def test_set_tempo_validates_range(loaded_session_actions):
@@ -346,6 +383,8 @@ def test_play_invokes_song_start_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.play_called == 1
     assert ctx.song.is_playing is True
+    # Wave-2 W2-D / B-15: result_template returns a structured response.
+    assert resp.result == {"is_playing": True}
 
 
 def test_stop_invokes_song_stop_playing(loaded_session_actions):
@@ -355,6 +394,8 @@ def test_stop_invokes_song_stop_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.stop_called == 1
     assert ctx.song.is_playing is False
+    # Wave-2 W2-D / B-15: structured result instead of None.
+    assert resp.result == {"is_playing": False}
 
 
 # ---------- seek ----------
@@ -403,6 +444,41 @@ def test_seek_with_implicit_beat_zero(loaded_session_actions):
     assert ctx.song.current_song_time == pytest.approx(32.0)
 
 
+def test_seek_acquires_live_state_lock(loaded_session_actions):
+    """B-21 regression. ``seek`` writes ``current_song_time``, which
+    races against concurrent ``cue_create`` / ``cue_delete`` callers.
+    The handler must take ``live_state_lock`` around the write so the
+    operations serialize.
+    """
+    class _RecordingLock:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self._inner = threading.RLock()
+
+        def __enter__(self):
+            self._inner.acquire()
+            self.events.append("acquire")
+            return self
+
+        def __exit__(self, *args):
+            self.events.append("release")
+            self._inner.release()
+            return False
+
+    ctx = FakeLiveContext()
+    recording = _RecordingLock()
+    ctx._live_state_lock = recording
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="seek",
+            params={"bar": 3, "beat": 0.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert recording.events == ["acquire", "release"]
+
+
 # set_arrangement_loop: deprecated in Wave M-5 — see
 # test_actions_arrangement.py::set_loop tests for the canonical home.
 
@@ -433,7 +509,9 @@ def test_set_view_maps_lowercase_to_live_names(loaded_session_actions):
         context=ctx,
     )
     assert resp.ok is True
-    assert ctx.song.get_application().view.shown_views == ["Arranger"]
+    # Application lives on the context (not the song) — same surface the
+    # handler reaches through.
+    assert ctx.application.view.shown_views == ["Arranger"]
 
 
 def test_set_view_rejects_unknown_view(loaded_session_actions):

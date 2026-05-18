@@ -165,9 +165,69 @@ register(
             ParamSpec(name="name", type="str", required=False),
         ),
         handler=arrangement_handlers.cue_create_handler,
+        # W3-F: see handler docstring. The seek-then-settle window
+        # needs WALL-CLOCK wait time while Live's main thread pumps
+        # audio-thread propagation events. Running the handler on the
+        # worker thread (and bouncing each Live touch through
+        # ``run_on_main`` individually) avoids the main-thread deadlock
+        # the W2-F implementation hit.
+        runs_on_worker=True,
         example=(
             "ableton_arrangement(action='cue_create', position_beats=16.0, "
             "name='Verse')"
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_arrangement",
+        name="cue_create_batch",
+        description=(
+            "Create multiple cue points in one call. Each entry is "
+            "{position_beats: float, name?: str}. Returns "
+            "{cue_count, cues: [...]} in submission order. Each per-cue "
+            "result shape matches cue_create's. PREFERRED over multiple "
+            "parallel cue_create calls — the underlying Live API has a "
+            "~400ms per-cue settle window that doesn't parallelize, so "
+            "the batch pays the per-cue cost once across one round trip "
+            "instead of N. Indices reported are the position in "
+            "song.cue_points at the time of each insert; call cue_list "
+            "after the batch for the final mapping. "
+            "**Partial-state on error**: pre-validation (type/duplicate "
+            "checks) fails the whole batch with NO cues created. But if "
+            "an error occurs MID-LOOP (e.g. a cue collides with an "
+            "existing cue Live just acquired), prior entries in the "
+            "batch ARE persisted — the response is the per-cue error "
+            "string with no list of what landed. Call cue_list "
+            "afterward to discover the partial state."
+        ),
+        params=(
+            ParamSpec(
+                name="cues", type="list",
+                description=(
+                    "List of {position_beats: float, name?: str} dicts. "
+                    "Positions must be unique within the batch and within "
+                    "[0, last_event_time]."
+                ),
+            ),
+        ),
+        handler=arrangement_handlers.cue_create_batch_handler,
+        runs_on_worker=True,  # W3-F — same rationale as cue_create.
+        example=(
+            "ableton_arrangement(action='cue_create_batch', cues=["
+            "{'position_beats': 0.0, 'name': 'Intro'}, "
+            "{'position_beats': 16.0, 'name': 'Verse'}, "
+            "{'position_beats': 48.0, 'name': 'Chorus'}])"
+        ),
+        tips=(
+            "For a 7-cue song this is ~3s end-to-end (each cue's "
+            "audio-thread settle is ~400ms) — acceptable for setup-time "
+            "pushes, slow for interactive use.",
+            "Final cue_index values may differ from those reported in "
+            "the per-cue results because Live keeps the list sorted by "
+            "position. Use cue_list afterward if you need the stable "
+            "index mapping.",
         ),
     )
 )
@@ -181,10 +241,35 @@ register(
             ParamSpec(name="cue_index", type="int", minimum=1),
         ),
         handler=arrangement_handlers.cue_delete_handler,
+        runs_on_worker=True,  # W3-F — same rationale as cue_create.
         example="ableton_arrangement(action='cue_delete', cue_index=2)",
         tips=(
             "Subsequent cue_index values shift down after a delete; "
             "recompute between calls or delete in descending order.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_arrangement",
+        name="cue_rename",
+        description=(
+            "Set a cue point's display name. Useful when ``cue_create`` "
+            "completed but the rename step couldn't be applied due to "
+            "Live API timing — call ``cue_list`` to find the cue_index "
+            "of the cue you want to rename, then this."
+        ),
+        params=(
+            ParamSpec(name="cue_index", type="int", minimum=1),
+            ParamSpec(name="name", type="str"),
+        ),
+        handler=arrangement_handlers.cue_rename_handler,
+        example="ableton_arrangement(action='cue_rename', cue_index=2, name='Verse')",
+        tips=(
+            "Cue.name is a direct writable property on Live's CuePoint "
+            "object, so this is a synchronous one-call rename — no "
+            "main-thread settle dance needed.",
         ),
     )
 )
@@ -209,6 +294,10 @@ register(
             ),
         ),
         handler=arrangement_handlers.cue_jump_handler,
+        # W3-F follow-up: cue_jump_handler acquires live_state_lock,
+        # same RLock as the worker-thread cue handlers. Must be on
+        # the worker thread to avoid cross-thread deadlock.
+        runs_on_worker=True,
         example=(
             "ableton_arrangement(action='cue_jump', direction='next')"
         ),

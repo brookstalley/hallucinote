@@ -8,11 +8,16 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# Songwright DB files (per-user, never committed)
+# Hallucinote DB files (per-user, never committed)
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Claude Code MCP server config — per-user / per-environment. The install
+# skill writes the correct shape for the user's environment (bare-name vs
+# absolute venv path). See .mcp.json.example for the canonical entry.
+.mcp.json
 
 # Build artifacts
 build/
@@ -44,3 +49,13 @@ uv.lock
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
 .claude/scheduled_tasks.lock
+
+# E2E push-test ephemera (Wave 3 throwaway artifacts until ableton-push skill ships)
+.prawduct/.push-clip-*.json
+.prawduct/.push-plan-*.json
+.prawduct/.push-results-*.json
+.prawduct/.push-session-id
+.prawduct/.push-findings.md
+.prawduct/.getting-started-prompts.md
+.prawduct/push-orchestrator.py
+.getting-started-prompts.md

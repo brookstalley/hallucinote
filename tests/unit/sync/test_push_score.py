@@ -147,6 +147,73 @@ def test_plan_push_time_signature_map_emits_canonical_call_and_gap_warn(conn, so
     assert any("MCP gap" in n for n in plan.notes)
 
 
+# ---------- _position_bar_to_beats (W3-B inverse of _split_bar) ----------
+
+
+def test_position_bar_to_beats_empty_map_4_4_default():
+    assert push._position_bar_to_beats(1.0, []) == 0.0
+    assert push._position_bar_to_beats(17.0, []) == 64.0
+    assert push._position_bar_to_beats(17.5, []) == 66.0
+
+
+def test_position_bar_to_beats_rejects_below_one():
+    with pytest.raises(ValueError, match="1-based bar convention"):
+        push._position_bar_to_beats(0.0, [])
+    with pytest.raises(ValueError, match="1-based bar convention"):
+        push._position_bar_to_beats(0.999, [])
+
+
+def test_position_bar_to_beats_single_4_4_at_bar_1(conn, song):
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    points = _ts_rows(conn, song)
+    # Falling-walking cues: 1, 17, 32, 40, 48, 56, 60 in 4/4.
+    assert push._position_bar_to_beats(1.0, points) == 0.0
+    assert push._position_bar_to_beats(17.0, points) == 64.0
+    assert push._position_bar_to_beats(32.0, points) == 124.0
+    assert push._position_bar_to_beats(60.0, points) == 236.0
+
+
+def test_position_bar_to_beats_6_8_compound(conn, song):
+    """6/8 = 3 quarter-note-beats per bar (Live's "1 beat = 1 quarter")."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=6, denominator=8
+    )
+    points = _ts_rows(conn, song)
+    assert push._position_bar_to_beats(1.0, points) == 0.0
+    assert push._position_bar_to_beats(2.0, points) == 3.0
+    assert push._position_bar_to_beats(5.0, points) == 12.0
+
+
+def test_position_bar_to_beats_across_meter_change(conn, song):
+    """4/4 from bar 1; switches to 6/8 at bar 5. A cue at bar 7 = 4 bars × 4
+    beats (4/4 segment) + 2 bars × 3 beats (6/8 segment) = 22 beats."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
+    )
+    points = _ts_rows(conn, song)
+    assert push._position_bar_to_beats(5.0, points) == 16.0  # boundary
+    assert push._position_bar_to_beats(7.0, points) == 22.0  # 16 + 2×3
+    assert push._position_bar_to_beats(6.5, points) == 20.5  # 16 + 1.5×3
+
+
+def test_position_bar_to_beats_before_first_ts_point_uses_first_meter(conn, song):
+    """Bars before ts_points[0].start_bar use ts_points[0]'s meter (matches
+    _meter_at_bar fallback). Mirrors the J-6 invariant: songs SHOULD have a
+    bar-1 point, but if they don't we don't blow up."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
+    )
+    points = _ts_rows(conn, song)
+    # Bar 3 in 6/8 (from the first point's meter, even though it starts at bar 5):
+    # 2 bars × 3 beats = 6 beats.
+    assert push._position_bar_to_beats(3.0, points) == 6.0
+
+
 # ---------- plan_push_cue_points ----------
 
 
@@ -156,47 +223,72 @@ def test_plan_push_cue_points_empty_warns(conn, song):
     assert any("no cue_points" in n for n in plan.notes)
 
 
-def test_plan_push_cue_points_uses_canonical_create_cue_point(conn, song):
-    """Matches the real MCP `create_cue_point(bar: 1-based int, beat: 0-based
-    float, name)` signature — locking this shape in so changes break loudly."""
+def test_plan_push_cue_points_emits_single_batched_call(conn, song):
+    """W3-B: planner emits one ableton_arrangement(cue_create_batch) call
+    carrying all cues — one round-trip instead of N. Locks the canonical
+    shape after the W3-B drift fix."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    cid = M.add_cue_point(conn, song_id=song, position_bar=8.0, name="chorus")
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+    M.add_cue_point(conn, song_id=song, position_bar=32.0, name="chorus")
+
     plan = push.plan_push_cue_points(conn, song_id=song)
-    assert len(plan.calls) == 1
+
+    assert len(plan.calls) == 1, "cue push must be a single batched call"
     call = plan.calls[0]
-    assert call.tool == "create_cue_point"
-    assert call.args == {"bar": 8, "beat": 0.0, "name": "chorus"}
-    assert call.key == f"cue_point:{cid}"
+    assert call.tool == "ableton_arrangement"
+    assert call.args["action"] == "cue_create_batch"
+    assert call.args["cues"] == [
+        {"position_beats": 0.0, "name": "intro"},
+        {"position_beats": 64.0, "name": "verse"},
+        {"position_beats": 124.0, "name": "chorus"},
+    ]
+    assert call.key == f"cue_batch:{song}"
 
 
-def test_plan_push_cue_points_splits_fractional_position(conn, song):
-    """A position 8.5 in 4/4 -> (bar=8, beat=2.0)."""
+def test_plan_push_cue_points_fractional_position_converts_correctly(conn, song):
+    """A cue at bar 8.5 in 4/4 = (8-1)*4 + 0.5*4 = 30 beats."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     M.add_cue_point(conn, song_id=song, position_bar=8.5, name="halfway")
     plan = push.plan_push_cue_points(conn, song_id=song)
-    call = plan.calls[0]
-    assert call.args["bar"] == 8
-    assert math.isclose(call.args["beat"], 2.0)
+    cues = plan.calls[0].args["cues"]
+    assert len(cues) == 1
+    assert math.isclose(cues[0]["position_beats"], 30.0)
 
 
 def test_plan_push_cue_points_warns_when_no_ts_map(conn, song):
+    """Bar→beats falls back to 4/4 with a planner warn."""
     M.add_cue_point(conn, song_id=song, position_bar=4.0, name="x")
     plan = push.plan_push_cue_points(conn, song_id=song)
-    call = plan.calls[0]
-    assert call.args == {"bar": 4, "beat": 0.0, "name": "x"}
+    cues = plan.calls[0].args["cues"]
+    assert cues == [{"position_beats": 12.0, "name": "x"}]  # (4-1)*4
     assert any("4/4" in n for n in plan.notes)
 
 
 def test_plan_push_cue_points_nameless_emits_empty_string(conn, song):
-    """The real MCP create_cue_point takes name as a string (default ""), not None.
-    Avoid passing None through and breaking the dispatch."""
+    """The MCP cue_create_batch takes name as optional string. None → ''."""
     M.add_cue_point(conn, song_id=song, position_bar=1.0, name=None)
     plan = push.plan_push_cue_points(conn, song_id=song)
-    assert plan.calls[0].args["name"] == ""
+    cues = plan.calls[0].args["cues"]
+    assert cues == [{"position_beats": 0.0, "name": ""}]
+
+
+def test_plan_push_cue_points_respects_meter_change(conn, song):
+    """Cue at bar 7 across a 4/4→6/8 change at bar 5 = 22 beats."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=7.0, name="post-change")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    cues = plan.calls[0].args["cues"]
+    assert cues == [{"position_beats": 22.0, "name": "post-change"}]
 
 
 # ---------- plan_push_sections ----------

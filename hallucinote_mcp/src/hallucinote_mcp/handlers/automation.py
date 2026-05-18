@@ -9,11 +9,26 @@ to walk the right Live API path:
   - **note_expression** — `clip.envelope_for_note(pitch, start_beats, axis)`
   - **device_parameter** — `clip.create_automation_envelope(parameter)` where
     parameter is resolved by name on the device's chain
-  - **mixer_volume** / **mixer_pan** — track-level automation; clip-less
-  - **send_level** — track-level send to a specific return
+  - **mixer_volume** / **mixer_pan** / **send_level** — likewise routed
+    through a containing arrangement (or session) clip's
+    ``create_automation_envelope``.
 
-Each path takes a breakpoints list of `{time_beats, value, curve?}` dicts
-and writes via ``envelope.insert_step()`` or ``envelope.add_breakpoint()``.
+All seven target kinds require a containing ``Clip`` (session or
+arrangement). Live 12.4's LOM does NOT expose track-level / parameter-level
+envelope creation: ``Track.create_automation_envelope`` and
+``Parameter.automation_*`` are not in the public surface (verified against
+Live 12 Suite's bundled ``LomTypes`` plus the first-party Push code in
+``pushbase/automation_component.py``). The handler surfaces a
+``NotImplementedError`` with a teaching message when callers omit
+``clip_index + location`` for the mixer/send/device-parameter kinds.
+
+Each path takes a breakpoints list of ``{time_beats, value, curve?}`` dicts
+and writes via ``Envelope.insert_step(time, duration, value)``. Live 12.4's
+``Envelope`` exposes neither ``clear()`` nor ``add_segment(...)``; pre-clear
+goes through the parent clip's ``clear_envelope(target)`` and all
+breakpoints are written as stepped regions. The wire's ``curve`` field is
+accepted for forward compatibility but recorded as a note when non-step
+hints appear (Live 12.4 has no way to apply them).
 
 The handler is push-direction. ``clear`` / ``clear_all`` destroy
 envelopes; ``get_envelope`` / ``list`` are gap-blocked stubs (the MCP
@@ -39,6 +54,22 @@ TARGET_KINDS: tuple[str, ...] = (
     "mixer_volume",
     "mixer_pan",
     "send_level",
+)
+
+# Kinds that REQUIRE a containing clip on Live 12.4 (used for the teaching
+# error when callers omit clip_index + location).
+_CLIP_REQUIRED_KINDS: frozenset[str] = frozenset({
+    "device_parameter", "mixer_volume", "mixer_pan", "send_level",
+})
+
+
+_TRACK_LEVEL_GAP_HINT = (
+    "target_kind={target_kind!r} requires clip_index + location on Live "
+    "12.4: the LOM does not expose track-level (clip-less) envelope "
+    "creation for mixer / send / device-parameter automation. Provide "
+    "location='arrangement' (or 'session') and clip_index pointing at "
+    "the containing clip. Live's UI shows free track lanes, but the "
+    "Python API only addresses envelopes through Clip."
 )
 
 
@@ -89,7 +120,7 @@ def get_envelope_handler(
 
 
 # ---------------------------------------------------------------------------
-# Shared resolvers (kept tight — write_envelope branches mostly inline)
+# Shared resolvers
 # ---------------------------------------------------------------------------
 
 
@@ -196,45 +227,40 @@ def _validate_breakpoints(breakpoints: list[dict[str, Any]]) -> list[dict[str, A
     return cleaned
 
 
-def _apply_envelope(envelope: Any, breakpoints: list[dict[str, Any]]) -> None:
-    """Write a sorted breakpoint list to a Live envelope object.
+def _write_breakpoints_as_steps(
+    envelope: Any, breakpoints: list[dict[str, Any]]
+) -> bool:
+    """Walk breakpoints emitting ``insert_step`` calls.
 
-    Live's automation envelope exposes ``clear()`` plus
-    ``insert_step(time, duration, value)`` for stepped points and
-    ``add_segment(time, duration, start_value, end_value, curve)`` for
-    linear/curved segments. We use a uniform pattern: clear then walk
-    the breakpoints emitting either insert_step (for 'hold' curve) or
-    add_segment (everything else, defaulting to linear).
+    Live 12.4's ``Envelope`` only exposes ``insert_step(time, duration,
+    value)`` — there is no ``add_segment`` for linear/curved transitions.
+    Each segment between consecutive breakpoints becomes one stepped region;
+    a final zero-duration step anchors the last value so it holds without
+    extrapolation past the envelope's range.
+
+    Returns True if any non-'hold' curve hint was present — the caller can
+    surface a note explaining the curve was recorded but not applied.
     """
-    envelope.clear()
+    non_step_seen = False
     for i in range(len(breakpoints) - 1):
         bp = breakpoints[i]
         nxt = breakpoints[i + 1]
         t = bp["time_beats"]
         dur = nxt["time_beats"] - t
-        if bp["curve"] == "hold":
-            envelope.insert_step(t, dur, bp["value"])
-        else:
-            # Live's API takes a curve constant; we map our enum to Live's
-            # numeric curve hint (defaults to 0.0 = linear).
-            envelope.add_segment(
-                t, dur, bp["value"], nxt["value"], _curve_to_live(bp["curve"])
-            )
-    # Final breakpoint: anchor as a zero-duration step so the value holds
-    # past the envelope's range without Live extrapolating.
+        envelope.insert_step(t, dur, bp["value"])
+        if bp.get("curve") not in (None, "hold"):
+            non_step_seen = True
     last = breakpoints[-1]
     envelope.insert_step(last["time_beats"], 0.0, last["value"])
+    return non_step_seen
 
 
-def _curve_to_live(curve: str | None) -> float:
-    """Map our curve enum to Live's segment-curve hint (signed 0..1 range)."""
-    if curve in (None, "linear", "hold"):
-        return 0.0
-    if curve == "fast":
-        return 1.0   # convex toward the end value
-    if curve == "slow":
-        return -1.0  # convex toward the start value
-    return 0.0
+def _stepped_envelope_note() -> str:
+    return (
+        "Live 12.4 LOM exposes only stepped envelopes "
+        "(Envelope.insert_step); 'linear'/'fast'/'slow' curve hints were "
+        "recorded in the request but applied as step transitions."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +286,12 @@ def write_envelope_handler(
 ) -> dict[str, Any]:
     """Write a single automation envelope.
 
-    The required identifier set depends on target_kind. The handler validates
-    per-kind before walking the Live API.
+    The required identifier set depends on target_kind. The handler
+    validates per-kind before walking the Live API. All seven target kinds
+    require a containing clip (session or arrangement) on Live 12.4 —
+    callers that omit ``clip_index + location`` for the mixer / send /
+    device-parameter kinds get a ``NotImplementedError`` citing the LOM
+    gap.
     """
     if target_kind not in TARGET_KINDS:
         raise ValueError(
@@ -269,6 +299,7 @@ def write_envelope_handler(
         )
     cleaned = _validate_breakpoints(breakpoints)
 
+    non_step_seen = False
     if target_kind == "clip_cc":
         if cc_number is None:
             raise ValueError("target_kind='clip_cc' requires cc_number (0-127)")
@@ -278,19 +309,27 @@ def write_envelope_handler(
             context, track_index=track_index, location=location,
             clip_index=clip_index,
         )
-        envelope = clip.create_automation_envelope(
-            _midi_cc_envelope_target(clip, int(cc_number))
-        )
-        _apply_envelope(envelope, cleaned)
+        target = _midi_cc_envelope_target(clip, int(cc_number))
+        try:
+            clip.clear_envelope(target)
+            envelope = clip.create_automation_envelope(target)
+        except TypeError as exc:
+            # Boost.Python's ArgumentError subclasses TypeError; the
+            # tuple sentinel triggers it.
+            raise _translate_envelope_target_error("clip_cc", exc) from exc
+        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "clip_pitch_bend":
         clip = _require_clip(
             context, track_index=track_index, location=location,
             clip_index=clip_index,
         )
-        envelope = clip.create_automation_envelope(
-            _midi_pitch_bend_envelope_target(clip)
-        )
-        _apply_envelope(envelope, cleaned)
+        target = _midi_pitch_bend_envelope_target(clip)
+        try:
+            clip.clear_envelope(target)
+            envelope = clip.create_automation_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
+        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "note_expression":
         if note_pitch is None or note_start_beats is None or axis is None:
             raise ValueError(
@@ -305,71 +344,81 @@ def write_envelope_handler(
             context, track_index=track_index, location=location,
             clip_index=clip_index,
         )
+        # Note-expression envelopes have their own factory (envelope_for_note)
+        # rather than the create_automation_envelope path; Live exposes no
+        # equivalent clear-by-target for them, so insert_step's overwrite
+        # semantics handle replacement within the breakpoint range.
         envelope = clip.envelope_for_note(
             int(note_pitch), float(note_start_beats), axis
         )
-        _apply_envelope(envelope, cleaned)
-    elif target_kind == "device_parameter":
-        if device_index is None or parameter_name is None:
-            raise ValueError(
-                "target_kind='device_parameter' requires device_index and "
-                "parameter_name"
+        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
+    elif target_kind in _CLIP_REQUIRED_KINDS:
+        if clip_index is None or location is None:
+            raise NotImplementedError(
+                _TRACK_LEVEL_GAP_HINT.format(target_kind=target_kind)
             )
-        parent = _require_parent(
-            context, track_index=track_index, return_index=return_index,
-        )
-        device = _resolve_device_on(parent, device_index)
-        param = _find_parameter(device, parameter_name)
-        # Device-parameter envelopes can be clip-local or track-level. M-4
-        # supports clip-local: if location+clip_index are set, write to that
-        # clip's envelope; otherwise write to the track's arrangement-level
-        # automation.
-        if location is not None and clip_index is not None:
+        # Wave-2 W2-10: empirical Live 12.4 — mixer / pan / send / device_parameter
+        # envelopes are addressable on SESSION clips only. Arrangement clips
+        # reject these targets with RuntimeError("Not a session clip or
+        # parameter belongs to another track."). Surface the gap with a
+        # teaching error pointing at the session-clip path rather than
+        # letting Live's raw error reach the caller.
+        if location == "arrangement":
+            raise NotImplementedError(
+                f"target_kind={target_kind!r} on an arrangement clip is "
+                "not supported by Live 12.4's LOM — Clip.create_automation_"
+                "envelope() rejects mixer / pan / send / device_parameter "
+                "targets unless the clip is a session clip. Author the "
+                "envelope on a session clip first (location='session'), "
+                "then ableton_clip(action='duplicate_to_arrangement') to "
+                "place a copy in the arrangement. The arrangement clip "
+                "inherits the envelope.\n"
+                "Track-level arrangement automation creation isn't exposed "
+                "on Live 12.4 either — see ableton://guides/gaps for the "
+                "broader LOM gap."
+            )
+        if target_kind == "device_parameter":
+            if device_index is None or parameter_name is None:
+                raise ValueError(
+                    "target_kind='device_parameter' requires device_index "
+                    "and parameter_name"
+                )
+            parent = _require_parent(
+                context, track_index=track_index, return_index=return_index,
+            )
+            device = _resolve_device_on(parent, device_index)
+            target = _find_parameter(device, parameter_name)
             clip = _resolve_clip(parent, location, clip_index)
-            envelope = clip.create_automation_envelope(param)
-        else:
-            envelope = parent.automation_envelopes.get(param) \
-                if hasattr(parent, "automation_envelopes") else None
-            if envelope is None:
-                envelope = _create_track_envelope(parent, param)
-        _apply_envelope(envelope, cleaned)
-    elif target_kind in ("mixer_volume", "mixer_pan"):
-        parent = _require_parent(
-            context, track_index=track_index, return_index=return_index,
-        )
-        mixer = parent.mixer_device
-        param = mixer.volume if target_kind == "mixer_volume" else mixer.panning
-        if location is not None and clip_index is not None:
+        elif target_kind in ("mixer_volume", "mixer_pan"):
+            parent = _require_parent(
+                context, track_index=track_index, return_index=return_index,
+            )
+            mixer = parent.mixer_device
+            target = mixer.volume if target_kind == "mixer_volume" else mixer.panning
             clip = _resolve_clip(parent, location, clip_index)
-            envelope = clip.create_automation_envelope(param)
-        else:
-            envelope = _create_track_envelope(parent, param)
-        _apply_envelope(envelope, cleaned)
-    elif target_kind == "send_level":
-        if return_index is None:
-            raise ValueError(
-                "target_kind='send_level' requires return_index "
-                "(the destination return for the send)"
-            )
-        if track_index is None:
-            raise ValueError(
-                "target_kind='send_level' requires track_index "
-                "(the source track of the send)"
-            )
-        track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(sends)}] for track {track_index}"
-            )
-        send_param = sends[return_index - 1]
-        if location is not None and clip_index is not None:
+        else:  # send_level
+            if return_index is None:
+                raise ValueError(
+                    "target_kind='send_level' requires return_index "
+                    "(the destination return for the send)"
+                )
+            if track_index is None:
+                raise ValueError(
+                    "target_kind='send_level' requires track_index "
+                    "(the source track of the send)"
+                )
+            track = _resolve_track(context, track_index)
+            sends = track.mixer_device.sends
+            if return_index < 1 or return_index > len(sends):
+                raise IndexError(
+                    f"return_index {return_index} out of range "
+                    f"[1, {len(sends)}] for track {track_index}"
+                )
+            target = sends[return_index - 1]
             clip = _resolve_clip(track, location, clip_index)
-            envelope = clip.create_automation_envelope(send_param)
-        else:
-            envelope = _create_track_envelope(track, send_param)
-        _apply_envelope(envelope, cleaned)
+        clip.clear_envelope(target)
+        envelope = clip.create_automation_envelope(target)
+        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     else:
         # Defensive — enum validation above should have caught this.
         raise ValueError(f"unhandled target_kind {target_kind!r}")
@@ -390,6 +439,8 @@ def write_envelope_handler(
         result["device_index"] = device_index
     if parameter_name is not None:
         result["parameter_name"] = parameter_name
+    if non_step_seen:
+        result["notes"] = [_stepped_envelope_note()]
     return result
 
 
@@ -413,26 +464,116 @@ def clear_handler(
     note_start_beats: float | None = None,
     axis: str | None = None,
 ) -> dict[str, Any]:
-    """Clear one specific envelope. Same identifier set as write_envelope,
-    minus breakpoints."""
+    """Clear one specific envelope.
+
+    Same identifier set as write_envelope, minus breakpoints. Clip-scoped
+    on Live 12.4 — same gap rationale as ``write_envelope`` for the
+    mixer / send / device-parameter kinds.
+
+    Returns ``cleared: True`` after invoking ``clip.clear_envelope(target)``.
+    Live's API is idempotent (no-op when no envelope existed) but does not
+    expose a way to inspect existence first, so we always report True.
+    Callers needing the "was-it-present" signal should pair this with
+    ``get_envelope`` once the read-surface gap closes.
+    """
     if target_kind not in TARGET_KINDS:
         raise ValueError(
             f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
         )
-    # Strategy: resolve the envelope target the same way write_envelope does,
-    # then call envelope.clear() on it. Re-using a single write path with an
-    # empty breakpoint list would also work, but keeping clear lightweight
-    # avoids the validation cost.
-    envelope = _resolve_write_target(
-        context, target_kind=target_kind, track_index=track_index,
-        return_index=return_index, clip_index=clip_index, location=location,
-        device_index=device_index, parameter_name=parameter_name,
-        cc_number=cc_number, note_pitch=note_pitch,
-        note_start_beats=note_start_beats, axis=axis,
-    )
-    if envelope is None:
-        return {"target_kind": target_kind, "cleared": False, "reason": "no envelope existed"}
-    envelope.clear()
+    if target_kind == "clip_cc":
+        if cc_number is None:
+            raise ValueError(
+                "clear with target_kind='clip_cc' requires cc_number — "
+                "matches write_envelope's requirement for the same kind"
+            )
+        clip = _require_clip(
+            context, track_index=track_index, location=location,
+            clip_index=clip_index,
+        )
+        target = _midi_cc_envelope_target(clip, int(cc_number))
+        try:
+            clip.clear_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_cc", exc) from exc
+        return {"target_kind": target_kind, "cleared": True}
+    if target_kind == "clip_pitch_bend":
+        clip = _require_clip(
+            context, track_index=track_index, location=location,
+            clip_index=clip_index,
+        )
+        target = _midi_pitch_bend_envelope_target(clip)
+        try:
+            clip.clear_envelope(target)
+        except TypeError as exc:
+            raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
+        return {"target_kind": target_kind, "cleared": True}
+    if target_kind == "note_expression":
+        # Live 12.4 has no documented per-axis clear for note-expression
+        # envelopes through Clip.clear_envelope (which expects a Parameter-
+        # shaped target, not the note-expression envelope target). Direct
+        # callers should fall back to action='clear_all' on the clip.
+        raise NotImplementedError(
+            "clear with target_kind='note_expression' is not exposed by "
+            "Live 12.4's LOM (clear_envelope expects a Parameter target; "
+            "envelope_for_note returns the envelope but no symmetric "
+            "clear factory exists). Use action='clear_all' to clear all "
+            "envelopes on the containing clip."
+        )
+
+    # device_parameter / mixer_volume / mixer_pan / send_level
+    if clip_index is None or location is None:
+        raise NotImplementedError(
+            _TRACK_LEVEL_GAP_HINT.format(target_kind=target_kind)
+        )
+    # Wave-2 W2-10: Live 12.4 also rejects clear_envelope for these targets
+    # on arrangement clips (same root cause as write — Clip's create / clear
+    # path only accepts session-clip-owned mixer / pan / send / parameter
+    # envelopes). Mirror write_envelope's arrangement guard so the
+    # symmetric clear path surfaces the same teaching error.
+    if location == "arrangement":
+        raise NotImplementedError(
+            f"clear with target_kind={target_kind!r} on an arrangement clip "
+            "is not supported by Live 12.4's LOM — symmetric with "
+            "write_envelope's gap. Author the envelope on a session clip "
+            "first; clear it via location='session' if you need to remove "
+            "it. To remove ALL envelopes from an arrangement clip, use "
+            "action='clear_all' on the clip-owning track."
+        )
+    if target_kind == "device_parameter":
+        if device_index is None or parameter_name is None:
+            raise ValueError(
+                "clear with target_kind='device_parameter' requires "
+                "device_index and parameter_name (matches write_envelope)"
+            )
+        parent = _require_parent(
+            context, track_index=track_index, return_index=return_index,
+        )
+        device = _resolve_device_on(parent, device_index)
+        target = _find_parameter(device, parameter_name)
+        clip = _resolve_clip(parent, location, clip_index)
+    elif target_kind in ("mixer_volume", "mixer_pan"):
+        parent = _require_parent(
+            context, track_index=track_index, return_index=return_index,
+        )
+        mixer = parent.mixer_device
+        target = mixer.volume if target_kind == "mixer_volume" else mixer.panning
+        clip = _resolve_clip(parent, location, clip_index)
+    else:  # send_level
+        if return_index is None or track_index is None:
+            raise ValueError(
+                "clear with target_kind='send_level' requires track_index "
+                "AND return_index"
+            )
+        track = _resolve_track(context, track_index)
+        sends = track.mixer_device.sends
+        if return_index < 1 or return_index > len(sends):
+            raise IndexError(
+                f"return_index {return_index} out of range "
+                f"[1, {len(sends)}] for track {track_index}"
+            )
+        target = sends[return_index - 1]
+        clip = _resolve_clip(track, location, clip_index)
+    clip.clear_envelope(target)
     return {"target_kind": target_kind, "cleared": True}
 
 
@@ -444,25 +585,23 @@ def clear_all_handler(
     clip_index: int | None = None,
     location: str | None = None,
 ) -> dict[str, Any]:
-    """Clear ALL envelopes on a clip OR a track/return.
+    """Clear ALL envelopes on a clip OR on every clip of a track/return.
 
-    If clip_index + location are set, clears all of that clip's envelopes.
-    Otherwise clears all of the parent (track/return) arrangement-level
-    envelopes.
+    Clip-scoped (``track_index + location + clip_index``): one direct call
+    to ``clip.clear_all_envelopes()``.
+
+    Parent-scoped (``track_index`` or ``return_index`` only): Live 12.4
+    does NOT expose an atomic track-level clear. We iterate the parent's
+    arrangement clips and session-view clips (skipping empty slots) and
+    invoke ``clear_all_envelopes()`` on each. The response carries the
+    count so callers know whether the operation touched anything.
     """
     if location is not None and clip_index is not None:
         if track_index is None:
             raise ValueError("clip-scoped clear_all requires track_index")
         track = _resolve_track(context, track_index)
         clip = _resolve_clip(track, location, clip_index)
-        clear_fn = getattr(clip, "clear_all_envelopes", None) \
-            or getattr(clip, "remove_automation", None)
-        if clear_fn is None:
-            raise NotImplementedError(
-                "clip does not expose clear_all_envelopes / "
-                "remove_automation in this Live version"
-            )
-        clear_fn()
+        clip.clear_all_envelopes()
         return {
             "cleared_scope": "clip",
             "track_index": track_index,
@@ -489,15 +628,35 @@ def clear_all_handler(
             "clear_all requires track_index or return_index (clip-scoped "
             "clear additionally needs location + clip_index)"
         )
-    clear_fn = getattr(parent, "clear_all_envelopes", None) \
-        or getattr(parent, "remove_automation", None)
-    if clear_fn is None:
-        raise NotImplementedError(
-            f"{kind} does not expose clear_all_envelopes / "
-            "remove_automation in this Live version"
-        )
-    clear_fn()
-    return {"cleared_scope": kind, f"{kind}_index": idx}
+    cleared_count = _clear_all_on_parent_clips(parent)
+    return {
+        "cleared_scope": kind,
+        f"{kind}_index": idx,
+        "clips_cleared": cleared_count,
+    }
+
+
+def _clear_all_on_parent_clips(parent: Any) -> int:
+    """Iterate every clip on the parent (arrangement + occupied session
+    slots) and clear envelopes on each. Returns the count for caller
+    response payloads.
+
+    Live 12.4's LOM has no atomic ``Track.clear_all_envelopes`` —
+    automation lives on the contained Clip objects, so a track-wide clear
+    is an explicit fan-out. ``clear_all_envelopes`` is exposed on
+    ``Live.Clip.Clip`` (verified via pushbase / _Framework usage).
+    """
+    count = 0
+    for clip in getattr(parent, "arrangement_clips", ()):
+        clip.clear_all_envelopes()
+        count += 1
+    for slot in getattr(parent, "clip_slots", ()):
+        clip = getattr(slot, "clip", None)
+        if clip is None:
+            continue
+        clip.clear_all_envelopes()
+        count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -544,12 +703,19 @@ def _require_parent(
 
 
 def _midi_cc_envelope_target(clip: Any, cc_number: int) -> Any:
-    """Build the Live envelope target for a clip-CC envelope."""
+    """Build the Live envelope target for a clip-CC envelope.
+
+    Live 12.4 may not expose ``Clip.envelope_target_for_cc`` — the
+    canonical factory name is uncertain (Ableton's Remote Script LOM is
+    undocumented for this surface). The fallback returns a tuple
+    sentinel that the test fakes recognize; real Live will reject it
+    at the typed boundary (``clip.clear_envelope`` /
+    ``clip.create_automation_envelope``) and the caller surfaces the
+    teaching error via ``_translate_envelope_target_error``.
+    """
     factory = getattr(clip, "envelope_target_for_cc", None)
     if factory is not None:
         return factory(int(cc_number))
-    # Fallback for older / mock APIs: return a structural sentinel that the
-    # test fakes recognize.
     return ("cc", int(cc_number))
 
 
@@ -560,103 +726,30 @@ def _midi_pitch_bend_envelope_target(clip: Any) -> Any:
     return ("pitch_bend",)
 
 
-def _create_track_envelope(parent: Any, param: Any) -> Any:
-    """Create or fetch the arrangement-level envelope for a track parameter."""
-    creator = getattr(parent, "create_automation_envelope", None)
-    if creator is None:
-        raise NotImplementedError(
-            "track-level (arrangement) automation creation is not exposed "
-            "on this parent in this Live version"
-        )
-    return creator(param)
+def _translate_envelope_target_error(target_kind: str, exc: Exception) -> Exception:
+    """Convert Live's raw ArgumentError on envelope-target writes to a
+    teaching NotImplementedError.
 
-
-def _resolve_write_target(
-    context: LiveContext,
-    *,
-    target_kind: str,
-    track_index: int | None,
-    return_index: int | None,
-    clip_index: int | None,
-    location: str | None,
-    device_index: int | None,
-    parameter_name: str | None,
-    cc_number: int | None,
-    note_pitch: int | None,
-    note_start_beats: float | None,
-    axis: str | None,
-) -> Any:
-    """Best-effort resolve of an existing envelope object for a target.
-
-    Used by ``clear``. If no envelope exists, returns None (clear becomes
-    a no-op).
+    Live 12.4 raises ``ArgumentError: Python argument types ... did not
+    match C++ signature: clear_envelope(TPyHandle<AClip>,
+    TPyHandle<ATimeableValue>)`` when the handler passes a tuple sentinel
+    (our fallback when the factory method isn't exposed). Wave-2 W2-10
+    captured this empirically for ``clip_pitch_bend``; the same applies
+    to ``clip_cc``. Surface a teaching error pointing at the LOM gap.
     """
-    if target_kind in ("clip_cc", "clip_pitch_bend", "note_expression"):
-        clip = _require_clip(
-            context, track_index=track_index, location=location,
-            clip_index=clip_index,
+    msg = str(exc)
+    if "ATimeableValue" in msg or "TimeableValue" in msg:
+        return NotImplementedError(
+            f"target_kind={target_kind!r}: Live 12.4's LOM doesn't expose "
+            f"a public factory for this clip envelope target — the handler "
+            f"passes a structural sentinel that Live's typed boundary "
+            f"rejects with ArgumentError. Workaround for clip_cc: encode "
+            f"the CC as a MIDI control-change event via "
+            f"ableton_clip(action='replace_notes'). For clip_pitch_bend: "
+            f"author it manually in Live's clip envelope editor. Original "
+            f"error: {exc}"
         )
-        # The cleanest path is to call envelope_for_target which returns the
-        # existing envelope (or None). Fall back to None if absent.
-        getter = getattr(clip, "automation_envelope_for", None)
-        if getter is None:
-            return None
-        if target_kind == "clip_cc":
-            if cc_number is None:
-                raise ValueError(
-                    "clear with target_kind='clip_cc' requires cc_number — "
-                    "matches write_envelope's requirement for the same kind"
-                )
-            return getter(_midi_cc_envelope_target(clip, int(cc_number)))
-        if target_kind == "clip_pitch_bend":
-            return getter(_midi_pitch_bend_envelope_target(clip))
-        # note_expression
-        getter_note = getattr(clip, "envelope_for_note", None)
-        if getter_note is None or note_pitch is None or note_start_beats is None \
-                or axis is None:
-            return None
-        return getter_note(int(note_pitch), float(note_start_beats), axis)
-    if target_kind == "device_parameter":
-        if device_index is None or parameter_name is None:
-            return None
-        parent = _require_parent(
-            context, track_index=track_index, return_index=return_index,
-        )
-        device = _resolve_device_on(parent, device_index)
-        param = _find_parameter(device, parameter_name)
-        if location is not None and clip_index is not None:
-            clip = _resolve_clip(parent, location, clip_index)
-            getter = getattr(clip, "automation_envelope_for", None)
-            return getter(param) if getter else None
-        getter = getattr(parent, "automation_envelope_for", None)
-        return getter(param) if getter else None
-    if target_kind in ("mixer_volume", "mixer_pan"):
-        parent = _require_parent(
-            context, track_index=track_index, return_index=return_index,
-        )
-        mixer = parent.mixer_device
-        param = mixer.volume if target_kind == "mixer_volume" else mixer.panning
-        if location is not None and clip_index is not None:
-            clip = _resolve_clip(parent, location, clip_index)
-            getter = getattr(clip, "automation_envelope_for", None)
-            return getter(param) if getter else None
-        getter = getattr(parent, "automation_envelope_for", None)
-        return getter(param) if getter else None
-    if target_kind == "send_level":
-        if track_index is None or return_index is None:
-            return None
-        track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            return None
-        send_param = sends[return_index - 1]
-        if location is not None and clip_index is not None:
-            clip = _resolve_clip(track, location, clip_index)
-            getter = getattr(clip, "automation_envelope_for", None)
-            return getter(send_param) if getter else None
-        getter = getattr(track, "automation_envelope_for", None)
-        return getter(send_param) if getter else None
-    return None
+    return exc
 
 
 __all__ = [

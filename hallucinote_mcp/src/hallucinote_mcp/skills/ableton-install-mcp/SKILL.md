@@ -35,7 +35,10 @@ the package import fails, stop and tell the user to
 The report has these blocks:
 
 - **`package`** — `version`, `root` (source for the Remote Script copy),
-  `remote_script_exclude` (files to skip when copying).
+  `remote_script_exclude` (structured: `top_level_files` anchored to the
+  package root, `dirs_any` and `file_globs_any` matched anywhere), plus
+  `rsync_exclude_args` and `robocopy_exclude_args` (pre-rendered for the
+  copy commands below — use these verbatim instead of hand-rolling).
 - **`user_library`** — `default` path, `default_exists` flag, and
   `candidates` (each with `path` + `exists`). On Windows, multiple
   candidates handle OneDrive Documents redirection.
@@ -113,36 +116,60 @@ default UTF-16 BOM. In cmd.exe, the `>` redirect works fine.)
 
 ### 3b. The vendored `hallucinote_mcp/` package
 
-The source is `package.root` from the preflight report. The exclude list
-is `package.remote_script_exclude`. Use the platform's native copy tool.
+The source is `package.root` from the preflight report. The exclude args
+are pre-rendered for both copy tools — use them verbatim. The anchoring
+on `server.py` is **load-bearing**: `server.py` exists at the package
+root (FastMCP-dependent, must skip) and inside `remote_script/` (the
+Control Surface entrypoint Live LOADS). A naive unanchored exclude
+strips both and silently breaks the install.
 
-**macOS / Linux — rsync:**
+**macOS / Linux — rsync** (interpolate `package.rsync_exclude_args` as
+space-separated tokens; note the leading `/` on `--exclude=/server.py`
+that anchors to the source root):
 ```bash
 rsync -a \
-  --exclude='server.py' \
-  --exclude='cli' \
-  --exclude='tests' \
-  --exclude='__pycache__' \
-  --exclude='*.pyc' \
+  <package.rsync_exclude_args joined by space> \
   "<package.root>/" \
   "<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp/"
 ```
 
-**Windows — robocopy (recommended over `Copy-Item` because it handles
-deep paths and gives a clean exclude story):**
+Example, with the args expanded for a real run:
+```bash
+rsync -a \
+  --exclude=/server.py \
+  --exclude=cli --exclude=tests --exclude=__pycache__ \
+  --exclude=*.pyc \
+  "<package.root>/" \
+  "<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp/"
+```
+
+**Windows — robocopy** (interpolate `package.robocopy_exclude_args` —
+the `/XF` list starts with the absolute path to the package-root
+`server.py`, which anchors the exclusion to that single location):
 ```powershell
-robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" /E /XD cli tests __pycache__ /XF server.py *.pyc
+robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" /E <package.robocopy_exclude_args joined by space>
+```
+
+Example, with the args expanded:
+```powershell
+robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" /E /XF "<package.root>\server.py" *.pyc /XD cli tests __pycache__
 ```
 
 `/E` = copy subdirs including empty ones. `/XD` excludes directory names
-(matched anywhere in the tree). `/XF` excludes filenames / globs. Robocopy
+(matched anywhere). `/XF` matches by basename anywhere too — except when
+the argument is an absolute path, in which case only that exact file is
+skipped (the trick that preserves `remote_script\server.py`). Robocopy
 exit codes `0`-`7` are success; `8`+ are errors — check this if scripting.
 
-If robocopy isn't available (very old Windows), fall back:
+If robocopy isn't available (very old Windows), fall back. Note the
+explicit single-file remove only touches the package-root `server.py`,
+not the `remote_script\server.py` Live needs:
 ```powershell
 Copy-Item -Path "<package.root>\*" -Destination "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Recurse
-Remove-Item -Recurse -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\server.py", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\cli", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\tests"
+Remove-Item -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\server.py"
+Remove-Item -Recurse -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\cli", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\tests"
 Get-ChildItem -Path "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Filter __pycache__ -Recurse -Directory | Remove-Item -Recurse -Force
+Get-ChildItem -Path "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Filter *.pyc -Recurse -File | Remove-Item -Force
 ```
 
 ### 3c. Sanity check
@@ -283,6 +310,31 @@ picks up the new MCP entry, then try:  ableton_session(action='help')
   if both, ask.
 
 ## When things look wrong
+
+### Version handshake errors at runtime
+
+If `ableton_session(action='info')` (or any non-`help` action) returns
+`"Hallucinote MCP version handshake missing"` or
+`"Hallucinote MCP version mismatch"`, the two halves of the bridge have
+drifted — the pip-installed server side and the vendored Remote Script
+side are on different `hallucinote_mcp.__version__`.
+
+Quick recovery (the error's `hint` field names both versions so you can
+tell which side is stale):
+
+- **Remote Script side stale (common):** rerun this skill
+  (`/ableton-install-mcp`) to refresh the vendored copy, then fully quit
+  and reopen Live. **`/mcp` reconnect alone won't help** because Live
+  caches Control Surface modules at startup — the staleness lives inside
+  Live's Python.
+- **MCP server side stale:** `pip install -U hallucinote-mcp`, then run
+  `/mcp` in Claude Code. `/mcp` respawns the MCP subprocess with the new
+  code; no full Claude Code restart needed.
+
+See `ableton://guides/error-recovery` for the full version-handshake
+section.
+
+### Control Surface not appearing in the dropdown
 
 If after the install + the Preferences click, Live doesn't show "Hallucinote"
 in the Control Surface dropdown:

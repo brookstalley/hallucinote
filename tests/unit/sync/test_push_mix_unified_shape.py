@@ -207,10 +207,10 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
 
 
 def test_planner_track_create_emit_validates_against_dispatcher(conn):
-    """Wave M-5: plan_push_clip's unlinked-track path now emits
-    ableton_track(action='create', kind='midi', name=..., instrument_uri?).
-    Pipe through the actual dispatcher against a fake context to lock the
-    cross-package wire contract.
+    """W3-C: track creation moved out of plan_push_clip into the
+    song-level pre-pass plan_push_song_tracks. Pipe its emit through the
+    actual dispatcher against a fake context to lock the cross-package
+    wire contract for the new pre-pass shape.
     """
     from hallucinote_mcp.dispatcher import dispatch
     from hallucinote_mcp.testing import isolated_actions
@@ -218,20 +218,19 @@ def test_planner_track_create_emit_validates_against_dispatcher(conn):
 
     sid = M.create_song(conn, name="m5-track-create-shape", title="M-5 track create")
     sess = M.create_ableton_session(conn, song_id=sid, name="test")
-    tid = M.create_track(
+    M.create_track(
         conn, song_id=sid, track_index=1, name="Lead",
         instrument_uri="query:Operator#FileId_99",
     )
-    cid = M.create_clip(conn, track_id=tid, slot=1, name="Pattern", length_beats=16.0)
-    # Note: track is intentionally NOT linked — push.plan_push_clip should
+    # The track is intentionally NOT linked — plan_push_song_tracks should
     # emit the create call.
-    plan = push.plan_push_clip(conn, clip_id=cid, session_id=sess)
+    plan = push.plan_push_song_tracks(conn, song_id=sid, session_id=sess)
     create_calls = [
         c for c in plan.calls
         if c.tool == "ableton_track" and c.args.get("action") == "create"
     ]
     assert len(create_calls) == 1, (
-        f"planner did not emit ableton_track(create): {plan.calls!r}"
+        f"plan_push_song_tracks did not emit ableton_track(create): {plan.calls!r}"
     )
     call = create_calls[0]
     assert call.args["kind"] == "midi"
@@ -355,11 +354,24 @@ def test_planner_cue_list_pull_validates_against_dispatcher(conn):
         assert names == ["Intro", "Verse", "Chorus"]
 
 
-def test_planner_envelope_emits_validate_against_dispatcher(conn):
+def test_planner_envelope_emits_track_level_mixer_volume(conn):
     """Wave M-4: all seven envelope target families flow through one
     ableton_automation(action='write_envelope', target_kind=...) shape.
-    Pipe a track-level mixer_volume envelope through the actual dispatcher
-    against a fake context and confirm the shape is accepted end-to-end.
+
+    Today the planner emits ``mixer_volume`` with ``track_index`` only — no
+    ``clip_index + location``. That shape is rejected by the Live 12.4 MCP
+    handler because the LOM has no ``Track.create_automation_envelope``
+    surface (B-11 research, Chunk D). Until the planner is updated to
+    route mixer / pan / send / device-parameter envelopes through their
+    containing arrangement (or session) clip, this test pins the
+    contradiction:
+
+      - planner emits the historic shape (one call, target_kind correct,
+        no clip context)
+      - dispatcher rejects with a teaching error citing the LOM gap
+
+    See backlog item "sync planner: route track-level envelopes through
+    containing arrangement clip" for the planned remediation.
     """
     from hallucinote_mcp.dispatcher import dispatch
     from hallucinote_mcp.testing import isolated_actions
@@ -389,45 +401,39 @@ def test_planner_envelope_emits_validate_against_dispatcher(conn):
     ]
     assert len(write_calls) == 1
     assert write_calls[0].args["target_kind"] == "mixer_volume"
+    # No clip context — this is the shape that fails on Live 12.4 until the
+    # planner-side fix lands.
+    assert "clip_index" not in write_calls[0].args
+    assert "location" not in write_calls[0].args
 
-    # Build a fake song with 3 tracks (so track_index=3 resolves) and a
-    # mixer that records envelope creation.
+    # Fake song with 3 tracks (so track_index=3 resolves).
     class _Param:
-        def __init__(self, v=0.0):
+        def __init__(self, name="X", v=0.0):
+            self.name = name
             self.value = v
             self.min = 0.0
             self.max = 1.0
             self.value_items = None
 
-    class _Envelope:
-        def __init__(self):
-            self.cleared = 0
-            self.calls = []
-        def clear(self): self.cleared += 1
-        def insert_step(self, t, dur, v): self.calls.append(("step", t, dur, v))
-        def add_segment(self, t, dur, s, e, c): self.calls.append(("seg", t, dur, s, e, c))
-
     class _Mixer:
         def __init__(self):
-            self.volume = _Param(0.5)
-            self.panning = _Param(0.0)
+            self.volume = _Param("Volume", 0.5)
+            self.panning = _Param("Panning", 0.0)
             self.sends = []
+
+    class _ClipSlot:
+        def __init__(self): self.clip = None
 
     class _Track:
         def __init__(self):
             self.mixer_device = _Mixer()
             self.devices = []
-            self.clip_slots = []
+            self.clip_slots = [_ClipSlot() for _ in range(4)]
             self.arrangement_clips = []
-            self.envelopes = []
-        def create_automation_envelope(self, param):
-            env = _Envelope()
-            self.envelopes.append(env)
-            return env
 
     class _Song:
         def __init__(self):
-            self.tracks = [_Track(), _Track(), _Track()]  # index 3 = third
+            self.tracks = [_Track(), _Track(), _Track()]
             self.return_tracks = []
 
     class _Ctx:
@@ -445,19 +451,15 @@ def test_planner_envelope_emits_validate_against_dispatcher(conn):
                 Request(tool=call.tool, action=action_name, params=args),
                 context=ctx,
             )
-            assert resp.ok, (
-                f"planner-emitted call rejected by dispatcher: "
-                f"action={action_name}, args={args}, err={resp.error!r}"
+            # Pinned gap: clip-less mixer_volume is rejected with a
+            # teaching error pointing at the clip-scoped workaround.
+            assert resp.ok is False, (
+                f"expected dispatcher to reject clip-less mixer_volume "
+                f"until planner is updated; got {resp.result!r}"
             )
-        # The mixer-volume envelope landed on track 3's track-level envelope
-        target = ctx.song.tracks[2]
-        assert len(target.envelopes) == 1
-        env = target.envelopes[0]
-        assert env.cleared == 1
-        # 2 breakpoints → 1 segment + 1 anchor step
-        kinds = [c[0] for c in env.calls]
-        assert kinds.count("seg") == 1
-        assert kinds.count("step") == 1
+            err = (resp.error or "").lower()
+            assert "clip_index" in err
+            assert "live 12.4" in err
 
 
 def test_planner_device_load_emit_validates_against_dispatcher(conn):
@@ -489,24 +491,66 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
                 "panning": type("P", (), {"value": 0.0})(),
                 "sends": [],
             })()
-        def load_device(self, *args, **kwargs):
-            self.devices.append(type("D", (), {
-                "name": kwargs.get("kind", args[0] if args else "Unknown"),
-                "class_name": kwargs.get("kind", args[0] if args else "Unknown"),
+
+    class _View:
+        def __init__(self): self.selected_track = None
+
+    class _Item:
+        def __init__(self, name, uri):
+            self.name = name
+            self.uri = uri
+            self.is_loadable = True
+            self.is_folder = False
+            self.children = ()
+
+    class _Root:
+        def __init__(self, name): self.name = name; self.children = []
+        is_loadable = False; is_folder = True; uri = ""
+
+    class _Browser:
+        def __init__(self, song):
+            self._song = song
+            self.instruments = _Root("Instruments")
+            self.audio_effects = _Root("Audio Effects")
+            self.midi_effects = _Root("MIDI Effects")
+            self.drums = _Root("Drums")
+            self.plugins = _Root("Plug-Ins")
+            self.samples = _Root("Samples")
+            self.user_library = _Root("User Library")
+            self.packs = _Root("Packs")
+            # Pre-populate with the Compressor2 the planner is about to load.
+            self.audio_effects.children.append(
+                _Item("Compressor2", "query:Compressor2")
+            )
+
+        def load_item(self, item):
+            target = self._song.view.selected_track
+            new_dev = type("D", (), {
+                "name": item.name,
+                "class_name": item.name,
                 "is_active": True,
                 "parameters": (),
                 "can_have_chains": False,
-            })())
+            })()
+            target.devices.append(new_dev)
+
+    class _Application:
+        def __init__(self, song): self.browser = _Browser(song)
 
     class _Song:
         def __init__(self):
             self.tracks = [_Track()]
             self.return_tracks = []
+            self.view = _View()
 
     class _Ctx:
-        def __init__(self): self._song = _Song()
+        def __init__(self):
+            self._song = _Song()
+            self._application = _Application(self._song)
         @property
         def song(self): return self._song
+        @property
+        def application(self): return self._application
         def run_on_main(self, fn): return fn()
 
     with isolated_actions():

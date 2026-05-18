@@ -46,7 +46,21 @@ Pushing to Ableton goes through the `plan_push_*` planners in `hallucinote.sync.
 
 ## Dependencies
 
-Talks to the in-repo `hallucinote-mcp` server (`hallucinote_mcp/`). The `.mcp.json` in this repo invokes the `hallucinote-mcp` console script that ships with the package; no sibling clone or external fork is required. The Remote Script for Ableton Live is installed via the package's install skill.
+Talks to the in-repo `hallucinote-mcp` server (`hallucinote_mcp/`). No sibling clone or external fork is required.
+
+The Claude Code MCP config (`.mcp.json`) is **gitignored** — its `command` field is per-environment (bare `hallucinote-mcp` when on PATH, absolute venv path when not), and contributors may want to add other MCP servers locally without sharing them with the team. See `.mcp.json.example` for the canonical entry shape.
+
+To wire up the MCP server and the Ableton Remote Script in one step, open Claude Code in this repo and say:
+
+> *"install the Hallucinote MCP plugin"*
+
+Claude will locate and follow the install skill at `hallucinote_mcp/src/hallucinote_mcp/skills/ableton-install-mcp/SKILL.md`, which:
+
+1. Copies the Remote Script into Live's User Library.
+2. Writes `.mcp.json` with the right command shape for your environment.
+3. Tells you the one Ableton Preferences click you do at the end.
+
+Every contributor runs this once per clone (the MCP config is local, not committed).
 
 ## Vision
 

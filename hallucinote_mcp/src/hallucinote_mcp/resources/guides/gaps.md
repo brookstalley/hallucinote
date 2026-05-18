@@ -22,6 +22,48 @@ agents pushing notes.
 + `action='clear'` / `action='clear_all'` for destructive operations.
 You can push envelopes; you can't read them back.
 
+### Track-level / clip-less mixer / pan / send / device-parameter envelopes
+**Status:** Live 12.4's Python LOM exposes envelope creation only
+through `Clip.create_automation_envelope(target)`. There is no
+`Track.create_automation_envelope`, no atomic `Track.clear_all_envelopes`,
+and `Envelope` itself has neither `clear()` nor `add_segment(...)`.
+**Working alternative:** Pass `location='session'` + `clip_index`
+pointing at a session clip alongside the envelope's target. The
+handler routes through that clip's `clear_envelope(target) →
+create_automation_envelope(target) → insert_step(time, duration,
+value)` flow. Non-'hold' curve hints (linear / fast / slow) are
+recorded in the request but applied as step transitions; the
+response carries a `notes` field describing the fallback.
+
+### Mixer / pan / send / device-parameter envelopes on ARRANGEMENT clips
+**Status:** Live 12.4 narrows the clip-scoped path further — these
+target kinds work only on SESSION clips. Calling
+`write_envelope(target_kind='mixer_volume', location='arrangement',
+clip_index=N)` raises a teaching `NotImplementedError` because Live's
+`Clip.create_automation_envelope(target)` rejects with "Not a session
+clip or parameter belongs to another track." for arrangement clips.
+**Working alternative:** author the envelope on a session clip, then
+`ableton_clip(action='duplicate_to_arrangement')` — the arrangement
+clip inherits the envelope. (clip_cc / clip_pitch_bend / note_expression
+on arrangement clips do work; only the track-level targets are
+restricted.)
+
+### MIDI CC and pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
+**Status:** Live 12.4's LOM exposes neither
+`Clip.envelope_target_for_cc(N)` nor
+`Clip.envelope_target_for_pitch_bend()` — the structural sentinels
+the handler constructs are rejected by `Clip.clear_envelope` /
+`Clip.create_automation_envelope` at the C++ boundary with
+`ArgumentError ... did not match C++ signature: ...
+TPyHandle<ATimeableValue>`. The handler catches that error and
+surfaces a teaching `NotImplementedError`.
+**Working alternative:** for CC, encode the change as a MIDI
+control-change event via `ableton_clip(action='replace_notes')` —
+this writes the data into the MIDI clip itself rather than as a
+clip envelope. For pitch-bend, author manually in Live's clip
+envelope editor, or use `target_kind='note_expression'` (pitch axis,
+which DOES work).
+
 ### Arrangement-level tempo / signature automation
 **Status:** Live exposes `Song.tempo` as a single value plus the
 arrangement-envelope API, but `ableton_automation` doesn't have a

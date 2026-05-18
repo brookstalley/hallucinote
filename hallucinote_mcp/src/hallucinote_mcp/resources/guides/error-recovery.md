@@ -52,6 +52,47 @@ Live's `set_or_delete_cue` is a TOGGLE that would silently DELETE the
 existing cue. The handler refuses to "create" at an occupied position.
 Use `cue_delete` first if you want to replace.
 
+### `cue_create: position_beats=X is past the song's last_event_time=Y`
+Live's `current_song_time` setter is clamped to the arrangement's
+extent. Place arrangement content covering this position first
+(`ableton_clip(action='create', location='arrangement', ...)`), then
+add the cue.
+
+## Cue creation — latency model
+
+Each `cue_create` takes **~150-400ms** end-to-end. Live's
+`Song.current_song_time` setter is asynchronous: the audio thread
+processes the write on its own buffer-aligned schedule, and Live's
+Python-visible getter reads a main-thread mirror that updates when the
+main thread pumps the audio-thread → mirror propagation event.
+
+**W3-F (2026-05-18) threading model.** `cue_create`, `cue_create_batch`,
+and `cue_delete` are *worker-thread handlers* (the only such actions
+in the surface; everything else stays on the main-thread-wrapped path).
+The handler runs on the TCP-listener thread and marshals each Live
+touch through `context.run_on_main(fn)` individually. Between bouts it
+`time.sleep`s on the worker thread — leaving the main thread free to
+pump the propagation event that updates the mirror. The pre-W3-F
+implementation ran the whole handler (including the sleep loop) on
+the main thread; this deadlocked the very thread that needed to pump
+the propagation, surfaced empirically as every first-call `cue_create`
+timing out at 3.0s with a stale `last_observed`.
+
+**For multi-cue pushes, use `cue_create_batch`** — one TCP round trip,
+acquires `live_state_lock` once for the whole batch. Per-cue end-to-end
+latency is the same as serial `cue_create` calls; the savings are
+in TCP round-trip overhead, not Live's per-cue settle cost.
+
+**Parallel `cue_create` calls effectively serialize.** The bridge
+holds a per-Live mutex (`live_state_lock`) around the cue
+seek+settle+toggle window so concurrent callers don't observe each
+other's playhead writes. Firing 7 parallel `cue_create` calls
+completes in ~7× the per-cue cost wall-clock — they wait their turn
+on the lock.
+
+`seek` and `cue_delete` take the same lock; they don't race against
+in-flight cue creates either.
+
 ## "Needs Live" errors
 
 ### `<tool>('<action>') requires the Remote Script side to execute (no Live context available)`
@@ -63,6 +104,59 @@ Control Surface. Re-run the call.
 The server tried to forward but the TCP connection to the Remote Script
 failed. Live may not be running, or the Remote Script may not be installed.
 The `/ableton-install-mcp` Claude Code skill walks through fresh install.
+
+## Version-handshake errors
+
+The MCP bridge has two halves running in different Python processes: the
+**MCP server** (the `hallucinote-mcp` pip package, spawned by Claude Code
+when you connect) and the **Remote Script** (the vendored copy in Live's
+User Library, loaded by Live when it boots). They must agree on
+`hallucinote_mcp.__version__`. On every call, the server side stamps its
+version into the request; the Live side checks before dispatch.
+
+Two failure modes — recovery differs:
+
+### `Hallucinote MCP version handshake missing: ...`
+The MCP server side didn't send a `server_version` field at all. It's old
+enough to predate the handshake — i.e., the pip-installed `hallucinote-mcp`
+is older than what's currently in Live's Remote Scripts folder.
+
+**Fix:** upgrade the pip package, then respawn the MCP server.
+1. `pip install -U hallucinote-mcp` (in the environment Claude Code uses)
+2. In Claude Code: `/mcp` — this respawns the server process, which now
+   ships the version on every request.
+
+A full Claude Code restart works too, but `/mcp` alone is sufficient
+because it relaunches the MCP server subprocess.
+
+### `Hallucinote MCP version mismatch: MCP server side reports X, Remote Script side is Y`
+Both halves are speaking the handshake, but they disagree. Versions are
+of the form `0.1.0+<12-hex-fingerprint>` — the base segment is the pip
+package's semver, the suffix is a content hash over the files that
+define the wire surface (actions, handlers, dispatcher, schema, wire,
+remote_script). Drift in EITHER side flips the fingerprint, so
+"different versions" doesn't tell you which side is older — just
+that the two source trees diverge.
+
+**The recovery is almost always the same path: refresh the Remote
+Script side**, because the MCP server side updates more freely (every
+pip install / editable-install reload) while the Remote Script side
+only updates when explicitly reinstalled:
+
+1. `/ableton-install-mcp` — re-runs the install, refreshing the vendored
+   copy in Live's User Library.
+2. Fully quit Live (⌘Q / Alt+F4) and reopen it. **Live caches Control
+   Surface modules at startup**, so a restart is required — `/mcp` alone
+   does nothing for this branch, because the staleness is inside Live.
+
+**If the MCP server side is the one that's behind** (rare — happens
+when the Remote Script was installed from a newer working tree than
+the pip-installed package):
+1. `pip install -U hallucinote-mcp` (or reinstall from source).
+2. `/mcp` in Claude Code to respawn the server.
+
+The error message names both versions so you can copy them into a bug
+report if the symptom persists after reinstall + restart.
 
 ## Gap-blocked actions (intentional)
 
@@ -76,6 +170,21 @@ path today. See `ableton://guides/gaps`.
 The MCP envelope read surface isn't yet implemented. Use
 `action='write_envelope'` to push; envelope reads come in a future
 chunk.
+
+### `target_kind=... requires clip_index + location on Live 12.4...`
+Live 12.4's LOM only addresses envelopes through a containing clip —
+there's no `Track.create_automation_envelope`. Pass `location`
+(`'arrangement'` or `'session'`) and `clip_index` pointing at the
+clip that should hold the envelope. Same applies to `action='clear'`
+on the mixer / pan / send / device_parameter target_kinds. See
+`ableton://guides/gaps` for the "track-level / clip-less" entry.
+
+### `clear with target_kind='note_expression' is not exposed by Live 12.4's LOM...`
+Live exposes `Clip.envelope_for_note(pitch, start, axis)` to fetch /
+create the per-axis envelope but no symmetric `clear_note_envelope`.
+Use `action='clear_all'` on the containing clip to wipe every
+envelope (including note expression), then re-write what you want to
+keep.
 
 ## Schema-bug errors
 

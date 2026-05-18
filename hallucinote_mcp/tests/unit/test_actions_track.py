@@ -68,9 +68,19 @@ class FakeSong:
         self._deleted_tracks: list[FakeTrack] = []
         self._created_tracks: list[FakeTrack] = []
 
-    def delete_track(self, track: FakeTrack) -> None:
-        self._deleted_tracks.append(track)
-        self.tracks.remove(track)
+    def delete_track(self, index_0based: int) -> None:
+        # Live 12.4's C++ signature is delete_track(int). Passing the Track
+        # wrapper raises ArgumentError at the C++ boundary. We mirror that
+        # strictly here so handler bugs that pass a wrapper fail at test
+        # time, not in production (Wave-2 W2-2 root cause).
+        if not isinstance(index_0based, int) or isinstance(index_0based, bool):
+            raise TypeError(
+                "Song.delete_track(int) — got "
+                f"{type(index_0based).__name__}; Live's C++ signature "
+                f"rejects wrapper objects"
+            )
+        self._deleted_tracks.append(self.tracks[index_0based])
+        del self.tracks[index_0based]
 
     def create_midi_track(self, insert_at: int = -1) -> FakeTrack:
         t = FakeTrack(name="Midi", kind="midi")
@@ -241,6 +251,111 @@ def test_create_with_instrument_uri_is_deferred(loaded_actions):
     assert resp.result["instrument_uri_deferred"] == "query:Operator"
 
 
+# Regression: real Live re-wraps API objects on each property access, so
+# ``song.tracks[i] is song.tracks[i]`` returns False for the same underlying
+# track. The handler used to scan for identity and falsely raise "Live API
+# bug" whenever the track was created successfully but its wrapper
+# couldn't be matched — affecting every real Live ``create`` call. This
+# fake reproduces that wrapper-recreation semantics.
+
+
+class _ReWrappingFakeSong:
+    """Mimics Live's wrapper-per-access behavior. Underlying data is stable;
+    every ``song.tracks`` access returns a fresh list of fresh wrappers."""
+
+    def __init__(self) -> None:
+        self._underlying: list[dict] = [
+            {"name": "Drums", "kind": "midi"},
+            {"name": "Bass", "kind": "audio"},
+        ]
+        self.return_tracks: list = []
+
+    @property
+    def tracks(self):
+        return [_FreshWrapper(d) for d in self._underlying]
+
+    def create_midi_track(self, insert_at: int = -1):
+        d = {"name": "Midi", "kind": "midi"}
+        if insert_at == -1:
+            self._underlying.append(d)
+        else:
+            self._underlying.insert(insert_at, d)
+        return _FreshWrapper(d)
+
+    def create_audio_track(self, insert_at: int = -1):  # not used here but
+        d = {"name": "Audio", "kind": "audio"}             # symmetry
+        if insert_at == -1:
+            self._underlying.append(d)
+        else:
+            self._underlying.insert(insert_at, d)
+        return _FreshWrapper(d)
+
+
+class _FreshWrapper:
+    """A wrapper around an underlying dict — never `is`-equal to other
+    wrappers around the same dict. Exactly the behavior Live's API
+    exhibits with `_Live_Track_Wrapper`-style proxies."""
+
+    def __init__(self, data: dict) -> None:
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data["name"]
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._data["name"] = value
+
+
+class _ReWrappingCtx:
+    def __init__(self) -> None:
+        self._song = _ReWrappingFakeSong()
+
+    @property
+    def song(self) -> _ReWrappingFakeSong:
+        return self._song
+
+    def run_on_main(self, fn):
+        return fn()
+
+
+def test_create_handles_live_wrapper_recreation(loaded_actions):
+    """The handler must not rely on ``new_track is song.tracks[i]`` — Live
+    re-wraps API objects on every access, so identity is unreliable. The
+    new index is determined from the create-call's known semantics
+    (append == len-after; insert_at-N == N+1)."""
+    ctx = _ReWrappingCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_track",
+            action="create",
+            params={"kind": "midi", "name": "Pad"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    # Appended to a 2-track song → new index is 3.
+    assert resp.result["track_index"] == 3
+    assert resp.result["name"] == "Pad"
+
+
+def test_create_with_explicit_index_handles_wrapper_recreation(loaded_actions):
+    """Insert-at-position path: ``index=2`` → new track ends up at 1-based 2."""
+    ctx = _ReWrappingCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_track",
+            action="create",
+            params={"kind": "midi", "name": "Lead", "index": 2},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["track_index"] == 2
+    assert resp.result["name"] == "Lead"
+
+
 def test_delete_removes_track(loaded_actions):
     ctx = FakeCtx()
     target = ctx.song.tracks[1]
@@ -252,6 +367,23 @@ def test_delete_removes_track(loaded_actions):
     assert resp.result["deleted_track_index"] == 2
     assert target in ctx.song._deleted_tracks
     assert target not in ctx.song.tracks
+
+
+def test_delete_passes_int_to_live_api(loaded_actions):
+    """Regression for Wave-2 W2-2 / Wave-1 B-23: ``Song.delete_track`` must
+    receive a 0-based int, not the Track wrapper. The tightened FakeSong
+    raises TypeError on a wrapper, so this test passes only when the
+    handler does the right thing. Lock in the contract explicitly.
+    """
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(tool="ableton_track", action="delete", params={"track_index": 3}),
+        context=ctx,
+    )
+    assert resp.ok is True, (
+        f"delete handler regressed to passing a Track wrapper. "
+        f"Response: {resp.to_dict()}"
+    )
 
 
 def test_rename_via_declarative_path(loaded_actions):
@@ -266,6 +398,11 @@ def test_rename_via_declarative_path(loaded_actions):
     )
     assert resp.ok is True
     assert ctx.song.tracks[0].name == "Renamed"
+    # Wave-2 W2-D / B-15: result_template echoes track_index + name so
+    # callers get a confirming response instead of result=None.
+    assert resp.result == {"track_index": 1, "name": "Renamed"}, (
+        f"track.rename should return {{track_index, name}}; got {resp.result!r}"
+    )
 
 
 # ---------- set_property / get_property ----------

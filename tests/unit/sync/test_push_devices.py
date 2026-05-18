@@ -106,7 +106,8 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
     assert load.args["track_index"] == 5
-    assert load.args["position"] == 1
+    # Live 12.4 has no public reorder API — planner does NOT emit position.
+    assert "position" not in load.args
     assert load.args["kind"] == "DrumGroupDevice"
     assert load.args["preset_uri"] == "query:Drums#FileId_5418"
     assert load.key == f"device:{did}"
@@ -206,7 +207,9 @@ def test_plan_push_devices_emits_return_specific_tools(
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
     assert load.args["return_index"] == 1
-    assert load.args["position"] == 1
+    # No position emission — Live 12.4 cannot reorder, planner relies on
+    # chain-order push to match DB position.
+    assert "position" not in load.args
     assert load.args["kind"] == "Reverb"
     # preset_uri is omitted when None — keeps the wire shape minimal.
     assert "preset_uri" not in load.args

@@ -108,6 +108,59 @@ def _split_bar(
     return bar_int, frac * _beats_per_bar(num, den)
 
 
+def _position_bar_to_beats(
+    bar_pos: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Convert a 1-based fractional bar position to cumulative beats from song start.
+
+    Live's arrangement time is measured in BEATS (quarter notes) regardless of
+    meter — `position_beats` on every ableton_arrangement / ableton_clip
+    arrangement-side action. Inverse-ish of :func:`_split_bar`: that returns
+    ``(bar_int, beat_within_bar)``; this returns the total beats from bar 1's
+    downbeat to the requested fractional bar.
+
+    Walks the time_signature_map so meter changes accumulate correctly. Bars
+    before ``ts_points[0].start_bar`` use ``ts_points[0]``'s meter (matches
+    :func:`_meter_at_bar`'s fallback). Empty map → 4/4 throughout.
+
+    Examples (in 4/4):
+      - ``bar_pos=1.0`` -> 0.0
+      - ``bar_pos=17.0`` -> 64.0    (16 bars × 4 beats)
+      - ``bar_pos=17.5`` -> 66.0    (16 bars × 4 + half-bar = 2 beats)
+    """
+    if bar_pos < 1.0:
+        raise ValueError(
+            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
+        )
+    if not ts_points:
+        return (bar_pos - 1.0) * _beats_per_bar(
+            _DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR,
+        )
+
+    beats = 0.0
+    current_bar = 1.0
+    current_bpb = _beats_per_bar(
+        ts_points[0]["numerator"], ts_points[0]["denominator"],
+    )
+
+    for p in ts_points:
+        change_at = float(p["start_bar"])
+        if change_at <= current_bar:
+            # Already at or past this point's bar (the canonical case for
+            # ts_points[0] when its start_bar == 1.0). Adopt this point's
+            # meter; nothing to accumulate.
+            current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
+            continue
+        if bar_pos < change_at:
+            return beats + (bar_pos - current_bar) * current_bpb
+        beats += (change_at - current_bar) * current_bpb
+        current_bar = change_at
+        current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
+
+    return beats + (bar_pos - current_bar) * current_bpb
+
+
 def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """DB notes carry tags + extra fields; MCP wants the bare quartet."""
     return [
@@ -127,23 +180,125 @@ def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def plan_push_song_tracks(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Pre-pass: emit one ``ableton_track(action='create')`` call per
+    unique unlinked non-master track for this song.
+
+    W3-C — replaces the per-clip track-create emit that
+    :func:`plan_push_clip` used to do. A song with 8 tracks and 32 clips
+    used to produce 32 ``ableton_track(create)`` calls (with identical
+    ``key=track:{track_id}`` values for each track), all of which had to
+    be deduplicated by the agent. This planner emits exactly N calls for
+    N unique unlinked tracks — dedupe is structural, not behavioral.
+
+    Caller flow:
+        1. ``plan = plan_push_song_tracks(conn, song_id, session_id)``
+        2. Agent executes ``plan.calls`` (parallelizable — each is
+           independent), captures results.
+        3. ``apply_push_results(conn, results, session_id=session_id)``
+           records each new ``track_index`` via ``ableton_links``.
+        4. Now :func:`plan_push_clip`, :func:`plan_push_arrangement`,
+           and :func:`plan_push_mix` can run — every track they touch
+           is linked.
+
+    Master tracks are skipped: master has no Live-side "create" — it
+    exists implicitly in every Live set and is reached via
+    ``ableton_session(set_master_property)``.
+
+    Returns an empty plan when every non-master track is already linked
+    (idempotent — safe to re-run after partial pushes).
+    """
+    plan = PushPlan()
+    tracks = Q.get_tracks_for_song(conn, song_id)
+    for t in tracks:
+        if t["kind"] == "master":
+            continue
+        existing = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if existing is not None:
+            continue
+        create_args: dict[str, Any] = {
+            "action": "create",
+            "kind": t["kind"],
+            "name": t["name"],
+        }
+        if t["instrument_uri"]:
+            # Round-trips in the result as `instrument_uri_deferred`; agent
+            # follows up with ableton_device(action='load') separately.
+            create_args["instrument_uri"] = t["instrument_uri"]
+        plan.add(ToolCall(
+            tool="ableton_track",
+            args=create_args,
+            key=f"track:{t['id']}",
+            purpose=(
+                f"create unlinked track '{t['name']}' "
+                f"(kind={t['kind']}, db_id={t['id']})"
+            ),
+        ))
+    return plan
+
+
+def plan_push_song_returns(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Pre-pass: emit one ``ableton_return(action='create')`` call per
+    unique unlinked return for this song.
+
+    Mirror of :func:`plan_push_song_tracks` for return tracks. The same
+    dedupe-at-the-planner-level rationale applies: returns are
+    referenced by sends and by send_level envelopes — without a
+    song-level pre-pass, every per-element planner would re-emit the
+    create. Idempotent across re-runs.
+    """
+    plan = PushPlan()
+    returns = Q.get_returns_for_song(conn, song_id)
+    for r in returns:
+        existing = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if existing is not None:
+            continue
+        plan.add(ToolCall(
+            tool="ableton_return",
+            args={"action": "create", "name": r["name"]},
+            key=f"return:{r['id']}",
+            purpose=f"create unlinked return '{r['name']}' (db_id={r['id']})",
+        ))
+    return plan
+
+
 def plan_push_clip(
     conn: sqlite3.Connection,
     *,
     clip_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan the push of a single session clip (track + notes) to Ableton.
+    """Plan the push of a single session clip to Ableton.
 
-    Three cases:
-      1. Track not yet linked in this session -> ableton_track(action='create',
-         kind='midi', name=...) — Wave M-5 retarget from create_midi_track_with.
-      2. Clip not yet linked in this session  -> ableton_clip(action='create',
-         location='session', kind='midi', replace=True, notes=...) — atomic
-         single-call create+populate, Wave M+1-1 retarget that replaced the
-         3-step `replace_session_clip` emulation.
-      3. Clip already linked                  -> ableton_clip(action='replace_notes')
+    Two cases (W3-C narrowed from three; track-creation moved to
+    :func:`plan_push_song_tracks`):
+      1. Clip not yet linked  -> ``ableton_clip(action='create',
+         location='session', kind=…, replace=True, notes=…)``  — atomic
+         single-call create+populate (Wave M+1-1).
+      2. Clip already linked  -> ``ableton_clip(action='replace_notes')``
          (in-place; gap #1's renamed action, unified via Wave M-3).
+
+    Precondition (W3-C — strict): the clip's track must already be
+    linked in this session. Run :func:`plan_push_song_tracks` first to
+    create+link all unlinked tracks, ``apply_push_results``, then call
+    this planner. The strict raise replaces the prior silent-redundant-
+    emit behavior that produced N duplicate ``ableton_track(create)``
+    calls for N clips on the same unlinked track (32 calls for an
+    8-track / 32-clip song; one per CLIP, not one per TRACK).
     """
     plan = PushPlan()
 
@@ -164,33 +319,14 @@ def plan_push_clip(
     )
 
     if track_at is None:
-        # Wave M-5: retargeted to the unified ableton_track(action='create')
-        # shape. instrument_uri remains schema-stable but deferred (M-2's
-        # behavior); the planner's caller should follow with a device-load
-        # call via ableton_device(action='load') if an instrument was named.
-        create_args: dict[str, Any] = {
-            "action": "create",
-            "kind": "midi",
-            "name": track_row["name"],
-        }
-        if track_row["instrument_uri"]:
-            # Round-trips in result as `instrument_uri_deferred`; agent
-            # follows up with ableton_device(action='load') separately.
-            create_args["instrument_uri"] = track_row["instrument_uri"]
-        plan.add(ToolCall(
-            tool="ableton_track",
-            args=create_args,
-            key=f"track:{track_row['id']}",
-            purpose=f"create track '{track_row['name']}' (db track_id={track_row['id']})",
-        ))
-        plan.warn(
-            f"track {track_row['id']} has no ableton link in session {session_id} yet — "
-            f"after ableton_track(action='create') returns, call apply_push_results to record it."
+        raise ValueError(
+            f"plan_push_clip: track {track_row['id']!r} ('{track_row['name']}') "
+            f"is not linked in session {session_id!r}. Call "
+            f"plan_push_song_tracks(conn, song_id=..., session_id=...) first "
+            f"to create and link any unlinked tracks (one call per unique "
+            f"track, not per clip), apply_push_results, then re-run "
+            f"plan_push_clip."
         )
-        # Subsequent calls in this plan can't run until we know the new track index.
-        # The agent should execute the track-creation, capture the result, call
-        # apply_push_results, then re-plan to pick up the now-linked track.
-        return plan
 
     if clip_at is None:
         # Wave M+1-1: atomic single-call create+populate. `replace=True`
@@ -237,15 +373,40 @@ def plan_push_arrangement(
     song_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan rebuilding the arrangement for a song.
+    """Plan the arrangement build for a song.
 
-    Strategy: clear all existing arrangement clips for the involved tracks,
-    then duplicate session clips into the arrangement at their target bars.
-    Single batch_arrangement_layout call.
+    Strategy: for each ``arrangement_clips`` row, emit one
+    ``ableton_clip(action='duplicate_to_arrangement', track_index,
+    clip_index, start_beats)`` call. The agent / push-skill is responsible
+    for executing them — they're reorder-safe within the planner output
+    (each call addresses an independent (track, slot, position) triple)
+    and Live's underlying API handles them serially.
 
-    Pre-conditions (planner asserts and warns; doesn't fix):
-      - All tracks involved have a `track` link in this session
-      - All clips involved have a `clip` link in this session
+    Pre-conditions (strict — raises with actionable error if violated,
+    matching :func:`plan_push_clip`'s strict-contract discipline post-W3-C):
+      - Every involved track has a ``track`` link in this session.
+      - Every involved session clip has a ``clip`` link in this session.
+
+    Strict raise rather than warn+skip: a song-wide arrangement push
+    with unlinked elements means the caller skipped a phase
+    (plan_push_song_tracks / clip-create) — silently building a partial
+    arrangement would leave Live in a wrong state that's hard to
+    detect downstream. The error message points at the missing phase.
+
+    Position conversion: each row's 1-based fractional ``start_bar`` is
+    converted to cumulative beats from song start via
+    :func:`_position_bar_to_beats`. The agent doesn't see bars; the MCP
+    surface is meter-agnostic (beats throughout).
+
+    Clear pass: not emitted here. The agent / push-skill should wipe
+    existing arrangement clips on the involved tracks before running the
+    plan. Adding explicit delete ops requires probing Live first (no DB
+    knowledge of what's currently in the arrangement) — out of scope for
+    pure-DB planners; see W3-I.
+
+    Returns N decomposed calls. Each call's result must carry
+    ``arrangement_clip_index`` so :func:`apply_push_results` can record
+    the binding under the ``arrangement_clip:{db_id}`` key.
     """
     plan = PushPlan()
     arr_rows = Q.get_arrangement_for_song(conn, song_id)
@@ -253,46 +414,57 @@ def plan_push_arrangement(
         plan.warn("no arrangement rows for this song")
         return plan
 
-    operations: list[dict[str, Any]] = []
-    track_indices_seen: set[int] = set()
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    if not ts_points:
+        plan.warn(
+            "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
+        )
 
     for row in arr_rows:
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            plan.warn(f"arrangement_clip {row['id']}: track not linked in this session — skipping")
-            continue
+            raise ValueError(
+                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
+                f"references track {row['track_id']!r}, which is not linked "
+                f"in session {session_id!r}. Run plan_push_song_tracks(conn, "
+                f"song_id=..., session_id=...) first, apply_push_results, "
+                f"then re-run plan_push_arrangement."
+            )
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
-            plan.warn(
-                f"arrangement_clip {row['id']}: clip {row['clip_id']} not linked in this session — skipping"
+            raise ValueError(
+                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
+                f"references session clip {row['clip_id']!r}, which is not "
+                f"linked in session {session_id!r}. Run the clip-create "
+                f"phase (plan_push_clip per clip OR the master orchestrator's "
+                f"clip phase), apply_push_results, then re-run "
+                f"plan_push_arrangement."
             )
-            continue
-        track_indices_seen.add(track_at)
-        operations.append({
-            "op": "duplicate",
-            "track_index": track_at,
-            "clip_index": clip_at,
-            "destination_bar": row["start_bar"],
-            "key": f"arrangement_clip:{row['id']}",
-        })
-
-    # Clear pass: caller-controlled. Conservative default — assume agent wipes
-    # arrangement clips on listed tracks before this batch runs. We could add
-    # explicit delete ops here once the planner knows what's currently in the
-    # arrangement (requires a get_arrangement_info pre-call).
-    if operations:
         plan.add(ToolCall(
-            tool="batch_arrangement_layout",
-            args={"operations": operations},
-            key=f"arrangement_batch:{song_id}",
-            purpose=f"rebuild arrangement: {len(operations)} duplicates "
-                    f"across {len(track_indices_seen)} tracks",
+            tool="ableton_clip",
+            args={
+                "action": "duplicate_to_arrangement",
+                "track_index": track_at,
+                "clip_index": clip_at,
+                "start_beats": _position_bar_to_beats(row["start_bar"], ts_points),
+            },
+            key=f"arrangement_clip:{row['id']}",
+            purpose=(
+                f"duplicate session slot {clip_at} on track {track_at} → "
+                f"arrangement bar {row['start_bar']:g}"
+            ),
         ))
-    plan.warn("planner does not yet emit pre-clear ops — agent must clear target tracks first")
+
+    if plan.calls:
+        plan.warn(
+            "agent must clear existing arrangement clips on the involved tracks "
+            "before running these duplicates (planner emits no pre-clear ops "
+            "because it has no DB knowledge of Live's current arrangement state)"
+        )
     return plan
 
 
@@ -388,12 +560,30 @@ def plan_push_cue_points(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `create_cue_point` calls for every row in `cue_points`.
+    """Emit a single batched ``ableton_arrangement(cue_create_batch)`` call.
 
-    Live's MCP `create_cue_point(bar, beat, name)` is callable today, with
-    `bar` 1-based int and `beat` 0-based float within that bar. The planner
-    splits each row's fractional `position_bar` accordingly using the song's
-    time_signature_map.
+    Live's MCP exposes per-cue ``ableton_arrangement(action='cue_create',
+    position_beats=…, name=…)`` and a batched ``cue_create_batch`` that
+    submits multiple cues in one round-trip. The batch is strictly more
+    efficient (one TCP exchange instead of N) and matches the underlying
+    Live API's per-cue settle cost, so the planner emits the batch form.
+
+    Position conversion: each row's 1-based fractional ``position_bar`` is
+    converted to cumulative beats from song start via
+    :func:`_position_bar_to_beats`, walking the song's time_signature_map.
+    Cues at bar 1.0 → ``position_beats=0.0``; downstream meter changes
+    accumulate correctly.
+
+    Sequencing precondition (W3-I): cue creation must run AFTER
+    arrangement-clip placement, because Live's ``set_or_delete_cue`` is
+    clamped to ``[0, song.last_event_time]``. The agent / push-skill is
+    responsible for phase order; this planner emits no internal warn —
+    a cue past the arrangement's extent surfaces as a teaching error
+    from the handler at execution time.
+
+    Result key: ``cue_batch:{song_id}``. The batch handler returns a list
+    of per-cue results; ``apply_push_results`` consumes it via the
+    existing batched-result path.
     """
     plan = PushPlan()
     rows = Q.get_cue_points(conn, song_id)
@@ -403,16 +593,22 @@ def plan_push_cue_points(
     ts_points = Q.get_time_signature_map(conn, song_id)
     if not ts_points:
         plan.warn(
-            "no time_signature_map; assuming 4/4 for cue-point bar/beat split"
+            "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
-    for r in rows:
-        bar, beat = _split_bar(r["position_bar"], ts_points)
-        plan.add(ToolCall(
-            tool="create_cue_point",
-            args={"bar": bar, "beat": beat, "name": r["name"] or ""},
-            key=f"cue_point:{r['id']}",
-            purpose=f"create cue point '{r['name'] or ''}' at bar {r['position_bar']:g}",
-        ))
+
+    cues = [
+        {
+            "position_beats": _position_bar_to_beats(r["position_bar"], ts_points),
+            "name": r["name"] or "",
+        }
+        for r in rows
+    ]
+    plan.add(ToolCall(
+        tool="ableton_arrangement",
+        args={"action": "cue_create_batch", "cues": cues},
+        key=f"cue_batch:{song_id}",
+        purpose=f"create {len(cues)} cue point(s) in one batched call",
+    ))
     return plan
 
 
@@ -722,8 +918,12 @@ def _emit_device_calls(
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.
         # The handler accepts a Live device class name as `kind` and an
-        # optional Live browser URI as `preset_uri`. Position routing is
-        # supported when set.
+        # optional Live browser URI as `preset_uri`. Live 12.4 has no
+        # public reorder API — devices always land at the END of the
+        # destination chain, so the planner does not emit `position`.
+        # If the DB chain order needs to be enforced, push devices in the
+        # order they appear in the chain (position-asc) and Live's
+        # tail-append will match.
         load_args = {
             parent_arg: parent_at,
             "action": "load",
@@ -731,8 +931,6 @@ def _emit_device_calls(
         }
         if device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
-        if device["position"] is not None:
-            load_args["position"] = int(device["position"])
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,
@@ -1235,11 +1433,13 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
-    # Chunk 2 (score)
-    "arrangement_batch",     # batch_arrangement_layout outer envelope; inner ops carry `arrangement_clip:` keys
-    "tempo_point",           # write_tempo_point
-    "time_signature_point",  # write_time_signature_point
-    "cue_point",             # create_cue_point
+    # Chunk 2 (score). W3-D dropped `arrangement_batch` (the planner now
+    # emits N `arrangement_clip:` calls directly; each has its own
+    # binding via _LINK_KINDS). W3-B dropped per-cue `cue_point` in
+    # favor of the single batched `cue_batch:` key.
+    "cue_batch",             # ableton_arrangement(cue_create_batch) — handler returns list of per-cue results
+    "tempo_point",           # write_tempo_point (emulator placeholder)
+    "time_signature_point",  # write_time_signature_point (emulator placeholder)
     # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
     # ableton_track(action='set_property') call. The key prefixes here stay
     # the same (volume/pan/mute/solo/arm/color) so apply matches by what the

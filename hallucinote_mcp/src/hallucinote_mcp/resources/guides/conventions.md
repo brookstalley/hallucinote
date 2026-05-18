@@ -54,8 +54,15 @@ for atomic create-and-populate (single round-trip).
 ## Devices live above their parent
 
 When you load a device with `ableton_device(action='load', track_index=X,
-kind='Compressor2')`, it appends to the END of track X's device chain by
-default. Pass `position` (1-based) to insert at a specific slot.
+kind='Compressor2')`, it appends to the END of track X's device chain.
+Live 12.4 exposes no public reorder API, so the position is fixed —
+plan the load order if you care about chain order.
+
+For a specific preset / instrument / plugin (anything beyond built-in
+Live device classes), capture the canonical URI via
+`ableton_browser(action='at_path', ...)` and pass it as `preset_uri`.
+Display-name matching only works for the built-in roots
+(instruments / audio_effects / midi_effects / drums).
 
 ## What's NOT here (deliberate omissions)
 

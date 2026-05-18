@@ -175,6 +175,10 @@ register(
             target="song.tracks[{track_index-1}]",
             property="name",
             value_param="name",
+            result_template={
+                "track_index": "$track_index",
+                "name": "$name",
+            },
         ),
         example="ableton_track(action='rename', track_index=5, name='Lead')",
     )

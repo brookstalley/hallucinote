@@ -69,17 +69,19 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
         ParamSpec(
             name="clip_index", type="int", required=False, minimum=1,
             description=(
-                "1-based session slot OR arrangement-clip index. Required for "
-                "clip_cc / clip_pitch_bend / note_expression; optional for "
-                "device_parameter / mixer_* / send_level to write a "
-                "clip-local envelope (omit for arrangement-track-level)."
+                "1-based session slot OR arrangement-clip index. Required "
+                "for ALL target_kinds on Live 12.4 — the LOM exposes "
+                "envelope creation only through Clip.create_automation_"
+                "envelope, so mixer / pan / send / device-parameter "
+                "envelopes must address a containing clip just like "
+                "clip_cc / clip_pitch_bend / note_expression."
             ),
         ),
         ParamSpec(
             name="location", type="str", required=False, enum=_LOCATION_ENUM,
             description=(
-                "'session' or 'arrangement'. Required whenever clip_index is "
-                "set."
+                "'session' or 'arrangement'. Required whenever clip_index "
+                "is set."
             ),
         ),
         ParamSpec(name="device_index", type="int", required=False, minimum=1),
@@ -156,20 +158,25 @@ register(
             "{time_beats:16.0, value:0.8, curve:'linear'}])"
         ),
         tips=(
-            "Per-target_kind required identifiers: "
+            "Per-target_kind required identifiers (Live 12.4 — ALL kinds "
+            "require a containing clip; track-level / clip-less paths "
+            "are not exposed by the LOM): "
             "clip_cc → track_index + location + clip_index + cc_number; "
             "clip_pitch_bend → track_index + location + clip_index; "
             "note_expression → track_index + location + clip_index + "
             "note_pitch + note_start_beats + axis; "
-            "device_parameter → (track_index | return_index) + device_index "
-            "+ parameter_name (optionally + location + clip_index for "
-            "clip-local); "
+            "device_parameter → (track_index | return_index) + "
+            "device_index + parameter_name + location + clip_index; "
             "mixer_volume / mixer_pan → (track_index | return_index) "
-            "(optionally + location + clip_index for clip-local); "
-            "send_level → track_index + return_index (optionally + "
-            "location + clip_index).",
+            "+ location + clip_index; "
+            "send_level → track_index + return_index + location + "
+            "clip_index.",
             "Breakpoints must be sorted by time_beats — the handler "
             "raises with the offending index if not.",
+            "Live 12.4's Envelope only exposes insert_step — segments / "
+            "curves are not in the LOM. Non-'hold' curve hints are "
+            "recorded in the DB but applied as step transitions; the "
+            "response carries a 'notes' field describing the fallback.",
             "Time is in beats. The Hallucinote planner converts from "
             "bar-based song positions via the time-signature map. MCP "
             "stays meter-agnostic.",
@@ -188,8 +195,16 @@ register(
         name="clear",
         description=(
             "Clear one specific envelope. Same identifier set as "
-            "write_envelope (minus breakpoints). If the envelope doesn't "
-            "exist, returns cleared=False as a no-op (not an error)."
+            "write_envelope (minus breakpoints). Live 12.4's "
+            "`Clip.clear_envelope` is idempotent — no error when the "
+            "envelope was absent — and the LOM has no existence probe, "
+            "so the response always reports `cleared: True` after a "
+            "successful invocation. Pair with `get_envelope` for the "
+            "was-it-present signal once the envelope read surface gap "
+            "closes. clip-less mixer / pan / send / device_parameter "
+            "calls raise the same teaching error as write_envelope; "
+            "target_kind='note_expression' is not exposed by Live 12.4's "
+            "per-target clear surface — use action='clear_all'."
         ),
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
@@ -198,7 +213,7 @@ register(
         handler=automation_handlers.clear_handler,
         example=(
             "ableton_automation(action='clear', target_kind='mixer_volume', "
-            "track_index=2)"
+            "track_index=2, location='arrangement', clip_index=1)"
         ),
     )
 )

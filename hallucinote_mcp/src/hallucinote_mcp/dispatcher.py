@@ -43,20 +43,46 @@ logger = logging.getLogger("hallucinote_mcp.dispatcher")
 class LiveContext(Protocol):
     """The dispatcher sees the Live API through this Protocol.
 
-    Two members:
+    Four members:
 
       - ``song``: the Live Song object (``Live.Song.Song`` in real Live).
         Accessed from inside ``run_on_main`` callbacks so it's always
         touched on the main thread.
 
+      - ``application``: the Live Application object
+        (``Live.Application.Application`` in real Live). Used for
+        view-state reads/writes (``set_view`` / ``focused_view``) and
+        browser access. Live's ``Song`` does NOT expose ``get_application``
+        — the canonical accessor is ``Live.Application.get_application()``
+        (module-level), surfaced here so handlers don't import Live
+        directly.
+
       - ``run_on_main(fn)``: invoke a zero-arg callable on Live's main
         thread, block the calling worker thread until it returns, return
         the result (or re-raise the exception). Tests substitute a synchronous
         identity function; real Live uses ``schedule_message``.
+
+      - ``live_state_lock``: a context-manager-shaped lock that serializes
+        operations whose correctness depends on shared Live transport
+        state (``Song.current_song_time``). Required for every handler
+        that writes the playhead — currently ``cue_create``,
+        ``cue_create_batch``, ``cue_delete``, ``cue_jump``, and ``seek``.
+        Each ``with context.live_state_lock:`` block covers the
+        seek + audio-thread-settle + toggle window so concurrent
+        callers don't observe each other's intermediate playhead
+        writes. See ``handlers/arrangement.py`` for the empirical race
+        this guards against (B-21). Re-entrant — a batch handler holds
+        it across multiple inner ops without deadlocking.
     """
 
     @property
     def song(self) -> Any: ...  # pragma: no cover - structural only
+
+    @property
+    def application(self) -> Any: ...  # pragma: no cover - structural only
+
+    @property
+    def live_state_lock(self) -> Any: ...  # pragma: no cover - structural only
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any: ...  # pragma: no cover
 
@@ -246,6 +272,30 @@ def walk_song(song: Any, expression: str) -> Any:
     return current
 
 
+def _render_result_template(
+    template: dict[str, Any], params: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a result dict from a LiveOp.result_template + validated params.
+
+    String values starting with ``$`` are resolved as param refs
+    (``"$bpm"`` → ``params["bpm"]``); other values are literal. Used by
+    declarative ops whose natural return value is ``None`` to populate a
+    structured response instead of forcing every action to write a
+    handler (Wave-2 W2-D / B-15).
+    """
+    out: dict[str, Any] = {}
+    for key, source in template.items():
+        if isinstance(source, str) and source.startswith("$"):
+            param_name = source[1:]
+            if param_name in params:
+                out[key] = params[param_name]
+            # If the template references an unsupplied optional param,
+            # omit the key from the result rather than emit a None.
+        else:
+            out[key] = source
+    return out
+
+
 def execute_declarative(
     op: schema.LiveOp, params: dict[str, Any], song: Any
 ) -> Any:
@@ -255,6 +305,11 @@ def execute_declarative(
     via ``context.run_on_main``). Both the navigation walk AND the final
     property read/write or method call happen here atomically, so neither
     half escapes the main thread.
+
+    If ``op.result_template`` is set, the executor builds a result dict
+    from it (after the op runs) regardless of the op's natural return
+    value. Without a template, ``property_write`` returns ``None`` and
+    ``method_call`` returns whatever the underlying method does.
     """
     target_expr = resolve_target(op.target, params)
     target_obj = walk_song(song, target_expr)
@@ -262,11 +317,16 @@ def execute_declarative(
         return getattr(target_obj, op.property)
     if op.kind == "property_write":
         setattr(target_obj, op.property, params[op.value_param])
+        if op.result_template is not None:
+            return _render_result_template(op.result_template, params)
         return None
     if op.kind == "method_call":
         method = getattr(target_obj, op.method)
         args = [params[name] for name in op.method_args]
-        return method(*args)
+        natural = method(*args)
+        if op.result_template is not None:
+            return _render_result_template(op.result_template, params)
+        return natural
     raise ValueError(f"unknown LiveOp kind: {op.kind!r}")
 
 
@@ -353,7 +413,13 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             needs_remote=True,
         )
 
-    # Marshal the full executor invocation onto Live's main thread.
+    # Marshal the full executor invocation onto Live's main thread —
+    # unless the action opted out via runs_on_worker (W3-F). Worker-thread
+    # handlers manage their own main-thread marshaling via repeated
+    # ``context.run_on_main(...)`` calls, with worker-side
+    # ``time.sleep()`` between to let the main thread pump events
+    # between bouts. The default (main-thread-wrapped) path stays
+    # the safe choice for every other handler.
     def run_executor() -> Any:
         if action.handler is not None:
             return action.handler(context, **validated)
@@ -361,7 +427,13 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
         return execute_declarative(action.declarative_op, validated, context.song)
 
     try:
-        result = context.run_on_main(run_executor)
+        if action.runs_on_worker:
+            # Handler is responsible for its own main-thread marshaling.
+            # Invariant (__post_init__): runs_on_worker implies handler-based.
+            assert action.handler is not None  # guaranteed by Action.__post_init__
+            result = action.handler(context, **validated)
+        else:
+            result = context.run_on_main(run_executor)
     except KeyError as exc:
         logger.warning(
             "schema bug: %s(%r) executor referenced unknown param %r",

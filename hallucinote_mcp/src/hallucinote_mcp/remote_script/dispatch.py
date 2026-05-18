@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 
 SongFactory = Callable[[], Any]
+ApplicationFactory = Callable[[], Any]
 ScheduleOnMain = Callable[[Callable[[], None]], None]
 
 
@@ -29,6 +30,11 @@ class LiveLiveContext:
     Parameters:
       song_factory: zero-arg callable returning the current Live Song object
         (Ableton's ``ControlSurface.song()`` is the canonical source).
+      application_factory: zero-arg callable returning Live's Application
+        object. Real ``ControlSurface`` exposes ``self.application`` which
+        is exactly this shape. The Live ``Song`` does NOT expose
+        ``get_application``, so we flow Application access through the
+        context Protocol instead of having handlers ``import Live`` directly.
       schedule_on_main: callable that takes a zero-arg function and arranges
         for Live to invoke it on the main thread. The conventional shape in
         ``_Framework`` is ``lambda fn: control_surface.schedule_message(0, fn)``.
@@ -42,12 +48,17 @@ class LiveLiveContext:
     def __init__(
         self,
         song_factory: SongFactory,
+        application_factory: ApplicationFactory,
         schedule_on_main: ScheduleOnMain,
         main_thread_timeout: float = 15.0,
     ):
         self._song_factory = song_factory
+        self._application_factory = application_factory
         self._schedule_on_main = schedule_on_main
         self._main_thread_timeout = main_thread_timeout
+        # Re-entrant so batch handlers (e.g. cue_create_batch) can acquire
+        # it once and call into per-item helpers that also acquire.
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self) -> Any:
@@ -59,6 +70,30 @@ class LiveLiveContext:
         which the dispatcher arranges.
         """
         return self._song_factory()
+
+    @property
+    def application(self) -> Any:
+        """Live's Application object.
+
+        Used for view-state reads/writes and browser access. Same main-thread
+        discipline as ``song`` — call from inside ``run_on_main`` callbacks.
+        """
+        return self._application_factory()
+
+    @property
+    def live_state_lock(self) -> threading.RLock:
+        """Mutex serializing handlers that write ``Song.current_song_time``.
+
+        Acquired by ``cue_create`` / ``cue_create_batch`` / ``cue_delete``
+        / ``cue_jump`` / ``seek``. The ~400ms seek+settle+toggle+settle
+        window in cue ops would otherwise let parallel callers' playhead
+        writes overwrite each other before the audio thread picks them
+        up; empirically observed as "each handler reads the previous
+        handler's target" (B-21 in bug-triage). The lock is also a
+        forward guard for any future handler that writes transport
+        state.
+        """
+        return self._live_state_lock
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any:
         """Invoke ``fn`` on Live's main thread; return its result.

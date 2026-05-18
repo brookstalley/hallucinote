@@ -17,9 +17,9 @@ import socket
 import threading
 from typing import Any, Callable
 
-from .. import wire
+from .. import __version__, wire
 from ..dispatcher import LiveContext, dispatch
-from ..wire import DEFAULT_HOST, DEFAULT_PORT, FrameError, Request
+from ..wire import DEFAULT_HOST, DEFAULT_PORT, FrameError, Request, check_version_compat
 
 
 LogFn = Callable[[str], None]
@@ -111,7 +111,13 @@ class RemoteScriptServer:
                 except ValueError as exc:
                     response = wire.error(str(exc))
                 else:
-                    response = dispatch(request, context=self._live_context)
+                    version_error = check_version_compat(
+                        request.server_version, __version__
+                    )
+                    if version_error is not None:
+                        response = version_error
+                    else:
+                        response = dispatch(request, context=self._live_context)
                 try:
                     wire.send_message(client, response)
                 except OSError as exc:

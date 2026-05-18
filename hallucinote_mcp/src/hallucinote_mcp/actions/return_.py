@@ -1,9 +1,11 @@
 """``ableton_return`` action schema.
 
-Six actions: help, list, info, create, delete, set_property. Mirrors
-``ableton_track`` but against ``song.return_tracks`` and without ``arm``
-(returns can't be record-armed) or ``set_send`` (return-to-return sends
-are out of scope for V1).
+Seven actions: help, list, info, create, rename, delete, set_property.
+W3-H (2026-05-18) added ``rename`` — the recovery path when Live's
+slot-letter auto-prefix clobbers a name at create time. Mirrors
+``ableton_track`` but against ``song.return_tracks`` and without
+``arm`` (returns can't be record-armed) or ``set_send`` (return-to-
+return sends are out of scope for V1).
 """
 from __future__ import annotations
 
@@ -77,13 +79,47 @@ register(
             ),
         ),
         handler=return_handlers.create_handler,
-        example="ableton_return(action='create', name='A-Reverb')",
+        example="ableton_return(action='create', name='Reverb')",
         tips=(
             "Returns {return_index, name}. Live 11+ supports this directly; "
             "older builds raise a teaching error.",
+            "**Live rewrites every name write to '<slot-letter>-<value>'** "
+            "unconditionally (e.g. slot C + name='Reverb' → 'C-Reverb'; "
+            "slot C + name='C-Reverb' → 'C-C-Reverb'). Pass the SUFFIX "
+            "only — Live produces the full prefixed form. When Live "
+            "mutates the input, the result carries a 'requested_name' "
+            "field showing what you asked for.",
         ),
     )
 )
+
+register(
+    Action(
+        tool="ableton_return",
+        name="rename",
+        description=(
+            "Set a return track's display name. W3-H (2026-05-18) — "
+            "previously there was no MCP path to rename a return after "
+            "create. Useful as the recovery path when Live's slot-letter "
+            "auto-prefix clobbered the name at create time (see the "
+            "create action). ``ReturnTrack.name`` is a directly-writable "
+            "property on Live's LOM, so this is a synchronous one-call rename."
+        ),
+        params=(
+            ParamSpec(name="return_index", type="int", minimum=1),
+            ParamSpec(name="name", type="str"),
+        ),
+        handler=return_handlers.rename_handler,
+        example="ableton_return(action='rename', return_index=2, name='Plate')",
+        tips=(
+            "Subject to Live's unconditional slot-letter prefix on every "
+            "name write (same rule as create). Pass the SUFFIX only — "
+            "Live produces the full '<slot>-<value>' form. The result "
+            "carries 'requested_name' when Live mutates your input.",
+        ),
+    )
+)
+
 
 register(
     Action(

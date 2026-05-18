@@ -1909,6 +1909,13 @@ def probe_and_link(
                 "name": lt["name"],
             })
 
+    _flag_case_near_matches(
+        result.unmatched_db_tracks,
+        result.unmatched_live_tracks,
+        kind="track",
+        notes=result.notes,
+    )
+
     # ---- Returns: strip Live's slot-letter prefix, then match by name.
     live_return_by_name: dict[str, list[dict[str, Any]]] = {}
     for lr in live_returns:
@@ -1944,7 +1951,53 @@ def probe_and_link(
                 "name": lr["name"],
             })
 
+    # Returns match by stripped-name; compare against stripped form
+    # so DB 'Reverb' vs Live 'A-reverb' surfaces as near-match.
+    _flag_case_near_matches(
+        result.unmatched_db_returns,
+        result.unmatched_live_returns,
+        kind="return",
+        notes=result.notes,
+        live_normalize=strip_return_slot_prefix,
+    )
+
     return result
+
+
+def _flag_case_near_matches(
+    unmatched_db: list[dict[str, Any]],
+    unmatched_live: list[dict[str, Any]],
+    *,
+    kind: str,
+    notes: list[str],
+    live_normalize: Callable[[str | None], str | None] | None = None,
+) -> None:
+    """Surface DB×Live pairs that match case-insensitively but not
+    case-sensitively. Catches the silent foot-gun where a user renames
+    Live's 'Drums' → 'drums' and the probe creates a duplicate 'Drums'
+    track right next to it (W4-E real-Live finding, 2026-05-18).
+
+    Returns through ``notes`` rather than the unmatched lists — both
+    sides stay genuinely unmatched (the probe doesn't auto-link
+    case-variant pairs; the user decides). ``live_normalize`` is
+    applied to the Live-side name before comparison (e.g. strip
+    Live's return slot-letter prefix so DB 'Reverb' near-matches
+    Live 'A-reverb' / 'a-Reverb').
+    """
+    norm = live_normalize or (lambda s: s)
+    for db in unmatched_db:
+        db_name = db["name"]
+        for live in unmatched_live:
+            live_name = norm(live["name"])
+            if (
+                db_name != live_name
+                and db_name.casefold() == live_name.casefold()
+            ):
+                notes.append(
+                    f"DB {kind} {db_name!r} has near-match Live "
+                    f"{live['name']!r} (case differs); intentional? "
+                    "Rename one to match if not."
+                )
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,7 @@ The CLI matches by name (track names directly; return names after stripping Live
 
 Display to the user:
 - The matched lists (concise — `"linked 3 of 5 DB tracks; 2 will be created"`).
-- The `notes` list verbatim if non-empty (duplicate names, kind mismatches).
+- The `notes` list verbatim if non-empty. Notes cover duplicate names, kind mismatches, and **case-only near-matches** (W5-B). If a DB track 'Drums' and a Live track 'drums' both appear unmatched, the note flags them as a case-variant pair so the user can decide whether to rename one before push (otherwise phase 3 silently creates a duplicate `Drums` next to the existing `drums`).
 - The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch. The user often wants to know "the song will live alongside `1-MIDI`, `2-MIDI`, ..." so they can clean those up manually if desired.
 
 Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched — push is additive.

@@ -49,3 +49,13 @@ uv.lock
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
 .claude/scheduled_tasks.lock
+
+# E2E push-test ephemera (Wave 3 throwaway artifacts until ableton-push skill ships)
+.prawduct/.push-clip-*.json
+.prawduct/.push-plan-*.json
+.prawduct/.push-results-*.json
+.prawduct/.push-session-id
+.prawduct/.push-findings.md
+.prawduct/.getting-started-prompts.md
+.prawduct/push-orchestrator.py
+.getting-started-prompts.md

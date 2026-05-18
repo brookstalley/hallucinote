@@ -15,6 +15,7 @@ to multiple Live sets at the same time without aliasing. Open one with
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
@@ -1572,6 +1573,223 @@ def _emit_send_envelope(
         ),
     ))
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+
+
+# ---------------------------------------------------------------------------
+# Master orchestration: plan_push_song
+# ---------------------------------------------------------------------------
+
+
+def plan_push_clips(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan the create/replace of every session clip in a song.
+
+    Aggregates :func:`plan_push_clip` over every ``clips`` row whose
+    parent track belongs to this song. Per-clip warnings are prefixed
+    with the clip name so the merged plan stays diagnosable.
+
+    Strict precondition (inherited from :func:`plan_push_clip`): every
+    clip's track must already be linked in this session. Run
+    :func:`plan_push_song_tracks` first, ``apply_push_results``, then
+    this. The strict raise surfaces orchestration order bugs loudly —
+    a silent skip would leave Live missing clips with no signal.
+    """
+    plan = PushPlan()
+    rows = conn.execute(
+        "SELECT id, name FROM clips WHERE track_id IN "
+        "(SELECT id FROM tracks WHERE song_id=?) ORDER BY name, id",
+        (song_id,),
+    ).fetchall()
+    for c in rows:
+        sub = plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
+        plan.calls.extend(sub.calls)
+        plan.notes.extend(f"[{c['name']}] {n}" for n in sub.notes)
+    if not plan.calls and not plan.notes:
+        plan.warn("no clips for this song; nothing to push")
+    return plan
+
+
+@dataclass(frozen=True)
+class PushPhase:
+    """One phase of the song-level master push.
+
+    Each phase produces a fresh :class:`PushPlan` on demand by calling
+    ``plan_fn()``. The thunk pattern (rather than an eager list of
+    pre-built ``PushPlan`` objects) is load-bearing: later phases
+    inspect ``ableton_links`` written by earlier phases via
+    :func:`apply_push_results`. ``plan_push_clip`` /
+    ``plan_push_arrangement`` raise on unlinked deps by design (W3-C),
+    so pre-building all phases at ``plan_push_song`` time would either
+    fail loudly or require re-planning anyway. Thunks make the
+    re-plan-each-phase contract explicit.
+
+    ``name`` is the stable identifier the push skill uses for logging
+    and for keying status to phases. Don't rename — tests and the
+    skill prose pin these strings.
+    """
+    name: str
+    plan_fn: Callable[[], PushPlan]
+    description: str
+
+
+# The ten phases of the master push, in execution order. Order is
+# load-bearing — see :func:`plan_push_song` for the dependency
+# rationale per phase. This tuple is the single source of truth; tests
+# pin both the names and the count.
+_PHASE_NAMES: tuple[str, ...] = (
+    "tempo_map",
+    "time_signature_map",
+    "tracks",
+    "returns",
+    "clips",
+    "mix",
+    "devices",
+    "envelopes",
+    "arrangement",
+    "cues",
+)
+
+
+def plan_push_song(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> list[PushPhase]:
+    """Master orchestration: return the ten phases of a full song push, in order.
+
+    Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
+    fresh :class:`PushPlan` from current DB state at call time. The
+    push skill (W4-E) iterates the list, for each phase calling
+    ``plan_fn()`` → executing the calls via MCP → recording results via
+    :func:`apply_push_results` → moving to the next phase. Each
+    successive phase sees the ``ableton_links`` the prior phase wrote.
+
+    Phase order (load-bearing):
+
+      1. ``tempo_map`` — :func:`plan_push_tempo_map`. No link deps.
+      2. ``time_signature_map`` — :func:`plan_push_time_signature_map`.
+         No link deps.
+      3. ``tracks`` — :func:`plan_push_song_tracks`. Creates+links
+         every unlinked non-master track. Prerequisite for clips, mix,
+         devices, envelopes, arrangement.
+      4. ``returns`` — :func:`plan_push_song_returns`. Creates+links
+         every unlinked return. Prerequisite for mix sends, return-side
+         devices, return-side envelopes.
+      5. ``clips`` — :func:`plan_push_clips`. Creates+links every
+         session clip. Needs tracks linked (raises otherwise per W3-C
+         strict contract). Prerequisite for envelopes (session-clip
+         hosting) and arrangement (duplicate source).
+      6. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
+         Needs tracks + returns linked. No clip dep.
+      7. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+         effects and sets parameters. Needs tracks + returns linked.
+         Prerequisite for ``device_parameter`` envelopes (need the
+         target device linked).
+      8. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
+         on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
+         a snapshot copy, so the envelope must exist on the session
+         clip BEFORE arrangement runs. Needs tracks + clips + returns
+         + devices linked.
+      9. ``arrangement`` — :func:`plan_push_arrangement`. Emits
+         ``duplicate_to_arrangement`` per arrangement row. Carries
+         session-clip envelopes as snapshot copies (W4-A finding).
+         Needs clips linked (raises otherwise).
+      10. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
+          Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
+          clamped to ``[0, song.last_event_time]``; cues placed before
+          arrangement exists get rejected.
+
+    Sections (``plan_push_sections``) is NOT included: it emits no
+    canonical calls (Live has no section-marker concept distinct from
+    cue points). Run it separately to surface its warn if needed.
+
+    Returns 10 phases regardless of whether the song actually has
+    content for each phase — empty phases produce a plan with a
+    ``no … to push`` warn instead of an empty plan, so the skill's
+    progress reporting can distinguish "ran cleanly with nothing to
+    do" from "phase skipped". Idempotent: running the full sequence a
+    second time produces empty plans (all link prereqs satisfied;
+    each planner's already-linked branch is a no-op).
+    """
+    phases = (
+        PushPhase(
+            name="tempo_map",
+            plan_fn=lambda: plan_push_tempo_map(conn, song_id=song_id),
+            description="Write tempo points.",
+        ),
+        PushPhase(
+            name="time_signature_map",
+            plan_fn=lambda: plan_push_time_signature_map(conn, song_id=song_id),
+            description="Write time-signature points.",
+        ),
+        PushPhase(
+            name="tracks",
+            plan_fn=lambda: plan_push_song_tracks(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create unlinked non-master tracks (pre-pass for clips/mix/devices/envelopes/arrangement).",
+        ),
+        PushPhase(
+            name="returns",
+            plan_fn=lambda: plan_push_song_returns(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create unlinked return tracks (pre-pass for sends/devices/envelopes).",
+        ),
+        PushPhase(
+            name="clips",
+            plan_fn=lambda: plan_push_clips(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create+populate every session clip (atomic create+notes per W3-C / Wave M+1-1).",
+        ),
+        PushPhase(
+            name="mix",
+            plan_fn=lambda: plan_push_mix(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Push mixer state (volume/pan/mute/solo/arm/color) + master + sends.",
+        ),
+        PushPhase(
+            name="devices",
+            plan_fn=lambda: plan_push_devices(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Load instruments+effects and set parameters on tracks/returns.",
+        ),
+        PushPhase(
+            name="envelopes",
+            plan_fn=lambda: plan_push_envelopes(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Write envelopes on session clips (W4-A: must precede arrangement; duplicate_to_arrangement snapshots).",
+        ),
+        PushPhase(
+            name="arrangement",
+            plan_fn=lambda: plan_push_arrangement(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Duplicate session clips to the arrangement view (snapshots session-clip envelopes per W4-A).",
+        ),
+        PushPhase(
+            name="cues",
+            plan_fn=lambda: plan_push_cue_points(conn, song_id=song_id),
+            description="Create cue points (after arrangement so Live's [0, last_event_time] clamp accepts them).",
+        ),
+    )
+    # The tuple-of-names canary keeps tests and the skill agreeing on
+    # phase identity without re-traversing this whole function.
+    # Runtime raise (not `assert`) so the check survives `python -O`.
+    if tuple(p.name for p in phases) != _PHASE_NAMES:
+        raise RuntimeError(
+            "plan_push_song phase order drifted from _PHASE_NAMES; update both."
+        )
+    return list(phases)
 
 
 # ---------------------------------------------------------------------------

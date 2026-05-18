@@ -175,6 +175,58 @@ register(
 register(
     Action(
         tool="ableton_arrangement",
+        name="cue_create_batch",
+        description=(
+            "Create multiple cue points in one call. Each entry is "
+            "{position_beats: float, name?: str}. Returns "
+            "{cue_count, cues: [...]} in submission order. Each per-cue "
+            "result shape matches cue_create's. PREFERRED over multiple "
+            "parallel cue_create calls — the underlying Live API has a "
+            "~400ms per-cue settle window that doesn't parallelize, so "
+            "the batch pays the per-cue cost once across one round trip "
+            "instead of N. Indices reported are the position in "
+            "song.cue_points at the time of each insert; call cue_list "
+            "after the batch for the final mapping. "
+            "**Partial-state on error**: pre-validation (type/duplicate "
+            "checks) fails the whole batch with NO cues created. But if "
+            "an error occurs MID-LOOP (e.g. a cue collides with an "
+            "existing cue Live just acquired), prior entries in the "
+            "batch ARE persisted — the response is the per-cue error "
+            "string with no list of what landed. Call cue_list "
+            "afterward to discover the partial state."
+        ),
+        params=(
+            ParamSpec(
+                name="cues", type="list",
+                description=(
+                    "List of {position_beats: float, name?: str} dicts. "
+                    "Positions must be unique within the batch and within "
+                    "[0, last_event_time]."
+                ),
+            ),
+        ),
+        handler=arrangement_handlers.cue_create_batch_handler,
+        example=(
+            "ableton_arrangement(action='cue_create_batch', cues=["
+            "{'position_beats': 0.0, 'name': 'Intro'}, "
+            "{'position_beats': 16.0, 'name': 'Verse'}, "
+            "{'position_beats': 48.0, 'name': 'Chorus'}])"
+        ),
+        tips=(
+            "For a 7-cue song this is ~3s end-to-end (each cue's "
+            "audio-thread settle is ~400ms) — acceptable for setup-time "
+            "pushes, slow for interactive use.",
+            "Final cue_index values may differ from those reported in "
+            "the per-cue results because Live keeps the list sorted by "
+            "position. Use cue_list afterward if you need the stable "
+            "index mapping.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_arrangement",
         name="cue_delete",
         description="Delete a cue point by 1-based cue_index.",
         params=(

@@ -8,6 +8,7 @@ actions module (or calls the targeted registration) inside that isolation.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -116,6 +117,7 @@ class FakeLiveContext:
             FakeApplication() if application is FakeLiveContext._MISSING else application
         )
         self.run_on_main_calls = 0
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self) -> FakeSong:
@@ -124,6 +126,10 @@ class FakeLiveContext:
     @property
     def application(self) -> Any:
         return self._application
+
+    @property
+    def live_state_lock(self):
+        return self._live_state_lock
 
     def run_on_main(self, fn):
         self.run_on_main_calls += 1
@@ -426,6 +432,41 @@ def test_seek_with_implicit_beat_zero(loaded_session_actions):
     )
     assert resp.ok is True
     assert ctx.song.current_song_time == pytest.approx(32.0)
+
+
+def test_seek_acquires_live_state_lock(loaded_session_actions):
+    """B-21 regression. ``seek`` writes ``current_song_time``, which
+    races against concurrent ``cue_create`` / ``cue_delete`` callers.
+    The handler must take ``live_state_lock`` around the write so the
+    operations serialize.
+    """
+    class _RecordingLock:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self._inner = threading.RLock()
+
+        def __enter__(self):
+            self._inner.acquire()
+            self.events.append("acquire")
+            return self
+
+        def __exit__(self, *args):
+            self.events.append("release")
+            self._inner.release()
+            return False
+
+    ctx = FakeLiveContext()
+    recording = _RecordingLock()
+    ctx._live_state_lock = recording
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="seek",
+            params={"bar": 3, "beat": 0.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert recording.events == ["acquire", "release"]
 
 
 # set_arrangement_loop: deprecated in Wave M-5 — see

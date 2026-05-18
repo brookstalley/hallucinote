@@ -224,26 +224,18 @@ def cue_list_handler(context: LiveContext) -> dict[str, Any]:
     return {"cue_points": out}
 
 
-def cue_create_handler(
-    context: LiveContext,
-    *,
-    position_beats: float,
-    name: str | None = None,
+def _create_one_cue_locked(
+    song: Any, *, position_beats: float, name: str | None
 ) -> dict[str, Any]:
-    """Create a cue point at position_beats. Live's API takes the play
-    position via set_or_delete_cue_point (which adds at the current play
-    head). We temporarily seek to position_beats, add the cue, then
-    optionally rename + restore.
+    """Inner cue-creation routine. **Caller must hold the live_state_lock.**
 
-    **Toggle-collision guard.** Live's ``set_or_delete_cue`` is a TOGGLE —
-    calling it at a position that already has a cue DELETES that cue
-    instead of creating a new one. cue_create's contract is to create;
-    we pre-check for an existing cue at the position and raise a teaching
-    error instead of silently destroying it.
+    Factored out so ``cue_create_batch_handler`` can acquire the lock
+    once and call this in a loop, paying only one set of acquire/release
+    overhead while still keeping every per-cue seek+settle+toggle window
+    serialized against parallel single-cue callers.
     """
     if position_beats < 0:
         raise ValueError(f"position_beats {position_beats} must be >= 0")
-    song = context.song
     # Pre-check: refuse to "create" when the position is already occupied.
     # Float tolerance matches the apply-side `pos_key` precision.
     for existing in getattr(song, "cue_points", ()):
@@ -360,6 +352,111 @@ def cue_create_handler(
     }
 
 
+def cue_create_handler(
+    context: LiveContext,
+    *,
+    position_beats: float,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Create a cue point at position_beats. Live's API takes the play
+    position via set_or_delete_cue_point (which adds at the current play
+    head). We temporarily seek to position_beats, add the cue, then
+    optionally rename + restore.
+
+    **Toggle-collision guard.** Live's ``set_or_delete_cue`` is a TOGGLE —
+    calling it at a position that already has a cue DELETES that cue
+    instead of creating a new one. cue_create's contract is to create;
+    we pre-check for an existing cue at the position and raise a teaching
+    error instead of silently destroying it.
+
+    **Parallel-call safety (B-21).** The seek + audio-thread-settle +
+    toggle + settle window is held under ``context.live_state_lock`` so
+    concurrent callers can't observe each other's playhead writes
+    before the audio thread picks them up. Empirical Live 12.x
+    behavior: even with 200ms main-thread sleeps, parallel handlers'
+    cst writes race because the audio thread processes them on its own
+    buffer-aligned schedule. The lock makes the per-cue window atomic.
+    For multi-cue pushes, prefer ``cue_create_batch`` — it pays the
+    lock overhead once.
+    """
+    with context.live_state_lock:
+        return _create_one_cue_locked(
+            context.song, position_beats=position_beats, name=name
+        )
+
+
+def cue_create_batch_handler(
+    context: LiveContext, *, cues: list[Any],
+) -> dict[str, Any]:
+    """Create multiple cues in one call, holding ``live_state_lock`` once.
+
+    Each entry in ``cues`` is ``{"position_beats": float, "name": str?}``.
+    Returns ``{"cue_count": N, "cues": [...]}`` where each result is the
+    same shape as ``cue_create``'s return value, in submission order.
+
+    **Index caveat**: the reported ``cue_index`` is the position in
+    ``song.cue_points`` AT THE TIME each cue was created. Because Live
+    keeps the list sorted by position, inserting an earlier cue shifts
+    later indices. Callers needing the final stable index mapping
+    should call ``cue_list`` after the batch.
+    """
+    if not isinstance(cues, list):
+        raise ValueError(
+            f"cue_create_batch: cues must be a list, got {type(cues).__name__}"
+        )
+    if not cues:
+        raise ValueError("cue_create_batch: cues list is empty")
+
+    # Pre-validate the whole list so we fail loudly before any partial
+    # mutation rather than half-completing the batch.
+    parsed: list[tuple[float, str | None]] = []
+    seen_positions: set[float] = set()
+    for i, entry in enumerate(cues):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"cue_create_batch: cues[{i}] must be a dict, got "
+                f"{type(entry).__name__}"
+            )
+        if "position_beats" not in entry:
+            raise ValueError(
+                f"cue_create_batch: cues[{i}] missing required key "
+                f"'position_beats'"
+            )
+        pos_raw = entry["position_beats"]
+        if not isinstance(pos_raw, (int, float)) or isinstance(pos_raw, bool):
+            raise ValueError(
+                f"cue_create_batch: cues[{i}].position_beats must be a "
+                f"number, got {type(pos_raw).__name__}"
+            )
+        pos = float(pos_raw)
+        rounded = round(pos, 6)
+        if rounded in seen_positions:
+            raise ValueError(
+                f"cue_create_batch: cues[{i}].position_beats={pos} is a "
+                f"duplicate within the batch — Live's cue list rejects "
+                f"two cues at the same position"
+            )
+        seen_positions.add(rounded)
+        name_raw = entry.get("name")
+        if name_raw is not None and not isinstance(name_raw, str):
+            raise ValueError(
+                f"cue_create_batch: cues[{i}].name must be a string, got "
+                f"{type(name_raw).__name__}"
+            )
+        parsed.append((pos, name_raw))
+
+    results: list[dict[str, Any]] = []
+    with context.live_state_lock:
+        song = context.song
+        for position_beats, name in parsed:
+            results.append(
+                _create_one_cue_locked(
+                    song, position_beats=position_beats, name=name
+                )
+            )
+    return {"cue_count": len(results), "cues": results}
+
+
 def cue_delete_handler(
     context: LiveContext,
     *,
@@ -403,12 +500,17 @@ def cue_delete_handler(
     # write (which the audio thread picks up), don't verify via the
     # getter (which can return a stale cache), and confirm success by
     # the actual side effect: the target cue is gone from cue_points.
-    prior = float(getattr(song, "current_song_time", 0.0))
-    song.current_song_time = target_time
-    time.sleep(_CUE_SETTLE_SLEEP_S)
-    toggle()
-    time.sleep(_CUE_SETTLE_SLEEP_S)
-    song.current_song_time = prior
+    #
+    # Hold ``live_state_lock`` across the seek+settle+toggle+settle
+    # window for the same parallel-safety reason as cue_create (B-21):
+    # concurrent cst writers would otherwise race the audio thread.
+    with context.live_state_lock:
+        prior = float(getattr(song, "current_song_time", 0.0))
+        song.current_song_time = target_time
+        time.sleep(_CUE_SETTLE_SLEEP_S)
+        toggle()
+        time.sleep(_CUE_SETTLE_SLEEP_S)
+        song.current_song_time = prior
     return {"deleted_cue_index": cue_index}
 
 
@@ -470,10 +572,16 @@ def cue_jump_handler(
             raise NotImplementedError(
                 f"Live does not expose jump_to_{direction}_cue in this version"
             )
-        fn()
+        # jump_to_{next,prev}_cue mutates current_song_time on Live's side,
+        # so it falls under the same parallel-safety contract as cue_create /
+        # cue_delete / seek (B-21). Holding live_state_lock here keeps the
+        # contract honest.
+        with context.live_state_lock:
+            fn()
+            position_after = float(getattr(song, "current_song_time", 0.0))
         return {
             "direction": direction,
-            "position_beats": float(getattr(song, "current_song_time", 0.0)),
+            "position_beats": position_after,
         }
     # name path
     target = None
@@ -489,13 +597,18 @@ def cue_jump_handler(
             f"cue_jump: no cue named {name!r}; available: {available}"
         )
     jumper = getattr(target, "jump", None)
-    if jumper is not None:
-        jumper()
-    else:
-        song.current_song_time = float(getattr(target, "time", 0.0))
+    # Both paths write current_song_time (either Live's CuePoint.jump() does
+    # it internally, or we set it directly). Same B-21 race surface as the
+    # direction path above.
+    with context.live_state_lock:
+        if jumper is not None:
+            jumper()
+        else:
+            song.current_song_time = float(getattr(target, "time", 0.0))
+        position_after = float(getattr(song, "current_song_time", 0.0))
     return {
         "name": name,
-        "position_beats": float(getattr(song, "current_song_time", 0.0)),
+        "position_beats": position_after,
     }
 
 
@@ -505,6 +618,7 @@ __all__ = [
     "control_view_handler",
     "cue_list_handler",
     "cue_create_handler",
+    "cue_create_batch_handler",
     "cue_delete_handler",
     "cue_rename_handler",
     "cue_jump_handler",

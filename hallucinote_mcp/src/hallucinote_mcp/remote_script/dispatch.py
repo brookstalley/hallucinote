@@ -56,6 +56,9 @@ class LiveLiveContext:
         self._application_factory = application_factory
         self._schedule_on_main = schedule_on_main
         self._main_thread_timeout = main_thread_timeout
+        # Re-entrant so batch handlers (e.g. cue_create_batch) can acquire
+        # it once and call into per-item helpers that also acquire.
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self) -> Any:
@@ -76,6 +79,21 @@ class LiveLiveContext:
         discipline as ``song`` — call from inside ``run_on_main`` callbacks.
         """
         return self._application_factory()
+
+    @property
+    def live_state_lock(self) -> threading.RLock:
+        """Mutex serializing handlers that write ``Song.current_song_time``.
+
+        Acquired by ``cue_create`` / ``cue_create_batch`` / ``cue_delete``
+        / ``cue_jump`` / ``seek``. The ~400ms seek+settle+toggle+settle
+        window in cue ops would otherwise let parallel callers' playhead
+        writes overwrite each other before the audio thread picks them
+        up; empirically observed as "each handler reads the previous
+        handler's target" (B-21 in bug-triage). The lock is also a
+        forward guard for any future handler that writes transport
+        state.
+        """
+        return self._live_state_lock
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any:
         """Invoke ``fn`` on Live's main thread; return its result.

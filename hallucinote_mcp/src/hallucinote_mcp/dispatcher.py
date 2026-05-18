@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp.dispatcher")
 class LiveContext(Protocol):
     """The dispatcher sees the Live API through this Protocol.
 
-    Three members:
+    Four members:
 
       - ``song``: the Live Song object (``Live.Song.Song`` in real Live).
         Accessed from inside ``run_on_main`` callbacks so it's always
@@ -61,6 +61,18 @@ class LiveContext(Protocol):
         thread, block the calling worker thread until it returns, return
         the result (or re-raise the exception). Tests substitute a synchronous
         identity function; real Live uses ``schedule_message``.
+
+      - ``live_state_lock``: a context-manager-shaped lock that serializes
+        operations whose correctness depends on shared Live transport
+        state (``Song.current_song_time``). Required for every handler
+        that writes the playhead — currently ``cue_create``,
+        ``cue_create_batch``, ``cue_delete``, ``cue_jump``, and ``seek``.
+        Each ``with context.live_state_lock:`` block covers the
+        seek + audio-thread-settle + toggle window so concurrent
+        callers don't observe each other's intermediate playhead
+        writes. See ``handlers/arrangement.py`` for the empirical race
+        this guards against (B-21). Re-entrant — a batch handler holds
+        it across multiple inner ops without deadlocking.
     """
 
     @property
@@ -68,6 +80,9 @@ class LiveContext(Protocol):
 
     @property
     def application(self) -> Any: ...  # pragma: no cover - structural only
+
+    @property
+    def live_state_lock(self) -> Any: ...  # pragma: no cover - structural only
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any: ...  # pragma: no cover
 

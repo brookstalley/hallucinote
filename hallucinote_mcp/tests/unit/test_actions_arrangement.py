@@ -1,6 +1,8 @@
 """ableton_arrangement schema + handler behavior."""
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from hallucinote_mcp import schema
@@ -101,7 +103,9 @@ class FakeSong:
 
 class FakeCtx:
     """LiveContext stub. Application lives on the ctx (not the song),
-    matching the real LiveContext Protocol."""
+    matching the real LiveContext Protocol. ``live_state_lock`` is a
+    real ``threading.RLock`` so concurrent-caller tests exercise the
+    same mutual-exclusion semantics as real Live."""
 
     def __init__(
         self,
@@ -111,6 +115,7 @@ class FakeCtx:
         self._song = song or FakeSong()
         self._application = application or FakeApplication()
         self.run_on_main_calls = 0
+        self._live_state_lock = threading.RLock()
 
     @property
     def song(self):
@@ -119,6 +124,10 @@ class FakeCtx:
     @property
     def application(self):
         return self._application
+
+    @property
+    def live_state_lock(self):
+        return self._live_state_lock
 
     def run_on_main(self, fn):
         self.run_on_main_calls += 1
@@ -137,11 +146,12 @@ def loaded_actions():
 
 _EXPECTED_ARRANGEMENT_ACTIONS = {
     "help", "info", "set_loop", "control_view",
-    "cue_list", "cue_create", "cue_delete", "cue_rename", "cue_jump",
+    "cue_list", "cue_create", "cue_create_batch",
+    "cue_delete", "cue_rename", "cue_jump",
 }
 
 
-def test_arrangement_registers_nine_actions(loaded_actions):
+def test_arrangement_registers_expected_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_arrangement")}
     assert names == _EXPECTED_ARRANGEMENT_ACTIONS
 
@@ -586,3 +596,389 @@ def test_arrangement_execution_marshals_to_main_thread(loaded_actions):
         context=ctx,
     )
     assert ctx.run_on_main_calls == 1
+
+
+# ---------- cue_create_batch ----------
+
+
+def test_cue_create_batch_creates_all_in_order(loaded_actions):
+    """Happy path: a 4-element batch produces 4 cues at the requested
+    positions with the requested names."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "Intro"},
+                {"position_beats": 16.0, "name": "Verse"},
+                {"position_beats": 32.0, "name": "Chorus"},
+                {"position_beats": 48.0, "name": "Bridge"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["cue_count"] == 4
+    assert len(resp.result["cues"]) == 4
+    # All four landed at requested positions with requested names.
+    landed = {(c.time, c.name) for c in ctx.song.cue_points}
+    assert landed == {
+        (0.0, "Intro"), (16.0, "Verse"),
+        (32.0, "Chorus"), (48.0, "Bridge"),
+    }
+
+
+def test_cue_create_batch_omitted_name_is_blank(loaded_actions):
+    """Entries without ``name`` create a cue with Live's auto-name
+    (empty string in the fake — real Live's "1", "2", etc.)."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [{"position_beats": 8.0}]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert ctx.song.cue_points[0].name == ""
+
+
+def test_cue_create_batch_rejects_empty_list(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": []},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "empty" in (resp.error or "")
+
+
+def test_cue_create_batch_rejects_non_list(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": {"position_beats": 0.0}},
+        ),
+        context=ctx,
+    )
+    # Dispatcher's param validation rejects dict-where-list-expected before
+    # the handler even runs.
+    assert resp.ok is False
+
+
+def test_cue_create_batch_rejects_non_dict_entry(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [16.0]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "must be a dict" in (resp.error or "")
+
+
+def test_cue_create_batch_rejects_missing_position(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [{"name": "Intro"}]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "position_beats" in (resp.error or "")
+
+
+def test_cue_create_batch_rejects_duplicate_position(loaded_actions):
+    """Live's cue list rejects two cues at the same position. Pre-flight
+    duplicate detection beats a partial batch + opaque mid-loop error."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 16.0, "name": "A"},
+                {"position_beats": 16.0, "name": "B"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "duplicate" in (resp.error or "")
+    # Pre-validation fired before any cue was created.
+    assert len(ctx.song.cue_points) == 0
+
+
+def test_cue_create_batch_rejects_invalid_name_type(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [{"position_beats": 16.0, "name": 123}]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "name" in (resp.error or "") and "string" in (resp.error or "")
+
+
+def test_cue_create_batch_rejects_invalid_position_type(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [{"position_beats": "16.0"}]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "must be a number" in (resp.error or "")
+
+
+def test_cue_create_batch_propagates_per_cue_error(loaded_actions):
+    """Once pre-validation passes, an in-loop failure (e.g. clash with
+    an existing cue) surfaces with the cue_create error and the batch
+    aborts — no half-completed state pretending to be success."""
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(32.0, "Existing")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 16.0, "name": "Verse"},
+                {"position_beats": 32.0, "name": "Clash"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "already exists" in (resp.error or "")
+    # The first cue DID land before the second one failed — surfacing the
+    # error mid-batch is better than silent rollback we can't actually do
+    # against Live (the toggle is destructive).
+    landed_names = sorted(c.name for c in ctx.song.cue_points)
+    assert "Verse" in landed_names
+    assert "Existing" in landed_names
+
+
+# ---------- live_state_lock acquisition ----------
+
+
+class _InstrumentedRLock:
+    """Re-entrant lock that records every acquire / release event.
+
+    Used to assert handlers actually take the lock — a regression where
+    a future refactor forgets to `with context.live_state_lock:` would
+    let the parallel-call race re-appear silently. The instrumentation
+    pins the contract.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self.events: list[str] = []
+
+    def __enter__(self):
+        self._lock.acquire()
+        self.events.append("acquire")
+        return self
+
+    def __exit__(self, *args):
+        self.events.append("release")
+        self._lock.release()
+        return False
+
+
+class _InstrumentedCtx(FakeCtx):
+    """FakeCtx with an instrumented live_state_lock."""
+
+    def __init__(self, song: FakeSong | None = None):
+        super().__init__(song=song)
+        self._live_state_lock = _InstrumentedRLock()
+
+
+def test_cue_create_acquires_live_state_lock(loaded_actions):
+    ctx = _InstrumentedCtx()
+    dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={"position_beats": 16.0, "name": "Verse"},
+        ),
+        context=ctx,
+    )
+    assert ctx.live_state_lock.events == ["acquire", "release"]
+
+
+def test_cue_create_batch_acquires_lock_once_for_whole_batch(loaded_actions):
+    """A 3-cue batch should acquire+release the lock exactly once, not
+    three times. That's the latency win over three separate cue_create
+    calls — pay the lock+settle window once."""
+    ctx = _InstrumentedCtx()
+    ctx.song.last_event_time = 64.0
+    dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0},
+                {"position_beats": 16.0},
+                {"position_beats": 32.0},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert ctx.live_state_lock.events == ["acquire", "release"]
+
+
+def test_cue_delete_acquires_live_state_lock(loaded_actions):
+    """cue_delete's fallback path (seek + toggle) holds the lock so it
+    serializes against concurrent cue_create / seek operations."""
+    song = FakeSong(cues=[FakeCue(16.0, "Verse")])
+    ctx = _InstrumentedCtx(song)
+    dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_delete",
+            params={"cue_index": 1},
+        ),
+        context=ctx,
+    )
+    # cue_delete's primary path uses per-cue `delete()` if exposed (no lock
+    # needed); FakeCue here doesn't define it, so we hit the fallback.
+    assert ctx.live_state_lock.events == ["acquire", "release"]
+
+
+def test_cue_jump_by_direction_acquires_live_state_lock(loaded_actions):
+    """cue_jump's direction path calls Live's jump_to_{next,prev}_cue
+    which mutates current_song_time. Same B-21 race surface as
+    cue_create/seek — handler must hold live_state_lock."""
+    ctx = _InstrumentedCtx(
+        FakeSong(cues=[FakeCue(16.0, "Verse"), FakeCue(32.0, "Chorus")])
+    )
+    dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"direction": "next"},
+        ),
+        context=ctx,
+    )
+    assert ctx.live_state_lock.events == ["acquire", "release"]
+
+
+def test_cue_jump_by_name_acquires_live_state_lock(loaded_actions):
+    """cue_jump's name path writes current_song_time directly (when the
+    target CuePoint doesn't expose .jump()). Same lock requirement."""
+    song = FakeSong(cues=[FakeCue(16.0, "Verse")])
+    ctx = _InstrumentedCtx(song)
+    dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"name": "Verse"},
+        ),
+        context=ctx,
+    )
+    assert ctx.live_state_lock.events == ["acquire", "release"]
+
+
+# ---------- Parallel-call regression (B-21) ----------
+
+
+def test_concurrent_cue_creates_all_land_at_requested_positions(
+    loaded_actions, monkeypatch,
+):
+    """B-21 regression. Multiple worker threads calling cue_create in
+    parallel must each produce a cue at its requested position, with no
+    "previous handler's target" cross-contamination.
+
+    The race exists because Live's audio thread picks up
+    ``current_song_time`` writes on its own schedule (the handler sleeps
+    to give it wall-clock time). Without serialization, thread A writes
+    cst=X, sleeps, thread B writes cst=Y during A's sleep, A wakes and
+    toggles at cst=Y. The live_state_lock makes the per-handler window
+    atomic.
+
+    The fake here mimics the audio-thread settle by reading
+    ``current_song_time`` at toggle time (which under a real race would
+    return another thread's value). Sleep is monkey-patched to a small
+    value so the test stays under a second.
+    """
+    import hallucinote_mcp.handlers.arrangement as arr_module
+    monkeypatch.setattr(arr_module, "_CUE_SETTLE_SLEEP_S", 0.005)
+
+    song = FakeSong()
+    song.last_event_time = 1000.0
+    ctx = FakeCtx(song)
+
+    positions = [16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0]
+    errors: list[str] = []
+
+    def worker(pos: float) -> None:
+        resp = dispatch(
+            Request(
+                tool="ableton_arrangement", action="cue_create",
+                params={"position_beats": pos, "name": f"Cue@{pos}"},
+            ),
+            context=ctx,
+        )
+        if not resp.ok:
+            errors.append(f"pos={pos}: {resp.error}")
+
+    threads = [
+        threading.Thread(target=worker, args=(pos,)) for pos in positions
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10.0)
+
+    assert not errors, f"worker errors: {errors}"
+    # Every requested position has a cue, with the matching name.
+    landed = {(c.time, c.name) for c in song.cue_points}
+    expected = {(p, f"Cue@{p}") for p in positions}
+    assert landed == expected, (
+        f"missing cues — expected={expected}, got={landed}; "
+        f"indicates the parallel-call race re-surfaced"
+    )
+
+
+def test_concurrent_cue_creates_restore_playhead_to_initial(
+    loaded_actions, monkeypatch,
+):
+    """Each handler restores ``current_song_time`` to the value it
+    observed on entry. With the lock, the LAST handler's restore is the
+    one that wins (whichever ran last), and it should be the value that
+    was current BEFORE that handler started — which under serialization
+    equals the initial play position before any handler ran. (No handler
+    sees an intermediate target because they're mutually exclusive.)
+    """
+    import hallucinote_mcp.handlers.arrangement as arr_module
+    monkeypatch.setattr(arr_module, "_CUE_SETTLE_SLEEP_S", 0.005)
+
+    song = FakeSong()
+    song.last_event_time = 1000.0
+    song.current_song_time = 4.0
+    ctx = FakeCtx(song)
+
+    def worker(pos: float) -> None:
+        dispatch(
+            Request(
+                tool="ableton_arrangement", action="cue_create",
+                params={"position_beats": pos},
+            ),
+            context=ctx,
+        )
+
+    threads = [
+        threading.Thread(target=worker, args=(pos,))
+        for pos in (16.0, 32.0, 48.0)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    assert song.current_song_time == 4.0

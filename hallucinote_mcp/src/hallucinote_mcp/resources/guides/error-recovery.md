@@ -52,6 +52,37 @@ Live's `set_or_delete_cue` is a TOGGLE that would silently DELETE the
 existing cue. The handler refuses to "create" at an occupied position.
 Use `cue_delete` first if you want to replace.
 
+### `cue_create: position_beats=X is past the song's last_event_time=Y`
+Live's `current_song_time` setter is clamped to the arrangement's
+extent. Place arrangement content covering this position first
+(`ableton_clip(action='create', location='arrangement', ...)`), then
+add the cue.
+
+## Cue creation — latency model
+
+Each `cue_create` takes **~400ms** end-to-end (200ms pre-toggle settle
++ 200ms post-toggle settle). Live's `Song.current_song_time` setter is
+asynchronous — the audio thread picks up the write on its own
+buffer-aligned schedule, so the handler sleeps to give it wall-clock
+time before firing the toggle. There is no faster reliable path on
+Live 12.x; `schedule_message` bounces don't yield wall-clock time and
+read-after-write checks return stale cached values.
+
+**For multi-cue pushes, use `cue_create_batch`** — one round trip,
+N × 400ms (a 7-cue song is ~3s). It holds the parallel-safety lock
+once for the whole batch instead of once per cue, so it's not faster
+than serial single calls but it's one TCP round trip instead of N.
+
+**Parallel `cue_create` calls effectively serialize.** The bridge
+holds a per-Live mutex (`live_state_lock`) around the cue
+seek+settle+toggle window so concurrent callers don't observe each
+other's playhead writes. Firing 7 parallel `cue_create` calls
+completes in ~7×400ms wall-clock, not 400ms — they wait their turn
+on the lock. Prefer `cue_create_batch` to be explicit about it.
+
+`seek` and `cue_delete` take the same lock; they don't race against
+in-flight cue creates either.
+
 ## "Needs Live" errors
 
 ### `<tool>('<action>') requires the Remote Script side to execute (no Live context available)`

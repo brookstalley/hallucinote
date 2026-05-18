@@ -172,7 +172,7 @@ def test_apply_session_info_no_master_row_warns(conn, song, session):
 
 def test_apply_returns_list_updates_linked_return(conn, song, session):
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     results = [_result("returns_list", [
@@ -203,7 +203,7 @@ def test_apply_returns_list_accepts_wrapped_shape_from_unified_surface(conn, son
     only identity fields. The apply layer accepts the wrapper natively (no
     skill-side normalization needed)."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # New shape: wrapped dict + return_index instead of index. Mixer state
@@ -226,7 +226,7 @@ def test_apply_return_info_skips_unlinked_return(conn, song, session):
     reports it as ``skipped_unlinked`` rather than writing.
     """
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     # Deliberately NOT linked.
     results = [{
@@ -249,7 +249,7 @@ def test_apply_return_info_ingests_mute_and_solo(conn, song, session):
     handling: DB-side NULL + Ableton-side True/False both count as a
     real change (matches `tracks.mute`/`solo`/`arm` semantics)."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1,
+        conn, song_id=song, name="Reverb", position=1,
         volume=0.85, pan=0.0,
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
@@ -277,7 +277,7 @@ def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
     """Once DB-side mute/solo match the Ableton state, re-applying the
     same probe is a no-op."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1,
+        conn, song_id=song, name="Reverb", position=1,
         volume=0.85, pan=0.0,
     )
     M.update_return(conn, return_id=rid, mute=1, solo=0)
@@ -300,12 +300,72 @@ def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
     assert out.no_ops == 1
 
 
+def test_apply_return_info_strips_prefix_no_mutation_on_round_trip(
+    conn, song, session,
+):
+    """W4-C: when the DB stores the SUFFIX-only return name and Ableton
+    reports the PREFIXED form, the planner should diff them as equal
+    (after stripping) — no name mutation fires for a clean round-trip."""
+    rid = M.create_return(
+        conn, song_id=song, name="Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    # Strip + diff matches DB; no changes, so no_ops == 1.
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    row = Q.get_return(conn, rid)
+    assert row["name"] == "Reverb"  # still suffix-only
+
+
+def test_apply_return_info_writes_stripped_name_when_changed(
+    conn, song, session,
+):
+    """W4-C: if Ableton reports a return name that differs from the DB
+    (after stripping the prefix), the strip-then-diff path writes the
+    stripped form, not the raw Live-prefixed form."""
+    rid = M.create_return(
+        conn, song_id=song, name="Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Sidechain", "color": None,
+                "volume": 0.85, "panning": 0.0,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_return(conn, rid)
+    assert row["name"] == "Sidechain"  # NOT "A-Sidechain"
+
+
 def test_apply_return_info_ingests_mixer_state(conn, song, session):
     """Wave M-2: the per-return info probe carries the mixer state that
     used to live in the returns_list payload. Diffed and applied via
     update_return."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     results = [
@@ -407,7 +467,7 @@ def test_apply_track_sends_level_change(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1
+        conn, song_id=song, name="Reverb", position=1
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.0)
@@ -417,14 +477,17 @@ def test_apply_track_sends_level_change(conn, song, session):
     )
     assert out.mutations == 1
     sends = Q.get_sends_for_track(conn, tid)
-    assert any(s["return_name"] == "A-Reverb" and abs(s["level"] - 0.4) < 1e-6
+    # W4-C: DB stores SUFFIX-only return names; the send row joins back the
+    # DB-side name "Reverb" even though Ableton's send map was keyed by
+    # "A-Reverb".
+    assert any(s["return_name"] == "Reverb" and abs(s["level"] - 0.4) < 1e-6
                for s in sends)
 
 
 def test_apply_track_sends_added_in_ableton(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # No existing send row in DB; Ableton has one.
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.3})]
@@ -439,7 +502,7 @@ def test_apply_track_sends_added_in_ableton(conn, song, session):
 def test_apply_track_sends_removed_in_ableton(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
     # Ableton no longer reports A-Reverb on this track.
@@ -455,7 +518,7 @@ def test_apply_track_sends_removed_in_ableton(conn, song, session):
 def test_apply_track_sends_no_op_within_tolerance(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.4001})]
@@ -550,7 +613,7 @@ def test_apply_track_info_unlinked_track_skips_with_warning(conn, song, session)
 
 def test_apply_track_sends_unlinked_track_skips_with_warning(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # track NOT linked
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.4})]
@@ -566,9 +629,9 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
     ValueError is caught per-send and reported as a warning."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    r1 = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    r1 = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=r1, ableton_index=1)
-    r2 = M.create_return(conn, song_id=song, name="B-Delay", position=2)
+    r2 = M.create_return(conn, song_id=song, name="Delay", position=2)
     _link_return(conn, session=session, db_id=r2, ableton_index=2)
     # 1.5 is out of range (set_send_level rejects > 1.0); 0.3 is valid.
     results = [_result(f"track_sends:{tid}",
@@ -577,12 +640,13 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
         conn, results, song_id=song, session_id=session
     )
     # The valid send went through; the out-of-range one is a warning.
+    # W4-C: warning identifies the return by its DB (stripped) form.
     assert out.mutations == 1
-    assert any("rejected" in w and "A-Reverb" in w for w in out.warnings)
+    assert any("rejected" in w and "Reverb" in w for w in out.warnings)
     sends = Q.get_sends_for_track(conn, tid)
-    # Only B-Delay should be present.
+    # Only Delay should be present.
     assert len(sends) == 1
-    assert sends[0]["return_name"] == "B-Delay"
+    assert sends[0]["return_name"] == "Delay"
 
 
 # ---------------------------------------------------------------------------
@@ -883,7 +947,7 @@ def test_plan_pull_devices_emits_list_per_linked_track(conn, song, session):
 
 
 def test_plan_pull_devices_emits_list_per_linked_return(conn, song, session):
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
     assert len(plan.calls) == 1
@@ -895,7 +959,7 @@ def test_plan_pull_devices_emits_list_per_linked_return(conn, song, session):
 
 def test_plan_pull_devices_skips_unlinked_with_warning(conn, song, session):
     M.create_track(conn, song_id=song, track_index=1, name="Drums")
-    M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
     assert plan.calls == []
     assert any("not linked" in n.lower() for n in plan.notes)
@@ -930,7 +994,7 @@ def test_plan_pull_devices_args_match_mcp_list_action_schema(
 
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
@@ -1136,7 +1200,7 @@ def test_apply_track_devices_swap_within_chain(conn, song, session):
 
 def test_apply_return_devices_uses_return_chain(conn, song, session):
     """Smoke test for the return path through the shared helper."""
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     out = pull.apply_pull_results(
@@ -2407,7 +2471,7 @@ def test_round_trip_push_then_pull(conn, song, session, master):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     M.set_track_mixer(conn, track_id=tid, volume=0.6, pan=0.0)
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb",
+    rid = M.create_return(conn, song_id=song, name="Reverb",
                           position=1, volume=0.85, pan=0.0)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.0)
@@ -2510,7 +2574,7 @@ def test_skill_allowed_tools_cover_every_planner_emitted_tool(
 
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=2)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     emitted_tools: set[str] = set()

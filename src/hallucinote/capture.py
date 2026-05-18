@@ -58,6 +58,7 @@ sequence.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
 
@@ -68,6 +69,25 @@ SNAPSHOT_FORMAT_VERSION = 1
 # Track types accepted in snapshot["tracks"][n]["type"]; mapped 1:1 to
 # `tracks.kind` in the DB. Unknown values raise; the snapshot is authoritative.
 _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
+
+
+# Live 12.4 unconditionally prefixes every `ReturnTrack.name` with a
+# `<slot-letter>-` segment (A-, B-, ..., Z-). Storing the prefixed form in
+# the DB causes double-prefixing on push (DB "A-Reverb" → Live "A-A-Reverb").
+# W3-H real-Live finding (2026-05-18); W4-C cross-layer fix.
+_RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
+
+
+def strip_return_slot_prefix(name: str | None) -> str | None:
+    """Strip Live's `<slot-letter>-` prefix from a return-track name.
+
+    Idempotent: names without the prefix (already-stripped, or never had it)
+    pass through unchanged. The DB stores SUFFIX-only return names; push
+    re-emits the suffix and Live re-adds its slot prefix.
+    """
+    if name is None:
+        return None
+    return _RETURN_SLOT_PREFIX.sub("", name, count=1)
 
 
 def _norm_pan(value: Any) -> float | None:
@@ -237,10 +257,14 @@ def replay_capture(
 
     return_ids_by_name: dict[str, str] = {}
     for r in snapshot.get("returns") or []:
+        # W4-C: strip Live's `<letter>-` slot prefix on the way into the DB.
+        # The snapshot's `t["sends"]` is keyed by the SAME prefixed names
+        # Live reports, so we strip on the lookup side too (below).
+        stripped_name = strip_return_slot_prefix(r["name"])
         rid = M.create_return(
             conn,
             song_id=song_id,
-            name=r["name"],
+            name=stripped_name,
             position=int(r["index"]),
             volume=_norm_vol(r.get("volume")),
             pan=_norm_pan(r.get("panning", r.get("pan"))),
@@ -249,7 +273,7 @@ def replay_capture(
             request_id=request_id,
             reason=reason,
         )
-        return_ids_by_name[r["name"]] = rid
+        return_ids_by_name[stripped_name] = rid
         if r.get("devices"):
             return_chain_id = M.create_device_chain(
                 conn,
@@ -307,7 +331,10 @@ def replay_capture(
         for return_name, level in (t.get("sends") or {}).items():
             if level is None:
                 continue
-            target = return_ids_by_name.get(return_name)
+            # W4-C: the snapshot's send map is keyed by Live's prefixed names;
+            # the return_ids_by_name dict is keyed by stripped names, so we
+            # strip here too for consistent lookup.
+            target = return_ids_by_name.get(strip_return_slot_prefix(return_name))
             if target is None:
                 raise ValueError(
                     f"track {t['name']!r} sends to return {return_name!r} "

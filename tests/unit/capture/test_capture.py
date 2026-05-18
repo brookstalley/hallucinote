@@ -3,8 +3,35 @@ from __future__ import annotations
 
 import pytest
 
-from hallucinote.capture import capture_plan, compile_snapshot, replay_capture
+from hallucinote.capture import (
+    capture_plan, compile_snapshot, replay_capture,
+    strip_return_slot_prefix,
+)
 from hallucinote.db import init_db, mutations as M, queries as Q
+
+
+# ---------- W4-C: strip_return_slot_prefix ----------
+
+
+@pytest.mark.parametrize("inp,expected", [
+    ("A-Reverb", "Reverb"),
+    ("B-Delay", "Delay"),
+    ("Z-Bus", "Bus"),
+    # idempotent: already-stripped name passes through
+    ("Reverb", "Reverb"),
+    # only strips ONCE: "A-B-Comp" -> "B-Comp", not "Comp"
+    ("A-B-Comp", "B-Comp"),
+    # multi-letter first segment is NOT a slot prefix; pass through
+    ("Bus-A", "Bus-A"),
+    ("Ghost-Reverb", "Ghost-Reverb"),
+    # lowercase first letter is NOT a slot prefix; pass through
+    ("a-mine", "a-mine"),
+    # empty / None pass through
+    ("", ""),
+    (None, None),
+])
+def test_strip_return_slot_prefix(inp, expected):
+    assert strip_return_slot_prefix(inp) == expected
 
 
 @pytest.fixture
@@ -58,15 +85,20 @@ def test_replay_creates_song_master_returns_tracks_sends(conn):
     assert by_name["05 Chorus Pluck"]["pan"] == pytest.approx(0.25)
 
     returns = Q.get_returns_for_song(conn, sid)
-    assert [r["name"] for r in returns] == ["A-Reverb", "B-Delay"]
+    # W4-C: Live's `<letter>-` slot prefix is stripped on capture so the DB
+    # stores SUFFIX-only return names. Push re-emits the suffix and Live
+    # auto-prefixes back. The snapshot still carries Live's prefixed shape.
+    assert [r["name"] for r in returns] == ["Reverb", "Delay"]
     assert returns[0]["position"] == 1
 
     sends = Q.get_sends_for_song(conn, sid)
-    # Drums sends to A and B; Pluck sends to A and B → 4 send rows
+    # Drums sends to A and B; Pluck sends to A and B → 4 send rows.
+    # Send-side lookup also strips the prefix when matching the snapshot's
+    # send map (keyed by Live's prefixed names) against return_ids_by_name.
     assert len(sends) == 4
     drums_to_delay = next(
         s for s in sends if s["from_track_name"] == "01 Drums"
-        and s["return_name"] == "B-Delay"
+        and s["return_name"] == "Delay"
     )
     assert drums_to_delay["level"] == pytest.approx(0.1)
 

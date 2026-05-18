@@ -107,6 +107,28 @@ class Action:
     tips: tuple[str, ...] = ()
     declarative_op: LiveOp | None = None
     handler: Callable[..., Any] | None = None
+    # W3-F: Threading discipline opt-out.
+    #
+    # Default (``runs_on_worker=False``): the dispatcher wraps the
+    # executor in ``context.run_on_main(...)`` — the action runs entirely
+    # on Live's main thread. This is correct for nearly every Live API
+    # call: reads, writes, method invocations are all main-thread-only.
+    #
+    # ``runs_on_worker=True``: the dispatcher invokes the handler
+    # DIRECTLY on the worker (TCP-listener) thread. The handler is then
+    # responsible for marshaling every Live touch via
+    # ``context.run_on_main(fn)`` itself. Required for handlers that
+    # need to BLOCK WALL-CLOCK TIME waiting for Live's audio thread to
+    # propagate a state change to the main-thread mirror — sleeping on
+    # the main thread blocks the very thread that needs to pump the
+    # propagation event, causing the deadlock that surfaced in the
+    # 2026-05-18 push test (cue_create flaked 100% on first call).
+    #
+    # Worker-thread handlers MUST acquire ``context.live_state_lock``
+    # before mutating shared Live state; the lock is a ``threading.RLock``
+    # owned on the worker thread, and main-thread bouts inside
+    # ``run_on_main`` don't try to re-acquire it.
+    runs_on_worker: bool = False
 
     def __post_init__(self) -> None:
         if self.tool not in TOOLS:
@@ -130,6 +152,17 @@ class Action:
             raise ValueError(
                 f"Action {self.tool}({self.name!r}): exactly one of "
                 f"declarative_op or handler must be set"
+            )
+        # runs_on_worker is meaningful only for handler-based actions:
+        # the dispatcher uses it to decide whether to wrap the handler
+        # in ``run_on_main``. Declarative ops have no opportunity to
+        # manage threading themselves — they ARE just a property/method
+        # touch, which always belongs on the main thread.
+        if self.runs_on_worker and not has_handler:
+            raise ValueError(
+                f"Action {self.tool}({self.name!r}): runs_on_worker=True "
+                f"requires a handler (declarative_op actions run entirely "
+                f"on the main thread by construction)"
             )
 
     def required_params(self) -> tuple[str, ...]:

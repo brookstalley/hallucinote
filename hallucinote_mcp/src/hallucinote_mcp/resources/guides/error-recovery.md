@@ -60,25 +60,35 @@ add the cue.
 
 ## Cue creation — latency model
 
-Each `cue_create` takes **~400ms** end-to-end (200ms pre-toggle settle
-+ 200ms post-toggle settle). Live's `Song.current_song_time` setter is
-asynchronous — the audio thread picks up the write on its own
-buffer-aligned schedule, so the handler sleeps to give it wall-clock
-time before firing the toggle. There is no faster reliable path on
-Live 12.x; `schedule_message` bounces don't yield wall-clock time and
-read-after-write checks return stale cached values.
+Each `cue_create` takes **~150-400ms** end-to-end. Live's
+`Song.current_song_time` setter is asynchronous: the audio thread
+processes the write on its own buffer-aligned schedule, and Live's
+Python-visible getter reads a main-thread mirror that updates when the
+main thread pumps the audio-thread → mirror propagation event.
 
-**For multi-cue pushes, use `cue_create_batch`** — one round trip,
-N × 400ms (a 7-cue song is ~3s). It holds the parallel-safety lock
-once for the whole batch instead of once per cue, so it's not faster
-than serial single calls but it's one TCP round trip instead of N.
+**W3-F (2026-05-18) threading model.** `cue_create`, `cue_create_batch`,
+and `cue_delete` are *worker-thread handlers* (the only such actions
+in the surface; everything else stays on the main-thread-wrapped path).
+The handler runs on the TCP-listener thread and marshals each Live
+touch through `context.run_on_main(fn)` individually. Between bouts it
+`time.sleep`s on the worker thread — leaving the main thread free to
+pump the propagation event that updates the mirror. The pre-W3-F
+implementation ran the whole handler (including the sleep loop) on
+the main thread; this deadlocked the very thread that needed to pump
+the propagation, surfaced empirically as every first-call `cue_create`
+timing out at 3.0s with a stale `last_observed`.
+
+**For multi-cue pushes, use `cue_create_batch`** — one TCP round trip,
+acquires `live_state_lock` once for the whole batch. Per-cue end-to-end
+latency is the same as serial `cue_create` calls; the savings are
+in TCP round-trip overhead, not Live's per-cue settle cost.
 
 **Parallel `cue_create` calls effectively serialize.** The bridge
 holds a per-Live mutex (`live_state_lock`) around the cue
 seek+settle+toggle window so concurrent callers don't observe each
 other's playhead writes. Firing 7 parallel `cue_create` calls
-completes in ~7×400ms wall-clock, not 400ms — they wait their turn
-on the lock. Prefer `cue_create_batch` to be explicit about it.
+completes in ~7× the per-cue cost wall-clock — they wait their turn
+on the lock.
 
 `seek` and `cue_delete` take the same lock; they don't race against
 in-flight cue creates either.

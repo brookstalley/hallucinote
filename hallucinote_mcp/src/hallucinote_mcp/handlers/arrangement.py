@@ -26,60 +26,84 @@ from typing import Any
 from ..dispatcher import LiveContext
 
 
-# How long ``cue_create`` waits in wall-clock time for
-# ``Song.current_song_time`` to be visible to ``Song.set_or_delete_cue``.
-# Empirical Live 12.x behavior: the setter completes synchronously on
-# the main thread, but the audio thread (which the cue toggle reads)
-# picks up the new value on a delayed schedule — observed lag is on
-# the order of 100-200ms when transport is stopped. ``schedule_message``
-# bounces don't wait wall-clock time (they fire back-to-back within
-# one engine tick) so a poll-via-bounce loop reads stale values. The
-# fixed 200ms sleep used pre-Wave-2 was unreliable under stopped-
-# transport (W2-4): when the playhead is being moved a meaningful
-# distance from the prior position, propagation can exceed 200ms.
-# The post-toggle scan then sees set_or_delete_cue having fired at the
-# OLD playhead (or no movement at all).
+# How long the cue handlers wait in wall-clock time for
+# ``Song.current_song_time`` to settle to a write before reading or
+# toggling at the new position.
 #
-# Wave-2 W2-F replaces the fixed sleep with a poll-until-confirmed
-# pattern: ``_seek_then_settle`` writes ``current_song_time`` and
-# polls the getter (which lags the write by the same audio-thread
-# delay set_or_delete_cue reads from) until the value matches the
-# target. The poll has a generous timeout (defaults to 3s) — far
-# beyond the empirical worst case but bounded so a permanently-stuck
-# audio thread surfaces a clear timeout rather than hanging.
+# W3-F (2026-05-18) — ROOT-CAUSE REWRITE of the settle pattern.
+#
+# Wave-2 W2-F introduced a poll-until-confirmed loop that ran ENTIRELY
+# on Live's main thread (dispatcher wraps every handler in
+# ``run_on_main``). The poll body called ``time.sleep`` between reads.
+# Empirically observed 2026-05-18: every first-call ``cue_create``
+# timed out at 3.0s with ``last_observed = <previous target>``, then a
+# retry succeeded immediately. The seek itself completed — the next
+# request always saw the updated mirror — but our poll loop never did.
+#
+# Why: ``Song.current_song_time`` setters queue an update for the audio
+# thread (~10ms propagation). The main thread's Python-visible getter
+# reads a mirror that's refreshed via main-thread event-pump callbacks
+# from the audio thread. When the handler runs on the main thread and
+# ``time.sleep`` s in a loop, the main thread is BLOCKED — the very
+# thread that has to pump those callbacks. The audio thread updates its
+# internal value, but the mirror never refreshes because the main
+# thread is asleep. Once the handler returns (or times out), the main
+# thread resumes its event loop, processes the queued mirror update,
+# and the NEXT request sees the new value.
+#
+# The architectural fix: this helper now runs on the WORKER (TCP-
+# listener) thread. Each "read the position" iteration bounces through
+# ``context.run_on_main`` (a brief main-thread bout that pumps cleanly).
+# Between iterations, ``time.sleep`` on the WORKER thread — the main
+# thread is free to process audio-thread callbacks and refresh the
+# mirror. The same architectural change applies to the toggle/verify
+# steps in cue_create / cue_delete / cue_create_batch: each Live touch
+# is its own main-thread bout; wall-clock waits happen between bouts on
+# the worker thread.
+#
+# Action contract: ``cue_create`` / ``cue_create_batch`` / ``cue_delete``
+# are registered with ``runs_on_worker=True`` (schema.Action). The
+# dispatcher invokes them directly on the worker thread; the handlers
+# call ``context.run_on_main(fn)`` for each Live touch themselves.
 _CUE_SETTLE_TIMEOUT_S = 3.0
 _CUE_SETTLE_POLL_S = 0.05
 _CUE_SETTLE_TOLERANCE_BEATS = 0.001  # ~1ms in beats; matches Live's quantization
 
 
-def _seek_then_settle(
-    song: Any,
+def _seek_and_wait_on_worker(
+    context: LiveContext,
     target_beats: float,
     *,
     max_wait_s: float = _CUE_SETTLE_TIMEOUT_S,
     poll_interval_s: float = _CUE_SETTLE_POLL_S,
 ) -> None:
-    """Seek the arrangement playhead and BLOCK until the audio thread
-    confirms the move.
+    """Write ``current_song_time = target_beats`` and BLOCK on the
+    worker thread until Live's main-thread mirror reflects the write.
 
-    Live 12.4 makes ``Song.current_song_time`` writes asynchronously
-    visible — both the getter and ``set_or_delete_cue``'s read of the
-    audio-thread playhead lag the write by an audio buffer (often more
-    when transport is stopped). The pre-Wave-2 implementation used a
-    fixed 200ms sleep, which empirically wasn't enough (W2-4 — playhead
-    far from target meant the toggle fired at the prior position). This
-    helper polls the getter until it confirms the target, then returns.
+    Caller invariant: runs on the WORKER (TCP-listener) thread. Each
+    Live read+write goes through ``context.run_on_main(fn)``. Between
+    polls, ``time.sleep`` on the worker thread lets Live's main thread
+    pump the audio-thread → mirror propagation event.
 
-    Raises ``TimeoutError`` if the playhead hasn't moved within
-    ``max_wait_s``. Tests with a synchronous fake see the move
-    instantly and return on the first poll.
+    Raises ``TimeoutError`` if the mirror hasn't reached the target
+    within ``max_wait_s`` (the worker keeps polling for the full
+    duration; the deadline is wall-clock-bounded so a permanently-
+    stalled Live surfaces cleanly).
     """
     target = round(float(target_beats), 6)
-    song.current_song_time = float(target_beats)
+
+    def _seek_on_main() -> None:
+        context.song.current_song_time = float(target_beats)
+
+    context.run_on_main(_seek_on_main)
 
     deadline = time.monotonic() + max_wait_s
+    actual = -1.0
     while True:
-        actual = round(float(getattr(song, "current_song_time", -1.0)), 6)
+        def _read_position_on_main() -> float:
+            return round(float(getattr(context.song, "current_song_time", -1.0)), 6)
+
+        actual = context.run_on_main(_read_position_on_main)
         if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
             return
         if time.monotonic() >= deadline:
@@ -289,126 +313,177 @@ def cue_list_handler(context: LiveContext) -> dict[str, Any]:
 
 
 def _create_one_cue_locked(
-    song: Any, *, position_beats: float, name: str | None
+    context: LiveContext, *, position_beats: float, name: str | None
 ) -> dict[str, Any]:
-    """Inner cue-creation routine. **Caller must hold the live_state_lock.**
+    """Inner cue-creation routine — runs on the WORKER thread.
 
-    Factored out so ``cue_create_batch_handler`` can acquire the lock
-    once and call this in a loop, paying only one set of acquire/release
-    overhead while still keeping every per-cue seek+settle+toggle window
-    serialized against parallel single-cue callers.
+    **Caller invariants:**
+      - Holds ``context.live_state_lock`` (so concurrent callers can't
+        observe each other's playhead writes mid-window).
+      - Is running on the worker (TCP-listener) thread, not Live's main
+        thread. This routine marshals every Live touch via
+        ``context.run_on_main(fn)`` and ``time.sleep`` s between bouts
+        to let the main thread pump audio-thread propagation events.
+
+    Factored so ``cue_create_batch_handler`` can acquire the lock once
+    and call this in a loop, paying acquire/release overhead exactly
+    once while still keeping every per-cue window serialized against
+    parallel single-cue callers.
+
+    The handler is split into four phases, each phase a separate
+    main-thread bout (plus the worker-thread settle wait between
+    bouts 1 and 2):
+
+      1. Validate + capture prior state + write current_song_time.
+      2. Worker-thread poll (via ``_seek_and_wait_on_worker``) until
+         Live's main-thread mirror confirms the seek.
+      3. Toggle ``set_or_delete_cue`` at the now-settled playhead.
+      4. Verify the new cue is in ``song.cue_points``, restore the
+         prior playhead position, and optionally rename.
     """
-    if position_beats < 0:
-        raise ValueError(f"position_beats {position_beats} must be >= 0")
-    # Pre-check: refuse to "create" when the position is already occupied.
-    # Float tolerance matches the apply-side `pos_key` precision.
-    for existing in getattr(song, "cue_points", ()):
-        if abs(float(getattr(existing, "time", -1.0)) - float(position_beats)) < 1e-6:
+    # ---- Bout 1: validate, capture, seek (main thread) ----
+    def _validate_capture_seek() -> tuple[float, frozenset[float]]:
+        song = context.song
+        if position_beats < 0:
+            raise ValueError(f"position_beats {position_beats} must be >= 0")
+        # Refuse if a cue already exists at this position.
+        for existing in getattr(song, "cue_points", ()):
+            if abs(float(getattr(existing, "time", -1.0)) - float(position_beats)) < 1e-6:
+                raise ValueError(
+                    f"cue_create: a cue already exists at position_beats="
+                    f"{position_beats} (name={getattr(existing, 'name', '')!r}); "
+                    "use cue_delete first if you want to replace it"
+                )
+        # Probe that Live exposes a cue-toggle API in this version.
+        toggle = getattr(song, "set_or_delete_cue", None) or getattr(
+            song, "set_or_delete_cue_point", None,
+        )
+        if toggle is None:
+            raise NotImplementedError(
+                "Live does not expose a cue-point creation API in this version"
+            )
+        # Refuse if the arrangement doesn't extend to the cue position:
+        # the setter is clamped to ``last_event_time`` (the end of any
+        # arrangement content). A seek past the extent silently fails;
+        # we'd toggle at the wrong position and corrupt unrelated state.
+        last_event_time = float(getattr(song, "last_event_time", 0.0))
+        if position_beats > last_event_time + 1e-6:
             raise ValueError(
-                f"cue_create: a cue already exists at position_beats="
-                f"{position_beats} (name={getattr(existing, 'name', '')!r}); "
-                "use cue_delete first if you want to replace it"
+                f"cue_create: position_beats={position_beats} is past the "
+                f"song's last_event_time={last_event_time}. Live's "
+                f"current_song_time setter is clamped to the arrangement's "
+                f"extent — place arrangement content covering this position "
+                f"first (e.g., via ableton_clip(action='create', "
+                f"location='arrangement', ...)) before adding the cue."
+            )
+        prior = float(getattr(song, "current_song_time", 0.0))
+        positions_before = frozenset(
+            round(float(getattr(c, "time", -1.0)), 6)
+            for c in getattr(song, "cue_points", ())
+        )
+        # Write current_song_time HERE so bout 2's settle wait observes
+        # the propagation. Combining the validate + seek in one bout
+        # avoids a race where another handler creates a cue between
+        # validation and seek.
+        song.current_song_time = float(position_beats)
+        return prior, positions_before
+
+    prior, positions_before = context.run_on_main(_validate_capture_seek)
+
+    # ---- Bout 2: worker-thread settle wait ----
+    #
+    # The seek (issued in bout 1) is queued for the audio thread.
+    # ``_seek_and_wait_on_worker`` polls the main-thread mirror; between
+    # polls the main thread is free to pump the audio-thread → mirror
+    # propagation event. THIS is the W3-F fix vs. W2-F's main-thread
+    # tight-poll which deadlocked the propagation it was waiting for.
+    target = round(float(position_beats), 6)
+    deadline = time.monotonic() + _CUE_SETTLE_TIMEOUT_S
+    while True:
+        def _read_mirror() -> float:
+            return round(
+                float(getattr(context.song, "current_song_time", -1.0)), 6,
             )
 
-    # Live exposes ``set_or_delete_cue`` as a NO-ARG toggle that operates
-    # on the current song position, and Live 12.x has TWO independent
-    # constraints that make creating a cue at an arbitrary position
-    # non-trivial:
-    #
-    # (1) ``Song.current_song_time`` writes are picked up by the audio
-    #     thread on the NEXT audio buffer (~10ms). The main-thread
-    #     ``current_song_time`` getter (and ``set_or_delete_cue``,
-    #     which reads the same audio-thread-side position) lag the
-    #     write by up to a buffer. Bouncing through ``schedule_message``
-    #     doesn't help: those callbacks fire within a single engine
-    #     tick and don't yield wall-clock time to the audio thread.
-    #     The reliable fix is to sleep — the audio thread runs on its
-    #     own OS thread and continues processing while we block.
-    #
-    # (2) The setter is also clamped: ``current_song_time`` cannot move
-    #     past ``last_event_time`` (the end of any arrangement
-    #     content). If the arrangement is empty, the seek is silently
-    #     rejected and the cue lands at 0. The caller must ensure the
-    #     song has length covering the cue position — typically by
-    #     placing arrangement clips first.
-    toggle = getattr(song, "set_or_delete_cue", None)
-    if toggle is None:
-        toggle = getattr(song, "set_or_delete_cue_point", None)
-    if toggle is None:
-        raise NotImplementedError(
-            "Live does not expose a cue-point creation API in this version"
-        )
-
-    prior = float(getattr(song, "current_song_time", 0.0))
-    positions_before: set[float] = {
-        round(float(getattr(c, "time", -1.0)), 6)
-        for c in getattr(song, "cue_points", ())
-    }
-    target = round(float(position_beats), 6)
-
-    # Refuse if the song's arrangement doesn't extend to the cue position:
-    # the seek would be clamped, the toggle would fire at the clamped
-    # position, and we'd corrupt unrelated state. A clear error here
-    # beats a confusing one downstream.
-    last_event_time = float(getattr(song, "last_event_time", 0.0))
-    if position_beats > last_event_time + 1e-6:
-        raise ValueError(
-            f"cue_create: position_beats={position_beats} is past the "
-            f"song's last_event_time={last_event_time}. Live's "
-            f"current_song_time setter is clamped to the arrangement's "
-            f"extent — place arrangement content covering this position "
-            f"first (e.g., via ableton_clip(action='create', "
-            f"location='arrangement', ...)) before adding the cue."
-        )
-
-    # Seek-then-toggle with poll-confirmed settle. Wave-2 W2-F replaces
-    # the prior fixed-200ms-sleep pattern with `_seek_then_settle`,
-    # which polls the audio-thread-visible playhead until it matches
-    # the target. set_or_delete_cue then fires at the confirmed
-    # position. We still verify via the cue_points side effect after
-    # the toggle (the toggle itself is a brief audio-thread operation
-    # that the post-write read picks up reliably).
-    _seek_then_settle(song, float(position_beats))
-    toggle()
-    time.sleep(_CUE_SETTLE_POLL_S)  # one poll-interval slack for the toggle
-
-    cues_after = list(getattr(song, "cue_points", ()))
-    new_cue_index: int | None = None
-    new_cue = None
-    for i, cue in enumerate(cues_after, start=1):
-        t = round(float(getattr(cue, "time", -1.0)), 6)
-        if t == target and t not in positions_before:
-            new_cue_index = i
-            new_cue = cue
+        actual = context.run_on_main(_read_mirror)
+        if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
             break
+        if time.monotonic() >= deadline:
+            # Best-effort restore the playhead — don't leave the
+            # transport parked at the in-flight target on timeout.
+            def _restore_after_timeout() -> None:
+                context.song.current_song_time = prior
+            try:
+                context.run_on_main(_restore_after_timeout)
+            except Exception:  # prawduct:ok-broad-except — error-path cleanup; we MUST raise the timeout, not the cleanup failure
+                pass
+            raise TimeoutError(
+                f"playhead seek to beat {target} did not settle within "
+                f"{_CUE_SETTLE_TIMEOUT_S}s (last observed current_song_time={actual}). "
+                "Live's audio thread may be unresponsive — stop transport "
+                "and retry, or check if Live is busy with another operation."
+            )
+        time.sleep(_CUE_SETTLE_POLL_S)
 
-    # Restore the play head regardless of scan outcome so a failed
-    # rename doesn't leave the transport at an unexpected position.
-    song.current_song_time = prior
+    # ---- Bout 3: toggle (main thread) ----
+    def _toggle_at_settled_playhead() -> None:
+        song = context.song
+        toggle = getattr(song, "set_or_delete_cue", None) or getattr(
+            song, "set_or_delete_cue_point", None,
+        )
+        # Re-check existence (defensive — bout-1 probe could theoretically
+        # be invalidated by hot-swapped Live API; cheap insurance).
+        if toggle is None:
+            raise NotImplementedError(
+                "Live does not expose a cue-point creation API in this version"
+            )
+        toggle()
+    context.run_on_main(_toggle_at_settled_playhead)
 
-    if new_cue is None:
-        observed_positions = [
-            round(float(getattr(c, "time", -1.0)), 6) for c in cues_after
-        ]
-        new_positions = sorted(
-            t for t in observed_positions if t not in positions_before
-        )
-        raise RuntimeError(
-            f"cue_create: toggle did not produce a new cue at "
-            f"position_beats={position_beats}. Diagnostic — "
-            f"new_positions={new_positions} (any positions present after "
-            f"toggle but not before), all_observed={observed_positions}, "
-            f"target={target}. If new_positions contains a different "
-            f"value, the toggle fired at the wrong playhead position — "
-            f"common when the seek hasn't settled to the audio thread."
-        )
-    if name is not None:
-        new_cue.name = name
-    return {
-        "cue_index": new_cue_index,
-        "position_beats": float(position_beats),
-        "name": str(getattr(new_cue, "name", "")),
-    }
+    # ---- Worker-thread slack for the toggle to be visible ----
+    time.sleep(_CUE_SETTLE_POLL_S)
+
+    # ---- Bout 4: scan + restore + rename (main thread) ----
+    def _scan_restore_rename() -> dict[str, Any]:
+        song = context.song
+        cues_after = list(getattr(song, "cue_points", ()))
+        new_cue_index: int | None = None
+        new_cue = None
+        for i, cue in enumerate(cues_after, start=1):
+            t = round(float(getattr(cue, "time", -1.0)), 6)
+            if t == target and t not in positions_before:
+                new_cue_index = i
+                new_cue = cue
+                break
+
+        # Restore playhead regardless of scan outcome.
+        song.current_song_time = prior
+
+        if new_cue is None:
+            observed_positions = [
+                round(float(getattr(c, "time", -1.0)), 6) for c in cues_after
+            ]
+            new_positions = sorted(
+                t for t in observed_positions if t not in positions_before
+            )
+            raise RuntimeError(
+                f"cue_create: toggle did not produce a new cue at "
+                f"position_beats={position_beats}. Diagnostic — "
+                f"new_positions={new_positions} (any positions present after "
+                f"toggle but not before), all_observed={observed_positions}, "
+                f"target={target}. If new_positions contains a different "
+                f"value, the toggle fired at the wrong playhead position — "
+                f"common when the seek hasn't settled to the audio thread."
+            )
+        if name is not None:
+            new_cue.name = name
+        return {
+            "cue_index": new_cue_index,
+            "position_beats": float(position_beats),
+            "name": str(getattr(new_cue, "name", "")),
+        }
+
+    return context.run_on_main(_scan_restore_rename)
 
 
 def cue_create_handler(
@@ -417,10 +492,17 @@ def cue_create_handler(
     position_beats: float,
     name: str | None = None,
 ) -> dict[str, Any]:
-    """Create a cue point at position_beats. Live's API takes the play
-    position via set_or_delete_cue_point (which adds at the current play
-    head). We temporarily seek to position_beats, add the cue, then
-    optionally rename + restore.
+    """Create a cue point at position_beats.
+
+    **Threading (W3-F):** Registered with ``runs_on_worker=True`` —
+    this handler runs on the TCP-listener (worker) thread, not Live's
+    main thread. It marshals each Live touch through
+    ``context.run_on_main(fn)`` and ``time.sleep`` s between the seek-
+    write and the toggle so Live's main thread can pump the audio-thread
+    propagation event that updates the ``current_song_time`` mirror. The
+    pre-W3-F implementation ran entirely on the main thread and
+    deadlocked: the very thread that needed to pump the mirror update
+    was the one sleeping in the poll loop.
 
     **Toggle-collision guard.** Live's ``set_or_delete_cue`` is a TOGGLE —
     calling it at a position that already has a cue DELETES that cue
@@ -429,18 +511,14 @@ def cue_create_handler(
     error instead of silently destroying it.
 
     **Parallel-call safety (B-21).** The seek + audio-thread-settle +
-    toggle + settle window is held under ``context.live_state_lock`` so
-    concurrent callers can't observe each other's playhead writes
-    before the audio thread picks them up. Empirical Live 12.x
-    behavior: even with 200ms main-thread sleeps, parallel handlers'
-    cst writes race because the audio thread processes them on its own
-    buffer-aligned schedule. The lock makes the per-cue window atomic.
-    For multi-cue pushes, prefer ``cue_create_batch`` — it pays the
-    lock overhead once.
+    toggle + verify window is held under ``context.live_state_lock``
+    (acquired on the worker thread) so concurrent callers can't observe
+    each other's playhead writes mid-window. For multi-cue pushes,
+    prefer ``cue_create_batch`` — it pays the lock overhead once.
     """
     with context.live_state_lock:
         return _create_one_cue_locked(
-            context.song, position_beats=position_beats, name=name
+            context, position_beats=position_beats, name=name
         )
 
 
@@ -504,13 +582,15 @@ def cue_create_batch_handler(
             )
         parsed.append((pos, name_raw))
 
+    # W3-F: each per-cue iteration runs through _create_one_cue_locked
+    # which is a worker-thread routine. The lock is acquired once on the
+    # worker thread for the whole batch.
     results: list[dict[str, Any]] = []
     with context.live_state_lock:
-        song = context.song
         for position_beats, name in parsed:
             results.append(
                 _create_one_cue_locked(
-                    song, position_beats=position_beats, name=name
+                    context, position_beats=position_beats, name=name
                 )
             )
     return {"cue_count": len(results), "cues": results}
@@ -526,71 +606,135 @@ def cue_delete_handler(
     Live 12.x's ``set_or_delete_cue`` is a NO-ARG toggle on the current
     play position (same constraint as ``cue_create``), so deletion via
     the toggle requires seeking to the cue's position first and waiting
-    for the audio thread to pick it up. See ``cue_create_handler`` for
-    the full timing rationale.
+    for the audio thread to pick it up.
+
+    **Threading (W3-F):** Registered with ``runs_on_worker=True``. The
+    seek+settle+toggle+verify sequence is broken into main-thread bouts
+    interleaved with worker-thread waits, for the same deadlock-
+    avoidance reason as ``cue_create_handler`` (see its docstring).
+
+    Fast path: if the ``CuePoint`` exposes ``.delete()`` or ``.remove()``
+    directly, we skip the seek+toggle dance entirely — that method is
+    synchronous and bypasses the audio-thread race. Empirically Live
+    12.4's CuePoint objects DON'T expose this, so the slow path is the
+    common one.
     """
-    song = context.song
-    cues = list(getattr(song, "cue_points", ()))
-    if cue_index < 1 or cue_index > len(cues):
-        raise IndexError(
-            f"cue_index {cue_index} out of range [1, {len(cues)}]"
+    # ---- Bout 1: resolve target + fast-path attempt (main thread) ----
+    def _resolve_and_try_fast_path() -> dict[str, Any] | None:
+        """Return the result dict if the fast path landed; else return
+        a structured continuation marker for the slow path."""
+        song = context.song
+        cues = list(getattr(song, "cue_points", ()))
+        if cue_index < 1 or cue_index > len(cues):
+            raise IndexError(
+                f"cue_index {cue_index} out of range [1, {len(cues)}]"
+            )
+        target_cue = cues[cue_index - 1]
+        target_time = float(getattr(target_cue, "time", 0.0))
+
+        delete_fn = getattr(target_cue, "delete", None) or getattr(
+            target_cue, "remove", None,
         )
-    target_cue = cues[cue_index - 1]
-    target_time = float(getattr(target_cue, "time", 0.0))
+        if delete_fn is not None:
+            delete_fn()
+            return {"deleted_cue_index": cue_index, "_done": True}
 
-    # Prefer the per-cue delete method when present — synchronous and
-    # bypasses the seek+toggle dance entirely.
-    delete_fn = getattr(target_cue, "delete", None) or getattr(target_cue, "remove", None)
-    if delete_fn is not None:
-        delete_fn()
-        return {"deleted_cue_index": cue_index}
+        toggle = getattr(song, "set_or_delete_cue", None)
+        if toggle is None:
+            raise NotImplementedError(
+                "Live does not expose cue deletion in this version"
+            )
+        return {
+            "_done": False,
+            "target_time": target_time,
+            "prior_song_time": float(getattr(song, "current_song_time", 0.0)),
+        }
 
-    # Fallback: seek to the cue's position and toggle. Real Live 12.x
-    # CuePoint objects don't expose `delete`, so this path is the
-    # common one. The no-arg toggle requires the audio thread to have
-    # the cst write — sleep gives it wall-clock time.
-    toggle = getattr(song, "set_or_delete_cue", None)
-    if toggle is None:
-        raise NotImplementedError(
-            "Live does not expose cue deletion in this version"
-        )
+    state = context.run_on_main(_resolve_and_try_fast_path)
+    if state["_done"]:
+        # Fast path landed; pop the sentinel and return.
+        state.pop("_done")
+        return state
+    target_time: float = state["target_time"]
+    prior: float = state["prior_song_time"]
 
-    # Hold ``live_state_lock`` across the seek+toggle+verify window for
-    # the same parallel-safety reason as cue_create (B-21): concurrent
-    # cst writers would otherwise race the audio thread.
-    #
-    # Wave-2 W2-F: use _seek_then_settle (poll-confirmed) instead of a
-    # fixed sleep, and verify via cue_points side effect (W2-6) — the
-    # pre-Wave-2 implementation returned ok:true after the toggle even
-    # when the cue was still present (the toggle fired at the wrong
-    # position due to W2-4's settle race). The playhead is restored in
-    # a finally clause so timeout / verify failures don't leave the
-    # transport parked at the cue's position (symmetric with
-    # cue_create's restore path).
+    # Slow path — same shape as cue_create's worker-thread split.
+    # Acquire the per-Live lock for the seek+settle+toggle+verify
+    # window; concurrent cst writers (cue_create, cue_jump, seek)
+    # could otherwise race the audio thread (B-21).
     target_pos_key = round(target_time, 6)
     with context.live_state_lock:
-        prior = float(getattr(song, "current_song_time", 0.0))
+        # ---- Bout 2: write current_song_time (main thread) ----
+        def _seek() -> None:
+            context.song.current_song_time = float(target_time)
+        context.run_on_main(_seek)
+
         try:
-            _seek_then_settle(song, target_time)
-            toggle()
-            time.sleep(_CUE_SETTLE_POLL_S)  # one poll-interval slack for toggle
-            cues_after = list(getattr(song, "cue_points", ()))
-            still_present = any(
-                abs(round(float(getattr(c, "time", -1.0)), 6) - target_pos_key) < 1e-6
-                for c in cues_after
-            )
-            if still_present:
-                raise RuntimeError(
-                    f"cue_delete: toggle did not remove the cue at "
-                    f"position_beats={target_time}. The cue is still "
-                    "present in song.cue_points after the toggle. This "
-                    "usually means the audio-thread playhead didn't "
-                    "settle to the target position before "
-                    "set_or_delete_cue fired — try retrying, or use "
-                    "cue_rename to mark it for manual deletion in Live."
+            # ---- Worker-thread settle wait ----
+            deadline = time.monotonic() + _CUE_SETTLE_TIMEOUT_S
+            while True:
+                def _read_mirror() -> float:
+                    return round(
+                        float(getattr(context.song, "current_song_time", -1.0)),
+                        6,
+                    )
+                actual = context.run_on_main(_read_mirror)
+                if abs(actual - target_pos_key) < _CUE_SETTLE_TOLERANCE_BEATS:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"playhead seek to beat {target_pos_key} did not "
+                        f"settle within {_CUE_SETTLE_TIMEOUT_S}s "
+                        f"(last observed current_song_time={actual}). "
+                        "Live's audio thread may be unresponsive — stop "
+                        "transport and retry, or check if Live is busy with "
+                        "another operation."
+                    )
+                time.sleep(_CUE_SETTLE_POLL_S)
+
+            # ---- Bout 3: toggle (main thread) ----
+            def _toggle() -> None:
+                song = context.song
+                toggle = getattr(song, "set_or_delete_cue", None)
+                if toggle is None:
+                    raise NotImplementedError(
+                        "Live does not expose cue deletion in this version"
+                    )
+                toggle()
+            context.run_on_main(_toggle)
+
+            # Worker-thread slack for the toggle to be visible.
+            time.sleep(_CUE_SETTLE_POLL_S)
+
+            # ---- Bout 4: verify (main thread) ----
+            def _verify_deleted() -> None:
+                cues_after = list(getattr(context.song, "cue_points", ()))
+                still_present = any(
+                    abs(round(float(getattr(c, "time", -1.0)), 6) - target_pos_key) < 1e-6
+                    for c in cues_after
                 )
+                if still_present:
+                    raise RuntimeError(
+                        f"cue_delete: toggle did not remove the cue at "
+                        f"position_beats={target_time}. The cue is still "
+                        "present in song.cue_points after the toggle. This "
+                        "usually means the audio-thread playhead didn't "
+                        "settle to the target position before "
+                        "set_or_delete_cue fired — try retrying, or use "
+                        "cue_rename to mark it for manual deletion in Live."
+                    )
+            context.run_on_main(_verify_deleted)
         finally:
-            song.current_song_time = prior
+            # Restore the playhead — best effort; raise nothing here
+            # because the function's primary exception (if any) is the
+            # real signal.
+            def _restore() -> None:
+                context.song.current_song_time = prior
+            try:
+                context.run_on_main(_restore)
+            except Exception:  # prawduct:ok-broad-except — cleanup; primary exception takes precedence
+                pass
+
     return {"deleted_cue_index": cue_index}
 
 

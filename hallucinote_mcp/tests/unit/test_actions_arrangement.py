@@ -387,24 +387,32 @@ def test_cue_create_rejects_negative_position(loaded_actions):
 
 
 def test_seek_then_settle_returns_when_playhead_confirms_target():
-    """Wave-2 W2-F: the new poll-confirmed settle helper waits for the
-    audio thread to acknowledge the seek (via the current_song_time
-    getter) instead of trusting a fixed sleep. The synchronous fake's
-    setter is immediately visible, so this returns on the first poll.
+    """W3-F: the seek-and-wait helper now runs on the WORKER thread and
+    marshals each Live touch through ``context.run_on_main``. The
+    synchronous test fake's setter is immediately visible via its
+    getter, so the helper returns on the first poll iteration.
     """
-    from hallucinote_mcp.handlers.arrangement import _seek_then_settle
-    song = FakeSong()
-    song.current_song_time = 0.0
-    _seek_then_settle(song, 12.0)
-    assert song.current_song_time == 12.0
+    from hallucinote_mcp.handlers.arrangement import _seek_and_wait_on_worker
+    ctx = FakeCtx()
+    ctx.song.current_song_time = 0.0
+    _seek_and_wait_on_worker(ctx, 12.0)
+    assert ctx.song.current_song_time == 12.0
+    # Each poll is its own main-thread bout: at minimum the seek-write
+    # + one mirror-read = 2 bouts. The synchronous fake returns the
+    # target on the first read so we expect exactly 2.
+    assert ctx.run_on_main_calls == 2
 
 
 def test_seek_then_settle_times_out_when_audio_thread_stuck():
-    """If the audio thread never picks up the write, the getter stays at
-    the old value forever. The helper must surface a TimeoutError with
-    actionable text instead of hanging.
+    """If the audio thread never picks up the write, the mirror stays
+    at the old value forever. The helper must surface a TimeoutError
+    with actionable text instead of hanging — and crucially, it must do
+    so WITHOUT blocking Live's main thread, which is the W3-F fix's
+    central architectural goal. (The fake's ``run_on_main`` is identity;
+    in real Live the main thread is free to pump events between our
+    worker-thread polls.)
     """
-    from hallucinote_mcp.handlers.arrangement import _seek_then_settle
+    from hallucinote_mcp.handlers.arrangement import _seek_and_wait_on_worker
     import pytest
 
     class _StuckSong:
@@ -419,11 +427,101 @@ def test_seek_then_settle_times_out_when_audio_thread_stuck():
         def current_song_time(self, v: float) -> None:
             self._stored = v
 
+    ctx = FakeCtx(song=_StuckSong())
     with pytest.raises(TimeoutError) as exc_info:
-        _seek_then_settle(_StuckSong(), 8.0, max_wait_s=0.15, poll_interval_s=0.05)
+        _seek_and_wait_on_worker(
+            ctx, 8.0, max_wait_s=0.15, poll_interval_s=0.05,
+        )
     msg = str(exc_info.value)
     assert "did not settle" in msg
     assert "8" in msg  # mentions the target beat
+
+
+def test_seek_then_settle_polls_via_run_on_main_until_mirror_settles():
+    """W3-F architectural contract: when the mirror LAGS the setter
+    (the real-Live failure mode that broke W2-F), the helper polls
+    via MULTIPLE ``run_on_main`` bouts — NOT a single bout containing
+    a sleep loop, which would deadlock Live's main thread against the
+    very event it needs to pump.
+
+    The lagged-mirror fake refreshes its visible getter only on the
+    Nth read, simulating Live's audio-thread → mirror propagation
+    that happens between main-thread bouts (each ``run_on_main`` call
+    in real Live yields back to the event loop for one tick). The
+    worker-thread loop must observe the eventual settle.
+    """
+    from hallucinote_mcp.handlers.arrangement import _seek_and_wait_on_worker
+
+    class _LaggedMirror:
+        """Setter accepted immediately; getter returns the stale value
+        for the first ``lag_reads`` reads, then catches up.
+
+        This faithfully simulates Live's main-thread mirror being
+        refreshed only when the main thread pumps an event between
+        polls (which only happens in the W3-F architecture, where
+        polls are separate main-thread bouts)."""
+
+        def __init__(self, lag_reads: int = 3):
+            self._set_value = 0.0
+            self._visible = 0.0
+            self._reads_since_set = 0
+            self._lag_reads = lag_reads
+
+        @property
+        def current_song_time(self) -> float:
+            self._reads_since_set += 1
+            if self._reads_since_set > self._lag_reads:
+                self._visible = self._set_value
+            return self._visible
+
+        @current_song_time.setter
+        def current_song_time(self, v: float) -> None:
+            self._set_value = float(v)
+            self._reads_since_set = 0
+
+    ctx = FakeCtx(song=_LaggedMirror(lag_reads=3))
+    _seek_and_wait_on_worker(ctx, 12.0, poll_interval_s=0.001)
+    # The fake required 4 reads to settle: 3 lagged + 1 actual. Plus
+    # one setter bout. So we expect 5 run_on_main bouts.
+    assert ctx.run_on_main_calls == 5, (
+        f"expected 5 main-thread bouts (1 setter + 4 polls), got "
+        f"{ctx.run_on_main_calls}. Counting matters: if this drops to 1, "
+        f"the helper has regressed to a single-bout sleep loop that would "
+        f"deadlock real Live (the W2-F failure mode W3-F was designed to fix)."
+    )
+    # And the final visible value matches the target.
+    assert ctx.song.current_song_time == 12.0
+
+
+def test_cue_create_action_runs_on_worker_thread():
+    """W3-F: cue_create / cue_create_batch / cue_delete are registered
+    with ``runs_on_worker=True``. The dispatcher must invoke them
+    DIRECTLY rather than wrapping in ``run_on_main``. This test pins the
+    contract: if a future commit forgets the flag (or a refactor of the
+    dispatcher silently re-wraps), the structural property is lost and
+    we deadlock real Live again.
+    """
+    from hallucinote_mcp import schema
+
+    with isolated_actions():
+        cue_create = schema.get("ableton_arrangement", "cue_create")
+        cue_batch = schema.get("ableton_arrangement", "cue_create_batch")
+        cue_delete = schema.get("ableton_arrangement", "cue_delete")
+        assert cue_create is not None and cue_create.runs_on_worker, (
+            "cue_create must be registered with runs_on_worker=True (W3-F)"
+        )
+        assert cue_batch is not None and cue_batch.runs_on_worker, (
+            "cue_create_batch must be registered with runs_on_worker=True (W3-F)"
+        )
+        assert cue_delete is not None and cue_delete.runs_on_worker, (
+            "cue_delete must be registered with runs_on_worker=True (W3-F)"
+        )
+        # And the non-cue actions stay on the default (main-thread-wrapped)
+        # path — opting in is per-action and conservative.
+        cue_list = schema.get("ableton_arrangement", "cue_list")
+        info = schema.get("ableton_arrangement", "info")
+        assert cue_list is not None and not cue_list.runs_on_worker
+        assert info is not None and not info.runs_on_worker
 
 
 def test_cue_delete_verifies_via_cue_points_side_effect(loaded_actions):

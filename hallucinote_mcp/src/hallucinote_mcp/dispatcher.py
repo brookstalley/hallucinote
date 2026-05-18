@@ -413,7 +413,13 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             needs_remote=True,
         )
 
-    # Marshal the full executor invocation onto Live's main thread.
+    # Marshal the full executor invocation onto Live's main thread —
+    # unless the action opted out via runs_on_worker (W3-F). Worker-thread
+    # handlers manage their own main-thread marshaling via repeated
+    # ``context.run_on_main(...)`` calls, with worker-side
+    # ``time.sleep()`` between to let the main thread pump events
+    # between bouts. The default (main-thread-wrapped) path stays
+    # the safe choice for every other handler.
     def run_executor() -> Any:
         if action.handler is not None:
             return action.handler(context, **validated)
@@ -421,7 +427,13 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
         return execute_declarative(action.declarative_op, validated, context.song)
 
     try:
-        result = context.run_on_main(run_executor)
+        if action.runs_on_worker:
+            # Handler is responsible for its own main-thread marshaling.
+            # Invariant (__post_init__): runs_on_worker implies handler-based.
+            assert action.handler is not None  # guaranteed by Action.__post_init__
+            result = action.handler(context, **validated)
+        else:
+            result = context.run_on_main(run_executor)
     except KeyError as exc:
         logger.warning(
             "schema bug: %s(%r) executor referenced unknown param %r",

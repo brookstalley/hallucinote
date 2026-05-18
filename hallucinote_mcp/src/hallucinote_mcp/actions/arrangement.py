@@ -165,6 +165,13 @@ register(
             ParamSpec(name="name", type="str", required=False),
         ),
         handler=arrangement_handlers.cue_create_handler,
+        # W3-F: see handler docstring. The seek-then-settle window
+        # needs WALL-CLOCK wait time while Live's main thread pumps
+        # audio-thread propagation events. Running the handler on the
+        # worker thread (and bouncing each Live touch through
+        # ``run_on_main`` individually) avoids the main-thread deadlock
+        # the W2-F implementation hit.
+        runs_on_worker=True,
         example=(
             "ableton_arrangement(action='cue_create', position_beats=16.0, "
             "name='Verse')"
@@ -206,6 +213,7 @@ register(
             ),
         ),
         handler=arrangement_handlers.cue_create_batch_handler,
+        runs_on_worker=True,  # W3-F — same rationale as cue_create.
         example=(
             "ableton_arrangement(action='cue_create_batch', cues=["
             "{'position_beats': 0.0, 'name': 'Intro'}, "
@@ -233,6 +241,7 @@ register(
             ParamSpec(name="cue_index", type="int", minimum=1),
         ),
         handler=arrangement_handlers.cue_delete_handler,
+        runs_on_worker=True,  # W3-F — same rationale as cue_create.
         example="ableton_arrangement(action='cue_delete', cue_index=2)",
         tips=(
             "Subsequent cue_index values shift down after a delete; "

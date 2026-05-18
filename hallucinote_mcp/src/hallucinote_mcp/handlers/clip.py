@@ -336,13 +336,21 @@ def create_handler(
     if location == "session":
         result["clip_index"] = clip_index
     else:
-        # Compute the 1-based arrangement index after the create. The result
-        # field is `arrangement_clip_index` (not `clip_index`) so the
-        # Hallucinote apply layer's `_LINK_KINDS["arrangement_clip"]` can
-        # read it to record the `ableton_links` binding.
+        # Compute the 1-based arrangement index. The result field is
+        # `arrangement_clip_index` (not `clip_index`) so the Hallucinote
+        # apply layer's `_LINK_KINDS["arrangement_clip"]` can read it to
+        # record the `ableton_links` binding.
+        #
+        # Live re-wraps API objects on each property access, so the
+        # identity scan that lived here previously (``c is clip``)
+        # silently failed and the result was missing the index field.
+        # Live's arrangement_clips are sorted by ``start_time``, so we
+        # resolve by start-time match using ``start_beats`` (the position
+        # we just created at). Float tolerance handles round-trip drift.
+        target_start = float(start_beats) if start_beats is not None else float(clip.start_time)
         track = _resolve_track(context, track_index)
         for i, c in enumerate(track.arrangement_clips, start=1):
-            if c is clip:
+            if abs(float(c.start_time) - target_start) < 1e-6:
                 result["arrangement_clip_index"] = i
                 break
         result["start_beats"] = float(start_beats) if start_beats is not None else None

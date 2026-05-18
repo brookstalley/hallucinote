@@ -65,21 +65,20 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
         "track_count": len(song.tracks),
         "return_count": len(song.return_tracks),
         "scene_count": len(song.scenes),
-        "focused_view": _focused_view(song),
+        "focused_view": _focused_view(context),
     }
 
 
-def _focused_view(song: Any) -> str:
+def _focused_view(context: LiveContext) -> str:
     """Return one of the top-level view labels currently shown by Live.
 
-    Reads via ``song.get_application().view`` — the same surface that
+    Reads via ``context.application.view`` — the same surface that
     ``set_view_handler`` writes to, so reads and writes are symmetric. If the
     application object isn't reachable (older Live builds, weird embeddings),
     returns ``"unknown"`` rather than leaking unrelated state into the field.
     """
     try:
-        application = song.get_application()
-        view = application.view
+        view = context.application.view
     except (AttributeError, RuntimeError):
         return "unknown"
     for label in ("Session", "Arranger", "Detail/Clip", "Detail/DeviceChain", "Browser"):
@@ -162,13 +161,24 @@ def set_master_property_handler(
 def seek_handler(
     context: LiveContext, *, bar: int, beat: float = 0.0
 ) -> dict[str, Any]:
-    """Move the playhead to (bar, beat). 1-based bar, 0-based-within-bar beat."""
+    """Move the playhead to (bar, beat). 1-based bar, 0-based-within-bar beat.
+
+    Returns the COMPUTED ``song_time`` from the input, not a getter-readback.
+    Live 12.x's ``Song.current_song_time`` getter can return a stale cached
+    value within the same callback as the setter (the audio thread picks
+    up writes on a delayed schedule); reporting the readback gave false
+    response values like ``song_time=last_event_time`` when the readback
+    raced the write. The write itself is correct — Live's transport
+    eventually settles to the target — so reporting what we wrote is the
+    honest answer.
+    """
     song = context.song
     beats_per_bar = float(song.signature_numerator) * (
         4.0 / float(song.signature_denominator)
     )
-    song.current_song_time = (bar - 1) * beats_per_bar + beat
-    return {"bar": bar, "beat": beat, "song_time": float(song.current_song_time)}
+    song_time = (bar - 1) * beats_per_bar + beat
+    song.current_song_time = song_time
+    return {"bar": bar, "beat": beat, "song_time": float(song_time)}
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +245,11 @@ _VIEW_NAMES: dict[str, str] = {
 def set_view_handler(context: LiveContext, *, view: str) -> dict[str, Any]:
     """Focus a top-level Live view.
 
-    Live's view system lives at ``Application.View``, not on the song. The
-    handler asks the Application object for its view, then calls
-    ``show_view(<live-name>)``.
+    Live's view system lives at ``Application.View``, not on the song.
+    Application access flows through ``LiveContext.application`` so the
+    handler doesn't need to import Live directly or reach into Song
+    (which doesn't expose ``get_application`` in any Live version we
+    target).
     """
     live_name = _VIEW_NAMES.get(view)
     if live_name is None:
@@ -245,9 +257,7 @@ def set_view_handler(context: LiveContext, *, view: str) -> dict[str, Any]:
             f"set_view: view {view!r} not recognized; "
             f"valid values are {sorted(_VIEW_NAMES)}"
         )
-    song = context.song
-    application = song.get_application()  # Live's standard accessor
-    application.view.show_view(live_name)
+    context.application.view.show_view(live_name)
     return {"view": view, "live_view_name": live_name}
 
 

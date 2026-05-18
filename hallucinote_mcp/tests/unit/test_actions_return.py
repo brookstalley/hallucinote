@@ -135,6 +135,71 @@ def test_create_return_appends(loaded_actions):
     assert ctx.song.return_tracks[-1].name == "C-Plate"
 
 
+# Regression: real Live re-wraps return-track objects on each property
+# access, so scanning ``song.return_tracks`` for ``new_return`` by ``is``
+# used to spuriously fail and the handler raised a false-positive "Live
+# API bug". The fix uses the deterministic post-append length (Live's
+# ``create_return_track()`` always appends).
+
+
+class _ReWrappingReturnSong:
+    """Wrapper-per-access semantics for return_tracks."""
+
+    def __init__(self) -> None:
+        self._underlying: list[dict] = [
+            {"name": "A-Reverb"}, {"name": "B-Delay"},
+        ]
+
+    @property
+    def return_tracks(self):
+        return [_FreshReturnWrapper(d) for d in self._underlying]
+
+    def create_return_track(self):
+        d = {"name": "Return"}
+        self._underlying.append(d)
+        return _FreshReturnWrapper(d)
+
+
+class _FreshReturnWrapper:
+    def __init__(self, data: dict) -> None:
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data["name"]
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._data["name"] = value
+
+
+class _ReturnCtx:
+    def __init__(self) -> None:
+        self._song = _ReWrappingReturnSong()
+
+    @property
+    def song(self):
+        return self._song
+
+    def run_on_main(self, fn):
+        return fn()
+
+
+def test_create_return_handles_live_wrapper_recreation(loaded_actions):
+    """The new return's index is computed as len-after-append, no scan."""
+    ctx = _ReturnCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_return", action="create",
+            params={"name": "C-Plate"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["return_index"] == 3  # appended to a 2-return song
+    assert resp.result["name"] == "C-Plate"
+
+
 def test_create_return_raises_if_live_api_missing(loaded_actions):
     """If Live (or our fake) doesn't expose ``create_return_track``, we get a
     teaching error rather than a raw AttributeError.

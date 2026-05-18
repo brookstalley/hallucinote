@@ -8,11 +8,16 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# Songwright DB files (per-user, never committed)
+# Hallucinote DB files (per-user, never committed)
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Claude Code MCP server config — per-user / per-environment. The install
+# skill writes the correct shape for the user's environment (bare-name vs
+# absolute venv path). See .mcp.json.example for the canonical entry.
+.mcp.json
 
 # Build artifacts
 build/

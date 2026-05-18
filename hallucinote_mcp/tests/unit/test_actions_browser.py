@@ -83,21 +83,28 @@ class FakeApp:
 
 
 class FakeSong:
-    def __init__(self):
-        self._app = FakeApp()
-
-    def get_application(self) -> FakeApp:
-        return self._app
+    """Real Live ``Song`` does NOT expose ``get_application`` — the
+    Application is reached via ``Live.Application.get_application()`` and
+    flows to handlers through ``LiveContext.application``. The fake
+    mirrors that surface (no get_application)."""
 
 
 class FakeCtx:
-    def __init__(self):
+    """LiveContext stub. Owns the FakeApp directly (symmetric to the real
+    Protocol where ``application`` is a peer of ``song``)."""
+
+    def __init__(self, application: FakeApp | None = None):
         self._song = FakeSong()
+        self._application = application or FakeApp()
         self.run_on_main_calls = 0
 
     @property
     def song(self):
         return self._song
+
+    @property
+    def application(self):
+        return self._application
 
     def run_on_main(self, fn):
         self.run_on_main_calls += 1

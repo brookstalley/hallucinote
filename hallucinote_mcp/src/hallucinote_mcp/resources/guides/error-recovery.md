@@ -64,6 +64,51 @@ The server tried to forward but the TCP connection to the Remote Script
 failed. Live may not be running, or the Remote Script may not be installed.
 The `/ableton-install-mcp` Claude Code skill walks through fresh install.
 
+## Version-handshake errors
+
+The MCP bridge has two halves running in different Python processes: the
+**MCP server** (the `hallucinote-mcp` pip package, spawned by Claude Code
+when you connect) and the **Remote Script** (the vendored copy in Live's
+User Library, loaded by Live when it boots). They must agree on
+`hallucinote_mcp.__version__`. On every call, the server side stamps its
+version into the request; the Live side checks before dispatch.
+
+Two failure modes — recovery differs:
+
+### `Hallucinote MCP version handshake missing: ...`
+The MCP server side didn't send a `server_version` field at all. It's old
+enough to predate the handshake — i.e., the pip-installed `hallucinote-mcp`
+is older than what's currently in Live's Remote Scripts folder.
+
+**Fix:** upgrade the pip package, then respawn the MCP server.
+1. `pip install -U hallucinote-mcp` (in the environment Claude Code uses)
+2. In Claude Code: `/mcp` — this respawns the server process, which now
+   ships the version on every request.
+
+A full Claude Code restart works too, but `/mcp` alone is sufficient
+because it relaunches the MCP server subprocess.
+
+### `Hallucinote MCP version mismatch: MCP server side reports X, Remote Script side is Y`
+Both halves are speaking the handshake, but they disagree. Whichever side
+is older is the one to refresh.
+
+**If the Remote Script side is older (`Remote Script side is Y` where
+`Y < X`)** — the common case, because the pip side updates more freely:
+1. `/ableton-install-mcp` — re-runs the install, refreshing the vendored
+   copy in Live's User Library.
+2. Fully quit Live (⌘Q / Alt+F4) and reopen it. **Live caches Control
+   Surface modules at startup**, so a restart is required — `/mcp` alone
+   does nothing for this branch, because the staleness is inside Live.
+
+**If the MCP server side is older (`MCP server side reports X` where
+`X < Y`)** — less common, but happens if you reinstall the Remote Script
+without upgrading the pip package:
+1. `pip install -U hallucinote-mcp`
+2. `/mcp` in Claude Code to respawn the server.
+
+The error message names both versions so you can tell which side is the
+stale one without guessing.
+
 ## Gap-blocked actions (intentional)
 
 ### `ableton_note operations are blocked by MCP gap #4 — ...`

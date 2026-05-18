@@ -512,6 +512,133 @@ def test_create_arrangement_midi_clip(loaded_actions):
     assert arr[0].start_time == 16.0
 
 
+# Regression: real Live re-wraps API objects on each property access, so
+# scanning ``track.arrangement_clips`` for ``c is new_clip`` used to
+# spuriously fail and the result was missing the ``arrangement_clip_index``
+# field — the apply layer's link recorder reads that field, so a missing
+# index broke the link write silently. The fix resolves by start-time
+# match instead of identity (Live's arrangement_clips are start-sorted).
+
+
+class _WrapperRecreatingArrangementTrack:
+    """Underlying clip data is stable; every ``arrangement_clips`` access
+    returns a fresh list of fresh wrappers. Mirrors Live 12.x's wrapper
+    semantics."""
+
+    def __init__(self) -> None:
+        # list of {"start_time", "length", "kind", "name"}
+        self._underlying: list[dict] = []
+
+    @property
+    def arrangement_clips(self):
+        return [_FreshClipWrapper(d) for d in self._underlying]
+
+    def create_midi_clip(self, start_beats: float, length: float) -> None:
+        self._underlying.append(
+            {"start_time": float(start_beats), "length": float(length),
+             "kind": "midi", "name": ""}
+        )
+
+
+class _FreshClipWrapper:
+    def __init__(self, data: dict) -> None:
+        self._data = data
+        # Notes accumulator the handler may call set_notes on.
+        self._notes: list = []
+
+    @property
+    def start_time(self) -> float:
+        return self._data["start_time"]
+
+    @property
+    def length(self) -> float:
+        return self._data["length"]
+
+    @property
+    def name(self) -> str:
+        return self._data["name"]
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._data["name"] = value
+
+    def set_notes(self, notes) -> None:  # pragma: no cover — exercised indirectly
+        self._notes = list(notes)
+
+
+class _ArrangementClipSong:
+    def __init__(self) -> None:
+        self.tracks = [_WrapperRecreatingArrangementTrack()]
+
+
+class _ArrangementClipCtx:
+    def __init__(self) -> None:
+        self._song = _ArrangementClipSong()
+
+    @property
+    def song(self):
+        return self._song
+
+    def run_on_main(self, fn):
+        return fn()
+
+
+def test_create_arrangement_clip_returns_index_under_wrapper_recreation(
+    loaded_actions,
+):
+    """First clip in an empty track → arrangement_clip_index == 1, even
+    when the wrapper returned by Live's create_*_clip is not ``is``-equal
+    to anything in ``track.arrangement_clips``."""
+    ctx = _ArrangementClipCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "arrangement",
+                "kind": "midi", "length": 16.0, "start_beats": 16.0,
+                "name": "Intro",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["arrangement_clip_index"] == 1
+    assert resp.result["start_beats"] == 16.0
+
+
+def test_create_arrangement_clip_index_for_second_clip_under_wrapper_recreation(
+    loaded_actions,
+):
+    """A second clip created later in time lands at arrangement_clip_index 2
+    (start-sorted). Catches an off-by-one if the lookup ever returned the
+    first clip instead of the new one."""
+    ctx = _ArrangementClipCtx()
+    # First clip at beat 0.
+    dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "arrangement",
+                "kind": "midi", "length": 8.0, "start_beats": 0.0,
+            },
+        ),
+        context=ctx,
+    )
+    # Second clip at beat 16.
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "arrangement",
+                "kind": "midi", "length": 8.0, "start_beats": 16.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["arrangement_clip_index"] == 2
+
+
 def test_create_arrangement_clip_missing_start_beats_errors(loaded_actions):
     ctx = FakeCtx()
     resp = dispatch(

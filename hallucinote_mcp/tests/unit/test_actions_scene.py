@@ -186,6 +186,87 @@ def test_create_inserts_at_position(loaded_actions):
     assert ctx.song.scenes[2].name == "Pre-Chorus"
 
 
+# Regression: real Live re-wraps API objects on each property access, so
+# scanning ``song.scenes`` for ``new_scene`` by ``is`` identity used to
+# spuriously fail and the handler raised a false-positive "Live API bug".
+# The fix computes the new index from the create-call's known semantics
+# (append → len-after; insert_at-N → N+1).
+
+
+class _ReWrappingSceneSong:
+    """Underlying data is stable; every ``scenes`` access returns a fresh
+    list of fresh wrappers. ``new_scene is song.scenes[i]`` always False."""
+
+    def __init__(self) -> None:
+        self._underlying: list[dict] = [
+            {"name": "Intro"}, {"name": "Verse"}, {"name": "Chorus"},
+        ]
+        self.view = type("V", (), {"selected_scene": None})()
+
+    @property
+    def scenes(self):
+        return [_FreshSceneWrapper(d) for d in self._underlying]
+
+    def create_scene(self, insert_at: int = -1):
+        d = {"name": "New"}
+        if insert_at == -1:
+            self._underlying.append(d)
+        else:
+            self._underlying.insert(insert_at, d)
+        return _FreshSceneWrapper(d)
+
+
+class _FreshSceneWrapper:
+    def __init__(self, data: dict) -> None:
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data["name"]
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._data["name"] = value
+
+
+class _SceneCtx:
+    def __init__(self) -> None:
+        self._song = _ReWrappingSceneSong()
+
+    @property
+    def song(self):
+        return self._song
+
+    def run_on_main(self, fn):
+        return fn()
+
+
+def test_create_scene_handles_live_wrapper_recreation(loaded_actions):
+    """Append path: new index is len-after, computed without scanning."""
+    ctx = _SceneCtx()
+    resp = dispatch(
+        Request(tool="ableton_scene", action="create", params={"name": "Bridge"}),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["scene_index"] == 4  # appended to a 3-scene song
+    assert resp.result["name"] == "Bridge"
+
+
+def test_create_scene_with_position_handles_wrapper_recreation(loaded_actions):
+    """Insert path: new index is the requested 1-based position."""
+    ctx = _SceneCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="create",
+            params={"name": "Pre-Chorus", "position": 3},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["scene_index"] == 3
+
+
 def test_delete_removes_scene(loaded_actions):
     ctx = FakeCtx()
     resp = dispatch(

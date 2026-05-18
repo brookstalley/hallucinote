@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 
 SongFactory = Callable[[], Any]
+ApplicationFactory = Callable[[], Any]
 ScheduleOnMain = Callable[[Callable[[], None]], None]
 
 
@@ -29,6 +30,11 @@ class LiveLiveContext:
     Parameters:
       song_factory: zero-arg callable returning the current Live Song object
         (Ableton's ``ControlSurface.song()`` is the canonical source).
+      application_factory: zero-arg callable returning Live's Application
+        object. Real ``ControlSurface`` exposes ``self.application`` which
+        is exactly this shape. The Live ``Song`` does NOT expose
+        ``get_application``, so we flow Application access through the
+        context Protocol instead of having handlers ``import Live`` directly.
       schedule_on_main: callable that takes a zero-arg function and arranges
         for Live to invoke it on the main thread. The conventional shape in
         ``_Framework`` is ``lambda fn: control_surface.schedule_message(0, fn)``.
@@ -42,10 +48,12 @@ class LiveLiveContext:
     def __init__(
         self,
         song_factory: SongFactory,
+        application_factory: ApplicationFactory,
         schedule_on_main: ScheduleOnMain,
         main_thread_timeout: float = 15.0,
     ):
         self._song_factory = song_factory
+        self._application_factory = application_factory
         self._schedule_on_main = schedule_on_main
         self._main_thread_timeout = main_thread_timeout
 
@@ -59,6 +67,15 @@ class LiveLiveContext:
         which the dispatcher arranges.
         """
         return self._song_factory()
+
+    @property
+    def application(self) -> Any:
+        """Live's Application object.
+
+        Used for view-state reads/writes and browser access. Same main-thread
+        discipline as ``song`` — call from inside ``run_on_main`` callbacks.
+        """
+        return self._application_factory()
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any:
         """Invoke ``fn`` on Live's main thread; return its result.

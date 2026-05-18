@@ -94,18 +94,13 @@ def create_handler(
     new_return = create_fn()
     if name:
         new_return.name = name
-    # Find the new return's 1-based index using identity (``is`` not ``==``)
-    # — Live Object Model equality semantics are undocumented; we want the
-    # object Live just handed us, not "anything that compares equal".
-    for i, ret in enumerate(song.return_tracks, start=1):
-        if ret is new_return:
-            new_index = i
-            break
-    else:
-        raise RuntimeError(
-            "create: Live returned a return-track that isn't in song.return_tracks; "
-            "this is a Live API bug"
-        )
+    # ``Song.create_return_track()`` always appends to the end of
+    # ``return_tracks``. The new 1-based index is therefore deterministic.
+    # We do NOT scan for identity: Live re-wraps API objects on each
+    # property access, so ``new_return is ret`` and equality can both
+    # spuriously return False (same root cause as the track / scene /
+    # arrangement create handlers).
+    new_index = len(song.return_tracks)
     return {"return_index": new_index, "name": new_return.name}
 
 

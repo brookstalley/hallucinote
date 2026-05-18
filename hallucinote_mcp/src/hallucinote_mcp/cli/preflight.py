@@ -20,11 +20,26 @@ def _build_report() -> dict:
     so the consumer can tell "not detected" from "empty string".
     """
     cmd_path, cmd_on_path = P.hallucinote_mcp_command()
+    pkg_root = P.package_root()
     return {
         "package": {
             "version": __version__,
-            "root": str(P.package_root()),
-            "remote_script_exclude": list(P.REMOTE_SCRIPT_EXCLUDE),
+            "root": str(pkg_root),
+            # Structured excludes — top-level files are anchored to the
+            # package root; any-position dirs/globs match anywhere in the
+            # tree. Emitting the structure (rather than a flat list) keeps
+            # the install skill from having to re-derive the anchoring.
+            "remote_script_exclude": {
+                "top_level_files": list(P.REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES),
+                "dirs_any": list(P.REMOTE_SCRIPT_EXCLUDE_DIRS_ANY),
+                "file_globs_any": list(P.REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY),
+            },
+            # Pre-rendered command arguments — the install skill interpolates
+            # these directly into the rsync / robocopy invocation so platform
+            # quirks (rsync's leading-slash anchor, robocopy's full-path
+            # /XF anchor) stay in tested Python instead of fragile markdown.
+            "rsync_exclude_args": P.rsync_exclude_args(),
+            "robocopy_exclude_args": P.robocopy_exclude_args(pkg_root),
         },
         "user_library": {
             "default": str(P.default_user_library()),

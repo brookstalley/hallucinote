@@ -3,7 +3,9 @@
 Arrangement state lives at ``song.cue_points`` (the cue list),
 ``song.loop`` / ``song.loop_start`` / ``song.loop_length`` (the loop
 region), ``song.last_event_time`` (the arrangement total length), and
-``song.get_application().view`` (arranger view controls).
+``context.application.view`` (arranger view controls — Live's ``Song``
+does NOT expose ``get_application``; the Application is reached via
+the LiveContext Protocol).
 
 Cue point time positions are in **beats** on the wire (Wave M-3/M-4
 principle: wire stays meter-agnostic; Hallucinote planner converts from
@@ -18,9 +20,26 @@ for the new MCP server's lifetime.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ..dispatcher import LiveContext
+
+
+# How long ``cue_create`` waits in wall-clock time for
+# ``Song.current_song_time`` to be visible to ``Song.set_or_delete_cue``.
+# Empirical Live 12.x behavior: the setter completes synchronously on
+# the main thread, but the audio thread (which the cue toggle reads)
+# picks up the new value on a delayed schedule — observed lag is on
+# the order of 100-200ms when transport is stopped. ``schedule_message``
+# bounces don't wait wall-clock time (they fire back-to-back within
+# one engine tick) so a poll-via-bounce loop reads stale values. The
+# simplest reliable mechanism is to sleep here: the audio thread runs
+# on its own OS thread and continues processing while the main thread
+# blocks. 200ms is a conservative ceiling that handles the observed
+# lag with margin; tighten if/when the audio-thread timing model is
+# better understood.
+_CUE_SETTLE_SLEEP_S = 0.2
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +141,12 @@ def control_view_handler(
             f"action_kind {action_kind!r} not in {list(_VIEW_ACTIONS)}"
         )
     song = context.song
-    application_view = song.get_application().view if hasattr(song, "get_application") else None
+    # Application view lives on LiveContext.application, not on Song —
+    # Song does not expose get_application in any Live version we target.
+    try:
+        application_view = context.application.view
+    except (AttributeError, RuntimeError):
+        application_view = None
 
     if action_kind in ("follow_on", "follow_off"):
         target = song.view
@@ -229,33 +253,103 @@ def cue_create_handler(
                 f"{position_beats} (name={getattr(existing, 'name', '')!r}); "
                 "use cue_delete first if you want to replace it"
             )
-    create_fn = getattr(song, "set_or_delete_cue", None)
-    if create_fn is not None:
-        # Newer Live exposes set_or_delete_cue(time) directly.
-        create_fn(float(position_beats))
-    else:
-        # Fallback: seek then use the toggle on the current play position.
-        prior = float(getattr(song, "current_song_time", 0.0))
-        song.current_song_time = float(position_beats)
+
+    # Live exposes ``set_or_delete_cue`` as a NO-ARG toggle that operates
+    # on the current song position, and Live 12.x has TWO independent
+    # constraints that make creating a cue at an arbitrary position
+    # non-trivial:
+    #
+    # (1) ``Song.current_song_time`` writes are picked up by the audio
+    #     thread on the NEXT audio buffer (~10ms). The main-thread
+    #     ``current_song_time`` getter (and ``set_or_delete_cue``,
+    #     which reads the same audio-thread-side position) lag the
+    #     write by up to a buffer. Bouncing through ``schedule_message``
+    #     doesn't help: those callbacks fire within a single engine
+    #     tick and don't yield wall-clock time to the audio thread.
+    #     The reliable fix is to sleep — the audio thread runs on its
+    #     own OS thread and continues processing while we block.
+    #
+    # (2) The setter is also clamped: ``current_song_time`` cannot move
+    #     past ``last_event_time`` (the end of any arrangement
+    #     content). If the arrangement is empty, the seek is silently
+    #     rejected and the cue lands at 0. The caller must ensure the
+    #     song has length covering the cue position — typically by
+    #     placing arrangement clips first.
+    toggle = getattr(song, "set_or_delete_cue", None)
+    if toggle is None:
         toggle = getattr(song, "set_or_delete_cue_point", None)
-        if toggle is None:
-            raise NotImplementedError(
-                "Live does not expose a cue-point creation API in this version"
-            )
-        toggle()
-        song.current_song_time = prior
-    # Find the new cue (by position match) and rename if requested.
+    if toggle is None:
+        raise NotImplementedError(
+            "Live does not expose a cue-point creation API in this version"
+        )
+
+    prior = float(getattr(song, "current_song_time", 0.0))
+    positions_before: set[float] = {
+        round(float(getattr(c, "time", -1.0)), 6)
+        for c in getattr(song, "cue_points", ())
+    }
+    target = round(float(position_beats), 6)
+
+    # Refuse if the song's arrangement doesn't extend to the cue position:
+    # the seek would be clamped, the toggle would fire at the clamped
+    # position, and we'd corrupt unrelated state. A clear error here
+    # beats a confusing one downstream.
+    last_event_time = float(getattr(song, "last_event_time", 0.0))
+    if position_beats > last_event_time + 1e-6:
+        raise ValueError(
+            f"cue_create: position_beats={position_beats} is past the "
+            f"song's last_event_time={last_event_time}. Live's "
+            f"current_song_time setter is clamped to the arrangement's "
+            f"extent — place arrangement content covering this position "
+            f"first (e.g., via ableton_clip(action='create', "
+            f"location='arrangement', ...)) before adding the cue."
+        )
+
+    # Seek then toggle. Empirical Live 12.x behavior: the
+    # ``current_song_time`` *getter* lags the setter by some unknown
+    # main-thread caching layer — reading after a write may still see
+    # the prior value within the same callback. The audio thread (which
+    # ``set_or_delete_cue`` reads) DOES pick up the write, just on a
+    # different timeline. So instead of verifying via the getter (which
+    # gave us false-negative "didn't settle" failures), we trust the
+    # write, sleep, fire the toggle, and verify success by reading the
+    # actual side effect: ``cue_points``. The scan loop confirms a new
+    # cue appeared at the target, which is the only thing that matters
+    # to the caller.
+    song.current_song_time = float(position_beats)
+    time.sleep(_CUE_SETTLE_SLEEP_S)
+    toggle()
+    time.sleep(_CUE_SETTLE_SLEEP_S)
+
+    cues_after = list(getattr(song, "cue_points", ()))
     new_cue_index: int | None = None
     new_cue = None
-    for i, cue in enumerate(getattr(song, "cue_points", ()), start=1):
-        if abs(float(getattr(cue, "time", -1.0)) - float(position_beats)) < 1e-6:
+    for i, cue in enumerate(cues_after, start=1):
+        t = round(float(getattr(cue, "time", -1.0)), 6)
+        if t == target and t not in positions_before:
             new_cue_index = i
             new_cue = cue
             break
+
+    # Restore the play head regardless of scan outcome so a failed
+    # rename doesn't leave the transport at an unexpected position.
+    song.current_song_time = prior
+
     if new_cue is None:
+        observed_positions = [
+            round(float(getattr(c, "time", -1.0)), 6) for c in cues_after
+        ]
+        new_positions = sorted(
+            t for t in observed_positions if t not in positions_before
+        )
         raise RuntimeError(
-            f"cue_create: could not locate the new cue at "
-            f"position_beats={position_beats}"
+            f"cue_create: toggle did not produce a new cue at "
+            f"position_beats={position_beats}. Diagnostic — "
+            f"new_positions={new_positions} (any positions present after "
+            f"toggle but not before), all_observed={observed_positions}, "
+            f"target={target}. If new_positions contains a different "
+            f"value, the toggle fired at the wrong playhead position — "
+            f"common when the seek hasn't settled to the audio thread."
         )
     if name is not None:
         new_cue.name = name
@@ -271,27 +365,78 @@ def cue_delete_handler(
     *,
     cue_index: int,
 ) -> dict[str, Any]:
-    """Delete a cue by 1-based index."""
+    """Delete a cue by 1-based index.
+
+    Live 12.x's ``set_or_delete_cue`` is a NO-ARG toggle on the current
+    play position (same constraint as ``cue_create``), so deletion via
+    the toggle requires seeking to the cue's position first and waiting
+    for the audio thread to pick it up. See ``cue_create_handler`` for
+    the full timing rationale.
+    """
     song = context.song
     cues = list(getattr(song, "cue_points", ()))
     if cue_index < 1 or cue_index > len(cues):
         raise IndexError(
             f"cue_index {cue_index} out of range [1, {len(cues)}]"
         )
-    target = cues[cue_index - 1]
-    # Live exposes deletion via the cue's own method or via
-    # song.set_or_delete_cue(time). Prefer the per-cue method when present.
-    delete_fn = getattr(target, "delete", None) or getattr(target, "remove", None)
+    target_cue = cues[cue_index - 1]
+    target_time = float(getattr(target_cue, "time", 0.0))
+
+    # Prefer the per-cue delete method when present — synchronous and
+    # bypasses the seek+toggle dance entirely.
+    delete_fn = getattr(target_cue, "delete", None) or getattr(target_cue, "remove", None)
     if delete_fn is not None:
         delete_fn()
-    else:
-        toggle = getattr(song, "set_or_delete_cue", None)
-        if toggle is None:
-            raise NotImplementedError(
-                "Live does not expose cue deletion in this version"
-            )
-        toggle(float(getattr(target, "time", 0.0)))
+        return {"deleted_cue_index": cue_index}
+
+    # Fallback: seek to the cue's position and toggle. Real Live 12.x
+    # CuePoint objects don't expose `delete`, so this path is the
+    # common one. The no-arg toggle requires the audio thread to have
+    # the cst write — sleep gives it wall-clock time.
+    toggle = getattr(song, "set_or_delete_cue", None)
+    if toggle is None:
+        raise NotImplementedError(
+            "Live does not expose cue deletion in this version"
+        )
+
+    # Same audio-thread-settle pattern as cue_create — trust the setter
+    # write (which the audio thread picks up), don't verify via the
+    # getter (which can return a stale cache), and confirm success by
+    # the actual side effect: the target cue is gone from cue_points.
+    prior = float(getattr(song, "current_song_time", 0.0))
+    song.current_song_time = target_time
+    time.sleep(_CUE_SETTLE_SLEEP_S)
+    toggle()
+    time.sleep(_CUE_SETTLE_SLEEP_S)
+    song.current_song_time = prior
     return {"deleted_cue_index": cue_index}
+
+
+def cue_rename_handler(
+    context: LiveContext,
+    *,
+    cue_index: int,
+    name: str,
+) -> dict[str, Any]:
+    """Set a cue's display name. Live's ``CuePoint.name`` is a direct
+    writable property — no seek/toggle dance — so this is synchronous
+    and reliable. Mainly useful as a recovery path when ``cue_create``
+    completed the toggle but couldn't apply the rename inline due to
+    Live's audio-thread settle timing.
+    """
+    song = context.song
+    cues = list(getattr(song, "cue_points", ()))
+    if cue_index < 1 or cue_index > len(cues):
+        raise IndexError(
+            f"cue_index {cue_index} out of range [1, {len(cues)}]"
+        )
+    cue = cues[cue_index - 1]
+    cue.name = name
+    return {
+        "cue_index": cue_index,
+        "position_beats": float(getattr(cue, "time", 0.0)),
+        "name": str(getattr(cue, "name", "")),
+    }
 
 
 _JUMP_DIRECTIONS = ("next", "previous")
@@ -361,5 +506,6 @@ __all__ = [
     "cue_list_handler",
     "cue_create_handler",
     "cue_delete_handler",
+    "cue_rename_handler",
     "cue_jump_handler",
 ]

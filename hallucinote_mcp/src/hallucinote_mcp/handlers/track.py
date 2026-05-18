@@ -143,19 +143,18 @@ def create_handler(
     if name:
         new_track.name = name
 
-    # Live appends or inserts at the specified position; find the actual
-    # post-insert 1-based index by scanning for identity (``is`` not ``==``)
-    # because Live Object Model equality semantics are undocumented.
-    for i, track in enumerate(song.tracks, start=1):
-        if track is new_track:
-            new_index = i
-            break
-    else:
-        # Shouldn't happen — Live's create_*_track always returns a track
-        # that's now in song.tracks. Raise loudly if it ever does.
-        raise RuntimeError(
-            "create: Live returned a track that isn't in song.tracks; this is a Live API bug"
-        )
+    # Live's create_midi_track / create_audio_track inserts at the given
+    # 0-based position, or appends when -1. The new track's 1-based index
+    # is deterministic from that.
+    #
+    # We deliberately do NOT scan ``song.tracks`` for identity: Live
+    # re-wraps API objects on each property access, so ``new_track is
+    # song.tracks[i]`` and ``new_track == song.tracks[i]`` can both
+    # spuriously return False for wrappers around the same underlying
+    # Live track. The previous identity scan tripped this on every real
+    # ``create`` call, leaving the new track in Live but the handler
+    # response a false-negative "Live API bug" error.
+    new_index = len(song.tracks) if insert_at == -1 else insert_at + 1
 
     result: dict[str, Any] = {
         "track_index": new_index,

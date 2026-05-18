@@ -32,18 +32,24 @@ class FakeNode:
 class FakeLiveContext:
     """LiveContext stub for tests — synchronous, no thread marshaling.
 
-    Mirrors the production ``LiveLiveContext`` Protocol: exposes ``song`` and
-    ``run_on_main``. Since tests run on a single thread, ``run_on_main`` just
-    invokes the callable directly and returns the result (or re-raises).
+    Mirrors the production ``LiveLiveContext`` Protocol: exposes ``song``,
+    ``application``, and ``run_on_main``. Since tests run on a single
+    thread, ``run_on_main`` just invokes the callable directly and
+    returns the result (or re-raises).
     """
 
-    def __init__(self, root: Any):
+    def __init__(self, root: Any, application: Any = None):
         self._root = root
+        self._application = application
         self.run_on_main_calls = 0
 
     @property
     def song(self) -> Any:
         return self._root
+
+    @property
+    def application(self) -> Any:
+        return self._application
 
     def run_on_main(self, fn):
         self.run_on_main_calls += 1

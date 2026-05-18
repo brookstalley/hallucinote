@@ -28,12 +28,17 @@ _ROOTS = ("instruments", "audio_effects", "midi_effects", "drums", "plugins",
 
 
 def _resolve_browser(context: LiveContext) -> Any:
-    song = context.song
-    app = song.get_application() if hasattr(song, "get_application") else None
+    # Application lives on LiveContext.application (the Protocol's symmetric
+    # peer to ``song``). Live's Song does NOT expose get_application;
+    # routing through the context keeps Live-specific access points off
+    # the Song object.
+    try:
+        app = context.application
+    except (AttributeError, RuntimeError):
+        app = None
     if app is None:
         raise NotImplementedError(
-            "song.get_application() not exposed in this Live version — "
-            "browser is unreachable"
+            "LiveContext.application is unreachable — browser cannot be opened"
         )
     browser = getattr(app, "browser", None)
     if browser is None:

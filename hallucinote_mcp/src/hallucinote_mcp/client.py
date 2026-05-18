@@ -12,10 +12,11 @@ is negligible.
 """
 from __future__ import annotations
 
+import dataclasses
 import socket
 from typing import Any
 
-from . import wire
+from . import __version__, wire
 from .wire import DEFAULT_HOST, DEFAULT_PORT, Request, Response
 
 
@@ -32,10 +33,19 @@ def send(
 ) -> Response:
     """Send a request to the Remote Script; return the parsed response.
 
+    Stamps the request with this process's ``hallucinote_mcp.__version__``
+    when the caller didn't set ``server_version`` explicitly. The Live side
+    uses that field to detect a stale Remote Script and surface a clear
+    recovery action. An explicit value is preserved as-is so tests can
+    drive the mismatch path.
+
     Raises ``LiveConnectionError`` if the socket can't be opened. Wire-level
     framing errors (``wire.FrameError``) propagate — those are protocol bugs,
     not connection bugs, and should not be silently translated.
     """
+    if not request.server_version:
+        request = dataclasses.replace(request, server_version=__version__)
+
     try:
         sock = socket.create_connection((host, port), timeout=timeout)
     except OSError as exc:

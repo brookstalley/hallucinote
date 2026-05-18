@@ -43,11 +43,19 @@ logger = logging.getLogger("hallucinote_mcp.dispatcher")
 class LiveContext(Protocol):
     """The dispatcher sees the Live API through this Protocol.
 
-    Two members:
+    Three members:
 
       - ``song``: the Live Song object (``Live.Song.Song`` in real Live).
         Accessed from inside ``run_on_main`` callbacks so it's always
         touched on the main thread.
+
+      - ``application``: the Live Application object
+        (``Live.Application.Application`` in real Live). Used for
+        view-state reads/writes (``set_view`` / ``focused_view``) and
+        browser access. Live's ``Song`` does NOT expose ``get_application``
+        — the canonical accessor is ``Live.Application.get_application()``
+        (module-level), surfaced here so handlers don't import Live
+        directly.
 
       - ``run_on_main(fn)``: invoke a zero-arg callable on Live's main
         thread, block the calling worker thread until it returns, return
@@ -57,6 +65,9 @@ class LiveContext(Protocol):
 
     @property
     def song(self) -> Any: ...  # pragma: no cover - structural only
+
+    @property
+    def application(self) -> Any: ...  # pragma: no cover - structural only
 
     def run_on_main(self, fn: Callable[[], Any]) -> Any: ...  # pragma: no cover
 

@@ -192,6 +192,30 @@ register(
 register(
     Action(
         tool="ableton_arrangement",
+        name="cue_rename",
+        description=(
+            "Set a cue point's display name. Useful when ``cue_create`` "
+            "completed but the rename step couldn't be applied due to "
+            "Live API timing — call ``cue_list`` to find the cue_index "
+            "of the cue you want to rename, then this."
+        ),
+        params=(
+            ParamSpec(name="cue_index", type="int", minimum=1),
+            ParamSpec(name="name", type="str"),
+        ),
+        handler=arrangement_handlers.cue_rename_handler,
+        example="ableton_arrangement(action='cue_rename', cue_index=2, name='Verse')",
+        tips=(
+            "Cue.name is a direct writable property on Live's CuePoint "
+            "object, so this is a synchronous one-call rename — no "
+            "main-thread settle dance needed.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_arrangement",
         name="cue_jump",
         description=(
             "Jump the playhead to a cue. Provide EXACTLY ONE of "

@@ -12,6 +12,7 @@ from hallucinote_mcp.wire import (
     FrameError,
     Request,
     Response,
+    check_version_compat,
     decode_messages,
     encode_message,
     error,
@@ -29,17 +30,74 @@ def test_request_round_trip():
     assert Request.from_dict(req.to_dict()) == req
 
 
+def test_request_round_trips_server_version():
+    req = Request(
+        tool="ableton_session", action="info", params={}, server_version="1.2.3"
+    )
+    serialized = req.to_dict()
+    assert serialized["server_version"] == "1.2.3"
+    assert Request.from_dict(serialized) == req
+
+
+def test_request_to_dict_omits_empty_server_version():
+    # Keep the wire small for the legacy/no-handshake path. The Live side
+    # treats missing-or-empty identically; we don't need to ship "".
+    req = Request(tool="ableton_session", action="help")
+    assert "server_version" not in req.to_dict()
+
+
+def test_request_from_dict_defaults_missing_server_version():
+    obj = {"tool": "ableton_session", "action": "help", "params": {}}
+    assert Request.from_dict(obj).server_version == ""
+
+
 @pytest.mark.parametrize(
     "obj, message",
     [
         ({"tool": 5, "action": "x", "params": {}}, "tool must be a string"),
         ({"tool": "x", "action": None, "params": {}}, "action must be a string"),
         ({"tool": "x", "action": "y", "params": []}, "params must be an object"),
+        (
+            {"tool": "x", "action": "y", "params": {}, "server_version": 42},
+            "server_version must be a string",
+        ),
     ],
 )
 def test_request_from_dict_validates(obj, message):
     with pytest.raises(ValueError, match=message):
         Request.from_dict(obj)
+
+
+# ---------- Version handshake ----------
+
+
+def test_check_version_compat_match_returns_none():
+    assert check_version_compat("0.2.0", "0.2.0") is None
+
+
+def test_check_version_compat_empty_returns_stale_server_error():
+    resp = check_version_compat("", "0.2.0")
+    assert resp is not None
+    assert resp.ok is False
+    assert "0.2.0" in (resp.error or "")
+    # The hint must name both the pip upgrade AND the `/mcp` reconnect —
+    # those are the two-step recovery for this branch.
+    assert "pip install" in (resp.hint or "").lower()
+    assert "/mcp" in (resp.hint or "")
+
+
+def test_check_version_compat_mismatch_names_both_versions():
+    resp = check_version_compat("0.1.0", "0.2.0")
+    assert resp is not None
+    assert resp.ok is False
+    # The agent reading this needs to see both versions to know which side
+    # is stale and which install step to take.
+    assert "0.1.0" in (resp.error or "")
+    assert "0.2.0" in (resp.error or "")
+    # The hint must cover both recovery branches — Remote Script stale
+    # (re-install + full Live restart) and MCP server stale (pip + /mcp).
+    assert "ableton-install-mcp" in (resp.hint or "")
+    assert "/mcp" in (resp.hint or "")
 
 
 def test_ok_response_serializes_result():

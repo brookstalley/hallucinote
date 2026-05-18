@@ -97,17 +97,13 @@ def create_handler(
     new_scene = create_fn(insert_at)
     if name:
         new_scene.name = name
-    # Identify the new scene by identity (per M-2's `is` lesson).
-    new_index: int | None = None
-    for i, scene in enumerate(song.scenes, start=1):
-        if scene is new_scene:
-            new_index = i
-            break
-    if new_index is None:
-        raise RuntimeError(
-            "create_scene: Live returned a scene not in song.scenes — "
-            "this is a Live API bug"
-        )
+    # ``Song.create_scene(insert_at)`` inserts at the given 0-based position,
+    # or appends if -1. The new scene's 1-based index is deterministic from
+    # that. We do NOT scan ``song.scenes`` for identity: Live re-wraps API
+    # objects on each property access, so ``new_scene is scene`` and
+    # equality can both spuriously return False (the same root cause as the
+    # arrangement / track / return create handlers; see those for context).
+    new_index = len(song.scenes) if insert_at == -1 else insert_at + 1
     return {
         "scene_index": new_index,
         "name": str(getattr(new_scene, "name", "")),

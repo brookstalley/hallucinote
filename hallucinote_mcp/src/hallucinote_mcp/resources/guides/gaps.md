@@ -22,6 +22,20 @@ agents pushing notes.
 + `action='clear'` / `action='clear_all'` for destructive operations.
 You can push envelopes; you can't read them back.
 
+### Track-level / clip-less mixer / pan / send / device-parameter envelopes
+**Status:** Live 12.4's Python LOM exposes envelope creation only
+through `Clip.create_automation_envelope(target)`. There is no
+`Track.create_automation_envelope`, no atomic `Track.clear_all_envelopes`,
+and `Envelope` itself has neither `clear()` nor `add_segment(...)`.
+**Working alternative:** Pass `location` + `clip_index` pointing at the
+containing arrangement (or session) clip alongside the envelope's
+target. The handler routes through that clip's
+`clear_envelope(target) → create_automation_envelope(target) →
+insert_step(time, duration, value)` flow. Non-'hold' curve hints
+(linear / fast / slow) are recorded in the request but applied as
+step transitions; the response carries a `notes` field describing
+the fallback.
+
 ### Arrangement-level tempo / signature automation
 **Status:** Live exposes `Song.tempo` as a single value plus the
 arrangement-envelope API, but `ableton_automation` doesn't have a

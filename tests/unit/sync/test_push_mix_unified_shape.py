@@ -355,11 +355,24 @@ def test_planner_cue_list_pull_validates_against_dispatcher(conn):
         assert names == ["Intro", "Verse", "Chorus"]
 
 
-def test_planner_envelope_emits_validate_against_dispatcher(conn):
+def test_planner_envelope_emits_track_level_mixer_volume(conn):
     """Wave M-4: all seven envelope target families flow through one
     ableton_automation(action='write_envelope', target_kind=...) shape.
-    Pipe a track-level mixer_volume envelope through the actual dispatcher
-    against a fake context and confirm the shape is accepted end-to-end.
+
+    Today the planner emits ``mixer_volume`` with ``track_index`` only — no
+    ``clip_index + location``. That shape is rejected by the Live 12.4 MCP
+    handler because the LOM has no ``Track.create_automation_envelope``
+    surface (B-11 research, Chunk D). Until the planner is updated to
+    route mixer / pan / send / device-parameter envelopes through their
+    containing arrangement (or session) clip, this test pins the
+    contradiction:
+
+      - planner emits the historic shape (one call, target_kind correct,
+        no clip context)
+      - dispatcher rejects with a teaching error citing the LOM gap
+
+    See backlog item "sync planner: route track-level envelopes through
+    containing arrangement clip" for the planned remediation.
     """
     from hallucinote_mcp.dispatcher import dispatch
     from hallucinote_mcp.testing import isolated_actions
@@ -389,45 +402,39 @@ def test_planner_envelope_emits_validate_against_dispatcher(conn):
     ]
     assert len(write_calls) == 1
     assert write_calls[0].args["target_kind"] == "mixer_volume"
+    # No clip context — this is the shape that fails on Live 12.4 until the
+    # planner-side fix lands.
+    assert "clip_index" not in write_calls[0].args
+    assert "location" not in write_calls[0].args
 
-    # Build a fake song with 3 tracks (so track_index=3 resolves) and a
-    # mixer that records envelope creation.
+    # Fake song with 3 tracks (so track_index=3 resolves).
     class _Param:
-        def __init__(self, v=0.0):
+        def __init__(self, name="X", v=0.0):
+            self.name = name
             self.value = v
             self.min = 0.0
             self.max = 1.0
             self.value_items = None
 
-    class _Envelope:
-        def __init__(self):
-            self.cleared = 0
-            self.calls = []
-        def clear(self): self.cleared += 1
-        def insert_step(self, t, dur, v): self.calls.append(("step", t, dur, v))
-        def add_segment(self, t, dur, s, e, c): self.calls.append(("seg", t, dur, s, e, c))
-
     class _Mixer:
         def __init__(self):
-            self.volume = _Param(0.5)
-            self.panning = _Param(0.0)
+            self.volume = _Param("Volume", 0.5)
+            self.panning = _Param("Panning", 0.0)
             self.sends = []
+
+    class _ClipSlot:
+        def __init__(self): self.clip = None
 
     class _Track:
         def __init__(self):
             self.mixer_device = _Mixer()
             self.devices = []
-            self.clip_slots = []
+            self.clip_slots = [_ClipSlot() for _ in range(4)]
             self.arrangement_clips = []
-            self.envelopes = []
-        def create_automation_envelope(self, param):
-            env = _Envelope()
-            self.envelopes.append(env)
-            return env
 
     class _Song:
         def __init__(self):
-            self.tracks = [_Track(), _Track(), _Track()]  # index 3 = third
+            self.tracks = [_Track(), _Track(), _Track()]
             self.return_tracks = []
 
     class _Ctx:
@@ -445,19 +452,15 @@ def test_planner_envelope_emits_validate_against_dispatcher(conn):
                 Request(tool=call.tool, action=action_name, params=args),
                 context=ctx,
             )
-            assert resp.ok, (
-                f"planner-emitted call rejected by dispatcher: "
-                f"action={action_name}, args={args}, err={resp.error!r}"
+            # Pinned gap: clip-less mixer_volume is rejected with a
+            # teaching error pointing at the clip-scoped workaround.
+            assert resp.ok is False, (
+                f"expected dispatcher to reject clip-less mixer_volume "
+                f"until planner is updated; got {resp.result!r}"
             )
-        # The mixer-volume envelope landed on track 3's track-level envelope
-        target = ctx.song.tracks[2]
-        assert len(target.envelopes) == 1
-        env = target.envelopes[0]
-        assert env.cleared == 1
-        # 2 breakpoints → 1 segment + 1 anchor step
-        kinds = [c[0] for c in env.calls]
-        assert kinds.count("seg") == 1
-        assert kinds.count("step") == 1
+            err = (resp.error or "").lower()
+            assert "clip_index" in err
+            assert "live 12.4" in err
 
 
 def test_planner_device_load_emit_validates_against_dispatcher(conn):

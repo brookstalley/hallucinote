@@ -153,6 +153,21 @@ The MCP envelope read surface isn't yet implemented. Use
 `action='write_envelope'` to push; envelope reads come in a future
 chunk.
 
+### `target_kind=... requires clip_index + location on Live 12.4...`
+Live 12.4's LOM only addresses envelopes through a containing clip —
+there's no `Track.create_automation_envelope`. Pass `location`
+(`'arrangement'` or `'session'`) and `clip_index` pointing at the
+clip that should hold the envelope. Same applies to `action='clear'`
+on the mixer / pan / send / device_parameter target_kinds. See
+`ableton://guides/gaps` for the "track-level / clip-less" entry.
+
+### `clear with target_kind='note_expression' is not exposed by Live 12.4's LOM...`
+Live exposes `Clip.envelope_for_note(pitch, start, axis)` to fetch /
+create the per-axis envelope but no symmetric `clear_note_envelope`.
+Use `action='clear_all'` on the containing clip to wipe every
+envelope (including note expression), then re-write what you want to
+keep.
+
 ## Schema-bug errors
 
 ### `<tool>('<action>') executor referenced unknown param 'X'; this is a schema bug`

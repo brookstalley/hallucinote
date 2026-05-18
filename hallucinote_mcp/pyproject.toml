@@ -32,7 +32,6 @@ include = ["hallucinote_mcp*"]
 
 [tool.setuptools.package-data]
 hallucinote_mcp = [
-    "skills/**/*.md",
     "resources/guides/*.md",
     "resources/reference/*.json",
 ]

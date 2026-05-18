@@ -28,8 +28,8 @@ from hallucinote_mcp.install_paths import (
 
 
 SKILL_PATH = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "src" / "hallucinote_mcp" / "skills"
+    pathlib.Path(__file__).resolve().parents[3]
+    / ".claude" / "skills"
     / "ableton-install-mcp" / "SKILL.md"
 )
 

@@ -32,14 +32,9 @@ and tells you the one-line Ableton Preferences click:
 /ableton-install-mcp
 ```
 
-The skill body lives at `hallucinote_mcp/skills/ableton-install-mcp/SKILL.md`. To
-make Claude Code aware of it, copy the bundled skills folder into your user skills
-directory once:
-
-```bash
-# macOS / Linux
-cp -R "$(python -c 'import hallucinote_mcp,pathlib; print(pathlib.Path(hallucinote_mcp.__file__).parent / "skills")')/." ~/.claude/skills/
-```
+The skill body lives at `.claude/skills/ableton-install-mcp/SKILL.md` in the
+Hallucinote repo. Claude Code discovers it automatically when the repo is
+checked out; no manual copy step needed.
 
 Uninstall is symmetric: `/ableton-uninstall-mcp`.
 

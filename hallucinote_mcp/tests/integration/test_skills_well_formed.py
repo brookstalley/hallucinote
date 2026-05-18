@@ -1,9 +1,10 @@
-"""Sanity checks on the two install/uninstall skills shipped in the package.
+"""Sanity checks on the two install/uninstall skills.
 
-The skills are user-invocable Markdown with YAML frontmatter. These tests
-verify the structural contract Claude Code expects (a name, a description,
-and a body that follows). If the frontmatter shape changes, this catches it
-at test time rather than at first /ableton-install-mcp invocation.
+The skills live at the Hallucinote repo's ``.claude/skills/`` (the de facto
+slash-command home). These tests verify the structural contract Claude Code
+expects (a name, a description, and a body that follows). If the frontmatter
+shape changes, this catches it at test time rather than at first
+``/ableton-install-mcp`` invocation.
 """
 from __future__ import annotations
 
@@ -12,10 +13,10 @@ import re
 
 import pytest
 
-from hallucinote_mcp.install_paths import package_root
 
-
-SKILLS_DIR = package_root() / "skills"
+# The repo's .claude/skills/ — three parents up from this test file:
+# tests/integration/test_skills_well_formed.py → tests/ → hallucinote_mcp/ → <repo>
+SKILLS_DIR = pathlib.Path(__file__).resolve().parents[3] / ".claude" / "skills"
 
 EXPECTED_SKILLS = ("ableton-install-mcp", "ableton-uninstall-mcp")
 

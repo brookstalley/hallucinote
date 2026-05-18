@@ -600,9 +600,9 @@ Single Python package on PyPI: `pip install hallucinote-mcp`. **Install is LLM-m
 | `hallucinote-mcp serve` | Starts the FastMCP server (the runtime entry point used by `.mcp.json`). |
 | `hallucinote-mcp version` | Prints the package version. |
 
-There is intentionally **no `register` console script and no post-install hook**. The user copies the bundled skill folder into `~/.claude/skills/` once (a one-line documented `cp -R`), and from then on the skill itself drives all installs/uninstalls/upgrades. The reasoning: post-install hooks are increasingly discouraged in modern Python packaging (uv ignores them, `pip install --no-deps` skips them, PEP 660 editable installs are inconsistent), and a register console script is functionally identical to a documented `cp -R`. The skill is the install primitive.
+There is intentionally **no `register` console script and no post-install hook**. The install skill itself drives all installs/uninstalls/upgrades. The reasoning: post-install hooks are increasingly discouraged in modern Python packaging (uv ignores them, `pip install --no-deps` skips them, PEP 660 editable installs are inconsistent), and a register console script is functionally identical to a documented invocation. The skill is the install primitive.
 
-**Skills shipped inside the package** (live at `hallucinote_mcp/skills/`):
+**Skills shipped with the repo** (live at `.claude/skills/`):
 
 | Skill | What it does |
 |---|---|

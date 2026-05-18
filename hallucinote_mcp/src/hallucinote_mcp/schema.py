@@ -66,6 +66,19 @@ class LiveOp:
 
     For ``method_call``, ``method`` is the method name and ``method_args``
     is a tuple of param-name templates resolved at call time.
+
+    ``result_template`` OVERRIDES the op's natural return value with a
+    structured dict — useful for actions where the natural value is
+    ``None`` (every ``property_write`` and several ``method_call`` cases
+    — ``start_playing`` / ``stop_playing`` / etc). Values starting with
+    ``$`` are param references — ``"$bpm"`` means "look up the validated
+    'bpm' param and use its value". Other values are literals. Example:
+    ``{"is_playing": True}`` for ``play``, ``{"tempo": "$bpm"}`` for
+    ``set_tempo``. When ``result_template`` is ``None`` the executor
+    returns the op's natural value (``None`` for ``property_write``;
+    whatever the method returned for ``method_call``). Avoid setting
+    ``result_template`` on a ``method_call`` whose natural return value
+    is meaningful — the template would discard it.
     """
 
     kind: LiveOpKind
@@ -74,6 +87,7 @@ class LiveOp:
     method: str = ""
     method_args: tuple[str, ...] = ()
     value_param: str = "value"
+    result_template: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

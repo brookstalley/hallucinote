@@ -147,6 +147,7 @@ register(
             target="song",
             property="tempo",
             value_param="bpm",
+            result_template={"tempo": "$bpm"},
         ),
         example="ableton_session(action='set_tempo', bpm=132.0)",
         tips=(
@@ -201,7 +202,8 @@ register(
         name="play",
         description="Start playback from the current song position.",
         declarative_op=LiveOp(
-            kind="method_call", target="song", method="start_playing"
+            kind="method_call", target="song", method="start_playing",
+            result_template={"is_playing": True},
         ),
         example="ableton_session(action='play')",
     )
@@ -213,7 +215,8 @@ register(
         name="stop",
         description="Stop playback. The playhead does not reset.",
         declarative_op=LiveOp(
-            kind="method_call", target="song", method="stop_playing"
+            kind="method_call", target="song", method="stop_playing",
+            result_template={"is_playing": False},
         ),
         example="ableton_session(action='stop')",
     )

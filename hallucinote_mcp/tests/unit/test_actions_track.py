@@ -398,6 +398,11 @@ def test_rename_via_declarative_path(loaded_actions):
     )
     assert resp.ok is True
     assert ctx.song.tracks[0].name == "Renamed"
+    # Wave-2 W2-D / B-15: result_template echoes track_index + name so
+    # callers get a confirming response instead of result=None.
+    assert resp.result == {"track_index": 1, "name": "Renamed"}, (
+        f"track.rename should return {{track_index, name}}; got {resp.result!r}"
+    )
 
 
 # ---------- set_property / get_property ----------

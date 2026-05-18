@@ -190,6 +190,78 @@ def test_execute_declarative_property_write_with_custom_value_param():
     assert root.tempo == 145.5
 
 
+def test_result_template_echoes_input_param():
+    """W2-D: result_template populates the result dict so callers see a
+    structured response instead of None on property_write."""
+    root = FakeNode(tempo=120.0)
+    op = LiveOp(
+        kind="property_write",
+        target="song",
+        property="tempo",
+        value_param="bpm",
+        result_template={"tempo": "$bpm"},
+    )
+    result = execute_declarative(op, {"bpm": 132.0}, root)
+    assert result == {"tempo": 132.0}
+
+
+def test_result_template_with_literal_value():
+    """Literals (non-string and non-$-prefixed) pass through unchanged."""
+    root = FakeNode()
+    root.start_playing = lambda: None
+    op = LiveOp(
+        kind="method_call",
+        target="song",
+        method="start_playing",
+        result_template={"is_playing": True},
+    )
+    result = execute_declarative(op, {}, root)
+    assert result == {"is_playing": True}
+
+
+def test_result_template_omits_unsupplied_optional_params():
+    """If a template references an optional param the caller didn't pass,
+    the key is omitted from the result rather than emitted as None.
+    """
+    root = FakeNode(tempo=120.0)
+    op = LiveOp(
+        kind="property_write",
+        target="song",
+        property="tempo",
+        value_param="bpm",
+        result_template={
+            "tempo": "$bpm",
+            "actor": "$actor",  # not supplied by the caller
+        },
+    )
+    result = execute_declarative(op, {"bpm": 100.0}, root)
+    assert result == {"tempo": 100.0}  # no 'actor' key
+
+
+def test_no_result_template_returns_natural_value():
+    """When result_template is None, property_write returns None and
+    method_call returns whatever the method returned — backward
+    compatibility for actions that don't opt in.
+    """
+    # property_write branch: natural value is None.
+    root = FakeNode(tempo=120.0)
+    pw_op = LiveOp(
+        kind="property_write",
+        target="song",
+        property="tempo",
+        value_param="bpm",
+    )
+    assert execute_declarative(pw_op, {"bpm": 100.0}, root) is None
+
+    # method_call branch: natural value is whatever the method returned.
+    class _Sentinel:
+        pass
+    sentinel = _Sentinel()
+    root.get_thing = lambda: sentinel
+    mc_op = LiveOp(kind="method_call", target="song", method="get_thing")
+    assert execute_declarative(mc_op, {}, root) is sentinel
+
+
 # ---------- dispatch (top-level) ----------
 
 

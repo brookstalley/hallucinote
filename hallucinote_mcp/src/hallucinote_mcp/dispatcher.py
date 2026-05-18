@@ -272,6 +272,30 @@ def walk_song(song: Any, expression: str) -> Any:
     return current
 
 
+def _render_result_template(
+    template: dict[str, Any], params: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a result dict from a LiveOp.result_template + validated params.
+
+    String values starting with ``$`` are resolved as param refs
+    (``"$bpm"`` → ``params["bpm"]``); other values are literal. Used by
+    declarative ops whose natural return value is ``None`` to populate a
+    structured response instead of forcing every action to write a
+    handler (Wave-2 W2-D / B-15).
+    """
+    out: dict[str, Any] = {}
+    for key, source in template.items():
+        if isinstance(source, str) and source.startswith("$"):
+            param_name = source[1:]
+            if param_name in params:
+                out[key] = params[param_name]
+            # If the template references an unsupplied optional param,
+            # omit the key from the result rather than emit a None.
+        else:
+            out[key] = source
+    return out
+
+
 def execute_declarative(
     op: schema.LiveOp, params: dict[str, Any], song: Any
 ) -> Any:
@@ -281,6 +305,11 @@ def execute_declarative(
     via ``context.run_on_main``). Both the navigation walk AND the final
     property read/write or method call happen here atomically, so neither
     half escapes the main thread.
+
+    If ``op.result_template`` is set, the executor builds a result dict
+    from it (after the op runs) regardless of the op's natural return
+    value. Without a template, ``property_write`` returns ``None`` and
+    ``method_call`` returns whatever the underlying method does.
     """
     target_expr = resolve_target(op.target, params)
     target_obj = walk_song(song, target_expr)
@@ -288,11 +317,16 @@ def execute_declarative(
         return getattr(target_obj, op.property)
     if op.kind == "property_write":
         setattr(target_obj, op.property, params[op.value_param])
+        if op.result_template is not None:
+            return _render_result_template(op.result_template, params)
         return None
     if op.kind == "method_call":
         method = getattr(target_obj, op.method)
         args = [params[name] for name in op.method_args]
-        return method(*args)
+        natural = method(*args)
+        if op.result_template is not None:
+            return _render_result_template(op.result_template, params)
+        return natural
     raise ValueError(f"unknown LiveOp kind: {op.kind!r}")
 
 

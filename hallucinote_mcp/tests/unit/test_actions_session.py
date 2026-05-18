@@ -235,6 +235,12 @@ def test_set_tempo_writes_song_tempo(loaded_session_actions):
     )
     assert resp.ok is True
     assert ctx.song.tempo == 132.0
+    # Wave-2 W2-D / B-15: result_template echoes the input bpm so callers
+    # get a confirming response shape instead of result=None.
+    assert resp.result == {"tempo": 132.0}, (
+        f"set_tempo should return {{tempo: bpm}} via result_template; "
+        f"got {resp.result!r}"
+    )
 
 
 def test_set_tempo_validates_range(loaded_session_actions):
@@ -377,6 +383,8 @@ def test_play_invokes_song_start_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.play_called == 1
     assert ctx.song.is_playing is True
+    # Wave-2 W2-D / B-15: result_template returns a structured response.
+    assert resp.result == {"is_playing": True}
 
 
 def test_stop_invokes_song_stop_playing(loaded_session_actions):
@@ -386,6 +394,8 @@ def test_stop_invokes_song_stop_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.stop_called == 1
     assert ctx.song.is_playing is False
+    # Wave-2 W2-D / B-15: structured result instead of None.
+    assert resp.result == {"is_playing": False}
 
 
 # ---------- seek ----------

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import device_names
 from ..dispatcher import LiveContext
 
 
@@ -245,11 +246,19 @@ def _find_browser_item(
 
     With ``preset_uri``: walk every root (including plugins / packs / user
     library) looking for an exact ``uri`` match. With ``kind`` only:
-    walk the built-in roots only and match on the first ``is_loadable``
-    node whose ``name`` equals ``kind``. Display-name match is unreliable
-    across Live versions for some device classes — agents that need a
-    specific device should pass ``preset_uri`` (typically captured via
-    ``ableton_browser(action='at_path', ...)``).
+    walk the built-in roots, matching on the first ``is_loadable`` node
+    whose ``name`` equals ``kind``. If that fails, try a second pass with
+    ``kind`` translated through the class-name → display-name table
+    (``device_names``) — Live exposes built-ins under two name spaces
+    (``device.class_name`` returns ``Compressor2`` / ``Eq8`` /
+    ``StereoGain``, but the browser indexes them as ``Compressor`` /
+    ``EQ Eight`` / ``Utility``), and captured songs reach the planner
+    with the class name.
+
+    Agents loading non-built-in devices (plugins, presets) should always
+    pass ``preset_uri`` — captured via
+    ``ableton_browser(action='at_path', ...)`` — which is the
+    unambiguous load contract.
     """
     if preset_uri is not None:
         for root_name in _BROWSER_URI_ROOTS:
@@ -260,6 +269,9 @@ def _find_browser_item(
             if match is not None:
                 return match
         return None
+
+    # Pass 1: direct name match (third-party plugins + Live built-ins
+    # whose class name matches the browser display name).
     for root_name in _BROWSER_LOAD_ROOTS:
         root_node = getattr(browser, root_name, None)
         if root_node is None:
@@ -267,6 +279,17 @@ def _find_browser_item(
         match = _walk_for_name(root_node, kind, _BROWSER_WALK_DEPTH)
         if match is not None:
             return match
+
+    # Pass 2: try the class-name → display-name translation.
+    translated = device_names.class_name_to_display(kind)
+    if translated is not None and translated != kind:
+        for root_name in _BROWSER_LOAD_ROOTS:
+            root_node = getattr(browser, root_name, None)
+            if root_node is None:
+                continue
+            match = _walk_for_name(root_node, translated, _BROWSER_WALK_DEPTH)
+            if match is not None:
+                return match
     return None
 
 
@@ -327,10 +350,17 @@ def load_handler(
 
     item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
     if item is None:
-        criteria = (
-            f"preset_uri={preset_uri!r}" if preset_uri is not None
-            else f"kind={kind!r}"
-        )
+        if preset_uri is not None:
+            criteria = f"preset_uri={preset_uri!r}"
+        else:
+            translated = device_names.class_name_to_display(kind)
+            if translated is not None and translated != kind:
+                criteria = (
+                    f"kind={kind!r} (also tried translated display name "
+                    f"{translated!r} via device_names)"
+                )
+            else:
+                criteria = f"kind={kind!r}"
         raise ValueError(
             f"no loadable browser item found for {criteria}; verify via "
             "ableton_browser(action='tree', ...) or pass preset_uri from "

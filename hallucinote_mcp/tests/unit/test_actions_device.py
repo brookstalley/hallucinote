@@ -442,6 +442,88 @@ def test_load_preset_uri_searches_plugins_root(loaded_actions):
         "query:VST3#serum.vst3"
 
 
+def test_load_translates_class_name_to_display_name(loaded_actions):
+    """Wave-2 W2-7: real Live exposes ``device.class_name='Compressor2'`` but
+    the browser indexes it as ``'Compressor'``. Capture → push reaches the
+    handler with the class name; the handler falls back to the
+    device_names translation table when the direct name match misses.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Browser exposes ONLY the display name "Compressor" — no node named
+    # "Compressor2" exists. Without translation, this load would fail.
+    _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Compressor")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, (
+        f"Expected translation 'Compressor2' → 'Compressor' to succeed. "
+        f"Response: {resp.to_dict()}"
+    )
+    # The result preserves the requested kind (caller's identity).
+    assert resp.result["kind"] == "Compressor2"
+    # And the device IS loaded.
+    assert len(ctx.song.tracks[0].devices) == 1
+
+
+def test_load_translates_drum_group_device_to_drum_rack(loaded_actions):
+    """Sample table coverage: DrumGroupDevice → Drum Rack — exercised by
+    every drum kit push (falling-walking has one).
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "DrumGroupDevice"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["kind"] == "DrumGroupDevice"
+
+
+def test_load_passes_through_unmapped_class_name(loaded_actions):
+    """For names not in the translation table (third-party plugins,
+    Live built-ins that match in both name spaces), the original behavior
+    is preserved — direct display-name match.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Reverb", uri="query:Reverb")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Reverb"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["kind"] == "Reverb"
+
+
+def test_load_unknown_kind_error_mentions_translation(loaded_actions):
+    """When the translation table has a mapping but the browser still lacks
+    the translated node, the error reports BOTH the original kind and the
+    translated display name so the user knows we tried both paths.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # No "Compressor" or "Compressor2" node in the browser.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "Compressor2" in (resp.error or "")
+    assert "Compressor" in (resp.error or "")  # translated form mentioned
+    assert "device_names" in (resp.error or "")  # hint at the table
+
+
 def test_load_unknown_kind_errors_with_browser_hint(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     resp = dispatch(

@@ -603,7 +603,20 @@ def duplicate_to_arrangement_handler(
     Live's ``track.duplicate_clip_to_arrangement(clip, destination_time)``
     takes beats. The Hallucinote planner converts from bar-based song
     positions using its time-signature map before emit; the MCP layer
-    stays meter-agnostic. Returns the new arrangement clip's 1-based index.
+    stays meter-agnostic. Returns the new arrangement clip's 1-based
+    index.
+
+    Wave-2 W2-H / B-24: when the destination region overlaps an existing
+    arrangement clip, Live's duplicate semantics SPLIT the overlapped
+    clip at the destination position and emit a SECOND copy of the
+    overlapped clip starting at ``dest_beats + source_length`` (the
+    right-half-of-the-split, but as a NEW arrangement clip). Example:
+    Scaffold 0..32 + duplicate(source_length=4) at beat 16 produces
+    [Scaffold 0..32, DupSource 16..20, Scaffold 20..52] — the third
+    clip is the side effect. The handler now detects this case and
+    deletes the spurious clip post-call. Cleanup is best-effort: if
+    Live doesn't expose a per-clip deleter on this track, we report
+    the spurious clip in the result so the agent can act on it.
     """
     if start_beats < 0:
         raise ValueError(f"start_beats {start_beats} must be >= 0")
@@ -622,6 +635,7 @@ def duplicate_to_arrangement_handler(
         )
     source_clip = slot.clip
     dest_beats = float(start_beats)
+
     duplicate_fn = getattr(track, "duplicate_clip_to_arrangement", None)
     if duplicate_fn is None:
         raise NotImplementedError(
@@ -629,12 +643,17 @@ def duplicate_to_arrangement_handler(
             f"duplicate_clip_to_arrangement — older Live build, or the API "
             f"has moved"
         )
+
+    # Snapshot start_times before the duplicate so we can identify the
+    # spurious overlap-split side effect afterward.
+    before_starts: set[float] = {
+        round(float(c.start_time), 6) for c in track.arrangement_clips
+    }
     duplicate_fn(source_clip, dest_beats)
+
     # The new arrangement clip is whichever one starts at dest_beats.
-    # Break on first hit — under unlikely overlap (two clips at the same
-    # beat) we don't want to silently pick the wrong one; first-hit-then-stop
-    # is the closest-to-deterministic behavior the API gives us.
     new_index: int | None = None
+    expected_start_key = round(dest_beats, 6)
     for i, c in enumerate(track.arrangement_clips, start=1):
         if abs(float(c.start_time) - dest_beats) < 1e-6:
             new_index = i
@@ -644,12 +663,73 @@ def duplicate_to_arrangement_handler(
             "duplicate_to_arrangement: could not locate the new arrangement "
             "clip after Live's duplicate call"
         )
-    return {
+
+    # Identify any NEW arrangement clip whose start_time wasn't present
+    # before AND isn't our intended destination — that's Live's B-24
+    # split-and-shift side effect.
+    spurious_clips: list[Any] = []
+    for c in track.arrangement_clips:
+        start_key = round(float(c.start_time), 6)
+        if start_key in before_starts:
+            continue
+        if start_key == expected_start_key:
+            continue
+        spurious_clips.append(c)
+
+    spurious_removed: list[dict[str, Any]] = []
+    spurious_remaining: list[dict[str, Any]] = []
+    for c in spurious_clips:
+        info = {
+            "start_beats": float(c.start_time),
+            "length": float(c.length),
+            "name": str(getattr(c, "name", "")),
+        }
+        # Prefer Track.delete_clip(clip) — Live 12.4's per-clip deleter.
+        # Fall back to clip.delete() / clip.remove() if exposed.
+        deleter = getattr(track, "delete_clip", None)
+        deleted = False
+        if deleter is not None:
+            try:
+                deleter(c)
+                deleted = True
+            except (TypeError, RuntimeError):
+                pass
+        if not deleted:
+            per_clip = getattr(c, "delete", None) or getattr(c, "remove", None)
+            if per_clip is not None:
+                try:
+                    per_clip()
+                    deleted = True
+                except (TypeError, RuntimeError):
+                    pass
+        if deleted:
+            spurious_removed.append(info)
+        else:
+            spurious_remaining.append(info)
+
+    # Recompute new_index since the spurious-clip removal may have
+    # shifted positions in arrangement_clips (Live's collection is
+    # dense and sorted by start_time).
+    if spurious_removed:
+        for i, c in enumerate(track.arrangement_clips, start=1):
+            if abs(float(c.start_time) - dest_beats) < 1e-6:
+                new_index = i
+                break
+
+    result: dict[str, Any] = {
         "track_index": track_index,
         "source_clip_index": clip_index,
         "arrangement_clip_index": new_index,
         "start_beats": dest_beats,
     }
+    if spurious_removed:
+        result["spurious_clips_removed"] = spurious_removed
+    if spurious_remaining:
+        # Don't fail the call — the requested duplicate IS in place. But
+        # the agent should know the cleanup couldn't complete so it can
+        # decide whether to delete via a follow-up call.
+        result["spurious_clips_remaining"] = spurious_remaining
+    return result
 
 
 # ---------------------------------------------------------------------------

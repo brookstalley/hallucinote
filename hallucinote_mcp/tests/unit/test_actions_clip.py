@@ -116,9 +116,35 @@ class FakeTrack:
         copy = FakeArrangementClip(
             name=source.name, length=source.length, start_time=destination_beats
         )
-        # Live's duplicate copies the source's note array; mirror that.
         copy.notes = source.notes
+        # Live 12.4 B-24 side effect: when the destination region
+        # overlaps an existing arrangement clip, Live emits a SECOND
+        # copy of the overlapped clip starting at
+        # ``destination_beats + source.length`` (the right-half-of-the-split,
+        # but as a new arrangement clip). The original overlapped
+        # clip stays in place. Mirror that behavior so the handler's
+        # Wave-2 W2-H cleanup is exercised against a Live-faithful
+        # fake.
+        dest_end = destination_beats + source.length
+        for existing in list(self.arrangement_clips):
+            ex_start = existing.start_time
+            ex_end = existing.start_time + existing.length
+            # Overlap when destination intersects existing's interval.
+            if ex_start < dest_end and ex_end > destination_beats:
+                spurious = FakeArrangementClip(
+                    name=existing.name,
+                    length=existing.length,
+                    start_time=dest_end,
+                    kind=getattr(existing, "_kind", "midi"),
+                )
+                self.arrangement_clips.append(spurious)
+                # Live only splits ONE overlapping clip per call (the
+                # one whose interval contains destination_beats). Break
+                # after the first match.
+                break
         self.arrangement_clips.append(copy)
+        # Keep arrangement_clips sorted by start_time (Live's invariant).
+        self.arrangement_clips.sort(key=lambda c: c.start_time)
 
     def stop_all_clips(self) -> None:
         self.stop_all_clips_calls += 1
@@ -1043,6 +1069,173 @@ def test_duplicate_to_arrangement(loaded_actions):
     track = ctx.song.tracks[0]
     assert len(track.duplicate_calls) == 1
     assert track.duplicate_calls[0][1] == 32.0
+
+
+def test_duplicate_to_arrangement_cleans_up_spurious_split_clip(loaded_actions):
+    """Wave-2 W2-H / B-24: when the destination region overlaps an
+    existing arrangement clip, Live emits a spurious second copy of the
+    overlapped clip at ``dest_beats + source.length``. The handler
+    detects + deletes it.
+
+    Real-Live repro:
+      - Scaffold at 0..32 already in arrangement
+      - duplicate_to_arrangement(clip_index=N, start_beats=16) where
+        source slot N is a 4-beat DupSource clip
+      - Pre-fix result: [Scaffold 0..32, DupSource 16..20, Scaffold 20..52]
+      - Post-fix result: [Scaffold 0..32, DupSource 16..20] — the
+        third clip is deleted, and `spurious_clips_removed` reports it.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    # Existing Scaffold clip at 0..32.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Session source: a 4-beat DupSource clip.
+    dup_source = FakeClip(name="DupSource", length=4.0)
+    track.clip_slots[1].clip = dup_source
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # The requested duplicate lands at 16..20.
+    assert resp.result["start_beats"] == 16.0
+    # Arrangement state: just the original Scaffold + the requested DupSource.
+    names_and_starts = [
+        (c.name, c.start_time) for c in track.arrangement_clips
+    ]
+    assert names_and_starts == [
+        ("Scaffold", 0.0),
+        ("DupSource", 16.0),
+    ], f"unexpected arrangement state: {names_and_starts}"
+    # The handler reports the cleanup.
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert len(removed) == 1
+    assert removed[0]["name"] == "Scaffold"
+    assert removed[0]["start_beats"] == 20.0
+    assert removed[0]["length"] == 32.0
+
+
+def test_duplicate_to_arrangement_per_clip_delete_fallback(loaded_actions):
+    """When Track.delete_clip raises, the handler tries per-clip
+    ``clip.delete()`` as a fallback. Build a FakeTrack where
+    delete_clip raises but FakeArrangementClip exposes ``.delete()``,
+    and confirm the spurious clip still goes away (reported in
+    spurious_clips_removed, NOT spurious_clips_remaining).
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    # Override Track.delete_clip to raise — forces the fallback.
+    def _raise(_clip):
+        raise RuntimeError("simulated: Track.delete_clip not supported")
+    track.delete_clip = _raise
+
+    # Add per-clip delete() to the arrangement clips (FakeArrangementClip
+    # doesn't have one by default).
+    for c in track.arrangement_clips:
+        c.delete = lambda c=c: track.arrangement_clips.remove(c)
+
+    # The spurious clip will be added by duplicate; its `delete` won't
+    # exist yet. The handler's fallback chain uses getattr — and clips
+    # that lack the method end up in `spurious_clips_remaining`. To
+    # specifically exercise the fallback-success path, attach delete()
+    # to NEW arrangement clips too via a track-level hook. Simplest:
+    # monkey-patch the fake's duplicate to add `.delete` to new clips.
+    original_duplicate = track.duplicate_clip_to_arrangement.__func__
+
+    def patched_duplicate(self, source, dest):
+        original_duplicate(self, source, dest)
+        for c in self.arrangement_clips:
+            if not hasattr(c, "delete"):
+                c.delete = lambda c=c: self.arrangement_clips.remove(c)
+    track.duplicate_clip_to_arrangement = patched_duplicate.__get__(track)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert len(removed) == 1, (
+        f"per-clip delete fallback should have cleaned up the spurious "
+        f"clip. Result: {resp.result!r}"
+    )
+    assert "spurious_clips_remaining" not in resp.result
+
+
+def test_duplicate_to_arrangement_reports_undeletable_spurious(loaded_actions):
+    """When neither Track.delete_clip nor per-clip delete is exposed,
+    the handler reports the spurious clip in spurious_clips_remaining
+    so the agent knows the cleanup is incomplete (best-effort
+    contract).
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    # Remove both delete paths.
+    def _no_delete(_clip):
+        raise RuntimeError("simulated")
+    track.delete_clip = _no_delete
+    # Don't add .delete to the arrangement clips.
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # The requested clip IS in place.
+    assert resp.result["start_beats"] == 16.0
+    # The spurious clip is reported but not removed.
+    remaining = resp.result.get("spurious_clips_remaining") or []
+    assert len(remaining) == 1
+    assert remaining[0]["start_beats"] == 20.0
+    assert "spurious_clips_removed" not in resp.result
+
+
+def test_duplicate_to_arrangement_no_overlap_no_spurious(loaded_actions):
+    """When the destination doesn't overlap any existing clip, the
+    cleanup path is a no-op — no spurious_clips_removed key in the
+    response.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    # Existing clip well clear of the destination.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Far", length=4.0, start_time=64.0)
+    )
+    source = FakeClip(name="Loop", length=8.0)
+    track.clip_slots[0].clip = source
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 1, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert "spurious_clips_removed" not in resp.result
+    assert "spurious_clips_remaining" not in resp.result
 
 
 def test_duplicate_from_empty_slot_errors(loaded_actions):

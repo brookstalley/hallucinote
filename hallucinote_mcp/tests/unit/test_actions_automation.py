@@ -885,6 +885,84 @@ def test_clear_note_expression_raises_teaching_error(loaded_actions):
     assert "clear_all" in err  # points at the working alternative
 
 
+# W6-A: missing-arg validation precedes the gap raise — matches the
+# clip_cc branch's "validate cc_number first" precedent. Without these
+# tests, a future refactor could silently re-flip the precedence and
+# mask a missing-axis error behind a "not supported" error, giving the
+# agent two things to debug instead of one.
+
+
+def test_clear_note_expression_missing_axis_raises_value_error_first(loaded_actions):
+    """When note_expression args are missing, the missing-arg ValueError
+    fires BEFORE the gap NotImplementedError. The agent sees the actionable
+    error (missing axis) rather than the structural one (not supported)."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                # axis intentionally omitted
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "requires note_pitch" in err or "axis" in err
+    # Critically: the gap message must NOT be what surfaces.
+    assert "clear_all" not in err
+
+
+def test_clear_note_expression_invalid_axis_raises_value_error_first(loaded_actions):
+    """Same precedence applies to invalid (not just missing) args."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0, "axis": "volume",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "axis" in err and "volume" in err
+    assert "clear_all" not in err
+
+
+def test_write_envelope_note_expression_validation_uses_shared_helper(loaded_actions):
+    """Cross-check: write_envelope's note_expression branch produces the
+    SAME error text as clear's note_expression branch when args are
+    missing. Pins the shared-helper extraction — both paths route through
+    _require_note_expression_args."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                # axis intentionally omitted
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.0},
+                    {"time_beats": 1.0, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "requires note_pitch" in err
+
+
 # ---------- clear_all ----------
 
 

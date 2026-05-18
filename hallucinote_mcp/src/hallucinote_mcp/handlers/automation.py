@@ -179,6 +179,37 @@ def _find_parameter(device: Any, parameter_name: str) -> Any:
     )
 
 
+_NOTE_EXPRESSION_AXES = ("pitch", "pressure", "timbre")
+
+
+def _require_note_expression_args(
+    *,
+    note_pitch: int | None,
+    note_start_beats: float | None,
+    axis: str | None,
+) -> None:
+    """Validate the trio of args every ``note_expression`` path requires.
+
+    Called by ``write_envelope`` (where the gap is closed and the args
+    drive the actual ``envelope_for_note`` call) AND by ``clear`` (where
+    the gap is open today but the args ARE part of the target's address
+    — validating them up front matches ``clear``'s ``clip_cc`` precedent
+    which validates ``cc_number`` before raising the Live-API failure).
+
+    Raises ``ValueError`` on missing or invalid args; raises nothing on
+    a valid trio.
+    """
+    if note_pitch is None or note_start_beats is None or axis is None:
+        raise ValueError(
+            "target_kind='note_expression' requires note_pitch, "
+            "note_start_beats, and axis (one of 'pitch'|'pressure'|'timbre')"
+        )
+    if axis not in _NOTE_EXPRESSION_AXES:
+        raise ValueError(
+            f"axis {axis!r} not in {list(_NOTE_EXPRESSION_AXES)}"
+        )
+
+
 _CURVE_KINDS = ("linear", "hold", "fast", "slow")
 
 
@@ -331,15 +362,11 @@ def write_envelope_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "note_expression":
-        if note_pitch is None or note_start_beats is None or axis is None:
-            raise ValueError(
-                "target_kind='note_expression' requires note_pitch, "
-                "note_start_beats, and axis (one of 'pitch'|'pressure'|'timbre')"
-            )
-        if axis not in ("pitch", "pressure", "timbre"):
-            raise ValueError(
-                f"axis {axis!r} not in ['pitch', 'pressure', 'timbre']"
-            )
+        _require_note_expression_args(
+            note_pitch=note_pitch,
+            note_start_beats=note_start_beats,
+            axis=axis,
+        )
         clip = _require_clip(
             context, track_index=track_index, location=location,
             clip_index=clip_index,
@@ -508,6 +535,16 @@ def clear_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         return {"target_kind": target_kind, "cleared": True}
     if target_kind == "note_expression":
+        # Validate required addressing args FIRST — matches the clip_cc
+        # branch above (which validates cc_number before invoking Live)
+        # and matches write_envelope's note_expression branch. Without
+        # this, the gap raise below would mask "missing axis" errors
+        # behind "not supported," giving the agent two things to debug.
+        _require_note_expression_args(
+            note_pitch=note_pitch,
+            note_start_beats=note_start_beats,
+            axis=axis,
+        )
         # Live 12.4 has no documented per-axis clear for note-expression
         # envelopes through Clip.clear_envelope (which expects a Parameter-
         # shaped target, not the note-expression envelope target). Direct

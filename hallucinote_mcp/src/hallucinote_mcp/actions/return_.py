@@ -79,10 +79,16 @@ register(
             ),
         ),
         handler=return_handlers.create_handler,
-        example="ableton_return(action='create', name='A-Reverb')",
+        example="ableton_return(action='create', name='Reverb')",
         tips=(
             "Returns {return_index, name}. Live 11+ supports this directly; "
             "older builds raise a teaching error.",
+            "**Live rewrites every name write to '<slot-letter>-<value>'** "
+            "unconditionally (e.g. slot C + name='Reverb' → 'C-Reverb'; "
+            "slot C + name='C-Reverb' → 'C-C-Reverb'). Pass the SUFFIX "
+            "only — Live produces the full prefixed form. When Live "
+            "mutates the input, the result carries a 'requested_name' "
+            "field showing what you asked for.",
         ),
     )
 )
@@ -105,6 +111,12 @@ register(
         ),
         handler=return_handlers.rename_handler,
         example="ableton_return(action='rename', return_index=2, name='Plate')",
+        tips=(
+            "Subject to Live's unconditional slot-letter prefix on every "
+            "name write (same rule as create). Pass the SUFFIX only — "
+            "Live produces the full '<slot>-<value>' form. The result "
+            "carries 'requested_name' when Live mutates your input.",
+        ),
     )
 )
 

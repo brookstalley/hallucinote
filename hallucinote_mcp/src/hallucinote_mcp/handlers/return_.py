@@ -83,23 +83,29 @@ def create_handler(
     builds don't have this; if the attribute is missing we raise a teaching
     error explaining the gap.
 
-    **Name-clobber mitigation (W3-H / B-14)**: Live auto-prefixes the new
-    return's slot letter (e.g. ``"C-"``) onto whatever name we set at
-    create time — observed empirically 2026-05-17 / 2026-05-18 push
-    tests. Requesting ``name="TestReturn"`` produced ``"C-TestReturn"``;
-    requesting ``name="C-TestReturn"`` produced ``"C-C-TestReturn"``.
+    **Live's slot-letter prefix is unconditional (W3-H, real-Live verified
+    2026-05-18).** Live's API rewrites every ``ReturnTrack.name`` write
+    to ``"<slot-letter>-<user-input>"`` regardless of whether the input
+    already carries a letter-dash prefix. Observed empirically:
 
-    After the initial ``new_return.name = name`` write, this handler
-    reads back. If Live mutated the value (typically by prefixing), it
-    retries the write ONCE — empirically the second write often lands
-    without re-prefixing because Live's auto-prefix logic appears to
-    fire on first-name-set-after-create.
+      - ``create(name="TestReturn")`` on slot C  →  ``"C-TestReturn"``
+      - ``rename(slot=C, name="TestReturn")``    →  ``"C-TestReturn"``
+      - ``rename(slot=C, name="C-Plate")``       →  ``"C-C-Plate"``
+        (double prefix — Live does NOT detect or deduplicate)
 
-    If the second write still doesn't match, the handler accepts what
-    Live gave us and reports it in ``result["name"]``. The companion
-    :func:`rename_handler` is the recovery path: callers needing the
-    exact name can call ``ableton_return(action='rename')`` after
-    create. Pre-W3-H there was no MCP path to fix the name at all.
+    The handler reports both the raw request and Live's actual stored
+    value via ``name`` (what Live stored) and ``requested_name`` (what
+    we passed, only if it differs). Callers should pass the *suffix*
+    only (e.g. ``"Reverb"`` not ``"A-Reverb"``); Live will produce the
+    full ``"A-Reverb"`` form. Hallucinote's DB schema and capture path
+    should normalize on this rule.
+
+    An earlier W3-H attempt retried the name write once on mismatch,
+    speculating that Live's prefix logic might only fire on first-set.
+    Real-Live testing (2026-05-18) disproved that — Live re-prefixes on
+    every write — so the retry was dropped. The companion
+    :func:`rename_handler` is the recovery path (subject to the same
+    unconditional prefix rule).
     """
     song = context.song
     create_fn = getattr(song, "create_return_track", None)
@@ -110,17 +116,8 @@ def create_handler(
             "the planner will skip the create step once the return is linked."
         )
     new_return = create_fn()
-    final_name = new_return.name
     if name:
         new_return.name = name
-        final_name = new_return.name
-        if final_name != name:
-            # Live mutated our write (typically: auto-prefixed the slot
-            # letter). Try once more — empirically helps on Live 12.x
-            # where the prefix logic fires only on the first name write
-            # after create_return_track().
-            new_return.name = name
-            final_name = new_return.name
     # ``Song.create_return_track()`` always appends to the end of
     # ``return_tracks``. The new 1-based index is therefore deterministic.
     # We do NOT scan for identity: Live re-wraps API objects on each
@@ -128,7 +125,14 @@ def create_handler(
     # spuriously return False (same root cause as the track / scene /
     # arrangement create handlers).
     new_index = len(song.return_tracks)
-    return {"return_index": new_index, "name": final_name}
+    final_name = new_return.name
+    result: dict[str, Any] = {"return_index": new_index, "name": final_name}
+    # Surface Live's prefix mutation if the user passed an explicit name
+    # and Live's stored value differs. The caller can detect this
+    # programmatically without parsing the name string.
+    if name is not None and final_name != name:
+        result["requested_name"] = name
+    return result
 
 
 def rename_handler(
@@ -139,13 +143,22 @@ def rename_handler(
     W3-H — symmetric to ``ableton_track(rename)``. ``ReturnTrack.name``
     is a writable property on Live's LOM, so this is a synchronous
     one-call write. Mainly useful as the recovery path when
-    ``ableton_return(create, name=…)`` couldn't apply the name cleanly
-    due to Live's slot-letter auto-prefix (see ``create_handler`` for
-    the empirical behavior).
+    ``ableton_return(create, name=…)`` produced an unexpected name,
+    BUT subject to the same unconditional slot-letter prefix as
+    ``create_handler`` (see its docstring for the empirical findings).
+    Passing ``"Plate"`` to a slot-C return yields ``"C-Plate"``;
+    passing ``"C-Plate"`` yields ``"C-C-Plate"``.
+
+    Result includes ``requested_name`` when Live mutated the input, so
+    callers can detect and respond.
     """
     ret = _resolve_return(context, return_index)
     ret.name = name
-    return {"return_index": return_index, "name": ret.name}
+    final_name = ret.name
+    result: dict[str, Any] = {"return_index": return_index, "name": final_name}
+    if final_name != name:
+        result["requested_name"] = name
+    return result
 
 
 def delete_handler(

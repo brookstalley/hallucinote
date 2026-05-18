@@ -194,13 +194,15 @@ register(
             "instead of N. Indices reported are the position in "
             "song.cue_points at the time of each insert; call cue_list "
             "after the batch for the final mapping. "
-            "**Partial-state on error**: pre-validation (type/duplicate "
-            "checks) fails the whole batch with NO cues created. But if "
-            "an error occurs MID-LOOP (e.g. a cue collides with an "
-            "existing cue Live just acquired), prior entries in the "
-            "batch ARE persisted — the response is the per-cue error "
-            "string with no list of what landed. Call cue_list "
-            "afterward to discover the partial state."
+            "**Atomic precondition** (W5-C): pre-validation now includes "
+            "every position against ``last_event_time`` — if any cue is "
+            "past the arrangement extent, NO cues are written. Combined "
+            "with the existing type/duplicate checks this means range / "
+            "shape errors fail the whole batch atomically. **Mid-loop "
+            "errors** (e.g. a position collides with a cue Live "
+            "acquired between batches) can still leave partial state — "
+            "call cue_list afterward to discover what landed if the "
+            "response surfaces a per-cue error."
         ),
         params=(
             ParamSpec(

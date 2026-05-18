@@ -336,6 +336,19 @@ register(
         tips=(
             "Returns {arrangement_clip_index} — capture for subsequent "
             "arrangement-side property writes.",
+            "May also return spurious_clips_removed and/or "
+            "spurious_clips_remaining. Live's duplicate API occasionally "
+            "splits an existing arrangement clip that overlaps the "
+            "destination (the B-24 side effect — W2-H). The handler "
+            "detects these by tracking start_times before/after the "
+            "duplicate and attempts to delete any new clip whose start "
+            "isn't the requested dest_beats. Successfully deleted clips "
+            "are reported in spurious_clips_removed; clips the deleter "
+            "couldn't remove are listed in spurious_clips_remaining — "
+            "the requested duplicate IS in place either way, but the "
+            "agent should follow up to clean remaining spurious clips. "
+            "Both fields are omitted from the response when the duplicate "
+            "produced no spurious side effects (the common case).",
         ),
     )
 )

@@ -73,11 +73,21 @@ def _compute_content_fingerprint() -> str:
 
 
 def _hash_file(hasher: "hashlib._Hash", path: Path, rel: str) -> None:
-    """Mix one file's path + content into the running hash."""
+    """Mix one file's path + content into the running hash.
+
+    Line endings are normalized (CRLF → LF) before hashing so the
+    fingerprint is stable across Windows (or any git checkout with
+    autocrlf=true) and Unix. Without this, the same source tree
+    produces different fingerprints depending on how it was checked
+    out — and the handshake then surfaces a version mismatch for
+    semantically-identical code. Safe to apply because every entry
+    in :data:`_FINGERPRINT_PATHS` is Python source (no binaries).
+    """
     hasher.update(rel.encode("utf-8"))
     hasher.update(b"\x00")
     try:
-        hasher.update(path.read_bytes())
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        hasher.update(content)
     except OSError:
         hasher.update(b"<unreadable>")
     hasher.update(b"\x00")

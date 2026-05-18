@@ -321,6 +321,109 @@ def plan_pull_devices(
     return plan
 
 
+def plan_pull_device_parameters(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull per-device parameter values for every device
+    already in the DB on a linked track or return (W5-D).
+
+    The keystone for V1 round-trip parity: native Live instruments
+    built by parameter-dialing (Operator, Wavetable, etc.) round-trip
+    as default-state blanks today because the capture+pull side
+    records the device class but not its parameter values.
+    `plan_push_devices` already emits `set_parameter` per row in
+    `device_parameters` (push.py:958-965); once pull populates the
+    table, push closes the loop.
+
+    Emits one ``ableton_device(action='get_parameters', detail='full')``
+    per device. ``detail='full'`` is required for the ``min``/``max``/
+    ``is_enum`` fields the apply path uses to compute
+    ``value_normalized`` for the DB's [0, 1] storage form (enum and
+    constant-range params get NULL).
+
+    Iterates the SAME structural pass as `plan_pull_devices` — top-level
+    chain only (`position==0`); nested rack chains gated by gap #17b;
+    `master` tracks skipped. Operates on the device rows the previous
+    `plan_pull_devices` pull wrote, so callers should run device pull
+    first if the chain isn't already current.
+    """
+    plan = PullPlan()
+    any_emitted = False
+
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}): not linked; skipping "
+                "device parameters"
+            )
+            continue
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            if chain["position"] != 0:
+                continue  # nested rack chains gated by gap #17b
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_parameters",
+                        "track_index": track_at,
+                        "device_index": d["position"],
+                        "detail": "full",
+                    },
+                    key=f"device_parameters:{d['id']}",
+                    purpose=(
+                        f"pull parameters for device {d['kind']!r} "
+                        f"(pos {d['position']}) on track {t['name']!r}"
+                    ),
+                ))
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if return_at is None:
+            plan.warn(
+                f"return {r['name']!r} ({r['id']}): not linked; skipping "
+                "device parameters"
+            )
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_parameters",
+                        "return_index": return_at,
+                        "device_index": d["position"],
+                        "detail": "full",
+                    },
+                    key=f"device_parameters:{d['id']}",
+                    purpose=(
+                        f"pull parameters for device {d['kind']!r} "
+                        f"(pos {d['position']}) on return {r['name']!r}"
+                    ),
+                ))
+
+    if not any_emitted:
+        plan.warn(
+            "no devices on linked tracks or returns — device-parameter "
+            "pull will be empty (run plan_pull_devices first if you "
+            "expected devices)"
+        )
+    return plan
+
+
 def plan_pull_arrangement_clips(
     conn: sqlite3.Connection,
     *,
@@ -532,6 +635,42 @@ def _floats_differ(new: Any, existing: Any) -> bool:
     if existing is None:
         return True
     return abs(float(new) - float(existing)) > _FLOAT_EPS
+
+
+def _normalize_param_value(
+    value: float, min_val: float, max_val: float, is_enum: bool,
+) -> float | None:
+    """Map Live's raw ``value`` into the DB's [0, 1] form.
+
+    Returns ``None`` for enum/quantized params (schema CHECK allows
+    NULL there — there's no continuous form). Also returns ``None``
+    when ``min == max`` (constant-range params; the normalized form
+    is undefined). Otherwise returns ``(value - min) / (max - min)``
+    clamped into [0, 1] — Live's reported value can be marginally
+    outside the documented range due to float, but the schema CHECK
+    is strict on [0, 1] so we clamp at the boundary.
+    """
+    if is_enum:
+        return None
+    rng = max_val - min_val
+    if abs(rng) < 1e-9:
+        return None
+    norm = (value - min_val) / rng
+    return max(0.0, min(1.0, norm))
+
+
+def _normalized_values_match(
+    new: float | None, existing: Any,
+) -> bool:
+    """True iff ``new`` and ``existing`` represent the same
+    normalized parameter value (both None, or floats within
+    ``_FLOAT_EPS``). Mirrors :func:`_floats_differ`'s tolerance but
+    treats both-None as equal (the enum-param case)."""
+    if new is None and existing is None:
+        return True
+    if new is None or existing is None:
+        return False
+    return abs(float(new) - float(existing)) <= _FLOAT_EPS
 
 
 def _bool_db(v: Any) -> int | None:
@@ -1430,6 +1569,125 @@ def _apply_devices_for_parent(
         )
 
 
+def _apply_device_parameters_for_device(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff one device's parameter set against the probe payload (W5-D).
+
+    Identity is by parameter name (each device has unique parameter
+    names per the schema's ``UNIQUE(device_id, name)``). Diff enumerates
+    every state per the "detection enumerates every state" learning:
+
+      - in DB + in Live + same value         -> no-op
+      - in DB + in Live + value differs      -> upsert (mutator handles)
+      - in Live only                         -> create (upsert)
+      - in DB only                           -> remove
+
+    ``value_normalized`` is computed from Live's raw ``value`` against
+    the ``min``/``max`` returned by ``detail='full'``. Enum/quantized
+    params and constant-range params store ``value_normalized=NULL``
+    per the schema CHECK; ``value_display`` is always set.
+    """
+    device = Q.get_device(conn, device_id)
+    if device is None:
+        out.warnings.append(
+            f"device_parameters for device {device_id!r}: device row not "
+            "found; skipping (pull_devices may not have run)"
+        )
+        return
+
+    params_in = result.get("parameters")
+    if params_in is None:
+        out.warnings.append(
+            f"device_parameters for device {device_id!r} "
+            f"({device['kind']!r}): result missing 'parameters' field"
+        )
+        return
+
+    live_by_name: dict[str, dict[str, Any]] = {}
+    for entry in params_in:
+        if not isinstance(entry, dict):
+            out.warnings.append(
+                f"device_parameters for {device['kind']!r}: parameter "
+                f"entry is not a dict: {entry!r}; skipping"
+            )
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            out.warnings.append(
+                f"device_parameters for {device['kind']!r}: parameter "
+                "missing 'name'; skipping"
+            )
+            continue
+        live_by_name[name] = entry
+
+    db_rows = Q.get_device_parameters(conn, device_id)
+    db_by_name = {r["name"]: r for r in db_rows}
+
+    for name, entry in live_by_name.items():
+        raw_value = entry.get("value")
+        if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+            out.warnings.append(
+                f"device_parameters for {device['kind']!r}: parameter "
+                f"{name!r} has non-numeric value {raw_value!r}; skipping"
+            )
+            continue
+        value_display = entry.get("value_display")
+        if not isinstance(value_display, str):
+            value_display = ""
+        min_val = float(entry.get("min", 0.0))
+        max_val = float(entry.get("max", 1.0))
+        is_enum = bool(entry.get("is_enum", False))
+        value_normalized = _normalize_param_value(
+            float(raw_value), min_val, max_val, is_enum,
+        )
+
+        existing = db_by_name.get(name)
+        if existing is not None:
+            display_same = existing["value_display"] == value_display
+            norm_same = _normalized_values_match(
+                value_normalized, existing["value_normalized"],
+            )
+            if display_same and norm_same:
+                out.no_ops += 1
+                continue
+        M.set_device_parameter(
+            conn,
+            device_id=device_id,
+            name=name,
+            value_display=value_display,
+            value_normalized=value_normalized,
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        verb = "updated" if existing is not None else "added"
+        out.details.append(
+            f"device {device['kind']!r} param {name!r}: "
+            f"{verb} -> {value_display!r}"
+        )
+
+    for db_row in db_rows:
+        if db_row["name"] in live_by_name:
+            continue
+        M.remove_device_parameter(
+            conn,
+            device_id=device_id,
+            name=db_row["name"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"device {device['kind']!r} param {db_row['name']!r}: removed"
+        )
+
+
 def _apply_arrangement_clips_for_track(
     conn: sqlite3.Connection,
     *,
@@ -1932,6 +2190,7 @@ _HANDLERS = {
     "cue_points_list":           ("cue_points_list",           False),
     "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
+    "device_parameters":         ("device_parameters",         True),   # W5-D: per-device param values
     "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
     "track_session_clips":       ("track_session_clips",       True),   # V1 close-out C
     "clip_notes":                ("clip_notes",                True),   # V1 close-out D — gap #4 partial
@@ -2040,6 +2299,12 @@ def apply_pull_results(
                 _apply_devices_for_parent(
                     conn, session_id=session_id,
                     parent_kind="return", parent_id=db_id,
+                    result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "device_parameters":
+                _apply_device_parameters_for_device(
+                    conn, device_id=db_id,
                     result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )

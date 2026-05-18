@@ -85,10 +85,12 @@ def loaded_actions():
 # ---------- Schema sanity ----------
 
 
-_EXPECTED_RETURN_ACTIONS = {"help", "list", "info", "create", "delete", "set_property"}
+_EXPECTED_RETURN_ACTIONS = {
+    "help", "list", "info", "create", "rename", "delete", "set_property",
+}
 
 
-def test_return_registers_six_actions(loaded_actions):
+def test_return_registers_seven_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_return")}
     assert names == _EXPECTED_RETURN_ACTIONS
 
@@ -208,6 +210,154 @@ def test_create_return_handles_live_wrapper_recreation(loaded_actions):
     assert resp.ok is True, f"unexpected error: {resp.error!r}"
     assert resp.result["return_index"] == 3  # appended to a 2-return song
     assert resp.result["name"] == "C-Plate"
+
+
+# ---------- W3-H: name-clobber mitigation + rename action ----------
+
+
+class _PrefixingReturn:
+    """Mirrors Live 12.x's slot-letter auto-prefix on FIRST name write.
+
+    Empirical Live behavior observed 2026-05-17 / 2026-05-18: setting
+    ``new_return.name = "X"`` right after create_return_track() yields
+    ``"<slot>-X"``. A SUBSEQUENT name write lands cleanly (Live's
+    prefix logic appears to fire only on the first-name-set-after-create).
+    """
+
+    def __init__(self, slot_letter: str = "C"):
+        self._name = "Return"
+        self._slot_letter = slot_letter
+        self._writes_since_create = 0
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._writes_since_create += 1
+        if self._writes_since_create == 1:
+            # First write after create: Live's auto-prefix fires.
+            self._name = f"{self._slot_letter}-{value}"
+        else:
+            # Subsequent writes land cleanly.
+            self._name = value
+
+
+class _PrefixingSong:
+    def __init__(self):
+        self.return_tracks: list = [
+            FakeReturn(name="A-Reverb"),
+            FakeReturn(name="B-Delay"),
+        ]
+
+    def create_return_track(self):
+        new_ret = _PrefixingReturn(slot_letter="C")
+        self.return_tracks.append(new_ret)
+        return new_ret
+
+
+def test_create_return_retries_once_when_live_prefixes_name(loaded_actions):
+    """W3-H: when Live mutates the name on the first write, the handler
+    detects the mismatch and retries once. The second write lands
+    cleanly (empirical Live behavior — auto-prefix logic fires only on
+    first-set-after-create).
+    """
+    ctx = FakeCtx(song=_PrefixingSong())
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="create",
+            params={"name": "TestReturn"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    # Pre-W3-H: would return "C-TestReturn". Post-W3-H: handler's retry
+    # gets us back to "TestReturn".
+    assert resp.result["name"] == "TestReturn", (
+        f"create handler did not retry the name write after Live's "
+        f"first-write prefix clobber: got {resp.result['name']!r}"
+    )
+
+
+class _AlwaysPrefixingReturn(_PrefixingReturn):
+    """Worst-case: Live prefixes on EVERY write. The handler retries
+    but the result is still prefixed. We accept that and report what
+    Live gave us — the rename action is the explicit recovery path."""
+
+    @_PrefixingReturn.name.setter
+    def name(self, value: str) -> None:
+        # type:ignore[no-redef]
+        self._name = f"{self._slot_letter}-{value}"
+
+
+class _AlwaysPrefixingSong:
+    def __init__(self):
+        self.return_tracks: list = [FakeReturn(name="A-R"), FakeReturn(name="B-D")]
+
+    def create_return_track(self):
+        new_ret = _AlwaysPrefixingReturn(slot_letter="C")
+        self.return_tracks.append(new_ret)
+        return new_ret
+
+
+def test_create_return_accepts_final_name_when_retry_does_not_help(loaded_actions):
+    """W3-H: when retry doesn't undo Live's prefix, the handler accepts
+    what Live gave us and reports it in result["name"]. The caller can
+    detect the mismatch and use the rename action to fix it explicitly."""
+    ctx = FakeCtx(song=_AlwaysPrefixingSong())
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="create",
+            params={"name": "TestReturn"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # Live always prefixed; handler returns what Live gave us. Caller
+    # who needs the clean name can call rename next.
+    assert resp.result["name"] == "C-TestReturn"
+
+
+def test_rename_return_writes_name(loaded_actions):
+    """W3-H: new ``rename`` action — the recovery path when create's
+    name-clobber retry didn't fully resolve, or when the user just wants
+    to rename a return mid-session."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="rename",
+            params={"return_index": 1, "name": "Plate"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result == {"return_index": 1, "name": "Plate"}
+    assert ctx.song.return_tracks[0].name == "Plate"
+
+
+def test_rename_return_out_of_range(loaded_actions):
+    """Range check fires before the name write — teaching error, no mutation."""
+    ctx = FakeCtx()
+    pre_names = [r.name for r in ctx.song.return_tracks]
+    resp = dispatch(
+        Request(
+            tool="ableton_return",
+            action="rename",
+            params={"return_index": 99, "name": "Whatever"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "99" in (resp.error or "")
+    # No mutation despite the failed call.
+    assert [r.name for r in ctx.song.return_tracks] == pre_names
+
+
+# ---------- create teaching error ----------
 
 
 def test_create_return_raises_if_live_api_missing(loaded_actions):

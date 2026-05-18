@@ -82,6 +82,24 @@ def create_handler(
     Live 11+ exposes ``Song.create_return_track()`` (no args). Older Live
     builds don't have this; if the attribute is missing we raise a teaching
     error explaining the gap.
+
+    **Name-clobber mitigation (W3-H / B-14)**: Live auto-prefixes the new
+    return's slot letter (e.g. ``"C-"``) onto whatever name we set at
+    create time — observed empirically 2026-05-17 / 2026-05-18 push
+    tests. Requesting ``name="TestReturn"`` produced ``"C-TestReturn"``;
+    requesting ``name="C-TestReturn"`` produced ``"C-C-TestReturn"``.
+
+    After the initial ``new_return.name = name`` write, this handler
+    reads back. If Live mutated the value (typically by prefixing), it
+    retries the write ONCE — empirically the second write often lands
+    without re-prefixing because Live's auto-prefix logic appears to
+    fire on first-name-set-after-create.
+
+    If the second write still doesn't match, the handler accepts what
+    Live gave us and reports it in ``result["name"]``. The companion
+    :func:`rename_handler` is the recovery path: callers needing the
+    exact name can call ``ableton_return(action='rename')`` after
+    create. Pre-W3-H there was no MCP path to fix the name at all.
     """
     song = context.song
     create_fn = getattr(song, "create_return_track", None)
@@ -92,8 +110,17 @@ def create_handler(
             "the planner will skip the create step once the return is linked."
         )
     new_return = create_fn()
+    final_name = new_return.name
     if name:
         new_return.name = name
+        final_name = new_return.name
+        if final_name != name:
+            # Live mutated our write (typically: auto-prefixed the slot
+            # letter). Try once more — empirically helps on Live 12.x
+            # where the prefix logic fires only on the first name write
+            # after create_return_track().
+            new_return.name = name
+            final_name = new_return.name
     # ``Song.create_return_track()`` always appends to the end of
     # ``return_tracks``. The new 1-based index is therefore deterministic.
     # We do NOT scan for identity: Live re-wraps API objects on each
@@ -101,7 +128,24 @@ def create_handler(
     # spuriously return False (same root cause as the track / scene /
     # arrangement create handlers).
     new_index = len(song.return_tracks)
-    return {"return_index": new_index, "name": new_return.name}
+    return {"return_index": new_index, "name": final_name}
+
+
+def rename_handler(
+    context: LiveContext, *, return_index: int, name: str
+) -> dict[str, Any]:
+    """Set a return track's display name.
+
+    W3-H — symmetric to ``ableton_track(rename)``. ``ReturnTrack.name``
+    is a writable property on Live's LOM, so this is a synchronous
+    one-call write. Mainly useful as the recovery path when
+    ``ableton_return(create, name=…)`` couldn't apply the name cleanly
+    due to Live's slot-letter auto-prefix (see ``create_handler`` for
+    the empirical behavior).
+    """
+    ret = _resolve_return(context, return_index)
+    ret.name = name
+    return {"return_index": return_index, "name": ret.name}
 
 
 def delete_handler(

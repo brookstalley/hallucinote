@@ -98,23 +98,12 @@ If `plan.calls` is empty, skip to the next phase. Common reasons: nothing in the
 
 For each `call` in `plan.calls`:
 
-- `call.tool` always starts with `ableton_` (or one of two emulator names — see below).
+- `call.tool` always starts with `ableton_` — every emitter routes to a real `hallucinote-mcp` tool. (As of W5-A there are no emulator placeholders — `mcp_names.ALIASES_TODAY` is empty.)
 - Route to the matching MCP namespace: `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "create", ...}`).
 - On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
 - On failure (MCP raises), build `{"key": call.key, "ok": false, "tool": call.tool, "error": "<message>"}` and continue to the next call. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
 
-**Emulator placeholders (planner-bug fallback, NOT a real MCP gap).** Two tools are emitted by the planner today:
-- `write_tempo_point`
-- `write_time_signature_point`
-
-These names predate the current MCP surface. **MCP actually exposes the right tools** — bar-1 tempo/signature go through `ableton_session(action='set_tempo', bpm=...)` and `ableton_session(action='set_signature', numerator=, denominator=)`; multi-bar automation goes through `ableton_automation(action='write_envelope', target_kind='song_tempo'|'song_signature')`. The planner wasn't updated when the MCP surface grew (see backlog entry "plan_push_tempo_map / plan_push_time_signature_map emit stale emulator names").
-
-**Skill workaround until the planner is fixed:** when you see `write_tempo_point` or `write_time_signature_point` in a phase plan:
-- For bar 1, invoke `ableton_session(action='set_tempo', bpm=<bpm>)` (or `set_signature` with the n/d) directly.
-- Surface the planner's call with `ok: false, error: "planner emits stale emulator name; agent dispatched ableton_session directly"`.
-- Multi-bar automation: today, surface `{"ok": false, "error": "planner emits stale name; multi-bar tempo/sig automation needs planner rewrite to use ableton_automation(target_kind='song_tempo'|'song_signature')"}` and continue.
-
-The DB still records the intended state regardless; the planner fix lands in a future wave.
+**Tempo / signature: bar-1 only.** Live's MCP exposes `ableton_session(set_tempo)` and `set_signature` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (`ableton_automation` has no `song_tempo` / `song_signature` `target_kind` — see `hallucinote_mcp/.../guides/gaps.md`). The planner emits `ableton_session(set_tempo/set_signature)` for the bar-1 row of each map and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
 
 **3c. Assemble + apply.**
 
@@ -143,8 +132,8 @@ Each phase's planner emits a known set of MCP calls. This map lets you sanity-ch
 
 | Phase | Tool(s) emitted |
 |---|---|
-| `tempo_map` | `write_tempo_point` (stale name — substitute `ableton_session(set_tempo)` for bar 1; skip multi-bar) |
-| `time_signature_map` | `write_time_signature_point` (stale name — substitute `ableton_session(set_signature)` for bar 1; skip multi-bar) |
+| `tempo_map` | `ableton_session(action='set_tempo')` for the bar-1 row; non-bar-1 rows skipped with a warn (MCP gap) |
+| `time_signature_map` | `ableton_session(action='set_signature')` for the bar-1 row; non-bar-1 rows skipped with a warn (MCP gap) |
 | `tracks` | `ableton_track(action='create')` |
 | `returns` | `ableton_return(action='create')` |
 | `clips` | `ableton_clip(action='create' / 'replace_notes')` |

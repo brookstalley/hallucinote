@@ -1,19 +1,23 @@
 """Tool-name aliases bridging planner-canonical names to currently-callable
 emulator placeholders.
 
-Post-Wave-3 (2026-05-18): only TWO aliases remain — both for genuine Live
-API gaps where no single MCP primitive exists. The other entries that
-used to live here were either absorbed into unified-tool actions (most of
-Wave M) or decomposed at the planner level (W3-D dropped
-``batch_arrangement_layout``; the planner now emits N
-``ableton_clip(duplicate_to_arrangement)`` calls directly).
+As of W5-A (2026-05-18): the alias table is empty. The two prior entries
+(``write_tempo_point`` / ``write_time_signature_point``) were retired when
+``plan_push_tempo_map`` / ``plan_push_time_signature_map`` were rewritten
+to emit ``ableton_session(set_tempo)`` / ``ableton_session(set_signature)``
+for bar-1 rows directly. Multi-bar tempo / meter automation remains a real
+MCP gap (no ``song_tempo`` / ``song_signature`` ``target_kind`` on
+``ableton_automation`` — see ``hallucinote_mcp/.../guides/gaps.md``) — the
+planner warns and skips those rows; no ToolCall is emitted, so no alias
+is needed.
 
-Each remaining entry resolves to an ``_emulate_*`` placeholder. The agent
-recognizes the prefix as a signal that the operation is multi-step or
-Live-gap-blocked and consults the planner's emitted ``purpose`` /
-``notes`` for what to do.
+The module + :func:`resolve` are kept as the seam: if a future Live gap
+forces a multi-call decomposition that can't be expressed as a single
+canonical MCP tool, this is where the seam lives.
 
-History (per Wave M-* / Wave W2-* / Wave W3-* sessions in `.session-reflected`):
+History (per Wave M-* / Wave W2-* / Wave W3-* / W5-* sessions in
+``.session-reflected``):
+
 - M-1: dropped master volume / pan aliases (unified ableton_session).
 - M-2: dropped 8 entries — track + return mixer state + return creation.
 - M-3: dropped set_clip_notes (unified ableton_clip(replace_notes)).
@@ -23,10 +27,13 @@ History (per Wave M-* / Wave W2-* / Wave W3-* sessions in `.session-reflected`):
   (unified ableton_clip(delete, location='session')), create_midi_track_with
   (unified ableton_track(create, kind='midi', name=...)).
 - M+1-1: dropped replace_session_clip (atomic single-call retarget).
-- W3-B: dropped `create_cue_point` — planner emits batched
+- W3-B: dropped ``create_cue_point`` — planner emits batched
   ``ableton_arrangement(cue_create_batch)`` directly.
-- W3-D: dropped `batch_arrangement_layout` — planner decomposes into
+- W3-D: dropped ``batch_arrangement_layout`` — planner decomposes into
   N ``ableton_clip(duplicate_to_arrangement)`` calls itself.
+- W5-A: dropped ``write_tempo_point`` and ``write_time_signature_point`` —
+  planner emits ``ableton_session(set_tempo/set_signature)`` for bar-1
+  directly; multi-bar is a real MCP gap, planner warns + skips.
 
 The :data:`ALIASES_TODAY` size is part of the wave-coverage contract —
 :func:`test_known_emulators_allowlist_stays_audited` in
@@ -36,19 +43,7 @@ silent new emulator can't sneak in.
 from __future__ import annotations
 
 # planner emits (canonical) -> currently-callable name
-ALIASES_TODAY: dict[str, str] = {
-    # Tempo automation per (bar, beat) — Live exposes the global
-    # `Song.tempo` and per-bar automation envelopes, but not a single
-    # "set tempo at this bar" primitive. The emulator decomposes into
-    # ableton_session(action='set_tempo') for single-point + envelope
-    # writes for ramps; multi-point ramps remain a hard MCP gap until
-    # the envelope read surface lands.
-    "write_tempo_point": "_emulate_write_tempo_point",
-    # Arrangement-level meter changes — no Live API primitive exists.
-    # Canonical args: {bar, beat, numerator: int, denominator: int}.
-    # Hard MCP gap; emulator no-ops with a warn.
-    "write_time_signature_point": "_emulate_write_time_signature_point",
-}
+ALIASES_TODAY: dict[str, str] = {}
 
 
 def resolve(canonical: str) -> str:

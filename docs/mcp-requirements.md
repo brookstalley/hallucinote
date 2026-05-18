@@ -152,22 +152,35 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 
 ## Priority 2 — Score-half push gaps (chunk 2)
 
-Surfaced by chunk 2 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
+Surfaced by chunk 2 of the DB-as-source-of-truth migration. Post-W5-A
+(2026-05-18) the bar-1 case is solved via the existing
+`ableton_session(set_tempo)` / `set_signature` surface — the planner
+emits those directly. The aspirational entries below cover the
+remaining multi-bar automation gap; until they land, the planner
+warns and skips non-bar-1 rows (see
+`hallucinote_mcp/.../guides/gaps.md` "Arrangement-level tempo /
+signature automation").
 
 ### Tempo automation at a (bar, beat)
 
-**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement position, and no way to express linear ramps between points.
+**Current state:** `ableton_session(set_tempo, bpm=...)` sets Live's
+global `Song.tempo` (bar-1 value). Per-bar tempo automation is not
+exposed — `ableton_automation` has no `song_tempo` `target_kind`.
 
 **Required:**
-- `write_tempo_point(bar: int, beat: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope. `bar` is 1-based and `beat` is 0-based-within-bar, matching `create_cue_point`.
-- For single-point / `hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
+- A `song_tempo` `target_kind` on `ableton_automation(write_envelope, ...)` so
+  per-bar tempo points and ramps can be authored via the unified envelope
+  surface (mirror of how `mixer_volume` etc. work today).
 
 ### Arrangement-level time signature changes
 
-**Current state:** No MCP tool writes meter-change events on the arrangement. The Live API exposes time-signature markers, but they're not surfaced.
+**Current state:** `ableton_session(set_signature, numerator=, denominator=)`
+sets Live's global meter. Per-bar meter automation is not exposed — no
+`song_signature` `target_kind` on `ableton_automation`.
 
 **Required:**
-- `write_time_signature_point(bar: int, beat: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline. `bar` 1-based, `beat` 0-based-within-bar.
+- A `song_signature` `target_kind` on `ableton_automation(write_envelope, ...)`
+  so the time-signature timeline can be authored programmatically.
 
 ### Section markers (informational)
 

@@ -480,40 +480,40 @@ def plan_push_tempo_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_tempo_point` calls — one per row in `tempo_map`.
+    """Emit `ableton_session(set_tempo)` for the bar-1 row; warn for the rest.
 
-    Positions are emitted as `(bar, beat)` matching the rest of the MCP surface
-    (see mcp-requirements.md). The (bar, beat) pair is computed via the song's
-    time_signature_map (defaulting to 4/4 if empty, with a warning).
+    Live exposes `Song.tempo` as a single global value (settable via
+    `ableton_session(action='set_tempo')`). Per-bar tempo automation is a
+    real MCP gap — `ableton_automation` has no `song_tempo` target_kind
+    (see hallucinote_mcp/.../guides/gaps.md "Arrangement-level tempo /
+    signature automation"). Any tempo_map row at start_bar != 1.0 is
+    therefore skipped with a warn.
     """
     plan = PushPlan()
     rows = Q.get_tempo_map(conn, song_id)
     if not rows:
         plan.warn("no tempo_map rows for this song; nothing to push")
         return plan
-    ts_points = Q.get_time_signature_map(conn, song_id)
-    if not ts_points:
-        plan.warn(
-            "no time_signature_map; assuming 4/4 for tempo-map bar/beat split"
-        )
-    for r in rows:
-        bar, beat = _split_bar(r["start_bar"], ts_points)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_tempo_point",
-            args={
-                "bar": bar,
-                "beat": beat,
-                "bpm": r["tempo_bpm"],
-                "ramp": r["ramp"],
-            },
-            key=f"tempo_point:{r['id']}",
-            purpose=f"set tempo to {r['tempo_bpm']:g} bpm at bar {r['start_bar']:g} "
-                    f"(ramp={r['ramp']})",
+            tool="ableton_session",
+            args={"action": "set_tempo", "bpm": bar_1["tempo_bpm"]},
+            key=f"tempo_point:{bar_1['id']}",
+            purpose=f"set global tempo to {bar_1['tempo_bpm']:g} bpm",
         ))
-    if len(rows) > 1 or any(r["ramp"] == "linear" for r in rows):
+    else:
         plan.warn(
-            "multi-point or ramped tempo maps require full tempo-automation MCP "
-            "support (see docs/mcp-requirements.md, P2)"
+            "tempo_map has no row at start_bar=1.0 — global tempo not set "
+            "(Live's set_tempo only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar tempo automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_tempo' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 tempo_map rows skipped"
         )
     return plan
 
@@ -523,37 +523,47 @@ def plan_push_time_signature_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_time_signature_point` calls — one per meter change.
+    """Emit `ableton_session(set_signature)` for the bar-1 row; warn the rest.
 
-    Live exposes no MCP tool for arrangement-level meter changes today; the
-    planner produces canonical (bar, beat, numerator, denominator) calls and
-    warns about the MCP gap so apply can no-op until support lands.
+    Symmetric with `plan_push_tempo_map`. Live's `Song.signature_numerator` /
+    `signature_denominator` are the global meter (settable via
+    `ableton_session(action='set_signature')`). Per-bar meter automation
+    is a real MCP gap — `ableton_automation` has no `song_signature`
+    target_kind (see hallucinote_mcp/.../guides/gaps.md).
     """
     plan = PushPlan()
     rows = Q.get_time_signature_map(conn, song_id)
     if not rows:
         plan.warn("no time_signature_map rows for this song; nothing to push")
         return plan
-    for r in rows:
-        # A time-signature point's own position is in its own meter context —
-        # use `rows` (the map itself) as the time-sig reference.
-        bar, beat = _split_bar(r["start_bar"], rows)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_time_signature_point",
+            tool="ableton_session",
             args={
-                "bar": bar,
-                "beat": beat,
-                "numerator": r["numerator"],
-                "denominator": r["denominator"],
+                "action": "set_signature",
+                "numerator": bar_1["numerator"],
+                "denominator": bar_1["denominator"],
             },
-            key=f"time_signature_point:{r['id']}",
-            purpose=f"set meter to {r['numerator']}/{r['denominator']} "
-                    f"at bar {r['start_bar']:g}",
+            key=f"time_signature_point:{bar_1['id']}",
+            purpose=(
+                f"set global meter to "
+                f"{bar_1['numerator']}/{bar_1['denominator']}"
+            ),
         ))
-    plan.warn(
-        "time-signature change writes are an MCP gap "
-        "(see docs/mcp-requirements.md, P2)"
-    )
+    else:
+        plan.warn(
+            "time_signature_map has no row at start_bar=1.0 — global meter "
+            "not set (Live's set_signature only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar meter automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_signature' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped"
+        )
     return plan
 
 
@@ -1972,8 +1982,8 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # binding via _LINK_KINDS). W3-B dropped per-cue `cue_point` in
     # favor of the single batched `cue_batch:` key.
     "cue_batch",             # ableton_arrangement(cue_create_batch) — handler returns list of per-cue results
-    "tempo_point",           # write_tempo_point (emulator placeholder)
-    "time_signature_point",  # write_time_signature_point (emulator placeholder)
+    "tempo_point",           # ableton_session(set_tempo) for bar-1 (W5-A)
+    "time_signature_point",  # ableton_session(set_signature) for bar-1 (W5-A)
     # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
     # ableton_track(action='set_property') call. The key prefixes here stay
     # the same (volume/pan/mute/solo/arm/color) so apply matches by what the

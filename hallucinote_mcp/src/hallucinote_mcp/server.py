@@ -7,21 +7,36 @@ Each ``@mcp.tool()`` is a thin wrapper that:
      Remote Script over TCP via ``client.send``.
   4. Returns the structured response (success or teaching error) as a dict.
 
-The action surface is empty in M-0 — only ``action='help'`` works on every
-tool. Subsequent chunks populate the registry; this file does not change
-when new actions land. That's the property we wanted from declarative-first
-dispatch.
+Wire shape: each tool's input schema is synthesized at registration time
+from the registry — ``action`` plus the *flattened* union of every action's
+params on that tool, all keyword-only and optional. That makes the wire
+shape match the docs (``ableton_session(action='set_tempo', bpm=132.0)``)
+and removes the agent-hostile ``params={...}`` envelope that pydantic's
+``extra='ignore'`` silently demanded under the old ``(action, params)``
+wrapper.
 """
 from __future__ import annotations
 
+import inspect
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from . import client, schema
 from .dispatcher import dispatch
 from .wire import Request
+
+
+# Param.type → Python type used for FastMCP's pydantic-derived JSONSchema.
+_PARAM_TYPE_MAP: dict[str, type] = {
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "list": list,
+    "dict": dict,
+}
 
 
 logger = logging.getLogger("hallucinote_mcp")
@@ -149,17 +164,86 @@ def handle_tool_call(tool: str, action: str, params: dict[str, Any] | None = Non
     return remote_response.to_dict()
 
 
+def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:
+    """Union of every param across every action on this tool.
+
+    Each unique param name appears once. Ordered alphabetically for
+    deterministic schema generation (FastMCP/pydantic hashes the field
+    order into the generated JSONSchema title — stability matters for
+    snapshot tests and human review).
+
+    If two actions on the same tool define a param with the same name
+    but different ``type``, we widen by raising — callers should rename
+    one of the params (no collisions exist today; the check is a
+    guardrail against future divergence).
+    """
+    seen: dict[str, schema.ParamSpec] = {}
+    for action in schema.actions_for(tool_name):
+        if action.name == "help":
+            continue
+        for spec in action.params:
+            existing = seen.get(spec.name)
+            if existing is None:
+                seen[spec.name] = spec
+                continue
+            if existing.type != spec.type:
+                raise ValueError(
+                    f"Param type conflict on {tool_name}: "
+                    f"'{spec.name}' is {existing.type} in one action "
+                    f"and {spec.type} in another — rename one to avoid "
+                    f"a flat-schema collision."
+                )
+    return [seen[name] for name in sorted(seen)]
+
+
 def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     """Register one of the ten unified tools on the FastMCP instance.
 
-    The wrapper signature is ``(action: str, params: dict | None = None)`` —
-    deliberately minimal, since the per-action schema is discoverable via
-    ``action='help'`` and the dispatcher does the validation.
+    The wrapper exposes a *flat* signature: ``(action, **params)`` where each
+    param across every action on this tool becomes a keyword-only argument
+    (all optional, since they're action-specific). FastMCP introspects the
+    signature to build the tool's JSONSchema, so the wire shape Claude Code
+    sees matches every example string (``ableton_session(action='set_tempo',
+    bpm=132.0)``).
+
+    Per-action validation still happens inside the dispatcher — this wrapper
+    only widens the wire surface. Unknown params on a given action surface
+    as the dispatcher's existing teaching error.
     """
+    params = _collect_tool_params(tool_name)
 
-    def wrapper(action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        return handle_tool_call(tool_name, action, params)
+    sig_params = [
+        inspect.Parameter(
+            "action",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=str,
+        )
+    ]
+    annotations: dict[str, Any] = {"action": str, "return": dict}
+    for spec in params:
+        py_type = _PARAM_TYPE_MAP.get(spec.type, Any)
+        sig_params.append(
+            inspect.Parameter(
+                spec.name,
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=Optional[py_type],
+            )
+        )
+        annotations[spec.name] = Optional[py_type]
 
+    def wrapper(**kwargs: Any) -> dict[str, Any]:
+        action = kwargs.pop("action")
+        # Drop None-valued kwargs — they represent "not supplied" by the
+        # MCP client. Real None payloads aren't a thing in our action
+        # surface (the dispatcher validates required fields below).
+        passed = {k: v for k, v in kwargs.items() if v is not None}
+        return handle_tool_call(tool_name, action, passed)
+
+    wrapper.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        sig_params, return_annotation=dict
+    )
+    wrapper.__annotations__ = annotations
     wrapper.__name__ = tool_name
     wrapper.__doc__ = (
         f"{summary}\n\n"

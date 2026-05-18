@@ -54,7 +54,7 @@ To wire up the MCP server and the Ableton Remote Script in one step, open Claude
 
 > *"install the Hallucinote MCP plugin"*
 
-Claude will locate and follow the install skill at `hallucinote_mcp/src/hallucinote_mcp/skills/ableton-install-mcp/SKILL.md`, which:
+Claude will locate and follow the install skill at `.claude/skills/ableton-install-mcp/SKILL.md`, which:
 
 1. Copies the Remote Script into Live's User Library.
 2. Writes `.mcp.json` with the right command shape for your environment.

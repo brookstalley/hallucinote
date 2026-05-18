@@ -29,6 +29,8 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from hallucinote.capture import strip_return_slot_prefix
+
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
@@ -870,8 +872,13 @@ def _apply_return_info(
     pan_in = result.get("panning", result.get("pan"))
 
     changes: dict[str, Any] = {}
-    if "name" in result and result["name"] != ret_row["name"]:
-        changes["name"] = result["name"]
+    if "name" in result:
+        # W4-C: Live unconditionally prefixes return names with `<slot-letter>-`
+        # (W3-H 2026-05-18). The DB stores SUFFIX-only; strip the prefix
+        # before diffing so the no-op case actually no-ops.
+        stripped = strip_return_slot_prefix(result["name"])
+        if stripped != ret_row["name"]:
+            changes["name"] = stripped
     if "volume" in result and _floats_differ(result["volume"], ret_row["volume"]):
         changes["volume"] = float(result["volume"])
     if pan_in is not None and _floats_differ(pan_in, ret_row["pan"]):
@@ -1014,14 +1021,17 @@ def _apply_track_sends(
     }
     seen_names: set[str] = set()
 
-    for return_name, level in result.items():
+    for raw_name, level in result.items():
         if level is None:
             continue
+        # W4-C: Live's send map is keyed by prefixed return names
+        # (`A-Reverb`); the DB stores suffix-only, so strip on lookup.
+        return_name = strip_return_slot_prefix(raw_name)
         seen_names.add(return_name)
         ret_row = Q.get_return_by_name(conn, song_id=song_id, name=return_name)
         if ret_row is None:
             out.warnings.append(
-                f"track {track_row['name']!r} send -> {return_name!r}: "
+                f"track {track_row['name']!r} send -> {raw_name!r}: "
                 "no matching return in DB; skipping (V1 does not auto-create)"
             )
             continue

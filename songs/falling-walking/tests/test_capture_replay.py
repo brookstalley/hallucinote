@@ -39,9 +39,11 @@ def test_replay_falling_walking_snapshot(conn):
     # Master volume from the snapshot.
     master = next(t for t in tracks if t["kind"] == "master")
     assert master["volume"] == pytest.approx(0.85)
-    # 2 returns.
+    # 2 returns. W4-C: Live's `<letter>-` slot prefix is stripped on
+    # capture so the DB stores SUFFIX-only names (the snapshot still
+    # carries Live's prefixed shape).
     returns = Q.get_returns_for_song(conn, sid)
-    assert {r["name"] for r in returns} == {"A-Reverb", "B-Delay"}
+    assert {r["name"] for r in returns} == {"Reverb", "Delay"}
     # 8 audible tracks × 2 returns = 16 send rows.
     sends = Q.get_sends_for_song(conn, sid)
     assert len(sends) == 16
@@ -49,7 +51,7 @@ def test_replay_falling_walking_snapshot(conn):
     # Chunk 4a: device chains + devices + dialed params replayed.
     # The 4 placeholder tracks ("1-MIDI", "2-MIDI", "3-Audio", "4-Audio") have
     # no `devices` array; the 8 instrumented tracks each get one top-level
-    # chain. Returns A-Reverb and B-Delay also each get one chain. Total:
+    # chain. Returns Reverb and Delay also each get one chain. Total:
     # 8 + 2 = 10 chains.
     chains = conn.execute(
         "SELECT COUNT(*) FROM device_chains"

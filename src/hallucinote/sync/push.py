@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from hallucinote.capture import strip_return_slot_prefix
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
@@ -1790,6 +1791,150 @@ def plan_push_song(
             "plan_push_song phase order drifted from _PHASE_NAMES; update both."
         )
     return list(phases)
+
+
+# ---------------------------------------------------------------------------
+# Probe-and-link: bind existing Live tracks/returns to DB rows by name
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProbeAndLinkResult:
+    """Outcome of :func:`probe_and_link`. The skill displays the
+    matched / unmatched lists so the user can spot rename drift
+    (e.g. DB has 'Drums', Live has 'Drum Kit')."""
+    matched_tracks: list[dict[str, Any]] = field(default_factory=list)
+    matched_returns: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_db_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_db_returns: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_live_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_live_returns: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def probe_and_link(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    live_tracks: list[dict[str, Any]],
+    live_returns: list[dict[str, Any]],
+    actor: str = "sync",
+    reason: str | None = None,
+) -> ProbeAndLinkResult:
+    """Match Live tracks/returns by name against DB rows; write the
+    matches as ``ableton_links`` so subsequent phases skip the
+    create call.
+
+    This is the W3-G work that was deferred from Wave 3 — running it
+    before the master orchestrator lets the agent push against a
+    Live set that already contains some of the song's tracks/returns
+    (typical when the user opened a half-built set or is iterating
+    against a saved template). Unmatched DB entities still get
+    created in phases 3 / 4; unmatched Live entities are NOT
+    deleted — push is additive, not destructive.
+
+    Track matching: case-sensitive name equality. Master tracks (DB
+    ``kind='master'``) are skipped — Live's track list never
+    contains master, and master mixer state is reached via
+    ``ableton_session`` rather than a track index.
+
+    Return matching: the live-side name is stripped of Live's
+    automatic slot-letter prefix (W4-C) before comparison. So DB
+    'Reverb' matches Live 'A-Reverb' (and is linked to return_index
+    1, the index Live exposes for slot A).
+
+    Duplicate names on either side warn loudly and link the FIRST
+    match; the agent should rename to disambiguate. Returns kind
+    drift between DB and Live as a note (informational — kind isn't
+    enforced at link time).
+
+    Re-runnable: calling ``probe_and_link`` a second time on the same
+    inputs is a no-op (link_db_to_ableton is upsert-by-(session, db_kind, db_id)).
+    """
+    result = ProbeAndLinkResult()
+
+    db_tracks = [t for t in Q.get_tracks_for_song(conn, song_id) if t["kind"] != "master"]
+    db_returns = list(Q.get_returns_for_song(conn, song_id))
+
+    # ---- Tracks: name-equality match.
+    live_track_by_name: dict[str, list[dict[str, Any]]] = {}
+    for lt in live_tracks:
+        live_track_by_name.setdefault(lt["name"], []).append(lt)
+    consumed_live_track_indexes: set[int] = set()
+    for dt in db_tracks:
+        candidates = live_track_by_name.get(dt["name"], [])
+        if not candidates:
+            result.unmatched_db_tracks.append({"db_id": dt["id"], "name": dt["name"]})
+            continue
+        if len(candidates) > 1:
+            result.notes.append(
+                f"track name {dt['name']!r}: {len(candidates)} Live tracks "
+                "match; linking to the first (track_index="
+                f"{candidates[0]['track_index']}). Rename in Live to disambiguate."
+            )
+        chosen = candidates[0]
+        if dt["kind"] != chosen.get("kind"):
+            result.notes.append(
+                f"track {dt['name']!r}: DB kind={dt['kind']!r} but "
+                f"Live kind={chosen.get('kind')!r} (informational; link written anyway)"
+            )
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="track", db_id=dt["id"],
+            ableton_index=chosen["track_index"], actor=actor, reason=reason,
+        )
+        consumed_live_track_indexes.add(chosen["track_index"])
+        result.matched_tracks.append({
+            "db_id": dt["id"],
+            "name": dt["name"],
+            "ableton_index": chosen["track_index"],
+        })
+    for lt in live_tracks:
+        if lt["track_index"] not in consumed_live_track_indexes:
+            result.unmatched_live_tracks.append({
+                "track_index": lt["track_index"],
+                "name": lt["name"],
+            })
+
+    # ---- Returns: strip Live's slot-letter prefix, then match by name.
+    live_return_by_name: dict[str, list[dict[str, Any]]] = {}
+    for lr in live_returns:
+        stripped = strip_return_slot_prefix(lr["name"])
+        live_return_by_name.setdefault(stripped, []).append(lr)
+    consumed_live_return_indexes: set[int] = set()
+    for dr in db_returns:
+        candidates = live_return_by_name.get(dr["name"], [])
+        if not candidates:
+            result.unmatched_db_returns.append({"db_id": dr["id"], "name": dr["name"]})
+            continue
+        if len(candidates) > 1:
+            result.notes.append(
+                f"return name {dr['name']!r} (suffix): {len(candidates)} Live "
+                "returns match; linking to the first (return_index="
+                f"{candidates[0]['return_index']})."
+            )
+        chosen = candidates[0]
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="return", db_id=dr["id"],
+            ableton_index=chosen["return_index"], actor=actor, reason=reason,
+        )
+        consumed_live_return_indexes.add(chosen["return_index"])
+        result.matched_returns.append({
+            "db_id": dr["id"],
+            "name": dr["name"],
+            "ableton_index": chosen["return_index"],
+        })
+    for lr in live_returns:
+        if lr["return_index"] not in consumed_live_return_indexes:
+            result.unmatched_live_returns.append({
+                "return_index": lr["return_index"],
+                "name": lr["name"],
+            })
+
+    return result
 
 
 # ---------------------------------------------------------------------------

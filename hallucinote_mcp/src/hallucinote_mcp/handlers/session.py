@@ -276,6 +276,160 @@ def set_view_handler(context: LiveContext, *, view: str) -> dict[str, Any]:
     return {"view": view, "live_view_name": live_name}
 
 
+# ---------------------------------------------------------------------------
+# introspect (W6-Probe — empirical LOM probing for chunk investigations)
+# ---------------------------------------------------------------------------
+
+
+import re as _re
+
+
+_INTROSPECT_ROOTS: dict[str, Any] = {}  # populated per-call from context
+_INTROSPECT_SEGMENT_RE = _re.compile(r"^([a-zA-Z_][a-zA-Z_0-9]*)(?:\[(\d+)\])?$")
+_INTROSPECT_WHAT_KINDS = ("dir", "type", "value", "repr")
+_INTROSPECT_PRIMITIVES = (int, float, bool, str, type(None))
+
+
+def _resolve_introspect_target(context: LiveContext, target: str) -> Any:
+    """Walk a dotted path against the LiveContext roots.
+
+    Roots: ``song`` (→ ``context.song``), ``application``
+    (→ ``context.application``), ``view`` (→ ``context.application.view``).
+
+    Each segment is ``name`` or ``name[index]``. Index access is 0-based —
+    this is RAW Python indexing, NOT the 1-based MCP convention used for
+    track_index etc., because the whole point of introspect is an
+    unvarnished view of the LOM.
+
+    Read-only: uses ``getattr`` and ``__getitem__`` only — no eval, no
+    method invocation. Returns the resolved object for the caller to
+    introspect.
+    """
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("introspect: target must be a non-empty dotted path")
+    segments = target.split(".")
+
+    first = _INTROSPECT_SEGMENT_RE.match(segments[0])
+    if first is None:
+        raise ValueError(
+            f"introspect: invalid root segment {segments[0]!r}"
+        )
+    root_name = first.group(1)
+    if root_name == "song":
+        obj: Any = context.song
+    elif root_name == "application":
+        obj = context.application
+    elif root_name == "view":
+        # `view` is an alias for `application.view` for convenience.
+        obj = context.application.view
+    else:
+        raise ValueError(
+            f"introspect: root {root_name!r} not in ['song', 'application', "
+            f"'view']"
+        )
+    if first.group(2) is not None:
+        # Indexed root (rare — e.g. `view[0]` doesn't make sense but
+        # `song` could conceivably be indexable in some future shape).
+        # Apply it uniformly with the rest of the walk.
+        obj = _apply_index(obj, int(first.group(2)), at=root_name)
+
+    path_so_far = segments[0]
+    for seg in segments[1:]:
+        m = _INTROSPECT_SEGMENT_RE.match(seg)
+        if m is None:
+            raise ValueError(
+                f"introspect: invalid path segment {seg!r} in {target!r}; "
+                f"expected `name` or `name[index]`"
+            )
+        attr = m.group(1)
+        if not hasattr(obj, attr):
+            raise ValueError(
+                f"introspect: {path_so_far!r} has no attribute {attr!r}"
+            )
+        obj = getattr(obj, attr)
+        if m.group(2) is not None:
+            obj = _apply_index(
+                obj, int(m.group(2)), at=f"{path_so_far}.{attr}"
+            )
+        path_so_far = f"{path_so_far}.{seg}"
+
+    return obj
+
+
+def _apply_index(container: Any, idx: int, *, at: str) -> Any:
+    try:
+        return container[idx]
+    except (IndexError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"introspect: index {idx} invalid at {at!r}: {exc}"
+        ) from exc
+
+
+def introspect_handler(
+    context: LiveContext,
+    *,
+    target: str,
+    what: str = "dir",
+    include_private: bool = False,
+) -> dict[str, Any]:
+    """Read-only LOM probing — call ``dir()`` / ``type()`` / ``value`` /
+    ``repr()`` on a dotted-path target.
+
+    Used to investigate Live's API surface from a conversation when the
+    Live 12 LOM XML isn't published or the gluon Remote Scripts repo
+    isn't unambiguous. Has no side effects on the song.
+
+    Path syntax: dotted from one of three roots (``song``, ``application``,
+    ``view``). Each segment is ``name`` or ``name[index]``. Index is
+    0-based RAW Python — NOT the 1-based MCP convention.
+
+    ``what``:
+      - ``dir``: list of member names. Private (``_*``) filtered unless
+        ``include_private=True``.
+      - ``type``: fully-qualified class name (e.g.
+        ``Live.Clip.AutomationEnvelope``).
+      - ``value``: the value itself if int/float/bool/str/None, else
+        ``repr()`` with a ``note`` flag.
+      - ``repr``: always ``repr(obj)``.
+
+    Generalized by design (per project memory
+    `feedback_generalize_research_first`): one mechanism for any LOM
+    object, not a per-class registry.
+    """
+    if what not in _INTROSPECT_WHAT_KINDS:
+        raise ValueError(
+            f"introspect: what {what!r} not in {list(_INTROSPECT_WHAT_KINDS)}"
+        )
+
+    obj = _resolve_introspect_target(context, target)
+
+    if what == "dir":
+        names = sorted(set(dir(obj)))
+        if not include_private:
+            names = [n for n in names if not n.startswith("_")]
+        return {"target": target, "what": what, "members": names}
+
+    if what == "type":
+        cls = type(obj)
+        module = getattr(cls, "__module__", "") or ""
+        qualname = getattr(cls, "__qualname__", cls.__name__)
+        type_name = f"{module}.{qualname}" if module and module != "builtins" else qualname
+        return {"target": target, "what": what, "type": type_name}
+
+    if what == "value":
+        if isinstance(obj, _INTROSPECT_PRIMITIVES):
+            return {"target": target, "what": what, "value": obj}
+        return {
+            "target": target,
+            "what": what,
+            "value": repr(obj),
+            "note": "non-primitive — returned repr()",
+        }
+
+    # what == "repr"
+    return {"target": target, "what": what, "repr": repr(obj)}
+
+
 __all__ = [
     "info_handler",
     "set_master_property_handler",
@@ -285,4 +439,5 @@ __all__ = [
     "snapshot_handler",
     "revert_handler",
     "list_snapshots_handler",
+    "introspect_handler",
 ]

@@ -310,4 +310,75 @@ register(
 )
 
 
+# ---------------------------------------------------------------------------
+# introspect (W6-Probe — empirical LOM probing for chunk investigations)
+# ---------------------------------------------------------------------------
+
+register(
+    Action(
+        tool="ableton_session",
+        name="introspect",
+        description=(
+            "Read-only LOM probing — call dir() / type() / value / repr "
+            "on a dotted-path target rooted at song / application / view. "
+            "Used to investigate Live's API surface from a conversation "
+            "when the Live 12 LOM XML isn't published or third-party "
+            "references are ambiguous. No side effects on the song."
+        ),
+        params=(
+            ParamSpec(
+                name="target",
+                type="str",
+                description=(
+                    "Dotted path from one of three roots: 'song' "
+                    "(→ context.song), 'application' (→ context.application), "
+                    "'view' (→ context.application.view). Each segment is "
+                    "`name` or `name[index]`. Example: "
+                    "'song.master_track.mixer_device.tempo' or "
+                    "'song.tracks[0].clip_slots[1]'. Index is 0-based RAW "
+                    "Python — NOT the 1-based MCP convention used for "
+                    "track_index etc."
+                ),
+            ),
+            ParamSpec(
+                name="what",
+                type="str",
+                required=False,
+                enum=("dir", "type", "value", "repr"),
+                description=(
+                    "dir: list of public members (filter `_*` unless "
+                    "include_private). type: fully-qualified class name. "
+                    "value: primitive value if int/float/bool/str/None, "
+                    "else repr() with a note flag. repr: always repr(obj). "
+                    "Default 'dir'."
+                ),
+            ),
+            ParamSpec(
+                name="include_private",
+                type="bool",
+                required=False,
+                description=(
+                    "If True, dir results include leading-underscore names. "
+                    "Default False (filters them out)."
+                ),
+            ),
+        ),
+        handler=session_handlers.introspect_handler,
+        example=(
+            "ableton_session(action='introspect', "
+            "target='song.master_track.mixer_device', what='dir')"
+        ),
+        tips=(
+            "Use this for empirical LOM investigation when third-party "
+            "references are stale or unclear. Read-only by design: walks "
+            "via getattr + __getitem__ only — no eval, no method "
+            "invocation, no setattr.",
+            "Indexing on the wire is 0-based (raw Python). The 1-based "
+            "convention only applies to track_index / clip_index / etc. "
+            "on agent-facing tool args.",
+        ),
+    )
+)
+
+
 __all__: list[str] = []  # registry side-effects only

@@ -657,3 +657,135 @@ def test_emittable_target_kinds_in_one_song(
     assert {c.tool for c in plan.calls} == {"ableton_automation"}
     keys = {c.key for c in plan.calls}
     assert keys == {f"envelope:{eid}" for eid in eids}
+
+
+# ---------- W5-E: curve-hint lossiness warn ----------
+#
+# Live 12.4 envelopes are step-only (Envelope.insert_step). DB curve_kinds
+# 'linear' / 'fast' / 'slow' are recorded faithfully but discarded on push;
+# only 'hold' round-trips. The planner emits ONE warn per envelope when any
+# breakpoint carries a lossy curve hint, surfacing the round-trip lossiness
+# at plan time rather than letting the user discover it from MCP-side
+# response notes.
+
+
+def _lossy_warns(plan) -> list[str]:
+    return [n for n in plan.notes if "curve hints are recorded in the DB but lossy" in n]
+
+
+def test_lossy_curve_hint_warns_once_for_linear_default(
+    conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
+):
+    """Default curve_kind is 'linear'. A typical envelope hits the warn."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    _add_one_breakpoint(conn, eid)  # both breakpoints curve_kind='linear'
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    warns = _lossy_warns(plan)
+    assert len(warns) == 1, plan.notes
+    assert eid in warns[0]
+    assert "device_parameter" in warns[0]
+    assert "Live 12.4" in warns[0]
+
+
+def test_lossy_curve_hint_dedupes_across_many_breakpoints(
+    conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
+):
+    """Many lossy breakpoints in one envelope → exactly one warn (dedup
+    per envelope, not per breakpoint)."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    for t, curve in [
+        (0.0, "linear"),
+        (0.25, "fast"),
+        (0.5, "slow"),
+        (0.75, "linear"),
+        (1.0, "hold"),
+    ]:
+        M.add_breakpoint(
+            conn, envelope_id=eid, time_beats=t, value=0.5, curve_kind=curve,
+        )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(_lossy_warns(plan)) == 1, plan.notes
+
+
+def test_all_hold_curves_no_lossy_warn(
+    conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
+):
+    """An envelope authored entirely with 'hold' curves round-trips
+    losslessly — no warn fires."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    M.add_breakpoint(
+        conn, envelope_id=eid, time_beats=0.0, value=0.5, curve_kind="hold",
+    )
+    M.add_breakpoint(
+        conn, envelope_id=eid, time_beats=1.0, value=0.0, curve_kind="hold",
+    )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    # The envelope still emits a ToolCall (it ships).
+    assert _calls_by_target_kind(plan).get("device_parameter")
+    # But no lossy-curve warn — 'hold' matches Live's step behavior.
+    assert _lossy_warns(plan) == [], plan.notes
+
+
+def test_lossy_warn_per_envelope_not_pooled(
+    conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
+):
+    """Two envelopes each with lossy curves → two warns (one per envelope).
+    Dedup is scoped per-envelope, not global."""
+    eid1 = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    eid2 = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    for eid in (eid1, eid2):
+        _add_one_breakpoint(conn, eid)  # linear defaults
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    warns = _lossy_warns(plan)
+    assert len(warns) == 2, plan.notes
+    assert any(eid1 in w for w in warns)
+    assert any(eid2 in w for w in warns)
+
+
+def test_skipped_envelope_does_not_emit_lossy_curve_warn(
+    conn, song, session, linked_track, linked_clip,
+):
+    """clip_cc envelopes are skipped wholesale (LOM gap); the curve hint
+    isn't "lossy on push" because nothing gets pushed. The skip-with-warn
+    message stands alone — no additional curve-lossiness warn."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="clip_cc",
+        target_clip_id=linked_clip, parameter_path="64",
+    )
+    _add_one_breakpoint(conn, eid)  # linear curves, but envelope is skipped
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert _lossy_warns(plan) == [], plan.notes
+    # The LOM-gap skip warn is still present.
+    assert any("clip_cc" in n and "Skipping" in n for n in plan.notes)
+
+
+def test_lossy_warn_fires_on_note_expression_path(
+    conn, song, session, linked_track, linked_clip, note,
+):
+    """The warn helper is wired into all four emit paths. Cross-path
+    canary: note_expression envelope with lossy curves → one warn."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="note_expression",
+        target_note_id=note, parameter_path="pitch",
+    )
+    _add_one_breakpoint(conn, eid)  # linear defaults
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    warns = _lossy_warns(plan)
+    assert len(warns) == 1, plan.notes
+    assert "note_expression" in warns[0]

@@ -166,6 +166,89 @@ def test_probe_and_link_notes_kind_mismatch(conn, song, session):
     assert any("kind" in n for n in result.notes), result.notes
 
 
+def test_probe_and_link_flags_case_near_match_for_tracks(conn, song, session):
+    """W5-B: DB 'Drums' vs Live 'drums' both end up unmatched (the
+    probe doesn't auto-link case-variants); a note surfaces so the
+    user spots the rename drift before phase 3 creates a duplicate."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 7, "name": "drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.matched_tracks == []
+    assert result.unmatched_db_tracks == [
+        {"db_id": result.unmatched_db_tracks[0]["db_id"], "name": "Drums"},
+    ]
+    assert result.unmatched_live_tracks == [{"track_index": 7, "name": "drums"}]
+    assert any(
+        "Drums" in n and "drums" in n and "case differs" in n
+        for n in result.notes
+    ), result.notes
+
+
+def test_probe_and_link_no_near_match_note_when_exact_match(conn, song, session):
+    """Exact case match → matched, no near-match note."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.matched_tracks
+    assert not any("case differs" in n for n in result.notes)
+
+
+def test_probe_and_link_no_near_match_note_when_names_unrelated(conn, song, session):
+    """Different names with no case-insensitive overlap → no
+    near-match note (avoid false-positive noise)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert not any("case differs" in n for n in result.notes)
+
+
+def test_probe_and_link_flags_multiple_case_near_matches(conn, song, session):
+    """Multiple unmatched-on-both-sides case-variant pairs each get
+    their own note — agent sees the full list, not just the first."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.create_track(conn, song_id=song, track_index=2, name="Bass", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[
+            {"track_index": 1, "name": "drums", "kind": "midi"},
+            {"track_index": 2, "name": "BASS", "kind": "midi"},
+        ],
+        live_returns=[],
+    )
+    assert result.matched_tracks == []
+    near_match_notes = [n for n in result.notes if "case differs" in n]
+    assert len(near_match_notes) == 2
+    assert any("Drums" in n and "drums" in n for n in near_match_notes)
+    assert any("Bass" in n and "BASS" in n for n in near_match_notes)
+
+
+def test_probe_and_link_flags_case_near_match_for_returns(conn, song, session):
+    """W5-B for returns: DB 'Reverb' vs Live 'A-reverb' (after slot
+    strip → 'reverb') near-matches. Both stay unmatched; note surfaces."""
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-reverb"}],
+    )
+    assert result.matched_returns == []
+    assert result.unmatched_db_returns
+    assert result.unmatched_live_returns
+    assert any(
+        "Reverb" in n and "A-reverb" in n and "case differs" in n
+        for n in result.notes
+    ), result.notes
+
+
 def test_probe_and_link_is_idempotent(conn, song, session):
     """Second invocation with the same inputs no-ops (upsert by
     (session, db_kind, db_id))."""

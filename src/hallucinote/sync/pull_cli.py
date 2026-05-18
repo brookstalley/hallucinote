@@ -65,6 +65,7 @@ _DOMAINS = {
     "score-globals":     pull.plan_pull_score_globals,
     "cue-points":        pull.plan_pull_cue_points,
     "devices":           pull.plan_pull_devices,
+    "device-parameters": pull.plan_pull_device_parameters,
     "arrangement-clips": pull.plan_pull_arrangement_clips,
     "session-clips":     pull.plan_pull_session_clips,
     "clip-notes":        pull.plan_pull_notes_for_clips,

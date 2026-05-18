@@ -480,40 +480,40 @@ def plan_push_tempo_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_tempo_point` calls — one per row in `tempo_map`.
+    """Emit `ableton_session(set_tempo)` for the bar-1 row; warn for the rest.
 
-    Positions are emitted as `(bar, beat)` matching the rest of the MCP surface
-    (see mcp-requirements.md). The (bar, beat) pair is computed via the song's
-    time_signature_map (defaulting to 4/4 if empty, with a warning).
+    Live exposes `Song.tempo` as a single global value (settable via
+    `ableton_session(action='set_tempo')`). Per-bar tempo automation is a
+    real MCP gap — `ableton_automation` has no `song_tempo` target_kind
+    (see hallucinote_mcp/.../guides/gaps.md "Arrangement-level tempo /
+    signature automation"). Any tempo_map row at start_bar != 1.0 is
+    therefore skipped with a warn.
     """
     plan = PushPlan()
     rows = Q.get_tempo_map(conn, song_id)
     if not rows:
         plan.warn("no tempo_map rows for this song; nothing to push")
         return plan
-    ts_points = Q.get_time_signature_map(conn, song_id)
-    if not ts_points:
-        plan.warn(
-            "no time_signature_map; assuming 4/4 for tempo-map bar/beat split"
-        )
-    for r in rows:
-        bar, beat = _split_bar(r["start_bar"], ts_points)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_tempo_point",
-            args={
-                "bar": bar,
-                "beat": beat,
-                "bpm": r["tempo_bpm"],
-                "ramp": r["ramp"],
-            },
-            key=f"tempo_point:{r['id']}",
-            purpose=f"set tempo to {r['tempo_bpm']:g} bpm at bar {r['start_bar']:g} "
-                    f"(ramp={r['ramp']})",
+            tool="ableton_session",
+            args={"action": "set_tempo", "bpm": bar_1["tempo_bpm"]},
+            key=f"tempo_point:{bar_1['id']}",
+            purpose=f"set global tempo to {bar_1['tempo_bpm']:g} bpm",
         ))
-    if len(rows) > 1 or any(r["ramp"] == "linear" for r in rows):
+    else:
         plan.warn(
-            "multi-point or ramped tempo maps require full tempo-automation MCP "
-            "support (see docs/mcp-requirements.md, P2)"
+            "tempo_map has no row at start_bar=1.0 — global tempo not set "
+            "(Live's set_tempo only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar tempo automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_tempo' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 tempo_map rows skipped"
         )
     return plan
 
@@ -523,37 +523,47 @@ def plan_push_time_signature_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_time_signature_point` calls — one per meter change.
+    """Emit `ableton_session(set_signature)` for the bar-1 row; warn the rest.
 
-    Live exposes no MCP tool for arrangement-level meter changes today; the
-    planner produces canonical (bar, beat, numerator, denominator) calls and
-    warns about the MCP gap so apply can no-op until support lands.
+    Symmetric with `plan_push_tempo_map`. Live's `Song.signature_numerator` /
+    `signature_denominator` are the global meter (settable via
+    `ableton_session(action='set_signature')`). Per-bar meter automation
+    is a real MCP gap — `ableton_automation` has no `song_signature`
+    target_kind (see hallucinote_mcp/.../guides/gaps.md).
     """
     plan = PushPlan()
     rows = Q.get_time_signature_map(conn, song_id)
     if not rows:
         plan.warn("no time_signature_map rows for this song; nothing to push")
         return plan
-    for r in rows:
-        # A time-signature point's own position is in its own meter context —
-        # use `rows` (the map itself) as the time-sig reference.
-        bar, beat = _split_bar(r["start_bar"], rows)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_time_signature_point",
+            tool="ableton_session",
             args={
-                "bar": bar,
-                "beat": beat,
-                "numerator": r["numerator"],
-                "denominator": r["denominator"],
+                "action": "set_signature",
+                "numerator": bar_1["numerator"],
+                "denominator": bar_1["denominator"],
             },
-            key=f"time_signature_point:{r['id']}",
-            purpose=f"set meter to {r['numerator']}/{r['denominator']} "
-                    f"at bar {r['start_bar']:g}",
+            key=f"time_signature_point:{bar_1['id']}",
+            purpose=(
+                f"set global meter to "
+                f"{bar_1['numerator']}/{bar_1['denominator']}"
+            ),
         ))
-    plan.warn(
-        "time-signature change writes are an MCP gap "
-        "(see docs/mcp-requirements.md, P2)"
-    )
+    else:
+        plan.warn(
+            "time_signature_map has no row at start_bar=1.0 — global meter "
+            "not set (Live's set_signature only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar meter automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_signature' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped"
+        )
     return plan
 
 
@@ -1299,6 +1309,43 @@ def _emit_note_expression_envelope(
             f"{len(breakpoints_mcp)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=breakpoints_mcp)
+
+
+_LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})
+
+
+def _warn_lossy_curve_hints(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """Emit one warn per envelope when any breakpoint carries a curve
+    hint Live 12.4 cannot apply.
+
+    Live 12.4 exposes only ``Envelope.insert_step``; the MCP handler
+    converts every breakpoint to a stepped region (see
+    ``hallucinote_mcp/src/hallucinote_mcp/handlers/automation.py::_write_breakpoints_as_steps``).
+    Curves ``linear`` / ``fast`` / ``slow`` are recorded in the DB
+    faithfully but discarded on push — the MCP handler returns a note
+    after the fact (``_stepped_envelope_note``). Surfacing the same
+    truth at plan time lets the user see round-trip lossiness BEFORE
+    dispatch instead of discovering it in MCP responses.
+
+    Only ``hold`` (and absent) curves are preserved on push. Dedup is
+    per-envelope: many lossy breakpoints in one envelope produce one
+    warn, not N.
+    """
+    if not any(bp.get("curve") in _LOSSY_CURVE_HINTS for bp in breakpoints_mcp):
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): Live 12.4 "
+        "applies all envelope curves as steps (Envelope.insert_step); "
+        "'linear'/'fast'/'slow' curve hints are recorded in the DB but "
+        "lossy on push. Use 'hold' to model the same behavior the DB "
+        "stores."
+    )
 
 
 def _warn_extra_placements(
@@ -1431,6 +1478,7 @@ def _emit_device_parameter_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 
@@ -1501,6 +1549,7 @@ def _emit_mixer_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 
@@ -1573,6 +1622,7 @@ def _emit_send_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
 
 
@@ -1899,6 +1949,13 @@ def probe_and_link(
                 "name": lt["name"],
             })
 
+    _flag_case_near_matches(
+        result.unmatched_db_tracks,
+        result.unmatched_live_tracks,
+        kind="track",
+        notes=result.notes,
+    )
+
     # ---- Returns: strip Live's slot-letter prefix, then match by name.
     live_return_by_name: dict[str, list[dict[str, Any]]] = {}
     for lr in live_returns:
@@ -1934,7 +1991,53 @@ def probe_and_link(
                 "name": lr["name"],
             })
 
+    # Returns match by stripped-name; compare against stripped form
+    # so DB 'Reverb' vs Live 'A-reverb' surfaces as near-match.
+    _flag_case_near_matches(
+        result.unmatched_db_returns,
+        result.unmatched_live_returns,
+        kind="return",
+        notes=result.notes,
+        live_normalize=strip_return_slot_prefix,
+    )
+
     return result
+
+
+def _flag_case_near_matches(
+    unmatched_db: list[dict[str, Any]],
+    unmatched_live: list[dict[str, Any]],
+    *,
+    kind: str,
+    notes: list[str],
+    live_normalize: Callable[[str | None], str | None] | None = None,
+) -> None:
+    """Surface DB×Live pairs that match case-insensitively but not
+    case-sensitively. Catches the silent foot-gun where a user renames
+    Live's 'Drums' → 'drums' and the probe creates a duplicate 'Drums'
+    track right next to it (W4-E real-Live finding, 2026-05-18).
+
+    Returns through ``notes`` rather than the unmatched lists — both
+    sides stay genuinely unmatched (the probe doesn't auto-link
+    case-variant pairs; the user decides). ``live_normalize`` is
+    applied to the Live-side name before comparison (e.g. strip
+    Live's return slot-letter prefix so DB 'Reverb' near-matches
+    Live 'A-reverb' / 'a-Reverb').
+    """
+    norm = live_normalize or (lambda s: s)
+    for db in unmatched_db:
+        db_name = db["name"]
+        for live in unmatched_live:
+            live_name = norm(live["name"])
+            if (
+                db_name != live_name
+                and db_name.casefold() == live_name.casefold()
+            ):
+                notes.append(
+                    f"DB {kind} {db_name!r} has near-match Live "
+                    f"{live['name']!r} (case differs); intentional? "
+                    "Rename one to match if not."
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1972,8 +2075,8 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # binding via _LINK_KINDS). W3-B dropped per-cue `cue_point` in
     # favor of the single batched `cue_batch:` key.
     "cue_batch",             # ableton_arrangement(cue_create_batch) — handler returns list of per-cue results
-    "tempo_point",           # write_tempo_point (emulator placeholder)
-    "time_signature_point",  # write_time_signature_point (emulator placeholder)
+    "tempo_point",           # ableton_session(set_tempo) for bar-1 (W5-A)
+    "time_signature_point",  # ableton_session(set_signature) for bar-1 (W5-A)
     # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
     # ableton_track(action='set_property') call. The key prefixes here stay
     # the same (volume/pan/mute/solo/arm/color) so apply matches by what the

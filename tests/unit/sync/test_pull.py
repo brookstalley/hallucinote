@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import pytest
+from hypothesis import given, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import pull
@@ -1248,6 +1249,546 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
     )
     assert out.mutations == 0
     assert any("class_name" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# plan_pull_device_parameters + _apply_device_parameters_for_device (W5-D)
+# ---------------------------------------------------------------------------
+
+
+def _params_payload(
+    *entries: tuple[str, float, str, float, float, bool],
+    track_index: int = 5,
+    device_index: int = 1,
+) -> dict:
+    """Build an `ableton_device(action='get_parameters', detail='full')`
+    payload from ``(name, value, value_display, min, max, is_enum)``
+    tuples. Mirrors the real ``get_parameters_handler`` shape with
+    ``detail='full'`` so apply tests exercise the wire form W5-D
+    actually sees.
+    """
+    return {
+        "device_index": device_index,
+        "parent_kind": "track",
+        "track_index": track_index,
+        "parameters": [
+            {
+                "name": name,
+                "value": float(value),
+                "value_display": display,
+                "min": float(min_v),
+                "max": float(max_v),
+                "is_enum": bool(is_enum),
+            }
+            for (name, value, display, min_v, max_v, is_enum) in entries
+        ],
+    }
+
+
+def test_plan_pull_device_parameters_emits_per_linked_track_device(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_device"
+    assert call.args == {
+        "action": "get_parameters", "track_index": 5,
+        "device_index": 1, "detail": "full",
+    }
+    assert call.key == f"device_parameters:{did}"
+
+
+def test_plan_pull_device_parameters_emits_per_linked_return_device(
+    conn, song, session,
+):
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Reverb", display_name="Reverb",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.args == {
+        "action": "get_parameters", "return_index": 1,
+        "device_index": 1, "detail": "full",
+    }
+    assert call.key == f"device_parameters:{did}"
+
+
+def test_plan_pull_device_parameters_skips_unlinked_track_with_warn(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("not linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_device_parameters_warns_when_no_devices(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("no devices" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_device_parameters_args_match_mcp_get_parameters_schema(
+    conn, song, session,
+):
+    """Structural canary — every emitted arg must be a known param on
+    ``ableton_device(action='get_parameters')``. Catches drift if the
+    MCP surface renames params or moves the action."""
+    from hallucinote_mcp.actions import device as _device_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    get_params = next(
+        a for a in all_actions()
+        if a.tool == "ableton_device" and a.name == "get_parameters"
+    )
+    schema_param_names = {p.name for p in get_params.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on get_parameters schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_device_parameters_creates_when_db_empty(conn, song, session):
+    """Diff state: in Live only -> create."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 0.5, "0.50", 0.0, 1.0, False),
+                ("Filter Type", 1.0, "Lowpass", 0.0, 3.0, True),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2
+    rows = Q.get_device_parameters(conn, did)
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["Volume"]["value_display"] == "0.50"
+    assert by_name["Volume"]["value_normalized"] == pytest.approx(0.5)
+    # Enum param: value_normalized=NULL per schema.
+    assert by_name["Filter Type"]["value_display"] == "Lowpass"
+    assert by_name["Filter Type"]["value_normalized"] is None
+
+
+def test_apply_device_parameters_no_op_when_identical(conn, song, session):
+    """Diff state: in both, identical -> no-op."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_parameters_no_op_within_float_epsilon(conn, song, session):
+    """Float jitter within `_FLOAT_EPS` is not a diff. Live's value
+    readback can wiggle in the last decimal place; that's not a
+    real change."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.85", value_normalized=0.85,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.8501, "0.85", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_parameters_updates_when_value_differs(conn, song, session):
+    """Diff state: in both, value differs -> upsert (update)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.75, "0.75", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_display"] == "0.75"
+    assert row["value_normalized"] == pytest.approx(0.75)
+
+
+def test_apply_device_parameters_removes_db_params_absent_from_live(
+    conn, song, session,
+):
+    """Diff state: in DB only -> remove."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Stale Param",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    rows = Q.get_device_parameters(conn, did)
+    assert {r["name"] for r in rows} == {"Volume"}
+
+
+def test_apply_device_parameters_handles_mixed_diff(conn, song, session):
+    """All four diff states in one apply: in-both-same (no-op),
+    in-both-differ (update), Live-only (create), DB-only (remove)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(  # will stay identical
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+    M.set_device_parameter(  # will change
+        conn, device_id=did, name="Attack",
+        value_display="0.10", value_normalized=0.1,
+    )
+    M.set_device_parameter(  # will be removed (Live no longer has it)
+        conn, device_id=did, name="Stale",
+        value_display="0.00", value_normalized=0.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 0.5, "0.50", 0.0, 1.0, False),    # no-op
+                ("Attack", 0.5, "0.50", 0.0, 1.0, False),    # update
+                ("Release", 0.3, "0.30", 0.0, 1.0, False),   # create
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # 1 update + 1 create + 1 remove = 3 mutations; 1 no-op.
+    assert out.mutations == 3
+    assert out.no_ops == 1
+    by_name = {r["name"]: r for r in Q.get_device_parameters(conn, did)}
+    assert set(by_name) == {"Volume", "Attack", "Release"}
+    assert by_name["Attack"]["value_display"] == "0.50"
+    assert by_name["Release"]["value_display"] == "0.30"
+
+
+def test_apply_device_parameters_normalizes_against_min_max(conn, song, session):
+    """value_normalized = (value - min) / (max - min). The raw 'value'
+    from Live is in [min, max]; the DB stores the [0, 1] form. With
+    a -60..0 range, value=-12 normalizes to 0.8."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Compressor2", display_name="Glue",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Threshold", -12.0, "-12.0 dB", -60.0, 0.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_display"] == "-12.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.8)
+
+
+def test_apply_device_parameters_constant_range_stores_null_normalized(
+    conn, song, session,
+):
+    """min == max -> normalized is undefined; store NULL.
+
+    Schema CHECK allows NULL when ``value_normalized IS NULL``."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Algorithm", 1.0, "Algorithm 1", 1.0, 1.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_normalized"] is None
+
+
+def test_apply_device_parameters_clamps_normalized_to_valid_range(
+    conn, song, session,
+):
+    """Live can report ``value`` marginally outside [min, max] due to
+    float; the schema CHECK is strict on [0, 1] so the apply layer
+    clamps at the boundary instead of letting the mutator raise."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    # value just barely past max — would normalize to ~1.0001
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 1.0001, "1.00", 0.0, 1.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_normalized"] == pytest.approx(1.0)
+
+
+def test_apply_device_parameters_missing_device_row_warns(conn, song, session):
+    """If the device_id in the key doesn't resolve to a DB row, surface
+    a warning (the planner shouldn't have emitted, but apply is the
+    defensive layer)."""
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            "device_parameters:nonexistent-uuid",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("device row not found" in w.lower() for w in out.warnings)
+
+
+def test_apply_device_parameters_missing_parameters_field_warns(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"device_parameters:{did}", {"device_index": 1})],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("'parameters' field" in w for w in out.warnings)
+
+
+# Hypothesis property: round-trip apply preserves the synthesized
+# parameter set in the DB. Random {name, value, min, max, is_enum}
+# tuples → apply → DB rows that match the synthesis (value_display
+# verbatim; value_normalized within `_FLOAT_EPS` of the computed
+# normalization; NULL for enum / constant-range).
+_param_name_strat = st.text(
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
+    min_size=1, max_size=20,
+).filter(lambda s: bool(s.strip()))
+
+
+@st.composite
+def _param_tuple(draw):
+    name = draw(_param_name_strat)
+    is_enum = draw(st.booleans())
+    if is_enum:
+        # Enum params have value_normalized=NULL; min/max still pass through
+        # but aren't used for normalization.
+        return (name, 1.0, "EnumLabel", 0.0, 1.0, True)
+    min_v = draw(st.floats(min_value=-1000.0, max_value=1000.0,
+                            allow_nan=False, allow_infinity=False))
+    max_v = draw(st.floats(min_value=min_v, max_value=min_v + 1000.0,
+                            allow_nan=False, allow_infinity=False))
+    value = draw(st.floats(min_value=min_v, max_value=max_v,
+                            allow_nan=False, allow_infinity=False))
+    return (name, value, f"{value:.4f}", min_v, max_v, False)
+
+
+@given(
+    entries=st.lists(_param_tuple(), min_size=1, max_size=8, unique_by=lambda e: e[0]),
+)
+def test_apply_device_parameters_property_round_trip(entries):
+    """Property: synthesized Live-side params → apply → DB rows that
+    match. Pins the (normalize + diff) pipeline against random input.
+
+    Tolerances:
+    - ``value_display`` is verbatim verbatim from the wire
+    - ``value_normalized`` is within ``_FLOAT_EPS`` (or NULL when the
+      synthesized param is enum / constant-range)
+    """
+    from hallucinote.db import init_db
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        conn = init_db(path)
+        song_id = M.create_song(conn, name="prop", key="C")
+        tid = M.create_track(
+            conn, song_id=song_id, track_index=1, name="Lead", kind="midi",
+        )
+        session_id = M.create_ableton_session(
+            conn, song_id=song_id, name="draft",
+        )
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="track",
+            db_id=tid, ableton_index=5,
+        )
+        chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+        did = M.create_device(
+            conn, chain_id=chain_id, position=1,
+            kind="Operator", display_name="Init",
+        )
+
+        out = pull.apply_pull_results(
+            conn,
+            [_result(
+                f"device_parameters:{did}",
+                _params_payload(*entries),
+            )],
+            song_id=song_id, session_id=session_id,
+        )
+        assert out.mutations == len(entries), (
+            f"expected {len(entries)} mutations, got {out.mutations}"
+        )
+
+        rows = {r["name"]: r for r in Q.get_device_parameters(conn, did)}
+        for name, value, display, min_v, max_v, is_enum in entries:
+            assert name in rows, f"missing param {name!r}"
+            row = rows[name]
+            assert row["value_display"] == display
+            rng = max_v - min_v
+            if is_enum or abs(rng) < 1e-9:
+                assert row["value_normalized"] is None
+            else:
+                expected = max(0.0, min(1.0, (value - min_v) / rng))
+                assert row["value_normalized"] == pytest.approx(
+                    expected, abs=1e-9
+                )
+        conn.close()
+    finally:
+        os.unlink(path)
 
 
 # ---------------------------------------------------------------------------
@@ -2622,6 +3163,30 @@ def test_pull_cli_domains_cover_every_public_planner():
         f"{sorted(p.__name__ for p in missing)}. Register them in "
         "pull_cli._DOMAINS and update .claude/skills/ableton-pull/SKILL.md."
     )
+
+
+def test_pull_cli_device_parameters_domain_emits_plan(tmp_path):
+    """Smoke test: the `device-parameters` domain reaches the new W5-D
+    planner through the CLI dispatch and emits a plan (empty here — no
+    linked tracks)."""
+    db_path = tmp_path / "device_params_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_dp", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "device-parameters", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "device-parameters"
+    assert plan_dict["session_id"] == session_id
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
 
 
 def test_pull_cli_devices_domain_emits_plan(tmp_path):

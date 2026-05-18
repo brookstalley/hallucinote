@@ -62,18 +62,14 @@ schema.register_help_actions()
 # MCP primitive exists. Adding to this list requires explaining WHY:
 # the comment is the structural rationale that lets a future reader
 # evaluate whether the gap is still real.
-KNOWN_EMULATORS: frozenset[str] = frozenset({
-    # Live exposes Song.tempo (global) + per-bar tempo automation envelopes,
-    # but no single "set tempo at this bar" primitive. The agent must
-    # decompose: ableton_session(set_tempo) for the global value; envelope
-    # writes for ramps; tempo automation at arbitrary (bar, beat) remains a
-    # hard MCP gap blocked on Live's tempo-envelope target_kind.
-    "_emulate_write_tempo_point",
-    # Live has NO arrangement-level meter-change API exposed. The
-    # planner emits the canonical (bar, beat, numerator, denominator)
-    # shape; the emulator is a no-op-with-warn until the Live gap closes.
-    "_emulate_write_time_signature_point",
-})
+#
+# As of W5-A (2026-05-18): this set is empty. The two prior emulator
+# entries were retired when the tempo/sig planners were rewritten to
+# emit `ableton_session(set_tempo/set_signature)` for bar-1 directly.
+# Multi-bar tempo/meter automation is a real MCP gap — the planner
+# warns and skips those rows (no ToolCall, no emulator needed). See
+# `src/hallucinote/sync/mcp_names.py` history for context.
+KNOWN_EMULATORS: frozenset[str] = frozenset()
 
 
 # Every plan_push_* entry point the canary exercises. The CALLABLE takes
@@ -394,8 +390,12 @@ def test_known_emulators_allowlist_stays_audited():
 
     # The allowlist size is part of the contract — if you genuinely
     # added a new gap-blocked emulator, bump this assertion deliberately.
-    assert len(KNOWN_EMULATORS) == 2, (
-        f"KNOWN_EMULATORS has {len(KNOWN_EMULATORS)} entries (expected 2). "
+    # As of W5-A (2026-05-18): zero. Every prior emulator has been
+    # collapsed into a real MCP call (or the planner now warns instead
+    # of emitting). Growing this set requires a rationale comment in
+    # KNOWN_EMULATORS itself + a backlog entry naming the real Live gap.
+    assert len(KNOWN_EMULATORS) == 0, (
+        f"KNOWN_EMULATORS has {len(KNOWN_EMULATORS)} entries (expected 0). "
         "Every emulator placeholder represents an acknowledged Live gap — "
         "bumping this requires confirming the gap is real and adding a "
         "rationale comment to KNOWN_EMULATORS itself."

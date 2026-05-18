@@ -34,12 +34,62 @@ from ..dispatcher import LiveContext
 # the order of 100-200ms when transport is stopped. ``schedule_message``
 # bounces don't wait wall-clock time (they fire back-to-back within
 # one engine tick) so a poll-via-bounce loop reads stale values. The
-# simplest reliable mechanism is to sleep here: the audio thread runs
-# on its own OS thread and continues processing while the main thread
-# blocks. 200ms is a conservative ceiling that handles the observed
-# lag with margin; tighten if/when the audio-thread timing model is
-# better understood.
-_CUE_SETTLE_SLEEP_S = 0.2
+# fixed 200ms sleep used pre-Wave-2 was unreliable under stopped-
+# transport (W2-4): when the playhead is being moved a meaningful
+# distance from the prior position, propagation can exceed 200ms.
+# The post-toggle scan then sees set_or_delete_cue having fired at the
+# OLD playhead (or no movement at all).
+#
+# Wave-2 W2-F replaces the fixed sleep with a poll-until-confirmed
+# pattern: ``_seek_then_settle`` writes ``current_song_time`` and
+# polls the getter (which lags the write by the same audio-thread
+# delay set_or_delete_cue reads from) until the value matches the
+# target. The poll has a generous timeout (defaults to 3s) — far
+# beyond the empirical worst case but bounded so a permanently-stuck
+# audio thread surfaces a clear timeout rather than hanging.
+_CUE_SETTLE_TIMEOUT_S = 3.0
+_CUE_SETTLE_POLL_S = 0.05
+_CUE_SETTLE_TOLERANCE_BEATS = 0.001  # ~1ms in beats; matches Live's quantization
+
+
+def _seek_then_settle(
+    song: Any,
+    target_beats: float,
+    *,
+    max_wait_s: float = _CUE_SETTLE_TIMEOUT_S,
+    poll_interval_s: float = _CUE_SETTLE_POLL_S,
+) -> None:
+    """Seek the arrangement playhead and BLOCK until the audio thread
+    confirms the move.
+
+    Live 12.4 makes ``Song.current_song_time`` writes asynchronously
+    visible — both the getter and ``set_or_delete_cue``'s read of the
+    audio-thread playhead lag the write by an audio buffer (often more
+    when transport is stopped). The pre-Wave-2 implementation used a
+    fixed 200ms sleep, which empirically wasn't enough (W2-4 — playhead
+    far from target meant the toggle fired at the prior position). This
+    helper polls the getter until it confirms the target, then returns.
+
+    Raises ``TimeoutError`` if the playhead hasn't moved within
+    ``max_wait_s``. Tests with a synchronous fake see the move
+    instantly and return on the first poll.
+    """
+    target = round(float(target_beats), 6)
+    song.current_song_time = float(target_beats)
+
+    deadline = time.monotonic() + max_wait_s
+    while True:
+        actual = round(float(getattr(song, "current_song_time", -1.0)), 6)
+        if abs(actual - target) < _CUE_SETTLE_TOLERANCE_BEATS:
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"playhead seek to beat {target} did not settle within "
+                f"{max_wait_s}s (last observed current_song_time={actual}). "
+                "Live's audio thread may be unresponsive — stop transport "
+                "and retry, or check if Live is busy with another operation."
+            )
+        time.sleep(poll_interval_s)
 
 
 # ---------------------------------------------------------------------------
@@ -311,21 +361,16 @@ def _create_one_cue_locked(
             f"location='arrangement', ...)) before adding the cue."
         )
 
-    # Seek then toggle. Empirical Live 12.x behavior: the
-    # ``current_song_time`` *getter* lags the setter by some unknown
-    # main-thread caching layer — reading after a write may still see
-    # the prior value within the same callback. The audio thread (which
-    # ``set_or_delete_cue`` reads) DOES pick up the write, just on a
-    # different timeline. So instead of verifying via the getter (which
-    # gave us false-negative "didn't settle" failures), we trust the
-    # write, sleep, fire the toggle, and verify success by reading the
-    # actual side effect: ``cue_points``. The scan loop confirms a new
-    # cue appeared at the target, which is the only thing that matters
-    # to the caller.
-    song.current_song_time = float(position_beats)
-    time.sleep(_CUE_SETTLE_SLEEP_S)
+    # Seek-then-toggle with poll-confirmed settle. Wave-2 W2-F replaces
+    # the prior fixed-200ms-sleep pattern with `_seek_then_settle`,
+    # which polls the audio-thread-visible playhead until it matches
+    # the target. set_or_delete_cue then fires at the confirmed
+    # position. We still verify via the cue_points side effect after
+    # the toggle (the toggle itself is a brief audio-thread operation
+    # that the post-write read picks up reliably).
+    _seek_then_settle(song, float(position_beats))
     toggle()
-    time.sleep(_CUE_SETTLE_SLEEP_S)
+    time.sleep(_CUE_SETTLE_POLL_S)  # one poll-interval slack for the toggle
 
     cues_after = list(getattr(song, "cue_points", ()))
     new_cue_index: int | None = None
@@ -510,21 +555,42 @@ def cue_delete_handler(
             "Live does not expose cue deletion in this version"
         )
 
-    # Same audio-thread-settle pattern as cue_create — trust the setter
-    # write (which the audio thread picks up), don't verify via the
-    # getter (which can return a stale cache), and confirm success by
-    # the actual side effect: the target cue is gone from cue_points.
+    # Hold ``live_state_lock`` across the seek+toggle+verify window for
+    # the same parallel-safety reason as cue_create (B-21): concurrent
+    # cst writers would otherwise race the audio thread.
     #
-    # Hold ``live_state_lock`` across the seek+settle+toggle+settle
-    # window for the same parallel-safety reason as cue_create (B-21):
-    # concurrent cst writers would otherwise race the audio thread.
+    # Wave-2 W2-F: use _seek_then_settle (poll-confirmed) instead of a
+    # fixed sleep, and verify via cue_points side effect (W2-6) — the
+    # pre-Wave-2 implementation returned ok:true after the toggle even
+    # when the cue was still present (the toggle fired at the wrong
+    # position due to W2-4's settle race). The playhead is restored in
+    # a finally clause so timeout / verify failures don't leave the
+    # transport parked at the cue's position (symmetric with
+    # cue_create's restore path).
+    target_pos_key = round(target_time, 6)
     with context.live_state_lock:
         prior = float(getattr(song, "current_song_time", 0.0))
-        song.current_song_time = target_time
-        time.sleep(_CUE_SETTLE_SLEEP_S)
-        toggle()
-        time.sleep(_CUE_SETTLE_SLEEP_S)
-        song.current_song_time = prior
+        try:
+            _seek_then_settle(song, target_time)
+            toggle()
+            time.sleep(_CUE_SETTLE_POLL_S)  # one poll-interval slack for toggle
+            cues_after = list(getattr(song, "cue_points", ()))
+            still_present = any(
+                abs(round(float(getattr(c, "time", -1.0)), 6) - target_pos_key) < 1e-6
+                for c in cues_after
+            )
+            if still_present:
+                raise RuntimeError(
+                    f"cue_delete: toggle did not remove the cue at "
+                    f"position_beats={target_time}. The cue is still "
+                    "present in song.cue_points after the toggle. This "
+                    "usually means the audio-thread playhead didn't "
+                    "settle to the target position before "
+                    "set_or_delete_cue fired — try retrying, or use "
+                    "cue_rename to mark it for manual deletion in Live."
+                )
+        finally:
+            song.current_song_time = prior
     return {"deleted_cue_index": cue_index}
 
 

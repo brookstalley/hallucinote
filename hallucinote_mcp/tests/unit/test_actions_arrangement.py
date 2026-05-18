@@ -386,6 +386,99 @@ def test_cue_create_rejects_negative_position(loaded_actions):
     assert "below minimum" in (resp.error or "")
 
 
+def test_seek_then_settle_returns_when_playhead_confirms_target():
+    """Wave-2 W2-F: the new poll-confirmed settle helper waits for the
+    audio thread to acknowledge the seek (via the current_song_time
+    getter) instead of trusting a fixed sleep. The synchronous fake's
+    setter is immediately visible, so this returns on the first poll.
+    """
+    from hallucinote_mcp.handlers.arrangement import _seek_then_settle
+    song = FakeSong()
+    song.current_song_time = 0.0
+    _seek_then_settle(song, 12.0)
+    assert song.current_song_time == 12.0
+
+
+def test_seek_then_settle_times_out_when_audio_thread_stuck():
+    """If the audio thread never picks up the write, the getter stays at
+    the old value forever. The helper must surface a TimeoutError with
+    actionable text instead of hanging.
+    """
+    from hallucinote_mcp.handlers.arrangement import _seek_then_settle
+    import pytest
+
+    class _StuckSong:
+        """Setter accepted but never acknowledged by the getter."""
+        _stored = 0.0
+
+        @property
+        def current_song_time(self) -> float:
+            return 0.0  # always lies — getter never reflects the write
+
+        @current_song_time.setter
+        def current_song_time(self, v: float) -> None:
+            self._stored = v
+
+    with pytest.raises(TimeoutError) as exc_info:
+        _seek_then_settle(_StuckSong(), 8.0, max_wait_s=0.15, poll_interval_s=0.05)
+    msg = str(exc_info.value)
+    assert "did not settle" in msg
+    assert "8" in msg  # mentions the target beat
+
+
+def test_cue_delete_verifies_via_cue_points_side_effect(loaded_actions):
+    """Wave-2 W2-6: cue_delete used to return ok:true after the toggle
+    even when the cue was still present (the toggle fired at the wrong
+    position due to the W2-4 settle race). Verify-via-side-effect:
+    after the toggle, scan cue_points and raise if the targeted cue
+    persists.
+    """
+    # Build a fake that toggles ONLY if current_song_time matches the cue.
+    # Then override set_or_delete_cue to "miss" — simulating the W2-4 race
+    # by leaving the cue intact regardless of toggle.
+    song = FakeSong(cues=[FakeCue(16.0, "Verse"), FakeCue(32.0, "Chorus")])
+
+    def _bad_toggle() -> None:  # simulates W2-4: toggle fired at wrong pos
+        pass  # no state change at all
+
+    song.set_or_delete_cue = _bad_toggle
+    ctx = FakeCtx(song)
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_delete",
+            params={"cue_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "did not remove" in err
+    assert "still present" in err
+    # The cue is still there (no spurious removal).
+    assert any(c.time == 16.0 for c in song.cue_points)
+    # Playhead restored despite the verify-failure raise (try/finally
+    # symmetric with cue_create).
+    assert song.current_song_time == 0.0
+
+
+def test_cue_delete_succeeds_when_toggle_works(loaded_actions):
+    """Happy-path symmetric with the verify regression: when the toggle
+    actually removes the cue, cue_delete returns ok:true.
+    """
+    song = FakeSong(cues=[FakeCue(16.0, "Verse")])
+    ctx = FakeCtx(song)
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_delete",
+            params={"cue_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["deleted_cue_index"] == 1
+    assert len(song.cue_points) == 0
+
+
 # Regression: Live's `Song.set_or_delete_cue` is a NO-ARG toggle that
 # operates on the current play position. The handler previously tried to
 # call it with a positional time argument first, and only fell back to
@@ -932,7 +1025,7 @@ def test_concurrent_cue_creates_all_land_at_requested_positions(
     value so the test stays under a second.
     """
     import hallucinote_mcp.handlers.arrangement as arr_module
-    monkeypatch.setattr(arr_module, "_CUE_SETTLE_SLEEP_S", 0.005)
+    monkeypatch.setattr(arr_module, "_CUE_SETTLE_POLL_S", 0.005)
 
     song = FakeSong()
     song.last_event_time = 1000.0
@@ -981,7 +1074,7 @@ def test_concurrent_cue_creates_restore_playhead_to_initial(
     sees an intermediate target because they're mutually exclusive.)
     """
     import hallucinote_mcp.handlers.arrangement as arr_module
-    monkeypatch.setattr(arr_module, "_CUE_SETTLE_SLEEP_S", 0.005)
+    monkeypatch.setattr(arr_module, "_CUE_SETTLE_POLL_S", 0.005)
 
     song = FakeSong()
     song.last_event_time = 1000.0

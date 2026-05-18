@@ -249,7 +249,7 @@ def cue_server(monkeypatch):
     # serialization guarantee is independent of sleep duration.
     import hallucinote_mcp.handlers.arrangement as arr_module
     from hallucinote_mcp.testing import isolated_actions
-    monkeypatch.setattr(arr_module, "_CUE_SETTLE_SLEEP_S", 0.005)
+    monkeypatch.setattr(arr_module, "_CUE_SETTLE_POLL_S", 0.005)
 
     with isolated_actions():
         song = _CueFakeSong()

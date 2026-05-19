@@ -444,6 +444,61 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 
 -- =============================================================================
+-- Song metadata layer: markdown_refs + FTS5 index
+-- =============================================================================
+-- Composer intent + decision rationale live in atomic markdown files under
+-- `songs/<name>/decisions/` and `songs/<name>/annotations/`. Markdown is the
+-- source of truth (git-tracked, LLM-native to read); this table is a
+-- rebuildable projection that makes the corpus queryable from SQL, with FTS5
+-- for prose + tag search. Body text is owned by FTS5; this table carries the
+-- queryable metadata.
+--
+-- See `.prawduct/artifacts/song-conventions.md` for the full frontmatter
+-- schema and directory convention. The reindex helper
+-- (`tools/reindex_markdown.py` / `markdown_refs.reindex_corpus`) walks the
+-- corpus and upserts rows here; rows whose file vanished get tombstoned
+-- (`tombstoned_at` non-null) instead of being deleted, so event-side payload
+-- paths remain resolvable for historical queries.
+--
+-- Reindex bypasses the mutator-emits-event discipline by design: it is a
+-- projection rebuild from disk, not a domain mutation. The audit-side
+-- "this LLM-driven write produced this file" event (MARKDOWN_REF_RECORDED)
+-- lives in the W8-B mutator surface; reindex is purely the read-side index.
+
+CREATE TABLE IF NOT EXISTS markdown_refs (
+    path                TEXT PRIMARY KEY,
+    kind                TEXT NOT NULL
+                            CHECK (kind IN ('decision', 'annotation', 'structural-fact')),
+    scope               TEXT NOT NULL
+                            CHECK (scope IN ('song', 'time', 'track', 'track-time')),
+    song_id             TEXT REFERENCES songs(id) ON DELETE SET NULL,
+    track_id            TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    bars_json           TEXT,           -- '[start, end]' or '[start]' when scope ∈ {time, track-time}
+    tags_json           TEXT,           -- '[str, ...]'
+    related_json        TEXT,           -- '[path, ...]'  cross-links to other refs
+    frontmatter_date    TEXT,           -- ISO 'YYYY-MM-DD' (required for decisions)
+    content_hash        TEXT NOT NULL,  -- SHA-256 hex digest of file content (change detection)
+    indexed_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    tombstoned_at       TEXT            -- non-null when the file is no longer on disk
+);
+
+CREATE INDEX IF NOT EXISTS idx_markdown_refs_song  ON markdown_refs(song_id);
+CREATE INDEX IF NOT EXISTS idx_markdown_refs_track ON markdown_refs(track_id);
+CREATE INDEX IF NOT EXISTS idx_markdown_refs_kind  ON markdown_refs(kind);
+
+-- FTS5 index over prose body + tag string. Owns its own content (regular FTS5
+-- mode — the marginal storage cost is trivial at corpus size, and avoids
+-- external-content sync ceremony). `path` is a stored-but-unindexed column so
+-- callers can JOIN back to markdown_refs without a rowid coordination dance.
+-- Reindex pattern: DELETE WHERE path=? + INSERT (idempotent per-file refresh).
+CREATE VIRTUAL TABLE IF NOT EXISTS markdown_refs_fts USING fts5(
+    body,
+    tags,
+    path UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+
+-- =============================================================================
 -- Ableton projection: sessions + links
 -- =============================================================================
 -- Ableton bindings live OUT of the core rows. A song can be bound to multiple

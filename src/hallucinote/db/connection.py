@@ -36,10 +36,42 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
-    """Open + apply schema. Idempotent: schema uses IF NOT EXISTS throughout."""
+    """Open + apply schema. Idempotent: schema uses IF NOT EXISTS throughout,
+    plus an explicit column-add pass for ALTER cases that CREATE doesn't cover.
+    """
     conn = connect(db_path)
     conn.executescript(_SCHEMA_PATH.read_text())
+    _ensure_added_columns(conn)
     return conn
+
+
+# Column additions that post-date the original schema CREATE statements.
+# SQLite has no `ADD COLUMN IF NOT EXISTS` so we sniff `PRAGMA table_info`
+# first. Each entry is (table, column_name, full_column_definition).
+# Append new rows here when a future chunk needs an additive schema bump
+# on existing DBs; never remove rows (removal is a destructive migration
+# that needs its own one-shot tool).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # W8-B: requests gains cycle metadata. Existing rows get NULL kind /
+    # duration_ms / outcome; mutators set them at request open + close.
+    ("requests", "kind", "TEXT"),
+    ("requests", "duration_ms", "INTEGER"),
+    ("requests", "outcome", "TEXT"),
+)
+
+
+def _ensure_added_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent column-add migration. Safe to call on fresh + existing DBs."""
+    by_table: dict[str, set[str]] = {}
+    for table, _col, _defn in _ADDED_COLUMNS:
+        by_table.setdefault(table, set())
+    for table in by_table:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        by_table[table] = {r["name"] for r in rows}
+    for table, col, defn in _ADDED_COLUMNS:
+        if col in by_table[table]:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
 
 
 @contextmanager

@@ -440,6 +440,145 @@ def get_ableton_links_for_session(
     ).fetchall()
 
 
+# ---------------------------------------------------------------------------
+# Markdown corpus projection (song-context retrieval surface)
+# ---------------------------------------------------------------------------
+
+
+def get_markdown_ref(
+    conn: sqlite3.Connection, path: str
+) -> sqlite3.Row | None:
+    """Look up one markdown_refs row by path. Returns None if not indexed."""
+    return conn.execute(
+        "SELECT * FROM markdown_refs WHERE path = ?", (path,)
+    ).fetchone()
+
+
+def get_request(
+    conn: sqlite3.Connection, request_id: str
+) -> sqlite3.Row | None:
+    """Look up one requests row by id. Returns None if not found."""
+    return conn.execute(
+        "SELECT * FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+
+
+def find_markdown_refs_for_request(
+    conn: sqlite3.Connection, request_id: str
+) -> list[sqlite3.Row]:
+    """Cross-reference query: markdown refs recorded during a specific request.
+
+    Joins `events` (kind=MARKDOWN_REF_RECORDED, threaded by request_id) to
+    `markdown_refs` on path. Returns the markdown_refs row plus the event's
+    `ts` so callers see when each ref was recorded relative to the cycle.
+    Tombstoned refs are included — the historical query stays valid even
+    after a file is removed.
+    """
+    return conn.execute(
+        """SELECT m.*, e.ts AS recorded_at
+           FROM events e
+           JOIN markdown_refs m
+             ON m.path = json_extract(e.payload_json, '$.path')
+           WHERE e.request_id = ?
+             AND e.kind = 'markdown_ref_recorded'
+           ORDER BY e.seq""",
+        (request_id,),
+    ).fetchall()
+
+
+def find_markdown_refs(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str | None = None,
+    kind: str | None = None,
+    scope: str | None = None,
+    track_id: str | None = None,
+    tags: list[str] | None = None,
+    fulltext: str | None = None,
+    bars: tuple[float, float] | None = None,
+    include_tombstoned: bool = False,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    """Query the markdown corpus projection.
+
+    All filter args are AND-composed; `tags` is a contains-any match. When
+    `fulltext` is set, results join to `markdown_refs_fts` and rank by
+    FTS5 relevance (returns include a `snippet` column with `<<...>>`
+    highlights). Without `fulltext`, results are ordered by frontmatter_date
+    DESC (most recent decisions first), tiebreaking on path.
+
+    `bars=(q_start, q_end)` returns rows whose `bars_json` overlaps the
+    given range — point rows `[a]` match iff `q_start <= a <= q_end`;
+    range rows `[a, b]` match iff `max(a, q_start) < min(b, q_end)`.
+
+    Tombstoned rows (file no longer on disk) are excluded by default.
+    """
+    where: list[str] = []
+    args: list[Any] = []
+
+    if not include_tombstoned:
+        where.append("m.tombstoned_at IS NULL")
+    if song_id:
+        where.append("m.song_id = ?")
+        args.append(song_id)
+    if kind:
+        where.append("m.kind = ?")
+        args.append(kind)
+    if scope:
+        where.append("m.scope = ?")
+        args.append(scope)
+    if track_id:
+        where.append("m.track_id = ?")
+        args.append(track_id)
+    if tags:
+        placeholders = ",".join("?" for _ in tags)
+        where.append(
+            f"EXISTS (SELECT 1 FROM json_each(m.tags_json) "
+            f"WHERE value IN ({placeholders}))"
+        )
+        args.extend(tags)
+    if bars is not None:
+        q_start, q_end = bars
+        where.append(
+            "m.bars_json IS NOT NULL AND ("
+            "(json_array_length(m.bars_json) = 1 "
+            " AND json_extract(m.bars_json, '$[0]') >= ? "
+            " AND json_extract(m.bars_json, '$[0]') <= ?) "
+            "OR "
+            "(json_array_length(m.bars_json) = 2 "
+            " AND json_extract(m.bars_json, '$[0]') < ? "
+            " AND json_extract(m.bars_json, '$[1]') > ?))"
+        )
+        args.extend([q_start, q_end, q_end, q_start])
+
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    if fulltext:
+        sql = (
+            "SELECT m.*, "
+            "snippet(markdown_refs_fts, 0, '<<', '>>', '...', 32) AS snippet "
+            "FROM markdown_refs_fts f "
+            "JOIN markdown_refs m ON m.path = f.path "
+            "WHERE markdown_refs_fts MATCH ?"
+            + ("" if not where else " AND " + " AND ".join(where))
+            + " ORDER BY rank LIMIT ?"
+        )
+        return conn.execute(sql, [fulltext, *args, limit]).fetchall()
+
+    sql = (
+        "SELECT m.* FROM markdown_refs m"
+        f"{where_sql} "
+        "ORDER BY COALESCE(m.frontmatter_date, '0000-01-01') DESC, m.path "
+        "LIMIT ?"
+    )
+    return conn.execute(sql, [*args, limit]).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Ableton projection (continued)
+# ---------------------------------------------------------------------------
+
+
 def get_db_id_by_ableton_index(
     conn: sqlite3.Connection,
     *,

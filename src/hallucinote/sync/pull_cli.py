@@ -69,6 +69,7 @@ _DOMAINS = {
     "arrangement-clips": pull.plan_pull_arrangement_clips,
     "session-clips":     pull.plan_pull_session_clips,
     "clip-notes":        pull.plan_pull_notes_for_clips,
+    "envelopes":         pull.plan_pull_envelopes,
 }
 
 

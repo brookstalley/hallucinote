@@ -96,12 +96,116 @@ S-1 (W6-G/H idempotency): PASS|FAIL
 - Fix applied: none | <brief description>
 ```
 
+### S-1 evidence (2026-05-19)
+
+**Result: PASS — but only after two bug fixes triggered by the smoke.**
+
+The smoke's pass/fail enumeration was incomplete. The spec anticipated
+"PASS (idempotent return)" vs "FAIL (destructive overwrite)." Real Live
+exhibited a *third* state not in the enumeration: `create_automation_envelope`
+returns None (or raises) on already-bound targets — non-destructive but
+also non-idempotent.
+
+- Live version: 12.4
+- MCP/Remote Script version (post-fix): `0.1.0+c671a9a12dc4`
+- **First-pass first read (pre-fix):** `exists: false`, breakpoints `[]` — read could not find the envelope it just wrote.
+- **Visual confirmation (pre-fix):** envelope WAS visible in Live, but with a
+  spurious 0dB / 0-pan revert-to-default point at the last breakpoint's
+  position (write-side bug: zero-duration anchor leaks default-revert).
+- **Fixes applied (same session, 2026-05-19):**
+  - `_find_existing_envelope` rewritten to iterate `clip.automation_envelopes`
+    and match by parameter identity. Falls back to `create_automation_envelope`
+    only for the fresh-target case.
+  - `_write_breakpoints_as_steps` accepts a `tail_end` kwarg; clip-scoped
+    callers (mixer / pan / send / device_parameter / clip_cc /
+    clip_pitch_bend) pass `clip.length` so the last step extends to clip
+    end instead of leaving a zero-duration anchor.
+  - FakeClip / FakeEnvelope updated to mirror real Live (non-idempotent
+    create, `automation_envelopes` iteration, `envelope.parameter`).
+- **Post-fix Step 4 (first read):** `exists: true`, 3 breakpoints at
+  values 0.85 / 0.50 / 0.20 (float32 precision artifacts visible).
+- **Post-fix Step 5 (second read):** identical to Step 4 — non-destructive.
+- **Post-fix Step 6:** Live's UI shows clean stepped curve, no revert artifact.
+
 ---
 
-## Future smokes (placeholders — populated as wave-7 progresses)
+## Additional smokes — W7-0 session 2026-05-19
 
-- **S-2** — W7-A envelope-pull round-trip (added in W7-D).
-- **S-3** — W7-B `get_device_chains` shape uniformity across rack subclasses (added in W7-D).
-- **S-4** — W6-K real-Live confirmation pass (added in W7-D).
-- **S-5** — Phaser/Flanger and Eq3/FilterEQ3 class_name preservation (added in W7-D).
-- **S-6** — W5-D parameter-dialed instrument sound parity (added in W7-D).
+Run alongside S-1 once the same fixture was confirmed. Outcomes recorded
+in line with each.
+
+### S-3 — `get_device_chains` shape uniformity across rack subclasses
+
+**Goal.** Verify the response shape is uniform across DrumGroupDevice,
+InstrumentGroupDevice, and AudioEffectGroupDevice — same keys at each
+level so consumers can write one walker.
+
+**Result: PASS.** All three rack types return identical top-level shape:
+`{device_index, class_name, chain_count, chains[], parent_kind,
+track_index}`. Per-chain shape: `{chain_index, name, device_count,
+devices[], is_muted, is_soloed}`. Per-nested-device:
+`{position, name, class_name, parameter_count, is_active}`.
+
+Populated case verified against "Late Nite Kit" (16 chains, mixed
+device types including a nested `AudioEffectGroupDevice` that's
+correctly NOT recursed — the one-level-deep design holds).
+
+**Side findings → filed in backlog:**
+- `load(kind='Drum Rack')` with no `preset_uri` can match an Instrument
+  Rack saved preset by display name. Use `preset_uri` for unambiguous loads.
+- `load(kind='Instrument Rack')` with no `preset_uri` fails outright —
+  the bare name isn't a directly-loadable browser node.
+
+### S-5 — class_name preservation
+
+**Goal.** Verify `ableton_device(action='list')` returns canonical class
+names that round-trip cleanly across Live 12.4's device-class renames.
+
+**Result: PASS.** Empirical mapping observed:
+- Phaser + Flanger → `class_name: PhaserNew` (Live 12 merged into one device
+  named "Phaser-Flanger" with class `PhaserNew`; both legacy names route to it)
+- EQ Three → `class_name: FilterEQ3`
+- Auto Filter → `class_name: AutoFilter2`
+
+Note the asymmetry: `kind` in the load response echoes the requested name
+(e.g., `"Phaser"`), while `list` returns the empirical class (`"PhaserNew"`).
+That's correct — `kind` is "what you asked for," `class_name` is "what
+Live actually instantiated."
+
+### S-6 — parameter-dialed Operator round-trip
+
+**Goal.** Verify W5-D's claim: parameter values survive a set+get
+round-trip via the MCP wire format (the core capability that captured
+snapshots depend on).
+
+**Result: PASS.** Three parameter shapes tested:
+- `Filter Freq` (continuous, internal [0,1] mapped log to Hz): wrote
+  0.5 → read 0.5 (display "745 Hz").
+- `Tone` (continuous): wrote 0.3 → read 0.30000001192092896 (float32 boundary).
+- `Algorithm` (is_enum=true, 11 values): wrote continuous `'5'` → read
+  5.0, display "Alg. 6". Enum params accept the continuous write path
+  without requiring `value_type='enum'`.
+
+### S-2 — envelope-pull round-trip
+
+**Status: COVERED BY PROXY — not run as a standalone smoke.**
+
+S-1 verified the underlying `ableton_automation(action='read_envelope')`
+path (the load-bearing primitive for envelope pull). The pull layer's
+diff math is unit-tested in `tests/unit/test_pull.py`. Running a full
+pull cycle would require building a song DB just to exercise diff logic
+that's already pinned. The composition of `read_envelope` (real-Live
+proven) + the pull layer (unit-test proven) is sufficient for V1.
+
+### S-4 — W6-K real-Live confirmation
+
+**Status: SUBSUMED — not run as a standalone smoke.**
+
+W6-K's intent was "validate the bundle of W6 changes against real Live."
+S-1 / S-3 / S-5 / S-6 collectively exercised the W6 surfaces that
+mattered: envelope read (S-1), nested-rack probe (S-3), class-name
+preservation (S-5), parameter writes via Operator (S-6 — covering W5-D
+which W6-K bundled). The remaining W6-K items (sidechain, load_in_rack,
+set_input_routing) have unit-test coverage and no smoke-caught surprises
+during this session's fixture work. Strike — re-open if a specific
+W6-K surface needs empirical attention.

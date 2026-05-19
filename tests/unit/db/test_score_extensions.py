@@ -290,3 +290,94 @@ def test_score_tables_cascade_with_song(conn):
             f"SELECT COUNT(*) FROM {table} WHERE song_id=?", (sid,)
         ).fetchone()[0]
         assert cnt == 0, f"{table} did not cascade"
+
+
+# ---------- W10-H: meter-ratchet refusal ----------
+
+
+def test_add_time_signature_point_at_bar_1_allowed(conn, song):
+    """Bar-1 (the global meter) is always fine."""
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=7, denominator=8,
+    )
+    assert pid
+
+
+def test_add_time_signature_point_refuses_post_bar_1(conn, song):
+    """W10-H: Live 12.4's MCP has no song_signature automation target,
+    so within-song meter ratchets can't reach Live. Refuse at the mutator
+    layer so invalid state never enters the DB."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    with pytest.raises(ValueError, match="meter ratchets can't reach Live"):
+        M.add_time_signature_point(
+            conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
+        )
+
+
+def test_add_time_signature_point_idempotent_repeats_at_post_bar_1_position(
+    conn, song,
+):
+    """W10-H + W12-A: an idempotent re-add at the same position with the
+    same values is a no-op. This preserves the build.py converger story for
+    legacy pre-W10-H DBs whose rows happen to already exist at non-bar-1
+    positions (those still need cleanup, but build.py shouldn't fail on
+    re-run while the operator decides what to do)."""
+    # Insert a legacy non-bar-1 row directly (bypassing the mutator's
+    # refusal — this models a pre-W10-H DB).
+    pid_legacy = "abc1234567890abc1234567890abc12"
+    conn.execute(
+        """INSERT INTO time_signature_map
+               (id, song_id, start_bar, numerator, denominator)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid_legacy, song, 17.0, 7, 8),
+    )
+    # Re-add with the same values: should return 'unchanged', not raise.
+    result = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
+    )
+    assert result == pid_legacy
+    assert result.kind == "unchanged"
+
+
+def test_update_time_signature_point_refuses_at_post_bar_1(conn, song):
+    """W10-H: updates to non-bar-1 rows are also refused (same reason as
+    adds — the underlying state can't reach Live)."""
+    pid_legacy = "def4567890abcdef4567890abcdef45"
+    conn.execute(
+        """INSERT INTO time_signature_map
+               (id, song_id, start_bar, numerator, denominator)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid_legacy, song, 17.0, 7, 8),
+    )
+    with pytest.raises(ValueError, match="meter ratchets can't reach Live"):
+        M.update_time_signature_point(
+            conn, point_id=pid_legacy, numerator=5, denominator=8,
+        )
+
+
+def test_update_time_signature_point_at_bar_1_still_works(conn, song):
+    """Bar-1 updates remain functional (the global meter is the v1 reality)."""
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.update_time_signature_point(
+        conn, point_id=pid, numerator=3, denominator=4,
+    )
+    sig = Q.get_time_signature_map(conn, song)[0]
+    assert (sig["numerator"], sig["denominator"]) == (3, 4)
+
+
+def test_remove_time_signature_point_at_post_bar_1_still_works(conn, song):
+    """W10-H: removes always allowed — legacy non-bar-1 rows need a path
+    out of the DB. Only adds + updates refuse."""
+    pid_legacy = "111222333444555666777888999aaab"
+    conn.execute(
+        """INSERT INTO time_signature_map
+               (id, song_id, start_bar, numerator, denominator)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid_legacy, song, 17.0, 7, 8),
+    )
+    M.remove_time_signature_point(conn, point_id=pid_legacy)
+    assert Q.get_time_signature_map(conn, song) == []

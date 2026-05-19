@@ -535,26 +535,24 @@ def build(reset: bool = False) -> str:
             conn, song_id=song_id, start_bar=1.0, numerator=7, denominator=8,
         )
 
-        # CANARY: try writing per-bar time-signature points for the fracture ratchet.
-        # We DO NOT YET KNOW whether the push planner emits these to Live — based
-        # on grep of sync/push.py::plan_push_time_signature_map, only the bar-1
-        # row reaches Live and the rest get a `plan.warn(...)`. So we are
-        # WRITING THESE TO THE DB but PUSH WILL DROP THEM SILENTLY. Logged
-        # explicitly in the runbook as the central architectural finding.
-        cum_bar = float(FRACTURE_BAR)
-        for (num, den) in FRACTURE_METER_PATTERN:
-            M.add_time_signature_point(
-                conn, song_id=song_id, start_bar=cum_bar,
-                numerator=num, denominator=den,
-                reason="fracture meter ratchet bar"
-            )
-            cum_bar += 1.0
-        # Back to 7/8 for release.
-        M.add_time_signature_point(
-            conn, song_id=song_id, start_bar=float(RELEASE_BAR),
-            numerator=7, denominator=8,
-            reason="release returns to 7/8"
-        )
+        # W10-H (post-Wave-0): the within-section meter ratchet that this
+        # canary was designed to surface is REFUSED at the mutator layer in
+        # v1 — Live 12.4's MCP has no `song_signature` automation target so
+        # the ratchet can't reach Live. Per the user-locked policy
+        # (2026-05-19), v1 ships loud refusal; v1.1 will explore the
+        # per-bar-arrangement-clip workaround. The canary preserves the
+        # 7/8 + polyrhythm work; fracture plays in global 7/8 (its bar
+        # offsets are still computed against FRACTURE_METER_PATTERN for
+        # the polyrhythmic content, but the meter map itself is bar-1-only).
+        #
+        # Original ratchet authoring (kept commented as v1.1 reference):
+        # cum_bar = float(FRACTURE_BAR)
+        # for (num, den) in FRACTURE_METER_PATTERN:
+        #     M.add_time_signature_point(conn, song_id=song_id,
+        #         start_bar=cum_bar, numerator=num, denominator=den)
+        #     cum_bar += 1.0
+        # M.add_time_signature_point(conn, song_id=song_id,
+        #     start_bar=float(RELEASE_BAR), numerator=7, denominator=8)
 
         # Sections.
         M.create_section(conn, song_id=song_id, name="intro",

@@ -278,33 +278,75 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
 # --- arrangement clips ---
 
 
-def test_plan_push_arrangement_raises_on_unlinked_track(
+def test_plan_push_arrangement_skips_on_unlinked_track(
     conn, song, session, track, clip
 ):
-    """W3-F follow-up (Critic warning): plan_push_arrangement is now
-    strict on unlinked tracks/clips — same discipline as plan_push_clip
-    post-W3-C. Silent skip would leave Live with a half-built
-    arrangement; the strict raise points at the missing pre-pass."""
+    """W10-G post-Wave-0 normalization: planners skip-and-warn instead of
+    raising on unlinked deps. Wave 0's full-band-rock canary surfaced the
+    prior strict-raise as a Python traceback through the CLI when an
+    earlier phase failed partway — agent had no way to continue. Now the
+    row is skipped, a teaching note appears, and the rest of the
+    arrangement still planned (the agent can choose to abort if any row
+    skips, but the choice is theirs)."""
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
-    with pytest.raises(ValueError, match="plan_push_song_tracks.*first"):
-        push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == []  # nothing emitted (track not linked)
+    assert any(
+        "not linked" in n and "plan_push_song_tracks" in n
+        for n in plan.notes
+    ), f"expected teaching note pointing at plan_push_song_tracks; got {plan.notes}"
 
 
-def test_plan_push_arrangement_raises_on_unlinked_clip(
+def test_plan_push_arrangement_skips_on_unlinked_clip(
     conn, song, session, track, clip
 ):
-    """When track IS linked but the session clip isn't, the error
-    points at the clip-create phase instead."""
+    """When track IS linked but the session clip isn't, the note points
+    at the clip-create phase. Same skip-and-warn shape as the unlinked-
+    track case (W10-G)."""
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
-    with pytest.raises(ValueError, match="clip-create phase"):
-        push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any(
+        "not linked" in n and "clip-create phase" in n
+        for n in plan.notes
+    ), f"expected teaching note pointing at clip-create phase; got {plan.notes}"
+
+
+def test_plan_push_arrangement_partial_state_emits_linked_rows_only(
+    conn, song, session, track, clip,
+):
+    """W10-G: when some rows are linked and others aren't, the planner
+    emits calls for the linked ones and warns about the rest — partial
+    progress is the right shape (vs. all-or-nothing raising)."""
+    # Track is linked; only one of two clips is.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=1
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    # Add a second clip; do NOT link it.
+    other_clip = M.create_clip(
+        conn, track_id=track, slot=2, length_beats=16.0, name="other"
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1, end_bar=5,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=other_clip,
+        start_bar=5, end_bar=9,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1  # only the linked clip's placement
+    assert any("not linked" in n for n in plan.notes)
 
 
 def test_plan_push_arrangement_emits_one_duplicate_per_arrangement_clip(

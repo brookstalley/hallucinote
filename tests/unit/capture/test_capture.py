@@ -103,11 +103,17 @@ def test_replay_creates_song_master_returns_tracks_sends(conn):
     assert drums_to_delay["level"] == pytest.approx(0.1)
 
 
-def test_replay_rejects_duplicate_song(conn):
+def test_replay_is_idempotent_on_duplicate_song(conn):
+    """W12-A: replay_capture is now idempotent — running it twice over the
+    same snapshot is a no-op for unchanged state. Prior contract (raise)
+    pre-dated mutator idempotency."""
     snap = _sample_snapshot()
-    replay_capture(conn, snap, song_name="t")
-    with pytest.raises(ValueError, match="already exists"):
-        replay_capture(conn, snap, song_name="t")
+    sid1 = replay_capture(conn, snap, song_name="t")
+    sid2 = replay_capture(conn, snap, song_name="t")
+    assert sid1 == sid2
+    # Same name resolves to same song; mutators recognize the existing rows
+    # and either no-op or update (depending on whether snapshot content
+    # differs from DB).
 
 
 def test_replay_rejects_unknown_track_type(conn):

@@ -283,22 +283,22 @@ def replay_capture(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
-    """Replay a snapshot into a fresh song in the DB. Returns the new song_id.
+    """Replay a snapshot into a song in the DB. Returns the song_id.
 
-    Idempotency / overwrite: callers are expected to operate on a fresh DB (or
-    a song that doesn't yet exist). Replay does not delete prior state; if the
-    song already exists, it raises so a stale partial replay can't shadow real
-    data.
+    W12-A: replay is idempotent — every underlying mutator (create_song,
+    create_track, create_return, create_device_chain, create_device,
+    set_device_parameter) is upsert-shaped. Re-replay onto an existing
+    song updates rows whose state changed (snapshot edits) and is a no-op
+    for unchanged rows. The prior "song already exists, raise" guard
+    pre-dated mutator idempotency and is no longer needed; the actor='sync'
+    threading still distinguishes pulled state from build-owned state for
+    tombstone-time semantics.
 
-    Notes/clips/devices in the snapshot are ignored — chunk 3 covers only the
-    mix layout. Score-half (tempo/time-signature/sections/cue points) is also
-    not populated by replay; build.py is expected to author those alongside
-    the captured mix.
+    Notes/clips/devices in the snapshot are NOT replayed via this function
+    — chunk 3 covers only the mix layout. Score-half (tempo/time-signature/
+    sections/cue points) is also not populated by replay; build.py authors
+    those alongside the captured mix.
     """
-    if Q.get_song_by_name(conn, song_name) is not None:
-        raise ValueError(
-            f"song {song_name!r} already exists; replay expects a clean slate"
-        )
 
     song_id = M.create_song(
         conn,

@@ -177,10 +177,23 @@ def test_add_tempo_point_rejects_nonpositive_bpm(conn, song):
         M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=0.0)
 
 
-def test_tempo_map_unique_per_bar(conn, song):
-    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
-    with pytest.raises(sqlite3.IntegrityError):
-        M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=100.0)
+def test_tempo_map_upserts_on_same_bar(conn, song):
+    """W12-A: re-adding at the same bar upserts (not raises). Same tempo →
+    unchanged; different tempo → updated. Schema UNIQUE remains as
+    defense-in-depth for raw-SQL callers but the mutator never trips it."""
+    p1 = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    assert p1.kind == "created"
+    # Same tempo → unchanged, same id
+    p2 = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
+    assert p2.kind == "unchanged"
+    assert p2 == p1
+    # Different tempo → updated, same id, value updated
+    p3 = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=100.0)
+    assert p3.kind == "updated"
+    assert p3 == p1
+    points = Q.get_tempo_map(conn, song)
+    assert len(points) == 1
+    assert points[0]["tempo_bpm"] == 100.0
 
 
 def test_remove_tempo_point_emits_event(conn, song):

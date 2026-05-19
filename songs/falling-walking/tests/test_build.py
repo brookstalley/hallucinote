@@ -81,6 +81,49 @@ def test_build_runs_clean_and_produces_full_song(build_module):
         conn.close()
 
 
+def test_build_is_idempotent_state_converger(build_module):
+    """W12-A: re-running the build over an existing DB produces zero net
+    state-change events. Validates the load-bearing state-converger promise
+    on the real falling-walking build (not a synthetic one)."""
+    from hallucinote.db import init_db
+
+    # First build.
+    song_id = build_module.build(reset=True)
+    conn = init_db(build_module.DB_PATH)
+    try:
+        # State-change events from the first build.
+        state_events_first = [
+            r["kind"] for r in conn.execute(
+                "SELECT kind FROM events "
+                "WHERE kind NOT IN ('request_created', 'request_closed') "
+                "ORDER BY seq"
+            ).fetchall()
+        ]
+        n_state_first = len(state_events_first)
+    finally:
+        conn.close()
+
+    # Second build — no reset, expect zero new state-change events.
+    song_id_2 = build_module.build(reset=False)
+    assert song_id_2 == song_id  # same song row
+
+    conn = init_db(build_module.DB_PATH)
+    try:
+        state_events_after = [
+            r["kind"] for r in conn.execute(
+                "SELECT kind FROM events "
+                "WHERE kind NOT IN ('request_created', 'request_closed') "
+                "ORDER BY seq"
+            ).fetchall()
+        ]
+        assert len(state_events_after) == n_state_first, (
+            f"Re-running build produced {len(state_events_after) - n_state_first} "
+            f"extra state-change events — converger discipline broken."
+        )
+    finally:
+        conn.close()
+
+
 def test_build_push_planners_run_without_error(build_module):
     """Every push planner runs without exceptions on the built song."""
     from hallucinote.db import init_db, mutations as M, queries as Q

@@ -146,10 +146,17 @@ def test_delete_return_cascades_sends(conn, song):
     assert not Q.get_sends_for_song(conn, song)
 
 
-def test_returns_unique_per_position(conn, song):
-    M.create_return(conn, song_id=song, name="A", position=1)
-    with pytest.raises(sqlite3.IntegrityError):
-        M.create_return(conn, song_id=song, name="B", position=1)
+def test_returns_upsert_per_position(conn, song):
+    """W12-A: re-adding at the same position upserts (not raises). Different
+    name → updated; same args → unchanged."""
+    r1 = M.create_return(conn, song_id=song, name="A", position=1)
+    assert r1.kind == "created"
+    r2 = M.create_return(conn, song_id=song, name="B", position=1)
+    assert r2.kind == "updated"
+    assert r2 == r1
+    r3 = M.create_return(conn, song_id=song, name="B", position=1)
+    assert r3.kind == "unchanged"
+    assert r3 == r1
 
 
 def test_returns_volume_check_constraint(conn, song):

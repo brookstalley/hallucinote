@@ -25,11 +25,13 @@ import json
 from pathlib import Path
 
 from hallucinote.capture import replay_capture
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import GeneratorOutput, bass, drums, harmony
 from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
 
-DB_PATH = Path(__file__).parent / "falling-walking.db"
+# W12-A: per-branch DB filename. Branch switches pick up the right DB
+# silently; outside a repo / detached HEAD falls back to falling-walking.db.
+DB_PATH = resolve_db_path("falling-walking", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # Chord roots (MIDI).
@@ -729,86 +731,94 @@ def _author_envelopes(conn, song_id: str, tracks: dict[str, str]) -> None:
 
 
 def build(reset: bool = False) -> str:
-    """Build the song. Returns the song_id (UUID hex)."""
+    """Build the song. Returns the song_id (UUID hex).
+
+    W12-A: this is a state-converger. Re-running with no changes is a no-op
+    (zero net events). Mutators inside the `build_session` are idempotent —
+    second call with identical args returns kind='unchanged' and emits no
+    event. Build-owned rows from a prior build that aren't touched this run
+    get tombstoned automatically at session exit. Pulled rows (actor='sync')
+    and LLM-authored edits survive.
+
+    `--reset` remains an escape hatch for "wipe the DB and start fresh" but
+    is no longer required in the normal flow.
+    """
     if reset and DB_PATH.exists():
         DB_PATH.unlink()
 
     conn = init_db(DB_PATH)
     try:
-        existing = Q.get_song_by_name(conn, "falling-walking")
-        if existing and not reset:
-            print(f"song already exists (id={existing['id']}); use --reset to rebuild")
-            return existing["id"]
+        with M.build_session(conn, song_name="falling-walking",
+                              owner="build.py"):
+            # Mix-half: replay the captured Ableton session.
+            snapshot = json.loads(SNAPSHOT_PATH.read_text())
+            song_id = replay_capture(
+                conn, snapshot,
+                song_name="falling-walking",
+                song_title="Falling, Walking",
+                song_key="Dm",
+                actor="sync", reason="chunk-5 capture replay",
+            )
 
-        # Mix-half: replay the captured Ableton session.
-        snapshot = json.loads(SNAPSHOT_PATH.read_text())
-        song_id = replay_capture(
-            conn, snapshot,
-            song_name="falling-walking",
-            song_title="Falling, Walking",
-            song_key="Dm",
-            actor="sync", reason="chunk-5 capture replay",
-        )
+            # Score-half.
+            M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
+            M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=132.0)
+            M.add_time_signature_point(
+                conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
+            )
 
-        # Score-half.
-        M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
-        M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=132.0)
-        M.add_time_signature_point(
-            conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
-        )
+            # Section markers.
+            M.create_section(conn, song_id=song_id, name="intro",
+                             start_bar=float(INTRO_BAR), end_bar=float(VERSE_BAR),
+                             notes_md="progressive hat journey + chord block crescendo")
+            M.create_section(conn, song_id=song_id, name="verse",
+                             start_bar=float(VERSE_BAR), end_bar=float(CHORUS_BAR),
+                             notes_md="trip-hop drums + Dm pad with detailed bass embellishments")
+            M.create_section(conn, song_id=song_id, name="chorus",
+                             start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR),
+                             notes_md="tresillo bass walking Dm-F-C-G")
+            M.create_section(conn, song_id=song_id, name="chorus_twist",
+                             start_bar=float(TWIST_BAR), end_bar=float(BRIDGE_BAR),
+                             notes_md="C3' variant — walks to Bb instead of G")
+            M.create_section(conn, song_id=song_id, name="bridge",
+                             start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR),
+                             notes_md="walking bossa through Bb major (Bbmaj7 / Gm7 / Cm7 / F7)")
+            M.create_section(conn, song_id=song_id, name="tag",
+                             start_bar=float(TAG_BAR), end_bar=float(OUTRO_BAR),
+                             notes_md="cooldown into the outro")
+            M.create_section(conn, song_id=song_id, name="outro",
+                             start_bar=float(OUTRO_BAR), end_bar=float(END_BAR),
+                             notes_md="fade out — pad + sub + lead hook variation")
 
-        # Section markers.
-        M.create_section(conn, song_id=song_id, name="intro",
-                         start_bar=float(INTRO_BAR), end_bar=float(VERSE_BAR),
-                         notes_md="progressive hat journey + chord block crescendo")
-        M.create_section(conn, song_id=song_id, name="verse",
-                         start_bar=float(VERSE_BAR), end_bar=float(CHORUS_BAR),
-                         notes_md="trip-hop drums + Dm pad with detailed bass embellishments")
-        M.create_section(conn, song_id=song_id, name="chorus",
-                         start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR),
-                         notes_md="tresillo bass walking Dm-F-C-G")
-        M.create_section(conn, song_id=song_id, name="chorus_twist",
-                         start_bar=float(TWIST_BAR), end_bar=float(BRIDGE_BAR),
-                         notes_md="C3' variant — walks to Bb instead of G")
-        M.create_section(conn, song_id=song_id, name="bridge",
-                         start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR),
-                         notes_md="walking bossa through Bb major (Bbmaj7 / Gm7 / Cm7 / F7)")
-        M.create_section(conn, song_id=song_id, name="tag",
-                         start_bar=float(TAG_BAR), end_bar=float(OUTRO_BAR),
-                         notes_md="cooldown into the outro")
-        M.create_section(conn, song_id=song_id, name="outro",
-                         start_bar=float(OUTRO_BAR), end_bar=float(END_BAR),
-                         notes_md="fade out — pad + sub + lead hook variation")
+            # Cue points at every section boundary.
+            for bar, name in [(INTRO_BAR, "intro"), (VERSE_BAR, "verse"),
+                              (CHORUS_BAR, "chorus"), (TWIST_BAR, "chorus_twist"),
+                              (BRIDGE_BAR, "bridge"), (TAG_BAR, "tag"),
+                              (OUTRO_BAR, "outro")]:
+                M.add_cue_point(conn, song_id=song_id, position_bar=float(bar), name=name)
 
-        # Cue points at every section boundary.
-        for bar, name in [(INTRO_BAR, "intro"), (VERSE_BAR, "verse"),
-                          (CHORUS_BAR, "chorus"), (TWIST_BAR, "chorus_twist"),
-                          (BRIDGE_BAR, "bridge"), (TAG_BAR, "tag"),
-                          (OUTRO_BAR, "outro")]:
-            M.add_cue_point(conn, song_id=song_id, position_bar=float(bar), name=name)
+            tracks = _tracks_by_name(conn, song_id)
 
-        tracks = _tracks_by_name(conn, song_id)
+            # Build each section's clips.
+            intro   = _build_intro(conn, song_id, tracks)
+            verse   = _build_verse(conn, song_id, tracks)
+            chorus  = _build_chorus(conn, song_id, tracks, twist=False)
+            twist   = _build_chorus(conn, song_id, tracks, twist=True)
+            bridge_ = _build_bridge(conn, song_id, tracks)
+            tag     = _build_tag(conn, song_id, tracks)
+            outro   = _build_outro(conn, song_id, tracks)
 
-        # Build each section's clips.
-        intro   = _build_intro(conn, song_id, tracks)
-        verse   = _build_verse(conn, song_id, tracks)
-        chorus  = _build_chorus(conn, song_id, tracks, twist=False)
-        twist   = _build_chorus(conn, song_id, tracks, twist=True)
-        bridge_ = _build_bridge(conn, song_id, tracks)
-        tag     = _build_tag(conn, song_id, tracks)
-        outro   = _build_outro(conn, song_id, tracks)
+            # Arrangement: every section drops its clips at its bar range.
+            _arrange_section(conn, song_id, tracks, intro,   start_bar=float(INTRO_BAR),  end_bar=float(VERSE_BAR))
+            _arrange_section(conn, song_id, tracks, verse,   start_bar=float(VERSE_BAR),  end_bar=float(CHORUS_BAR))
+            _arrange_section(conn, song_id, tracks, chorus,  start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR))
+            _arrange_section(conn, song_id, tracks, twist,   start_bar=float(TWIST_BAR),  end_bar=float(BRIDGE_BAR))
+            _arrange_section(conn, song_id, tracks, bridge_, start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR))
+            _arrange_section(conn, song_id, tracks, tag,     start_bar=float(TAG_BAR),    end_bar=float(OUTRO_BAR))
+            _arrange_section(conn, song_id, tracks, outro,   start_bar=float(OUTRO_BAR),  end_bar=float(END_BAR))
 
-        # Arrangement: every section drops its clips at its bar range.
-        _arrange_section(conn, song_id, tracks, intro,   start_bar=float(INTRO_BAR),  end_bar=float(VERSE_BAR))
-        _arrange_section(conn, song_id, tracks, verse,   start_bar=float(VERSE_BAR),  end_bar=float(CHORUS_BAR))
-        _arrange_section(conn, song_id, tracks, chorus,  start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR))
-        _arrange_section(conn, song_id, tracks, twist,   start_bar=float(TWIST_BAR),  end_bar=float(BRIDGE_BAR))
-        _arrange_section(conn, song_id, tracks, bridge_, start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR))
-        _arrange_section(conn, song_id, tracks, tag,     start_bar=float(TAG_BAR),    end_bar=float(OUTRO_BAR))
-        _arrange_section(conn, song_id, tracks, outro,   start_bar=float(OUTRO_BAR),  end_bar=float(END_BAR))
-
-        # Automation envelopes demonstrate the new envelope pathway end-to-end.
-        _author_envelopes(conn, song_id, tracks)
+            # Automation envelopes demonstrate the new envelope pathway end-to-end.
+            _author_envelopes(conn, song_id, tracks)
 
         return song_id
     finally:

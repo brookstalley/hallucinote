@@ -1,7 +1,9 @@
 """SQLite connection + schema bootstrap."""
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -72,6 +74,64 @@ def _ensure_added_columns(conn: sqlite3.Connection) -> None:
         if col in by_table[table]:
             continue
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+
+
+def _git_current_branch(cwd: Path | None = None) -> str | None:
+    """Current git branch name, or None if outside a repo or on detached HEAD.
+
+    Used by `resolve_db_path` to produce per-branch DB filenames (W12-A) so
+    branch switches don't silently leave the agent looking at a stale DB.
+    Returns None in three cases:
+      - `git` binary not on PATH
+      - cwd isn't inside a git working tree
+      - HEAD is detached (no symbolic ref)
+
+    All three fall back to the legacy `<slug>.db` path at the callsite.
+    """
+    if shutil.which("git") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=cwd, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+_BRANCH_PROBE_GIT = object()  # sentinel: "probe git" (vs explicit None/str)
+
+
+def resolve_db_path(
+    slug: str,
+    *,
+    root: Path | str = "songs",
+    branch: str | None = _BRANCH_PROBE_GIT,  # type: ignore[assignment]
+) -> Path:
+    """Per-branch DB filename. `songs/<slug>/<slug>-<branch>.db` inside a repo,
+    falling back to `songs/<slug>/<slug>.db` outside a repo or on detached HEAD.
+
+    The branch name is sanitized by replacing `/` with `--` so `feature/foo`
+    becomes `feature--foo` — mirrors `.prawduct/.pr-reviews/` naming so
+    behavior is predictable for the canonical "feature/X" gitflow shape.
+
+    `branch` is an escape hatch primarily for testing — pass `None` to force
+    the no-branch fallback, or a literal string to skip the git probe. Default
+    triggers the real git probe.
+    """
+    if branch is _BRANCH_PROBE_GIT:
+        resolved_branch = _git_current_branch()
+    else:
+        resolved_branch = branch
+    root_path = Path(root)
+    if resolved_branch is None:
+        return root_path / slug / f"{slug}.db"
+    sanitized = resolved_branch.replace("/", "--")
+    return root_path / slug / f"{slug}-{sanitized}.db"
 
 
 @contextmanager

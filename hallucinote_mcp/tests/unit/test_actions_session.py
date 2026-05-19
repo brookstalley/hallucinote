@@ -165,6 +165,7 @@ _EXPECTED_ACTIONS = {
     "snapshot",
     "revert",
     "list_snapshots",
+    "introspect",
 }
 # Wave M-5: set_arrangement_loop dropped from ableton_session; the canonical
 # home is ableton_arrangement(action='set_loop') — see test_actions_arrangement.
@@ -575,3 +576,217 @@ def test_help_payload_lists_set_master_property_enum(loaded_session_actions):
     smp = actions["set_master_property"]
     property_param = [p for p in smp["params"] if p["name"] == "property"][0]
     assert property_param["enum"] == ["volume", "panning", "mute"]
+
+
+# ---------- W6-Probe: introspect ----------
+#
+# Read-only LOM probing. The action surfaces dir/type/value/repr for any
+# dotted path rooted at song/application/view. Used in subsequent Wave 6
+# chunks (E/F/G/I/J) for empirical confirmation of Live's API surface
+# when third-party LOM dumps are stale or ambiguous.
+
+
+def test_introspect_dir_on_song_lists_public_members(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song", "what": "dir"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    members = resp.result["members"]
+    assert "tempo" in members
+    assert "tracks" in members
+    assert "master_track" in members
+    # Private filtered by default.
+    assert not any(m.startswith("_") for m in members)
+
+
+def test_introspect_dir_include_private_shows_underscore_names(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song", "what": "dir", "include_private": True},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # FakeSong has no private attrs of its own, but Python objects have
+    # ``__class__``, ``__init__``, etc. — those must surface.
+    assert any(m.startswith("_") for m in resp.result["members"])
+
+
+def test_introspect_type_on_song_tempo_returns_float(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.tempo", "what": "type"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["type"] == "float"
+
+
+def test_introspect_value_on_primitive_returns_value(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.tempo", "what": "value"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["value"] == 120.0
+    assert "note" not in resp.result
+
+
+def test_introspect_value_on_non_primitive_returns_repr_with_note(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.master_track", "what": "value"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert isinstance(resp.result["value"], str)
+    assert "note" in resp.result
+
+
+def test_introspect_repr_always_stringifies(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.tempo", "what": "repr"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["repr"] == "120.0"
+
+
+def test_introspect_walks_nested_dotted_path(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={
+                "target": "song.master_track.mixer_device.volume.value",
+                "what": "value",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["value"] == 0.85
+
+
+def test_introspect_supports_zero_based_index(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.tracks[0]", "what": "repr"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # FakeSong.tracks[0] is `object()` — repr starts with '<object object'.
+    assert "object object" in resp.result["repr"]
+
+
+def test_introspect_index_out_of_range_raises_teaching_error(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.tracks[99]", "what": "type"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "index 99" in (resp.error or "")
+
+
+def test_introspect_invalid_root_raises_teaching_error(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "context.foo", "what": "dir"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "root" in (resp.error or "")
+    assert "context" in (resp.error or "")
+
+
+def test_introspect_missing_attribute_raises_teaching_error(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song.nonexistent_attribute", "what": "dir"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "song" in err and "nonexistent_attribute" in err
+
+
+def test_introspect_invalid_what_raises_teaching_error(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "song", "what": "eval"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "what" in (resp.error or "")
+
+
+def test_introspect_view_root_aliases_application_view(loaded_session_actions):
+    ctx = FakeLiveContext()
+    # Both paths must resolve to the same object.
+    via_view = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "view", "what": "repr"},
+        ),
+        context=ctx,
+    )
+    via_application = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "application.view", "what": "repr"},
+        ),
+        context=ctx,
+    )
+    assert via_view.ok is True
+    assert via_application.ok is True
+    assert via_view.result["repr"] == via_application.result["repr"]
+
+
+def test_introspect_empty_target_raises_teaching_error(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(
+            tool="ableton_session", action="introspect",
+            params={"target": "", "what": "dir"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "non-empty" in (resp.error or "")

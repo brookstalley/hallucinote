@@ -39,14 +39,29 @@
   - `Q.get_compose_history(conn, song_id)` — kind='compose' filtered, ordered, with prompt previews.
   - `Q.find_related_decisions(conn, song_id, *, keywords, scope=None)` — substring/keyword search across `requests.prompt_text` + `requests.metadata_json.decision_rationale` + `annotations.body`. Returns ordered hits with timestamps + (optionally) parent context. Single SQL `LIKE` pass is enough for v1; semantic search (embeddings) is a follow-on if the dataset grows.
 
-  **Read-path UX — this is the payoff and the design driver.** Provenance is *context the LLM uses when working on the song*, not a passive audit. The target scenario:
+  **Read-path UX — this is the payoff and the design driver.** Provenance is *context the LLM uses when collaborating on the song*, not a passive audit. The retrieval surface enables both directions of musical conversation:
+
+  **Defensive — challenge contradictions:**
   > User: *"Accentuate the backbeats in the verse."*
-  > Claude (after `find_related_decisions(keywords=['backbeat', 'verse', 'dynamics'])`): *"Actually we brought those down on 2026-05-26 to contrast with the chorus — happy to adjust if you want to revisit that, but are you sure?"*
+  > Claude (after retrieving prior decisions): *"Actually we brought those down on 2026-05-26 to contrast with the chorus — happy to adjust if you want to revisit that, but are you sure?"*
+
+  **Generative — propose connections the user hasn't drawn yet:**
+  > User: *"Let's make the break go dim7."*
+  > Claude (after retrieving structural facts + prior decisions): *"That'll work great with the intro that starts dim7 and goes major — let's echo the first few notes."*
+
+  The defensive case prevents regression on deliberate choices. The generative case is the bigger payoff: the LLM has the whole song's structural + intentional context in working memory and **does the creative connection-drawing on its own** once the data is findable. The system's job is to surface broad relevant context cheaply, not to encode musical similarity (per project memory `feedback_prefer_llm_over_deterministic_module`).
 
   This requires three disciplines, not just schema:
-  1. **Decisions are recorded WITH RATIONALE, not just actions.** When the LLM makes a non-trivial compositional choice, the `requests` entry that wraps it MUST capture the *why*, not only the *what*. Convention: `requests.intent` = the user's surface request; `requests.metadata_json.decision_rationale` = the LLM's reasoning that produced the specific values. The mutator events under it carry the mechanical change (velocity drop, envelope edit) — the request carries the meaning.
-  2. **Before non-trivial work, the LLM queries prior decisions.** Add a `/decisions [topic]` skill (analogous to `/learnings`) or a pre-task pattern: at the start of any compositional ask, run `find_related_decisions` against the user's prompt's noun-phrases. If hits exist, surface them BEFORE acting — the LLM should challenge gently when prior reasoning contradicts the new ask.
-  3. **The session briefing surfaces recent decisions, not just recent activity.** "Last 5 prompts" is weaker than "last 5 *deliberate decisions with rationale*." Filter on `metadata_json.decision_rationale IS NOT NULL` (or a `kind='decision'` sub-classification).
+  1. **Decisions are recorded WITH RATIONALE, not just actions.** When the LLM makes a non-trivial compositional choice, the `requests` entry that wraps it MUST capture the *why*, not only the *what*. Convention: `requests.intent` = the user's surface request; `requests.metadata_json.decision_rationale` = the LLM's reasoning that produced the specific values. The mutator events under it carry the mechanical change (velocity drop, envelope edit) — the request carries the meaning. Structural facts that aren't decisions per se (e.g., "the intro is dim7 → major") rate the same treatment via annotations so they ride along the same retrieval surface.
+
+  2. **Before non-trivial work, the LLM retrieves prior context — broadly.** Not just exact-match against the user's prompt; the retrieval should pull in:
+     - Decisions about the SAME element ("the break") — defensive case.
+     - Decisions/annotations about RELATED CONCEPTS ("dim7" anywhere, harmonic moves, the bridge's chord pattern) — generative case.
+     - STRUCTURAL FACTS about adjacent sections — the LLM can draw connections only if it can see them.
+
+     Add a `/decisions [topic]` skill (analogous to `/learnings`) or a pre-task pattern: at the start of any compositional ask, run `find_related_decisions` with both the prompt's noun-phrases AND a broader semantic dragnet (related sections, related concepts the LLM extracts before searching). Surface the hits BEFORE acting; the LLM uses them to either challenge gently (defensive) or propose connections (generative). The LLM owns the creative synthesis — don't bake musical-similarity logic into the retriever.
+
+  3. **The session briefing surfaces decisions + structural facts, not just recent activity.** "Last 5 prompts" is weaker than "last 5 *deliberate decisions with rationale*" combined with "key structural annotations spanning the whole song." For a song with 3 sections, surface the section-scoped annotations on every session start — they're the working-memory shorthand a human collaborator would carry between sessions. Filter on `metadata_json.decision_rationale IS NOT NULL` (or a `kind='decision'` sub-classification) plus include all `annotations` with `kind IN ('intent', 'structure')`.
 
   This is also where provenance meets annotations: a deliberate compositional decision SHOULD often also produce a permanent annotation (the rationale graduates from request metadata to a song-scoped or section-scoped annotation if it'll guide future work). Provenance captures every decision in real time; annotations are the curated subset worth keeping forever. A small helper `M.promote_decision_to_annotation(conn, request_id)` would automate the common case.
 

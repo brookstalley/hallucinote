@@ -125,11 +125,18 @@ def test_device_position_must_be_positive(conn, song, track):
         M.create_device(conn, chain_id=cid, position=0, kind="Eq8", display_name="EQ")
 
 
-def test_device_unique_per_chain_position(conn, song, track):
+def test_device_upserts_per_chain_position(conn, song, track):
+    """W12-A: re-creating at the same position upserts (not raises). Different
+    kind/display_name → updated; identical args → unchanged."""
     cid = M.create_device_chain(conn, parent_track_id=track)
-    M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
-    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
-        M.create_device(conn, chain_id=cid, position=1, kind="Reverb", display_name="Rev")
+    d1 = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    assert d1.kind == "created"
+    d2 = M.create_device(conn, chain_id=cid, position=1, kind="Reverb", display_name="Rev")
+    assert d2.kind == "updated"
+    assert d2 == d1
+    d3 = M.create_device(conn, chain_id=cid, position=1, kind="Reverb", display_name="Rev")
+    assert d3.kind == "unchanged"
+    assert d3 == d1
 
 
 def test_delete_device_emits_event(conn, song, track):

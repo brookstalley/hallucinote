@@ -21,6 +21,7 @@ Conventions:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import re
 import sqlite3
@@ -30,6 +31,80 @@ from typing import Any, Iterator, Sequence
 
 from hallucinote.db import events as E
 from hallucinote.db.connection import transaction
+
+
+# ---------------------------------------------------------------------------
+# W12-A: structured mutator return + build-session injection
+# ---------------------------------------------------------------------------
+#
+# Mutator returns are `MutatorResult` — a `str` subclass so old callsites
+# (`tid = M.create_track(...)`) keep working AND new callers can inspect
+# `tid.kind` to see whether the row was just created, updated, or unchanged.
+#
+# When build.py wraps the build in `with M.build_session(...) as bs:`, the
+# `_current_build_session` ContextVar gets set. Mutators check it: if the
+# caller didn't pass `actor` explicitly (i.e. left the default 'system'),
+# the mutator promotes actor to 'build' and tags `request_id` with the
+# session's request. Touched-set accumulation happens on the session via
+# `bs.record_touch(kind, id)` — mutators call it after their state write.
+
+
+class MutatorResult(str):
+    """The mutator's row id (str-compatible for back-compat) plus `kind`.
+
+    `kind` is one of:
+      - 'created'   row was newly inserted
+      - 'updated'   row existed; one or more non-identity fields changed
+      - 'unchanged' row existed; state already matched the inputs (no-op)
+
+    `MutatorResult` is a `str` subclass so existing callsites that treat the
+    return as a bare id (`tid = M.create_track(...)`) keep working unchanged.
+    """
+    __slots__ = ("kind",)
+
+    def __new__(cls, id_: str, kind: str) -> "MutatorResult":
+        if kind not in {"created", "updated", "unchanged"}:
+            raise ValueError(f"invalid MutatorResult.kind {kind!r}")
+        instance = super().__new__(cls, id_)
+        instance.kind = kind  # noqa: PLW0238
+        return instance
+
+    def __repr__(self) -> str:  # pragma: no cover (cosmetic)
+        return f"MutatorResult({str(self)!r}, kind={self.kind!r})"
+
+
+# ContextVar for build-session injection. Default None means "not inside a
+# build session." Set by `build_session.__enter__`, reset by `__exit__`.
+_current_build_session: contextvars.ContextVar["BuildSession | None"] = (
+    contextvars.ContextVar("_current_build_session", default=None)
+)
+
+
+def _resolve_actor_and_request(
+    actor: str, request_id: str | None,
+) -> tuple[str, str | None]:
+    """If running inside `build_session` AND caller didn't pass actor/request_id
+    explicitly, inject the session's 'build' actor + request_id. Otherwise pass
+    through unchanged.
+
+    The "didn't pass explicitly" check is shape-based: actor=='system' (the
+    library default) and request_id is None. Explicit overrides survive
+    (test fixtures, push/pull layers, anything that needs a different
+    actor name).
+    """
+    bs = _current_build_session.get()
+    if bs is None:
+        return actor, request_id
+    if actor == "system" and request_id is None:
+        return "build", bs.request_id
+    return actor, request_id
+
+
+def _record_touch_if_session(kind: str, id_: str) -> None:
+    """If running inside `build_session`, record (kind, id) to its touched-set."""
+    bs = _current_build_session.get()
+    if bs is not None:
+        bs.record_touch(kind, id_)
 
 
 # Valid `requests.kind` values. Mirrors the wave-8 design: 'mutate' is the
@@ -327,6 +402,34 @@ def create_song(
         raise ValueError(
             f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
         )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        "SELECT id, title, key, timing_mode FROM songs WHERE name = ?",
+        (name,),
+    ).fetchone()
+    if existing is not None:
+        sid = existing["id"]
+        if (existing["title"], existing["key"], existing["timing_mode"]) == (
+            title, key, timing_mode,
+        ):
+            _record_touch_if_session("song", sid)
+            return MutatorResult(sid, "unchanged")
+        conn.execute(
+            "UPDATE songs SET title = ?, key = ?, timing_mode = ? WHERE id = ?",
+            (title, key, timing_mode, sid),
+        )
+        _touch_song(conn, sid)
+        _emit(
+            conn,
+            E.SONG_UPDATED,
+            {"name": name, "title": title, "key": key, "timing_mode": timing_mode},
+            song_id=sid,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        _record_touch_if_session("song", sid)
+        return MutatorResult(sid, "updated")
     sid = _uuid()
     conn.execute(
         "INSERT INTO songs (id, name, title, key, timing_mode) VALUES (?, ?, ?, ?, ?)",
@@ -341,7 +444,8 @@ def create_song(
         request_id=request_id,
         reason=reason,
     )
-    return sid
+    _record_touch_if_session("song", sid)
+    return MutatorResult(sid, "created")
 
 
 def set_song_timing_mode(
@@ -359,6 +463,13 @@ def set_song_timing_mode(
         raise ValueError(
             f"invalid timing_mode {timing_mode!r}; expected one of {sorted(TIMING_MODES)}"
         )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # W12-A: idempotent — no-op + skip event when state matches.
+    row = conn.execute(
+        "SELECT timing_mode FROM songs WHERE id = ?", (song_id,)
+    ).fetchone()
+    if row is not None and row["timing_mode"] == timing_mode:
+        return
     conn.execute(
         "UPDATE songs SET timing_mode = ? WHERE id = ?",
         (timing_mode, song_id),
@@ -402,6 +513,37 @@ def create_track(
     `set_track_mixer`."""
     if kind not in TRACK_KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {sorted(TRACK_KINDS)}")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, name, instrument_uri, kind FROM tracks
+           WHERE song_id = ? AND track_index = ?""",
+        (song_id, track_index),
+    ).fetchone()
+    if existing is not None:
+        tid = existing["id"]
+        if (existing["name"], existing["instrument_uri"], existing["kind"]) == (
+            name, instrument_uri, kind,
+        ):
+            _record_touch_if_session("track", tid)
+            return MutatorResult(tid, "unchanged")
+        conn.execute(
+            """UPDATE tracks SET name = ?, instrument_uri = ?, kind = ?
+               WHERE id = ?""",
+            (name, instrument_uri, kind, tid),
+        )
+        _emit(
+            conn,
+            E.TRACK_UPDATED,
+            {"track_id": tid, "track_index": track_index, "name": name,
+             "instrument_uri": instrument_uri, "kind": kind},
+            song_id=song_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("track", tid)
+        return MutatorResult(tid, "updated")
     tid = _uuid()
     conn.execute(
         """INSERT INTO tracks
@@ -425,7 +567,8 @@ def create_track(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return tid
+    _record_touch_if_session("track", tid)
+    return MutatorResult(tid, "created")
 
 
 _MIXER_FIELDS = {"volume", "pan", "mute", "solo", "arm", "color"}
@@ -450,18 +593,25 @@ def set_track_mixer(
         raise ValueError(f"unsupported fields: {sorted(bad)}")
     if not changes:
         return
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # Fetch existing values so we can skip when state already matches.
+    cols = ", ".join(["song_id"] + list(changes))
     row = conn.execute(
-        "SELECT song_id FROM tracks WHERE id = ?", (track_id,)
+        f"SELECT {cols} FROM tracks WHERE id = ?", (track_id,)
     ).fetchone()
     if row is None:
         return
-    sets = [f"{k} = ?" for k in changes]
-    vals = list(changes.values()) + [track_id]
+    # W12-A: idempotent — diff per-field; skip event when no field changes.
+    actual_changes = {k: v for k, v in changes.items() if row[k] != v}
+    if not actual_changes:
+        return
+    sets = [f"{k} = ?" for k in actual_changes]
+    vals = list(actual_changes.values()) + [track_id]
     conn.execute(f"UPDATE tracks SET {', '.join(sets)} WHERE id = ?", vals)
     _emit(
         conn,
         E.TRACK_MIXER_SET,
-        {"track_id": track_id, "changes": changes},
+        {"track_id": track_id, "changes": actual_changes},
         song_id=row["song_id"],
         actor=actor,
         request_id=request_id,
@@ -489,6 +639,45 @@ def create_clip(
     reason: str | None = None,
 ) -> str:
     gen_json = json.dumps(generator_call, separators=(",", ":")) if generator_call else None
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    song_row = conn.execute(
+        "SELECT t.song_id FROM tracks t WHERE t.id = ?", (track_id,)
+    ).fetchone()
+    existing = conn.execute(
+        """SELECT id, length_beats, name, section_role, generator_call_json
+           FROM clips WHERE track_id = ? AND slot = ?""",
+        (track_id, slot),
+    ).fetchone()
+    if existing is not None:
+        cid = existing["id"]
+        if (existing["length_beats"], existing["name"], existing["section_role"],
+                existing["generator_call_json"]) == (length_beats, name,
+                                                     section_role, gen_json):
+            _record_touch_if_session("clip", cid)
+            return MutatorResult(cid, "unchanged")
+        conn.execute(
+            """UPDATE clips SET length_beats = ?, name = ?, section_role = ?,
+                                generator_call_json = ?,
+                                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+            (length_beats, name, section_role, gen_json, cid),
+        )
+        _emit(
+            conn,
+            E.CLIP_UPDATED,
+            {"clip_id": cid, "track_id": track_id, "changes": {
+                "length_beats": length_beats, "name": name,
+                "section_role": section_role,
+                "generator_call": generator_call,
+            }},
+            song_id=song_row["song_id"] if song_row else None,
+            clip_id=cid,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        _record_touch_if_session("clip", cid)
+        return MutatorResult(cid, "updated")
     cid = _uuid()
     conn.execute(
         """INSERT INTO clips
@@ -496,9 +685,6 @@ def create_clip(
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (cid, track_id, slot, length_beats, name, section_role, gen_json),
     )
-    song_row = conn.execute(
-        "SELECT t.song_id FROM tracks t WHERE t.id = ?", (track_id,)
-    ).fetchone()
     _emit(
         conn,
         E.CLIP_CREATED,
@@ -517,7 +703,8 @@ def create_clip(
         request_id=request_id,
         reason=reason,
     )
-    return cid
+    _record_touch_if_session("clip", cid)
+    return MutatorResult(cid, "created")
 
 
 _CLIP_UPDATE_FIELDS = frozenset({"name", "length_beats", "section_role"})
@@ -656,11 +843,35 @@ def replace_clip_notes(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> list[str]:
-    """Atomic: delete every note for clip, insert fresh set. Single event emitted."""
+    """Atomic: delete every note for clip, insert fresh set. Single event emitted.
+
+    W12-A: idempotent — when the existing notes (by content, ignoring ids)
+    already match the incoming set, the function is a no-op and emits no
+    event. Returns the existing note ids in that case (preserves the
+    list[str] return contract — same length, same ordering by start_beats).
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # Idempotency check: compare normalized incoming set vs existing notes.
+    incoming = [_normalize_note(n) for n in notes]
+    existing_rows = conn.execute(
+        """SELECT id, pitch, start_beats, duration_beats, velocity, mute, tags_json
+           FROM notes WHERE clip_id = ?
+           ORDER BY start_beats, pitch""",
+        (clip_id,),
+    ).fetchall()
+    existing_sig = [
+        (r["pitch"], r["start_beats"], r["duration_beats"], r["velocity"],
+         r["mute"], r["tags_json"]) for r in existing_rows
+    ]
+    incoming_sig = sorted(incoming, key=lambda t: (t[1], t[0]))
+    existing_sig_sorted = sorted(existing_sig, key=lambda t: (t[1], t[0]))
+    if existing_sig_sorted == incoming_sig:
+        return [r["id"] for r in conn.execute(
+            "SELECT id FROM notes WHERE clip_id = ? ORDER BY start_beats, pitch",
+            (clip_id,),
+        ).fetchall()]
     with transaction(conn):
-        prev_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM notes WHERE clip_id = ?", (clip_id,)
-        ).fetchone()["c"]
+        prev_count = len(existing_rows)
         conn.execute("DELETE FROM notes WHERE clip_id = ?", (clip_id,))
         new_ids: list[str] = []
         for n in notes:
@@ -853,6 +1064,32 @@ def add_arrangement_clip(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, end_bar FROM arrangement_clips
+           WHERE song_id = ? AND track_id = ? AND clip_id = ? AND start_bar = ?""",
+        (song_id, track_id, clip_id, start_bar),
+    ).fetchone()
+    if existing is not None:
+        aid = existing["id"]
+        if existing["end_bar"] == end_bar:
+            _record_touch_if_session("arrangement_clip", aid)
+            return MutatorResult(aid, "unchanged")
+        conn.execute(
+            "UPDATE arrangement_clips SET end_bar = ? WHERE id = ?",
+            (end_bar, aid),
+        )
+        _emit(
+            conn,
+            E.ARRANGEMENT_CLIP_ADDED,
+            {"arrangement_clip_id": aid, "track_id": track_id,
+             "clip_id": clip_id, "start_bar": start_bar, "end_bar": end_bar,
+             "kind": "updated"},
+            song_id=song_id, clip_id=clip_id,
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        _record_touch_if_session("arrangement_clip", aid)
+        return MutatorResult(aid, "updated")
     aid = _uuid()
     conn.execute(
         """INSERT INTO arrangement_clips (id, song_id, track_id, clip_id, start_bar, end_bar)
@@ -875,7 +1112,8 @@ def add_arrangement_clip(
         request_id=request_id,
         reason=reason,
     )
-    return aid
+    _record_touch_if_session("arrangement_clip", aid)
+    return MutatorResult(aid, "created")
 
 
 def remove_arrangement_clip(
@@ -926,6 +1164,33 @@ def create_section(
     unless Live exposes section markers; surfaces in event log either way."""
     if end_bar <= start_bar:
         raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, end_bar, color, notes_md FROM sections
+           WHERE song_id = ? AND name = ? AND start_bar = ?""",
+        (song_id, name, start_bar),
+    ).fetchone()
+    if existing is not None:
+        sid = existing["id"]
+        if (existing["end_bar"], existing["color"], existing["notes_md"]) == (
+            end_bar, color, notes_md,
+        ):
+            _record_touch_if_session("section", sid)
+            return MutatorResult(sid, "unchanged")
+        conn.execute(
+            """UPDATE sections SET end_bar = ?, color = ?, notes_md = ?
+               WHERE id = ?""",
+            (end_bar, color, notes_md, sid),
+        )
+        _emit(
+            conn, E.SECTION_UPDATED,
+            {"section_id": sid, "changes": {"end_bar": end_bar,
+             "color": color, "notes_md": notes_md}},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("section", sid)
+        return MutatorResult(sid, "updated")
     sid = _uuid()
     conn.execute(
         """INSERT INTO sections
@@ -950,7 +1215,8 @@ def create_section(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return sid
+    _record_touch_if_session("section", sid)
+    return MutatorResult(sid, "created")
 
 
 _SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md"}
@@ -1050,6 +1316,29 @@ def add_tempo_point(
         )
     if tempo_bpm <= 0:
         raise ValueError(f"tempo_bpm must be positive, got {tempo_bpm}")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, tempo_bpm, ramp FROM tempo_map
+           WHERE song_id = ? AND start_bar = ?""",
+        (song_id, start_bar),
+    ).fetchone()
+    if existing is not None:
+        pid = existing["id"]
+        if (existing["tempo_bpm"], existing["ramp"]) == (tempo_bpm, ramp):
+            _record_touch_if_session("tempo_point", pid)
+            return MutatorResult(pid, "unchanged")
+        conn.execute(
+            "UPDATE tempo_map SET tempo_bpm = ?, ramp = ? WHERE id = ?",
+            (tempo_bpm, ramp, pid),
+        )
+        _emit(
+            conn, E.TEMPO_POINT_UPDATED,
+            {"point_id": pid, "changes": {"tempo_bpm": tempo_bpm, "ramp": ramp}},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("tempo_point", pid)
+        return MutatorResult(pid, "updated")
     pid = _uuid()
     conn.execute(
         """INSERT INTO tempo_map (id, song_id, start_bar, tempo_bpm, ramp)
@@ -1071,7 +1360,8 @@ def add_tempo_point(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return pid
+    _record_touch_if_session("tempo_point", pid)
+    return MutatorResult(pid, "created")
 
 
 _TEMPO_POINT_FIELDS = {"tempo_bpm", "ramp"}
@@ -1168,6 +1458,30 @@ def add_time_signature_point(
         raise ValueError(
             f"numerator/denominator must be positive, got {numerator}/{denominator}"
         )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, numerator, denominator FROM time_signature_map
+           WHERE song_id = ? AND start_bar = ?""",
+        (song_id, start_bar),
+    ).fetchone()
+    if existing is not None:
+        pid = existing["id"]
+        if (existing["numerator"], existing["denominator"]) == (numerator, denominator):
+            _record_touch_if_session("time_signature_point", pid)
+            return MutatorResult(pid, "unchanged")
+        conn.execute(
+            "UPDATE time_signature_map SET numerator = ?, denominator = ? WHERE id = ?",
+            (numerator, denominator, pid),
+        )
+        _emit(
+            conn, E.TIME_SIGNATURE_POINT_UPDATED,
+            {"point_id": pid, "changes": {"numerator": numerator,
+                                           "denominator": denominator}},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("time_signature_point", pid)
+        return MutatorResult(pid, "updated")
     pid = _uuid()
     conn.execute(
         """INSERT INTO time_signature_map
@@ -1190,7 +1504,8 @@ def add_time_signature_point(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return pid
+    _record_touch_if_session("time_signature_point", pid)
+    return MutatorResult(pid, "created")
 
 
 _TIME_SIGNATURE_POINT_FIELDS = {"numerator", "denominator"}
@@ -1283,7 +1598,36 @@ def add_cue_point(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
-    """Add an arrangement marker at `position_bar`. Maps to Live's cue points."""
+    """Add an arrangement marker at `position_bar`. Maps to Live's cue points.
+
+    Idempotent by `(song_id, position_bar)`: a second call at the same
+    position with the same name/color is a no-op; with different name/color
+    it updates the existing cue. Use `remove_cue_point` + add to move a cue.
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, name, color FROM cue_points
+           WHERE song_id = ? AND position_bar = ?""",
+        (song_id, position_bar),
+    ).fetchone()
+    if existing is not None:
+        pid = existing["id"]
+        if (existing["name"], existing["color"]) == (name, color):
+            _record_touch_if_session("cue_point", pid)
+            return MutatorResult(pid, "unchanged")
+        conn.execute(
+            "UPDATE cue_points SET name = ?, color = ? WHERE id = ?",
+            (name, color, pid),
+        )
+        _emit(
+            conn, E.CUE_POINT_ADDED,
+            {"cue_id": pid, "position_bar": position_bar, "name": name,
+             "color": color, "kind": "updated"},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("cue_point", pid)
+        return MutatorResult(pid, "updated")
     pid = _uuid()
     conn.execute(
         """INSERT INTO cue_points (id, song_id, position_bar, name, color)
@@ -1305,7 +1649,8 @@ def add_cue_point(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return pid
+    _record_touch_if_session("cue_point", pid)
+    return MutatorResult(pid, "created")
 
 
 def remove_cue_point(
@@ -1355,6 +1700,32 @@ def create_return(
     """Create a return track. `position` is the return's index in Live (1-based,
     matching captured_session.json). Volume/pan optional; default state is
     whatever Live applies to a freshly-created return."""
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, name, volume, pan, color FROM returns
+           WHERE song_id = ? AND position = ?""",
+        (song_id, position),
+    ).fetchone()
+    if existing is not None:
+        rid = existing["id"]
+        if (existing["name"], existing["volume"], existing["pan"],
+                existing["color"]) == (name, volume, pan, color):
+            _record_touch_if_session("return", rid)
+            return MutatorResult(rid, "unchanged")
+        conn.execute(
+            """UPDATE returns SET name = ?, volume = ?, pan = ?, color = ?
+               WHERE id = ?""",
+            (name, volume, pan, color, rid),
+        )
+        _emit(
+            conn, E.RETURN_UPDATED,
+            {"return_id": rid, "changes": {"name": name, "volume": volume,
+                                            "pan": pan, "color": color}},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        _touch_song(conn, song_id)
+        _record_touch_if_session("return", rid)
+        return MutatorResult(rid, "updated")
     rid = _uuid()
     conn.execute(
         """INSERT INTO returns
@@ -1379,7 +1750,8 @@ def create_return(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return rid
+    _record_touch_if_session("return", rid)
+    return MutatorResult(rid, "created")
 
 
 _RETURN_FIELDS = {"name", "position", "volume", "pan", "mute", "solo", "color"}
@@ -1460,6 +1832,7 @@ def set_send_level(
     0.0–1.0 to match track volume conventions."""
     if not (0.0 <= level <= 1.0):
         raise ValueError(f"level {level} out of range [0.0, 1.0]")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
     # Resolve song for the emitted event — track and return must share a song.
     track_row = conn.execute(
         "SELECT song_id FROM tracks WHERE id = ?", (from_track_id,)
@@ -1475,6 +1848,13 @@ def set_send_level(
         raise ValueError(
             "cross-song send: track and return belong to different songs"
         )
+    # W12-A: idempotent — skip when the existing level matches.
+    existing = conn.execute(
+        "SELECT level FROM sends WHERE from_track_id = ? AND to_return_id = ?",
+        (from_track_id, to_return_id),
+    ).fetchone()
+    if existing is not None and existing["level"] == level:
+        return
     conn.execute(
         """INSERT INTO sends (from_track_id, to_return_id, level)
            VALUES (?, ?, ?)
@@ -1562,6 +1942,21 @@ def create_device_chain(
             f"create_device_chain: exactly one parent kwarg required, "
             f"got {[k for k, _ in set_parents]}"
         )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # Identity by (parent_*_id, position). Each parent column is mutually
+    # exclusive by schema CHECK, so the SELECT below matches on the one set.
+    existing = conn.execute(
+        """SELECT id FROM device_chains
+           WHERE parent_track_id IS ? AND parent_return_id IS ?
+             AND parent_rack_device_id IS ? AND position = ?""",
+        (parent_track_id, parent_return_id, parent_rack_device_id, position),
+    ).fetchone()
+    if existing is not None:
+        # device_chains has no non-identity fields — existing match means
+        # unchanged by definition.
+        chain_id = existing["id"]
+        _record_touch_if_session("device_chain", chain_id)
+        return MutatorResult(chain_id, "unchanged")
     chain_id = _uuid()
     conn.execute(
         """INSERT INTO device_chains
@@ -1593,7 +1988,8 @@ def create_device_chain(
     )
     if song_id:
         _touch_song(conn, song_id)
-    return chain_id
+    _record_touch_if_session("device_chain", chain_id)
+    return MutatorResult(chain_id, "created")
 
 
 def _resolve_chain_song(
@@ -1687,6 +2083,36 @@ def create_device(
     the user-visible name (often == kind, may be a preset name)."""
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, kind, display_name, preset_uri FROM devices
+           WHERE chain_id = ? AND position = ?""",
+        (chain_id, position),
+    ).fetchone()
+    if existing is not None:
+        device_id = existing["id"]
+        if (existing["kind"], existing["display_name"], existing["preset_uri"]) == (
+            kind, display_name, preset_uri,
+        ):
+            _record_touch_if_session("device", device_id)
+            return MutatorResult(device_id, "unchanged")
+        conn.execute(
+            """UPDATE devices SET kind = ?, display_name = ?, preset_uri = ?
+               WHERE id = ?""",
+            (kind, display_name, preset_uri, device_id),
+        )
+        song_id = _resolve_device_song(conn, device_id=device_id)
+        _emit(
+            conn, E.DEVICE_CREATED,
+            {"device_id": device_id, "chain_id": chain_id, "position": position,
+             "kind": kind, "display_name": display_name,
+             "preset_uri": preset_uri, "result_kind": "updated"},
+            song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+        )
+        if song_id:
+            _touch_song(conn, song_id)
+        _record_touch_if_session("device", device_id)
+        return MutatorResult(device_id, "updated")
     device_id = _uuid()
     conn.execute(
         """INSERT INTO devices (id, chain_id, position, kind, display_name, preset_uri)
@@ -1712,7 +2138,8 @@ def create_device(
     )
     if song_id:
         _touch_song(conn, song_id)
-    return device_id
+    _record_touch_if_session("device", device_id)
+    return MutatorResult(device_id, "created")
 
 
 def _resolve_device_song(
@@ -1783,11 +2210,27 @@ def set_device_parameter(
         raise ValueError(
             f"value_normalized {value_normalized} out of range [0.0, 1.0]"
         )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        "SELECT id FROM device_parameters WHERE device_id = ? AND name = ?",
+        """SELECT id, value_display, value_normalized FROM device_parameters
+           WHERE device_id = ? AND name = ?""",
         (device_id, name),
     ).fetchone()
-    if existing is None:
+    if existing is not None:
+        param_id = existing["id"]
+        if (existing["value_display"], existing["value_normalized"]) == (
+            value_display, value_normalized,
+        ):
+            _record_touch_if_session("device_parameter", param_id)
+            return MutatorResult(param_id, "unchanged")
+        conn.execute(
+            """UPDATE device_parameters
+                  SET value_display = ?, value_normalized = ?
+                WHERE id = ?""",
+            (value_display, value_normalized, param_id),
+        )
+        result_kind = "updated"
+    else:
         param_id = _uuid()
         conn.execute(
             """INSERT INTO device_parameters
@@ -1795,14 +2238,7 @@ def set_device_parameter(
                VALUES (?, ?, ?, ?, ?)""",
             (param_id, device_id, name, value_display, value_normalized),
         )
-    else:
-        param_id = existing["id"]
-        conn.execute(
-            """UPDATE device_parameters
-                  SET value_display = ?, value_normalized = ?
-                WHERE id = ?""",
-            (value_display, value_normalized, param_id),
-        )
+        result_kind = "created"
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
         conn,
@@ -1821,7 +2257,8 @@ def set_device_parameter(
     )
     if song_id:
         _touch_song(conn, song_id)
-    return param_id
+    _record_touch_if_session("device_parameter", param_id)
+    return MutatorResult(param_id, result_kind)
 
 
 def remove_device_parameter(
@@ -1993,6 +2430,28 @@ def create_envelope(
         if note_row is not None:
             event_clip_id = note_row["clip_id"]
 
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+
+    # Identity by (song_id, target_kind, all target FKs, parameter_path).
+    # Use IS for nullable FK comparisons (SQL equality is NULL-vs-NULL = false).
+    existing = conn.execute(
+        """SELECT id FROM envelopes
+           WHERE song_id = ? AND target_kind = ?
+             AND target_clip_id IS ? AND target_note_id IS ?
+             AND target_device_id IS ? AND target_track_id IS ?
+             AND target_send_return_id IS ?
+             AND parameter_path IS ?""",
+        (song_id, target_kind, target_clip_id, target_note_id,
+         target_device_id, target_track_id, target_send_return_id,
+         parameter_path),
+    ).fetchone()
+    if existing is not None:
+        # Envelope rows have no non-identity content — breakpoints are
+        # separate. Identity match means unchanged by definition.
+        env_id = existing["id"]
+        _record_touch_if_session("envelope", env_id)
+        return MutatorResult(env_id, "unchanged")
+
     env_id = _uuid()
     conn.execute(
         """INSERT INTO envelopes
@@ -2026,7 +2485,8 @@ def create_envelope(
         reason=reason,
     )
     _touch_song(conn, song_id)
-    return env_id
+    _record_touch_if_session("envelope", env_id)
+    return MutatorResult(env_id, "created")
 
 
 def delete_envelope(
@@ -2163,12 +2623,31 @@ def replace_breakpoints(
 
     Each breakpoint dict: {time_beats: float, value: float,
     curve_kind: 'linear'|'hold'|'fast'|'slow' (default 'linear')}.
+
+    W12-A: idempotent — when the existing breakpoints already match the
+    incoming set (by content, ignoring ids), the function is a no-op and
+    emits no event. Returns the existing breakpoint ids in that case.
     """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # Idempotency check: compare incoming vs existing.
+    incoming_sig = [
+        (float(bp["time_beats"]), float(bp["value"]),
+         bp.get("curve_kind", "linear"))
+        for bp in breakpoints
+    ]
+    existing_rows = conn.execute(
+        """SELECT id, time_beats, value, curve_kind
+           FROM automation_breakpoints WHERE envelope_id = ?
+           ORDER BY time_beats""",
+        (envelope_id,),
+    ).fetchall()
+    existing_sig = [
+        (r["time_beats"], r["value"], r["curve_kind"]) for r in existing_rows
+    ]
+    if sorted(existing_sig) == sorted(incoming_sig):
+        return [r["id"] for r in existing_rows]
     with transaction(conn):
-        prev_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM automation_breakpoints WHERE envelope_id = ?",
-            (envelope_id,),
-        ).fetchone()["c"]
+        prev_count = len(existing_rows)
         conn.execute(
             "DELETE FROM automation_breakpoints WHERE envelope_id = ?",
             (envelope_id,),
@@ -2310,3 +2789,362 @@ def link_db_to_ableton(
         request_id=request_id,
         reason=reason,
     )
+
+
+# ---------------------------------------------------------------------------
+# W12-A: BuildSession — state-converger context manager
+# ---------------------------------------------------------------------------
+#
+# A song's build.py wraps its mutator calls in `with M.build_session(...)`:
+#
+#   with M.build_session(conn, song_name='falling-walking', owner='build.py'):
+#       song_id = M.create_song(conn, name='falling-walking', ...)
+#       M.create_track(conn, song_id=song_id, track_index=1, name='Drums')
+#       # ... 80+ more mutator calls
+#
+# On enter:
+#   - Opens a `kind='compose'` request (or 'build' if added later) returning
+#     request_id.
+#   - Sets the `_current_build_session` ContextVar so subsequent mutator
+#     calls (within this context) promote default actor='system' to 'build'
+#     and tag the request_id automatically.
+#
+# On exit (no exception):
+#   - For each managed kind owned by build, queries all rows for the song,
+#     finds rows NOT in `touched`, and for each candidate row checks the
+#     latest event actor. If the latest actor ∈ {'build', 'system'}, deletes
+#     the row (cascades children via schema FKs). 'sync'/'llm'/'user'/
+#     'generator' actor rows survive.
+#   - Closes the request with outcome='ok'.
+#
+# On exit (exception):
+#   - Closes the request with outcome='failed' (or 'partial'); does NOT
+#     tombstone (errors leave state alone for inspection).
+
+
+# Which (kind, song-scope) tables build owns + how to enumerate their ids
+# given a song_id. The order here is the deletion order; respecting FK
+# dependencies (children before parents) keeps cascade behavior predictable.
+# Note: most cascades are handled by ON DELETE CASCADE in the schema; we
+# delete the parent and trust the schema, but order from leaves inward
+# anyway for visibility in event logs.
+_BUILD_OWNED_KINDS: tuple[tuple[str, str, str], ...] = (
+    # (kind, table, song_id column expression for SELECT id FROM <table>)
+    ("envelope", "envelopes", "song_id"),
+    ("arrangement_clip", "arrangement_clips", "song_id"),
+    ("cue_point", "cue_points", "song_id"),
+    ("tempo_point", "tempo_map", "song_id"),
+    ("time_signature_point", "time_signature_map", "song_id"),
+    ("section", "sections", "song_id"),
+    # Devices live under chains under tracks/returns. Walking through chains
+    # via JOIN; managed below via _build_owned_devices.
+    ("device_parameter", "device_parameters", ""),  # special — joined via device->chain->track/return
+    ("device", "devices", ""),                       # special — joined via chain->track/return
+    ("device_chain", "device_chains", ""),           # special — joined via track/return
+    ("return", "returns", "song_id"),
+    ("clip", "clips", ""),  # special — joined via track
+    ("track", "tracks", "song_id"),
+)
+
+
+# events.kind values whose payload's `<kind>_id` or `id` field names the entity
+# the event acted on. Used to look up the "latest event actor" per row.
+# Map: row-kind -> tuple of (event_kind, payload_field).
+_LATEST_ACTOR_EVENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "song":                  (("song_created", "song_id"), ("song_updated", "song_id")),
+    "track":                 (("track_created", "track_id"), ("track_updated", "track_id"),
+                              ("track_mixer_set", "track_id")),
+    "clip":                  (("clip_created", "clip_id"), ("clip_updated", "clip_id")),
+    "arrangement_clip":      (("arrangement_clip_added", "arrangement_clip_id"),),
+    "section":               (("section_created", "section_id"),
+                              ("section_updated", "section_id")),
+    "tempo_point":           (("tempo_point_added", "point_id"),
+                              ("tempo_point_updated", "point_id")),
+    "time_signature_point":  (("time_signature_point_added", "point_id"),
+                              ("time_signature_point_updated", "point_id")),
+    "cue_point":             (("cue_point_added", "cue_id"),),
+    "return":                (("return_created", "return_id"),
+                              ("return_updated", "return_id")),
+    "device_chain":          (("device_chain_created", "chain_id"),),
+    "device":                (("device_created", "device_id"),),
+    "device_parameter":      (("device_parameter_set", "parameter_id"),),
+    "envelope":              (("envelope_created", "envelope_id"),),
+}
+
+
+def _latest_actor_for(
+    conn: sqlite3.Connection, *, row_kind: str, row_id: str,
+) -> str | None:
+    """Return the actor of the latest event referencing this row (None if
+    no event references it). Used by tombstoning to decide whether build is
+    allowed to delete the row (actor ∈ {'build','system'}) or must skip it."""
+    queries = _LATEST_ACTOR_EVENTS.get(row_kind)
+    if not queries:
+        return None
+    # Build a UNION of per-event-kind queries, ordered by seq DESC, take 1.
+    sql_parts = []
+    params: list[Any] = []
+    for ev_kind, field in queries:
+        sql_parts.append(
+            f"SELECT actor, seq FROM events "
+            f"WHERE kind = ? AND json_extract(payload_json, '$.{field}') = ?"
+        )
+        params.extend([ev_kind, row_id])
+    sql = " UNION ALL ".join(sql_parts) + " ORDER BY seq DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    return row["actor"] if row else None
+
+
+_DELETE_VERBS: dict[str, str] = {
+    # row-kind -> mutator that handles its delete (with proper event emission).
+    "envelope":             "delete_envelope",
+    "arrangement_clip":     "remove_arrangement_clip",
+    "cue_point":            "remove_cue_point",
+    "tempo_point":          "remove_tempo_point",
+    "time_signature_point": "remove_time_signature_point",
+    "section":              "delete_section",
+    "device_parameter":     "remove_device_parameter",
+    "device":               "delete_device",
+    "device_chain":         "delete_device_chain",
+    "return":               "delete_return",
+    "clip":                 "delete_clip",
+    "track":                "_delete_track",  # we add this below
+}
+
+
+def _delete_track(
+    conn: sqlite3.Connection, *,
+    track_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Tombstone-time helper: delete a track row. The schema already cascades
+    to clips/arrangement_clips/device_chains/etc, but mutations.py didn't
+    historically expose a `delete_track` mutator because the only path that
+    needed it was `delete_song` (which doesn't exist either). W12-A's
+    BuildSession needs it for tombstoning."""
+    row = conn.execute(
+        "SELECT song_id FROM tracks WHERE id = ?", (track_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+    _emit(
+        conn, E.TRACK_DELETED,
+        {"track_id": track_id},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
+class BuildSession:
+    """State carried by `M.build_session`. Tracks touched (kind, id) pairs."""
+
+    __slots__ = ("conn", "song_name", "song_id", "owner", "request_id",
+                 "touched", "_token", "_outcome")
+
+    def __init__(
+        self, conn: sqlite3.Connection, *, song_name: str, owner: str,
+    ) -> None:
+        self.conn = conn
+        self.song_name = song_name
+        self.owner = owner
+        self.song_id: str | None = None
+        self.request_id: str | None = None
+        self.touched: set[tuple[str, str]] = set()
+        self._token: contextvars.Token | None = None
+        self._outcome: str = "ok"
+
+    def record_touch(self, kind: str, id_: str) -> None:
+        """Called by mutators after their state write. Idempotent — duplicate
+        touches in one build are fine (a build that creates then updates a
+        row records two touches for the same id; the set dedups)."""
+        self.touched.add((kind, id_))
+
+    def touched_count(self, kind: str | None = None) -> int:
+        """Diagnostic helper. With kind=None: total touches; with kind: touches of that kind."""
+        if kind is None:
+            return len(self.touched)
+        return sum(1 for k, _ in self.touched if k == kind)
+
+
+@contextlib.contextmanager
+def build_session(
+    conn: sqlite3.Connection,
+    *,
+    song_name: str,
+    owner: str = "build.py",
+    reason: str | None = None,
+) -> Iterator[BuildSession]:
+    """State-converger context manager for a song's build.py (W12-A).
+
+    Inside the `with` block:
+      - Mutators default to actor='build' (unless caller passes otherwise).
+      - Every mutator call's (kind, id) is recorded on the session.
+
+    On clean exit:
+      - For each managed kind owned by this song, build-owned rows
+        (latest event actor ∈ {'build','system'}) NOT in the touched set
+        are deleted (cascades naturally via schema FKs).
+      - The session's request closes with outcome='ok'.
+
+    On exception:
+      - The session's request closes with outcome='failed'; no tombstoning.
+
+    Resolves `song_id` lazily: build.py's first call inside the session is
+    typically `M.create_song(name=song_name)`, which the tombstone path
+    needs to find rows by song. If a song with `song_name` doesn't exist
+    at exit time (e.g., create_song was never called), tombstone is a no-op.
+    """
+    bs = BuildSession(conn, song_name=song_name, owner=owner)
+    # Open a request to carry the build's actor + provenance for child events.
+    bs.request_id = create_request(
+        conn,
+        actor="build",
+        intent=f"build {song_name} (owner={owner})",
+        kind="compose",
+        reason=reason,
+    )
+    bs._token = _current_build_session.set(bs)
+    try:
+        yield bs
+    except BaseException:  # prawduct:ok-broad-except
+        # On any failure (including KeyboardInterrupt), close the request as
+        # failed and skip tombstoning. The DB stays in whatever partial state
+        # the build left it (transaction discipline is the caller's; we do
+        # NOT wrap the build in a transaction because builds are large and
+        # callers may want partial-progress observability).
+        bs._outcome = "failed"
+        _current_build_session.reset(bs._token)
+        close_request(conn, request_id=bs.request_id, outcome="failed")
+        raise
+    # Clean exit: resolve song_id (from create_song's touch or by name) and
+    # tombstone non-touched build-owned rows.
+    _current_build_session.reset(bs._token)
+    song_row = conn.execute(
+        "SELECT id FROM songs WHERE name = ?", (song_name,),
+    ).fetchone()
+    if song_row is None:
+        # No song was created — nothing to tombstone.
+        close_request(conn, request_id=bs.request_id, outcome="ok")
+        return
+    bs.song_id = song_row["id"]
+    _tombstone_untouched(conn, bs)
+    close_request(conn, request_id=bs.request_id, outcome="ok")
+
+
+def _tombstone_untouched(conn: sqlite3.Connection, bs: BuildSession) -> None:
+    """Delete build-owned rows for this song not touched in this build.
+
+    Build-owned = latest event actor ∈ {'build', 'system'}. 'sync'-actor
+    rows (pulled from Live) survive; 'llm'/'user'/'generator'-actor rows
+    survive too — only build's own droppings get cleaned up.
+
+    Walks the kinds in `_BUILD_OWNED_KINDS` in dependency-leaf-first order.
+    The schema FKs handle most cascades, but explicit per-kind deletion
+    ensures each row's deletion event is emitted by the corresponding
+    `M.<delete>` mutator (no silent cascades missing events).
+    """
+    assert bs.song_id is not None
+    song_id = bs.song_id
+    touched_by_kind: dict[str, set[str]] = {}
+    for k, i in bs.touched:
+        touched_by_kind.setdefault(k, set()).add(i)
+    for kind, table, song_col in _BUILD_OWNED_KINDS:
+        # Build the SELECT query — special-cases for chain/device/device_parameter/clip
+        # that don't have direct song_id columns.
+        if song_col:
+            row_ids = [
+                r["id"] for r in conn.execute(
+                    f"SELECT id FROM {table} WHERE {song_col} = ?", (song_id,),
+                ).fetchall()
+            ]
+        elif kind == "clip":
+            row_ids = [
+                r["id"] for r in conn.execute(
+                    """SELECT c.id FROM clips c
+                       JOIN tracks t ON t.id = c.track_id
+                       WHERE t.song_id = ?""",
+                    (song_id,),
+                ).fetchall()
+            ]
+        elif kind == "device_chain":
+            row_ids = [
+                r["id"] for r in conn.execute(
+                    """SELECT dc.id FROM device_chains dc
+                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
+                       LEFT JOIN returns r ON r.id = dc.parent_return_id
+                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    (song_id, song_id),
+                ).fetchall()
+            ]
+        elif kind == "device":
+            row_ids = [
+                r["id"] for r in conn.execute(
+                    """SELECT d.id FROM devices d
+                       JOIN device_chains dc ON dc.id = d.chain_id
+                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
+                       LEFT JOIN returns r ON r.id = dc.parent_return_id
+                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    (song_id, song_id),
+                ).fetchall()
+            ]
+        elif kind == "device_parameter":
+            row_ids = [
+                r["id"] for r in conn.execute(
+                    """SELECT dp.id FROM device_parameters dp
+                       JOIN devices d ON d.id = dp.device_id
+                       JOIN device_chains dc ON dc.id = d.chain_id
+                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
+                       LEFT JOIN returns r ON r.id = dc.parent_return_id
+                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    (song_id, song_id),
+                ).fetchall()
+            ]
+        else:
+            row_ids = []
+        touched_ids = touched_by_kind.get(kind, set())
+        for row_id in row_ids:
+            if row_id in touched_ids:
+                continue
+            actor = _latest_actor_for(conn, row_kind=kind, row_id=row_id)
+            # Treat None as 'system' (no event found = legacy/seed data,
+            # tombstone-eligible per the design).
+            if actor is not None and actor not in ("build", "system"):
+                continue
+            verb = _DELETE_VERBS.get(kind)
+            if verb is None:
+                continue
+            mutator = globals()[verb]
+            # Each kind's delete takes a kwarg whose name varies — map it.
+            kwarg = _DELETE_KWARGS[kind]
+            mutator(conn, actor="build", request_id=bs.request_id,
+                    **{kwarg: row_id})
+
+
+# Argument names accepted by each delete mutator (since they vary by kind).
+_DELETE_KWARGS: dict[str, str] = {
+    "envelope":             "envelope_id",
+    "arrangement_clip":     "arrangement_clip_id",
+    "cue_point":            "cue_id",
+    "tempo_point":          "point_id",
+    "time_signature_point": "point_id",
+    "section":              "section_id",
+    "device_chain":         "chain_id",
+    "device":               "device_id",
+    "return":               "return_id",
+    "clip":                 "clip_id",
+    "track":                "track_id",
+}
+
+
+# `device_parameter` doesn't fit the kwarg-by-id pattern (it's keyed by
+# (device_id, name)). Tombstoning a device_parameter directly is rare — the
+# parent device usually carries the tombstone. Skip device_parameter from
+# top-level tombstoning by removing it from the _DELETE_VERBS map (its row
+# gets caught when the parent device tombstones).
+del _DELETE_VERBS["device_parameter"]

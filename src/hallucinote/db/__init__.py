@@ -7,6 +7,6 @@ Discipline:
   without rewriting generators or sync code.
 """
 
-from hallucinote.db.connection import connect, init_db
+from hallucinote.db.connection import connect, init_db, resolve_db_path
 
-__all__ = ["connect", "init_db"]
+__all__ = ["connect", "init_db", "resolve_db_path"]

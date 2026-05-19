@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import sqlite3
-import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -10,10 +9,11 @@ from typing import Iterator
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # sqlite3.Connection doesn't allow attribute assignment, so we track nested
-# transaction depth in a side table keyed by `id(conn)`. `weakref.finalize`
-# cleans up the entry when the connection is GC'd; defensive `pop(.., None)`
-# in the outermost block tolerates an exception that interrupted a previous
-# transaction before depth reset.
+# transaction depth in a side table keyed by `id(conn)`. Depth entries are
+# explicitly popped when the outermost block closes (success or exception),
+# so connections that fully unwind leave no residue. Connections GC'd
+# mid-transaction (rare, abnormal) can leak one int entry, which is fine
+# at this scale — the connection's `id` doesn't recycle while it's live.
 _TRANSACTION_DEPTH: dict[int, int] = {}
 
 
@@ -56,8 +56,9 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     outer transaction (e.g. `apply_pull_results`, `apply_push_results`).
     The outermost block drives BEGIN/COMMIT/ROLLBACK; inner blocks drive
     SAVEPOINT/RELEASE/ROLLBACK TO so an inner failure rolls back only the
-    inner block, not the whole outer transaction. Reentrancy is tracked
-    on a `_transaction_depth` attribute on the connection.
+    inner block, not the whole outer transaction. Reentrancy depth is
+    tracked in the module-level `_TRANSACTION_DEPTH` dict keyed by
+    `id(conn)` (sqlite3.Connection doesn't permit attribute assignment).
 
     Usage:
         with transaction(conn):

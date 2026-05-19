@@ -355,6 +355,37 @@ def test_device_parameter_return_side_skipped_with_warn(
     assert any("return-side" in n for n in plan.notes), plan.notes
 
 
+def test_device_parameter_nested_rack_skipped_with_warn(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Symmetric with push: device_parameter envelopes on devices inside
+    rack chains (parent_rack_device_id IS NOT NULL) are skipped. W6-I/J
+    shipped the MCP-side probe but pull routing is still flat — closing
+    that gap is W7-B."""
+    # Build a rack device on the track, then a nested chain on the rack,
+    # then a device inside that nested chain.
+    rack_chain = M.create_device_chain(conn, parent_track_id=linked_track)
+    rack_device = M.create_device(
+        conn, chain_id=rack_chain, position=1,
+        kind="InstrumentGroupDevice", display_name="Rack",
+    )
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_device, position=0,
+    )
+    nested_device = M.create_device(
+        conn, chain_id=nested_chain, position=1,
+        kind="Operator", display_name="Synth",
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=nested_device, parameter_path="Cutoff",
+    )
+    _add_two_breakpoints(conn, eid)
+    plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("nested-rack" in n for n in plan.notes), plan.notes
+
+
 def test_unlinked_track_skipped_with_warn(
     conn, song, session, track, clip,
 ):
@@ -572,6 +603,38 @@ def test_apply_note_expression_no_offset_translation(
 # ---------------------------------------------------------------------------
 # Round-trip property: DB -> push-like read -> apply converges to no-op
 # ---------------------------------------------------------------------------
+
+
+def test_apply_time_jitter_within_sampling_resolution_is_noop(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Regression for the Critic-caught epsilon mismatch (W7-A round 1):
+    Live's sampling-based read can localize a step transition anywhere
+    within `resolution_beats` of its true position, so time deltas up to
+    `resolution_beats + _ENVELOPE_TIME_EPS_SLACK` (~0.0114 at default
+    1/96 beat) MUST be tolerated. Comparing time deltas against
+    `value_eps` (1e-3, an order of magnitude tighter) would flag every
+    pull as a change even when no real edit happened, producing
+    spurious mutations on every round-trip.
+    """
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    _add_two_breakpoints(conn, eid, curve_kind="linear")
+    # Times jittered by ~0.005 (5x value_eps but ~half of time_eps at
+    # default sampling resolution). Same values.
+    payload = _live_envelope_reply([(0.005, 0.5), (1.005, 0.0)])
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", payload)],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 0, (
+        f"Live's sampling jitter must not churn DB breakpoints: {result.details}"
+    )
+    assert result.no_ops == 1
+    # And curves survive.
+    bps = Q.get_breakpoints(conn, eid)
+    assert [b["curve_kind"] for b in bps] == ["linear", "linear"]
 
 
 def test_round_trip_simulated_read_is_no_op(

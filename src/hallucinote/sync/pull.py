@@ -43,10 +43,7 @@ from hallucinote.db.connection import transaction
 # that keeps pull and push exactly symmetric on routing semantics. Any push-side
 # routing fix automatically applies to pull.
 from hallucinote.sync.push import (
-    _CoveringPlacement,
-    _clip_local_breakpoints,
     _envelope_beat_range,
-    _position_bar_to_beats,
     _resolve_envelope_session_clip,
 )
 
@@ -2733,12 +2730,16 @@ def _merge_envelope_breakpoints(
                 "curve_kind": "hold",
             })
 
-    # Detect change: count mismatch or any field difference.
+    # Detect change: count mismatch or any field difference. Use the
+    # same epsilon scales as the per-breakpoint matching above — time
+    # comparisons use `time_eps` (sampling resolution + slack), not the
+    # tighter `value_eps`, so Live's quantum doesn't churn a no-op into
+    # a write on every pull.
     changed = len(merged) != len(db_bps)
     if not changed:
         for m, dbp in zip(merged, db_bps):
             if (
-                abs(m["time_beats"] - float(dbp["time_beats"])) > value_eps
+                abs(m["time_beats"] - float(dbp["time_beats"])) > time_eps
                 or abs(m["value"] - float(dbp["value"])) > value_eps
                 or m["curve_kind"] != dbp["curve_kind"]
             ):

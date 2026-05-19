@@ -599,3 +599,110 @@ def test_cli_end_to_end_drive_links_everything(
         ) is not None
     finally:
         fresh.close()
+
+
+# ---------------------------------------------------------------------------
+# W9-B: create-session + --auto-session for probe-and-link
+# ---------------------------------------------------------------------------
+
+
+def test_cli_create_session_emits_new_id(conn, song, db_path, capsys):
+    push_cli.main([
+        "create-session", "--song", "t", "--db", str(db_path),
+        "--name", "smoke",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert out["song_name"] == "t"
+    assert out["name"] == "smoke"
+    assert len(out["session_id"]) == 32
+    # And the row actually landed.
+    fresh = init_db(db_path)
+    try:
+        s = Q.get_ableton_session(fresh, out["session_id"])
+        assert s is not None
+        assert s["song_id"] == song
+    finally:
+        fresh.close()
+
+
+def test_cli_create_session_default_name_uses_timestamp(conn, song, db_path, capsys):
+    push_cli.main([
+        "create-session", "--song", "t", "--db", str(db_path),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    # Default name is <slug>-<utc-timestamp> matching r"<slug>-\d{8}-\d{6}".
+    assert out["name"].startswith("t-")
+    parts = out["name"].split("-", 1)
+    assert len(parts[1]) == len("20260519-150000")  # YYYYMMDD-HHMMSS
+
+
+def test_cli_create_session_refuses_missing_song(conn, db_path):
+    with pytest.raises(SystemExit, match="no song named"):
+        push_cli.main([
+            "create-session", "--song", "nosuchsong", "--db", str(db_path),
+        ])
+
+
+def test_cli_probe_and_link_auto_session_creates_and_uses(
+    conn, song, db_path, tmp_path, capsys,
+):
+    """End-to-end auto-session path: probe-and-link bootstraps the session
+    on its own when no session_id is provided."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({
+        "tracks": [{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        "returns": [],
+    }))
+    push_cli.main([
+        "probe-and-link", "--song", "t", "--db", str(db_path),
+        "--snapshot", str(snapshot), "--auto-session",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert out["auto_session_created"] is True
+    assert out["song_id"] == song
+    assert out["session_id"] and len(out["session_id"]) == 32
+    # The session row exists and the link was written.
+    fresh = init_db(db_path)
+    try:
+        s = Q.get_ableton_session(fresh, out["session_id"])
+        assert s is not None
+    finally:
+        fresh.close()
+
+
+def test_cli_probe_and_link_auto_session_requires_song(conn, song, db_path, tmp_path):
+    """--auto-session needs --song <slug> (--db alone can't infer the song)."""
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"tracks": [], "returns": []}))
+    with pytest.raises(SystemExit, match="--auto-session requires --song"):
+        push_cli.main([
+            "probe-and-link", "--db", str(db_path),
+            "--snapshot", str(snapshot), "--auto-session",
+        ])
+
+
+def test_cli_probe_and_link_auto_session_rejects_explicit_session_id(
+    conn, song, session, db_path, tmp_path,
+):
+    """--auto-session + positional session_id is invalid (ambiguous intent)."""
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"tracks": [], "returns": []}))
+    with pytest.raises(SystemExit, match="mutually exclusive"):
+        push_cli.main([
+            "probe-and-link", session, "--song", "t", "--db", str(db_path),
+            "--snapshot", str(snapshot), "--auto-session",
+        ])
+
+
+def test_cli_probe_and_link_requires_session_id_when_no_auto(
+    conn, song, db_path, tmp_path,
+):
+    """Without --auto-session AND without positional session_id, refuse."""
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"tracks": [], "returns": []}))
+    with pytest.raises(SystemExit, match="--auto-session"):
+        push_cli.main([
+            "probe-and-link", "--song", "t", "--db", str(db_path),
+            "--snapshot", str(snapshot),
+        ])

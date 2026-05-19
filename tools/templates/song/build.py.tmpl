@@ -1,0 +1,137 @@
+"""Build {{title}} into a SQLite DB using the hallucinote layer.
+
+{{intent_hint}}
+
+Section bar layout (1-based, 4/4 throughout — adjust if non-4/4):
+{{section_layout}}
+
+Run:
+    python songs/{{slug}}/build.py            # state-converger: re-run is no-op if nothing changed
+    python songs/{{slug}}/build.py --reset    # drop + rebuild from scratch
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from hallucinote.capture import replay_capture
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
+
+# Per-branch DB filename (W12-A): branch switches pick up the right DB
+# silently; outside a repo / detached HEAD falls back to {{slug}}.db.
+DB_PATH = resolve_db_path("{{slug}}", root=Path(__file__).parent.parent)
+SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
+
+
+# ---------------------------------------------------------------------------
+# Section bar boundaries (1-based) — adjust as the song grows
+# ---------------------------------------------------------------------------
+{{section_constants}}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
+    """Map track name -> id for the song. Master included; returns are not."""
+    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
+
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+
+
+def build(reset: bool = False) -> str:
+    """Build the song. Returns the song_id (UUID hex).
+
+    W12-A: this is a state-converger. Re-running with no source changes is
+    a no-op (zero net events). Mutators inside `build_session` are
+    idempotent — second call with identical args returns kind='unchanged'.
+    Build-owned rows from a prior build that aren't touched this run get
+    tombstoned automatically at session exit. Pulled rows (actor='sync')
+    and LLM-authored edits survive.
+
+    `--reset` remains an escape hatch for "wipe the DB and start fresh"
+    but is no longer required in the normal flow.
+    """
+    if reset and DB_PATH.exists():
+        DB_PATH.unlink()
+
+    conn = init_db(DB_PATH)
+    try:
+        with M.build_session(conn, song_name="{{slug}}", owner="build.py"):
+            # Mix-half: replay the captured (or synthetic) Ableton session.
+            snapshot = json.loads(SNAPSHOT_PATH.read_text())
+            song_id = replay_capture(
+                conn, snapshot,
+                song_name="{{slug}}",
+                song_title="{{title}}",
+                song_key={{key_literal}},
+                actor="sync", reason="initial capture replay",
+            )
+
+            # Score-half: tempo, meter, sections, cue points.
+            M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
+            M.add_tempo_point(
+                conn, song_id=song_id, start_bar=1.0, tempo_bpm={{tempo}},
+            )
+            M.add_time_signature_point(
+                conn, song_id=song_id, start_bar=1.0,
+                numerator={{numerator}}, denominator={{denominator}},
+            )
+
+            # Section markers.
+{{section_creates}}
+
+            # Cue points at every section boundary.
+{{cue_creates}}
+
+            tracks = _tracks_by_name(conn, song_id)
+
+            # === Compose-half: author your clips here ===
+            #
+            # Use library generators where they fit (`hallucinote.generators.*`),
+            # hand-author NoteDict lists where you need precision, then drop
+            # them into clips via `M.create_clip(...)` + `M.replace_clip_notes(...)`.
+            # Place clips in time with `M.add_arrangement_clip(...)`.
+            #
+            # See songs/falling-walking/build.py for a worked example —
+            # but note that falling-walking is historical, not a literal
+            # template. Generators today are 4/4-only (per Wave 0 finding H2);
+            # for non-4/4 songs hand-author until W14-B parametrizes them.
+
+        return song_id
+    finally:
+        conn.close()
+
+
+def report(song_id: str) -> None:
+    """Print a summary of what got built."""
+    conn = init_db(DB_PATH)
+    try:
+        song_row = Q.get_song(conn, song_id)
+        tracks = Q.get_tracks_for_song(conn, song_id)
+        print(f"song_id={song_id}, timing_mode={song_row['timing_mode']}, "
+              f"tracks={len(tracks)}")
+        total_notes = 0
+        for t in tracks:
+            clips = Q.get_clips_for_track(conn, t["id"])
+            notes_in_track = sum(len(Q.get_notes_for_clip(conn, c["id"])) for c in clips)
+            total_notes += notes_in_track
+            print(f"  track {t['track_index']:>2}  {t['name']:<24} "
+                  f"({t['kind']}, {len(clips)} clips, {notes_in_track} notes)")
+        sections = [s["name"] for s in Q.get_sections_for_song(conn, song_id)]
+        print(f"total notes: {total_notes}")
+        print(f"sections: {sections}")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    reset = "--reset" in sys.argv
+    song_id = build(reset=reset)
+    report(song_id)

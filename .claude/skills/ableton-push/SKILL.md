@@ -3,7 +3,7 @@ description: Push the Hallucinote DB into Ableton Live. Drives ten ordered phase
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
-argument-hint: <song-slug> <session_id>
+argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
 You are the Ableton push orchestrator. Your job: take the DB state for a song, materialize it in Live by driving ten ordered phases through MCP, and report what was created.
@@ -20,10 +20,13 @@ The ten phases run in a strict order set by Live's API constraints (e.g., envelo
 
 You need TWO pieces of information from `$ARGUMENTS`:
 
-1. **The song slug** (required) — filesystem-safe identifier matching the song's directory + DB filename. The DB lives at `songs/<slug>/<slug>.db` per the project's prescriptive convention (`.prawduct/artifacts/project-preferences.md`).
-2. **The session_id** (required — never default it) — the `ableton_sessions.id` row that binds the DB to the currently-open Live set. If the user hasn't created one, they should do so via `M.create_ableton_session(conn, song_id=..., name="...")` first; refuse to invent one.
+1. **The song slug** (required) — filesystem-safe identifier matching the song's directory + DB filename. The DB lives at `songs/<slug>/<slug>-<branch>.db` per W12-A (per-branch convention; outside a repo / detached HEAD falls back to `songs/<slug>/<slug>.db`).
+2. **The session_id** — the `ableton_sessions.id` row that binds the DB to the currently-open Live set. Three paths to provide it:
+   - **User passed an explicit id**: use it directly.
+   - **User said "new session" / first push for this song**: pass `--auto-session` to `probe-and-link` (W9-B) — the CLI creates the row and returns its id in the response (`session_id` field, `auto_session_created: true`). Tell the user the new id so they can reuse it for subsequent pushes (the user typically wants ONE session per Live set, not a new one per push).
+   - **User said "create a session named X"**: run `push_cli create-session --song <slug> --name X` first; capture the printed id; use it.
 
-If either is missing, ask the user — never guess.
+If the slug is missing, ask the user. For session, default to `--auto-session` only if the user explicitly signaled "this is the first push for this song / new session" — otherwise ask.
 
 ## Workflow overview
 

@@ -1,12 +1,22 @@
 # falling-walking
 
+> **Historical, not a template** (W9-A, 2026-05-19). This song predates
+> the `/new-song` scaffolding skill — its `build.py` was hand-authored
+> against early versions of the mutator API and accreted song-specific
+> patterns. For NEW songs, run `/new-song <slug>` instead of copying
+> this directory. The scaffold uses W12-A's state-converger
+> `build_session` pattern, the per-branch DB filename convention, and a
+> unique per-song test basename (`test_<slug>_build.py`). falling-walking
+> is preserved as a worked example of authoring depth (~860 LoC build.py,
+> 8 tracks, 7 sections, ~1000+ notes, real-Live-validated round-trip).
+> Read it for "how complex can build.py get" — not for "what should a
+> fresh build.py look like."
+>
 > **Composer intent + dated decisions** for this song live alongside this overview:
 > - `decisions/` — deliberate choices with rationale (ADR-shaped, dated)
 > - `annotations/` — timeless scoped intent (section feel, instrumentation, conventions)
 >
 > Query both via `/song-context [topic]` (FTS5-indexed). See `.prawduct/artifacts/song-conventions.md` for the convention.
->
-> This file is the **canonical overview** other songs should copy when starting. Keep it short: concept, structural reference, build orientation. Detail belongs in `decisions/` and `annotations/`.
 
 ---
 

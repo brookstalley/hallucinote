@@ -40,21 +40,33 @@ import json
 import sys
 from pathlib import Path
 
-from hallucinote.db import queries as Q
+from hallucinote.db import mutations as M, queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
 from hallucinote.sync import push
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
-    """``--song <slug>`` → ``songs/<slug>/<slug>.db``; ``--db PATH`` → PATH."""
+    """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
+
+    W12-A: resolves to ``songs/<slug>/<slug>-<branch>.db`` inside a repo,
+    falling back to legacy ``songs/<slug>/<slug>.db`` outside a repo / on
+    detached HEAD. If both exist, the per-branch form wins (matches build.py).
+    """
     if args.db:
         path = Path(args.db)
     else:
-        path = Path("songs") / args.song / f"{args.song}.db"
+        path = resolve_db_path(args.song)
+        # Legacy-fallback: if the per-branch DB doesn't exist but the legacy
+        # <slug>.db does, use that (pre-W12-A songs not yet rebuilt under
+        # the new convention). This is purely transitional.
+        if not path.exists():
+            legacy = Path("songs") / args.song / f"{args.song}.db"
+            if legacy.exists():
+                path = legacy
     if not path.exists():
         raise SystemExit(
-            f"push_cli: DB not found at {path} — "
-            "songs convention is one DB per song at songs/<slug>/<slug>.db"
+            f"push_cli: DB not found at {path} — run `python songs/{args.song}/build.py` "
+            "first to populate it."
         )
     return path
 
@@ -137,6 +149,10 @@ def _cmd_apply(args: argparse.Namespace) -> int:
 
 
 def _cmd_probe_and_link(args: argparse.Namespace) -> int:
+    if not args.song and not args.db:
+        raise SystemExit(
+            "push_cli probe-and-link: need --song <slug> or --db <path>"
+        )
     snapshot = json.loads(Path(args.snapshot).read_text())
     if not isinstance(snapshot, dict):
         raise SystemExit(
@@ -152,28 +168,112 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         )
 
     conn = connect(_resolve_db_path(args))
-    song_id = _resolve_song_id(conn, args.session_id)
+    session_id = args.session_id
+    auto_created = False
+
+    if args.auto_session:
+        # W9-B: bootstrap path for first-time push on a new song.
+        # Requires --song <slug> (need the song to bind the session to).
+        if not args.song:
+            raise SystemExit(
+                "push_cli probe-and-link: --auto-session requires --song <slug> "
+                "(can't infer song from --db path)"
+            )
+        if session_id is not None:
+            raise SystemExit(
+                "push_cli probe-and-link: --auto-session and a positional "
+                "session_id are mutually exclusive"
+            )
+        song = Q.get_song_by_name(conn, args.song)
+        if song is None:
+            raise SystemExit(
+                f"push_cli probe-and-link: no song named {args.song!r} in DB — "
+                "run build.py first"
+            )
+        name = args.session_name or f"{args.song}-{_timestamp()}"
+        session_id = M.create_ableton_session(
+            conn, song_id=song["id"], name=name,
+            actor="sync",
+            reason=args.reason or f"--auto-session from push_cli for {args.song}",
+        )
+        conn.commit()
+        auto_created = True
+
+    if session_id is None:
+        raise SystemExit(
+            "push_cli probe-and-link: pass session_id positionally OR use "
+            "--auto-session (with --song <slug>) to bootstrap one"
+        )
+
+    song_id = _resolve_song_id(conn, session_id)
     result = push.probe_and_link(
         conn,
         song_id=song_id,
-        session_id=args.session_id,
+        session_id=session_id,
         live_tracks=live_tracks,
         live_returns=live_returns,
         actor="sync",
-        reason=args.reason or f"probe-and-link from session {args.session_id}",
+        reason=args.reason or f"probe-and-link from session {session_id}",
     )
     out = result.to_dict()
     out["song_id"] = song_id
-    out["session_id"] = args.session_id
+    out["session_id"] = session_id
+    out["auto_session_created"] = auto_created
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
 
-def _add_db_args(p: argparse.ArgumentParser) -> None:
-    group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--song", help="song slug (resolves to songs/<slug>/<slug>.db)")
-    group.add_argument("--db", help="explicit path to the SQLite DB (escape hatch)")
+def _cmd_create_session(args: argparse.Namespace) -> int:
+    """W9-B: low-level helper. Creates an ableton_sessions row for the song,
+    prints its id on stdout. Used by ableton-push skill when the user hasn't
+    bound a session yet."""
+    conn = connect(_resolve_db_path(args))
+    song = Q.get_song_by_name(conn, args.song)
+    if song is None:
+        raise SystemExit(
+            f"push_cli create-session: no song named {args.song!r} in DB — "
+            "run build.py first"
+        )
+    name = args.name or f"{args.song}-{_timestamp()}"
+    session_id = M.create_ableton_session(
+        conn, song_id=song["id"], name=name,
+        actor="sync",
+        reason=args.reason or f"create-session for {args.song}",
+    )
+    conn.commit()
+    json.dump({
+        "session_id": session_id,
+        "song_id": song["id"],
+        "song_name": args.song,
+        "name": name,
+    }, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _timestamp() -> str:
+    """Compact UTC timestamp for default session names. Avoids `:` for paths."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _add_db_args(p: argparse.ArgumentParser, *, mutex: bool = True) -> None:
+    """Add --song / --db. By default mutually exclusive (one required).
+
+    Set ``mutex=False`` for subcommands like ``probe-and-link --auto-session``
+    that need ``--song`` for the slug AND optionally ``--db`` for an explicit
+    DB path override.
+    """
+    if mutex:
+        group = p.add_mutually_exclusive_group(required=True)
+        group.add_argument("--song", help="song slug (resolves via resolve_db_path)")
+        group.add_argument("--db", help="explicit path to the SQLite DB (escape hatch)")
+    else:
+        p.add_argument("--song", default=None,
+                       help="song slug (resolves via resolve_db_path)")
+        p.add_argument("--db", default=None,
+                       help="explicit path to the SQLite DB (override of --song resolution)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -204,13 +304,40 @@ def main(argv: list[str] | None = None) -> int:
         "probe-and-link",
         help="match Live tracks/returns by name → write ableton_links",
     )
-    p_pl.add_argument("session_id", help="ableton_sessions.id (always explicit)")
-    _add_db_args(p_pl)
+    # session_id is optional when --auto-session is used (W9-B).
+    p_pl.add_argument("session_id", nargs="?", default=None,
+                      help="ableton_sessions.id (omit if --auto-session)")
+    # Non-mutex: --auto-session needs --song for the slug; tests may pass
+    # --db for an explicit override.
+    _add_db_args(p_pl, mutex=False)
     p_pl.add_argument("--snapshot", required=True,
                       help="path to {tracks: [...], returns: [...]} JSON")
     p_pl.add_argument("--reason", default=None,
                       help="optional reason annotation for emitted link events")
+    p_pl.add_argument("--auto-session", action="store_true",
+                      help="W9-B: create an ableton_sessions row if not provided "
+                           "(requires --song <slug>; mutually exclusive with positional session_id)")
+    p_pl.add_argument("--session-name", default=None,
+                      help="optional name for the auto-created session "
+                           "(default: <slug>-<utc-timestamp>)")
     p_pl.set_defaults(func=_cmd_probe_and_link)
+
+    p_cs = sub.add_parser(
+        "create-session",
+        help="W9-B: create an ableton_sessions row for the song, print its id",
+    )
+    # create-session always needs the slug (to look up the song row); --db is
+    # an optional override for DB location. Doesn't use _add_db_args (which
+    # makes --song and --db mutually exclusive).
+    p_cs.add_argument("--song", required=True,
+                      help="song slug (resolves to per-branch DB via resolve_db_path)")
+    p_cs.add_argument("--db", default=None,
+                      help="optional explicit DB path (override of --song resolution)")
+    p_cs.add_argument("--name", default=None,
+                      help="optional session name (default: <slug>-<utc-timestamp>)")
+    p_cs.add_argument("--reason", default=None,
+                      help="optional reason annotation for the emitted event")
+    p_cs.set_defaults(func=_cmd_create_session)
 
     args = parser.parse_args(argv)
     return args.func(args)

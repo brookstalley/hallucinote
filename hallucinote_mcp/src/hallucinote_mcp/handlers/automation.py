@@ -30,10 +30,16 @@ breakpoints are written as stepped regions. The wire's ``curve`` field is
 accepted for forward compatibility but recorded as a note when non-step
 hints appear (Live 12.4 has no way to apply them).
 
-The handler is push-direction. ``clear`` / ``clear_all`` destroy
-envelopes; ``get_envelope`` / ``list`` are gap-blocked stubs (the MCP
-read surface for envelopes hasn't landed yet — Hallucinote's pull skill
-documents this as a blocked domain).
+The module covers both directions. ``write_envelope`` is the write
+keystone; ``clear`` / ``clear_all`` destroy envelopes; ``read_envelope``
+/ ``get_envelope`` (alias) read via sampling-based reconstruction
+(W6-G/H 2026-05-19) — Live exposes only ``envelope.value_at_time(t)``,
+not breakpoint enumeration, so the handler samples and reconstructs
+step transitions. Covers 5 of 7 target_kinds; clip_cc / clip_pitch_bend
+remain LOM-blocked on the read side same as the write side. ``list``
+(target-less enumeration) stays blocked — Live's
+``Clip.automation_envelopes`` yields envelope objects but their
+bound targets aren't readable.
 
 Time is in **beats** on the wire. The Hallucinote planner converts from
 bar-based song positions via its time-signature map before emit. MCP
@@ -41,6 +47,7 @@ stays meter-agnostic — same principle as ``ableton_clip``.
 """
 from __future__ import annotations
 
+import math as _math
 from typing import Any
 
 from ..dispatcher import LiveContext
@@ -145,8 +152,6 @@ def _sample_envelope_to_breakpoints(
     callers can round-trip an envelope that begins with the same value
     as its initial state without losing the anchor.
     """
-    import math as _math
-
     if end_beats <= start_beats:
         return []
     if resolution_beats <= 0:

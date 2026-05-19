@@ -281,12 +281,16 @@ def create_handler(
                 "session-view audio clip creation is not supported by "
                 "Live 10-12's LOM (ClipSlot.create_clip is MIDI-only; "
                 "no audio variant exists). Workarounds: (a) drag the "
-                "audio from Live's browser, (b) place audio in the "
-                "arrangement view via "
+                "audio from Live's browser into the slot manually; (b) "
+                "create an empty arrangement audio clip via "
                 "`ableton_clip(action='create', kind='audio', "
-                "location='arrangement', audio_path=...)`, or (c) load "
-                "audio into the highlighted clip slot via the browser "
-                "(see W6-D investigation in the backlog)."
+                "location='arrangement', ...)` — note that `audio_path` "
+                "is recorded but not yet loaded into the clip "
+                "(audio-file ingest is deferred work, see "
+                "`audio_path_deferred` in the result); (c) wire a "
+                "browser-load action that targets the highlighted clip "
+                "slot — also deferred (see W6-D investigation in "
+                ".prawduct/backlog.md)."
             )
         slot.create_clip(float(length))
         clip = slot.clip

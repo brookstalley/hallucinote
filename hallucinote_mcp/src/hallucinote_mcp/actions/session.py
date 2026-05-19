@@ -151,8 +151,13 @@ register(
         ),
         example="ableton_session(action='set_tempo', bpm=132.0)",
         tips=(
-            "This sets the GLOBAL tempo. For per-bar tempo automation, use "
-            "ableton_automation(action='write_envelope', target_kind='song_tempo').",
+            "This sets the GLOBAL tempo (bar-1 anchor). Multi-bar tempo "
+            "automation is NOT closeable via MCP — Live's LOM doesn't "
+            "expose create_automation_envelope from any song-level path "
+            "(W6-F 2026-05-19 investigation; see ableton://guides/gaps "
+            "'Arrangement-level tempo / signature automation'). For "
+            "multi-section tempo changes, use per-scene tempo via "
+            "ableton_scene.",
         ),
     )
 )
@@ -185,8 +190,12 @@ register(
         handler=session_handlers.set_signature_handler,
         example="ableton_session(action='set_signature', numerator=7, denominator=8)",
         tips=(
-            "For per-bar meter changes (a song that goes 4/4 then 6/8), use "
-            "ableton_automation(action='write_envelope', target_kind='song_signature').",
+            "This sets the GLOBAL meter. Multi-section meter changes are "
+            "NOT closeable via MCP — Live's signature_* are plain int "
+            "properties (not DeviceParameter objects) and time-signature "
+            "automation is unsupported in Live's API per Ableton's forum "
+            "(W6-F 2026-05-19). For sections in different meters, use "
+            "per-scene time signatures via ableton_scene.",
         ),
     )
 )

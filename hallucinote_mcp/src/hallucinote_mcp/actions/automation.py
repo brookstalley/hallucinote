@@ -1,13 +1,18 @@
 """``ableton_automation`` action schema.
 
-Six actions covering automation envelopes across all seven Live target
+Actions covering automation envelopes across all seven Live target
 families:
 
   - **Write**: write_envelope (the load-bearing collapse — 8 fork tools → 1)
+  - **Read**: read_envelope, get_envelope (alias) — sampling-based
+    reconstruction via Live's `envelope.value_at_time(t)`. Closed in
+    W6-G/H (2026-05-19) for 5 of 7 target_kinds; clip_cc / clip_pitch_bend
+    remain LOM-blocked on the read side mirroring the write side.
+  - **Read-list (gap-blocked)**: list — target-less enumeration of a
+    clip's envelopes isn't reachable (Live's `Clip.automation_envelopes`
+    yields envelope objects but their bound targets aren't readable).
+    Use `read_envelope` per-target instead.
   - **Destroy**: clear (one envelope), clear_all (all on clip OR parent)
-  - **Read (gap-blocked)**: list, get_envelope — stubs citing the MCP
-    envelope-read surface gap. Hallucinote's pull skill documents this as
-    a blocked domain.
   - **Help**: dispatcher-special
 
 write_envelope's ``target_kind`` discriminator selects among seven shapes:

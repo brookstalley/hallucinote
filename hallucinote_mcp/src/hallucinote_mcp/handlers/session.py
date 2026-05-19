@@ -23,6 +23,7 @@ The dispatcher invokes them on Live's main thread (atomically with the
 """
 from __future__ import annotations
 
+import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
@@ -281,10 +282,6 @@ def set_view_handler(context: LiveContext, *, view: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-import re as _re
-
-
-_INTROSPECT_ROOTS: dict[str, Any] = {}  # populated per-call from context
 _INTROSPECT_SEGMENT_RE = _re.compile(r"^([a-zA-Z_][a-zA-Z_0-9]*)(?:\[(\d+)\])?$")
 _INTROSPECT_WHAT_KINDS = ("dir", "type", "value", "repr")
 _INTROSPECT_PRIMITIVES = (int, float, bool, str, type(None))

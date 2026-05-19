@@ -19,6 +19,28 @@ the natural-language steps adaptable while the detection stays reliable.
 
 ## Step 1 — Preflight
 
+### Step 1.0 — Python version + cwd sanity (W15-B)
+
+Before running preflight, do two cheap checks:
+
+**Python version (refuse on < 3.10).** `hallucinote_mcp` requires Python 3.10+ (PEP 604 unions, etc.). Run:
+
+```bash
+python -c "import sys; assert sys.version_info >= (3, 10), f'hallucinote-mcp requires Python 3.10+, got {sys.version_info.major}.{sys.version_info.minor}'; print(sys.version)"
+```
+
+If that command exits non-zero, **stop**. Tell the user the version their `python` resolves to, and that they need 3.10 or newer (pyenv / Homebrew / apt / the python.org installer all work — pick whichever they already use). Don't suggest a fix path that requires sudo. Same flow for `python3` / `py -3` if the user's preferred command differs.
+
+**cwd looks like a project (warn if not).** `.mcp.json` lands in `cwd`. If `cwd` is the user's `$HOME`, `/`, `/tmp`, or has no `.git` / `pyproject.toml` / `package.json` / `Cargo.toml` / `go.mod` / equivalent project marker, that's almost certainly wrong — the user probably wants `.mcp.json` in a specific project's directory, not in their shell-default. Quick check:
+
+```bash
+[ -d .git ] || [ -f pyproject.toml ] || [ -f package.json ] || [ -f Cargo.toml ] || [ -f go.mod ] || [ -f deno.json ]
+```
+
+If it returns non-zero (no markers found), **show the user the current directory** and ask explicitly: "Install into `<cwd>`? If you meant another project, `cd` there first and rerun this skill." Don't refuse outright — some setups legitimately have no marker file — but make the user confirm. The cost of writing `.mcp.json` to the wrong place is high (the user will wonder for hours why Claude Code in their actual project doesn't see the MCP).
+
+### Step 1.1 — Run preflight
+
 Run preflight **from the project directory** the user wants the local
 `.mcp.json` written to. Preflight reports `mcp_configs.local_path` based
 on `cwd`, so running from the wrong directory misses an existing entry.
@@ -290,7 +312,7 @@ Don't write directly to the config — a crash or concurrent write mid-flight
 leaves a truncated file. `~/.claude.json` is large and stateful; corrupting
 it costs the user their Claude Code project history.
 
-## Step 5 — Tell the user the Ableton click
+## Step 5 — Tell the user the Ableton click + hand off (W15-B)
 
 Print this verbatim:
 
@@ -303,9 +325,18 @@ One last step in Ableton Live:
   3. In any free "Control Surface" slot, select "Hallucinote".
   4. Leave "Input" and "Output" as "None".
 
-After that, Hallucinote MCP is live. Restart Claude Code in this project so it
-picks up the new MCP entry, then try:  ableton_session(action='help')
+Then restart Claude Code in this project so it picks up the new MCP entry.
+
+Once you're back in Claude Code, try one of these to get going:
+  • "load falling-walking"          — push the bundled example song into Live
+  • "start a new song"              — scaffold a fresh song from a prompt
+  • "/ableton-pull <slug> <id> everything"
+                                   — pull current Live state into the DB
+
+If something looks broken, /ableton-uninstall-mcp reverses every step.
 ```
+
+The "Try:" lines are deliberately phrased the way a user would speak them, not as MCP tool invocations — the install skill is the first surface a brand-new user touches, and `ableton_session(action='help')` is developer syntax. The two suggested entry points (`load falling-walking` / `start a new song`) cover the two real first-time paths.
 
 ## Edge cases — handle them, don't paper over
 

@@ -1,4 +1,4 @@
-"""MCP prompts — 5 workflow templates that orchestrate multi-step
+"""MCP prompts — workflow templates that orchestrate multi-step
 tool sequences for common Ableton authoring patterns.
 
 Prompts differ structurally from tools and resources:
@@ -8,8 +8,9 @@ Prompts differ structurally from tools and resources:
     user-role instructions guiding the agent through a multi-call
     sequence. The agent then executes the calls itself.
 
-Wave M-7 ships 5 prompts:
+Current set (canonical names locked in ``PROMPT_NAMES``):
 
+Wave M-7 (5):
   - ``create_midi_track_with_instrument`` — create + name + optional
     instrument load (2 tool calls)
   - ``setup_sidechain_compression`` — ensure Compressor + set sidechain
@@ -20,11 +21,16 @@ Wave M-7 ships 5 prompts:
   - ``compose_section_pattern`` — generate a named pattern (trip-hop,
     tresillo, bossa, ...) into a clip
 
+Wave 9 (1):
+  - ``start_new_song`` — scaffold-then-compose orchestration: drives
+    /new-song to scaffold the song dir, then guides composition + the
+    first push with --auto-session bootstrap (W9-C).
+
 Carry-forward principle #9 (M-6 pattern): prompts live in their own
 module, registered via ``register_prompts(mcp)`` called from
 ``server.create_server``. The same lock-the-surface negative-test
 pattern (#3) applies — ``PROMPT_NAMES`` enumerates the canonical
-5; tests assert the exact set is registered.
+set; tests assert the exact set is registered.
 
 Per principle #1 (DB-as-source-of-truth), prompts that involve
 note-timing or note-velocity transforms (humanize, compose) instruct
@@ -46,6 +52,8 @@ PROMPT_NAMES: tuple[str, ...] = (
     "build_return_bus",
     "humanize_clip_velocity",
     "compose_section_pattern",
+    # W9-C: scaffold-then-compose orchestration for new songs.
+    "start_new_song",
 )
 
 
@@ -275,6 +283,80 @@ def _compose_section_pattern(
     return [_msg(text)]
 
 
+def _start_new_song(
+    slug: str,
+    title: str,
+    tempo: float,
+    signature: str = "4/4",
+    sections: str = "intro,verse,chorus,outro",
+    key: str | None = None,
+    intent_hint: str | None = None,
+) -> list[_Msg]:
+    """W9-C: scaffold-then-compose orchestration for new songs.
+
+    Returns user-role instructions guiding the agent through:
+      1. Run the `/new-song` skill to scaffold the directory.
+      2. Confirm shape tests pass.
+      3. Author the compose-half (clips + arrangement) directly in
+         the generated build.py, optionally with intent_hint as
+         the seed for the LLM-driven composition.
+      4. Push to Live with `--auto-session` (W9-B) for first push.
+
+    The prompt is honest about the scaffold being a starting point —
+    the synthetic snapshot is a placeholder until the user stages
+    Live and captures.
+    """
+    key_clause = f" in key {key}" if key else ""
+    intent_clause = (
+        f"\n\nComposer intent: {intent_hint}" if intent_hint else ""
+    )
+    sections_csv = sections.replace(" ", "")
+    text = (
+        f"Workflow: scaffold a new Hallucinote song {slug!r} (titled "
+        f"{title!r}, tempo {tempo}, signature {signature}{key_clause}) "
+        f"with sections [{sections_csv}], then compose its first pass."
+        f"{intent_clause}\n\n"
+        f"Steps:\n\n"
+        f"1. **Scaffold** the song directory by invoking the `/new-song` "
+        f"skill — pass slug={slug!r}, title={title!r}, tempo={tempo}, "
+        f"signature={signature!r}, sections={sections_csv!r}"
+        + (f", key={key!r}" if key else "")
+        + (f", intent={intent_hint!r}" if intent_hint else "")
+        + ". The skill runs `tools.scaffold_song` and creates "
+        f"`songs/{slug}/` with build.py (state-converger, W12-A), "
+        f"captured_session.json (synthetic 4 MIDI + 2 returns), tests, "
+        f"and decision/annotation directories.\n\n"
+        f"2. **Confirm scaffold**: run `python3 songs/{slug}/build.py "
+        f"--reset` and `pytest songs/{slug}/tests/ -v`. Both should pass "
+        f"on first run.\n\n"
+        f"3. **Compose**: open `songs/{slug}/build.py` and replace the "
+        f"`=== Compose-half ===` placeholder with your musical authoring. "
+        f"For each section: pick clips, generate or hand-author notes, "
+        f"call `M.create_clip` + `M.replace_clip_notes`, then "
+        f"`M.add_arrangement_clip` to place them. Generators in "
+        f"`hallucinote.generators.*` are 4/4-only today (Wave 0 finding "
+        f"H2); for non-4/4 songs hand-author until W14-B parametrizes "
+        f"them.\n\n"
+        f"4. **Iterate**: re-run `python3 songs/{slug}/build.py` "
+        f"(no --reset) after each edit. W12-A guarantees re-runs are "
+        f"no-ops if nothing changed — events only emit for real diffs. "
+        f"Re-run tests as you go.\n\n"
+        f"5. **Push to Live** when you're ready: ask the user to stage "
+        f"Live (open a new set or one matching the synthetic snapshot's "
+        f"shape), then run `/ableton-push {slug} --new-session` — the "
+        f"W9-B `--auto-session` path bootstraps the binding row on "
+        f"first push. Tell the user the new session_id so they can "
+        f"reuse it for subsequent pushes.\n\n"
+        f"6. **Capture for real**: once Live is populated with the "
+        f"target shape, run `tools/capture.py` to overwrite the "
+        f"synthetic `captured_session.json` with the real Live state. "
+        f"Re-run build to converge.\n\n"
+        f"Stop at any step if a prerequisite fails — surface the error "
+        f"to the user rather than guessing past it."
+    )
+    return [_msg(text)]
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -331,6 +413,16 @@ def register_prompts(mcp: Any) -> None:
             "arrangement clip on the given track at the given start bar."
         ),
     )(_compose_section_pattern)
+
+    mcp.prompt(
+        name="start_new_song",
+        description=(
+            "Scaffold a new Hallucinote song from templates (via /new-song), "
+            "verify the scaffold builds + tests pass, then guide the agent "
+            "through composing the first pass and pushing to Live with "
+            "--auto-session bootstrap."
+        ),
+    )(_start_new_song)
 
 
 __all__ = ["PROMPT_NAMES", "register_prompts"]

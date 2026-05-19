@@ -23,11 +23,13 @@ _EXPECTED_PROMPTS = {
     "build_return_bus",
     "humanize_clip_velocity",
     "compose_section_pattern",
+    # W9-C: scaffold-then-compose orchestration for new songs.
+    "start_new_song",
 }
 
 
 def test_prompt_name_list_matches_design():
-    """Lock the M-7 surface: exactly these 5 prompts, no more, no less.
+    """Lock the prompt surface: exactly these names, no more, no less.
 
     Carry-forward principle #3 (lock-the-surface negative test). A future
     PR that adds an unlisted prompt OR drops one gets caught here.
@@ -35,7 +37,7 @@ def test_prompt_name_list_matches_design():
     assert set(PROMPT_NAMES) == _EXPECTED_PROMPTS
 
 
-def test_create_server_registers_all_five_prompts():
+def test_create_server_registers_all_prompts():
     """End-to-end: create_server wires every prompt into FastMCP."""
     mcp = create_server()
     assert set(registered_prompt_names(mcp)) == _EXPECTED_PROMPTS
@@ -184,11 +186,16 @@ def test_compose_section_pattern_unknown_kind_returns_friendly_error():
 def test_primer_advertises_prompts():
     """The server PRIMER (sent on initialize) must mention prompts so
     clients see them at connect time alongside tools + resources.
+
+    Strict check: every PROMPT_NAMES entry appears in PRIMER. A new prompt
+    added without a PRIMER update gets caught here (W9 PR-review note).
     """
     from hallucinote_mcp.server import PRIMER
     assert "Prompts" in PRIMER or "prompts" in PRIMER.lower()
-    # At least one prompt name appears
-    assert "create_midi_track_with_instrument" in PRIMER
+    for name in PROMPT_NAMES:
+        assert name in PRIMER, (
+            f"PROMPT_NAMES includes {name!r} but PRIMER doesn't mention it"
+        )
 
 
 def test_primer_under_500_token_budget():
@@ -203,3 +210,51 @@ def test_primer_under_500_token_budget():
         "the M-7 budget is 500 tokens. Trim, or revisit the budget if "
         "the new content is load-bearing."
     )
+
+
+# ---------- start_new_song (W9-C) ----------
+
+
+def test_start_new_song_renders_required_steps():
+    """Verifies the orchestration prompt mentions the load-bearing steps."""
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="punk-fate", title="Punk Fate", tempo=160.0,
+        signature="4/4", sections="intro,verse,chorus,outro",
+    )
+    _check_message_list(msgs, [
+        "punk-fate",
+        "Punk Fate",
+        "tempo 160",
+        "4/4",
+        "intro,verse,chorus,outro",
+        "/new-song",        # step 1: invoke scaffold skill
+        "build.py --reset", # step 2: confirm scaffold
+        "pytest",
+        "Compose-half",     # step 3: where to author
+        "no-ops if nothing changed",  # step 4: iterate via converger
+        "/ableton-push",    # step 5: push
+        "--new-session",
+    ])
+
+
+def test_start_new_song_includes_optional_key_and_intent():
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="x", title="X", tempo=120.0,
+        sections="intro,outro",
+        key="Dm", intent_hint="moody, brooding",
+    )
+    text = msgs[0]["content"]
+    assert "Dm" in text
+    assert "moody, brooding" in text
+
+
+def test_start_new_song_omits_optional_clauses_when_unset():
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="x", title="X", tempo=120.0, sections="intro,outro",
+    )
+    text = msgs[0]["content"]
+    assert "in key " not in text
+    assert "Composer intent:" not in text

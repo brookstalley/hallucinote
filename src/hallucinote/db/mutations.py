@@ -83,20 +83,25 @@ _current_build_session: contextvars.ContextVar["BuildSession | None"] = (
 def _resolve_actor_and_request(
     actor: str, request_id: str | None,
 ) -> tuple[str, str | None]:
-    """If running inside `build_session` AND caller didn't pass actor/request_id
-    explicitly, inject the session's 'build' actor + request_id. Otherwise pass
-    through unchanged.
+    """If running inside `build_session`, inject the session's request_id when
+    caller didn't pass one, and promote default actor 'system' to 'build'.
 
-    The "didn't pass explicitly" check is shape-based: actor=='system' (the
-    library default) and request_id is None. Explicit overrides survive
-    (test fixtures, push/pull layers, anything that needs a different
-    actor name).
+    Two independent injections:
+      - `actor`: promoted from 'system' (library default) to 'build' inside
+        the session. Explicit non-default actors (e.g. 'sync' from
+        replay_capture, 'generator' from generators) survive.
+      - `request_id`: always injected when None, regardless of actor — so
+        every event emitted inside a build_session carries the cycle
+        request_id for audit-trail traceability. Explicit request_id values
+        survive (rare; mostly test fixtures or nested-cycle scenarios).
     """
     bs = _current_build_session.get()
     if bs is None:
         return actor, request_id
-    if actor == "system" and request_id is None:
-        return "build", bs.request_id
+    if actor == "system":
+        actor = "build"
+    if request_id is None:
+        request_id = bs.request_id
     return actor, request_id
 
 
@@ -2877,7 +2882,24 @@ def _latest_actor_for(
 ) -> str | None:
     """Return the actor of the latest event referencing this row (None if
     no event references it). Used by tombstoning to decide whether build is
-    allowed to delete the row (actor ∈ {'build','system'}) or must skip it."""
+    allowed to delete the row (actor ∈ {'build','system'}) or must skip it.
+
+    Special-case: row_kind='clip' uses the events.clip_id column directly so
+    every clip-touching event (create, update, notes_replaced, notes_inserted,
+    note_updated, notes_deleted, notes_bulk_updated) registers as a "touch
+    on this clip" — so an LLM revising notes on a build-owned clip flips
+    the clip's latest actor to 'llm' and protects it (and the notes that
+    cascade with it) from tombstoning.
+    """
+    if row_kind == "clip":
+        # Use the events.clip_id column — catches every clip-touching event
+        # without needing per-event-kind payload introspection.
+        row = conn.execute(
+            "SELECT actor FROM events WHERE clip_id = ? "
+            "ORDER BY seq DESC LIMIT 1",
+            (row_id,),
+        ).fetchone()
+        return row["actor"] if row else None
     queries = _LATEST_ACTOR_EVENTS.get(row_kind)
     if not queries:
         return None

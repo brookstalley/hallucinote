@@ -459,6 +459,80 @@ def test_tombstone_preserves_llm_authored_rows(conn):
     assert any(c["id"] == llm_cid for c in clips), "LLM-authored clip should survive"
 
 
+def test_llm_note_edits_protect_clip_from_tombstone(conn):
+    """PR review correctness check: if an LLM revises notes on a build-owned
+    clip (via M.replace_clip_notes(actor='llm')), a later build that drops
+    the clip from build.py must NOT tombstone it (CASCADE would lose the
+    LLM's note edits)."""
+    # Build creates a clip.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+        clip_id = M.create_clip(conn, track_id=tid, slot=1,
+                                 length_beats=4.0, name="Original")
+
+    # LLM edits notes on the clip outside the session.
+    M.replace_clip_notes(
+        conn, clip_id=clip_id,
+        notes=[{"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+                "velocity": 80}],
+        actor="llm",
+    )
+
+    # Re-build that drops the clip from build.py.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        M.create_track(conn, song_id=sid, track_index=1, name="T")
+        # No clip touched this time.
+
+    # The clip must survive — LLM's last edit overrides build's ownership.
+    clips = Q.get_clips_for_track(conn, tid)
+    assert any(c["id"] == clip_id for c in clips), (
+        "LLM-edited clip should survive tombstoning (latest event actor='llm')"
+    )
+
+
+def test_request_id_threaded_for_non_default_actor_inside_session(conn):
+    """PR review correctness check: sync/generator/llm actors used INSIDE
+    a build_session must still get the session's request_id (so the audit
+    trail can answer 'which build cycle produced this row?')."""
+    with M.build_session(conn, song_name="s") as bs:
+        # sync-actor event (mimics replay_capture inside build_session).
+        sid = M.create_song(conn, name="s", actor="sync")
+    # Find the song_created event and verify its request_id matches bs.request_id.
+    ev = conn.execute(
+        "SELECT actor, request_id FROM events WHERE kind = 'song_created' "
+        "ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    assert ev["actor"] == "sync"  # explicit actor preserved
+    assert ev["request_id"] == bs.request_id  # session request_id injected
+
+
+def test_generator_actor_envelope_survives_tombstone(conn):
+    """Same family as the LLM-note test but for the generator-actor case:
+    envelopes authored by `actor='generator'` (e.g., _author_envelopes) on
+    a build-owned target must survive build tombstoning even if not touched."""
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+
+    # Generator authors an envelope outside the session.
+    env_id = M.create_envelope(
+        conn, song_id=sid, target_kind="mixer_volume", target_track_id=tid,
+        actor="generator",
+    )
+
+    # Re-build that touches the track but not the envelope.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        M.create_track(conn, song_id=sid, track_index=1, name="T")
+
+    envs = Q.get_envelopes_for_song(conn, sid)
+    assert any(e["id"] == env_id for e in envs), (
+        "Generator-authored envelope should survive tombstoning"
+    )
+
+
 def test_tombstone_clip_removed_when_dropped_from_build(conn):
     """Inverse of LLM test: a clip created by build, then absent in re-build,
     gets tombstoned."""

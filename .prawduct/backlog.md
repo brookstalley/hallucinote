@@ -37,10 +37,20 @@
   - `Q.get_requests_for_song(conn, song_id, *, kind=None, since=None)` — timeline.
   - `Q.get_events_for_request(conn, request_id)` — drill-down on a cycle.
   - `Q.get_compose_history(conn, song_id)` — kind='compose' filtered, ordered, with prompt previews.
+  - `Q.find_related_decisions(conn, song_id, *, keywords, scope=None)` — substring/keyword search across `requests.prompt_text` + `requests.metadata_json.decision_rationale` + `annotations.body`. Returns ordered hits with timestamps + (optionally) parent context. Single SQL `LIKE` pass is enough for v1; semantic search (embeddings) is a follow-on if the dataset grows.
 
-  **Read-path UX (the payoff):** at session start the briefing can show "last 5 compose sessions: prompts" + "last 3 push/pull cycles: outcomes." The forensic question *"what prompt produced this part of the arrangement?"* becomes a `JOIN requests ON events.request_id = requests.id` query.
+  **Read-path UX — this is the payoff and the design driver.** Provenance is *context the LLM uses when working on the song*, not a passive audit. The target scenario:
+  > User: *"Accentuate the backbeats in the verse."*
+  > Claude (after `find_related_decisions(keywords=['backbeat', 'verse', 'dynamics'])`): *"Actually we brought those down on 2026-05-26 to contrast with the chorus — happy to adjust if you want to revisit that, but are you sure?"*
 
-  **Relationship to the song-annotations entry above:** annotations are AUTHOR-FACING intent (the *why* of the song, written deliberately, read forward to drive composition). The provenance log is PROCESS-FACING history (the *how* the song got built, written automatically, read backward for understanding). Both are valuable; neither replaces the other.
+  This requires three disciplines, not just schema:
+  1. **Decisions are recorded WITH RATIONALE, not just actions.** When the LLM makes a non-trivial compositional choice, the `requests` entry that wraps it MUST capture the *why*, not only the *what*. Convention: `requests.intent` = the user's surface request; `requests.metadata_json.decision_rationale` = the LLM's reasoning that produced the specific values. The mutator events under it carry the mechanical change (velocity drop, envelope edit) — the request carries the meaning.
+  2. **Before non-trivial work, the LLM queries prior decisions.** Add a `/decisions [topic]` skill (analogous to `/learnings`) or a pre-task pattern: at the start of any compositional ask, run `find_related_decisions` against the user's prompt's noun-phrases. If hits exist, surface them BEFORE acting — the LLM should challenge gently when prior reasoning contradicts the new ask.
+  3. **The session briefing surfaces recent decisions, not just recent activity.** "Last 5 prompts" is weaker than "last 5 *deliberate decisions with rationale*." Filter on `metadata_json.decision_rationale IS NOT NULL` (or a `kind='decision'` sub-classification).
+
+  This is also where provenance meets annotations: a deliberate compositional decision SHOULD often also produce a permanent annotation (the rationale graduates from request metadata to a song-scoped or section-scoped annotation if it'll guide future work). Provenance captures every decision in real time; annotations are the curated subset worth keeping forever. A small helper `M.promote_decision_to_annotation(conn, request_id)` would automate the common case.
+
+  **Relationship to the song-annotations entry below:** annotations are AUTHOR-FACING intent (the *why* of the song, written deliberately, read forward to drive composition). The provenance log is PROCESS-FACING history (the *how* the song got built — but with the rationale-discipline above, also *why* each decision was made at that moment). Provenance captures every decision in real time as the song evolves; annotations are the curated subset worth keeping forever. They share a retrieval pattern (`find_related_decisions` queries both) and a promotion path (provenance entries with durable rationale can be promoted to annotations).
 
   **Out of scope for v1:** transcript persistence (just the seed prompt — full conversation transcripts live in Claude Code's own storage and would balloon the DB); multi-user attribution (single-user assumption holds); cross-DB merge of requests (forklift to event-store flip).
 

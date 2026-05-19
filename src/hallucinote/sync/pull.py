@@ -2174,6 +2174,39 @@ def _apply_nested_rack_chains_for_device(
         )
         return
 
+    # Defense-in-depth link check, parallel to `_apply_devices_for_parent`:
+    # the planner won't emit for unlinked parents, but a hand-crafted
+    # results.json could route around that guard.
+    parent_chain = conn.execute(
+        "SELECT parent_track_id, parent_return_id FROM device_chains WHERE id = ?",
+        (rack["chain_id"],),
+    ).fetchone()
+    parent_kind, parent_id = (
+        ("track", parent_chain["parent_track_id"]) if parent_chain["parent_track_id"]
+        else ("return", parent_chain["parent_return_id"])
+        if parent_chain["parent_return_id"]
+        else (None, None)
+    )
+    if parent_kind is None:
+        # Rack on a rack chain — outside W7-B scope (one level only). Defense:
+        # the planner restricts emission to top-level rack rows, but if a
+        # hand-rolled results.json bypassed that, surface it.
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: rack lives on "
+            "a nested chain — W7-B walks one level only; skipping"
+        )
+        return
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: parent "
+            f"{parent_kind} {parent_id!r} not linked in session; skipping "
+            "(the planner would not have emitted this)"
+        )
+        return
+
     chains_in = result.get("chains")
     if chains_in is None:
         out.warnings.append(

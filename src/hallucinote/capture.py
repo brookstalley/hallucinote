@@ -494,7 +494,11 @@ def capture_plan() -> list[dict[str, str]]:
                     "devices (W7-B). Emit for every device whose class_name "
                     f"is in {sorted(RACK_CLASS_NAMES)}. The agent attaches "
                     "the result as the device's `chains` field on the "
-                    "snapshot."},
+                    "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
+                    "internal chain instruments not captured', etc.) on "
+                    "rack devices any more — the capture path now walks "
+                    "one level. Recursively nested racks (rack-in-rack) "
+                    "remain out of scope; replay raises on encounter."},
     ]
 
 

@@ -1539,6 +1539,30 @@ def test_apply_nested_rack_chains_warns_when_rack_device_missing(
     )
 
 
+def test_apply_nested_rack_chains_skips_when_parent_unlinked(
+    conn, song, session
+):
+    """Defense-in-depth link check: a hand-crafted results.json that
+    references a rack whose parent track isn't linked in this session
+    should be skipped, mirroring `_apply_devices_for_parent`."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    # NOT linked.
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack_id = M.create_device(conn, chain_id=chain_id, position=1,
+                              kind="DrumGroupDevice", display_name="Drum Rack")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.skipped_unlinked == 1
+    assert out.mutations == 0
+    assert any("not linked in session" in w for w in out.warnings)
+
+
 def test_apply_nested_rack_chains_warns_when_kind_is_not_rack(
     conn, song, session
 ):

@@ -5,6 +5,48 @@
      (builder), (critic), (reflection), or (migrated).
      Review with /janitor or when planning new work. -->
 
+- **HIGH PRIORITY — Provenance log: capture prompts, round-trip cycles, and "really anything" via the existing `requests` + `events` tables.** The `events` audit log + `requests` higher-level intent table already exist (every mutator emits an event tied to a request — project invariant per architecture memory). The bones are there, but a lot of useful provenance is being thrown away today:
+  1. **Prompts.** When the user (or Claude) drives composition, `requests.intent` ends up holding terse labels like `"create song"` or `"set track volume"`. The actual LLM-facing prompt text — *"build a verse that feels like weight getting worse"* — is not captured. Future sessions can't reconstruct *why* a song looks the way it does.
+  2. **Round-trip cycles.** Push/pull operations fan out into many per-mutator `actor='sync'` events. There's no top-level row marking "push cycle started → 47 plan calls → 3 warns → 0 failures → finished at T+8.2s." The cycle as a discrete operation is invisible.
+  3. **Compose sessions.** No record of "this Claude session (model X, git SHA Y, branch Z) touched the song between T0 and T1." Cross-session forensics requires manual scanning of `events.ts`.
+  4. **Snapshots / captures.** `capture.replay_capture` writes events with `actor='sync'`, but there's no header row tying the snapshot timestamp + Live-set identity to the event burst.
+
+  **Shape: extend `requests`, don't add a parallel table.** Today `requests` has `(id, ts, actor, intent, payload_json, song_id)`. Proposed additions:
+  ```
+  kind         TEXT NOT NULL DEFAULT 'mutate'  -- 'compose' | 'push' | 'pull' | 'capture' | 'analyze' | 'mutate'
+  prompt_text  TEXT                            -- full LLM-facing prompt when applicable
+  duration_ms  INTEGER                         -- wall-clock duration for cycle-shaped requests
+  outcome      TEXT                            -- 'ok' | 'partial' | 'failed' (NULL during open cycle)
+  parent_id    TEXT REFERENCES requests(id)    -- nest compose-session under cycle (or vice versa)
+  metadata_json TEXT                           -- {model, git_sha, branch, session_id, hostname, ...}
+  ```
+  The existing `payload_json` already accepts arbitrary JSON; `prompt_text` is split out so it's first-class queryable. `kind` lets queries answer "show me every push cycle" vs "show me every prompt."
+
+  **Mutator surface — entry points (DON'T inline in every callsite):**
+  - `M.open_request(conn, *, kind, intent, prompt_text=None, song_id=None, parent_id=None, ...) -> request_id` — opens a request, returns id; all subsequent mutator events tie to it. Already exists in spirit; needs the new kwargs.
+  - `M.close_request(conn, *, request_id, outcome='ok', duration_ms=None)` — marks a cycle done.
+  - Context-manager wrapper: `with M.request(conn, kind='push', intent='falling-walking → live', prompt_text=...) as rid:` — auto-closes on exit, records duration. Reduces ceremony.
+
+  **Wiring touchpoints:**
+  - **Push/pull skill drivers** open a `kind='push'` / `kind='pull'` request before fan-out, close it after `apply_*_results`. Sync events automatically nest underneath via `request_id`.
+  - **Capture** opens `kind='capture'`, attaches Live-set path + timestamp to `metadata_json`.
+  - **Claude Code compose sessions** open `kind='compose'` at session start with `prompt_text` = the user's initial message, `metadata_json` = {model, git_sha, branch}. Sub-actions nest via `parent_id`. This is the entry point the user can write in their session-briefing hook.
+  - **The MCP server's per-tool dispatcher** could auto-open a `kind='mutate'` request per top-level tool call if no parent exists, capturing the tool's args as `prompt_text` (degraded but always-present provenance).
+
+  **Query surface:**
+  - `Q.get_requests_for_song(conn, song_id, *, kind=None, since=None)` — timeline.
+  - `Q.get_events_for_request(conn, request_id)` — drill-down on a cycle.
+  - `Q.get_compose_history(conn, song_id)` — kind='compose' filtered, ordered, with prompt previews.
+
+  **Read-path UX (the payoff):** at session start the briefing can show "last 5 compose sessions: prompts" + "last 3 push/pull cycles: outcomes." The forensic question *"what prompt produced this part of the arrangement?"* becomes a `JOIN requests ON events.request_id = requests.id` query.
+
+  **Relationship to the song-annotations entry above:** annotations are AUTHOR-FACING intent (the *why* of the song, written deliberately, read forward to drive composition). The provenance log is PROCESS-FACING history (the *how* the song got built, written automatically, read backward for understanding). Both are valuable; neither replaces the other.
+
+  **Out of scope for v1:** transcript persistence (just the seed prompt — full conversation transcripts live in Claude Code's own storage and would balloon the DB); multi-user attribution (single-user assumption holds); cross-DB merge of requests (forklift to event-store flip).
+
+  **Sizing:** ~1 chunk for schema + mutator entry points + a few wiring points (push/pull/capture drivers). Session-briefing integration + LLM-side prompt-capture hook is a separate small chunk. MCP-side auto-capture on tool calls is a stretch chunk if it ever lands.
+  (Feature request 2026-05-19; user-flagged HIGH PRIORITY — sibling to annotations entry)
+
 - **HIGH PRIORITY — Song annotations: persist composer intent + stylistic notes alongside the song data.** Today the DB stores structure (notes, envelopes, devices, arrangement) but not the *meaning* behind it. The LLM-native workflow needs a place to accumulate the why: "the verse is sad, like weight getting worse; then the chorus it just evaporates," "last chorus goes around once in minor, then once in min7," "this bass line is weaving between drum parts at 95 and 100 BPM," "don't sidechain the bass on the bridge — let it bloom." Updated continuously as composition progresses; read back by every future agent session for context. **Why this is high priority:** annotations ARE the song requirements, captured in-place. Without them, every new session starts cold — Claude can read the structural DB but not the intent, so it can't act on aesthetic decisions the user already made. Bundle the requirements into the song itself, not in a separate brief.
 
   **Proposed shape — single polymorphic `annotations` table:**

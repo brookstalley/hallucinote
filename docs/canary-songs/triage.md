@@ -117,7 +117,9 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
 | H2 | **Every generator in `src/hallucinote/generators/` hard-codes `bar * 4.0`** — unusable for non-4/4 songs. No doc warns | **important** | ome-3 | **Triggers W14-B** (Generator library audit). Recommend the W14-B audit's first task is: parametrize every generator on `beats_per_bar`, OR rename to `*_4_4` and document. The triage's read: the audit was contingent on Wave 0 finding "same primitive hand-rolled 5×"; we got a stronger signal — "every generator is meter-overfit." **W14-B is triggered.** |
 | H3 | No library helper for "convert pulse-of-meter BPM to Live's quarter BPM" (eighth-pulse 168 → quarter 84 for 7/8) | paper-cut | ome-7a | **Backlog**: add `hallucinote.tempo.to_live_bpm(pulse_bpm, pulse_kind, time_signature)` helper or a docs sentence. |
 
-**Net plan change:** add **W10-H** for meter-ratchet refusal (or fold into W10-F as one "authoring-time validation" chunk covering D1/D2/D3/H1). **Mark W14-B as triggered** (no longer contingent). **User sign-off needed** on punting the *implementation* of within-section meter changes to v1.1.
+**Net plan change:** add **W10-H** for meter-ratchet refusal. **Mark W14-B as triggered** (no longer contingent).
+
+**H1 disposition (user 2026-05-19): ship loud refusal in v1; punt working impl to v1.1.** `plan_push_time_signature_map` refuses at plan time when >1 `time_signature_map` row is present, with a teaching message ("Within-section meter changes aren't supported in v1 — Live 12.4's MCP has no `song_signature` automation target_kind. Either consolidate to a single global meter, or wait for v1.1 which will explore the per-bar-arrangement-clip workaround"). DB-mutator side also rejects (mirroring W10-F D2's dual-layer pattern). Gaps-guide entry; v1.1 milestone tracker filed.
 
 ---
 
@@ -179,7 +181,7 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
   - Tests for all three; gaps-guide entry
   - **Critic mark: chunk**. Size ~250-400 LoC + 6-10 tests.
 - **W10-G (NEW)** — Partial-state normalization across phase planners (E1 — no more uncaught `ValueError` in arrangement).
-- **W10-H (NEW, pending sign-off)** — Meter-ratchet authoring-time refusal + docs (H1). Recommend ship loud refusal in v1; punt working impl to v1.1. **User sign-off still needed on H1 disposition.**
+- **W10-H (NEW, RESOLVED)** — Meter-ratchet authoring-time refusal + docs (H1). DB-mutator + planner refuse when >1 `time_signature_map` row present; teaching message points at "single global meter for v1, per-bar-arrangement-clip workaround coming in v1.1." Same dual-layer pattern as D2.
 
 ### Wave 14 — W14-B promoted from contingent to triggered
 - **W14-B is triggered.** Generator library audit MUST happen: every generator hard-codes 4/4. Either parametrize on `beats_per_bar` (preferred) or rename to `*_4_4` and document.
@@ -197,10 +199,14 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
 - K1: polyrhythm helper using `fractions.Fraction`
 
 ### Items needing explicit user sign-off
-1. **D1 / D2 / D3 disposition**: punt long-envelope authoring to v1.1, ship loud refusal in v1 (recommended) — OR design a working long-envelope authoring path (much larger chunk, likely a new wave).
-2. **H1 disposition**: punt within-section meter changes to v1.1, ship loud refusal in v1 (recommended) — OR design a per-bar-arrangement-clip authoring path.
-3. **W10 new chunks (E/F/G/H)**: scope and Critic marks. The wave grows from 4 chunks to 7-8 chunks.
-4. **W14-B trigger confirmation**: canary signal is "every generator is 4/4-only," which is stronger than the plan's "same primitive hand-rolled 5× across songs" trigger. Confirm we're triggering.
+
+ALL RESOLVED (2026-05-19):
+
+1. ✅ **D1 / D3**: tractable engineering, not a v1.1 punt — route long envelopes through arrangement clips. W10-F chunk.
+2. ✅ **D2**: confirmed no LOM path (D2 investigation); ship loud refusal in v1 at DB-mutator + planner layers with sub-bus teaching message (no M4L). W10-F chunk.
+3. ✅ **H1**: ship loud refusal in v1; punt working impl to v1.1. W10-H chunk.
+4. ✅ **W10 new chunks (E/F/G/H)**: scoped and Critic-marked above. Wave 10 grows from 4 chunks to 8.
+5. ✅ **W14-B trigger**: confirmed triggered. Generators get parametrized on `beats_per_bar` (or renamed `*_4_4` + documented).
 
 ---
 

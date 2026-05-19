@@ -71,6 +71,8 @@ If any of the three is missing, ask the user — never invent one and never scan
 
 For each resolved domain, do these steps in order. Run `mix-state` end-to-end before moving on to another domain.
 
+**Multi-domain runs (`everything` or any multi-domain request): emit a progress line BEFORE Step 1 of each domain** — `pulling domain <N>/<M>: <domain-name>`, with M = total domains the request resolved to. A nine-domain `everything` run takes long enough that the user otherwise can't tell whether the skill is still working or hung on an MCP probe; the progress line resolves the ambiguity. Single-domain runs don't need the line.
+
 ### Step 1 — Emit the plan
 
 Run:
@@ -124,7 +126,7 @@ Show the user:
 
 - The total counts (`<N> mutations applied, <M> no-ops, <K> skipped (unlinked)`).
 - Each line from `details` (these are the human-readable diffs — e.g. `track 'Drums' volume: 0.6 -> 0.75`).
-- Any warnings.
+- Any warnings. For the `clip-notes` "look moved" warning, add one sentence of plain-English context: "If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. Annotations or events keyed to the prior UUID won't follow the move. If that matters, undo in Ableton and edit DB-side by the original UUID instead."
 
 If `mutations == 0` and there are no warnings, say "DB already matches Ableton — no changes needed" and stop.
 

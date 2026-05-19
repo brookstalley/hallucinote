@@ -133,9 +133,15 @@ Tell the user concisely: `"<phase>: <N> calls, <K> applied, <F> failed"`. If any
 
 ### Step 4 — Final report
 
-After all ten phases:
-- Total applied / failed across phases.
-- A short summary by domain (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written; 2 emulator-gap calls skipped"`).
+After all ten phases, surface the following to the user **in this order**:
+
+1. **Totals.** Total applied / failed across phases.
+2. **Per-domain summary.** A short line (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written; 2 emulator-gap calls skipped"`).
+3. **Live 12.4 UI heads-up — conditional, only emit the rows that apply to this push.** These two behaviors are not bugs; they look broken until the user knows the gesture that reveals state. Mention each only when the push's actual output makes the user likely to hit it:
+   - **Mixer column hides on tracks with empty device chains.** Emit if any track in the push has zero devices (typically when the song's DB lists no devices for a track, or when the `devices` phase was skipped). One-liner: "Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders." Name each affected track.
+   - **Mixer / pan / send envelopes hidden in the MIDI clip envelope dropdown.** Emit if the `envelopes` phase wrote any `mixer_volume` / `mixer_pan` / `send_level` envelope on a MIDI clip. One-liner: "Mixer envelope(s) pushed onto MIDI clip 'Y' are playing (the fader will visibly move) but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider in Live and choose 'Show Modulation' to draw/edit them. Live remembers the choice per-set."
+
+   If neither applies, skip this section entirely — don't add ceremony to a clean push.
 
 If the user opens the Live set now, the song should be there.
 
@@ -196,10 +202,8 @@ Do not retry MCP calls automatically.
 
 ## Post-push Live UX quirks the user should know about
 
-Two Live 12.4 UI behaviors are worth flagging once the push completes — they're not bugs in the push, just things that look broken until you know:
+Two Live 12.4 UI behaviors are inherent to Live's LOM + UI defaults, not Hallucinote bugs. Step 4 of the workflow surfaces them to the user **conditionally** — only when the push's actual content makes the user likely to hit them. Reference detail kept here so the skill body can stay concise:
 
-1. **Mixer column hides on tracks with empty device chains.** Tracks that didn't have any devices loaded yet (e.g. before phase 7 runs, or after phase 7 if the song's DB lists no devices for a track) show no volume/pan/sends/master faders in Live's UI. The mixer state is still settable + functional via MCP; the UI just collapses. Loading any device into the chain restores the full column. If the user asks "why don't I see faders," the answer is "load any instrument on that track."
+1. **Mixer column hides on tracks with empty device chains.** Tracks that didn't have any devices loaded yet (e.g. before phase 7 runs, or after phase 7 if the song's DB lists no devices for a track) show no volume/pan/sends/master faders in Live's UI. The mixer state is still settable + functional via MCP; the UI just collapses. Loading any device into the chain restores the full column.
 
-2. **Mixer / Pan / Send envelopes on MIDI clips are hidden in the per-clip envelope dropdown by default.** Empirical Live 12.4 + W4-A `.als` XML inspection confirm: envelopes written through `ableton_automation(write_envelope, target_kind='mixer_volume'|'mixer_pan'|'send_level')` on MIDI session/arrangement clips are **fully attached and functional during playback** (the fader visibly moves), but Live's per-MIDI-clip envelope-selector UI hides `Mixer → Track Volume` (et al.) from the dropdown by default. To make the envelope drawable + editable in the UI, the user must **right-click the affected mixer slider in Live and choose "Show Modulation"**. Live remembers the choice per-set. The envelope plays correctly without this step — the gesture is only for visibility/editability. Mention this when the user asks "where are the envelopes I just pushed?" or "I want to tweak the swell after push."
-
-These limitations are inherent to Live 12.4's LOM + UI defaults, not Hallucinote. See backlog for the two findings.
+2. **Mixer / Pan / Send envelopes on MIDI clips are hidden in the per-clip envelope dropdown by default.** Empirical Live 12.4 + W4-A `.als` XML inspection confirm: envelopes written through `ableton_automation(write_envelope, target_kind='mixer_volume'|'mixer_pan'|'send_level')` on MIDI session/arrangement clips are **fully attached and functional during playback** (the fader visibly moves), but Live's per-MIDI-clip envelope-selector UI hides `Mixer → Track Volume` (et al.) from the dropdown by default. To make the envelope drawable + editable in the UI, the user must **right-click the affected mixer slider in Live and choose "Show Modulation"**. Live remembers the choice per-set. The envelope plays correctly without this step — the gesture is only for visibility/editability.

@@ -6,15 +6,16 @@ chunk 4a) device chains with dialed parameters. It is the seed mechanism for
 `build.py`: capture once (live Ableton -> snapshot.json), then replay into the
 DB through mutators.
 
-Scope (chunks 3 + 4a): tracks + returns + sends + master + mixer state +
-top-level device chains + dialed device parameters. Nested rack chains
-(`DrumGroupDevice` pads, `InstrumentGroupDevice` chains) are schema-supported
-but NOT yet populated by replay — the snapshot's `_note` flags them as
-"internal chain instruments not captured" and MCP gap #17b currently blocks
-deep probe. Automation envelopes (chunk 4b) are schema-modeled and push-
-plannable but the capture/replay path doesn't ingest them yet — MCP exposes
-no read surface for the seven envelope target families (see
-docs/mcp-requirements.md, chunk-4b section).
+Scope (chunks 3 + 4a + W7-B): tracks + returns + sends + master + mixer state +
+top-level device chains + dialed device parameters + one level of nested rack
+chains. Each rack-kind device (`DrumGroupDevice`, `InstrumentGroupDevice`,
+`AudioEffectGroupDevice`) may optionally carry a ``chains: [{chain_index, name,
+devices: [...]}]`` array; replay walks one level. Recursively nested racks
+(rack-inside-a-rack) are deferred (raises on encounter) — tracked in backlog
+under "nested-nested rack support". Automation envelopes (chunk 4b) are
+schema-modeled and push-plannable but the capture/replay path doesn't ingest
+them yet — MCP exposes no read surface for the seven envelope target families
+(see docs/mcp-requirements.md, chunk-4b section).
 
 Snapshot shape (extends the existing `captured_session.json` prototype):
 
@@ -78,6 +79,18 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 _RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
 
 
+# Live device classes that own nested chains. Mirrors `_resolve_rack_chains`
+# in hallucinote_mcp.handlers.device — kept here so the snapshot replay path
+# can validate "this device carries `chains`, but its class isn't a rack"
+# at the boundary. W6-I/J shipped the MCP-side walk; W7-B threads it through
+# capture + pull.
+RACK_CLASS_NAMES = frozenset({
+    "DrumGroupDevice",
+    "InstrumentGroupDevice",
+    "AudioEffectGroupDevice",
+})
+
+
 def strip_return_slot_prefix(name: str | None) -> str | None:
     """Strip Live's `<slot-letter>-` prefix from a return-track name.
 
@@ -123,10 +136,14 @@ def _replay_devices(
     actor: str,
     request_id: str | None,
     reason: str | None,
+    _depth: int = 0,
 ) -> None:
     """Insert each entry of `devices_array` into the given chain, plus any
-    dialed parameters. Nested rack chains are not recursed — see module
-    docstring on the capture/MCP gap.
+    dialed parameters and (at depth 0) one level of nested rack chains.
+
+    `_depth` is private — used to enforce the "one level of recursion only"
+    invariant. A rack device inside a rack chain (nested-nested) raises on
+    encounter; recursive support is deferred (tracked in backlog).
     """
     for d in devices_array:
         if "index" not in d or "class" not in d:
@@ -163,6 +180,74 @@ def _replay_devices(
                 request_id=request_id,
                 reason=reason,
             )
+        nested = d.get("chains")
+        if nested:
+            if _depth > 0:
+                raise ValueError(
+                    f"snapshot device {d.get('name')!r} (class {d['class']!r}): "
+                    "nested-nested rack chains are not supported — replay "
+                    "walks one level only"
+                )
+            if d["class"] not in RACK_CLASS_NAMES:
+                raise ValueError(
+                    f"snapshot device {d.get('name')!r} carries `chains` but "
+                    f"class {d['class']!r} is not a rack "
+                    f"({sorted(RACK_CLASS_NAMES)})"
+                )
+            _replay_rack_chains(
+                conn,
+                rack_device_id=device_id,
+                chains_array=nested,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+
+
+def _replay_rack_chains(
+    conn: sqlite3.Connection,
+    *,
+    rack_device_id: str,
+    chains_array: list[dict[str, Any]],
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Insert each nested chain under `rack_device_id` and recurse one level
+    into the chain's devices.
+
+    Each entry: ``{chain_index: int>=1, name: str (optional), devices: [...]}``.
+    The chain row's `position` matches W6-I/J's 1-based `chain_index` on the
+    wire; top-level chains use `position=0` so the two address spaces don't
+    collide.
+    """
+    for chain in chains_array:
+        if "chain_index" not in chain:
+            raise ValueError(
+                f"snapshot nested chain missing 'chain_index': {chain!r}"
+            )
+        ci = int(chain["chain_index"])
+        if ci < 1:
+            raise ValueError(
+                f"snapshot nested chain chain_index must be >= 1, got {ci}"
+            )
+        nested_chain_id = M.create_device_chain(
+            conn,
+            parent_rack_device_id=rack_device_id,
+            position=ci,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        _replay_devices(
+            conn,
+            chain_id=nested_chain_id,
+            devices_array=chain.get("devices") or [],
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+            _depth=1,
+        )
 
 
 def _mixer_from_snapshot(t: dict[str, Any]) -> dict[str, Any]:
@@ -383,13 +468,11 @@ def capture_plan() -> list[dict[str, str]]:
     Returns a sequence of `{tool, purpose}` records. The agent executes each,
     accumulates the results, and hands them to `compile_snapshot`.
 
-    Chunk 3 baseline: tempo/master/returns/tracks/sends. Chunk 4a adds device
-    probes — `get_track_info` already returns top-level device lists, but the
-    per-device parameter probe (`get_device_parameters`) is MCP gap #17b
-    (raises `No module named 'MCP_Server'`). Until that's patched, the agent
-    captures device chain identity (kind + display_name + position) but not
-    dialed parameters. Nested rack chains remain a separate MCP gap (see
-    docs/mcp-requirements.md, chunk-4 P2 section).
+    Chunk 3 baseline: tempo/master/returns/tracks/sends. Chunk 4a adds top-
+    level device chain + per-device dialed parameter probes. W7-B adds the
+    nested-rack chain walk: for every rack device returned in a track's or
+    return's top-level chain, probe `get_device_chains` to capture one level
+    of nested chains and their devices.
     """
     return [
         {"tool": "ableton_session(action='info')",
@@ -405,9 +488,17 @@ def capture_plan() -> list[dict[str, str]]:
          "purpose": "per-track: sends map keyed by return name (loop over tracks)"},
         {"tool": "get_device_parameters",
          "purpose": "per-device: dialed parameter map "
-                    "(name -> {value, normalized}) — loop over each device. "
-                    "MCP gap #17b: currently raises, captures parameters "
-                    "only when patched"},
+                    "(name -> {value, normalized}) — loop over each device"},
+        {"tool": "ableton_device(action='get_device_chains')",
+         "purpose": "per-rack-device: one level of nested chains + their "
+                    "devices (W7-B). Emit for every device whose class_name "
+                    f"is in {sorted(RACK_CLASS_NAMES)}. The agent attaches "
+                    "the result as the device's `chains` field on the "
+                    "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
+                    "internal chain instruments not captured', etc.) on "
+                    "rack devices any more — the capture path now walks "
+                    "one level. Recursively nested racks (rack-in-rack) "
+                    "remain out of scope; replay raises on encounter."},
     ]
 
 

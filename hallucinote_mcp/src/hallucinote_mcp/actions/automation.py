@@ -8,10 +8,13 @@ families:
     reconstruction via Live's `envelope.value_at_time(t)`. Closed in
     W6-G/H (2026-05-19) for 5 of 7 target_kinds; clip_cc / clip_pitch_bend
     remain LOM-blocked on the read side mirroring the write side.
-  - **Read-list (gap-blocked)**: list — target-less enumeration of a
-    clip's envelopes isn't reachable (Live's `Clip.automation_envelopes`
-    yields envelope objects but their bound targets aren't readable).
-    Use `read_envelope` per-target instead.
+  - **Read-list (not currently supported)**: list — bulk enumeration
+    without a target_kind isn't currently supported. `envelope.parameter`
+    IS accessible on Live 12.4 (W7-0 smoke confirmed this empirically),
+    so iteration is possible — but mapping each Live parameter back to
+    a `(target_kind, addressing-args)` tuple would require inverting
+    every target-resolution branch. Use `read_envelope` per-target
+    instead until a consumer needs bulk enumeration.
   - **Destroy**: clear (one envelope), clear_all (all on clip OR parent)
   - **Help**: dispatcher-special
 

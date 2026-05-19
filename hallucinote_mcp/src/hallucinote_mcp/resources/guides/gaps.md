@@ -17,13 +17,20 @@ Until the gap lifts, all-or-nothing replace is the only option for
 agents pushing notes.
 
 ### Envelope reads: `ableton_automation(action='list')`
-**Status:** `list` (enumerate-all-envelopes) remains blocked — Live's
-`Clip.automation_envelopes` yields envelope objects but their bound
-targets aren't readable from the envelope side, so target-less
-enumeration isn't possible.
+**Status:** `list` (enumerate-all-envelopes) is not currently
+supported. `envelope.parameter` IS accessible on Live 12.4 (the
+W7-0 smoke 2026-05-19 confirmed this empirically — and the targeted
+read path's existence-check now depends on it). Bulk enumeration
+would still require inverting every target-resolution branch to map
+each parameter back to a `(target_kind, addressing-args)` tuple —
+deferred until a consumer needs it.
 **Working alternative:** `ableton_automation(action='read_envelope',
 target_kind=..., ...)` — Wave 6 W6-G/W6-H (2026-05-19) closed the
-per-target read path via sampling-based reconstruction. Live exposes
+per-target read path via sampling-based reconstruction; W7-0
+(2026-05-19) corrected the existence check to iterate
+`Clip.automation_envelopes` and match by parameter identity (real
+Live's `create_automation_envelope` is not idempotent on already-
+bound targets, contrary to the W6-G assumption). Live exposes
 only `envelope.value_at_time(t)`, so the handler samples across the
 clip's range at `resolution_beats` (default 1/96 beat) and emits a
 breakpoint at each step transition. Works for all 7 target_kinds

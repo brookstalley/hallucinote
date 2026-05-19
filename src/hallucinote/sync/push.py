@@ -1177,10 +1177,25 @@ class _CoveringPlacement:
     placements of the same source session clip — those will also receive
     the envelope as snapshot copies after ``duplicate_to_arrangement``
     fires (W4-A finding: duplicate is a snapshot copy, not a live link).
+
+    W4-B defensive-warn fields:
+      - ``other_covering_clip_ids``: other DISTINCT session clips on the
+        same track whose arrangement-time range also covered the envelope.
+        Non-empty means the planner had to disambiguate; the warn names
+        all overlapping clips so the author can resolve the ambiguity
+        DB-side.
+      - ``trimmed_end_beats``: when the placement's ``end_bar`` is
+        SHORTER than the source clip's natural length, this is the
+        arrangement-time end of the trimmed placement. None when the
+        placement isn't trimmed. Used to warn when ``env_max`` exceeds
+        the trimmed extent (the envelope WOULD fit the un-trimmed clip
+        but won't play past the trim point in this placement).
     """
     clip_id: str
     start_beats: float
     other_placement_starts: list[float]
+    other_covering_clip_ids: list[str] = field(default_factory=list)
+    trimmed_end_beats: float | None = None
 
 
 def _resolve_envelope_session_clip(
@@ -1205,7 +1220,7 @@ def _resolve_envelope_session_clip(
     addressing.
     """
     rows = conn.execute(
-        """SELECT a.id, a.clip_id, a.start_bar, c.length_beats
+        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
            FROM arrangement_clips a
            JOIN clips c ON c.id = a.clip_id
            WHERE a.track_id = ?
@@ -1217,13 +1232,26 @@ def _resolve_envelope_session_clip(
     ts_points = Q.get_time_signature_map(conn, song_id)
     matched = None
     matched_start = None
+    matched_trimmed_end: float | None = None
+    other_covering_clip_ids: list[str] = []
     for r in rows:
         start_b = _position_bar_to_beats(r["start_bar"], ts_points)
-        end_b = start_b + float(r["length_beats"])
-        if env_min >= start_b and env_max <= end_b:
+        source_end_b = start_b + float(r["length_beats"])
+        if not (env_min >= start_b and env_max <= source_end_b):
+            continue
+        if matched is None:
             matched = r
             matched_start = start_b
-            break
+            placement_end_b = _position_bar_to_beats(r["end_bar"], ts_points)
+            if placement_end_b < source_end_b:
+                matched_trimmed_end = placement_end_b
+        elif r["clip_id"] != matched["clip_id"]:
+            # A DIFFERENT distinct session clip on the same track also
+            # covers the envelope's range. W4-B defensive warn — the
+            # planner picks the earliest by start_bar, but ambiguity is
+            # worth surfacing.
+            if r["clip_id"] not in other_covering_clip_ids:
+                other_covering_clip_ids.append(r["clip_id"])
     if matched is None:
         return None
     others = [
@@ -1235,6 +1263,8 @@ def _resolve_envelope_session_clip(
         clip_id=matched["clip_id"],
         start_beats=matched_start,
         other_placement_starts=others,
+        other_covering_clip_ids=other_covering_clip_ids,
+        trimmed_end_beats=matched_trimmed_end,
     )
 
 
@@ -1345,6 +1375,63 @@ def _warn_lossy_curve_hints(
         "'linear'/'fast'/'slow' curve hints are recorded in the DB but "
         "lossy on push. Use 'hold' to model the same behavior the DB "
         "stores."
+    )
+
+
+def _warn_multiple_covering_clips(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+) -> None:
+    """W4-B defensive warn: when more than one distinct session clip on
+    the same track covers the envelope's beat range, the planner picks
+    the earliest by ``start_bar``. The choice may not match the
+    author's intent — surface the alternatives so they can resolve the
+    ambiguity DB-side (trim a clip, move one, or split the envelope)."""
+    if not placement.other_covering_clip_ids:
+        return
+    others = ", ".join(placement.other_covering_clip_ids)
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): multiple "
+        f"distinct session clips cover the envelope's beat range on this "
+        f"track. Planner routed through {placement.clip_id!r}; other "
+        f"covering clips: [{others}]. Resolve the ambiguity DB-side "
+        "(adjust placements or split the envelope) if the routing "
+        "choice is wrong."
+    )
+
+
+def _warn_trimmed_placement(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+    env_max: float,
+) -> None:
+    """W4-B defensive warn: the matched placement is trimmed shorter
+    than its source session clip's natural length, AND the envelope
+    extends past the trimmed end. The envelope will play correctly
+    in the session view (the session clip is intact) but won't sound
+    past the trim point in this arrangement placement — Live truncates
+    playback at ``end_bar``.
+
+    No-op when the placement isn't trimmed OR the envelope fits within
+    the trimmed extent.
+    """
+    trimmed_end = placement.trimmed_end_beats
+    if trimmed_end is None:
+        return
+    if env_max <= trimmed_end:
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): the "
+        f"matched arrangement placement of clip {placement.clip_id!r} "
+        f"is trimmed shorter than the source clip; the envelope extends "
+        f"to time_beats={env_max:g} but the placement ends at "
+        f"time_beats={trimmed_end:g}. Breakpoints past the trim point "
+        "won't sound in this arrangement placement (session-view "
+        "playback is unaffected)."
     )
 
 
@@ -1480,6 +1567,10 @@ def _emit_device_parameter_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_mixer_envelope(
@@ -1551,6 +1642,10 @@ def _emit_mixer_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_send_envelope(
@@ -1624,6 +1719,10 @@ def _emit_send_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 # ---------------------------------------------------------------------------

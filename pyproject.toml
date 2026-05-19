@@ -28,3 +28,10 @@ python_files = ["test_*.py"]
 # Song test dirs intentionally have NO `__init__.py` (rootdir-discovered),
 # which keeps them from colliding with the platform `tests/` package
 # namespace under pytest's default `prepend` import mode.
+#
+# Per-song convention: test filenames MUST be unique across all songs
+# (`test_<slug>_build.py`, not bare `test_build.py`). Under the rootdir-
+# discovered + prepend-import-mode combination above, basename uniqueness is
+# how pytest distinguishes them; same-basename collisions across songs cause
+# collection errors. Follow falling-walking's pattern: descriptive per-song
+# names (`test_capture_replay.py`, `test_push_mix_snapshot.py`).

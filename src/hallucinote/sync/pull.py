@@ -3072,7 +3072,13 @@ def _apply_envelope(
             "missing 'breakpoints' field; skipping"
         )
         return
-    exists = bool(result.get("exists", len(live_bps) > 1))
+    # Delete-gate: an envelope is "absent in Live" iff the read returned ZERO
+    # breakpoints. The handler's `exists` field is informational and uses a
+    # `len > 1` heuristic that can't distinguish (a) "no envelope ever bound"
+    # (Live default sample at t=0) from (b) "single-breakpoint envelope held
+    # at a constant value" — both yield exactly one sampled breakpoint. Trusting
+    # `exists` for the delete decision would round-trip-delete case (b)
+    # (W7-0 cumulative-Critic warning 2026-05-19).
     resolution = float(result.get("resolution_beats", 1.0 / 96.0))
     # Tolerance derived from the actual sampling resolution Live used —
     # transitions can localize anywhere within that window. Slack added on
@@ -3081,7 +3087,7 @@ def _apply_envelope(
 
     db_bps = Q.get_breakpoints(conn, envelope_id)
 
-    if not exists:
+    if not live_bps:
         # Live reports no envelope here. If the DB row has breakpoints
         # (representing the user's authored intent), it means the user
         # removed the envelope in Live. Cascade-delete the DB row.

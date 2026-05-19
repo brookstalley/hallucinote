@@ -440,6 +440,43 @@ def test_apply_exists_false_no_db_breakpoints_is_noop(
     assert Q.get_envelope(conn, eid) is not None
 
 
+def test_apply_single_constant_value_envelope_survives_round_trip(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """W7-0 cumulative-Critic regression: a single-breakpoint envelope
+    held at a constant value across the clip MUST NOT be cascade-deleted
+    on round-trip. The handler's `exists` field uses a `len > 1` heuristic
+    that conflates "no envelope" with "one-breakpoint constant envelope"
+    — apply must gate the delete decision on `len(live_bps) == 0`, not
+    on the heuristic. Without this fix, a real-Live read of a constant-
+    value envelope returns 1 breakpoint with exists=False and the DB row
+    gets deleted (silent round-trip data loss)."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    # DB has the same single constant breakpoint as Live.
+    M.replace_breakpoints(
+        conn, envelope_id=eid, breakpoints=[
+            {"time_beats": 0.0, "value": 0.7, "curve_kind": "hold"},
+        ],
+    )
+    # Live read returns exists=False (heuristic: len(bps) > 1 = False),
+    # but breakpoints contains the one constant value. This is the case
+    # the apply layer must NOT treat as "envelope absent."
+    payload = _live_envelope_reply([(0.0, 0.7)], exists=False)
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", payload)],
+        song_id=song, session_id=session,
+    )
+    assert Q.get_envelope(conn, eid) is not None, (
+        "single-constant-value envelope must survive — apply trusted "
+        "the heuristic and cascade-deleted it"
+    )
+    # The DB breakpoint is identical to Live's, so no mutation needed.
+    assert result.mutations == 0
+    assert result.no_ops == 1
+
+
 # ---------------------------------------------------------------------------
 # Apply — curve preservation
 # ---------------------------------------------------------------------------

@@ -38,4 +38,4 @@ pytest songs/{{slug}}/tests/ -v           # shape tests
 
 1. **Stage Live**: open Ableton, recreate the track shape that `captured_session.json` describes (or capture from a real Live session to overwrite the synthetic snapshot).
 2. **Author clips**: open `build.py` and replace the `=== Compose-half ===` placeholder with library generators + hand-authored notes per section.
-3. **Push to Live**: `/ableton-push {{slug}} <session_id>` (create an `ableton_sessions` row first via `M.create_ableton_session` if needed — Wave 9-B will add `--auto-session`).
+3. **Push to Live**: `/ableton-push {{slug}} --new-session` for the first push (W9-B `--auto-session` bootstraps the binding row + prints its id; reuse the id for subsequent pushes).

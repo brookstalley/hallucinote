@@ -58,7 +58,7 @@ songs/<slug>/
 ```
 
 Two important defaults the scaffold uses:
-- **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Wave 9-B's `--auto-session` workflow will improve this; today, capture is manual.
+- **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Capture today is manual via `tools/capture.py`.
 - **State-converger build.py.** Re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op when nothing changed in build.py — W12-A guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
 
 ## Final report to user

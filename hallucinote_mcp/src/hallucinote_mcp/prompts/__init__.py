@@ -1,4 +1,4 @@
-"""MCP prompts — 5 workflow templates that orchestrate multi-step
+"""MCP prompts — workflow templates that orchestrate multi-step
 tool sequences for common Ableton authoring patterns.
 
 Prompts differ structurally from tools and resources:
@@ -8,8 +8,9 @@ Prompts differ structurally from tools and resources:
     user-role instructions guiding the agent through a multi-call
     sequence. The agent then executes the calls itself.
 
-Wave M-7 ships 5 prompts:
+Current set (canonical names locked in ``PROMPT_NAMES``):
 
+Wave M-7 (5):
   - ``create_midi_track_with_instrument`` — create + name + optional
     instrument load (2 tool calls)
   - ``setup_sidechain_compression`` — ensure Compressor + set sidechain
@@ -20,11 +21,16 @@ Wave M-7 ships 5 prompts:
   - ``compose_section_pattern`` — generate a named pattern (trip-hop,
     tresillo, bossa, ...) into a clip
 
+Wave 9 (1):
+  - ``start_new_song`` — scaffold-then-compose orchestration: drives
+    /new-song to scaffold the song dir, then guides composition + the
+    first push with --auto-session bootstrap (W9-C).
+
 Carry-forward principle #9 (M-6 pattern): prompts live in their own
 module, registered via ``register_prompts(mcp)`` called from
 ``server.create_server``. The same lock-the-surface negative-test
 pattern (#3) applies — ``PROMPT_NAMES`` enumerates the canonical
-5; tests assert the exact set is registered.
+set; tests assert the exact set is registered.
 
 Per principle #1 (DB-as-source-of-truth), prompts that involve
 note-timing or note-velocity transforms (humanize, compose) instruct

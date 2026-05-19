@@ -108,20 +108,20 @@ A `hallucinote.tempo.to_live_bpm(pulse_bpm, pulse_kind, time_signature)` helper 
 
 ---
 
-## Push session bootstrap (today, pre-W9-B)
+## Push session bootstrap (W9-B `--auto-session`)
 
-`/ableton-push` requires both `<song-slug>` and `<session_id>`. To create the `ableton_sessions` row for a new song:
+First push for a new song needs an `ableton_sessions` row binding the DB to a Live set. Two paths:
 
-```python
-from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
-conn = init_db(resolve_db_path("<slug>"))
-song = Q.get_song_by_name(conn, "<slug>")
-sid = M.create_ableton_session(conn, song_id=song["id"], name="<descriptive>")
-conn.commit()
-print(sid)  # use this as <session_id> for /ableton-push
+```bash
+# Recommended: --auto-session creates the row on first push and uses it.
+python3 -m hallucinote.sync.push_cli probe-and-link \
+    --song <slug> --snapshot /tmp/ableton-push-snapshot.json --auto-session
+
+# Or pre-create explicitly and capture the id:
+python3 -m hallucinote.sync.push_cli create-session --song <slug> --name <descriptive>
 ```
 
-W9-B will add `--auto-session` to `push_cli probe-and-link` so this Python ceremony goes away. Today, it's the explicit step.
+Both print the new session_id; use it for the rest of the push cycle and reuse it on subsequent pushes for the same Live set (don't create a new session every push). The `/ableton-push` skill knows how to choose between the two paths based on user signal.
 
 ---
 

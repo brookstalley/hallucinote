@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools + 11 resources + 5 prompts for Ableton
+hallucinote-mcp — 10 unified tools + 11 resources + 6 prompts for Ableton
 Live, structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -66,7 +66,8 @@ Resources (read via resources/read, no turn cost):
 
 Prompts (invoke via prompts/get for multi-step workflow templates):
   create_midi_track_with_instrument, setup_sidechain_compression,
-  build_return_bus, humanize_clip_velocity, compose_section_pattern
+  build_return_bus, humanize_clip_velocity, compose_section_pattern,
+  start_new_song
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).

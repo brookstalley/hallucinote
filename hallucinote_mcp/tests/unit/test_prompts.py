@@ -186,11 +186,16 @@ def test_compose_section_pattern_unknown_kind_returns_friendly_error():
 def test_primer_advertises_prompts():
     """The server PRIMER (sent on initialize) must mention prompts so
     clients see them at connect time alongside tools + resources.
+
+    Strict check: every PROMPT_NAMES entry appears in PRIMER. A new prompt
+    added without a PRIMER update gets caught here (W9 PR-review note).
     """
     from hallucinote_mcp.server import PRIMER
     assert "Prompts" in PRIMER or "prompts" in PRIMER.lower()
-    # At least one prompt name appears
-    assert "create_midi_track_with_instrument" in PRIMER
+    for name in PROMPT_NAMES:
+        assert name in PRIMER, (
+            f"PROMPT_NAMES includes {name!r} but PRIMER doesn't mention it"
+        )
 
 
 def test_primer_under_500_token_budget():

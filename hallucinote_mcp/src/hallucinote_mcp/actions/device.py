@@ -518,4 +518,126 @@ register(
 )
 
 
+# ---------------------------------------------------------------------------
+# Nested rack chains (W6-I / W6-J)
+# ---------------------------------------------------------------------------
+
+register(
+    Action(
+        tool="ableton_device",
+        name="get_device_chains",
+        description=(
+            "Probe a rack device's nested chains. Works for "
+            "InstrumentGroupDevice, AudioEffectGroupDevice, and "
+            "DrumGroupDevice — each owns chains[] of nested Devices with "
+            "their own parameters and (optionally) mixer state. "
+            "detail='summary' returns identity-only; detail='full' adds "
+            "mixer state per chain and per nested device. Does NOT recurse "
+            "into nested-nested racks (filed as backlog)."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1),
+            ParamSpec(
+                name="detail",
+                type="str",
+                required=False,
+                enum=_DETAIL,
+                description="'summary' (default) or 'full'.",
+            ),
+        ),
+        handler=device_handlers.get_device_chains_handler,
+        example=(
+            "ableton_device(action='get_device_chains', track_index=2, "
+            "device_index=1, detail='full')"
+        ),
+        tips=(
+            "Pair with `capabilities` (can_have_chains flag) to know "
+            "whether a device is a rack before calling. Use "
+            "`load_in_rack` to add devices into a specific chain.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
+        name="load_in_rack",
+        description=(
+            "Load a device into a specific nested chain of a rack. "
+            "Uses Live's browser-load mechanism via "
+            "`song.view.selected_track` + `rack.view.selected_chain` to "
+            "route the load. The new device appears at the end of the "
+            "chain's device list. Returns the new device's "
+            "nested_device_position for subsequent set_parameter_in_rack "
+            "calls."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1,
+                      description="Position of the rack device on its parent's chain (1-based)."),
+            ParamSpec(name="chain_index", type="int", minimum=1,
+                      description="Position of the destination chain inside the rack (1-based)."),
+            ParamSpec(name="kind", type="str",
+                      description="Live device class / display name (e.g. 'Compressor2', 'Operator')."),
+            ParamSpec(
+                name="preset_uri",
+                type="str",
+                required=False,
+                description="Optional canonical Live browser URI for a specific preset.",
+            ),
+        ),
+        handler=device_handlers.load_in_rack_handler,
+        example=(
+            "ableton_device(action='load_in_rack', track_index=2, "
+            "device_index=1, chain_index=2, kind='Compressor2')"
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
+        name="set_parameter_in_rack",
+        description=(
+            "Write a parameter on a device inside a rack's nested chain. "
+            "Same continuous/enum value semantics as set_parameter; "
+            "address via (rack device_index, chain_index, "
+            "nested_device_position, parameter_name)."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1,
+                      description="Position of the rack device on its parent's chain."),
+            ParamSpec(name="chain_index", type="int", minimum=1),
+            ParamSpec(name="nested_device_position", type="int", minimum=1),
+            ParamSpec(name="parameter_name", type="str"),
+            ParamSpec(
+                name="value",
+                type="str",
+                description=(
+                    "Schema-permissive: a string on the wire so enum "
+                    "values round-trip cleanly. The handler coerces to "
+                    "float for value_type='continuous' — mirrors "
+                    "set_parameter."
+                ),
+            ),
+            ParamSpec(
+                name="value_type",
+                type="str",
+                required=False,
+                enum=_VALUE_TYPES,
+                description="'continuous' (default) or 'enum'.",
+            ),
+        ),
+        handler=device_handlers.set_parameter_in_rack_handler,
+        example=(
+            "ableton_device(action='set_parameter_in_rack', track_index=2, "
+            "device_index=1, chain_index=1, nested_device_position=1, "
+            "parameter_name='Threshold', value=0.5)"
+        ),
+    )
+)
+
+
 __all__: list[str] = []  # registry side-effects only

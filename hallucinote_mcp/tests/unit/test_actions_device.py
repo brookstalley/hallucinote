@@ -242,6 +242,8 @@ _EXPECTED_DEVICE_ACTIONS = {
     "capabilities", "set_input_routing", "get_input_routing",
     "set_sidechain", "get_routing",
     "navigate_preset", "pad_info",
+    # W6-I/J nested rack chain actions:
+    "get_device_chains", "load_in_rack", "set_parameter_in_rack",
 }
 
 
@@ -1295,6 +1297,247 @@ def test_pad_info_rejects_non_drum_rack(loaded_actions):
     )
     assert resp.ok is False
     assert "drum rack" in (resp.error or "").lower()
+
+
+# ---------- nested rack chains (W6-I / W6-J) ----------
+
+
+class _FakeChainMixer:
+    def __init__(self, volume: float = 0.85, panning: float = 0.0):
+        self.volume = FakeParam("Volume", volume, min=0.0, max=1.0)
+        self.panning = FakeParam("Panning", panning, min=-1.0, max=1.0)
+
+
+class _FakeChain:
+    def __init__(self, name: str, devices: list[FakeDevice] | None = None,
+                 *, mute: bool = False, solo: bool = False):
+        self.name = name
+        self.devices = list(devices or [])
+        self.mixer_device = _FakeChainMixer()
+        self.mute = mute
+        self.solo = solo
+
+
+class _FakeRackView:
+    def __init__(self):
+        self.selected_chain = None
+
+
+class _FakeRackDevice(FakeDevice):
+    """Mirrors InstrumentGroupDevice / AudioEffectGroupDevice — has
+    `chains` + a view with selected_chain."""
+    def __init__(self, name: str = "Rack", chains: list[_FakeChain] | None = None):
+        super().__init__(name, class_name="InstrumentGroupDevice")
+        self.chains = chains or []
+        self.view = _FakeRackView()
+        self.can_have_chains = True
+
+
+def test_get_device_chains_summary(loaded_actions):
+    nested_a = FakeDevice("Sub-A", class_name="Operator")
+    nested_b = FakeDevice("Sub-B", class_name="Compressor2")
+    chain = _FakeChain("Lead", devices=[nested_a, nested_b])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_device_chains",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    r = resp.result
+    assert r["chain_count"] == 1
+    assert r["chains"][0]["name"] == "Lead"
+    assert r["chains"][0]["device_count"] == 2
+    names = [d["name"] for d in r["chains"][0]["devices"]]
+    assert names == ["Sub-A", "Sub-B"]
+
+
+def test_get_device_chains_full_includes_mixer(loaded_actions):
+    nested = FakeDevice("Sub", class_name="Operator")
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_device_chains",
+            params={"track_index": 1, "device_index": 1, "detail": "full"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert "mixer" in resp.result["chains"][0]
+    assert resp.result["chains"][0]["mixer"]["volume"] == 0.85
+
+
+def test_get_device_chains_non_rack_raises_teaching_error(loaded_actions):
+    eq = FakeDevice("EQ", class_name="EQ8")
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[eq])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_device_chains",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "EQ8" in err
+    assert "rack" in err.lower()
+
+
+def test_set_parameter_in_rack_writes_continuous_value(loaded_actions):
+    threshold = FakeParam("Threshold", 0.5, min=0.0, max=1.0)
+    nested = FakeDevice("Comp", class_name="Compressor2",
+                        parameters=[threshold])
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 1, "nested_device_position": 1,
+                "parameter_name": "Threshold", "value": "0.75",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert threshold.value == 0.75
+
+
+def test_set_parameter_in_rack_writes_enum_value(loaded_actions):
+    filter_type = FakeParam(
+        "Filter Type", 0.0, value_items=("Lowpass", "Highpass", "Bandpass"),
+    )
+    nested = FakeDevice("Op", class_name="Operator", parameters=[filter_type])
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 1, "nested_device_position": 1,
+                "parameter_name": "Filter Type", "value": "Highpass",
+                "value_type": "enum",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert filter_type.value == 1.0  # index of 'Highpass'
+
+
+def test_set_parameter_in_rack_invalid_chain_raises(loaded_actions):
+    rack = _FakeRackDevice("Rack", chains=[_FakeChain("Only", devices=[
+        FakeDevice("X", parameters=[FakeParam("Y", 0.0)]),
+    ])])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 99, "nested_device_position": 1,
+                "parameter_name": "Y", "value": "0.5",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "chain_index" in (resp.error or "")
+
+
+# load_in_rack — focuses on the chain-selection wire-through; full
+# browser-load integration is deferred to W6-K real-Live smoke.
+def test_load_in_rack_selects_chain_and_loads(loaded_actions):
+    chain = _FakeChain("Lead", devices=[])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    track = FakeTrack("T1", devices=[rack])
+    song = FakeSong(tracks=[track])
+    ctx = FakeCtx(song)
+    # The existing FakeCtx has an `application` with `browser` capable of
+    # walking; set up a loadable Compressor item.
+    from typing import Any as _Any
+
+    class _FakeItem:
+        def __init__(self, name: str):
+            self.name = name
+            self.is_loadable = True
+            self.is_folder = False
+            self.uri = ""
+            self.children = ()
+
+    class _FakeBrowser:
+        def __init__(self, item: _FakeItem):
+            self.audio_effects = _FakeItem("audio_effects")
+            self.audio_effects.is_loadable = False
+            self.audio_effects.is_folder = True
+            self.audio_effects.children = (item,)
+            self.instruments = _FakeItem("instruments")
+            self.instruments.is_loadable = False
+            self.instruments.is_folder = True
+            self.instruments.children = ()
+            self.midi_effects = _FakeItem("midi_effects")
+            self.midi_effects.is_loadable = False
+            self.midi_effects.is_folder = True
+            self.midi_effects.children = ()
+            self.drums = _FakeItem("drums")
+            self.drums.is_loadable = False
+            self.drums.is_folder = True
+            self.drums.children = ()
+            self.plugins = _FakeItem("plugins")
+            self.plugins.is_loadable = False
+            self.plugins.is_folder = True
+            self.plugins.children = ()
+            self.user_library = _FakeItem("user_library")
+            self.user_library.is_loadable = False
+            self.user_library.is_folder = True
+            self.user_library.children = ()
+            self.samples = _FakeItem("samples")
+            self.samples.is_loadable = False
+            self.samples.is_folder = True
+            self.samples.children = ()
+            self.sounds = _FakeItem("sounds")
+            self.sounds.is_loadable = False
+            self.sounds.is_folder = True
+            self.sounds.children = ()
+            self._item = item
+
+        def load_item(self, item: _Any) -> None:
+            # Simulate Live: appends the device to the currently-selected
+            # chain. The handler should have set selected_chain on
+            # rack.view BEFORE calling load_item.
+            assert rack.view.selected_chain is chain, (
+                "handler should have set rack.view.selected_chain before "
+                "browser.load_item"
+            )
+            chain.devices.append(FakeDevice("Compressor", class_name="Compressor2"))
+
+    item = _FakeItem("Compressor2")
+    application = ctx.application
+    application.browser = _FakeBrowser(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load_in_rack",
+            params={
+                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert len(chain.devices) == 1
+    assert resp.result["nested_device_position"] == 1
+    assert resp.result["chain_index"] == 1
 
 
 # ---------- run_on_main discipline ----------

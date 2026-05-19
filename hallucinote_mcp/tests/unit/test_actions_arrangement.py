@@ -802,6 +802,213 @@ def test_cue_jump_unknown_name_lists_available(loaded_actions):
     assert "Verse" in (resp.error or "")
 
 
+# ---------- cue_jump async-readback regression (real-Live finding 2026-05-18) ----------
+
+# Live's ``jump_to_*_cue`` and ``CuePoint.jump()`` schedule the playhead
+# move for the audio thread and return immediately. Reading
+# ``current_song_time`` in the same main-thread bout sees the PRE-jump
+# value (the main-thread mirror hasn't yet been refreshed by the audio
+# thread). The pre-fix handler returned that stale value as
+# ``position_beats``. These tests pin the post-fix contract: the
+# returned ``position_beats`` is the actual destination (resolved
+# before the jump fires), and the handler waits for the mirror to
+# catch up before returning.
+
+
+class _AsyncCue:
+    """Cue whose ``jump()`` schedules the playhead move to land on a
+    later read, not synchronously. Used to expose the real-Live async-
+    readback race that the unit FakeSong's synchronous behavior hides."""
+
+    def __init__(self, song: "_AsyncJumpSong", time: float, name: str = ""):
+        self.time = time
+        self.name = name
+        self._song = song
+
+    def jump(self) -> None:
+        self._song._schedule_jump(self.time)
+
+
+class _AsyncJumpSong:
+    """FakeSong whose cue jumps are async: ``jump()`` and
+    ``jump_to_*_cue()`` set a pending target, and the next read of
+    ``current_song_time`` advances toward it. Mirrors Live's actual
+    behavior where the audio thread propagates the position to the
+    main-thread mirror with a one-tick delay."""
+
+    def __init__(
+        self,
+        cues: list[tuple[float, str]],
+        *,
+        ticks_to_settle: int = 2,
+    ):
+        self.signature_numerator = 4
+        self.signature_denominator = 4
+        self.last_event_time = 256.0
+        self.loop = False
+        self.loop_start = 0.0
+        self.loop_length = 4.0
+        self._cst = 0.0
+        self._pending: float | None = None
+        self._ticks_remaining = 0
+        self._ticks_to_settle = ticks_to_settle
+        self.cue_points: list[_AsyncCue] = [
+            _AsyncCue(self, t, n) for t, n in cues
+        ]
+
+    @property
+    def current_song_time(self) -> float:
+        # Each read advances the propagation by one tick; once
+        # ``_ticks_to_settle`` reads have happened, the pending target
+        # becomes visible.
+        if self._pending is not None:
+            self._ticks_remaining -= 1
+            if self._ticks_remaining <= 0:
+                self._cst = self._pending
+                self._pending = None
+        return self._cst
+
+    @current_song_time.setter
+    def current_song_time(self, value: float) -> None:
+        # Direct writes (the fallback path when CuePoint.jump is absent)
+        # are synchronous in real Live too — only the `jump_to_*_cue` /
+        # `CuePoint.jump()` paths are async.
+        self._cst = float(value)
+        self._pending = None
+        self._ticks_remaining = 0
+
+    def _schedule_jump(self, target: float) -> None:
+        self._pending = float(target)
+        self._ticks_remaining = self._ticks_to_settle
+
+    def jump_to_next_cue(self) -> None:
+        # Real-Live boundary semantics (Live 12.4 empirically): no cue
+        # past current → wrap to ``last_event_time`` (arrangement end).
+        cur = self._cst
+        candidates = sorted(c.time for c in self.cue_points if c.time > cur)
+        if candidates:
+            self._schedule_jump(candidates[0])
+        elif self.last_event_time > cur:
+            self._schedule_jump(self.last_event_time)
+
+    def jump_to_prev_cue(self) -> None:
+        # Real-Live boundary semantics: no cue before current → wrap to
+        # 0.0 (arrangement start).
+        cur = self._cst
+        candidates = sorted(
+            (c.time for c in self.cue_points if c.time < cur), reverse=True,
+        )
+        if candidates:
+            self._schedule_jump(candidates[0])
+        elif cur > 0.0:
+            self._schedule_jump(0.0)
+
+
+def test_cue_jump_by_name_returns_destination_not_stale_readback(loaded_actions):
+    """Real-Live 2026-05-18: ``CuePoint.jump()`` is async and
+    ``current_song_time`` reads return the pre-jump value in the same
+    main-thread bout. Pre-fix handler returned that stale value as
+    ``position_beats``. Post-fix handler pre-resolves the target and
+    polls the mirror until it settles, so ``position_beats`` is always
+    the actual destination."""
+    song = _AsyncJumpSong(cues=[(8.0, "Intro"), (16.0, "Verse"), (32.0, "Chorus")])
+    ctx = FakeCtx(song=song)  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"name": "Verse"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok, resp.error
+    # Pre-fix this came back as 0.0 (the pre-jump current_song_time).
+    # Post-fix it must report the actual destination.
+    assert resp.result["position_beats"] == 16.0
+    # And by the time the handler returned, the mirror should have
+    # caught up (the settle loop blocked until propagation).
+    assert song._cst == 16.0
+
+
+def test_cue_jump_by_direction_returns_destination_not_stale_readback(loaded_actions):
+    """Same race as the name path, but ``jump_to_next_cue`` rather than
+    ``CuePoint.jump()``. Post-fix handler resolves the target from the
+    sorted cue list before firing the jump, then settles on the worker
+    thread."""
+    song = _AsyncJumpSong(cues=[(8.0, "Intro"), (16.0, "Verse"), (32.0, "Chorus")])
+    ctx = FakeCtx(song=song)  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"direction": "next"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok, resp.error
+    assert resp.result["position_beats"] == 8.0
+    assert song._cst == 8.0
+
+
+def test_cue_jump_by_direction_at_next_boundary_wraps_to_last_event_time(loaded_actions):
+    """Real-Live 2026-05-18 (Live 12.4): ``jump_to_next_cue`` from
+    past the latest cue wraps to ``last_event_time`` (arrangement
+    end). Handler's pre-resolution must include the implicit
+    end-boundary cue so the settle waits for the actual destination
+    rather than mis-classifying the move as a no-op."""
+    song = _AsyncJumpSong(cues=[(8.0, "Intro"), (16.0, "Verse")])
+    song.last_event_time = 24.0
+    song._cst = 20.0  # past the last cue
+    ctx = FakeCtx(song=song)  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"direction": "next"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok, resp.error
+    assert resp.result["position_beats"] == 24.0
+    assert song._cst == 24.0
+
+
+def test_cue_jump_by_direction_at_prev_boundary_wraps_to_zero(loaded_actions):
+    """Real-Live 2026-05-18 (Live 12.4): ``jump_to_prev_cue`` from
+    before any cue wraps to 0.0 (arrangement start). Handler's
+    pre-resolution must include the implicit start-boundary cue."""
+    song = _AsyncJumpSong(cues=[(8.0, "Intro"), (16.0, "Verse")])
+    song._cst = 8.0  # at the earliest cue — "previous" jumps to start
+    ctx = FakeCtx(song=song)  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"direction": "previous"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok, resp.error
+    assert resp.result["position_beats"] == 0.0
+    assert song._cst == 0.0
+
+
+def test_cue_jump_true_noop_at_song_start(loaded_actions):
+    """``jump_to_prev_cue`` from 0.0 is a true no-op (already at the
+    implicit start-boundary cue). Handler must NOT timeout waiting
+    for a settle that won't happen — pre-resolution returns None and
+    the fallback reads back the current (unchanged) position."""
+    song = _AsyncJumpSong(cues=[(8.0, "Intro"), (16.0, "Verse")])
+    song._cst = 0.0  # already at start
+    ctx = FakeCtx(song=song)  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_jump",
+            params={"direction": "previous"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok, resp.error
+    assert resp.result["position_beats"] == 0.0
+    assert song._cst == 0.0
+
+
 # ---------- run_on_main discipline ----------
 
 

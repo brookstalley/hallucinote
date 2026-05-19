@@ -49,17 +49,22 @@ All three canaries hit this on step 1 of every run. **Wave 9 is correctly scoped
 
 ---
 
-## Group D — Envelope architectural gaps (decision needed for v1)
+## Group D — Envelope reach (RESOLVED 2026-05-19)
 
-Wave 7 closed the envelope round-trip story. Canaries surfaced three categories of envelope authoring that **cannot ship to Live today** with no design path forward. These are not bugs — they're surface gaps that require an explicit v1 disposition.
+The first-pass triage flagged D1/D2/D3 as architectural blockers and recommended v1.1 punts. User challenge + a focused D2 investigation (`docs/canary-songs/d2-master-envelope-investigation.md`) reshaped this group: D1/D3 are tractable W10-F engineering; D2 ships loud refusal in v1.
 
-| # | Finding | Severity | Canary | Disposition (recommended) |
+| # | Finding | Severity | Canary | Disposition (resolved) |
 |---|---|---|---|---|
-| D1 | Long envelopes spanning multiple session clips can't be pushed (W4-B clip-routing requirement). The solo-piano-ambient brief's HEADLINE target failed here | **blocker** *for the brief's stated target* | spa-7d | **Punt to v1.1 OR redesign authoring model.** Recommend documenting as a Wave 10 chunk: **W10-F — "Long envelopes: authoring-time validation + clear error"** — planner refuses at planning time with "envelope spans beats [X,Y] but no session clip covers it; split into per-section envelopes" + a `docs/envelope-authoring.md` page. Shipping the *authoring* path that crosses clip boundaries is a v1.1 design problem. |
-| D2 | Master envelopes silently dropped on push — master track isn't linked, envelope planner's link lookup returns nothing, planner skips with a generic warn | **blocker** | fbr-7c | **W10-F (same new chunk)** — recommend authoring-time refusal + clear error: "envelopes on master track not supported by current Live MCP surface (`Song.signature_*` / master-volume have no automation target_kind). Move to a sub-bus or document as v1.1." |
-| D3 | Mixer envelopes on audio tracks unreachable — audio tracks can't hold MIDI session clips, so W4-B's clip-routing requirement is structurally impossible to satisfy | **blocker** | fbr-7c | **W10-F (same new chunk)** — same treatment: authoring-time refusal + doc. The "right" fix is W12-A-adjacent (idempotent mutators) + a routing-via-arrangement-clip planner — too big for v1. |
+| D1 | Long envelopes spanning multiple session clips can't be pushed today. Solo-piano-ambient's headline target | **important** | spa-7d | **W10-F — engineering, not a punt.** Live LOM accepts envelopes on EITHER session OR arrangement clips (see `automation.py:75-82` `_TRACK_LEVEL_GAP_HINT` — "Provide location='arrangement' (or 'session')"). Today's planner routes exclusively through session clips. Fix: investigation-first; either (a) reorder phases `arrangement → envelopes` so arrangement clips exist when envelopes plan, or (b) emit covering arrangement clips on demand for ranges no clip covers. |
+| D2 | Master envelopes silently dropped on push | **blocker** | fbr-7c | **W10-F — ship loud refusal in v1.** D2 investigation (Angle 1 + 2 + 3) confirmed no LOM path: `create_automation_envelope` lives only on `Clip`; master can't host clips; Utility-on-master dies at the same boundary; M4L mirror is a sub-bus pattern not an MCP path. **Decision (user 2026-05-19): reject at BOTH DB-mutator AND planner layers; teaching message points users at the sub-bus pattern (no M4L mention).** |
+| D3 | Mixer envelopes on audio tracks unreachable — same shape as D1, surfaced via the lead-vocal sidechain placeholder | **important** | fbr-7c | **W10-F — resolved by D1's fix.** Audio tracks host arrangement clips fine; the blocker was the same session-clip-only planner choice. |
 
-**Net plan change:** add **W10-F — "Envelope reach: authoring-time validation + non-support docs"** to Wave 10. **User sign-off needed** on the "punt the *authoring* of long-envelopes to v1.1, ship loud refusal for v1" call. If you'd rather ship a working long-envelope path, that's a much bigger chunk (likely its own wave).
+**W10-F scope (consolidated):**
+- (a) D1 + D3 — investigate phase reorder vs. covering-clip approach; implement the chosen path; regression tests covering long-envelope spanning multiple sections AND audio-track sidechain
+- (b) D2 — DB-mutator validation + planner refusal for master-targeted envelopes; teaching message pointing at sub-bus pattern; extend `handlers/automation.py` docstring with D2 finding; add `ableton://guides/gaps` entry
+- (c) Tests covering all three
+
+Size: ~250-400 LoC + ~6-10 tests. **Critic mark: yes** (touches the load-bearing envelope-emitter family + locks in non-support contract for D2). 1 chunk.
 
 ---
 
@@ -165,12 +170,16 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
 - ADD: minimal hello-world song template under `tools/templates/song/` (so authors copy a template, not historical falling-walking)
 - ADD: `docs/song-authoring-conventions.md` covering repeated-section pattern (I1)
 
-### Wave 10 — add three chunks
+### Wave 10 — add four chunks (E/F/G/H)
 - **W10-A** (existing) — expand scope: arrangement + devices + returns idempotency (was arrangement-only). Recommend retitle.
-- **W10-E (NEW)** — push_cli `execute` subcommand for streamed plan→MCP→results, removing the per-phase ceremony tax. **Probable Critic mark: chunk** (touches the push surface that every wave depends on).
-- **W10-F (NEW)** — Envelope reach: authoring-time validation + refusal + non-support docs for D1 / D2 / D3. **User sign-off needed on punting long/master/audio-track envelope authoring to v1.1.**
+- **W10-E (NEW)** — push_cli `execute` subcommand for streamed plan→MCP→results, removing the per-phase ceremony tax. **Critic mark: chunk** (touches the push surface that every wave depends on).
+- **W10-F (NEW, RESOLVED)** — Envelope reach (D1/D2/D3 consolidated):
+  - D1+D3: route long envelopes through arrangement clips (investigate phase-reorder vs. covering-clip; implement)
+  - D2: DB-mutator + planner refusal for master-targeted envelopes; teaching message points at sub-bus pattern (no M4L mention)
+  - Tests for all three; gaps-guide entry
+  - **Critic mark: chunk**. Size ~250-400 LoC + 6-10 tests.
 - **W10-G (NEW)** — Partial-state normalization across phase planners (E1 — no more uncaught `ValueError` in arrangement).
-- **W10-H (NEW or merged into W10-F)** — Meter-ratchet refusal + docs (H1). **User sign-off needed on punting within-section meter changes to v1.1.**
+- **W10-H (NEW, pending sign-off)** — Meter-ratchet authoring-time refusal + docs (H1). Recommend ship loud refusal in v1; punt working impl to v1.1. **User sign-off still needed on H1 disposition.**
 
 ### Wave 14 — W14-B promoted from contingent to triggered
 - **W14-B is triggered.** Generator library audit MUST happen: every generator hard-codes 4/4. Either parametrize on `beats_per_bar` (preferred) or rename to `*_4_4` and document.

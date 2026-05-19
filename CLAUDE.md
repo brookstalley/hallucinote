@@ -84,7 +84,7 @@ Run `/learnings [planned work]` to surface relevant rules before designing. Gene
 7. **Critic review.** Run `/critic` — it's in the build plan's "Done when" steps. The Critic reads test evidence from step 6; it does not re-run tests.
 8. **Resolve findings.** Fix blocking; address warnings.
 9. **Reflect — now, not at session end.** Append to `.prawduct/.session-reflected`: what the chunk delivered, what the Critic caught, what surprised you. Add a rule to `learnings.md` only if this cycle produced one. Chunk-boundary reflection makes `/clear` fast.
-10. **Commit and persist state.** Commit all work. Update the **Status** section in `build-plan.md` — mark the chunk complete (`[x]`), update the Context line (what's done, what's next, key decisions). Mandatory — compaction can strike at any time.
+10. **Commit and persist state.** Commit all work. Update the **Status** section in `build-plan.md` — mark the chunk complete (`[x]`), update the Context line (what's done, what's next, key decisions). When `views_enabled: true`, three views (Status, release-notes.md, scope_rollups) derive from change-log tags — add a tagged entry (`chunks=NN | status=shipped | release=... | scope=...`) and run `python3 tools/product-hook regen-views`. Mandatory — compaction can strike at any time.
 
 ### Creating Pull Requests
 

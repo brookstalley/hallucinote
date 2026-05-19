@@ -144,7 +144,7 @@ After all ten phases, surface the following to the user **in this order**:
    - **Mixer / pan / send envelopes hidden in the MIDI clip envelope dropdown.** Emit if the `envelopes` phase wrote any `mixer_volume` / `mixer_pan` / `send_level` envelope on a MIDI clip. One-liner: "Mixer envelope(s) pushed onto MIDI clip 'Y' are playing (the fader will visibly move) but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider in Live and choose 'Show Modulation' to draw/edit them. Live remembers the choice per-set."
 
    If neither applies, skip this section entirely — don't add ceremony to a clean push.
-4. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase wrote at least one cue point, append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip the hint when no cues were pushed.
+4. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase wrote at least one cue point — operationally: Step 3d reported `applied >= 1` for the `cues` phase (which emits a single batched `cue_create_batch` call) — append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip when no cues were pushed.
 
 If the user opens the Live set now, the song should be there.
 

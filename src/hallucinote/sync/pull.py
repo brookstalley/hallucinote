@@ -29,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import strip_return_slot_prefix
+from hallucinote.capture import RACK_CLASS_NAMES, strip_return_slot_prefix
 
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
@@ -331,6 +331,105 @@ def plan_pull_devices(
             "no linked tracks or returns for this session — device-chain "
             "pull will be empty"
         )
+    return plan
+
+
+def plan_pull_nested_rack_chains(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull one level of nested rack chains (W7-B).
+
+    Iterates DB-side top-level device rows on linked tracks/returns and emits
+    one ``ableton_device(action='get_device_chains', ...)`` per device whose
+    `kind` is in `RACK_CLASS_NAMES`. The result is consumed by
+    ``_apply_nested_rack_chains_for_device``, which diffs the response
+    against `device_chains` + `devices` rows hung off the rack device.
+
+    Assumes `plan_pull_devices` has already populated the top-level device
+    rows for the session. If no top-level devices exist (no `plan_pull_devices`
+    pull run yet), the planner emits nothing and warns.
+
+    Out of scope: recursively nested racks (rack-in-rack); tracked in backlog.
+
+    `detail='summary'` is the default — identity-only nested device entries
+    are sufficient for the diff. The full detail (per-nested mixer state)
+    would land schema columns that don't exist yet.
+    """
+    plan = PullPlan()
+    any_emitted = False
+    any_top_level_device = False
+
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if track_at is None:
+            continue
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_top_level_device = True
+                if d["kind"] not in RACK_CLASS_NAMES:
+                    continue
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_device_chains",
+                        "track_index": track_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"nested_rack_chains:{d['id']}",
+                    purpose=(
+                        f"pull nested chains for rack {d['kind']!r} "
+                        f"(pos {d['position']}) on track {t['name']!r}"
+                    ),
+                ))
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if return_at is None:
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_top_level_device = True
+                if d["kind"] not in RACK_CLASS_NAMES:
+                    continue
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_device_chains",
+                        "return_index": return_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"nested_rack_chains:{d['id']}",
+                    purpose=(
+                        f"pull nested chains for rack {d['kind']!r} "
+                        f"(pos {d['position']}) on return {r['name']!r}"
+                    ),
+                ))
+
+    if not any_top_level_device:
+        plan.warn(
+            "no top-level devices on linked tracks or returns — nested-rack "
+            "pull will be empty (run plan_pull_devices first if you "
+            "expected devices)"
+        )
+    elif not any_emitted:
+        # Top-level devices exist but no racks among them — that's a valid
+        # song shape, not a warning condition.
+        pass
     return plan
 
 
@@ -1924,23 +2023,66 @@ def _apply_devices_for_parent(
     else:
         chain_id = top_chain["id"]
 
+    _diff_chain_devices(
+        conn,
+        chain_id=chain_id,
+        entries=devices_in,
+        position_field="device_index",
+        label=f"{parent_kind} device",
+        context_label=f"{parent_kind}_devices for {parent_id!r}",
+        out=out,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
+def _diff_chain_devices(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    entries: list[dict[str, Any]],
+    position_field: str,
+    label: str,
+    context_label: str,
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff a Live device chain's contents against DB rows in `chain_id`.
+
+    Positional identity: a (chain, position) slot whose ``(class_name, name)``
+    matches is a no-op; any mismatch is delete + create at the same slot.
+    Removals: any DB row at a position absent from `entries`.
+
+    Shared by `_apply_devices_for_parent` (top-level chain, entries from
+    `ableton_device(action='list')`, position lives in ``device_index``)
+    and `_apply_nested_rack_chains_for_device` (nested chain, entries from
+    `ableton_device(action='get_device_chains')`, position lives in
+    ``position``).
+
+    `label` is the per-row prefix in details lines (e.g. ``"track device"``,
+    ``"rack chain 2 device"``). `context_label` is the prefix for warnings
+    that name the surface being diffed.
+    """
     db_devices = list(Q.get_devices_for_chain(conn, chain_id))
     db_by_position = {d["position"]: d for d in db_devices}
 
     seen_positions: set[int] = set()
-    for entry in devices_in:
-        idx = entry.get("device_index")
+    for entry in entries:
+        idx = entry.get(position_field)
         if not isinstance(idx, int) or idx < 1:
             out.warnings.append(
-                f"{parent_kind}_devices for {parent_id!r}: entry missing or "
-                f"invalid device_index: {entry!r}"
+                f"{context_label}: entry missing or invalid "
+                f"{position_field}: {entry!r}"
             )
             continue
         kind_in = entry.get("class_name") or ""
         if not kind_in:
             out.warnings.append(
-                f"{parent_kind}_devices for {parent_id!r}: device at index "
-                f"{idx} missing class_name; skipping"
+                f"{context_label}: device at position {idx} missing "
+                "class_name; skipping"
             )
             continue
         name_in = entry.get("name") or ""
@@ -1969,13 +2111,13 @@ def _apply_devices_for_parent(
         out.mutations += 1
         if existing is not None:
             out.details.append(
-                f"{parent_kind} device pos {idx}: "
+                f"{label} pos {idx}: "
                 f"{existing['kind']}/{existing['display_name']!r} -> "
                 f"{kind_in}/{name_in!r}"
             )
         else:
             out.details.append(
-                f"{parent_kind} device pos {idx}: added {kind_in}/{name_in!r}"
+                f"{label} pos {idx}: added {kind_in}/{name_in!r}"
             )
 
     # Removals: any DB row at a position Ableton didn't report. Iterating the
@@ -1990,8 +2132,121 @@ def _apply_devices_for_parent(
         )
         out.mutations += 1
         out.details.append(
-            f"{parent_kind} device pos {d['position']}: "
+            f"{label} pos {d['position']}: "
             f"removed {d['kind']}/{d['display_name']!r}"
+        )
+
+
+def _apply_nested_rack_chains_for_device(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    rack_device_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff one rack device's nested chains against the probe payload (W7-B).
+
+    Mirrors `_apply_devices_for_parent` but operates on chains hung off a
+    rack device (`parent_rack_device_id`). Chain identity is positional —
+    the `chain_index` field on each entry maps to `device_chains.position`.
+    Nested device diff reuses `_diff_chain_devices` after normalizing the
+    wire shape (`position` -> the same `device_index` field name).
+
+    Missing rack device on the DB side -> warn + skip (the planner shouldn't
+    have emitted, but defense-in-depth).
+    """
+    rack = Q.get_device(conn, rack_device_id)
+    if rack is None:
+        out.warnings.append(
+            f"nested_rack_chains for {rack_device_id!r}: rack device row "
+            "not found — DB drifted since planner ran; skipping"
+        )
+        return
+    if rack["kind"] not in RACK_CLASS_NAMES:
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: kind "
+            f"{rack['kind']!r} is not a rack class "
+            f"({sorted(RACK_CLASS_NAMES)}); skipping"
+        )
+        return
+
+    chains_in = result.get("chains")
+    if chains_in is None:
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: result missing "
+            "'chains' field"
+        )
+        return
+
+    db_chains = Q.get_device_chains_for_rack_device(conn, rack_device_id)
+    db_chain_by_position = {c["position"]: c for c in db_chains}
+
+    seen_positions: set[int] = set()
+    for chain_entry in chains_in:
+        ci = chain_entry.get("chain_index")
+        if not isinstance(ci, int) or ci < 1:
+            out.warnings.append(
+                f"nested_rack_chains for rack {rack_device_id!r}: chain "
+                f"entry missing or invalid chain_index: {chain_entry!r}"
+            )
+            continue
+        seen_positions.add(ci)
+
+        existing_chain = db_chain_by_position.get(ci)
+        if existing_chain is None:
+            chain_id = M.create_device_chain(
+                conn,
+                parent_rack_device_id=rack_device_id,
+                position=ci,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            out.mutations += 1
+            out.details.append(
+                f"nested chain {ci} on rack {rack['kind']}: added"
+            )
+        else:
+            chain_id = existing_chain["id"]
+
+        # Normalize wire-shape `position` to `device_index` so `_diff_chain_devices`
+        # can be shared with the top-level apply path. The MCP `get_device_chains`
+        # handler uses `position` for the nested device's slot, while
+        # `ableton_device(action='list')` uses `device_index` — same semantic,
+        # different field name.
+        nested_devices_raw = chain_entry.get("devices") or []
+        normalized = [
+            {**e, "device_index": e.get("position")}
+            for e in nested_devices_raw
+        ]
+        _diff_chain_devices(
+            conn,
+            chain_id=chain_id,
+            entries=normalized,
+            position_field="device_index",
+            label=f"nested chain {ci} on rack {rack['kind']} device",
+            context_label=f"nested_rack_chains for rack {rack_device_id!r}, "
+                          f"chain {ci}",
+            out=out,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+
+    # Removals: chains in DB that Ableton didn't report. Cascade clears nested
+    # devices + their parameters.
+    for c in db_chains:
+        if c["position"] in seen_positions:
+            continue
+        M.delete_device_chain(
+            conn, chain_id=c["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"nested chain {c['position']} on rack {rack['kind']}: removed"
         )
 
 
@@ -2867,6 +3122,7 @@ _HANDLERS = {
     "cue_points_list":           ("cue_points_list",           False),
     "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
+    "nested_rack_chains":        ("nested_rack_chains",        True),   # W7-B: one level deep
     "device_parameters":         ("device_parameters",         True),   # W5-D: per-device param values
     "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
     "track_session_clips":       ("track_session_clips",       True),   # V1 close-out C
@@ -2977,6 +3233,13 @@ def apply_pull_results(
                 _apply_devices_for_parent(
                     conn, session_id=session_id,
                     parent_kind="return", parent_id=db_id,
+                    result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "nested_rack_chains":
+                _apply_nested_rack_chains_for_device(
+                    conn, session_id=session_id,
+                    rack_device_id=db_id,
                     result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )

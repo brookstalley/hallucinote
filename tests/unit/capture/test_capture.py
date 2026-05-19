@@ -299,6 +299,160 @@ def test_replay_rejects_param_bad_shape(conn):
         replay_capture(conn, snap, song_name="t")
 
 
+# ---------- W7-B: nested rack chains ----------
+
+
+def _snapshot_with_nested_rack(*, chains: list[dict]) -> dict:
+    """Build a single-track snapshot whose track carries one Drum Rack with
+    the given nested chains. Each chain is dict-shaped per W6-I/J.
+    """
+    return {
+        "song": {},
+        "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Drum Rack",
+                "class": "DrumGroupDevice",
+                "chains": chains,
+            }],
+        }],
+    }
+
+
+def test_replay_creates_nested_chain_and_device(conn):
+    snap = _snapshot_with_nested_rack(chains=[
+        {"chain_index": 1, "name": "Kick", "devices": [
+            {"index": 1, "name": "Operator", "class": "Operator"},
+        ]},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    top_devs = Q.get_devices_for_track(conn, track["id"])
+    assert len(top_devs) == 1
+    rack = top_devs[0]
+    nested_chains = Q.get_device_chains_for_rack_device(conn, rack["id"])
+    assert len(nested_chains) == 1
+    assert nested_chains[0]["position"] == 1
+    nested_devs = Q.get_devices_for_chain(conn, nested_chains[0]["id"])
+    assert [(d["position"], d["kind"], d["display_name"]) for d in nested_devs] == [
+        (1, "Operator", "Operator"),
+    ]
+
+
+def test_replay_creates_multiple_nested_chains_ordered_by_chain_index(conn):
+    snap = _snapshot_with_nested_rack(chains=[
+        {"chain_index": 1, "name": "Kick", "devices": [
+            {"index": 1, "name": "Operator", "class": "Operator"},
+        ]},
+        {"chain_index": 2, "name": "Snare", "devices": [
+            {"index": 1, "name": "Drum Synth", "class": "DrumSynths"},
+            {"index": 2, "name": "Compressor", "class": "Compressor2"},
+        ]},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    chains = Q.get_device_chains_for_rack_device(conn, rack["id"])
+    assert [c["position"] for c in chains] == [1, 2]
+    # Chain 2 holds two devices in 1-based position order.
+    chain_2_devs = Q.get_devices_for_chain(conn, chains[1]["id"])
+    assert [(d["position"], d["kind"]) for d in chain_2_devs] == [
+        (1, "DrumSynths"), (2, "Compressor2"),
+    ]
+
+
+def test_replay_nested_device_with_dialed_params(conn):
+    snap = _snapshot_with_nested_rack(chains=[
+        {"chain_index": 1, "devices": [{
+            "index": 1, "name": "Operator", "class": "Operator",
+            "params_dialed": {
+                "Volume": {"value": "-6 dB", "normalized": 0.5},
+            },
+        }]},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    nested_chain = Q.get_device_chains_for_rack_device(conn, rack["id"])[0]
+    nested_dev = Q.get_devices_for_chain(conn, nested_chain["id"])[0]
+    params = Q.get_device_parameters(conn, nested_dev["id"])
+    assert len(params) == 1
+    assert params[0]["name"] == "Volume"
+    assert params[0]["value_display"] == "-6 dB"
+    assert params[0]["value_normalized"] == pytest.approx(0.5)
+
+
+def test_replay_rejects_nested_nested_rack(conn):
+    """One level only: a rack inside a rack chain raises at replay time.
+    Recursive support is deferred per the backlog nested-nested item.
+    """
+    snap = _snapshot_with_nested_rack(chains=[
+        {"chain_index": 1, "devices": [{
+            "index": 1, "name": "Inner Rack", "class": "InstrumentGroupDevice",
+            "chains": [{"chain_index": 1, "devices": []}],
+        }]},
+    ])
+    with pytest.raises(ValueError, match="nested-nested"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_rejects_chains_on_non_rack(conn):
+    """A `chains` field on a non-rack-classed device is malformed — surface it
+    rather than silently fabricating nested rows under a Compressor."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "x", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Comp", "class": "Compressor2",
+                "chains": [{"chain_index": 1, "devices": []}],
+            }],
+        }],
+    }
+    with pytest.raises(ValueError, match="not a rack"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_rejects_missing_chain_index(conn):
+    snap = _snapshot_with_nested_rack(chains=[
+        {"devices": []},  # no chain_index
+    ])
+    with pytest.raises(ValueError, match="missing 'chain_index'"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_rejects_chain_index_below_one(conn):
+    snap = _snapshot_with_nested_rack(chains=[{"chain_index": 0, "devices": []}])
+    with pytest.raises(ValueError, match="must be >= 1"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_rack_with_no_chains_field_still_works(conn):
+    """A `DrumGroupDevice` without a `chains` field on the snapshot is fine —
+    it just doesn't get any nested rows. Useful for snapshots from a pre-W7-B
+    agent (back-compat) or racks the agent intentionally skipped probing."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "x", "type": "midi",
+            "devices": [{"index": 1, "name": "R", "class": "DrumGroupDevice"}],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "x")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    assert Q.get_device_chains_for_rack_device(conn, rack["id"]) == []
+
+
+def test_replay_rack_with_empty_chains_array_no_rows(conn):
+    snap = _snapshot_with_nested_rack(chains=[])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    assert Q.get_device_chains_for_rack_device(conn, rack["id"]) == []
+
+
 # ---------- capture_plan / compile_snapshot ----------
 
 
@@ -312,7 +466,9 @@ def test_capture_plan_lists_expected_probes():
         "get_track_info",      # retargets in M-2
         "get_track_sends",     # retargets in M-2
         # Chunk 4a additions:
-        "get_device_parameters",  # MCP gap #17b; retargets in M-4
+        "get_device_parameters",
+        # W7-B addition: nested rack chain probe (one level only)
+        "ableton_device(action='get_device_chains')",
     }
 
 

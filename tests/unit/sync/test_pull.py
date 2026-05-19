@@ -1252,6 +1252,372 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# plan_pull_nested_rack_chains + _apply_nested_rack_chains_for_device (W7-B)
+# ---------------------------------------------------------------------------
+
+
+def _nested_chains_payload(
+    *entries: tuple[int, str, list[tuple[int, str, str]]],
+    parent_kind="track", parent_index=2, rack_position=1,
+    rack_class="DrumGroupDevice",
+) -> dict:
+    """Build a `get_device_chains` payload from
+    ``(chain_index, chain_name, [(position, class_name, display_name), ...])``
+    tuples per nested chain. Mirrors `get_device_chains_handler`'s
+    response shape exactly so apply tests exercise the real wire shape.
+    """
+    addr = {f"{parent_kind}_index": parent_index}
+    chains_out = []
+    for ci, name, devs in entries:
+        chains_out.append({
+            "chain_index": ci,
+            "name": name,
+            "device_count": len(devs),
+            "devices": [
+                {"position": p, "name": n, "class_name": k,
+                 "parameter_count": 0, "is_active": True}
+                for p, k, n in devs
+            ],
+            "is_muted": False,
+            "is_soloed": False,
+        })
+    return {
+        "device_index": rack_position,
+        "class_name": rack_class,
+        "chain_count": len(chains_out),
+        "chains": chains_out,
+        "parent_kind": parent_kind,
+        **addr,
+    }
+
+
+def _build_track_with_rack(conn, song, session, *, ableton_index=5):
+    """Set up a linked track with a rack device on its top-level chain.
+    Returns ``(track_id, chain_id, rack_device_id)``.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=ableton_index)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="DrumGroupDevice", display_name="Drum Rack",
+    )
+    return tid, chain_id, rack_id
+
+
+def test_plan_pull_nested_rack_chains_emits_one_probe_per_rack(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_device"
+    assert c.args == {
+        "action": "get_device_chains",
+        "track_index": 5,
+        "device_index": 1,
+    }
+    assert c.key == f"nested_rack_chains:{rack_id}"
+
+
+def test_plan_pull_nested_rack_chains_skips_non_racks(conn, song, session):
+    """Top-level devices that aren't racks don't get a probe — and don't
+    warn either (a valid song shape, not an error)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bass")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor2", display_name="Glue")
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    # Top-level devices exist; no warning fired.
+    assert not any("no top-level devices" in n for n in plan.notes)
+
+
+def test_plan_pull_nested_rack_chains_warns_when_no_top_level_devices(
+    conn, song, session
+):
+    """No devices at all -> the user almost certainly forgot to run
+    `plan_pull_devices` first. Warn so the skill surfaces it."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("no top-level devices" in n for n in plan.notes)
+
+
+def test_plan_pull_nested_rack_chains_skips_unlinked_track(
+    conn, song, session
+):
+    """Unlinked track -> no probe (silent skip, mirrors
+    `plan_pull_device_parameters`'s shape)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="DrumGroupDevice", display_name="Drum Rack")
+    # NOT linked.
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    # No calls and no top-level-device warning (the unlinked track filters
+    # out before the device walk).
+    assert plan.calls == []
+
+
+def test_plan_pull_nested_rack_chains_emits_for_return_rack(
+    conn, song, session
+):
+    """Racks on a return track get the same treatment — addressing via
+    `return_index` instead of `track_index`."""
+    rid = M.create_return(conn, song_id=song, name="Send-Bus", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
+    rack_id = M.create_device(conn, chain_id=chain_id, position=2,
+                              kind="AudioEffectGroupDevice", display_name="FX")
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.args == {
+        "action": "get_device_chains",
+        "return_index": 1,
+        "device_index": 2,
+    }
+    assert c.key == f"nested_rack_chains:{rack_id}"
+
+
+def test_plan_pull_nested_rack_chains_args_match_mcp_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits must be a known
+    param on `ableton_device(action='get_device_chains')`."""
+    from hallucinote_mcp.actions import device as _device_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    gc_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_device" and a.name == "get_device_chains"
+    )
+    schema_param_names = {p.name for p in gc_action.params}
+
+    _build_track_with_rack(conn, song, session)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on get_device_chains schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_nested_rack_chains_creates_chain_and_devices_when_db_empty(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # 1 chain create + 1 device create
+    assert out.mutations == 2
+    chains = Q.get_device_chains_for_rack_device(conn, rack_id)
+    assert len(chains) == 1 and chains[0]["position"] == 1
+    devs = Q.get_devices_for_chain(conn, chains[0]["id"])
+    assert [(d["position"], d["kind"], d["display_name"]) for d in devs] == [
+        (1, "Operator", "Operator"),
+    ]
+
+
+def test_apply_nested_rack_chains_no_op_when_identical(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    M.create_device(conn, chain_id=nested_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_nested_rack_chains_replaces_nested_device_when_kind_changes(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    M.create_device(conn, chain_id=nested_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Compressor2", "Glue")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    devs = Q.get_devices_for_chain(conn, nested_chain)
+    assert [(d["kind"], d["display_name"]) for d in devs] == [
+        ("Compressor2", "Glue"),
+    ]
+
+
+def test_apply_nested_rack_chains_deletes_chain_when_ableton_omits_it(
+    conn, song, session
+):
+    """A nested chain Ableton no longer reports gets removed; cascade clears
+    the chain's nested devices + their parameters."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    # Two chains in DB; Ableton reports only chain 1.
+    M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    chain2 = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=2,
+    )
+    M.create_device(conn, chain_id=chain2, position=1,
+                    kind="Sampler", display_name="Sampler")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    # Chain 2 deletion mutates; the empty chain 1 is a no-op shape-wise.
+    assert out.mutations >= 1
+    chains = Q.get_device_chains_for_rack_device(conn, rack_id)
+    assert [c["position"] for c in chains] == [1]
+
+
+def test_apply_nested_rack_chains_warns_when_rack_device_missing(
+    conn, song, session
+):
+    """If the rack row vanished between planner and apply (DB-side drift),
+    apply warns and skips rather than crashing."""
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            "nested_rack_chains:does-not-exist",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any(
+        "rack device row not found" in w
+        for w in out.warnings
+    )
+
+
+def test_apply_nested_rack_chains_warns_when_kind_is_not_rack(
+    conn, song, session
+):
+    """Defense: if the DB device pointed at is not a rack class, the
+    handler refuses to spawn nested chains under it. (Should be
+    unreachable via the planner, but apply is the source of truth.)"""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="x")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    not_a_rack = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor2", display_name="Glue",
+    )
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{not_a_rack}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("not a rack class" in w for w in out.warnings)
+
+
+def test_apply_nested_rack_chains_round_trip_simulated_no_op(
+    conn, song, session
+):
+    """End-to-end round-trip: capture rack with two chains into DB; the
+    `get_device_chains` probe should return the same shape; apply
+    produces zero mutations. This is the convergence invariant."""
+    from hallucinote.capture import replay_capture
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Drum Rack", "class": "DrumGroupDevice",
+                "chains": [
+                    {"chain_index": 1, "name": "Kick", "devices": [
+                        {"index": 1, "name": "Operator", "class": "Operator"},
+                    ]},
+                    {"chain_index": 2, "name": "Snare", "devices": [
+                        {"index": 1, "name": "Drum Synth", "class": "DrumSynths"},
+                        {"index": 2, "name": "EQ", "class": "Eq8"},
+                    ]},
+                ],
+            }],
+        }],
+    }
+    new_song = replay_capture(conn, snap, song_name="rt")
+    new_session = M.create_ableton_session(conn, song_id=new_song, name="rt-sess")
+    track = next(
+        t for t in Q.get_tracks_for_song(conn, new_song) if t["name"] == "Drums"
+    )
+    _link_track(conn, session=new_session, db_id=track["id"], ableton_index=5)
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack['id']}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+                (2, "Snare", [
+                    (1, "DrumSynths", "Drum Synth"),
+                    (2, "Eq8", "EQ"),
+                ]),
+                rack_position=1,
+            ),
+        )],
+        song_id=new_song, session_id=new_session,
+    )
+    assert out.mutations == 0
+    # Two chains in DB, one for each in the payload.
+    assert out.no_ops >= 1
+
+
+# ---------------------------------------------------------------------------
 # plan_pull_device_parameters + _apply_device_parameters_for_device (W5-D)
 # ---------------------------------------------------------------------------
 

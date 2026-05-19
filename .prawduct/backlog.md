@@ -5,6 +5,54 @@
      (builder), (critic), (reflection), or (migrated).
      Review with /janitor or when planning new work. -->
 
+- **HIGH PRIORITY — Song annotations: persist composer intent + stylistic notes alongside the song data.** Today the DB stores structure (notes, envelopes, devices, arrangement) but not the *meaning* behind it. The LLM-native workflow needs a place to accumulate the why: "the verse is sad, like weight getting worse; then the chorus it just evaporates," "last chorus goes around once in minor, then once in min7," "this bass line is weaving between drum parts at 95 and 100 BPM," "don't sidechain the bass on the bridge — let it bloom." Updated continuously as composition progresses; read back by every future agent session for context. **Why this is high priority:** annotations ARE the song requirements, captured in-place. Without them, every new session starts cold — Claude can read the structural DB but not the intent, so it can't act on aesthetic decisions the user already made. Bundle the requirements into the song itself, not in a separate brief.
+
+  **Proposed shape — single polymorphic `annotations` table:**
+  ```
+  annotations (
+    id            TEXT PRIMARY KEY,
+    song_id       TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    track_id      TEXT REFERENCES tracks(id) ON DELETE CASCADE,  -- nullable
+    start_bar     REAL,                                           -- nullable
+    end_bar       REAL,                                           -- nullable (open-ended OK)
+    kind          TEXT NOT NULL,    -- 'intent' | 'stylistic' | 'structure' | 'reference' | 'todo'
+    body          TEXT NOT NULL,
+    created_at    REAL NOT NULL,
+    updated_at    REAL NOT NULL,
+    CHECK (end_bar IS NULL OR end_bar > start_bar),
+    CHECK (start_bar IS NOT NULL OR end_bar IS NULL)
+  )
+  ```
+  Three scoping levels fall out of column nullability:
+  - **Song-scoped** = `track_id` NULL, `start_bar` NULL → applies to the whole song.
+  - **Time-scoped** = `track_id` NULL, `start_bar` set, `end_bar` optional → applies to a time range or point in song time.
+  - **Track-scoped** = `track_id` set, time optional → applies to a track (optionally over a time range).
+
+  Name conflict caveat: existing `notes` table is MIDI notes. `annotations` disambiguates cleanly; alternatives considered: `commentary`, `prose_notes`.
+
+  **Mutator surface:**
+  - `M.add_annotation(conn, *, song_id, track_id=None, start_bar=None, end_bar=None, kind, body, ...)`
+  - `M.update_annotation(conn, *, annotation_id, body=None, kind=None, ...)`
+  - `M.delete_annotation(conn, *, annotation_id, ...)`
+  - Events: `ANNOTATION_ADDED` / `ANNOTATION_UPDATED` / `ANNOTATION_REMOVED`.
+
+  **Query surface:**
+  - `Q.get_annotations_for_song(conn, song_id, *, kind=None)` — all
+  - `Q.get_annotations_for_track(conn, track_id)` — track-scoped only
+  - `Q.get_annotations_at_bar(conn, song_id, bar)` — time-active at bar (start_bar ≤ bar < end_bar, or unbounded end)
+
+  **MCP surface (DB-only domain — no Ableton round-trip; Live doesn't model these):**
+  - `ableton_annotation` tool OR action on `ableton_session` — single namespace for `list` / `add` / `update` / `delete` / `get_at_bar`.
+  - Resources: a `hallucinote://annotations/<song_id>` resource for cheap full-song reads.
+  - Prompts: a `compose_with_intent` prompt template that walks the LLM through reading annotations BEFORE generating.
+
+  **Session-start integration:** the session briefing (or a CLAUDE.md addendum) should surface "song annotations exist; read them before composing." Without this nudge, the LLM may build without context even with the data available.
+
+  **Out of scope for v1 of this feature:** versioning of annotation bodies, multi-user attribution, attachments (only text). Composer attribution rides on the existing `events.actor` field.
+
+  **Sizing:** ~1-2 chunks. Schema + mutators + queries + events (one chunk); MCP surface + skill integration + session-briefing wiring (one chunk).
+  (Feature request 2026-05-19; user-flagged HIGH PRIORITY)
+
 - **Envelope discovery on pull — envelopes authored only in Live.** W7-A (2026-05-19) ships `plan_pull_envelopes` in **DB-mirrored mode**: it iterates `envelopes` rows that already exist in the DB and refreshes their breakpoints from Live. This closes the round-trip case (DB-authored envelope → user tweaks in Live → pull → DB updated). It does NOT discover envelopes the user authored *only* in Live without a corresponding DB row — those would require enumerating every linked clip × supported `target_kind`, every linked device parameter, etc., which explodes the read surface (~10s-100s of probes per pull on a real song). A future "envelope discovery" pass could batch-probe likely surfaces (e.g. only on clips/devices/tracks the user mutated recently per `events` log) and fan out judiciously. Not blocking V1 — the round-trip story closes the dominant authoring loop. (W7-A 2026-05-19)
 - **Multi-bar tempo / time-signature automation — INVESTIGATION CLOSED, NO MCP-SIDE FIX POSSIBLE (W6-F 2026-05-19).** The bar-1 case is solved — W5-A (2026-05-18) rewrote `plan_push_tempo_map` / `plan_push_time_signature_map` to emit `ableton_session(set_tempo)` / `set_signature` for bar-1 rows directly. The multi-bar half cannot be closed via MCP: **the underlying Live LOM does not expose `create_automation_envelope` from any song-level path.** Across `gluon/AbletonLive12_MIDIRemoteScripts` and 25+ third-party Live MCP/Remote-Script repos (including ClyphX, the most aggressive Live-automation toolkit), `create_automation_envelope` is called EXCLUSIVELY on `Clip` objects. `song.master_track.mixer_device.song_tempo` IS a `DeviceParameter` but has no envelope-creation path; the Mixer chooser path is GUI-only. Time-signature is worse — `signature_numerator` / `signature_denominator` are plain int properties, not `DeviceParameter` objects, and per Ableton's own forum (t=144193) time-signature automation is unsupported in the API. Sources: Cycling74 LOM, gluon/AbletonLive12 `_MxDCore/LomTypes.py`, Live 12 release notes, Ableton manual. **Supported workarounds**: (a) **per-scene tempo/signature** via `ableton_scene` — scenes carry their own tempo/sig and trigger on launch; works for songs structured around scenes; (b) **real-time step-write** via scheduled `song_tempo.value` writes against `current_song_time` — degraded (lost on reload, requires playback). The Hallucinote planner's "warn and skip non-bar-1 rows" behavior is the right shape until Ableton extends the API. The per-scene workaround is a sync-side architectural change (see follow-on entry below). (corrected W4-E entry; W5-A 2026-05-18; investigation closed W6-F 2026-05-19)
 - **Per-scene tempo/signature as the supported workaround for the multi-bar gap.** Hallucinote DB stores `tempo_map` and `time_signature_map` keyed by `start_bar`. Live exposes per-scene tempo/sig (each session-view scene can override the global values when launched). A sync-side change could map "bar X starts a new section" → "create a scene with tempo Y at that bar boundary," giving users multi-bar tempo/sig in the supported architecture without depending on the missing LOM envelope API. Scope: schema-level decision on scene-bar binding, planner emit logic in `plan_push_tempo_map` (use scene path when non-bar-1 rows are present + scenes are part of the song's structure), test coverage. Not in Wave 6 — separate workstream once a song actually needs multi-bar tempo (falling-walking doesn't). (W6-F 2026-05-19)

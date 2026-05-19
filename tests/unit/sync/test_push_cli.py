@@ -886,12 +886,14 @@ def test_cli_apply_legacy_format_with_plan_warns_but_proceeds(
     ) is not None
 
 
-def test_cli_apply_minimal_format_handles_heterogeneous_batch(
+def test_cli_apply_minimal_format_handles_ack_only_batch(
     conn, song, session, db_path, tmp_path, capsys,
 ):
-    """W10-E PR-review coverage: a 'mix'-style phase mixes link-bearing
-    calls (track creates) with ack-only calls (mixer property sets) — the
-    minimal format must dispatch both correctly via plan order."""
+    """W10-E PR-review coverage: the mix phase emitting ack-only mixer
+    property sets (no per-call link rows) — the minimal format dispatches
+    all calls correctly via plan order even when the result bodies are
+    empty. This is the common shape for the mix phase once tracks are
+    linked."""
     # Build something that yields a heterogeneous mix plan: track + non-default
     # mixer state.
     tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")

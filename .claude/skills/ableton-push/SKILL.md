@@ -93,7 +93,7 @@ For **each** phase in the list (top to bottom):
 python3 -m hallucinote.sync.push_cli plan <phase-name> <session_id> --song <slug>
 ```
 
-Save stdout to `/tmp/ableton-push-plan-<phase>.json` using Write — `<phase>` substituted with the actual phase name (e.g., `tempo_map`, `tracks`). The apply step re-reads this file via `--plan`, so use the same path consistently across 3a / 3b / 3c.
+Save stdout to `/tmp/ableton-push-plan-<phase>.json` using Write — `<phase>` substituted with the actual phase name (e.g., `tempo_map`, `tracks`). The apply step (3c) re-reads this file via `--plan`, so use the same path consistently in 3a and 3c.
 
 Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
 

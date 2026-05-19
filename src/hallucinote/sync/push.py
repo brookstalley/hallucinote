@@ -1770,11 +1770,13 @@ class PushPhase:
     ``plan_fn()``. The thunk pattern (rather than an eager list of
     pre-built ``PushPlan`` objects) is load-bearing: later phases
     inspect ``ableton_links`` written by earlier phases via
-    :func:`apply_push_results`. ``plan_push_clip`` /
-    ``plan_push_arrangement`` raise on unlinked deps by design (W3-C),
-    so pre-building all phases at ``plan_push_song`` time would either
-    fail loudly or require re-planning anyway. Thunks make the
-    re-plan-each-phase contract explicit.
+    :func:`apply_push_results`. ``plan_push_clip`` raises on unlinked
+    deps by design (W3-C); ``plan_push_arrangement`` was W10-G converted
+    to skip-with-note for the same reason (phase-planner partial-state
+    normalization — Wave 0 E1). Either way, pre-building all phases at
+    ``plan_push_song`` time would either fail loudly, skip too much, or
+    require re-planning anyway. Thunks make the re-plan-each-phase
+    contract explicit.
 
     ``name`` is the stable identifier the push skill uses for logging
     and for keying status to phases. Don't rename — tests and the

@@ -33,6 +33,26 @@ def _ts_rows(conn, song_id) -> list:
     ).fetchall())
 
 
+def _ts_insert_raw(
+    conn, song_id, start_bar: float, numerator: int, denominator: int,
+) -> str:
+    """Raw INSERT for time_signature_map — bypasses W10-H's mutator-layer
+    refusal on post-bar-1 rows. Used by these planner tests because the
+    PLANNER must keep handling multi-point maps correctly even though the
+    AUTHORING path is locked to bar 1 for v1 (mutator refuses; pre-W10-H
+    DBs may carry legacy rows; planner needs to read them either way).
+    Returns the new row id."""
+    import uuid as _uuid
+    pid = _uuid.uuid4().hex
+    conn.execute(
+        """INSERT INTO time_signature_map
+               (id, song_id, start_bar, numerator, denominator)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pid, song_id, start_bar, numerator, denominator),
+    )
+    return pid
+
+
 def test_split_bar_empty_map_defaults_to_4_4():
     assert push._split_bar(1.0, []) == (1, 0.0)
     assert push._split_bar(4.5, []) == (4, 2.0)  # half bar in 4/4 -> 2 beats
@@ -70,9 +90,7 @@ def test_meter_at_bar_picks_active_meter(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=9.0, numerator=3, denominator=4
-    )
+    _ts_insert_raw(conn, song, 9.0, 3, 4)
     points = _ts_rows(conn, song)
     assert push._meter_at_bar(1.0, points) == (4, 4)
     assert push._meter_at_bar(8.0, points) == (4, 4)
@@ -81,9 +99,7 @@ def test_meter_at_bar_picks_active_meter(conn, song):
 
 
 def test_meter_at_bar_before_first_point_uses_first(conn, song):
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     assert push._meter_at_bar(1.0, points) == (6, 8)
     assert push._meter_at_bar(4.99, points) == (6, 8)
@@ -184,9 +200,7 @@ def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
     pid_1 = M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=9.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 9.0, 6, 8)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert len(plan.calls) == 1
     call = plan.calls[0]
@@ -205,9 +219,7 @@ def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
     meter unaddressable; warn on both the missing anchor and the
     multi-bar MCP gap.
     """
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 5.0, 6, 8)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert plan.calls == []
     assert any("no row at start_bar=1.0" in n for n in plan.notes)
@@ -259,9 +271,7 @@ def test_position_bar_to_beats_across_meter_change(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     assert push._position_bar_to_beats(5.0, points) == 16.0  # boundary
     assert push._position_bar_to_beats(7.0, points) == 22.0  # 16 + 2×3
@@ -272,9 +282,7 @@ def test_position_bar_to_beats_before_first_ts_point_uses_first_meter(conn, song
     """Bars before ts_points[0].start_bar use ts_points[0]'s meter (matches
     _meter_at_bar fallback). Mirrors the J-6 invariant: songs SHOULD have a
     bar-1 point, but if they don't we don't blow up."""
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     # Bar 3 in 6/8 (from the first point's meter, even though it starts at bar 5):
     # 2 bars × 3 beats = 6 beats.
@@ -349,9 +357,7 @@ def test_plan_push_cue_points_respects_meter_change(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
-    )
+    _ts_insert_raw(conn, song, 5.0, 6, 8)
     M.add_cue_point(conn, song_id=song, position_bar=7.0, name="post-change")
     plan = push.plan_push_cue_points(conn, song_id=song)
     cues = plan.calls[0].args["cues"]

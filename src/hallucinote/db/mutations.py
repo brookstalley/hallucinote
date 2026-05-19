@@ -1464,6 +1464,38 @@ def add_time_signature_point(
             f"numerator/denominator must be positive, got {numerator}/{denominator}"
         )
     actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # W10-H: refuse to author meter changes after bar 1. Live 12.4's MCP
+    # has no `song_signature` automation target_kind, so within-song meter
+    # ratchets can't reach Live. Per user 2026-05-19, ship loud refusal at
+    # both DB-mutator and planner layers (dual-layer pattern matching D2);
+    # punt the working impl to v1.1 (per-bar-arrangement-clip workaround).
+    # Idempotent re-adds at start_bar > 1.0 only fail if no row exists yet —
+    # if a row at this position already exists with matching values, the
+    # upsert path below returns "unchanged" silently (no new state).
+    # Guard fires only for start_bar > 1.0 — the policy is "no within-song
+    # ratchet"; bar-1 is the global meter (always allowed) and start_bar < 1.0
+    # falls through to the schema CHECK (also rejected, with a different
+    # error). The W12-A idempotency contract is preserved: if a row at
+    # this position already exists with matching values, we still fall
+    # through to the upsert path which returns "unchanged".
+    if start_bar > 1.0:
+        existing_at_pos = conn.execute(
+            """SELECT id, numerator, denominator FROM time_signature_map
+               WHERE song_id = ? AND start_bar = ?""",
+            (song_id, start_bar),
+        ).fetchone()
+        if existing_at_pos is None or (
+            existing_at_pos["numerator"], existing_at_pos["denominator"]
+        ) != (numerator, denominator):
+            raise ValueError(
+                f"add_time_signature_point: refusing to author meter at "
+                f"start_bar={start_bar} — Live 12.4's MCP has no "
+                f"`song_signature` automation target_kind, so within-song "
+                f"meter ratchets can't reach Live. Use a single global "
+                f"meter (one row at start_bar=1.0) for v1; the per-bar-"
+                f"arrangement-clip workaround is v1.1 scope (W10-H/v1.1). "
+                f"See ableton://guides/gaps for the LOM constraint."
+            )
     existing = conn.execute(
         """SELECT id, numerator, denominator FROM time_signature_map
            WHERE song_id = ? AND start_bar = ?""",
@@ -1540,10 +1572,24 @@ def update_time_signature_point(
             f"denominator must be positive, got {changes['denominator']}"
         )
     row = conn.execute(
-        "SELECT song_id FROM time_signature_map WHERE id = ?", (point_id,)
+        """SELECT song_id, start_bar FROM time_signature_map WHERE id = ?""",
+        (point_id,),
     ).fetchone()
     if row is None:
         return
+    # W10-H: updates to post-bar-1 rows are refused for the same reason
+    # adds are (no MCP path for per-bar meter automation). Updates at
+    # bar 1 are fine — that's the global meter. Pre-bar-1 rows shouldn't
+    # exist (schema CHECK rejects start_bar < 1.0), but if one does,
+    # refuse out of paranoia.
+    if row["start_bar"] != 1.0:
+        raise ValueError(
+            f"update_time_signature_point: refusing to update meter at "
+            f"start_bar={row['start_bar']} — Live 12.4's MCP has no "
+            f"`song_signature` automation target_kind, so within-song "
+            f"meter ratchets can't reach Live. Use a single global meter "
+            f"(one row at start_bar=1.0) for v1. See ableton://guides/gaps."
+        )
     sets = [f"{k} = ?" for k in changes]
     vals = list(changes.values()) + [point_id]
     conn.execute(

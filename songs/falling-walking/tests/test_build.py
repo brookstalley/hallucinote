@@ -190,8 +190,9 @@ def test_build_push_planners_run_without_error(build_module):
                     db_id=c["id"], ableton_index=c["slot"],
                 )
 
-        # plan_push_arrangement is strict (W3-F follow-up): tracks AND
-        # clips must be linked. With the loop above, they are.
+        # plan_push_arrangement (W10-G) skip-and-warns per row when
+        # tracks or clips aren't linked. With the loop above, all are
+        # linked → plan emits a real call per row, no skip-warns.
         arrangement_plan = push.plan_push_arrangement(
             conn, song_id=song_id, session_id=session_id,
         )

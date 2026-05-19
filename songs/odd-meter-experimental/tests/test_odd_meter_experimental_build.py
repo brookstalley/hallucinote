@@ -63,11 +63,17 @@ def test_build_runs_clean_and_produces_canary_shape(build_module):
         conn.close()
 
 
-def test_time_signature_map_has_meter_ratchet(build_module):
-    """The fracture section authors per-bar time_signature_map points.
+def test_time_signature_map_is_bar_1_only_per_W10H(build_module):
+    """W10-H (post-Wave-0): the within-section meter ratchet that this
+    canary was DESIGNED to surface is now refused at the mutator layer in
+    v1 — Live 12.4's MCP has no `song_signature` automation target, so the
+    ratchet can't reach Live. Per user-locked policy 2026-05-19, v1 ships
+    loud refusal; v1.1 will explore the per-bar-arrangement-clip workaround.
 
-    THIS IS THE CANARY for the v1 question: does the DB even MODEL within-section
-    meter changes? Test asserts the DB rows exist; push planner skips them.
+    The canary's CONCEPT survives (fracture's polyrhythmic content + the
+    7/8 base) but its meter map is now bar-1-only (single 7/8 row).
+    Re-running the canary on a v1.1 with ratchet support will need the
+    test updated back to the pre-W10-H shape.
     """
     from hallucinote.db import init_db, queries as Q
 
@@ -75,29 +81,14 @@ def test_time_signature_map_has_meter_ratchet(build_module):
     conn = init_db(build_module.DB_PATH)
     try:
         ts_pts = Q.get_time_signature_map(conn, song_id)
-        # Should have: bar 1 (7/8) + 8 fracture bars (varying) + bar 49 (7/8) = 10.
-        assert len(ts_pts) >= 10, (
-            f"expected >=10 time_signature_map rows for the meter ratchet, "
-            f"got {len(ts_pts)}"
+        # Bar 1 only — the W10-H mutator refusal prevents the ratchet.
+        assert len(ts_pts) == 1, (
+            f"expected exactly 1 time_signature_map row (bar-1 only per "
+            f"W10-H), got {len(ts_pts)}"
         )
-
-        # Bar 1 = 7/8.
-        bar1 = next(p for p in ts_pts if p["start_bar"] == 1.0)
+        bar1 = ts_pts[0]
+        assert bar1["start_bar"] == 1.0
         assert (bar1["numerator"], bar1["denominator"]) == (7, 8)
-
-        # Fracture bars 41..48 cycle (7,7,5,5,6,6,7,7).
-        expected_cycle = [(7, 8), (7, 8), (5, 8), (5, 8),
-                          (6, 8), (6, 8), (7, 8), (7, 8)]
-        for i, (en, ed) in enumerate(expected_cycle):
-            bar = float(41 + i)
-            p = next(p for p in ts_pts if p["start_bar"] == bar)
-            assert (p["numerator"], p["denominator"]) == (en, ed), (
-                f"bar {bar} expected {en}/{ed} got {p['numerator']}/{p['denominator']}"
-            )
-
-        # Release returns to 7/8 at bar 49.
-        rel = next(p for p in ts_pts if p["start_bar"] == 49.0)
-        assert (rel["numerator"], rel["denominator"]) == (7, 8)
     finally:
         conn.close()
 

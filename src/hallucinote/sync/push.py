@@ -384,16 +384,15 @@ def plan_push_arrangement(
     (each call addresses an independent (track, slot, position) triple)
     and Live's underlying API handles them serially.
 
-    Pre-conditions (strict — raises with actionable error if violated,
-    matching :func:`plan_push_clip`'s strict-contract discipline post-W3-C):
-      - Every involved track has a ``track`` link in this session.
-      - Every involved session clip has a ``clip`` link in this session.
-
-    Strict raise rather than warn+skip: a song-wide arrangement push
-    with unlinked elements means the caller skipped a phase
-    (plan_push_song_tracks / clip-create) — silently building a partial
-    arrangement would leave Live in a wrong state that's hard to
-    detect downstream. The error message points at the missing phase.
+    Pre-conditions (W10-G post-Wave-0): unlinked deps skip-and-warn
+    instead of raising. The prior strict-raise contract (W3-C/F) was
+    correct in intent but unfriendly in practice — Wave 0's full-band-rock
+    canary surfaced this as a Python traceback through the CLI when an
+    earlier phase failed partway. W10-G normalizes phase-planner partial-
+    state behavior: every planner skips-with-note, matching the existing
+    ``plan_push_envelopes`` and ``plan_push_devices`` patterns. The agent
+    sees actionable notes per skipped row and continues; nothing in Live
+    gets half-built because the row simply isn't emitted as a call.
 
     Position conversion: each row's 1-based fractional ``start_bar`` is
     converted to cumulative beats from song start via
@@ -406,9 +405,10 @@ def plan_push_arrangement(
     knowledge of what's currently in the arrangement) — out of scope for
     pure-DB planners; see W3-I.
 
-    Returns N decomposed calls. Each call's result must carry
-    ``arrangement_clip_index`` so :func:`apply_push_results` can record
-    the binding under the ``arrangement_clip:{db_id}`` key.
+    Returns N decomposed calls (one per row whose track + clip are both
+    linked). Each call's result must carry ``arrangement_clip_index`` so
+    :func:`apply_push_results` can record the binding under the
+    ``arrangement_clip:{db_id}`` key.
     """
     plan = PushPlan()
     arr_rows = Q.get_arrangement_for_song(conn, song_id)
@@ -427,25 +427,24 @@ def plan_push_arrangement(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            raise ValueError(
-                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
-                f"references track {row['track_id']!r}, which is not linked "
-                f"in session {session_id!r}. Run plan_push_song_tracks(conn, "
-                f"song_id=..., session_id=...) first, apply_push_results, "
-                f"then re-run plan_push_arrangement."
+            plan.warn(
+                f"arrangement_clip {row['id']!r}: track {row['track_id']!r} "
+                f"not linked in session {session_id!r}. Run plan_push_song_tracks "
+                f"+ apply_push_results before this phase to surface the link. "
+                f"Skipping this placement."
             )
+            continue
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
-            raise ValueError(
-                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
-                f"references session clip {row['clip_id']!r}, which is not "
-                f"linked in session {session_id!r}. Run the clip-create "
-                f"phase (plan_push_clip per clip OR the master orchestrator's "
-                f"clip phase), apply_push_results, then re-run "
-                f"plan_push_arrangement."
+            plan.warn(
+                f"arrangement_clip {row['id']!r}: session clip {row['clip_id']!r} "
+                f"not linked in session {session_id!r}. Run the clip-create "
+                f"phase + apply_push_results to surface the link. "
+                f"Skipping this placement."
             )
+            continue
         plan.add(ToolCall(
             tool="ableton_clip",
             args={
@@ -1771,11 +1770,13 @@ class PushPhase:
     ``plan_fn()``. The thunk pattern (rather than an eager list of
     pre-built ``PushPlan`` objects) is load-bearing: later phases
     inspect ``ableton_links`` written by earlier phases via
-    :func:`apply_push_results`. ``plan_push_clip`` /
-    ``plan_push_arrangement`` raise on unlinked deps by design (W3-C),
-    so pre-building all phases at ``plan_push_song`` time would either
-    fail loudly or require re-planning anyway. Thunks make the
-    re-plan-each-phase contract explicit.
+    :func:`apply_push_results`. ``plan_push_clip`` raises on unlinked
+    deps by design (W3-C); ``plan_push_arrangement`` was W10-G converted
+    to skip-with-note for the same reason (phase-planner partial-state
+    normalization — Wave 0 E1). Either way, pre-building all phases at
+    ``plan_push_song`` time would either fail loudly, skip too much, or
+    require re-planning anyway. Thunks make the re-plan-each-phase
+    contract explicit.
 
     ``name`` is the stable identifier the push skill uses for logging
     and for keying status to phases. Don't rename — tests and the

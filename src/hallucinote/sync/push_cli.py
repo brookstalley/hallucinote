@@ -15,9 +15,13 @@ Subcommands:
         -> emit one phase's PushPlan as JSON (same shape as pull_cli's
            plan output).
 
-    push_cli apply <session_id> (--song SLUG | --db PATH) --results R
+    push_cli apply <session_id> (--song SLUG | --db PATH) --results R [--plan P]
         -> read the results array, call apply_push_results, emit a
            {"applied", "failed", "details"} summary.
+           W10-E: results may use the MINIMAL format (list of {ok, result}
+           in plan order, no per-entry key/tool); pass --plan to point at
+           the original plan.json so keys + tools get re-derived. The legacy
+           full format ({key, ok, tool, result}) still works without --plan.
 
     push_cli probe-and-link <session_id> (--song SLUG | --db PATH) --snapshot S
         -> read a {"tracks": [...], "returns": [...]} snapshot
@@ -121,9 +125,56 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     if not isinstance(results, list):
         raise SystemExit(
             "push_cli apply: results file must be a JSON array of "
-            "{key, ok, tool, result} dicts"
+            "{key, ok, tool, result} dicts OR a minimal-format array of "
+            "{ok, result} dicts (use --plan to enrich)"
         )
     conn = connect(_resolve_db_path(args))
+
+    # W10-E: support the minimal results format (positional {ok, result}
+    # list, no per-entry key/tool). Agent assembles roughly half as much
+    # JSON per call. Sniff: if NO entry carries 'key', look up the plan
+    # via --plan <path> and zip by position. Legacy format still accepted.
+    # Mixed-format input is rejected explicitly (rather than silently
+    # falling back to one path) — the inconsistency almost certainly
+    # signals an authoring bug worth surfacing.
+    if results:
+        keyed_count = sum(1 for r in results if "key" in r)
+        if 0 < keyed_count < len(results):
+            raise SystemExit(
+                f"push_cli apply: mixed result formats — {keyed_count}/"
+                f"{len(results)} entries carry 'key', the rest don't. Use "
+                "ONE format throughout: legacy ({key, ok, tool, result}) OR "
+                "minimal ({ok, result}, then pass --plan)."
+            )
+        if keyed_count == 0:
+            if not args.plan:
+                raise SystemExit(
+                    "push_cli apply: minimal results format requires --plan "
+                    "<path> (the same plan.json that produced the results) "
+                    "so keys + tools can be re-derived. Pass --plan or fall "
+                    "back to legacy {key, ok, tool, result} entries."
+                )
+            plan = json.loads(Path(args.plan).read_text())
+            calls = plan.get("calls") or []
+            if len(results) != len(calls):
+                raise SystemExit(
+                    f"push_cli apply: minimal results length {len(results)} "
+                    f"doesn't match plan calls length {len(calls)} — re-run "
+                    f"plan + execute, or fall back to legacy format."
+                )
+            results = [
+                {**r, "key": c.get("key"), "tool": c.get("tool")}
+                for r, c in zip(results, calls)
+            ]
+        elif args.plan is not None:
+            # Legacy format with --plan also passed: silently ignoring would
+            # let the user think --plan is doing something. Warn loudly.
+            print(
+                "push_cli apply: --plan is ignored when results carry their "
+                "own 'key' (legacy format). Drop --plan or convert to minimal "
+                "format ({ok, result} per entry).",
+                file=sys.stderr,
+            )
 
     # apply_push_results is void on success; raises on unknown key kinds.
     # Surface a tiny summary so the skill can report per-phase progress.
@@ -296,6 +347,11 @@ def main(argv: list[str] | None = None) -> int:
     _add_db_args(p_apply)
     p_apply.add_argument("--results", required=True,
                          help="path to the results JSON the skill assembled")
+    p_apply.add_argument("--plan", default=None,
+                         help="W10-E: path to the original plan JSON. Required "
+                              "when --results uses the minimal format (list of "
+                              "{ok, result} without per-entry key/tool); ignored "
+                              "for the legacy {key, ok, tool, result} format.")
     p_apply.add_argument("--reason", default=None,
                          help="optional reason annotation for emitted events")
     p_apply.set_defaults(func=_cmd_apply)

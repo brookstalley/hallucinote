@@ -93,29 +93,39 @@ For **each** phase in the list (top to bottom):
 python3 -m hallucinote.sync.push_cli plan <phase-name> <session_id> --song <slug>
 ```
 
-Save stdout to `/tmp/ableton-push-plan.json` using Write. Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
+Save stdout to `/tmp/ableton-push-plan-<phase>.json` using Write — `<phase>` substituted with the actual phase name (e.g., `tempo_map`, `tracks`). The apply step re-reads this file via `--plan`, so use the same path consistently across 3a / 3b / 3c.
+
+Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
 
 If `plan.calls` is empty, skip to the next phase. Common reasons: nothing in the DB for this phase (e.g., no devices), or every entity already linked (idempotent re-push).
 
-**3b. Execute each call.**
+**3b. Execute each call (minimal format).**
 
-For each `call` in `plan.calls`:
+For each `call` in `plan.calls`, in plan-list order:
 
 - `call.tool` always starts with `ableton_` — every emitter routes to a real `hallucinote-mcp` tool. (As of W5-A there are no emulator placeholders — `mcp_names.ALIASES_TODAY` is empty.)
 - Route to the matching MCP namespace: `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "create", ...}`).
-- On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
-- On failure (MCP raises), build `{"key": call.key, "ok": false, "tool": call.tool, "error": "<message>"}` and continue to the next call. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
+- **W10-E minimal format (recommended)**: build a compact `{"ok": true, "result": <response>}` per call — ~half the JSON of the legacy format. The CLI re-derives `key` + `tool` from the plan via `--plan`.
+- On failure (MCP raises), build `{"ok": false, "error": "<message>"}` and continue. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
+
+Order in the results list MUST match the order of calls in `plan.calls`. The CLI zips them by position.
 
 **Tempo / signature: bar-1 only.** Live's MCP exposes `ableton_session(set_tempo)` and `set_signature` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (`ableton_automation` has no `song_tempo` / `song_signature` `target_kind` — see `hallucinote_mcp/.../guides/gaps.md`). The planner emits `ableton_session(set_tempo/set_signature)` for the bar-1 row of each map and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
 
-**3c. Assemble + apply.**
+**3c. Apply with --plan (minimal format).**
 
-Write the results array to `/tmp/ableton-push-results.json` and run:
+Write the minimal results array to `/tmp/ableton-push-results.json` and run:
 ```
-python3 -m hallucinote.sync.push_cli apply <session_id> --song <slug> --results /tmp/ableton-push-results.json
+python3 -m hallucinote.sync.push_cli apply <session_id> --song <slug> \
+    --results /tmp/ableton-push-results.json \
+    --plan /tmp/ableton-push-plan-<phase>.json
 ```
+
+The `--plan` arg points the CLI at the plan that produced the results, so it can re-derive `key` + `tool` and dispatch to the right apply path per call.
 
 The CLI prints `{"applied": N, "failed": M, "details": [...]}`. The apply call writes `ableton_links` rows from successful results so the next phase's planner sees the new state.
+
+**Legacy fallback**: if you already have `{"key", "ok", "tool", "result"}` entries (e.g., from a pre-W10-E playbook), pass them WITHOUT `--plan`. The CLI sniffs the format and accepts either.
 
 **3d. Report per-phase.**
 

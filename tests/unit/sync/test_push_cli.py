@@ -706,3 +706,216 @@ def test_cli_probe_and_link_requires_session_id_when_no_auto(
             "probe-and-link", "--song", "t", "--db", str(db_path),
             "--snapshot", str(snapshot),
         ])
+
+
+# ---------------------------------------------------------------------------
+# W10-E: minimal results format (positional {ok, result}, no per-entry key/tool)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_apply_accepts_minimal_results_with_plan(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E: agent assembles half as much JSON per call by dropping
+    `key` and `tool` from each result; CLI re-derives them from --plan."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+
+    # Plan the tracks phase to capture a real key.
+    push_cli.main(["plan", "tracks", session, "--db", str(db_path)])
+    plan_json = json.loads(capsys.readouterr().out)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan_json))
+    assert len(plan_json["calls"]) == 1
+    # The plan's one call should be a track create — fake a successful
+    # Live response without echoing key/tool.
+    minimal_results = [{"ok": True, "result": {"track_index": 1}}]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(minimal_results))
+
+    push_cli.main([
+        "apply", session, "--db", str(db_path),
+        "--results", str(results_path),
+        "--plan", str(plan_path),
+    ])
+    apply_summary = json.loads(capsys.readouterr().out)
+    assert apply_summary["applied"] == 1
+    assert apply_summary["failed"] == 0
+    # Link landed.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is not None
+
+
+def test_cli_apply_minimal_requires_plan(
+    conn, song, session, db_path, tmp_path,
+):
+    """W10-E: minimal results without --plan is a teaching error."""
+    minimal_results = [{"ok": True, "result": {"track_index": 1}}]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(minimal_results))
+    with pytest.raises(SystemExit, match="minimal results format requires --plan"):
+        push_cli.main([
+            "apply", session, "--db", str(db_path),
+            "--results", str(results_path),
+        ])
+
+
+def test_cli_apply_minimal_length_mismatch_teaches(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E: results count mismatching plan count refuses with the
+    actual counts in the message (so the user can spot the missing call)."""
+    M.create_track(conn, song_id=song, track_index=1, name="T1", kind="midi")
+    M.create_track(conn, song_id=song, track_index=2, name="T2", kind="midi")
+    push_cli.main(["plan", "tracks", session, "--db", str(db_path)])
+    plan_json = json.loads(capsys.readouterr().out)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan_json))
+    assert len(plan_json["calls"]) == 2
+    # Only one result for two calls.
+    minimal_results = [{"ok": True, "result": {"track_index": 1}}]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(minimal_results))
+    with pytest.raises(SystemExit, match=r"length 1 doesn't match plan calls length 2"):
+        push_cli.main([
+            "apply", session, "--db", str(db_path),
+            "--results", str(results_path),
+            "--plan", str(plan_path),
+        ])
+
+
+def test_cli_apply_legacy_format_still_works(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E: existing callers using {key, ok, tool, result} keep working
+    unchanged. --plan is ignored in this path (sniff: if any entry has key,
+    treat as legacy)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+    push_cli.main(["plan", "tracks", session, "--db", str(db_path)])
+    plan_json = json.loads(capsys.readouterr().out)
+    legacy_results = [
+        {
+            "key": plan_json["calls"][0]["key"],
+            "ok": True,
+            "tool": plan_json["calls"][0]["tool"],
+            "result": {"track_index": 1},
+        }
+    ]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(legacy_results))
+    push_cli.main([
+        "apply", session, "--db", str(db_path),
+        "--results", str(results_path),
+    ])  # NO --plan
+    apply_summary = json.loads(capsys.readouterr().out)
+    assert apply_summary["applied"] == 1
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is not None
+
+
+def test_cli_apply_empty_results_is_no_op(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E: empty list applies cleanly (zero net work). Both formats
+    happen to look identical for empty input — sniff defaults to legacy."""
+    results_path = tmp_path / "results.json"
+    results_path.write_text("[]")
+    push_cli.main([
+        "apply", session, "--db", str(db_path),
+        "--results", str(results_path),
+    ])
+    apply_summary = json.loads(capsys.readouterr().out)
+    assert apply_summary["applied"] == 0
+    assert apply_summary["failed"] == 0
+
+
+def test_cli_apply_rejects_mixed_results_format(
+    conn, song, session, db_path, tmp_path,
+):
+    """W10-E PR-review correctness: half the entries with `key` and half
+    without is almost certainly a bug — fail loudly rather than picking
+    one format silently."""
+    M.create_track(conn, song_id=song, track_index=1, name="T1", kind="midi")
+    M.create_track(conn, song_id=song, track_index=2, name="T2", kind="midi")
+    mixed_results = [
+        {"key": "track:abc", "ok": True, "tool": "ableton_track", "result": {"track_index": 1}},
+        {"ok": True, "result": {"track_index": 2}},  # missing key
+    ]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(mixed_results))
+    with pytest.raises(SystemExit, match="mixed result formats"):
+        push_cli.main([
+            "apply", session, "--db", str(db_path),
+            "--results", str(results_path),
+        ])
+
+
+def test_cli_apply_legacy_format_with_plan_warns_but_proceeds(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E PR-review correctness: passing --plan with legacy-keyed
+    results was previously a silent ignore — now warns to stderr so the
+    user notices the unused arg, but still applies cleanly."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+    push_cli.main(["plan", "tracks", session, "--db", str(db_path)])
+    plan_json = json.loads(capsys.readouterr().out)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan_json))
+
+    legacy_results = [{
+        "key": plan_json["calls"][0]["key"],
+        "ok": True,
+        "tool": plan_json["calls"][0]["tool"],
+        "result": {"track_index": 1},
+    }]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(legacy_results))
+
+    push_cli.main([
+        "apply", session, "--db", str(db_path),
+        "--results", str(results_path),
+        "--plan", str(plan_path),  # ignored, but should warn
+    ])
+    captured = capsys.readouterr()
+    assert "--plan is ignored" in captured.err
+    apply_summary = json.loads(captured.out)
+    assert apply_summary["applied"] == 1
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is not None
+
+
+def test_cli_apply_minimal_format_handles_heterogeneous_batch(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """W10-E PR-review coverage: a 'mix'-style phase mixes link-bearing
+    calls (track creates) with ack-only calls (mixer property sets) — the
+    minimal format must dispatch both correctly via plan order."""
+    # Build something that yields a heterogeneous mix plan: track + non-default
+    # mixer state.
+    tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+    M.set_track_mixer(conn, track_id=tid, volume=0.5, pan=-0.25)
+    # Link the track explicitly so the mix phase has work to do.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+
+    push_cli.main(["plan", "mix", session, "--db", str(db_path)])
+    plan_json = json.loads(capsys.readouterr().out)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan_json))
+    assert len(plan_json["calls"]) >= 2  # at least volume + pan
+    # Mixer sets are ack-only — empty result body is fine.
+    minimal_results = [{"ok": True, "result": {}} for _ in plan_json["calls"]]
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps(minimal_results))
+
+    push_cli.main([
+        "apply", session, "--db", str(db_path),
+        "--results", str(results_path),
+        "--plan", str(plan_path),
+    ])
+    apply_summary = json.loads(capsys.readouterr().out)
+    assert apply_summary["applied"] == len(plan_json["calls"])
+    assert apply_summary["failed"] == 0

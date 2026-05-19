@@ -3277,6 +3277,10 @@ def test_apply_notes_warns_on_likely_uuid_rotation(conn, song, session):
         "look moved" in w and "UUID rotates" in w
         for w in out.warnings
     ), out.warnings
+    # Warning names the moved note(s) so the user can act on it.
+    assert any(
+        "pitch 60 0->0.5" in w and "note_id" in w for w in out.warnings
+    ), out.warnings
     # The diff still applies as delete + insert; warning is informational.
     pitches = sorted(
         n["pitch"] for n in Q.get_notes_for_clip(conn, cid)

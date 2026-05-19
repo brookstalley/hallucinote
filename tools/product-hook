@@ -425,6 +425,7 @@ _SESSION_GITIGNORED_PATHS = (
     ".prawduct/.session-start",
     ".prawduct/.subagent-briefing.md",
     ".prawduct/.gates-waived",
+    ".prawduct/.sync-pending",
     ".prawduct/reflections.md",
     ".prawduct/sync-manifest.json",
     ".prawduct/artifacts/build-plan.md",
@@ -505,8 +506,10 @@ def tests_are_current(project_dir: Path) -> tuple[bool, str]:
 
     Uses a "trust the cycle" model: evidence is current if it was written
     during this session (timestamp >= session start) and all tests passed.
-    No fingerprinting or content hashing — the build cycle (write code →
-    run tests → Critic reviews) is the trust boundary.
+    No tree-hashing or content fingerprinting (those mechanisms were
+    removed pre-v1.4 after chronic false positives from metadata churn) —
+    the build cycle (write code → run tests → Critic reviews) is the
+    trust boundary.
 
     Falls back to timestamp-only comparison when no session-start marker
     exists (e.g., running outside a governed session).
@@ -572,6 +575,20 @@ _EVIDENCE_REQUIRED_FIELDS: dict[str, tuple[type, ...]] = {
     "command": (str,),
 }
 
+# v1.4 F4a — coverage-evidence fields. Presence of ``verifier`` is the
+# discriminator: legacy evidence without ``verifier`` validates exactly as
+# before (compat). When ``verifier`` IS present, the writer has opted into
+# the new schema and the other three fields become conditionally required —
+# so writer typos (``coverage`` vs. ``coverage_level``, ``tests_ran`` vs.
+# ``tests_executed``) fail loud instead of silently dropping coverage data.
+_EVIDENCE_COVERAGE_FIELDS: dict[str, tuple[type, ...]] = {
+    "verifier": (str,),
+    "tests_executed": (list,),
+    "changes_referenced": (list,),
+    "coverage_level": (str,),
+}
+_EVIDENCE_COVERAGE_LEVELS = frozenset({"referenced", "executed"})
+
 
 # Critic mode values persisted in .prawduct/.critic-findings.json's `mode` field.
 # Verbose strings are intentional: the JSON is read by humans during session
@@ -581,7 +598,12 @@ _EVIDENCE_REQUIRED_FIELDS: dict[str, tuple[type, ...]] = {
 # so writer drift surfaces immediately.
 _CRITIC_MODE_CHUNK = "chunk (lighter pass, not ready for push)"
 _CRITIC_MODE_FINAL = "final (full review, ready for push)"
-_CRITIC_MODE_VALUES = frozenset({_CRITIC_MODE_CHUNK, _CRITIC_MODE_FINAL})
+_CRITIC_MODE_CUMULATIVE = "cumulative (bundle review, ready for merge)"
+_CRITIC_MODE_VALUES = frozenset({
+    _CRITIC_MODE_CHUNK,
+    _CRITIC_MODE_FINAL,
+    _CRITIC_MODE_CUMULATIVE,
+})
 
 
 def _validate_evidence_schema(evidence: dict) -> tuple[bool, str]:
@@ -591,13 +613,26 @@ def _validate_evidence_schema(evidence: dict) -> tuple[bool, str]:
     Examples this catches: ``ran_at`` instead of ``timestamp``; ``num_passed``
     instead of ``passed``; passed/failed/skipped emitted as strings.
 
+    v1.4 F4a: when ``verifier`` is present, the writer has opted into the
+    coverage-evidence schema and ``tests_executed`` / ``changes_referenced``
+    / ``coverage_level`` are also required. Legacy evidence (pre-F4a shape:
+    no ``verifier`` field — historically called "fingerprint" though the
+    tree-hash mechanism it referred to was removed pre-v1.4) is accepted
+    unchanged; v1.5 will drop the compat path (see Chunk 10's migration
+    NOTE — `prawduct-setup migrate --enable-coverage` surfaces the
+    deprecation).
+
     Returns ``(True, "")`` on success, ``(False, reason)`` on failure. Missing
     fields are reported before wrong-typed fields, so a single fix-it pass
     addresses the highest-priority violations first.
     """
+    required = dict(_EVIDENCE_REQUIRED_FIELDS)
+    if "verifier" in evidence:
+        required.update(_EVIDENCE_COVERAGE_FIELDS)
+
     missing: list[str] = []
     wrong_type: list[str] = []
-    for field, allowed_types in _EVIDENCE_REQUIRED_FIELDS.items():
+    for field, allowed_types in required.items():
         if field not in evidence:
             missing.append(field)
             continue
@@ -610,6 +645,19 @@ def _validate_evidence_schema(evidence: dict) -> tuple[bool, str]:
         return False, f"evidence missing required field(s): {', '.join(sorted(missing))}"
     if wrong_type:
         return False, f"evidence schema violation: {'; '.join(wrong_type)}"
+
+    # Enum check for coverage_level — only when the coverage schema is in use
+    # AND the field's type is already known good (str). Bad-type errors are
+    # surfaced by the loop above; here we just refuse out-of-set values.
+    if "verifier" in evidence:
+        level = evidence.get("coverage_level")
+        if isinstance(level, str) and level not in _EVIDENCE_COVERAGE_LEVELS:
+            allowed = ", ".join(sorted(_EVIDENCE_COVERAGE_LEVELS))
+            return False, (
+                f"evidence schema violation: coverage_level must be one of "
+                f"{{{allowed}}}, got {level!r}"
+            )
+
     return True, ""
 
 
@@ -1319,6 +1367,28 @@ def assemble_session_briefing(
         for adv in advisories:
             msg = adv.get("message", "template drift detected")
             lines.append(f"  - {msg}")
+
+    # F5a sync-pending marker — surfaces when sync couldn't auto-commit
+    # framework drift because a precondition (WIP, protected branch,
+    # in-progress git op) blocked it. Surface so the user/Claude know there
+    # is uncommitted framework drift that should be resolved.
+    sync_pending_path = prawduct_dir / ".sync-pending"
+    if sync_pending_path.is_file():
+        try:
+            pending = json.loads(sync_pending_path.read_text())
+            reason = pending.get("reason", "unknown")
+            version = pending.get("version", "")
+            v_suffix = f" (v{version})" if version else ""
+            lines.append(
+                f"Framework sync pending{v_suffix}: {reason}. "
+                f"Resolve and commit `.prawduct/`/`CLAUDE.md`/etc. drift, "
+                f"or rerun sync once the blocker clears."
+            )
+        except (json.JSONDecodeError, OSError):
+            lines.append(
+                "Framework sync pending: marker file present but unreadable; "
+                "inspect `.prawduct/.sync-pending`."
+            )
 
     # CLAUDE.md size check
     claude_md_path = project_dir / "CLAUDE.md"
@@ -2304,8 +2374,24 @@ def cmd_stop(project_dir: Path) -> int:
     # noted when the gate would have actually blocked (valid findings absent).
     # `has_changes` already reflects baseline-aware diff via git_has_session_changes,
     # so no extra "code changes" check is needed beyond `not doc_only`.
-    critic_would_block = False
+    #
+    # v1.4 F6 — Type: designer-handoff also skips the gate (formalizes the
+    # prior user-memory carveout into a framework rule). Other declared types
+    # (code, doc-only, cleanup, cumulative-final) leave the gate behavior
+    # unchanged — only Critic's *protocol* adjusts inside the agent.
+    designer_handoff_skip = False
     if has_changes and has_build_plan and not doc_only:
+        current_chunk_id = _current_chunk_id_from_status(prawduct_dir)
+        if current_chunk_id is not None:
+            chunk_type, _ = _parse_build_plan_chunk_type(prawduct_dir, current_chunk_id)
+            if chunk_type == "designer-handoff":
+                designer_handoff_skip = True
+                waiver_notes.append(
+                    f"critic: skipped (Chunk {current_chunk_id} declares Type: designer-handoff — v1.4 F6 carveout)"
+                )
+
+    critic_would_block = False
+    if has_changes and has_build_plan and not doc_only and not designer_handoff_skip:
         critic_would_block = True
         critic_findings = prawduct_dir / ".critic-findings.json"
         session_start_file = prawduct_dir / ".session-start"
@@ -2493,13 +2579,612 @@ def cmd_validate_evidence(project_dir: Path) -> int:
 
 
 # =============================================================================
+# check-cumulative-critic command (v1.4 F2 — PR gate)
+# =============================================================================
+
+
+_BUILD_PLAN_PATH_RE = re.compile(r"`([^`\s]+)`")
+_BUILD_PLAN_NEW_QUALIFIER_RE = re.compile(r"\bnew\s+`([^`\s]+)`")
+# Per-chunk Type declaration (v1.4 F6 — proportional Critic via chunk type).
+# Matches `- **Type:** <token>` or `**Type:** <token>` as a list item; trailing
+# parenthetical prose is allowed and ignored.
+_BUILD_PLAN_TYPE_RE = re.compile(r"^[\s\-\*]*\*\*Type:\*\*\s*([A-Za-z][\w\-]*)")
+_BUILD_PLAN_ALLOWED_TYPES = frozenset(
+    {"code", "doc-only", "cleanup", "designer-handoff", "cumulative-final"}
+)
+
+
+def _looks_like_file_path(token: str) -> bool:
+    """A backticked token is a precise file-path reference only when it
+    contains ``/`` — i.e. the chunk author wrote a specific relative path.
+    Bare filenames in prose (e.g. ``backlog.md``, ``SKILL.md``) are usually
+    conceptual references whose actual location varies, so they're not
+    verifiable in a useful way.
+
+    Slash-commands (``/pr``, ``/learnings``, ``/critic``) also contain
+    ``/`` but are not file paths. Exclude tokens that start with ``/``,
+    have no further ``/``, and contain no ``.`` — that shape is a single
+    slash-command identifier, not a path."""
+    if "/" not in token:
+        return False
+    if token.startswith("/") and "/" not in token[1:] and "." not in token:
+        return False
+    return True
+
+
+def _parse_build_plan_chunk_refs(prawduct_dir: Path, chunk_id: str) -> dict:
+    """Extract backticked file-path references from a single chunk's section
+    in ``.prawduct/artifacts/build-plan.md``.
+
+    The section is located by name (``### Chunk <chunk_id>:`` prefix, leading
+    zeros tolerant), and parsing stops at the next ``### `` or ``## `` heading
+    — sibling chunks' refs are NOT returned. Fenced code blocks (```...```)
+    are skipped because project-structure diagrams aren't load-bearing prose.
+    Paths preceded by the word ``new`` on the same line are skipped as
+    intra-chunk forward references (files the chunk creates rather than
+    modifies).
+
+    Returns ``{"file_paths": [{"line_num": int, "ref": str}, ...],
+    "error": str | None}``. Symbol and backlog-ID extraction are deferred —
+    see Chunk 02 plan-vs-execution divergence (commit message).
+    """
+    result: dict = {"file_paths": [], "error": None}
+    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    if not plan_path.is_file():
+        result["error"] = f"missing build-plan: {plan_path}"
+        return result
+    try:
+        content = plan_path.read_text()
+    except OSError as exc:
+        result["error"] = f"unreadable build-plan: {exc}"
+        return result
+
+    # Normalize chunk_id: strip leading zeros for matching ("02" matches
+    # "### Chunk 2:" and vice versa) but report the original in errors.
+    target = chunk_id.lstrip("0") or "0"
+
+    in_section = False
+    in_fence = False
+    section_lines: list[tuple[int, str]] = []
+    for line_num, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("### Chunk "):
+            # Heading format: "### Chunk NN: Name"
+            rest = stripped[len("### Chunk "):]
+            head = rest.split(":", 1)[0].strip()
+            head_norm = head.lstrip("0") or "0"
+            if in_section:
+                # Entered a sibling chunk; stop accumulating.
+                break
+            if head_norm == target:
+                in_section = True
+            continue
+        if not in_section:
+            continue
+        if stripped.startswith("## "):
+            # Left the Build Chunks section entirely.
+            break
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        section_lines.append((line_num, line))
+
+    if not in_section and not section_lines:
+        result["error"] = f"chunk {chunk_id!r} not found in build-plan"
+        return result
+
+    seen: set[tuple[str, int]] = set()
+    for line_num, line in section_lines:
+        # Collect spans preceded by "new " — these get filtered out.
+        excluded_spans: list[tuple[int, int]] = [
+            m.span(1) for m in _BUILD_PLAN_NEW_QUALIFIER_RE.finditer(line)
+        ]
+        for match in _BUILD_PLAN_PATH_RE.finditer(line):
+            token = match.group(1)
+            if not _looks_like_file_path(token):
+                continue
+            if any(start == match.start(1) for start, _ in excluded_spans):
+                continue
+            key = (token, line_num)
+            if key in seen:
+                continue
+            seen.add(key)
+            result["file_paths"].append({"line_num": line_num, "ref": token})
+    return result
+
+
+def _parse_build_plan_chunk_type(
+    prawduct_dir: Path, chunk_id: str
+) -> tuple[str | None, str | None]:
+    """Extract the `Type:` declaration from a chunk's build-plan section.
+
+    Returns ``(chunk_type, error)``. ``chunk_type`` is one of
+    ``code | doc-only | cleanup | designer-handoff | cumulative-final``.
+    Default (field absent) is ``code`` — fail-closed so a missing declaration
+    runs the full Critic protocol rather than silently triggering a carveout
+    (learnings: "escape hatches in classification create silent failures").
+    Unknown values surface as ``(None, "unknown type: <value>")`` so the
+    author fixes the typo instead of getting silent fall-through.
+
+    Section discovery mirrors ``_parse_build_plan_chunk_refs`` — name-anchored
+    on ``### Chunk <chunk_id>:`` with leading-zero tolerance; fenced code
+    blocks are skipped.
+    """
+    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    if not plan_path.is_file():
+        return None, f"missing build-plan: {plan_path}"
+    try:
+        content = plan_path.read_text()
+    except OSError as exc:
+        return None, f"unreadable build-plan: {exc}"
+
+    target = chunk_id.lstrip("0") or "0"
+
+    in_section = False
+    in_fence = False
+    section_found = False
+    declared: str | None = None
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### Chunk "):
+            rest = stripped[len("### Chunk "):]
+            head = rest.split(":", 1)[0].strip()
+            head_norm = head.lstrip("0") or "0"
+            if in_section:
+                break  # hit sibling chunk
+            if head_norm == target:
+                in_section = True
+                section_found = True
+            continue
+        if not in_section:
+            continue
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = _BUILD_PLAN_TYPE_RE.match(line)
+        if m:
+            declared = m.group(1)
+            break
+
+    if not section_found:
+        return None, f"chunk {chunk_id!r} not found in build-plan"
+
+    if declared is None:
+        return "code", None  # fail-closed default
+    if declared not in _BUILD_PLAN_ALLOWED_TYPES:
+        allowed = ", ".join(sorted(_BUILD_PLAN_ALLOWED_TYPES))
+        return None, f"unknown type: {declared!r} (allowed: {allowed})"
+    return declared, None
+
+
+def _current_chunk_id_from_status(prawduct_dir: Path) -> str | None:
+    """Extract the chunk id of the first `- [ ]` item in the build-plan Status
+    section, e.g. ``"03"`` for ``- [ ] Chunk 03: Foo``. Returns ``None`` if
+    Status is missing, has no current chunk (all complete), or the chunk text
+    isn't in the expected ``Chunk NN:`` form.
+
+    Mirrors the resolution logic in ``cmd_verify_chunk_refs`` so the stop
+    hook and the Critic helper agree on "which chunk is current."
+    """
+    status = _parse_build_plan_status(prawduct_dir)
+    current = status.get("current_chunk", "")
+    if not current.startswith("Chunk "):
+        return None
+    rest = current[len("Chunk "):]
+    chunk_id = rest.split(":", 1)[0].strip()
+    return chunk_id or None
+
+
+def _verify_chunk_refs(project_dir: Path, refs: dict) -> list[dict]:
+    """Verify each file-path ref exists relative to ``project_dir``.
+    Returns a list of ``{"kind", "ref", "line_num", "reason"}`` for missing
+    entries. Empty list = all refs resolved.
+    """
+    missing: list[dict] = []
+    for entry in refs.get("file_paths", []):
+        ref = entry["ref"]
+        target = project_dir / ref
+        if not target.exists():
+            missing.append({
+                "kind": "file_path",
+                "ref": ref,
+                "line_num": entry["line_num"],
+                "reason": "file does not exist",
+            })
+    return missing
+
+
+def cmd_verify_chunk_refs(project_dir: Path, chunk_id: str | None) -> int:
+    """Critic Goal-2 helper: verify symbols/paths referenced in the current
+    chunk's build-plan section actually exist on the filesystem.
+
+    Exit 0 = all refs resolved (or nothing to check). Exit 1 = at least one
+    ref is missing, or the gate cannot be evaluated. stderr lists each
+    missing ref so the Critic can quote it in findings.
+
+    With no ``chunk_id``, reads the current chunk from Status (first unchecked
+    ``- [ ]`` item). If Status has no current chunk (all complete or no
+    Status section), exits 0 — there is nothing to verify.
+    """
+    prawduct_dir = get_prawduct_dir(project_dir)
+    if chunk_id is None:
+        chunk_id = os.environ.get("PRAWDUCT_VERIFY_CHUNK_ID")
+    if chunk_id is None:
+        status = _parse_build_plan_status(prawduct_dir)
+        current = status.get("current_chunk", "")
+        # current is e.g. "Chunk 02: F3 — …"
+        if not current.startswith("Chunk "):
+            print("ok: no current chunk in Status; nothing to verify")
+            return 0
+        rest = current[len("Chunk "):]
+        chunk_id = rest.split(":", 1)[0].strip()
+
+    refs = _parse_build_plan_chunk_refs(prawduct_dir, chunk_id)
+    if refs["error"]:
+        print(f"error: {refs['error']}", file=sys.stderr)
+        return 1
+    missing = _verify_chunk_refs(project_dir, refs)
+    if missing:
+        for m in missing:
+            print(
+                f"missing-ref: {m['ref']} (line {m['line_num']}, {m['kind']}): {m['reason']}",
+                file=sys.stderr,
+            )
+        return 1
+    count = len(refs["file_paths"])
+    print(f"ok: chunk {chunk_id} — {count} file ref(s) verified")
+    return 0
+
+
+# v1.4 F4b — coverage-required gate inputs.
+# Helper kept parallel to ``is_views_enabled`` in tools/lib/views.py: column-0
+# key scan, fail-closed default of False. Inline rather than imported to keep
+# the product-hook surface flat (no new lib dependency just for a 10-line
+# scanner). Same idiom = same drift discipline as views_enabled.
+def _read_bool_yaml_key(state_path: Path, key: str) -> bool:
+    if not state_path.exists():
+        return False
+    try:
+        content = state_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    needle = f"{key}:"
+    for raw in content.splitlines():
+        if raw[:1] in (" ", "\t"):
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.startswith(needle):
+            continue
+        value = line.split(":", 1)[1].strip().lower()
+        return value == "true"
+    return False
+
+
+def _coverage_resolve_base(project_dir: Path) -> tuple[str | None, str]:
+    """Pick the git diff base for coverage verification. Mirrors
+    ``_resolve_base`` in ``tools/test-reference-verify`` so writer (verifier)
+    and reader (verify-coverage) examine the same set of changes. If the
+    bases diverge, every chunk's verify-coverage would emit spurious
+    missing-coverage findings on files outside the verifier's base.
+    """
+    for candidate in ("origin/main", "main", "HEAD~1"):
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", candidate],
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return candidate, candidate
+    return None, "no base candidate resolved (origin/main, main, HEAD~1 all absent)"
+
+
+def _coverage_changed_files(project_dir: Path, base: str) -> list[str]:
+    """Files changed between ``base`` and the working tree, union untracked.
+    Mirrors ``_changed_files`` in ``tools/test-reference-verify`` — same
+    union over ``git diff`` + ``git ls-files --others --exclude-standard``
+    so verify-coverage sees exactly the file set the verifier scored.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", base],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git diff failed: {proc.stderr.strip()}")
+    files = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+    proc2 = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc2.returncode == 0:
+        files.update(line.strip() for line in proc2.stdout.splitlines() if line.strip())
+    return sorted(files)
+
+
+def cmd_verify_coverage(project_dir: Path) -> int:
+    """Critic Goal-1 helper (v1.4 F4b): when ``coverage_required: true`` in
+    project-state.yaml, verify every changed file in the diff appears in
+    ``.test-evidence.json``'s ``changes_referenced`` list.
+
+    Exit codes:
+      0 — check passed, or skipped (``coverage_required: false`` — the v1.4
+          default; opt-in by design).
+      1 — at least one changed file is missing from ``changes_referenced``,
+          or a precondition failed (evidence missing/invalid, schema lacks
+          F4a fields, git base unresolved).
+
+    stderr lists each missing file with language scaled to the declared
+    ``coverage_level`` — ``referenced`` (floor) vs ``executed`` (real
+    coverage tool) — so the Critic can quote it directly in BLOCKING
+    findings without re-deriving the wording.
+    """
+    prawduct_dir = get_prawduct_dir(project_dir)
+    state_path = prawduct_dir / "project-state.yaml"
+
+    if not _read_bool_yaml_key(state_path, "coverage_required"):
+        print("skipped: coverage_required is false (default in v1.4)")
+        return 0
+
+    evidence_path = prawduct_dir / ".test-evidence.json"
+    if not evidence_path.is_file():
+        print(
+            f"error: coverage_required=true but {evidence_path} is missing — "
+            "run the test suite + verifier first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        evidence = json.loads(evidence_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"error: cannot read evidence: {exc}", file=sys.stderr)
+        return 1
+
+    if "verifier" not in evidence:
+        print(
+            "error: coverage_required=true but evidence lacks F4a schema "
+            "(no `verifier` field) — emit coverage fields with "
+            "`tools/test-reference-verify` (or a stronger product-specific "
+            "verifier) before re-running.",
+            file=sys.stderr,
+        )
+        return 1
+
+    ok, reason = _validate_evidence_schema(evidence)
+    if not ok:
+        print(f"error: {reason}", file=sys.stderr)
+        return 1
+
+    coverage_level = evidence["coverage_level"]
+    referenced = set(evidence.get("changes_referenced", []))
+
+    base, base_reason = _coverage_resolve_base(project_dir)
+    if base is None:
+        print(f"error: cannot resolve diff base — {base_reason}", file=sys.stderr)
+        return 1
+
+    try:
+        changed = _coverage_changed_files(project_dir, base)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    missing = [f for f in changed if f not in referenced]
+    if not missing:
+        print(
+            f"ok: {len(changed)} changed file(s) covered "
+            f"(level: {coverage_level})"
+        )
+        return 0
+
+    # Severity wording is per the F4a spec — the floor (``referenced``)
+    # explicitly disclaims execution, the real-coverage level
+    # (``executed``) asserts it. Critic quotes these lines verbatim.
+    if coverage_level == "executed":
+        suffix = "has no executing test."
+    else:
+        suffix = (
+            "is not referenced by any executed test "
+            "(floor check — does not prove execution)."
+        )
+
+    for m in missing:
+        print(
+            f"missing-coverage: {m} (coverage_level: {coverage_level}) — {suffix}",
+            file=sys.stderr,
+        )
+    return 1
+
+
+def cmd_check_cumulative_critic(project_dir: Path) -> int:
+    """Structural gate for `/pr create`: require a fresh cumulative-Critic record.
+
+    Exit 0 only when the Critic findings file:
+      - exists and parses,
+      - is schema-valid (``validate_critic_findings``),
+      - has ``mode == _CRITIC_MODE_CUMULATIVE`` (chunk/final do not satisfy
+        this gate — cumulative is specifically the ``merge-base...HEAD``
+        bundle review),
+      - is fresh (mtime later than the current session's ``.session-start``
+        marker; stale evidence from a prior session is rejected),
+      - contains no unresolved BLOCKING severity findings (WARNING and NOTE
+        are advisory at the PR gate, matching the PR reviewer's semantics).
+
+    Exit 1 otherwise. stderr names the specific check that failed so the
+    caller (`/pr` skill) can present an actionable message to the user.
+    """
+    prawduct_dir = get_prawduct_dir(project_dir)
+    findings_path = prawduct_dir / ".critic-findings.json"
+
+    if not findings_path.is_file():
+        print(
+            "missing: no cumulative-Critic findings at "
+            f"{findings_path}. Run /critic cumulative before opening a PR.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not validate_critic_findings(findings_path):
+        print(
+            f"invalid: {findings_path} did not pass schema validation",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        data = json.loads(findings_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"unreadable: {exc}", file=sys.stderr)
+        return 1
+
+    mode = data.get("mode")
+    if mode != _CRITIC_MODE_CUMULATIVE:
+        print(
+            f"wrong-mode: findings mode is {mode!r}, expected cumulative "
+            f"({_CRITIC_MODE_CUMULATIVE!r}). The cumulative review covers "
+            "`merge-base...HEAD` — re-run /critic cumulative.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Freshness check — fail closed if the marker is missing or the check
+    # itself crashes. Mirrors the `needs_review = True` default in
+    # `_check_previous_session_gates` around line 1872; the cumulative gate
+    # cannot vouch for freshness it can't verify. (See "Escape hatches in
+    # classification create silent failures" in learnings.md.)
+    session_start_path = prawduct_dir / ".session-start"
+    if not session_start_path.is_file():
+        print(
+            "no-session-start: missing .prawduct/.session-start — cannot "
+            "validate cumulative-Critic freshness. Run /clear to start a "
+            "session, then re-run /critic cumulative.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        session_start = session_start_path.read_text().strip()
+        findings_mtime = datetime.fromtimestamp(
+            findings_path.stat().st_mtime, tz=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception as exc:  # prawduct:ok-broad-except — fail closed if freshness inputs are unreadable
+        print(
+            f"freshness-check-failed: could not compare cumulative-Critic "
+            f"findings vs session-start ({exc!r}). Re-run /critic cumulative.",
+            file=sys.stderr,
+        )
+        return 1
+    # Lexicographic compare on whole-second %Y-%m-%dT%H:%M:%SZ strings is
+    # order-preserving — same convention as cmd_clear's gate check around
+    # line 1874. Adding fractional seconds to the format would break both
+    # sides; keep them in lockstep.
+    if findings_mtime <= session_start:
+        print(
+            f"stale: cumulative findings ({findings_mtime}) "
+            f"predate session-start ({session_start}). Re-run "
+            "/critic cumulative in the current session before opening a PR.",
+            file=sys.stderr,
+        )
+        return 1
+
+    findings = data.get("findings", [])
+    blocking = [f for f in findings if isinstance(f, dict) and f.get("severity") == "blocking"]
+    if blocking:
+        first = blocking[0].get("summary", "<no summary>")
+        print(
+            f"blocking: cumulative-Critic recorded {len(blocking)} BLOCKING "
+            f"finding(s). First: {first}. Resolve before opening a PR.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"satisfied: cumulative-Critic record is fresh and clean ({findings_path})")
+    return 0
+
+
+# =============================================================================
 # main
 # =============================================================================
 
 
+def cmd_regen_views(project_dir: Path) -> int:
+    """Regenerate derived views from the change-log canonical store.
+
+    Three views are produced in one pass when `views_enabled: true`:
+
+      1. Build-plan `## Status` block — checkbox flips from `status=shipped` tags
+      2. Release-notes view — `.prawduct/release-notes.md` from `release=` tags
+      3. Scope-rollup view — `scope_rollups:` block in `project-state.yaml`
+         from `scope=` tags
+
+    No-op when `views_enabled: true` is absent (enabled by default in v1.4;
+    sync auto-enables for existing repos and `false` is the explicit opt-out).
+
+    Exit codes:
+      0 - success (views disabled, no changes needed, or regen applied cleanly)
+      2 - I/O or schema error (missing change-log or build-plan)
+    """
+    # Ensure tools/ is on sys.path so `from lib import views` resolves both
+    # when invoked as a script and when imported via SourceFileLoader in tests.
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    from lib import views  # noqa: PLC0415 — lazy import keeps top-level cheap
+
+    prawduct_dir = get_prawduct_dir(project_dir)
+    try:
+        enabled, results = views.plan_regen(prawduct_dir)
+    except FileNotFoundError as e:
+        msg = str(e)
+        if "change-log" in msg:
+            print(f"ERROR: {msg}", file=sys.stderr)
+        elif "build-plan" in msg:
+            print(f"ERROR: {msg}", file=sys.stderr)
+        else:
+            print(f"ERROR: {msg}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"ERROR reading view inputs: {e}", file=sys.stderr)
+        return 2
+
+    if not enabled:
+        print("Views disabled (set views_enabled: true in project-state.yaml).")
+        return 0
+
+    try:
+        views.apply_regen(prawduct_dir, results)
+    except OSError as e:
+        print(f"ERROR writing view output: {e}", file=sys.stderr)
+        return 2
+
+    for r in results:
+        print(r.summary)
+    return 0
+
+
+_USAGE = (
+    "Usage: product-hook "
+    "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
+    "verify-chunk-refs [chunk_id]|verify-coverage|regen-views}"
+)
+
+
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: product-hook {clear|stop|test-status|validate-evidence}", file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
         return 1
 
     command = sys.argv[1]
@@ -2513,8 +3198,17 @@ def main() -> int:
         return cmd_test_status(project_dir)
     elif command == "validate-evidence":
         return cmd_validate_evidence(project_dir)
+    elif command == "check-cumulative-critic":
+        return cmd_check_cumulative_critic(project_dir)
+    elif command == "verify-chunk-refs":
+        chunk_id = sys.argv[2] if len(sys.argv) > 2 else None
+        return cmd_verify_chunk_refs(project_dir, chunk_id)
+    elif command == "verify-coverage":
+        return cmd_verify_coverage(project_dir)
+    elif command == "regen-views":
+        return cmd_regen_views(project_dir)
     else:
-        print("Usage: product-hook {clear|stop|test-status|validate-evidence}", file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
         return 1
 
 

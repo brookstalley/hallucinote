@@ -3,7 +3,7 @@ description: PR lifecycle management — create, update, merge, or check status 
 argument-hint: "[create|update|merge|status]"
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Bash(gh *), Bash(git *), Bash(python3 tools/product-hook test-status), Read, Write, Agent
+allowed-tools: Bash(gh *), Bash(git *), Bash(python3 tools/product-hook test-status), Bash(python3 tools/product-hook check-cumulative-critic), Read, Write, Agent
 ---
 
 You are managing the PR lifecycle for this project. Detect the current state and take the appropriate action.
@@ -37,8 +37,13 @@ $ARGUMENTS
 ### Step 1: Branch hygiene
 Verify on a feature branch (not main/master/develop). Verify commits ahead of base. If uncommitted changes, offer to commit or stash. **Before running the test suite, run `python3 tools/product-hook test-status` — if it exits 0 (`current`), the saved `.prawduct/.test-evidence.json` already covers the current tree (HEAD + uncommitted edits) and re-running is wasteful. Only run the suite if `test-status` reports `stale` or evidence is missing.** When you do run, write fresh evidence so the next caller can skip it.
 
-### Step 2: Independent review — MANDATORY
-**STOP. Do NOT proceed to step 3 until the reviewer agent has completed and written its evidence file.**
+### Step 2: Cumulative-Critic gate — MANDATORY
+**Run `python3 tools/product-hook check-cumulative-critic`.** This gate requires a fresh, blocking-free `cumulative`-mode Critic record covering `merge-base...HEAD`. If it exits non-zero, **STOP**: invoke `/critic cumulative` to produce the missing record, resolve any blocking findings, then re-check. Do NOT proceed to Step 3 until this gate passes.
+
+While `/critic cumulative` runs (~4-10 min), do prep that doesn't depend on findings: `/learnings` for next-chunk topics, draft the PR description in your head, audit `.prawduct/backlog.md` for items this branch resolves, capture deferred chunk-boundary reflections. Reorganizes wait time; doesn't shorten it.
+
+### Step 3: Independent review — MANDATORY
+**STOP. Do NOT proceed to step 4 until the reviewer agent has completed and written its evidence file.**
 
 Spawn a **separate agent** (via the Task tool) for independent review. The reviewer must run in its own context — it has NOT seen your reasoning, and that independence is the point.
 
@@ -55,7 +60,7 @@ Tell the reviewer agent: "You are the PR reviewer. Read `.prawduct/pr-review.md`
 - If the file does not exist, the review did not complete — do NOT proceed
 - Present findings to the user: BLOCKING → stop and fix. WARNING → present, proceed unless user objects. NOTE → include in output.
 
-### Step 3: Verify review gate
+### Step 4: Verify review gate
 Before creating the PR, confirm:
 - The evidence file `.prawduct/.pr-reviews/<branch-name>.json` exists
 - It contains valid JSON with a `findings` array and `summary` field
@@ -63,7 +68,7 @@ Before creating the PR, confirm:
 
 If any check fails, STOP. Do not create the PR.
 
-### Step 4: Create PR
+### Step 5: Create PR
 Push branch with `-u`. Draft title and description from work context + review findings summary. Create via `gh pr create`. Update `pr_number` in the evidence file.
 
 ## Update Flow
@@ -98,5 +103,6 @@ PR review evidence is stored in `.prawduct/.pr-reviews/<branch-name>.json` (with
 - The PR reviewer runs as a **separate agent** — it must have independent context
 - The reviewer reads `.prawduct/pr-review.md` for its instructions
 - Run the full test suite before creating a PR — but check `python3 tools/product-hook test-status` first; skip the run if it reports `current`
+- **Run `python3 tools/product-hook check-cumulative-critic` before creating a PR** — this gate refuses to open a PR without a fresh, blocking-free `cumulative`-mode Critic record (see Step 2). The cumulative review (`merge-base...HEAD`) catches cross-chunk integration cracks per-chunk reviews can't see.
 - Include review findings summary in the PR description
 - **Never run `gh pr create` without a valid evidence file on disk**

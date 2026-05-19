@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import pytest
+from hypothesis import given, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import pull
@@ -172,7 +173,7 @@ def test_apply_session_info_no_master_row_warns(conn, song, session):
 
 def test_apply_returns_list_updates_linked_return(conn, song, session):
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     results = [_result("returns_list", [
@@ -203,7 +204,7 @@ def test_apply_returns_list_accepts_wrapped_shape_from_unified_surface(conn, son
     only identity fields. The apply layer accepts the wrapper natively (no
     skill-side normalization needed)."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # New shape: wrapped dict + return_index instead of index. Mixer state
@@ -226,7 +227,7 @@ def test_apply_return_info_skips_unlinked_return(conn, song, session):
     reports it as ``skipped_unlinked`` rather than writing.
     """
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     # Deliberately NOT linked.
     results = [{
@@ -249,7 +250,7 @@ def test_apply_return_info_ingests_mute_and_solo(conn, song, session):
     handling: DB-side NULL + Ableton-side True/False both count as a
     real change (matches `tracks.mute`/`solo`/`arm` semantics)."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1,
+        conn, song_id=song, name="Reverb", position=1,
         volume=0.85, pan=0.0,
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
@@ -277,7 +278,7 @@ def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
     """Once DB-side mute/solo match the Ableton state, re-applying the
     same probe is a no-op."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1,
+        conn, song_id=song, name="Reverb", position=1,
         volume=0.85, pan=0.0,
     )
     M.update_return(conn, return_id=rid, mute=1, solo=0)
@@ -300,12 +301,72 @@ def test_apply_return_info_mute_solo_no_op_when_unchanged(conn, song, session):
     assert out.no_ops == 1
 
 
+def test_apply_return_info_strips_prefix_no_mutation_on_round_trip(
+    conn, song, session,
+):
+    """W4-C: when the DB stores the SUFFIX-only return name and Ableton
+    reports the PREFIXED form, the planner should diff them as equal
+    (after stripping) — no name mutation fires for a clean round-trip."""
+    rid = M.create_return(
+        conn, song_id=song, name="Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb", "color": None,
+                "volume": 0.85, "panning": 0.0,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    # Strip + diff matches DB; no changes, so no_ops == 1.
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    row = Q.get_return(conn, rid)
+    assert row["name"] == "Reverb"  # still suffix-only
+
+
+def test_apply_return_info_writes_stripped_name_when_changed(
+    conn, song, session,
+):
+    """W4-C: if Ableton reports a return name that differs from the DB
+    (after stripping the prefix), the strip-then-diff path writes the
+    stripped form, not the raw Live-prefixed form."""
+    rid = M.create_return(
+        conn, song_id=song, name="Reverb", position=1,
+        volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Sidechain", "color": None,
+                "volume": 0.85, "panning": 0.0,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_return(conn, rid)
+    assert row["name"] == "Sidechain"  # NOT "A-Sidechain"
+
+
 def test_apply_return_info_ingests_mixer_state(conn, song, session):
     """Wave M-2: the per-return info probe carries the mixer state that
     used to live in the returns_list payload. Diffed and applied via
     update_return."""
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1, volume=0.85, pan=0.0
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     results = [
@@ -407,7 +468,7 @@ def test_apply_track_sends_level_change(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     rid = M.create_return(
-        conn, song_id=song, name="A-Reverb", position=1
+        conn, song_id=song, name="Reverb", position=1
     )
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.0)
@@ -417,14 +478,17 @@ def test_apply_track_sends_level_change(conn, song, session):
     )
     assert out.mutations == 1
     sends = Q.get_sends_for_track(conn, tid)
-    assert any(s["return_name"] == "A-Reverb" and abs(s["level"] - 0.4) < 1e-6
+    # W4-C: DB stores SUFFIX-only return names; the send row joins back the
+    # DB-side name "Reverb" even though Ableton's send map was keyed by
+    # "A-Reverb".
+    assert any(s["return_name"] == "Reverb" and abs(s["level"] - 0.4) < 1e-6
                for s in sends)
 
 
 def test_apply_track_sends_added_in_ableton(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # No existing send row in DB; Ableton has one.
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.3})]
@@ -439,7 +503,7 @@ def test_apply_track_sends_added_in_ableton(conn, song, session):
 def test_apply_track_sends_removed_in_ableton(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
     # Ableton no longer reports A-Reverb on this track.
@@ -455,7 +519,7 @@ def test_apply_track_sends_removed_in_ableton(conn, song, session):
 def test_apply_track_sends_no_op_within_tolerance(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.4001})]
@@ -550,7 +614,7 @@ def test_apply_track_info_unlinked_track_skips_with_warning(conn, song, session)
 
 def test_apply_track_sends_unlinked_track_skips_with_warning(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     # track NOT linked
     results = [_result(f"track_sends:{tid}", {"A-Reverb": 0.4})]
@@ -566,9 +630,9 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
     ValueError is caught per-send and reported as a warning."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    r1 = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    r1 = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=r1, ableton_index=1)
-    r2 = M.create_return(conn, song_id=song, name="B-Delay", position=2)
+    r2 = M.create_return(conn, song_id=song, name="Delay", position=2)
     _link_return(conn, session=session, db_id=r2, ableton_index=2)
     # 1.5 is out of range (set_send_level rejects > 1.0); 0.3 is valid.
     results = [_result(f"track_sends:{tid}",
@@ -577,12 +641,13 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
         conn, results, song_id=song, session_id=session
     )
     # The valid send went through; the out-of-range one is a warning.
+    # W4-C: warning identifies the return by its DB (stripped) form.
     assert out.mutations == 1
-    assert any("rejected" in w and "A-Reverb" in w for w in out.warnings)
+    assert any("rejected" in w and "Reverb" in w for w in out.warnings)
     sends = Q.get_sends_for_track(conn, tid)
-    # Only B-Delay should be present.
+    # Only Delay should be present.
     assert len(sends) == 1
-    assert sends[0]["return_name"] == "B-Delay"
+    assert sends[0]["return_name"] == "Delay"
 
 
 # ---------------------------------------------------------------------------
@@ -883,7 +948,7 @@ def test_plan_pull_devices_emits_list_per_linked_track(conn, song, session):
 
 
 def test_plan_pull_devices_emits_list_per_linked_return(conn, song, session):
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
     assert len(plan.calls) == 1
@@ -895,7 +960,7 @@ def test_plan_pull_devices_emits_list_per_linked_return(conn, song, session):
 
 def test_plan_pull_devices_skips_unlinked_with_warning(conn, song, session):
     M.create_track(conn, song_id=song, track_index=1, name="Drums")
-    M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
     assert plan.calls == []
     assert any("not linked" in n.lower() for n in plan.notes)
@@ -930,7 +995,7 @@ def test_plan_pull_devices_args_match_mcp_list_action_schema(
 
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     plan = pull.plan_pull_devices(conn, song_id=song, session_id=session)
@@ -1136,7 +1201,7 @@ def test_apply_track_devices_swap_within_chain(conn, song, session):
 
 def test_apply_return_devices_uses_return_chain(conn, song, session):
     """Smoke test for the return path through the shared helper."""
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     out = pull.apply_pull_results(
@@ -1184,6 +1249,936 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
     )
     assert out.mutations == 0
     assert any("class_name" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# plan_pull_nested_rack_chains + _apply_nested_rack_chains_for_device (W7-B)
+# ---------------------------------------------------------------------------
+
+
+def _nested_chains_payload(
+    *entries: tuple[int, str, list[tuple[int, str, str]]],
+    parent_kind="track", parent_index=2, rack_position=1,
+    rack_class="DrumGroupDevice",
+) -> dict:
+    """Build a `get_device_chains` payload from
+    ``(chain_index, chain_name, [(position, class_name, display_name), ...])``
+    tuples per nested chain. Mirrors `get_device_chains_handler`'s
+    response shape exactly so apply tests exercise the real wire shape.
+    """
+    addr = {f"{parent_kind}_index": parent_index}
+    chains_out = []
+    for ci, name, devs in entries:
+        chains_out.append({
+            "chain_index": ci,
+            "name": name,
+            "device_count": len(devs),
+            "devices": [
+                {"position": p, "name": n, "class_name": k,
+                 "parameter_count": 0, "is_active": True}
+                for p, k, n in devs
+            ],
+            "is_muted": False,
+            "is_soloed": False,
+        })
+    return {
+        "device_index": rack_position,
+        "class_name": rack_class,
+        "chain_count": len(chains_out),
+        "chains": chains_out,
+        "parent_kind": parent_kind,
+        **addr,
+    }
+
+
+def _build_track_with_rack(conn, song, session, *, ableton_index=5):
+    """Set up a linked track with a rack device on its top-level chain.
+    Returns ``(track_id, chain_id, rack_device_id)``.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=ableton_index)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="DrumGroupDevice", display_name="Drum Rack",
+    )
+    return tid, chain_id, rack_id
+
+
+def test_plan_pull_nested_rack_chains_emits_one_probe_per_rack(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.tool == "ableton_device"
+    assert c.args == {
+        "action": "get_device_chains",
+        "track_index": 5,
+        "device_index": 1,
+    }
+    assert c.key == f"nested_rack_chains:{rack_id}"
+
+
+def test_plan_pull_nested_rack_chains_skips_non_racks(conn, song, session):
+    """Top-level devices that aren't racks don't get a probe — and don't
+    warn either (a valid song shape, not an error)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bass")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor2", display_name="Glue")
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    # Top-level devices exist; no warning fired.
+    assert not any("no top-level devices" in n for n in plan.notes)
+
+
+def test_plan_pull_nested_rack_chains_warns_when_no_top_level_devices(
+    conn, song, session
+):
+    """No devices at all -> the user almost certainly forgot to run
+    `plan_pull_devices` first. Warn so the skill surfaces it."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("no top-level devices" in n for n in plan.notes)
+
+
+def test_plan_pull_nested_rack_chains_skips_unlinked_track(
+    conn, song, session
+):
+    """Unlinked track -> no probe (silent skip, mirrors
+    `plan_pull_device_parameters`'s shape)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="DrumGroupDevice", display_name="Drum Rack")
+    # NOT linked.
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    # No calls and no top-level-device warning (the unlinked track filters
+    # out before the device walk).
+    assert plan.calls == []
+
+
+def test_plan_pull_nested_rack_chains_emits_for_return_rack(
+    conn, song, session
+):
+    """Racks on a return track get the same treatment — addressing via
+    `return_index` instead of `track_index`."""
+    rid = M.create_return(conn, song_id=song, name="Send-Bus", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
+    rack_id = M.create_device(conn, chain_id=chain_id, position=2,
+                              kind="AudioEffectGroupDevice", display_name="FX")
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    c = plan.calls[0]
+    assert c.args == {
+        "action": "get_device_chains",
+        "return_index": 1,
+        "device_index": 2,
+    }
+    assert c.key == f"nested_rack_chains:{rack_id}"
+
+
+def test_plan_pull_nested_rack_chains_args_match_mcp_schema(
+    conn, song, session
+):
+    """Structural contract: every arg the planner emits must be a known
+    param on `ableton_device(action='get_device_chains')`."""
+    from hallucinote_mcp.actions import device as _device_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    gc_action = next(
+        a for a in all_actions()
+        if a.tool == "ableton_device" and a.name == "get_device_chains"
+    )
+    schema_param_names = {p.name for p in gc_action.params}
+
+    _build_track_with_rack(conn, song, session)
+    plan = pull.plan_pull_nested_rack_chains(
+        conn, song_id=song, session_id=session,
+    )
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on get_device_chains schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_nested_rack_chains_creates_chain_and_devices_when_db_empty(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # 1 chain create + 1 device create
+    assert out.mutations == 2
+    chains = Q.get_device_chains_for_rack_device(conn, rack_id)
+    assert len(chains) == 1 and chains[0]["position"] == 1
+    devs = Q.get_devices_for_chain(conn, chains[0]["id"])
+    assert [(d["position"], d["kind"], d["display_name"]) for d in devs] == [
+        (1, "Operator", "Operator"),
+    ]
+
+
+def test_apply_nested_rack_chains_no_op_when_identical(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    M.create_device(conn, chain_id=nested_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_nested_rack_chains_replaces_nested_device_when_kind_changes(
+    conn, song, session
+):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    M.create_device(conn, chain_id=nested_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Compressor2", "Glue")]),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    devs = Q.get_devices_for_chain(conn, nested_chain)
+    assert [(d["kind"], d["display_name"]) for d in devs] == [
+        ("Compressor2", "Glue"),
+    ]
+
+
+def test_apply_nested_rack_chains_deletes_chain_when_ableton_omits_it(
+    conn, song, session
+):
+    """A nested chain Ableton no longer reports gets removed; cascade clears
+    the chain's nested devices + their parameters."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    # Two chains in DB; Ableton reports only chain 1.
+    M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    chain2 = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=2,
+    )
+    M.create_device(conn, chain_id=chain2, position=1,
+                    kind="Sampler", display_name="Sampler")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    # Chain 2 deletion mutates; the empty chain 1 is a no-op shape-wise.
+    assert out.mutations >= 1
+    chains = Q.get_device_chains_for_rack_device(conn, rack_id)
+    assert [c["position"] for c in chains] == [1]
+
+
+def test_apply_nested_rack_chains_warns_when_rack_device_missing(
+    conn, song, session
+):
+    """If the rack row vanished between planner and apply (DB-side drift),
+    apply warns and skips rather than crashing."""
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            "nested_rack_chains:does-not-exist",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any(
+        "rack device row not found" in w
+        for w in out.warnings
+    )
+
+
+def test_apply_nested_rack_chains_skips_when_parent_unlinked(
+    conn, song, session
+):
+    """Defense-in-depth link check: a hand-crafted results.json that
+    references a rack whose parent track isn't linked in this session
+    should be skipped, mirroring `_apply_devices_for_parent`."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    # NOT linked.
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack_id = M.create_device(conn, chain_id=chain_id, position=1,
+                              kind="DrumGroupDevice", display_name="Drum Rack")
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.skipped_unlinked == 1
+    assert out.mutations == 0
+    assert any("not linked in session" in w for w in out.warnings)
+
+
+def test_apply_nested_rack_chains_warns_when_kind_is_not_rack(
+    conn, song, session
+):
+    """Defense: if the DB device pointed at is not a rack class, the
+    handler refuses to spawn nested chains under it. (Should be
+    unreachable via the planner, but apply is the source of truth.)"""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="x")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    not_a_rack = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor2", display_name="Glue",
+    )
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{not_a_rack}",
+            _nested_chains_payload((1, "Kick", [])),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("not a rack class" in w for w in out.warnings)
+
+
+def test_apply_nested_rack_chains_round_trip_simulated_no_op(
+    conn, song, session
+):
+    """End-to-end round-trip: capture rack with two chains into DB; the
+    `get_device_chains` probe should return the same shape; apply
+    produces zero mutations. This is the convergence invariant."""
+    from hallucinote.capture import replay_capture
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Drum Rack", "class": "DrumGroupDevice",
+                "chains": [
+                    {"chain_index": 1, "name": "Kick", "devices": [
+                        {"index": 1, "name": "Operator", "class": "Operator"},
+                    ]},
+                    {"chain_index": 2, "name": "Snare", "devices": [
+                        {"index": 1, "name": "Drum Synth", "class": "DrumSynths"},
+                        {"index": 2, "name": "EQ", "class": "Eq8"},
+                    ]},
+                ],
+            }],
+        }],
+    }
+    new_song = replay_capture(conn, snap, song_name="rt")
+    new_session = M.create_ableton_session(conn, song_id=new_song, name="rt-sess")
+    track = next(
+        t for t in Q.get_tracks_for_song(conn, new_song) if t["name"] == "Drums"
+    )
+    _link_track(conn, session=new_session, db_id=track["id"], ableton_index=5)
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack['id']}",
+            _nested_chains_payload(
+                (1, "Kick", [(1, "Operator", "Operator")]),
+                (2, "Snare", [
+                    (1, "DrumSynths", "Drum Synth"),
+                    (2, "Eq8", "EQ"),
+                ]),
+                rack_position=1,
+            ),
+        )],
+        song_id=new_song, session_id=new_session,
+    )
+    assert out.mutations == 0
+    # Two chains in DB, one for each in the payload.
+    assert out.no_ops >= 1
+
+
+# ---------------------------------------------------------------------------
+# plan_pull_device_parameters + _apply_device_parameters_for_device (W5-D)
+# ---------------------------------------------------------------------------
+
+
+def _params_payload(
+    *entries: tuple[str, float, str, float, float, bool],
+    track_index: int = 5,
+    device_index: int = 1,
+) -> dict:
+    """Build an `ableton_device(action='get_parameters', detail='full')`
+    payload from ``(name, value, value_display, min, max, is_enum)``
+    tuples. Mirrors the real ``get_parameters_handler`` shape with
+    ``detail='full'`` so apply tests exercise the wire form W5-D
+    actually sees.
+    """
+    return {
+        "device_index": device_index,
+        "parent_kind": "track",
+        "track_index": track_index,
+        "parameters": [
+            {
+                "name": name,
+                "value": float(value),
+                "value_display": display,
+                "min": float(min_v),
+                "max": float(max_v),
+                "is_enum": bool(is_enum),
+            }
+            for (name, value, display, min_v, max_v, is_enum) in entries
+        ],
+    }
+
+
+def test_plan_pull_device_parameters_emits_per_linked_track_device(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_device"
+    assert call.args == {
+        "action": "get_parameters", "track_index": 5,
+        "device_index": 1, "detail": "full",
+    }
+    assert call.key == f"device_parameters:{did}"
+
+
+def test_plan_pull_device_parameters_emits_per_linked_return_device(
+    conn, song, session,
+):
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Reverb", display_name="Reverb",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.args == {
+        "action": "get_parameters", "return_index": 1,
+        "device_index": 1, "detail": "full",
+    }
+    assert call.key == f"device_parameters:{did}"
+
+
+def test_plan_pull_device_parameters_skips_unlinked_track_with_warn(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("not linked" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_device_parameters_warns_when_no_devices(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("no devices" in n.lower() for n in plan.notes)
+
+
+def test_plan_pull_device_parameters_args_match_mcp_get_parameters_schema(
+    conn, song, session,
+):
+    """Structural canary — every emitted arg must be a known param on
+    ``ableton_device(action='get_parameters')``. Catches drift if the
+    MCP surface renames params or moves the action."""
+    from hallucinote_mcp.actions import device as _device_actions  # noqa: F401
+    from hallucinote_mcp.schema import all_actions
+
+    get_params = next(
+        a for a in all_actions()
+        if a.tool == "ableton_device" and a.name == "get_parameters"
+    )
+    schema_param_names = {p.name for p in get_params.params}
+
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    for call in plan.calls:
+        emitted = set(call.args.keys()) - {"action"}
+        unknown = emitted - schema_param_names
+        assert not unknown, (
+            f"planner emitted args not on get_parameters schema: "
+            f"{sorted(unknown)} (full call: {call!r})"
+        )
+
+
+def test_apply_device_parameters_creates_when_db_empty(conn, song, session):
+    """Diff state: in Live only -> create."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 0.5, "0.50", 0.0, 1.0, False),
+                ("Filter Type", 1.0, "Lowpass", 0.0, 3.0, True),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2
+    rows = Q.get_device_parameters(conn, did)
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["Volume"]["value_display"] == "0.50"
+    assert by_name["Volume"]["value_normalized"] == pytest.approx(0.5)
+    # Enum param: value_normalized=NULL per schema.
+    assert by_name["Filter Type"]["value_display"] == "Lowpass"
+    assert by_name["Filter Type"]["value_normalized"] is None
+
+
+def test_apply_device_parameters_no_op_when_identical(conn, song, session):
+    """Diff state: in both, identical -> no-op."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_parameters_no_op_within_float_epsilon(conn, song, session):
+    """Float jitter within `_FLOAT_EPS` is not a diff. Live's value
+    readback can wiggle in the last decimal place; that's not a
+    real change."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.85", value_normalized=0.85,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.8501, "0.85", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_parameters_updates_when_value_differs(conn, song, session):
+    """Diff state: in both, value differs -> upsert (update)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.75, "0.75", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_display"] == "0.75"
+    assert row["value_normalized"] == pytest.approx(0.75)
+
+
+def test_apply_device_parameters_removes_db_params_absent_from_live(
+    conn, song, session,
+):
+    """Diff state: in DB only -> remove."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Stale Param",
+        value_display="0.50", value_normalized=0.5,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    rows = Q.get_device_parameters(conn, did)
+    assert {r["name"] for r in rows} == {"Volume"}
+
+
+def test_apply_device_parameters_handles_mixed_diff(conn, song, session):
+    """All four diff states in one apply: in-both-same (no-op),
+    in-both-differ (update), Live-only (create), DB-only (remove)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(  # will stay identical
+        conn, device_id=did, name="Volume",
+        value_display="0.50", value_normalized=0.5,
+    )
+    M.set_device_parameter(  # will change
+        conn, device_id=did, name="Attack",
+        value_display="0.10", value_normalized=0.1,
+    )
+    M.set_device_parameter(  # will be removed (Live no longer has it)
+        conn, device_id=did, name="Stale",
+        value_display="0.00", value_normalized=0.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 0.5, "0.50", 0.0, 1.0, False),    # no-op
+                ("Attack", 0.5, "0.50", 0.0, 1.0, False),    # update
+                ("Release", 0.3, "0.30", 0.0, 1.0, False),   # create
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # 1 update + 1 create + 1 remove = 3 mutations; 1 no-op.
+    assert out.mutations == 3
+    assert out.no_ops == 1
+    by_name = {r["name"]: r for r in Q.get_device_parameters(conn, did)}
+    assert set(by_name) == {"Volume", "Attack", "Release"}
+    assert by_name["Attack"]["value_display"] == "0.50"
+    assert by_name["Release"]["value_display"] == "0.30"
+
+
+def test_apply_device_parameters_normalizes_against_min_max(conn, song, session):
+    """value_normalized = (value - min) / (max - min). The raw 'value'
+    from Live is in [min, max]; the DB stores the [0, 1] form. With
+    a -60..0 range, value=-12 normalizes to 0.8."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Compressor2", display_name="Glue",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Threshold", -12.0, "-12.0 dB", -60.0, 0.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_display"] == "-12.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.8)
+
+
+def test_apply_device_parameters_constant_range_stores_null_normalized(
+    conn, song, session,
+):
+    """min == max -> normalized is undefined; store NULL.
+
+    Schema CHECK allows NULL when ``value_normalized IS NULL``."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Algorithm", 1.0, "Algorithm 1", 1.0, 1.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_normalized"] is None
+
+
+def test_apply_device_parameters_clamps_normalized_to_valid_range(
+    conn, song, session,
+):
+    """Live can report ``value`` marginally outside [min, max] due to
+    float; the schema CHECK is strict on [0, 1] so the apply layer
+    clamps at the boundary instead of letting the mutator raise."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    # value just barely past max — would normalize to ~1.0001
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Volume", 1.0001, "1.00", 0.0, 1.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    row = Q.get_device_parameters(conn, did)[0]
+    assert row["value_normalized"] == pytest.approx(1.0)
+
+
+def test_apply_device_parameters_missing_device_row_warns(conn, song, session):
+    """If the device_id in the key doesn't resolve to a DB row, surface
+    a warning (the planner shouldn't have emitted, but apply is the
+    defensive layer)."""
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            "device_parameters:nonexistent-uuid",
+            _params_payload(("Volume", 0.5, "0.50", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("device row not found" in w.lower() for w in out.warnings)
+
+
+def test_apply_device_parameters_missing_parameters_field_warns(
+    conn, song, session,
+):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"device_parameters:{did}", {"device_index": 1})],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert any("'parameters' field" in w for w in out.warnings)
+
+
+# Hypothesis property: round-trip apply preserves the synthesized
+# parameter set in the DB. Random {name, value, min, max, is_enum}
+# tuples → apply → DB rows that match the synthesis (value_display
+# verbatim; value_normalized within `_FLOAT_EPS` of the computed
+# normalization; NULL for enum / constant-range).
+_param_name_strat = st.text(
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"), whitelist_characters="_-"
+    ),
+    min_size=1, max_size=20,
+).filter(lambda s: bool(s.strip()))
+
+
+@st.composite
+def _param_tuple(draw):
+    name = draw(_param_name_strat)
+    is_enum = draw(st.booleans())
+    if is_enum:
+        # Enum params have value_normalized=NULL; min/max still pass through
+        # but aren't used for normalization.
+        return (name, 1.0, "EnumLabel", 0.0, 1.0, True)
+    min_v = draw(st.floats(min_value=-1000.0, max_value=1000.0,
+                            allow_nan=False, allow_infinity=False))
+    max_v = draw(st.floats(min_value=min_v, max_value=min_v + 1000.0,
+                            allow_nan=False, allow_infinity=False))
+    value = draw(st.floats(min_value=min_v, max_value=max_v,
+                            allow_nan=False, allow_infinity=False))
+    return (name, value, f"{value:.4f}", min_v, max_v, False)
+
+
+@given(
+    entries=st.lists(_param_tuple(), min_size=1, max_size=8, unique_by=lambda e: e[0]),
+)
+def test_apply_device_parameters_property_round_trip(entries):
+    """Property: synthesized Live-side params → apply → DB rows that
+    match. Pins the (normalize + diff) pipeline against random input.
+
+    Tolerances:
+    - ``value_display`` is verbatim verbatim from the wire
+    - ``value_normalized`` is within ``_FLOAT_EPS`` (or NULL when the
+      synthesized param is enum / constant-range)
+    """
+    from hallucinote.db import init_db
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        conn = init_db(path)
+        song_id = M.create_song(conn, name="prop", key="C")
+        tid = M.create_track(
+            conn, song_id=song_id, track_index=1, name="Lead", kind="midi",
+        )
+        session_id = M.create_ableton_session(
+            conn, song_id=song_id, name="draft",
+        )
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="track",
+            db_id=tid, ableton_index=5,
+        )
+        chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+        did = M.create_device(
+            conn, chain_id=chain_id, position=1,
+            kind="Operator", display_name="Init",
+        )
+
+        out = pull.apply_pull_results(
+            conn,
+            [_result(
+                f"device_parameters:{did}",
+                _params_payload(*entries),
+            )],
+            song_id=song_id, session_id=session_id,
+        )
+        assert out.mutations == len(entries), (
+            f"expected {len(entries)} mutations, got {out.mutations}"
+        )
+
+        rows = {r["name"]: r for r in Q.get_device_parameters(conn, did)}
+        for name, value, display, min_v, max_v, is_enum in entries:
+            assert name in rows, f"missing param {name!r}"
+            row = rows[name]
+            assert row["value_display"] == display
+            rng = max_v - min_v
+            if is_enum or abs(rng) < 1e-9:
+                assert row["value_normalized"] is None
+            else:
+                expected = max(0.0, min(1.0, (value - min_v) / rng))
+                assert row["value_normalized"] == pytest.approx(
+                    expected, abs=1e-9
+                )
+        conn.close()
+    finally:
+        os.unlink(path)
 
 
 # ---------------------------------------------------------------------------
@@ -2402,12 +3397,95 @@ def test_pull_cli_clip_notes_domain_emits_plan(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_clip_notes_end_to_end_round_trip(conn, song, session):
+    """W7-C: end-to-end note round-trip pin — push DB state into a
+    simulated Ableton payload, pull it back, confirm convergence.
+
+    Individual diff classes (no-op / update / delete / insert) are
+    covered by sibling tests; this is the end-to-end contract pin.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0, name="A")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(
+        conn, clip_id=cid,
+        notes=[
+            {"pitch": 60, "start_beats": 0.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+            {"pitch": 62, "start_beats": 1.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+            {"pitch": 64, "start_beats": 2.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+        ],
+    )
+    db_notes_before = Q.get_notes_for_clip(conn, cid)
+    db_note_ids_by_key = {
+        (n["pitch"], n["start_beats"], n["duration_beats"]): n["id"]
+        for n in db_notes_before
+    }
+
+    # Round-trip 1: Ableton state mirrors DB — convergent, zero
+    # mutations. The simulated note_id values are arbitrary (Live
+    # regenerates them on every write; apply doesn't persist them).
+    same_state = [
+        _result(f"clip_notes:{cid}", _notes_payload(
+            (10, 60, 0.0, 0.5, 100, False),
+            (11, 62, 1.0, 0.5, 100, False),
+            (12, 64, 2.0, 0.5, 100, False),
+        )),
+    ]
+    out1 = pull.apply_pull_results(
+        conn, same_state, song_id=song, session_id=session,
+    )
+    assert out1.mutations == 0
+    assert out1.no_ops == 3
+    # UUIDs preserved across the no-op pull.
+    db_notes_after_noop = Q.get_notes_for_clip(conn, cid)
+    after_ids_by_key = {
+        (n["pitch"], n["start_beats"], n["duration_beats"]): n["id"]
+        for n in db_notes_after_noop
+    }
+    assert after_ids_by_key == db_note_ids_by_key
+
+    # Round-trip 2: user dragged a velocity, removed one note, added one.
+    # Pitch 62's velocity 100 -> 80 (UPDATE — same key, vel drift).
+    # Pitch 64 disappears (DELETE).
+    # New pitch 67 at start 3.0 (INSERT).
+    drifted_state = [
+        _result(f"clip_notes:{cid}", _notes_payload(
+            (20, 60, 0.0, 0.5, 100, False),
+            (21, 62, 1.0, 0.5,  80, False),
+            (22, 67, 3.0, 0.5, 100, False),
+        )),
+    ]
+    out2 = pull.apply_pull_results(
+        conn, drifted_state, song_id=song, session_id=session,
+    )
+    assert out2.mutations >= 3, (out2.mutations, out2.details)
+    db_notes_after = Q.get_notes_for_clip(conn, cid)
+    by_pitch_start = {(n["pitch"], n["start_beats"]): n for n in db_notes_after}
+    assert (60, 0.0) in by_pitch_start
+    assert by_pitch_start[(62, 1.0)]["velocity"] == 80
+    assert (64, 2.0) not in by_pitch_start
+    assert (67, 3.0) in by_pitch_start
+    # Pitch-60 + pitch-62 UUIDs preserved (velocity update is in-place).
+    assert by_pitch_start[(60, 0.0)]["id"] == db_note_ids_by_key[(60, 0.0, 0.5)]
+    assert by_pitch_start[(62, 1.0)]["id"] == db_note_ids_by_key[(62, 1.0, 0.5)]
+
+    # Round-trip 3: re-applying drifted_state is now a full no-op.
+    out3 = pull.apply_pull_results(
+        conn, drifted_state, song_id=song, session_id=session,
+    )
+    assert out3.mutations == 0
+
+
 def test_round_trip_push_then_pull(conn, song, session, master):
     """Set DB state, simulate Ableton drift, pull, confirm DB caught up."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     M.set_track_mixer(conn, track_id=tid, volume=0.6, pan=0.0)
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb",
+    rid = M.create_return(conn, song_id=song, name="Reverb",
                           position=1, volume=0.85, pan=0.0)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.0)
@@ -2510,7 +3588,7 @@ def test_skill_allowed_tools_cover_every_planner_emitted_tool(
 
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=2)
-    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
 
     emitted_tools: set[str] = set()
@@ -2558,6 +3636,30 @@ def test_pull_cli_domains_cover_every_public_planner():
         f"{sorted(p.__name__ for p in missing)}. Register them in "
         "pull_cli._DOMAINS and update .claude/skills/ableton-pull/SKILL.md."
     )
+
+
+def test_pull_cli_device_parameters_domain_emits_plan(tmp_path):
+    """Smoke test: the `device-parameters` domain reaches the new W5-D
+    planner through the CLI dispatch and emits a plan (empty here — no
+    linked tracks)."""
+    db_path = tmp_path / "device_params_cli.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="cli_dp", key="Dm")
+    session_id = M.create_ableton_session(
+        conn, song_id=song_id, name="draft",
+    )
+    conn.close()
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "plan", "device-parameters", session_id, "--db", str(db_path)],
+        capture_output=True, text=True, check=True,
+    )
+    plan_dict = json.loads(p.stdout)
+    assert plan_dict["domain"] == "device-parameters"
+    assert plan_dict["session_id"] == session_id
+    assert plan_dict["calls"] == []
+    assert plan_dict["notes"]
 
 
 def test_pull_cli_devices_domain_emits_plan(tmp_path):

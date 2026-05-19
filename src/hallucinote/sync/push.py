@@ -15,9 +15,11 @@ to multiple Live sets at the same time without aliasing. Open one with
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from hallucinote.capture import strip_return_slot_prefix
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
@@ -478,40 +480,40 @@ def plan_push_tempo_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_tempo_point` calls — one per row in `tempo_map`.
+    """Emit `ableton_session(set_tempo)` for the bar-1 row; warn for the rest.
 
-    Positions are emitted as `(bar, beat)` matching the rest of the MCP surface
-    (see mcp-requirements.md). The (bar, beat) pair is computed via the song's
-    time_signature_map (defaulting to 4/4 if empty, with a warning).
+    Live exposes `Song.tempo` as a single global value (settable via
+    `ableton_session(action='set_tempo')`). Per-bar tempo automation is a
+    real MCP gap — `ableton_automation` has no `song_tempo` target_kind
+    (see hallucinote_mcp/.../guides/gaps.md "Arrangement-level tempo /
+    signature automation"). Any tempo_map row at start_bar != 1.0 is
+    therefore skipped with a warn.
     """
     plan = PushPlan()
     rows = Q.get_tempo_map(conn, song_id)
     if not rows:
         plan.warn("no tempo_map rows for this song; nothing to push")
         return plan
-    ts_points = Q.get_time_signature_map(conn, song_id)
-    if not ts_points:
-        plan.warn(
-            "no time_signature_map; assuming 4/4 for tempo-map bar/beat split"
-        )
-    for r in rows:
-        bar, beat = _split_bar(r["start_bar"], ts_points)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_tempo_point",
-            args={
-                "bar": bar,
-                "beat": beat,
-                "bpm": r["tempo_bpm"],
-                "ramp": r["ramp"],
-            },
-            key=f"tempo_point:{r['id']}",
-            purpose=f"set tempo to {r['tempo_bpm']:g} bpm at bar {r['start_bar']:g} "
-                    f"(ramp={r['ramp']})",
+            tool="ableton_session",
+            args={"action": "set_tempo", "bpm": bar_1["tempo_bpm"]},
+            key=f"tempo_point:{bar_1['id']}",
+            purpose=f"set global tempo to {bar_1['tempo_bpm']:g} bpm",
         ))
-    if len(rows) > 1 or any(r["ramp"] == "linear" for r in rows):
+    else:
         plan.warn(
-            "multi-point or ramped tempo maps require full tempo-automation MCP "
-            "support (see docs/mcp-requirements.md, P2)"
+            "tempo_map has no row at start_bar=1.0 — global tempo not set "
+            "(Live's set_tempo only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar tempo automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_tempo' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 tempo_map rows skipped"
         )
     return plan
 
@@ -521,37 +523,47 @@ def plan_push_time_signature_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit canonical `write_time_signature_point` calls — one per meter change.
+    """Emit `ableton_session(set_signature)` for the bar-1 row; warn the rest.
 
-    Live exposes no MCP tool for arrangement-level meter changes today; the
-    planner produces canonical (bar, beat, numerator, denominator) calls and
-    warns about the MCP gap so apply can no-op until support lands.
+    Symmetric with `plan_push_tempo_map`. Live's `Song.signature_numerator` /
+    `signature_denominator` are the global meter (settable via
+    `ableton_session(action='set_signature')`). Per-bar meter automation
+    is a real MCP gap — `ableton_automation` has no `song_signature`
+    target_kind (see hallucinote_mcp/.../guides/gaps.md).
     """
     plan = PushPlan()
     rows = Q.get_time_signature_map(conn, song_id)
     if not rows:
         plan.warn("no time_signature_map rows for this song; nothing to push")
         return plan
-    for r in rows:
-        # A time-signature point's own position is in its own meter context —
-        # use `rows` (the map itself) as the time-sig reference.
-        bar, beat = _split_bar(r["start_bar"], rows)
+    bar_1 = next((r for r in rows if float(r["start_bar"]) == 1.0), None)
+    if bar_1 is not None:
         plan.add(ToolCall(
-            tool="write_time_signature_point",
+            tool="ableton_session",
             args={
-                "bar": bar,
-                "beat": beat,
-                "numerator": r["numerator"],
-                "denominator": r["denominator"],
+                "action": "set_signature",
+                "numerator": bar_1["numerator"],
+                "denominator": bar_1["denominator"],
             },
-            key=f"time_signature_point:{r['id']}",
-            purpose=f"set meter to {r['numerator']}/{r['denominator']} "
-                    f"at bar {r['start_bar']:g}",
+            key=f"time_signature_point:{bar_1['id']}",
+            purpose=(
+                f"set global meter to "
+                f"{bar_1['numerator']}/{bar_1['denominator']}"
+            ),
         ))
-    plan.warn(
-        "time-signature change writes are an MCP gap "
-        "(see docs/mcp-requirements.md, P2)"
-    )
+    else:
+        plan.warn(
+            "time_signature_map has no row at start_bar=1.0 — global meter "
+            "not set (Live's set_signature only addresses the bar-1 value)"
+        )
+    non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
+    if non_bar_1:
+        plan.warn(
+            f"per-bar meter automation is an MCP gap on Live 12.4 — "
+            f"ableton_automation has no 'song_signature' target_kind "
+            f"(see hallucinote_mcp/.../guides/gaps.md); "
+            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped"
+        )
     return plan
 
 
@@ -1035,9 +1047,26 @@ def plan_push_envelopes(
     session_id: str,
 ) -> PushPlan:
     """Plan the push of every envelope in a song. One canonical call per
-    envelope with breakpoints inline. Envelopes whose target isn't linked in
-    the session yet are skipped with a warning; envelopes with zero
-    breakpoints are skipped with a warning (nothing to push)."""
+    envelope with breakpoints inline.
+
+    Skip-with-warn paths (W4-B):
+      - ``clip_cc`` / ``clip_pitch_bend``: Live 12.4 LOM doesn't expose
+        ``Clip.create_automation_envelope`` for these targets
+        (push-findings #12). Warn cites the MIDI control-change-note
+        workaround for clip_cc; pitch_bend has no auto-encode path.
+      - ``mixer_volume`` / ``mixer_pan`` / ``send_level`` /
+        ``device_parameter``: routed through a session clip on the target
+        track (Live 12.4 LOM accepts these only on session clips). When
+        no arrangement_clip placement on the target track covers the
+        envelope's beat range, the envelope can't be hosted; warn + skip.
+      - Return-side ``device_parameter``: DB has no return-track session-
+        clip model; warn + skip (backlog).
+
+    Other skip-with-warn paths (legacy):
+      - target/clip/device not linked in the session
+      - zero breakpoints (nothing to push)
+      - nested-rack devices (MCP gap)
+    """
     plan = PushPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
     if not envelopes:
@@ -1055,14 +1084,30 @@ def plan_push_envelopes(
         target_kind = env["target_kind"]
         bps_mcp = _breakpoints_for_mcp(breakpoints)
 
-        if target_kind in ("clip_cc", "clip_pitch_bend"):
-            _emit_clip_envelope(
-                plan, conn,
-                session_id=session_id,
-                envelope=env,
-                breakpoints_mcp=bps_mcp,
+        if target_kind == "clip_cc":
+            # W4-B: Live 12.4's LOM doesn't expose
+            # ``Clip.create_automation_envelope`` for MIDI CC targets —
+            # the call raises ``ArgumentError`` (push-findings #12). The
+            # canonical workaround is to encode the CC ride as MIDI
+            # control-change notes via ``ableton_clip(action='replace_notes')``.
+            plan.warn(
+                f"envelope {env['id']} (clip_cc CC{env['parameter_path']}): "
+                "Live 12.4 LOM doesn't expose Clip.create_automation_envelope "
+                "for MIDI CC targets; encode as control-change notes via "
+                "ableton_clip(action='replace_notes') instead. Skipping."
             )
-        elif target_kind == "note_expression":
+            continue
+        if target_kind == "clip_pitch_bend":
+            # W4-B: same LOM gap as clip_cc (push-findings #12). No
+            # auto-encode path exists for pitch bend — author manually
+            # in Live.
+            plan.warn(
+                f"envelope {env['id']} (clip_pitch_bend): Live 12.4 LOM "
+                "doesn't expose Clip.create_automation_envelope for "
+                "pitch-bend targets; author manually in Live. Skipping."
+            )
+            continue
+        if target_kind == "note_expression":
             _emit_note_expression_envelope(
                 plan, conn,
                 session_id=session_id,
@@ -1071,21 +1116,21 @@ def plan_push_envelopes(
             )
         elif target_kind == "device_parameter":
             _emit_device_parameter_envelope(
-                plan, conn,
+                plan, conn, song_id=song_id,
                 session_id=session_id,
                 envelope=env,
                 breakpoints_mcp=bps_mcp,
             )
         elif target_kind in ("mixer_volume", "mixer_pan"):
             _emit_mixer_envelope(
-                plan, conn,
+                plan, conn, song_id=song_id,
                 session_id=session_id,
                 envelope=env,
                 breakpoints_mcp=bps_mcp,
             )
         elif target_kind == "send_level":
             _emit_send_envelope(
-                plan, conn,
+                plan, conn, song_id=song_id,
                 session_id=session_id,
                 envelope=env,
                 breakpoints_mcp=bps_mcp,
@@ -1121,63 +1166,126 @@ def _clip_and_track_indices(
     return track_at, clip_at
 
 
-def _emit_clip_envelope(
-    plan: PushPlan,
+@dataclass
+class _CoveringPlacement:
+    """An arrangement_clip placement that covers an envelope's beat range.
+
+    ``clip_id`` is the source session clip; ``start_beats`` is the
+    placement's arrangement-time offset, which becomes the subtractive
+    offset for converting envelope time_beats → clip-local time_beats.
+    ``other_placement_starts`` lists the arrangement starts of OTHER
+    placements of the same source session clip — those will also receive
+    the envelope as snapshot copies after ``duplicate_to_arrangement``
+    fires (W4-A finding: duplicate is a snapshot copy, not a live link).
+
+    W4-B defensive-warn fields:
+      - ``other_covering_clip_ids``: other DISTINCT session clips on the
+        same track whose arrangement-time range also covered the envelope.
+        Non-empty means the planner had to disambiguate; the warn names
+        all overlapping clips so the author can resolve the ambiguity
+        DB-side.
+      - ``trimmed_end_beats``: when the placement's ``end_bar`` is
+        SHORTER than the source clip's natural length, this is the
+        arrangement-time end of the trimmed placement. None when the
+        placement isn't trimmed. Used to warn when ``env_max`` exceeds
+        the trimmed extent (the envelope WOULD fit the un-trimmed clip
+        but won't play past the trim point in this placement).
+    """
+    clip_id: str
+    start_beats: float
+    other_placement_starts: list[float]
+    other_covering_clip_ids: list[str] = field(default_factory=list)
+    trimmed_end_beats: float | None = None
+
+
+def _resolve_envelope_session_clip(
     conn: sqlite3.Connection,
     *,
-    session_id: str,
-    envelope: sqlite3.Row,
-    breakpoints_mcp: list[dict[str, Any]],
-) -> None:
-    """clip_cc + clip_pitch_bend emission."""
-    clip_id = envelope["target_clip_id"]
-    track_at, clip_at = _clip_and_track_indices(
-        conn, session_id=session_id, clip_id=clip_id
+    song_id: str,
+    target_track_id: str,
+    env_min: float,
+    env_max: float,
+) -> _CoveringPlacement | None:
+    """Find an arrangement_clip placement on ``target_track_id`` whose
+    arrangement-time range covers [env_min, env_max]. Returns the source
+    session clip + arrangement offset, or None if no placement covers.
+
+    Coverage uses the SOURCE session clip's ``length_beats`` rather than
+    the placement's ``end_bar``: ``duplicate_to_arrangement`` creates an
+    arrangement clip of the source's natural length (W4-A finding), and
+    envelopes are bound to clip-local [0, length_beats]. A placement
+    whose ``end_bar`` trims the clip shorter than its source length
+    cannot host envelope breakpoints past ``end_bar``, but the source
+    clip's full length is what the session clip exposes for envelope
+    addressing.
+    """
+    rows = conn.execute(
+        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
+           FROM arrangement_clips a
+           JOIN clips c ON c.id = a.clip_id
+           WHERE a.track_id = ?
+           ORDER BY a.start_bar, a.id""",
+        (target_track_id,),
+    ).fetchall()
+    if not rows:
+        return None
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    matched = None
+    matched_start = None
+    matched_trimmed_end: float | None = None
+    other_covering_clip_ids: list[str] = []
+    for r in rows:
+        start_b = _position_bar_to_beats(r["start_bar"], ts_points)
+        source_end_b = start_b + float(r["length_beats"])
+        if not (env_min >= start_b and env_max <= source_end_b):
+            continue
+        if matched is None:
+            matched = r
+            matched_start = start_b
+            placement_end_b = _position_bar_to_beats(r["end_bar"], ts_points)
+            if placement_end_b < source_end_b:
+                matched_trimmed_end = placement_end_b
+        elif r["clip_id"] != matched["clip_id"]:
+            # A DIFFERENT distinct session clip on the same track also
+            # covers the envelope's range. W4-B defensive warn — the
+            # planner picks the earliest by start_bar, but ambiguity is
+            # worth surfacing.
+            if r["clip_id"] not in other_covering_clip_ids:
+                other_covering_clip_ids.append(r["clip_id"])
+    if matched is None:
+        return None
+    others = [
+        _position_bar_to_beats(r["start_bar"], ts_points)
+        for r in rows
+        if r["clip_id"] == matched["clip_id"] and r["id"] != matched["id"]
+    ]
+    return _CoveringPlacement(
+        clip_id=matched["clip_id"],
+        start_beats=matched_start,
+        other_placement_starts=others,
+        other_covering_clip_ids=other_covering_clip_ids,
+        trimmed_end_beats=matched_trimmed_end,
     )
-    if track_at is None or clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} ({envelope['target_kind']}): "
-            f"clip {clip_id} not linked in session (track={track_at}, "
-            f"clip={clip_at}); skipping"
-        )
-        return
-    if envelope["target_kind"] == "clip_cc":
-        # Mutator validated parameter_path as an int in [0,127] at create time.
-        cc_number = int(envelope["parameter_path"])
-        plan.add(ToolCall(
-            tool="ableton_automation",
-            args={
-                "action": "write_envelope",
-                "target_kind": "clip_cc",
-                "track_index": track_at,
-                "location": "session",
-                "clip_index": clip_at,
-                "cc_number": cc_number,
-                "breakpoints": breakpoints_mcp,
-            },
-            key=f"envelope:{envelope['id']}",
-            purpose=(
-                f"clip_cc CC{cc_number} on clip {clip_at}: "
-                f"{len(breakpoints_mcp)} breakpoint(s)"
-            ),
-        ))
-    else:
-        plan.add(ToolCall(
-            tool="ableton_automation",
-            args={
-                "action": "write_envelope",
-                "target_kind": "clip_pitch_bend",
-                "track_index": track_at,
-                "location": "session",
-                "clip_index": clip_at,
-                "breakpoints": breakpoints_mcp,
-            },
-            key=f"envelope:{envelope['id']}",
-            purpose=(
-                f"clip_pitch_bend on clip {clip_at}: "
-                f"{len(breakpoints_mcp)} breakpoint(s)"
-            ),
-        ))
+
+
+def _clip_local_breakpoints(
+    breakpoints_mcp: list[dict[str, Any]],
+    offset_beats: float,
+) -> list[dict[str, Any]]:
+    """Translate arrangement-time breakpoint times to clip-local by
+    subtracting the placement offset. Other fields pass through."""
+    return [
+        {**bp, "time_beats": float(bp["time_beats"]) - offset_beats}
+        for bp in breakpoints_mcp
+    ]
+
+
+def _envelope_beat_range(
+    breakpoints_mcp: list[dict[str, Any]],
+) -> tuple[float, float]:
+    """Return (min, max) ``time_beats`` across the breakpoints."""
+    times = [float(bp["time_beats"]) for bp in breakpoints_mcp]
+    return min(times), max(times)
 
 
 def _emit_note_expression_envelope(
@@ -1231,19 +1339,144 @@ def _emit_note_expression_envelope(
             f"{len(breakpoints_mcp)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=breakpoints_mcp)
+
+
+_LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})
+
+
+def _warn_lossy_curve_hints(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+) -> None:
+    """Emit one warn per envelope when any breakpoint carries a curve
+    hint Live 12.4 cannot apply.
+
+    Live 12.4 exposes only ``Envelope.insert_step``; the MCP handler
+    converts every breakpoint to a stepped region (see
+    ``hallucinote_mcp/src/hallucinote_mcp/handlers/automation.py::_write_breakpoints_as_steps``).
+    Curves ``linear`` / ``fast`` / ``slow`` are recorded in the DB
+    faithfully but discarded on push — the MCP handler returns a note
+    after the fact (``_stepped_envelope_note``). Surfacing the same
+    truth at plan time lets the user see round-trip lossiness BEFORE
+    dispatch instead of discovering it in MCP responses.
+
+    Only ``hold`` (and absent) curves are preserved on push. Dedup is
+    per-envelope: many lossy breakpoints in one envelope produce one
+    warn, not N.
+    """
+    if not any(bp.get("curve") in _LOSSY_CURVE_HINTS for bp in breakpoints_mcp):
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): Live 12.4 "
+        "applies all envelope curves as steps (Envelope.insert_step); "
+        "'linear'/'fast'/'slow' curve hints are recorded in the DB but "
+        "lossy on push. Use 'hold' to model the same behavior the DB "
+        "stores."
+    )
+
+
+def _warn_multiple_covering_clips(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+) -> None:
+    """W4-B defensive warn: when more than one distinct session clip on
+    the same track covers the envelope's beat range, the planner picks
+    the earliest by ``start_bar``. The choice may not match the
+    author's intent — surface the alternatives so they can resolve the
+    ambiguity DB-side (trim a clip, move one, or split the envelope)."""
+    if not placement.other_covering_clip_ids:
+        return
+    others = ", ".join(placement.other_covering_clip_ids)
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): multiple "
+        f"distinct session clips cover the envelope's beat range on this "
+        f"track. Planner routed through {placement.clip_id!r}; other "
+        f"covering clips: [{others}]. Resolve the ambiguity DB-side "
+        "(adjust placements or split the envelope) if the routing "
+        "choice is wrong."
+    )
+
+
+def _warn_trimmed_placement(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+    env_max: float,
+) -> None:
+    """W4-B defensive warn: the matched placement is trimmed shorter
+    than its source session clip's natural length, AND the envelope
+    extends past the trimmed end. The envelope will play correctly
+    in the session view (the session clip is intact) but won't sound
+    past the trim point in this arrangement placement — Live truncates
+    playback at ``end_bar``.
+
+    No-op when the placement isn't trimmed OR the envelope fits within
+    the trimmed extent.
+    """
+    trimmed_end = placement.trimmed_end_beats
+    if trimmed_end is None:
+        return
+    if env_max <= trimmed_end:
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): the "
+        f"matched arrangement placement of clip {placement.clip_id!r} "
+        f"is trimmed shorter than the source clip; the envelope extends "
+        f"to time_beats={env_max:g} but the placement ends at "
+        f"time_beats={trimmed_end:g}. Breakpoints past the trim point "
+        "won't sound in this arrangement placement (session-view "
+        "playback is unaffected)."
+    )
+
+
+def _warn_extra_placements(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+) -> None:
+    """When the session clip is placed multiple times in the arrangement,
+    ``duplicate_to_arrangement`` snapshot-copies the session-clip
+    envelope to every placement (W4-A finding). The DB models the
+    envelope as fixed to one arrangement range; the planner can't avoid
+    the extra firings without cloning the session clip. Warn loudly so
+    the author knows their envelope will also fire at the listed
+    arrangement positions."""
+    if not placement.other_placement_starts:
+        return
+    others = ", ".join(f"{s:g}" for s in placement.other_placement_starts)
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): source "
+        f"session clip {placement.clip_id} is placed at multiple "
+        f"arrangement positions; the envelope will also fire at "
+        f"start_beats=[{others}] after duplicate_to_arrangement "
+        "(W4-A snapshot semantics). Use a uniquely-placed session clip "
+        "to localize the envelope."
+    )
 
 
 def _emit_device_parameter_envelope(
     plan: PushPlan,
     conn: sqlite3.Connection,
     *,
+    song_id: str,
     session_id: str,
     envelope: sqlite3.Row,
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
-    """device_parameter emission — track-side or return-side depending on the
-    device's parent chain. Requires both the parent (track/return) AND the
-    device itself to be linked."""
+    """device_parameter emission — track-side only on Live 12.4. Routes
+    through a session clip on the parent track (W4-A / W4-B).
+
+    Return-side device_parameter envelopes are blocked: returns have no
+    DB session-clip model, and Live 12.4 only accepts mixer/pan/send/
+    device_parameter envelopes on session clips. Warn and skip.
+    """
     device_id = envelope["target_device_id"]
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device_id,
@@ -1267,74 +1500,92 @@ def _emit_device_parameter_envelope(
             f"device {device_id} — push not yet supported (MCP gap)"
         )
         return
-    if chain_row["parent_track_id"] is not None:
-        parent_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track",
-            db_id=chain_row["parent_track_id"],
+    if chain_row["parent_return_id"] is not None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): return-side "
+            f"device {device_id} — Live 12.4 requires session-clip routing "
+            "for device_parameter envelopes, but the DB has no return-side "
+            "session-clip model; skipping (backlog: return-track clip "
+            "domain)"
         )
-        if parent_at is None or device_at is None:
-            plan.warn(
-                f"envelope {envelope['id']} (device_parameter): track or "
-                f"device not linked (track={parent_at}, device={device_at}); "
-                "skipping"
-            )
-            return
-        plan.add(ToolCall(
-            tool="ableton_automation",
-            args={
-                "action": "write_envelope",
-                "target_kind": "device_parameter",
-                "track_index": parent_at,
-                "device_index": device_at,
-                "parameter_name": envelope["parameter_path"],
-                "breakpoints": breakpoints_mcp,
-            },
-            key=f"envelope:{envelope['id']}",
-            purpose=(
-                f"device_parameter {envelope['parameter_path']} on track "
-                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s)"
-            ),
-        ))
-    else:
-        # parent_return_id is set (CHECK ensures one of the three).
-        parent_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="return",
-            db_id=chain_row["parent_return_id"],
+        return
+    parent_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track",
+        db_id=chain_row["parent_track_id"],
+    )
+    if parent_at is None or device_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): track or "
+            f"device not linked (track={parent_at}, device={device_at}); "
+            "skipping"
         )
-        if parent_at is None or device_at is None:
-            plan.warn(
-                f"envelope {envelope['id']} (device_parameter): return or "
-                f"device not linked (return={parent_at}, device={device_at}); "
-                "skipping"
-            )
-            return
-        plan.add(ToolCall(
-            tool="ableton_automation",
-            args={
-                "action": "write_envelope",
-                "target_kind": "device_parameter",
-                "return_index": parent_at,
-                "device_index": device_at,
-                "parameter_name": envelope["parameter_path"],
-                "breakpoints": breakpoints_mcp,
-            },
-            key=f"envelope:{envelope['id']}",
-            purpose=(
-                f"device_parameter {envelope['parameter_path']} on return "
-                f"device {device_at}: {len(breakpoints_mcp)} breakpoint(s)"
-            ),
-        ))
+        return
+    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=chain_row["parent_track_id"],
+        env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): no arrangement "
+            f"clip on track {parent_at} covers beat range [{env_min:g}, "
+            f"{env_max:g}]; Live 12.4 requires session-clip routing for "
+            "device_parameter envelopes (W4-B). Add an arrangement_clip "
+            "placement spanning the envelope's range or trim breakpoints "
+            "to fit an existing placement; skipping."
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): session clip "
+            f"{placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return
+    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
+    plan.add(ToolCall(
+        tool="ableton_automation",
+        args={
+            "action": "write_envelope",
+            "target_kind": "device_parameter",
+            "track_index": parent_at,
+            "location": "session",
+            "clip_index": clip_at,
+            "device_index": device_at,
+            "parameter_name": envelope["parameter_path"],
+            "breakpoints": local_bps,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"device_parameter {envelope['parameter_path']} on track "
+            f"{parent_at} session clip {clip_at} (offset {placement.start_beats:g}): "
+            f"{len(local_bps)} breakpoint(s)"
+        ),
+    ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
+    _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_mixer_envelope(
     plan: PushPlan,
     conn: sqlite3.Connection,
     *,
+    song_id: str,
     session_id: str,
     envelope: sqlite3.Row,
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
-    """mixer_volume + mixer_pan emission."""
+    """mixer_volume + mixer_pan emission. Routes through a session clip
+    on the target track (W4-A / W4-B): Live 12.4 only accepts these
+    envelopes on session clips, then ``duplicate_to_arrangement``
+    snapshot-copies them to the arrangement."""
     track_id = envelope["target_track_id"]
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=track_id,
@@ -1345,36 +1596,72 @@ def _emit_mixer_envelope(
             f"{track_id} not linked; skipping"
         )
         return
-    # Wave M-4: mixer_volume / mixer_pan collapse into one
-    # ableton_automation(action='write_envelope', target_kind=...) shape.
+    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=track_id,
+        env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): no "
+            f"arrangement clip on track {track_at} covers beat range "
+            f"[{env_min:g}, {env_max:g}]; Live 12.4 requires session-clip "
+            f"routing for {envelope['target_kind']} envelopes (W4-B). Add "
+            "an arrangement_clip placement spanning the envelope's range "
+            "or trim breakpoints to fit an existing placement; skipping."
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): "
+            f"session clip {placement.clip_id} (covering placement) not "
+            "linked; skipping"
+        )
+        return
+    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
     plan.add(ToolCall(
         tool="ableton_automation",
         args={
             "action": "write_envelope",
             "target_kind": envelope["target_kind"],
             "track_index": track_at,
-            "breakpoints": breakpoints_mcp,
+            "location": "session",
+            "clip_index": clip_at,
+            "breakpoints": local_bps,
         },
         key=f"envelope:{envelope['id']}",
         purpose=(
-            f"{envelope['target_kind']} on track {track_at}: "
-            f"{len(breakpoints_mcp)} breakpoint(s)"
+            f"{envelope['target_kind']} on track {track_at} session clip "
+            f"{clip_at} (offset {placement.start_beats:g}): "
+            f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
+    _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_send_envelope(
     plan: PushPlan,
     conn: sqlite3.Connection,
     *,
+    song_id: str,
     session_id: str,
     envelope: sqlite3.Row,
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
-    """send_level emission — addressed by (track, return) pair."""
+    """send_level emission — addressed by (track, return) pair. Routes
+    through a session clip on the source track (W4-A / W4-B)."""
+    track_id = envelope["target_track_id"]
     track_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="track",
-        db_id=envelope["target_track_id"],
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
     )
     return_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="return",
@@ -1386,21 +1673,470 @@ def _emit_send_envelope(
             f"(track={track_at}, return={return_at}); skipping"
         )
         return
+    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=track_id,
+        env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): no arrangement clip "
+            f"on track {track_at} covers beat range [{env_min:g}, "
+            f"{env_max:g}]; Live 12.4 requires session-clip routing for "
+            "send_level envelopes (W4-B). Add an arrangement_clip "
+            "placement spanning the envelope's range or trim breakpoints "
+            "to fit an existing placement; skipping."
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): session clip "
+            f"{placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return
+    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
     plan.add(ToolCall(
         tool="ableton_automation",
         args={
             "action": "write_envelope",
             "target_kind": "send_level",
             "track_index": track_at,
+            "location": "session",
+            "clip_index": clip_at,
             "return_index": return_at,
-            "breakpoints": breakpoints_mcp,
+            "breakpoints": local_bps,
         },
         key=f"envelope:{envelope['id']}",
         purpose=(
-            f"send_level track {track_at} -> return {return_at}: "
-            f"{len(breakpoints_mcp)} breakpoint(s) (MCP gap)"
+            f"send_level track {track_at} -> return {return_at} via "
+            f"session clip {clip_at} (offset {placement.start_beats:g}): "
+            f"{len(local_bps)} breakpoint(s)"
         ),
     ))
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
+    _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Master orchestration: plan_push_song
+# ---------------------------------------------------------------------------
+
+
+def plan_push_clips(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan the create/replace of every session clip in a song.
+
+    Aggregates :func:`plan_push_clip` over every ``clips`` row whose
+    parent track belongs to this song. Per-clip warnings are prefixed
+    with the clip name so the merged plan stays diagnosable.
+
+    Strict precondition (inherited from :func:`plan_push_clip`): every
+    clip's track must already be linked in this session. Run
+    :func:`plan_push_song_tracks` first, ``apply_push_results``, then
+    this. The strict raise surfaces orchestration order bugs loudly —
+    a silent skip would leave Live missing clips with no signal.
+    """
+    plan = PushPlan()
+    rows = conn.execute(
+        "SELECT id, name FROM clips WHERE track_id IN "
+        "(SELECT id FROM tracks WHERE song_id=?) ORDER BY name, id",
+        (song_id,),
+    ).fetchall()
+    for c in rows:
+        sub = plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
+        plan.calls.extend(sub.calls)
+        plan.notes.extend(f"[{c['name']}] {n}" for n in sub.notes)
+    if not plan.calls and not plan.notes:
+        plan.warn("no clips for this song; nothing to push")
+    return plan
+
+
+@dataclass(frozen=True)
+class PushPhase:
+    """One phase of the song-level master push.
+
+    Each phase produces a fresh :class:`PushPlan` on demand by calling
+    ``plan_fn()``. The thunk pattern (rather than an eager list of
+    pre-built ``PushPlan`` objects) is load-bearing: later phases
+    inspect ``ableton_links`` written by earlier phases via
+    :func:`apply_push_results`. ``plan_push_clip`` /
+    ``plan_push_arrangement`` raise on unlinked deps by design (W3-C),
+    so pre-building all phases at ``plan_push_song`` time would either
+    fail loudly or require re-planning anyway. Thunks make the
+    re-plan-each-phase contract explicit.
+
+    ``name`` is the stable identifier the push skill uses for logging
+    and for keying status to phases. Don't rename — tests and the
+    skill prose pin these strings.
+    """
+    name: str
+    plan_fn: Callable[[], PushPlan]
+    description: str
+
+
+# The ten phases of the master push, in execution order. Order is
+# load-bearing — see :func:`plan_push_song` for the dependency
+# rationale per phase. This tuple is the single source of truth; tests
+# pin both the names and the count.
+_PHASE_NAMES: tuple[str, ...] = (
+    "tempo_map",
+    "time_signature_map",
+    "tracks",
+    "returns",
+    "clips",
+    "mix",
+    "devices",
+    "envelopes",
+    "arrangement",
+    "cues",
+)
+
+
+def plan_push_song(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> list[PushPhase]:
+    """Master orchestration: return the ten phases of a full song push, in order.
+
+    Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
+    fresh :class:`PushPlan` from current DB state at call time. The
+    push skill (W4-E) iterates the list, for each phase calling
+    ``plan_fn()`` → executing the calls via MCP → recording results via
+    :func:`apply_push_results` → moving to the next phase. Each
+    successive phase sees the ``ableton_links`` the prior phase wrote.
+
+    Phase order (load-bearing):
+
+      1. ``tempo_map`` — :func:`plan_push_tempo_map`. No link deps.
+      2. ``time_signature_map`` — :func:`plan_push_time_signature_map`.
+         No link deps.
+      3. ``tracks`` — :func:`plan_push_song_tracks`. Creates+links
+         every unlinked non-master track. Prerequisite for clips, mix,
+         devices, envelopes, arrangement.
+      4. ``returns`` — :func:`plan_push_song_returns`. Creates+links
+         every unlinked return. Prerequisite for mix sends, return-side
+         devices, return-side envelopes.
+      5. ``clips`` — :func:`plan_push_clips`. Creates+links every
+         session clip. Needs tracks linked (raises otherwise per W3-C
+         strict contract). Prerequisite for envelopes (session-clip
+         hosting) and arrangement (duplicate source).
+      6. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
+         Needs tracks + returns linked. No clip dep.
+      7. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+         effects and sets parameters. Needs tracks + returns linked.
+         Prerequisite for ``device_parameter`` envelopes (need the
+         target device linked).
+      8. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
+         on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
+         a snapshot copy, so the envelope must exist on the session
+         clip BEFORE arrangement runs. Needs tracks + clips + returns
+         + devices linked.
+      9. ``arrangement`` — :func:`plan_push_arrangement`. Emits
+         ``duplicate_to_arrangement`` per arrangement row. Carries
+         session-clip envelopes as snapshot copies (W4-A finding).
+         Needs clips linked (raises otherwise).
+      10. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
+          Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
+          clamped to ``[0, song.last_event_time]``; cues placed before
+          arrangement exists get rejected.
+
+    Sections (``plan_push_sections``) is NOT included: it emits no
+    canonical calls (Live has no section-marker concept distinct from
+    cue points). Run it separately to surface its warn if needed.
+
+    Returns 10 phases regardless of whether the song actually has
+    content for each phase — empty phases produce a plan with a
+    ``no … to push`` warn instead of an empty plan, so the skill's
+    progress reporting can distinguish "ran cleanly with nothing to
+    do" from "phase skipped". Idempotent: running the full sequence a
+    second time produces empty plans (all link prereqs satisfied;
+    each planner's already-linked branch is a no-op).
+    """
+    phases = (
+        PushPhase(
+            name="tempo_map",
+            plan_fn=lambda: plan_push_tempo_map(conn, song_id=song_id),
+            description="Write tempo points.",
+        ),
+        PushPhase(
+            name="time_signature_map",
+            plan_fn=lambda: plan_push_time_signature_map(conn, song_id=song_id),
+            description="Write time-signature points.",
+        ),
+        PushPhase(
+            name="tracks",
+            plan_fn=lambda: plan_push_song_tracks(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create unlinked non-master tracks (pre-pass for clips/mix/devices/envelopes/arrangement).",
+        ),
+        PushPhase(
+            name="returns",
+            plan_fn=lambda: plan_push_song_returns(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create unlinked return tracks (pre-pass for sends/devices/envelopes).",
+        ),
+        PushPhase(
+            name="clips",
+            plan_fn=lambda: plan_push_clips(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Create+populate every session clip (atomic create+notes per W3-C / Wave M+1-1).",
+        ),
+        PushPhase(
+            name="mix",
+            plan_fn=lambda: plan_push_mix(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Push mixer state (volume/pan/mute/solo/arm/color) + master + sends.",
+        ),
+        PushPhase(
+            name="devices",
+            plan_fn=lambda: plan_push_devices(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Load instruments+effects and set parameters on tracks/returns.",
+        ),
+        PushPhase(
+            name="envelopes",
+            plan_fn=lambda: plan_push_envelopes(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Write envelopes on session clips (W4-A: must precede arrangement; duplicate_to_arrangement snapshots).",
+        ),
+        PushPhase(
+            name="arrangement",
+            plan_fn=lambda: plan_push_arrangement(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Duplicate session clips to the arrangement view (snapshots session-clip envelopes per W4-A).",
+        ),
+        PushPhase(
+            name="cues",
+            plan_fn=lambda: plan_push_cue_points(conn, song_id=song_id),
+            description="Create cue points (after arrangement so Live's [0, last_event_time] clamp accepts them).",
+        ),
+    )
+    # The tuple-of-names canary keeps tests and the skill agreeing on
+    # phase identity without re-traversing this whole function.
+    # Runtime raise (not `assert`) so the check survives `python -O`.
+    if tuple(p.name for p in phases) != _PHASE_NAMES:
+        raise RuntimeError(
+            "plan_push_song phase order drifted from _PHASE_NAMES; update both."
+        )
+    return list(phases)
+
+
+# ---------------------------------------------------------------------------
+# Probe-and-link: bind existing Live tracks/returns to DB rows by name
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProbeAndLinkResult:
+    """Outcome of :func:`probe_and_link`. The skill displays the
+    matched / unmatched lists so the user can spot rename drift
+    (e.g. DB has 'Drums', Live has 'Drum Kit')."""
+    matched_tracks: list[dict[str, Any]] = field(default_factory=list)
+    matched_returns: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_db_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_db_returns: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_live_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unmatched_live_returns: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def probe_and_link(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    live_tracks: list[dict[str, Any]],
+    live_returns: list[dict[str, Any]],
+    actor: str = "sync",
+    reason: str | None = None,
+) -> ProbeAndLinkResult:
+    """Match Live tracks/returns by name against DB rows; write the
+    matches as ``ableton_links`` so subsequent phases skip the
+    create call.
+
+    This is the W3-G work that was deferred from Wave 3 — running it
+    before the master orchestrator lets the agent push against a
+    Live set that already contains some of the song's tracks/returns
+    (typical when the user opened a half-built set or is iterating
+    against a saved template). Unmatched DB entities still get
+    created in phases 3 / 4; unmatched Live entities are NOT
+    deleted — push is additive, not destructive.
+
+    Track matching: case-sensitive name equality. Master tracks (DB
+    ``kind='master'``) are skipped — Live's track list never
+    contains master, and master mixer state is reached via
+    ``ableton_session`` rather than a track index.
+
+    Return matching: the live-side name is stripped of Live's
+    automatic slot-letter prefix (W4-C) before comparison. So DB
+    'Reverb' matches Live 'A-Reverb' (and is linked to return_index
+    1, the index Live exposes for slot A).
+
+    Duplicate names on either side warn loudly and link the FIRST
+    match; the agent should rename to disambiguate. Returns kind
+    drift between DB and Live as a note (informational — kind isn't
+    enforced at link time).
+
+    Re-runnable: calling ``probe_and_link`` a second time on the same
+    inputs is a no-op (link_db_to_ableton is upsert-by-(session, db_kind, db_id)).
+    """
+    result = ProbeAndLinkResult()
+
+    db_tracks = [t for t in Q.get_tracks_for_song(conn, song_id) if t["kind"] != "master"]
+    db_returns = list(Q.get_returns_for_song(conn, song_id))
+
+    # ---- Tracks: name-equality match.
+    live_track_by_name: dict[str, list[dict[str, Any]]] = {}
+    for lt in live_tracks:
+        live_track_by_name.setdefault(lt["name"], []).append(lt)
+    consumed_live_track_indexes: set[int] = set()
+    for dt in db_tracks:
+        candidates = live_track_by_name.get(dt["name"], [])
+        if not candidates:
+            result.unmatched_db_tracks.append({"db_id": dt["id"], "name": dt["name"]})
+            continue
+        if len(candidates) > 1:
+            result.notes.append(
+                f"track name {dt['name']!r}: {len(candidates)} Live tracks "
+                "match; linking to the first (track_index="
+                f"{candidates[0]['track_index']}). Rename in Live to disambiguate."
+            )
+        chosen = candidates[0]
+        if dt["kind"] != chosen.get("kind"):
+            result.notes.append(
+                f"track {dt['name']!r}: DB kind={dt['kind']!r} but "
+                f"Live kind={chosen.get('kind')!r} (informational; link written anyway)"
+            )
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="track", db_id=dt["id"],
+            ableton_index=chosen["track_index"], actor=actor, reason=reason,
+        )
+        consumed_live_track_indexes.add(chosen["track_index"])
+        result.matched_tracks.append({
+            "db_id": dt["id"],
+            "name": dt["name"],
+            "ableton_index": chosen["track_index"],
+        })
+    for lt in live_tracks:
+        if lt["track_index"] not in consumed_live_track_indexes:
+            result.unmatched_live_tracks.append({
+                "track_index": lt["track_index"],
+                "name": lt["name"],
+            })
+
+    _flag_case_near_matches(
+        result.unmatched_db_tracks,
+        result.unmatched_live_tracks,
+        kind="track",
+        notes=result.notes,
+    )
+
+    # ---- Returns: strip Live's slot-letter prefix, then match by name.
+    live_return_by_name: dict[str, list[dict[str, Any]]] = {}
+    for lr in live_returns:
+        stripped = strip_return_slot_prefix(lr["name"])
+        live_return_by_name.setdefault(stripped, []).append(lr)
+    consumed_live_return_indexes: set[int] = set()
+    for dr in db_returns:
+        candidates = live_return_by_name.get(dr["name"], [])
+        if not candidates:
+            result.unmatched_db_returns.append({"db_id": dr["id"], "name": dr["name"]})
+            continue
+        if len(candidates) > 1:
+            result.notes.append(
+                f"return name {dr['name']!r} (suffix): {len(candidates)} Live "
+                "returns match; linking to the first (return_index="
+                f"{candidates[0]['return_index']})."
+            )
+        chosen = candidates[0]
+        M.link_db_to_ableton(
+            conn, session_id=session_id, db_kind="return", db_id=dr["id"],
+            ableton_index=chosen["return_index"], actor=actor, reason=reason,
+        )
+        consumed_live_return_indexes.add(chosen["return_index"])
+        result.matched_returns.append({
+            "db_id": dr["id"],
+            "name": dr["name"],
+            "ableton_index": chosen["return_index"],
+        })
+    for lr in live_returns:
+        if lr["return_index"] not in consumed_live_return_indexes:
+            result.unmatched_live_returns.append({
+                "return_index": lr["return_index"],
+                "name": lr["name"],
+            })
+
+    # Returns match by stripped-name; compare against stripped form
+    # so DB 'Reverb' vs Live 'A-reverb' surfaces as near-match.
+    _flag_case_near_matches(
+        result.unmatched_db_returns,
+        result.unmatched_live_returns,
+        kind="return",
+        notes=result.notes,
+        live_normalize=strip_return_slot_prefix,
+    )
+
+    return result
+
+
+def _flag_case_near_matches(
+    unmatched_db: list[dict[str, Any]],
+    unmatched_live: list[dict[str, Any]],
+    *,
+    kind: str,
+    notes: list[str],
+    live_normalize: Callable[[str | None], str | None] | None = None,
+) -> None:
+    """Surface DB×Live pairs that match case-insensitively but not
+    case-sensitively. Catches the silent foot-gun where a user renames
+    Live's 'Drums' → 'drums' and the probe creates a duplicate 'Drums'
+    track right next to it (W4-E real-Live finding, 2026-05-18).
+
+    Returns through ``notes`` rather than the unmatched lists — both
+    sides stay genuinely unmatched (the probe doesn't auto-link
+    case-variant pairs; the user decides). ``live_normalize`` is
+    applied to the Live-side name before comparison (e.g. strip
+    Live's return slot-letter prefix so DB 'Reverb' near-matches
+    Live 'A-reverb' / 'a-Reverb').
+    """
+    norm = live_normalize or (lambda s: s)
+    for db in unmatched_db:
+        db_name = db["name"]
+        for live in unmatched_live:
+            live_name = norm(live["name"])
+            if (
+                db_name != live_name
+                and db_name.casefold() == live_name.casefold()
+            ):
+                notes.append(
+                    f"DB {kind} {db_name!r} has near-match Live "
+                    f"{live['name']!r} (case differs); intentional? "
+                    "Rename one to match if not."
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1438,8 +2174,8 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # binding via _LINK_KINDS). W3-B dropped per-cue `cue_point` in
     # favor of the single batched `cue_batch:` key.
     "cue_batch",             # ableton_arrangement(cue_create_batch) — handler returns list of per-cue results
-    "tempo_point",           # write_tempo_point (emulator placeholder)
-    "time_signature_point",  # write_time_signature_point (emulator placeholder)
+    "tempo_point",           # ableton_session(set_tempo) for bar-1 (W5-A)
+    "time_signature_point",  # ableton_session(set_signature) for bar-1 (W5-A)
     # Chunk 3 (mix) → Wave M-2: all six mixer fields go through the unified
     # ableton_track(action='set_property') call. The key prefixes here stay
     # the same (volume/pan/mute/solo/arm/color) so apply matches by what the

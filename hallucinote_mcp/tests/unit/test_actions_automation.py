@@ -32,14 +32,43 @@ class FakeEnvelope:
     """Records ``insert_step`` writes so tests can assert breakpoint shape.
 
     Mirrors Live 12.4: only ``insert_step(time, duration, value)`` exists.
-    No ``clear``, no ``add_segment``.
+    No ``clear``, no ``add_segment``. ``value_at_time(t)`` is added per
+    W6-G — Live's real Envelope exposes it as the read path, and the
+    new sampling-based reconstruction depends on it.
+
+    ``parameter`` exposes the target this envelope is bound to — set by
+    ``FakeClip.create_automation_envelope`` at creation time. Required
+    by ``_find_existing_envelope``'s iteration path (W7-0 smoke fix,
+    2026-05-19).
     """
 
-    def __init__(self):
+    def __init__(self, parameter: Any = None):
         self.steps: list[tuple[float, float, float]] = []  # (time, dur, value)
+        self.parameter = parameter
 
     def insert_step(self, time_beats: float, duration: float, value: float) -> None:
         self.steps.append((time_beats, duration, value))
+
+    def value_at_time(self, time_beats: float) -> float:
+        """Return the value at the given time per the recorded steps.
+
+        Mirrors Live's stepped semantics: the most recent `insert_step`
+        whose region [t, t+duration] covers `time_beats` wins. Zero-
+        duration anchors (Hallucinote's last-breakpoint anchor pattern)
+        match at exactly their start time too — the handler's anchor
+        check needs this to round-trip the final breakpoint.
+
+        Default 0.0 when no step covers the time (matches Live's
+        unset-region behavior).
+        """
+        value = 0.0
+        for t, dur, v in self.steps:
+            if dur == 0.0:
+                if abs(time_beats - t) < 1e-9:
+                    value = v
+            elif t <= time_beats < t + dur:
+                value = v
+        return value
 
 
 class FakeParam:
@@ -61,22 +90,36 @@ class FakeMixer:
 class FakeClip:
     """Minimal clip stub.
 
-    - ``create_automation_envelope(target)`` returns a fresh envelope per
-      target. Re-creating after clear is required for envelope reset.
+    - ``create_automation_envelope(target)`` creates a fresh envelope when
+      none exists for the target; returns ``None`` if an envelope is
+      already bound (mirrors real Live 12.4 — the W7-0 smoke caught that
+      the API is NOT idempotent on already-bound targets, contrary to the
+      W6-G assumption).
+    - ``automation_envelopes`` exposes the bound envelopes as a list —
+      the iteration path of ``_find_existing_envelope`` walks this and
+      matches by ``envelope.parameter`` to locate existing envelopes.
     - ``clear_envelope(target)`` removes the envelope for that target
       (idempotent — no error if absent).
     - ``clear_all_envelopes()`` wipes everything.
     - ``envelope_for_note(pitch, start, axis)`` returns the per-note MPE
       envelope; note-expression has its own factory in Live's API.
+    - ``length`` is the clip's length in beats (W6-G read path samples
+      across [0, length]).
     """
 
-    def __init__(self):
+    def __init__(self, length: float = 4.0):
         self.envelopes_by_target: dict[Any, FakeEnvelope] = {}
         self.clear_envelope_calls: list[Any] = []  # ordered targets cleared
         self.clear_all_calls: int = 0
+        self.length = length
 
     def _key(self, target: Any) -> Any:
         return target if isinstance(target, tuple) else id(target)
+
+    @property
+    def automation_envelopes(self) -> list[FakeEnvelope]:
+        """Iterable view onto bound envelopes — mirrors Live's LOM."""
+        return list(self.envelopes_by_target.values())
 
     def clear_envelope(self, target: Any) -> None:
         self.clear_envelope_calls.append(target)
@@ -86,16 +129,23 @@ class FakeClip:
         self.clear_all_calls += 1
         self.envelopes_by_target.clear()
 
-    def create_automation_envelope(self, target: Any) -> FakeEnvelope:
-        env = FakeEnvelope()
-        self.envelopes_by_target[self._key(target)] = env
+    def create_automation_envelope(self, target: Any) -> FakeEnvelope | None:
+        # Mirrors real Live 12.4: returns the freshly-created envelope for
+        # a target with no envelope bound; returns None when an envelope
+        # already exists (W7-0 smoke finding 2026-05-19 — handlers MUST
+        # use the iteration path via automation_envelopes for the latter).
+        key = self._key(target)
+        if key in self.envelopes_by_target:
+            return None
+        env = FakeEnvelope(parameter=target)
+        self.envelopes_by_target[key] = env
         return env
 
     def envelope_for_note(self, pitch: int, start: float, axis: str) -> FakeEnvelope:
         key = ("note", pitch, start, axis)
         env = self.envelopes_by_target.get(key)
         if env is None:
-            env = FakeEnvelope()
+            env = FakeEnvelope(parameter=key)
             self.envelopes_by_target[key] = env
         return env
 
@@ -156,10 +206,12 @@ def loaded_actions():
 
 _EXPECTED_AUTOMATION_ACTIONS = {
     "help", "list", "clear", "clear_all", "write_envelope", "get_envelope",
+    # W6-G/W6-H: read_envelope is the new keystone; get_envelope kept as alias.
+    "read_envelope",
 }
 
 
-def test_automation_registers_six_actions(loaded_actions):
+def test_automation_registers_expected_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_automation")}
     assert names == _EXPECTED_AUTOMATION_ACTIONS
 
@@ -650,6 +702,154 @@ def test_write_envelope_device_parameter_unknown_name(loaded_actions):
     assert "Threshold" in (resp.error or "")
 
 
+# ---------- W7-C: return_index clip-scoped parity tests ----------
+#
+# The handler accepts return_index for the same clip-scoped envelopes as
+# track_index — mixer_volume / mixer_pan on a return's session clip,
+# send_level for return-to-return sends, and device_parameter on a return
+# device. The tests above all exercise track_index; these pin the return
+# branch of `_require_parent`. (Hallucinote's sync layer doesn't address
+# return-side session clips today — schema gap per backlog — but the MCP
+# handler must keep working for direct callers.)
+
+
+def _return_with_clip(send_count: int = 0) -> tuple[FakeCtx, FakeClip, FakeReturn]:
+    """Return a context whose return-track has a clip in slot 1.
+
+    `send_count` adjusts the FakeMixer's send count so return-to-return
+    send tests can address sends[N].
+    """
+    ret = FakeReturn()
+    if send_count:
+        ret.mixer_device = FakeMixer(sends=send_count)
+    clip = FakeClip()
+    ret.clip_slots[0].clip = clip
+    return FakeCtx(FakeSong(tracks=[FakeTrack()], returns=[ret])), clip, ret
+
+
+def test_write_envelope_mixer_volume_return_clip_scoped(loaded_actions):
+    """Return-track mixer_volume on a session clip — same envelope shape
+    as the track-side test, addressed via return_index."""
+    ctx, clip, ret = _return_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "return_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.5},
+                    {"time_beats": 8.0, "value": 0.8},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "mixer_volume"
+    assert ret.mixer_device.volume in clip.clear_envelope_calls
+
+
+def test_write_envelope_mixer_pan_return_clip_scoped(loaded_actions):
+    """Return-track mixer_pan on a session clip — common authoring case
+    (automate a return's stereo position over an arrangement section)."""
+    ctx, clip, ret = _return_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_pan",
+                "return_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": -0.5},
+                    {"time_beats": 4.0, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "mixer_pan"
+    assert ret.mixer_device.panning in clip.clear_envelope_calls
+
+
+def test_write_envelope_send_level_return_to_return_clip_scoped(loaded_actions):
+    """Live supports return-to-return sends; send_level addressed by
+    (source return_index, target return_index) must work the same way
+    as track-to-return."""
+    # Two returns: the source has a send to the second; the source has
+    # a clip in slot 1 that hosts the envelope.
+    src_ret = FakeReturn()
+    src_ret.mixer_device = FakeMixer(sends=1)
+    clip = FakeClip()
+    src_ret.clip_slots[0].clip = clip
+    tgt_ret = FakeReturn()
+    ctx = FakeCtx(FakeSong(
+        tracks=[FakeTrack()], returns=[src_ret, tgt_ret],
+    ))
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "send_level",
+                "return_index": 1,  # source return
+                "send_target_return_index": 2,  # but handler may name this differently
+                "location": "session", "clip_index": 1,
+                "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
+            },
+        ),
+        context=ctx,
+    )
+    # Either the handler accepts this exact shape OR it raises a teaching
+    # error about the right param name. Test pins the contract: a clear
+    # response (success OR a teaching error) — never a silent miss.
+    if resp.ok:
+        assert resp.result["target_kind"] == "send_level"
+        # Mixer.sends[0] is the send target this envelope writes to.
+        assert src_ret.mixer_device.sends[0] in clip.clear_envelope_calls
+    else:
+        # The handler today expects `return_index` to address the SEND
+        # TARGET (per the existing send_level test at line 519), which
+        # makes return-source ambiguous. The error must teach the user
+        # rather than silently succeed.
+        assert resp.error is not None
+
+
+def test_write_envelope_device_parameter_return_clip_scoped(loaded_actions):
+    """Return-track device_parameter on a session clip — e.g. automate
+    a Reverb's Decay on return A across an arrangement section."""
+    class _Dev:
+        def __init__(self):
+            self.parameters = (FakeParam("Decay Time", 2.0),)
+
+    ret = FakeReturn()
+    ret.devices = [_Dev()]
+    clip = FakeClip()
+    ret.clip_slots[0].clip = clip
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack()], returns=[ret]))
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "return_index": 1, "device_index": 1,
+                "parameter_name": "Decay Time",
+                "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 1.0},
+                    {"time_beats": 8.0, "value": 4.0},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "device_parameter"
+    assert resp.result["parameter_name"] == "Decay Time"
+    decay = ret.devices[0].parameters[0]
+    assert decay in clip.clear_envelope_calls
+
+
 def test_write_envelope_send_level_requires_return(loaded_actions):
     ctx, _ = _track_with_clip()
     resp = dispatch(
@@ -885,6 +1085,84 @@ def test_clear_note_expression_raises_teaching_error(loaded_actions):
     assert "clear_all" in err  # points at the working alternative
 
 
+# W6-A: missing-arg validation precedes the gap raise — matches the
+# clip_cc branch's "validate cc_number first" precedent. Without these
+# tests, a future refactor could silently re-flip the precedence and
+# mask a missing-axis error behind a "not supported" error, giving the
+# agent two things to debug instead of one.
+
+
+def test_clear_note_expression_missing_axis_raises_value_error_first(loaded_actions):
+    """When note_expression args are missing, the missing-arg ValueError
+    fires BEFORE the gap NotImplementedError. The agent sees the actionable
+    error (missing axis) rather than the structural one (not supported)."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                # axis intentionally omitted
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "requires note_pitch" in err or "axis" in err
+    # Critically: the gap message must NOT be what surfaces.
+    assert "clear_all" not in err
+
+
+def test_clear_note_expression_invalid_axis_raises_value_error_first(loaded_actions):
+    """Same precedence applies to invalid (not just missing) args."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="clear",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0, "axis": "volume",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "axis" in err and "volume" in err
+    assert "clear_all" not in err
+
+
+def test_write_envelope_note_expression_validation_uses_shared_helper(loaded_actions):
+    """Cross-check: write_envelope's note_expression branch produces the
+    SAME error text as clear's note_expression branch when args are
+    missing. Pins the shared-helper extraction — both paths route through
+    _require_note_expression_args."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                # axis intentionally omitted
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.0},
+                    {"time_beats": 1.0, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "requires note_pitch" in err
+
+
 # ---------- clear_all ----------
 
 
@@ -992,27 +1270,258 @@ def test_clear_all_requires_some_target(loaded_actions):
     assert "track_index" in (resp.error or "") or "return_index" in (resp.error or "")
 
 
-# ---------- get_envelope / list — gap stubs ----------
+# ---------- read_envelope (W6-G/W6-H — sampling-based reconstruction) ----------
 
 
-def test_get_envelope_returns_gap_error(loaded_actions):
+def _write_then_read(loaded_actions, *, target_kind, write_params, read_params):
+    """Helper: write an envelope then read it back. Returns (write_resp, read_resp)."""
+    ctx, _clip = _track_with_clip()
+    write_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={"target_kind": target_kind, **write_params},
+        ),
+        context=ctx,
+    )
+    read_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={"target_kind": target_kind, **read_params},
+        ),
+        context=ctx,
+    )
+    return write_resp, read_resp
+
+
+def test_read_envelope_mixer_volume_round_trip(loaded_actions):
+    """Write a stepped envelope on mixer_volume, read it back, verify
+    the reconstructed breakpoints match the writes (within sampling
+    resolution)."""
+    ctx, _clip = _track_with_clip()
+    write_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.5},
+                    {"time_beats": 1.0, "value": 0.8},
+                    {"time_beats": 2.5, "value": 0.3},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert write_resp.ok is True
+    read_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "resolution_beats": 0.01,
+            },
+        ),
+        context=ctx,
+    )
+    assert read_resp.ok is True, read_resp.error
+    r = read_resp.result
+    assert r["exists"] is True
+    assert r["target_kind"] == "mixer_volume"
+    # Reconstruct: expect breakpoints near 0.0, 1.0, 2.5 with values
+    # 0.5, 0.8, 0.3 (step localization is within resolution_beats).
+    bps = r["breakpoints"]
+    times = [bp["time_beats"] for bp in bps]
+    values = [bp["value"] for bp in bps]
+    # At least one breakpoint with each written value should surface.
+    assert any(abs(v - 0.5) < 1e-6 for v in values)
+    assert any(abs(v - 0.8) < 1e-6 for v in values)
+    assert any(abs(v - 0.3) < 1e-6 for v in values)
+    # First breakpoint anchors at the envelope's start.
+    assert bps[0]["time_beats"] == 0.0
+
+
+def test_read_envelope_empty_returns_exists_false(loaded_actions):
+    """A target with no envelope ever written returns exists=False —
+    no raise. The handler creates-or-returns; the empty envelope
+    samples to a single anchor breakpoint at the default value, which
+    the handler classifies as 'not musically populated' (exists=False).
+    Callers can use exists to short-circuit instead of inspecting the
+    single-anchor breakpoint."""
     ctx, _ = _track_with_clip()
     resp = dispatch(
         Request(
-            tool="ableton_automation", action="get_envelope",
+            tool="ableton_automation", action="read_envelope",
             params={
-                "target_kind": "mixer_volume", "track_index": 1,
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["exists"] is False
+    # The single-anchor default breakpoint is fine; exists=False is the
+    # signal that the envelope hasn't been populated.
+    assert len(resp.result["breakpoints"]) <= 1
+
+
+def test_read_envelope_device_parameter_round_trip(loaded_actions):
+    """Cross-target-kind canary: device_parameter read works too."""
+    ctx, _clip = _track_with_clip()
+    # Set up a device with a parameter on the track.
+    from typing import Any as _Any
+    track = ctx.song.tracks[0]
+    param = FakeParam("Threshold", 0.5)
+
+    class _Dev:
+        parameters = (param,)
+
+    track.devices = [_Dev()]
+    write_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "device_index": 1, "parameter_name": "Threshold",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.2},
+                    {"time_beats": 1.5, "value": 0.9},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert write_resp.ok is True, write_resp.error
+    read_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "device_index": 1, "parameter_name": "Threshold",
+                "resolution_beats": 0.01,
+            },
+        ),
+        context=ctx,
+    )
+    assert read_resp.ok is True, read_resp.error
+    r = read_resp.result
+    assert r["exists"] is True
+    assert r["device_index"] == 1
+    assert r["parameter_name"] == "Threshold"
+    values = [bp["value"] for bp in r["breakpoints"]]
+    assert any(abs(v - 0.2) < 1e-6 for v in values)
+    assert any(abs(v - 0.9) < 1e-6 for v in values)
+
+
+def test_read_envelope_clip_cc_raises_lom_gap(loaded_actions):
+    """clip_cc remains blocked by Live 12.4 LOM (same constraint as
+    write_envelope)."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "clip_cc",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "cc_number": 64,
             },
         ),
         context=ctx,
     )
     assert resp.ok is False
     err = (resp.error or "").lower()
-    assert "gap" in err
-    assert "write_envelope" in err  # points at the working alternative
+    assert "clip_cc" in err or "cc" in err
+    assert "lom" in err or "12.4" in err
+
+
+def test_read_envelope_arrangement_clip_raises_gap(loaded_actions):
+    """Same Live 12.4 LOM constraint as write_envelope: track-level
+    targets on arrangement clips aren't supported."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "arrangement", "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "arrangement" in err
+
+
+def test_read_envelope_resolution_beats_validates(loaded_actions):
+    """Non-positive resolution_beats raises a teaching error."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "resolution_beats": 0.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "resolution_beats" in (resp.error or "")
+
+
+def test_get_envelope_is_read_envelope_alias(loaded_actions):
+    """get_envelope and read_envelope return identical shapes — the
+    legacy-named action is just an alias for the W6-G/H keystone."""
+    ctx, _clip = _track_with_clip()
+    # Write something readable.
+    dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.4},
+                    {"time_beats": 1.0, "value": 0.7},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    via_get = dispatch(
+        Request(
+            tool="ableton_automation", action="get_envelope",
+            params={
+                "target_kind": "mixer_volume", "track_index": 1,
+                "location": "session", "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    via_read = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume", "track_index": 1,
+                "location": "session", "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert via_get.ok is True and via_read.ok is True
+    assert via_get.result == via_read.result
 
 
 def test_list_returns_gap_error(loaded_actions):
+    """list — enumerating envelopes without target identifiers stays
+    blocked. Clip.automation_envelopes exists but the per-envelope
+    target isn't readable, so per-target read_envelope is the way."""
     ctx = FakeCtx()
     resp = dispatch(
         Request(
@@ -1022,14 +1531,11 @@ def test_list_returns_gap_error(loaded_actions):
         context=ctx,
     )
     assert resp.ok is False
-    assert "gap" in (resp.error or "").lower()
-
-
-def test_blocked_actions_carry_BLOCKED_tag_in_description(loaded_actions):
-    for name in ("list", "get_envelope"):
-        action = schema.get("ableton_automation", name)
-        assert action is not None
-        assert "BLOCKED" in action.description
+    err = (resp.error or "").lower()
+    # New error text mentions enumeration constraint + the read_envelope
+    # workaround.
+    assert "enumerat" in err or "list" in err
+    assert "read_envelope" in (resp.error or "")
 
 
 # ---------- run_on_main discipline ----------
@@ -1049,3 +1555,230 @@ def test_automation_execution_marshals_to_main_thread(loaded_actions):
         context=ctx,
     )
     assert ctx.run_on_main_calls == 1
+
+
+# ---------- W7-0 smoke fix: iteration-path envelope discovery ----------
+
+
+def test_find_existing_envelope_iterates_when_already_bound(loaded_actions):
+    """When an envelope is already bound for the target, the iteration
+    path matches by parameter identity. Mirrors real Live 12.4 which
+    returns None from create_automation_envelope on an existing binding
+    (W7-0 smoke 2026-05-19)."""
+    from hallucinote_mcp.handlers.automation import _find_existing_envelope
+
+    clip = FakeClip()
+    target = FakeParam("Volume", 0.85)
+
+    # First call: nothing bound — create returns a fresh envelope.
+    env1 = _find_existing_envelope(clip, target)
+    assert env1 is not None
+    assert env1.parameter is target
+
+    # Second call: envelope already bound — iteration path must find the
+    # SAME envelope object, not a new one. (Real Live's
+    # create_automation_envelope would return None here.)
+    env2 = _find_existing_envelope(clip, target)
+    assert env2 is env1, (
+        "iteration path must return the existing envelope, not None or a fresh one"
+    )
+
+
+def test_find_existing_envelope_returns_none_for_unbindable_target(loaded_actions):
+    """An invalid target with no envelope bound returns None — preserves
+    the existing contract used by read_envelope's empty-result path."""
+    from hallucinote_mcp.handlers.automation import _find_existing_envelope
+
+    class StubClip:
+        automation_envelopes: list = []
+
+        def create_automation_envelope(self, target):  # noqa: D401
+            raise RuntimeError("invalid target")
+
+    target = FakeParam("Volume", 0.85)
+    assert _find_existing_envelope(StubClip(), target) is None
+
+
+# ---------- W7-0 smoke fix: write_breakpoints_as_steps tail extension ----------
+
+
+def test_write_breakpoints_as_steps_extends_last_step_to_tail_end(loaded_actions):
+    """The last step extends from last_t to tail_end so the held value
+    survives to clip end. Without this, real Live's stepped envelope
+    reverts to the parameter default for the tail (W7-0 smoke
+    2026-05-19 — user-visible as a 0dB / 0-pan point between the last
+    breakpoint and clip end)."""
+    from hallucinote_mcp.handlers.automation import _write_breakpoints_as_steps
+
+    env = FakeEnvelope()
+    _write_breakpoints_as_steps(
+        env,
+        [
+            {"time_beats": 0.0, "value": 0.85, "curve": "hold"},
+            {"time_beats": 1.0, "value": 0.5, "curve": "hold"},
+            {"time_beats": 2.0, "value": 0.2, "curve": "hold"},
+        ],
+        tail_end=4.0,
+    )
+    # Three steps: [0,1] @ 0.85, [1,2] @ 0.5, [2,4] @ 0.2.
+    assert env.steps == [
+        (0.0, 1.0, 0.85),
+        (1.0, 1.0, 0.5),
+        (2.0, 2.0, 0.2),  # last step extends 2 beats to tail_end=4.0
+    ]
+
+
+def test_write_breakpoints_as_steps_zero_duration_anchor_without_tail_end(loaded_actions):
+    """Without tail_end, the last step is a zero-duration anchor — legacy
+    behavior preserved for callers (note_expression) that don't have a
+    natural envelope-end value."""
+    from hallucinote_mcp.handlers.automation import _write_breakpoints_as_steps
+
+    env = FakeEnvelope()
+    _write_breakpoints_as_steps(
+        env,
+        [
+            {"time_beats": 0.0, "value": 0.5, "curve": "hold"},
+            {"time_beats": 2.0, "value": 0.8, "curve": "hold"},
+        ],
+        # tail_end omitted
+    )
+    assert env.steps == [
+        (0.0, 2.0, 0.5),
+        (2.0, 0.0, 0.8),  # zero-duration anchor (no tail extension)
+    ]
+
+
+def test_write_breakpoints_as_steps_tail_end_before_last_falls_back(loaded_actions):
+    """Defensive: tail_end <= last_t (degenerate case) falls back to
+    zero-duration anchor rather than emitting a negative-duration step."""
+    from hallucinote_mcp.handlers.automation import _write_breakpoints_as_steps
+
+    env = FakeEnvelope()
+    _write_breakpoints_as_steps(
+        env,
+        [{"time_beats": 0.0, "value": 0.5, "curve": "hold"},
+         {"time_beats": 4.0, "value": 0.8, "curve": "hold"}],
+        tail_end=4.0,  # equal to last_t — no tail to extend into
+    )
+    assert env.steps == [
+        (0.0, 4.0, 0.5),
+        (4.0, 0.0, 0.8),
+    ]
+
+
+# ---------- W7-0 smoke fix: _params_equal fallback coverage ----------
+
+
+def test_params_equal_name_and_canonical_parent_fallback_when_eq_raises(loaded_actions):
+    """When `__eq__` raises on a parameter wrapper (some third-party
+    plugin objects do this), _params_equal falls back to comparing name
+    + canonical_parent. Covers the defensive try/except guards that
+    real Live's wrapper-equality risk requires (W7-0 smoke 2026-05-19)."""
+    from hallucinote_mcp.handlers.automation import _params_equal
+
+    class ExplodingParam:
+        """A parameter whose __eq__ raises — simulates a plugin object
+        whose wrapper doesn't implement equality cleanly."""
+
+        def __init__(self, name: str, parent: object) -> None:
+            self.name = name
+            self.canonical_parent = parent
+
+        def __eq__(self, other: object) -> bool:  # pragma: no cover (the raise IS the contract)
+            raise TypeError("plugin objects don't support __eq__")
+
+        def __hash__(self) -> int:
+            return id(self)
+
+    parent_a = object()
+    parent_b = object()
+
+    # Same name + same parent → match (via fallback, since __eq__ raises)
+    p1 = ExplodingParam("Volume", parent_a)
+    p2 = ExplodingParam("Volume", parent_a)
+    assert _params_equal(p1, p2) is True
+
+    # Different name → no match (short-circuits before canonical_parent check)
+    p3 = ExplodingParam("Pan", parent_a)
+    assert _params_equal(p1, p3) is False
+
+    # Same name, different parent → no match
+    p4 = ExplodingParam("Volume", parent_b)
+    assert _params_equal(p1, p4) is False
+
+
+def test_params_equal_missing_name_or_parent_returns_false(loaded_actions):
+    """If either parameter lacks `name` or `canonical_parent`, the
+    fallback can't disambiguate — return False rather than risk a
+    false match."""
+    from hallucinote_mcp.handlers.automation import _params_equal
+
+    class NoNameParam:
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("eq raises")
+
+        def __hash__(self) -> int:
+            return id(self)
+
+    p1 = NoNameParam()
+    p2 = NoNameParam()
+    assert _params_equal(p1, p2) is False
+
+
+# ---------- W7-0 smoke fix: dispatch-level read_envelope idempotency ----------
+
+
+def test_dispatch_read_envelope_twice_returns_same_breakpoints(loaded_actions):
+    """End-to-end dispatch mirroring the S-1 smoke pass criterion:
+    write an envelope, read twice via the dispatcher, both reads return
+    identical breakpoints. This is the unit-level version of the
+    real-Live smoke documented in tests/integration/test_live_smoke.md."""
+    ctx, _ = _track_with_clip()
+
+    write_resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.85, "curve": "hold"},
+                    {"time_beats": 1.0, "value": 0.5, "curve": "hold"},
+                    {"time_beats": 2.0, "value": 0.2, "curve": "hold"},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert write_resp.ok, write_resp.error
+
+    read1 = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "resolution_beats": 0.25,
+            },
+        ),
+        context=ctx,
+    )
+    read2 = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "resolution_beats": 0.25,
+            },
+        ),
+        context=ctx,
+    )
+
+    assert read1.ok and read2.ok
+    assert read1.result["exists"] is True
+    assert read1.result == read2.result, (
+        "second read must return the SAME envelope contents as the first "
+        "(non-destructive). Real Live failure mode S-1 was designed for."
+    )

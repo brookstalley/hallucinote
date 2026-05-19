@@ -611,8 +611,32 @@ def cue_create_batch_handler(
     # W3-F: each per-cue iteration runs through _create_one_cue_locked
     # which is a worker-thread routine. The lock is acquired once on the
     # worker thread for the whole batch.
+    #
+    # W5-C: atomic precondition — every position must be within
+    # ``last_event_time`` before ANY cue writes. _create_one_cue_locked
+    # also validates per-cue, but checking up-front means a single
+    # out-of-range position blocks the whole batch instead of letting
+    # the prefix succeed before the bad cue raises. W4-E real-Live
+    # smoke showed the per-cue check leaves partial state on failure.
     results: list[dict[str, Any]] = []
     with context.live_state_lock:
+        song = context.song
+        last_event_time = float(getattr(song, "last_event_time", 0.0))
+        out_of_range = [
+            (i, pos) for i, (pos, _) in enumerate(parsed)
+            if pos > last_event_time + 1e-6
+        ]
+        if out_of_range:
+            offending = ", ".join(
+                f"cues[{i}].position_beats={pos}" for i, pos in out_of_range
+            )
+            raise ValueError(
+                f"cue_create_batch: {len(out_of_range)} cue(s) past "
+                f"last_event_time={last_event_time}: {offending}. Live's "
+                f"current_song_time setter is clamped to the arrangement's "
+                f"extent — place arrangement content covering these "
+                f"positions first. No cues written (atomic batch)."
+            )
         for position_beats, name in parsed:
             results.append(
                 _create_one_cue_locked(

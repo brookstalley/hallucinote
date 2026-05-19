@@ -98,31 +98,56 @@ def test_plan_push_tempo_map_empty_warns(conn, song):
     assert any("no tempo_map" in n for n in plan.notes)
 
 
-def test_plan_push_tempo_map_single_point(conn, song):
+def test_plan_push_tempo_map_single_bar1_point_emits_set_tempo(conn, song):
     pid = M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
     plan = push.plan_push_tempo_map(conn, song_id=song)
     assert len(plan.calls) == 1
     call = plan.calls[0]
-    assert call.tool == "write_tempo_point"
-    assert call.args == {"bar": 1, "beat": 0.0, "bpm": 132.0, "ramp": "hold"}
+    assert call.tool == "ableton_session"
+    assert call.args == {"action": "set_tempo", "bpm": 132.0}
     assert call.key == f"tempo_point:{pid}"
-    # 4/4 default warning expected since no time_signature_map present
-    assert any("4/4" in n for n in plan.notes)
+    # Bar-1-only: no MCP-gap warn.
+    assert plan.notes == []
 
 
-def test_plan_push_tempo_map_multi_point_emits_warn_and_calls(conn, song):
+def test_plan_push_tempo_map_multi_point_emits_bar1_call_and_gap_warn(conn, song):
+    """Per-bar tempo automation is an MCP gap on Live 12.4. The bar-1
+    row goes through `set_tempo`; non-bar-1 rows skip with a warn.
+    """
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=132.0)
-    M.add_tempo_point(conn, song_id=song, start_bar=16.5, tempo_bpm=80.0, ramp="linear")
+    pid_1 = M.add_tempo_point(
+        conn, song_id=song, start_bar=1.0, tempo_bpm=132.0
+    )
+    M.add_tempo_point(
+        conn, song_id=song, start_bar=16.5, tempo_bpm=80.0, ramp="linear"
+    )
     plan = push.plan_push_tempo_map(conn, song_id=song)
-    assert len(plan.calls) == 2
-    # Second point at bar 16.5 -> (bar=16, beat=2.0) in 4/4
-    assert plan.calls[1].args["bar"] == 16
-    assert math.isclose(plan.calls[1].args["beat"], 2.0)
-    assert plan.calls[1].args["ramp"] == "linear"
-    assert any("multi-point or ramped" in n for n in plan.notes)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_session"
+    assert call.args == {"action": "set_tempo", "bpm": 132.0}
+    assert call.key == f"tempo_point:{pid_1}"
+    assert any(
+        "song_tempo" in n and "1 non-bar-1" in n for n in plan.notes
+    )
+
+
+def test_plan_push_tempo_map_no_bar1_row_warns_and_emits_no_calls(conn, song):
+    """A tempo_map without a bar-1 row leaves Live's global tempo
+    unaddressable; the planner warns about both the missing bar-1
+    anchor AND the multi-bar MCP gap.
+    """
+    M.add_tempo_point(
+        conn, song_id=song, start_bar=5.0, tempo_bpm=132.0
+    )
+    plan = push.plan_push_tempo_map(conn, song_id=song)
+    assert plan.calls == []
+    assert any(
+        "no row at start_bar=1.0" in n for n in plan.notes
+    )
+    assert any("song_tempo" in n for n in plan.notes)
 
 
 # ---------- plan_push_time_signature_map ----------
@@ -134,17 +159,59 @@ def test_plan_push_time_signature_map_empty_warns(conn, song):
     assert any("no time_signature_map" in n for n in plan.notes)
 
 
-def test_plan_push_time_signature_map_emits_canonical_call_and_gap_warn(conn, song):
+def test_plan_push_time_signature_map_bar1_emits_set_signature(conn, song):
     pid = M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert len(plan.calls) == 1
     call = plan.calls[0]
-    assert call.tool == "write_time_signature_point"
-    assert call.args == {"bar": 1, "beat": 0.0, "numerator": 4, "denominator": 4}
+    assert call.tool == "ableton_session"
+    assert call.args == {
+        "action": "set_signature", "numerator": 4, "denominator": 4,
+    }
     assert call.key == f"time_signature_point:{pid}"
-    assert any("MCP gap" in n for n in plan.notes)
+    # Bar-1-only: no MCP-gap warn.
+    assert plan.notes == []
+
+
+def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
+    conn, song,
+):
+    """Per-bar meter automation is an MCP gap. Bar-1 row goes through
+    `set_signature`; non-bar-1 rows skip with a warn.
+    """
+    pid_1 = M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=9.0, numerator=6, denominator=8
+    )
+    plan = push.plan_push_time_signature_map(conn, song_id=song)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_session"
+    assert call.args == {
+        "action": "set_signature", "numerator": 4, "denominator": 4,
+    }
+    assert call.key == f"time_signature_point:{pid_1}"
+    assert any(
+        "song_signature" in n and "1 non-bar-1" in n for n in plan.notes
+    )
+
+
+def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
+    """A time_signature_map without a bar-1 row leaves Live's global
+    meter unaddressable; warn on both the missing anchor and the
+    multi-bar MCP gap.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=5.0, numerator=6, denominator=8
+    )
+    plan = push.plan_push_time_signature_map(conn, song_id=song)
+    assert plan.calls == []
+    assert any("no row at start_bar=1.0" in n for n in plan.notes)
+    assert any("song_signature" in n for n in plan.notes)
 
 
 # ---------- _position_bar_to_beats (W3-B inverse of _split_bar) ----------

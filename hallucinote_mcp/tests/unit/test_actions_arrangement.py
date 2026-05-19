@@ -1140,6 +1140,75 @@ def test_cue_create_batch_rejects_duplicate_position(loaded_actions):
     assert len(ctx.song.cue_points) == 0
 
 
+def test_cue_create_batch_atomic_on_out_of_range_position(loaded_actions):
+    """W5-C: a single position past last_event_time aborts the WHOLE
+    batch — no cues persist. Without this, the W4-E real-Live smoke
+    saw earlier cues persist while a later out-of-range cue raised."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 32.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "Intro"},
+                {"position_beats": 16.0, "name": "Verse"},
+                {"position_beats": 48.0, "name": "Past End"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "last_event_time" in (resp.error or "")
+    assert "48.0" in (resp.error or "")
+    assert "No cues written" in (resp.error or "")
+    # ATOMIC: the prior two in-range cues are NOT in Live's state.
+    assert len(ctx.song.cue_points) == 0
+
+
+def test_cue_create_batch_atomic_reports_all_out_of_range(loaded_actions):
+    """When multiple positions are out of range, the error names every
+    offending position so the user fixes them all in one round trip."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 16.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 8.0, "name": "OK"},
+                {"position_beats": 24.0, "name": "Bad1"},
+                {"position_beats": 32.0, "name": "Bad2"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "24.0" in (resp.error or "")
+    assert "32.0" in (resp.error or "")
+    assert "2 cue(s)" in (resp.error or "")
+    assert len(ctx.song.cue_points) == 0
+
+
+def test_cue_create_batch_atomic_all_in_range_succeeds(loaded_actions):
+    """Sanity check: with all positions inside last_event_time, the
+    atomic precondition passes silently and the batch writes."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "A"},
+                {"position_beats": 32.0, "name": "B"},
+                {"position_beats": 64.0, "name": "C"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["cue_count"] == 3
+    assert len(ctx.song.cue_points) == 3
+
+
 def test_cue_create_batch_rejects_invalid_name_type(loaded_actions):
     ctx = FakeCtx()
     resp = dispatch(

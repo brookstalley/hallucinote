@@ -6,12 +6,11 @@ Items grouped by **what unblocks the most workflow per fix**, not by implementat
 
 ---
 
-## Status as of Wave M-5 close (2026-05-17)
+## Status as of Wave 6 close (2026-05-19)
 
 The `hallucinote-mcp` greenfield server has now landed (Wave M-0 → M-5),
-and most of the gaps below are resolved by the unified 10-tool surface.
-This doc is preserved as the historical gap analysis that drove the
-Wave-M design; current status is annotated inline per section.
+extended through Wave 5 (sync-side V1 round-trip parity), and Wave 6
+closed the remaining MCP-side gaps where Live's LOM allows it.
 
 **P1 status:** all six items resolved or repositioned.
 - #1 (gap #1 rename): ✓ resolved — `ableton_clip(action='replace_notes')`
@@ -21,26 +20,36 @@ Wave-M design; current status is annotated inline per section.
 - #5 (bulk arrangement ops): partial — `ableton_clip(action='duplicate_to_arrangement')` is per-call; bulk patterns remain agent-emulated.
 - #6 (`duplicate_clip_to_arrangement` returns identity): ✓ resolved — handler returns `arrangement_clip_index`.
 - #16 (sends): ✓ resolved — `ableton_track(action='set_send')` + `get_sends`.
-- #17 (sidechain): ✓ resolved (Compressor only) — `ableton_device(action='set_sidechain')`.
+- #17 (sidechain): ✓ **resolved via capability probing (Wave 6 W6-E)** — `ableton_device(action='set_sidechain')` no longer rejects device classes; uniform mechanism via param-name discovery + `set_input_routing` for source routing. Designed for the third-party VST/AU/CLAP ecosystem (project memory `feedback_third_party_devices_require_capability_probing`).
 - #17b (`get_device_parameters` broken): ✓ resolved — `ableton_device(action='get_parameters')` is greenfield code, the legacy fork's bug doesn't apply.
 
-**P2 score-half:** tempo / signature automation per (bar, beat) remains a
-hard MCP gap. `ableton_session(action='set_tempo')` and `set_signature`
-cover the global (bar-1) values; per-bar automation needs Live's
-arrangement-envelope API, which isn't reached by `ableton_automation`
-target_kinds (no `song_tempo` target). Backlog item.
+**P2 score-half:** tempo / signature automation per (bar, beat) is
+**NOT closeable via MCP** — investigated in Wave 6 W6-F (2026-05-19).
+The Live LOM doesn't expose `create_automation_envelope` from any
+song-level path; `signature_*` aren't `DeviceParameter` objects;
+time-signature automation is unsupported in the API per Ableton's
+own forum. `ableton_session(action='set_tempo')` / `set_signature`
+cover the bar-1 value (W5-A); per-scene tempo/signature via
+`ableton_scene` is the supported architectural workaround for
+multi-section changes. Filed as residual backlog item.
 
 **P2 mix-half:** all five sub-sections resolved via Wave M-2's
 `ableton_track` / `ableton_return` collapse plus M-1's `set_master_property`.
 
-**P2 device-half:** resolved via Wave M-4's `ableton_device` consolidation.
-Nested-chain probe (sub-section "Nested-chain probe and push") remains
-blocked — backlog item under "Capture extension for nested rack chains."
+**P2 device-half:** resolved via Wave M-4's `ableton_device`
+consolidation + Wave 6 W6-I/W6-J nested-rack actions. Nested-chain
+probe / push is now one-level-deep via `get_device_chains`,
+`load_in_rack`, `set_parameter_in_rack`. Recursive sub-racks remain
+a future workstream.
 
-**P2 automation:** all seven envelope target families resolved via Wave
-M-4's `ableton_automation(action='write_envelope', target_kind=...)`
-collapse. Envelope read surface (list / get_envelope) remains blocked;
-gap-#4-style stubs cite the limitation.
+**P2 automation:** all seven envelope target families have BOTH
+write (Wave M-4) AND read (Wave 6 W6-G/W6-H) surfaces. The read
+path is sampling-based reconstruction since Live exposes only
+`envelope.value_at_time(t)`, not breakpoint enumeration — handler
+samples at `resolution_beats` (default 1/96 beat) and emits a
+breakpoint at each step transition. clip_cc / clip_pitch_bend
+remain blocked by Live 12.4 LOM (same gap that blocks the write
+side).
 
 **Other:** gap #13 (cue point names) is resolved in the greenfield server
 — `ableton_arrangement(action='cue_list')` returns real names. The
@@ -50,10 +59,11 @@ against agent reformatting.
 The remaining V1.1+ wishlist is tracked in `.prawduct/backlog.md`:
 - Hallucinote-side quantize / swing / groove module (M-3 user direction).
 - Replace-session-clip retarget to atomic `ableton_clip(create, replace=True, notes=...)`.
-- Arrangement-level tempo / signature automation.
-- Note pull surface (gap #4 PARTIAL resolved 2026-05-17; surgical Ableton-side writes remain — `ableton_note(add/update/delete)`).
+- Per-scene tempo/signature workaround for the multi-bar automation gap.
+- Surgical Ableton-side note writes (gap #4 residual; `scope.never`).
 - Audio render + analysis (`ableton_render`, `ableton_analysis`).
-- Nested rack chain probe.
+- Recursive nested-nested rack chain support.
+- Capture-side extension to walk `get_device_chains` and populate `device_chains` with `parent_rack_device_id`.
 
 ---
 
@@ -152,22 +162,35 @@ The items above all surfaced during note authoring. Items #16-#17 surfaced when 
 
 ## Priority 2 — Score-half push gaps (chunk 2)
 
-Surfaced by chunk 2 of the DB-as-source-of-truth migration. The hallucinote push planner emits the canonical names below; `mcp_names.ALIASES_TODAY` flags them as needing emulation until MCP supports them natively.
+Surfaced by chunk 2 of the DB-as-source-of-truth migration. Post-W5-A
+(2026-05-18) the bar-1 case is solved via the existing
+`ableton_session(set_tempo)` / `set_signature` surface — the planner
+emits those directly. The aspirational entries below cover the
+remaining multi-bar automation gap; until they land, the planner
+warns and skips non-bar-1 rows (see
+`hallucinote_mcp/.../guides/gaps.md` "Arrangement-level tempo /
+signature automation").
 
 ### Tempo automation at a (bar, beat)
 
-**Current state:** `set_tempo(tempo)` exists but is global / instantaneous. There is no way to write a tempo point at a specific arrangement position, and no way to express linear ramps between points.
+**Current state:** `ableton_session(set_tempo, bpm=...)` sets Live's
+global `Song.tempo` (bar-1 value). Per-bar tempo automation is not
+exposed — `ableton_automation` has no `song_tempo` `target_kind`.
 
 **Required:**
-- `write_tempo_point(bar: int, beat: float, bpm: float, ramp: "linear" | "hold")` — write a single point into the master-track tempo automation envelope. `bar` is 1-based and `beat` is 0-based-within-bar, matching `create_cue_point`.
-- For single-point / `hold`-ramp maps, an MCP shim could emulate via `set_tempo`, but multi-point maps and ramped transitions are blocked until proper automation writes land.
+- A `song_tempo` `target_kind` on `ableton_automation(write_envelope, ...)` so
+  per-bar tempo points and ramps can be authored via the unified envelope
+  surface (mirror of how `mixer_volume` etc. work today).
 
 ### Arrangement-level time signature changes
 
-**Current state:** No MCP tool writes meter-change events on the arrangement. The Live API exposes time-signature markers, but they're not surfaced.
+**Current state:** `ableton_session(set_signature, numerator=, denominator=)`
+sets Live's global meter. Per-bar meter automation is not exposed — no
+`song_signature` `target_kind` on `ableton_automation`.
 
 **Required:**
-- `write_time_signature_point(bar: int, beat: float, numerator: int, denominator: int)` — write a time-signature marker on the master / arrangement timeline. `bar` 1-based, `beat` 0-based-within-bar.
+- A `song_signature` `target_kind` on `ableton_automation(write_envelope, ...)`
+  so the time-signature timeline can be authored programmatically.
 
 ### Section markers (informational)
 

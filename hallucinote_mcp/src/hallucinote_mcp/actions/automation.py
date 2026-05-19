@@ -1,13 +1,21 @@
 """``ableton_automation`` action schema.
 
-Six actions covering automation envelopes across all seven Live target
+Actions covering automation envelopes across all seven Live target
 families:
 
   - **Write**: write_envelope (the load-bearing collapse — 8 fork tools → 1)
+  - **Read**: read_envelope, get_envelope (alias) — sampling-based
+    reconstruction via Live's `envelope.value_at_time(t)`. Closed in
+    W6-G/H (2026-05-19) for 5 of 7 target_kinds; clip_cc / clip_pitch_bend
+    remain LOM-blocked on the read side mirroring the write side.
+  - **Read-list (not currently supported)**: list — bulk enumeration
+    without a target_kind isn't currently supported. `envelope.parameter`
+    IS accessible on Live 12.4 (W7-0 smoke confirmed this empirically),
+    so iteration is possible — but mapping each Live parameter back to
+    a `(target_kind, addressing-args)` tuple would require inverting
+    every target-resolution branch. Use `read_envelope` per-target
+    instead until a consumer needs bulk enumeration.
   - **Destroy**: clear (one envelope), clear_all (all on clip OR parent)
-  - **Read (gap-blocked)**: list, get_envelope — stubs citing the MCP
-    envelope-read surface gap. Hallucinote's pull skill documents this as
-    a blocked domain.
   - **Help**: dispatcher-special
 
 write_envelope's ``target_kind`` discriminator selects among seven shapes:
@@ -290,18 +298,77 @@ register(
         tool="ableton_automation",
         name="get_envelope",
         description=(
-            "[BLOCKED — MCP envelope read surface gap] Read a single "
-            "envelope's breakpoints. Same identifier set as write_envelope; "
-            "returns [{time_beats, value, curve}, ...] once the gap lands."
+            "Read a single envelope's reconstructed breakpoints. Alias "
+            "for read_envelope — same shape, same params. W6-G/W6-H "
+            "(2026-05-19) closed the previous gap-blocked status via a "
+            "sampling-based reconstruction (Live's LOM exposes only "
+            "value_at_time, not breakpoint enumeration; the handler "
+            "samples at resolution_beats and emits a breakpoint at each "
+            "step transition)."
         ),
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
             *_envelope_target_params(),
+            ParamSpec(
+                name="resolution_beats",
+                type="float",
+                required=False,
+                description=(
+                    "Sampling resolution for reconstruction (default "
+                    "1/96 beat ≈ 3.1ms at 120BPM). Smaller = finer step "
+                    "localization at the cost of more samples."
+                ),
+            ),
         ),
         handler=automation_handlers.get_envelope_handler,
         example=(
             "ableton_automation(action='get_envelope', "
-            "target_kind='mixer_volume', track_index=2)"
+            "target_kind='device_parameter', track_index=2, "
+            "location='session', clip_index=1, device_index=1, "
+            "parameter_name='Threshold')"
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_automation",
+        name="read_envelope",
+        description=(
+            "Read an envelope's reconstructed breakpoints. Sampling-"
+            "based: Live's AutomationEnvelope exposes only "
+            "value_at_time(t), not breakpoint enumeration. The handler "
+            "samples across the clip's [0, length_beats] range at "
+            "resolution_beats and emits a breakpoint at each step "
+            "transition. Step changes are localized to within "
+            "resolution_beats; pass a smaller value for finer fidelity. "
+            "Returns exists=False (no raise) when no envelope is bound "
+            "to the target."
+        ),
+        params=(
+            ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
+            *_envelope_target_params(),
+            ParamSpec(
+                name="resolution_beats",
+                type="float",
+                required=False,
+                description=(
+                    "Sampling resolution (default 1/96 beat). Smaller = "
+                    "finer step localization at the cost of more samples."
+                ),
+            ),
+        ),
+        handler=automation_handlers.read_envelope_handler,
+        example=(
+            "ableton_automation(action='read_envelope', "
+            "target_kind='mixer_volume', track_index=2, "
+            "location='session', clip_index=1)"
+        ),
+        tips=(
+            "clip_cc and clip_pitch_bend remain blocked by Live 12.4 "
+            "LOM (same constraint as write_envelope). Read CC envelopes "
+            "indirectly via ableton_clip's note read for the "
+            "control-change-note encoding pattern.",
         ),
     )
 )

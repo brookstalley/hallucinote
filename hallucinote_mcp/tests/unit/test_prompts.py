@@ -90,7 +90,10 @@ def test_setup_sidechain_compression_includes_full_workflow():
         "ableton_device(action='list'",
         "Compressor2",
         "ableton_device(action='set_sidechain'",
-        "source_track_index=1",
+        # W6-E-2: source addressed by display_name, not 1-based index.
+        # Prompt now instructs the agent to resolve the name via track list.
+        "source_display_name=",
+        "ableton_track(action='list')",
         "track_index=4",
     ])
 

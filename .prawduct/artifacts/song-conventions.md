@@ -106,4 +106,24 @@ The DB stores the *what* — notes, envelopes, devices, arrangement positions. T
 - `markdown_refs.song_id` FK to `songs(id)` resolves the `songs/<slug>/` path.
 - The `related` cross-links are markdown-internal (point at other ref paths).
 
-When the LLM records a deliberate decision during a compose session, it writes a `decisions/` file AND emits a `MARKDOWN_REF_RECORDED` event tied to the active `request_id` — that's the audit trail linking "this compose session produced this decision." (Event emission lives in W8-B; the markdown convention here is the read surface.)
+When the LLM records a deliberate decision during a compose session, it should write the file via `markdown_refs.write_markdown_ref(...)` — a one-call surface that serializes the frontmatter + body, writes the file to disk, upserts the `markdown_refs` projection row, refreshes FTS5, and emits the `MARKDOWN_REF_RECORDED` audit event threaded to the active `request_id`. This links the compose session to the decision it produced.
+
+Pattern:
+
+```python
+from hallucinote.db import mutations as M
+from hallucinote.markdown_refs import write_markdown_ref
+
+with M.request(conn, actor="llm", intent="add C3' twist rationale",
+               kind="compose", song_id=sid) as rid:
+    write_markdown_ref(
+        conn,
+        path=Path("songs/falling-walking/decisions/2026-05-26-x.md"),
+        repo_root=repo_root,
+        body="...",
+        frontmatter={"kind": "decision", "scope": "song", "date": "2026-05-26"},
+        request_id=rid,
+    )
+```
+
+Reindex of pre-existing files (via `reindex_corpus`) is a separate path that does NOT emit `MARKDOWN_REF_RECORDED` — projection rebuild is not a domain mutation.

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hallucinote.db import mutations as M
 from hallucinote.db.connection import transaction
 
 # ---------------------------------------------------------------------------
@@ -237,6 +238,84 @@ def load_markdown_doc(path: Path, *, repo_root: Path) -> MarkdownDoc:
         body=body,
         content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
     )
+
+
+def write_markdown_ref(
+    conn: sqlite3.Connection,
+    *,
+    path: Path,
+    repo_root: Path,
+    body: str,
+    frontmatter: dict[str, Any],
+    actor: str = "llm",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> MarkdownDoc:
+    """Write a new decision/annotation file and emit the audit event.
+
+    This is the LLM-facing one-call surface for "I made a deliberate choice
+    and want to record it." It:
+
+      1. Serializes `frontmatter` into the file's YAML-subset header.
+      2. Writes `path` to disk (parents created as needed; UTF-8).
+      3. Parses + validates the written file (so schema errors surface
+         immediately, not on next reindex).
+      4. Upserts the `markdown_refs` row + refreshes FTS5 in one transaction.
+      5. Emits `MARKDOWN_REF_RECORDED` via `M.record_markdown_ref`, threaded
+         to the active `request_id` so cross-reference queries link this
+         decision back to the compose session that produced it.
+
+    Returns the parsed `MarkdownDoc`. Reindex of pre-existing files (via
+    `reindex_corpus`) is a separate path that does NOT emit this event —
+    projection rebuild is not a domain mutation.
+    """
+    if path.is_absolute():
+        relpath_obj = path.relative_to(repo_root)
+    else:
+        relpath_obj = path
+        path = repo_root / path
+    text = _serialize_markdown(frontmatter, body)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    doc = load_markdown_doc(path, repo_root=repo_root)
+    song_id = _resolve_song_id(conn, doc.relpath)
+    track_id = _resolve_track_id(conn, song_id, doc.frontmatter.track)
+    with transaction(conn):
+        _upsert_markdown_ref(conn, doc, song_id=song_id, track_id=track_id)
+        _refresh_fts(conn, doc)
+        M.record_markdown_ref(
+            conn,
+            path=doc.relpath,
+            content_hash=doc.content_hash,
+            song_id=song_id,
+            frontmatter=frontmatter,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+    return doc
+
+
+def _serialize_markdown(fm: dict[str, Any], body: str) -> str:
+    """Serialize frontmatter dict + body to the YAML-subset format the
+    parser accepts. Keys emit in a stable order; lists serialize inline.
+    """
+    field_order = ("date", "kind", "scope", "track", "bars", "tags", "related")
+    lines = ["---"]
+    for k in field_order:
+        if k not in fm or fm[k] is None or fm[k] == []:
+            continue
+        v = fm[k]
+        if isinstance(v, list):
+            inner = ", ".join(str(x) for x in v)
+            lines.append(f"{k}: [{inner}]")
+        else:
+            lines.append(f"{k}: {v}")
+    lines.append("---")
+    lines.append("")
+    lines.append(body.rstrip())
+    lines.append("")
+    return "\n".join(lines)
 
 
 def reindex_corpus(

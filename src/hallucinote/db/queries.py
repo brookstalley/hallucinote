@@ -454,6 +454,38 @@ def get_markdown_ref(
     ).fetchone()
 
 
+def get_request(
+    conn: sqlite3.Connection, request_id: str
+) -> sqlite3.Row | None:
+    """Look up one requests row by id. Returns None if not found."""
+    return conn.execute(
+        "SELECT * FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+
+
+def find_markdown_refs_for_request(
+    conn: sqlite3.Connection, request_id: str
+) -> list[sqlite3.Row]:
+    """Cross-reference query: markdown refs recorded during a specific request.
+
+    Joins `events` (kind=MARKDOWN_REF_RECORDED, threaded by request_id) to
+    `markdown_refs` on path. Returns the markdown_refs row plus the event's
+    `ts` so callers see when each ref was recorded relative to the cycle.
+    Tombstoned refs are included — the historical query stays valid even
+    after a file is removed.
+    """
+    return conn.execute(
+        """SELECT m.*, e.ts AS recorded_at
+           FROM events e
+           JOIN markdown_refs m
+             ON m.path = json_extract(e.payload_json, '$.path')
+           WHERE e.request_id = ?
+             AND e.kind = 'markdown_ref_recorded'
+           ORDER BY e.seq""",
+        (request_id,),
+    ).fetchall()
+
+
 def find_markdown_refs(
     conn: sqlite3.Connection,
     *,

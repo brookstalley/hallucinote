@@ -1,12 +1,16 @@
 """``ableton_device`` action schema.
 
-Thirteen actions covering devices on tracks and return tracks:
+Actions covering devices on tracks and return tracks:
 
   - **Read**: list, info, get_parameters
   - **Lifecycle**: load, delete
   - **Activation**: enable, disable
   - **Parameters**: set_parameter (continuous + enum via ``value_type``)
-  - **Routing**: set_sidechain, get_routing
+  - **Capability probing**: capabilities (W6-E-2)
+  - **Routing**: set_input_routing, get_input_routing, set_sidechain,
+    get_routing (W6-E-2 — replaced the prior Compressor-class whitelist
+    with capability-probing primitives that work uniformly on native +
+    third-party devices)
   - **Preset**: navigate_preset
   - **Drum rack**: pad_info
   - **Help**: dispatcher-special
@@ -311,35 +315,142 @@ register(
 register(
     Action(
         tool="ableton_device",
+        name="capabilities",
+        description=(
+            "Probe what a device supports — class name, parameter count, "
+            "sidechain-shaped param names (substring match for native + "
+            "third-party naming), whether it exposes the unified "
+            "input_routing_* API, whether it can host chains/drum pads, "
+            "third-party plugin flag, active state. Single-call replacement "
+            "for firing multiple introspect calls. The structured shape "
+            "lets agents decide what action to use without trial and error."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1),
+        ),
+        handler=device_handlers.capabilities_handler,
+        example=(
+            "ableton_device(action='capabilities', track_index=2, "
+            "device_index=1)"
+        ),
+        tips=(
+            "Use this BEFORE set_sidechain or set_input_routing on an "
+            "unfamiliar device — the response tells you which configuration "
+            "paths are available (params vs routing) without poking at "
+            "missing APIs.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
+        name="set_input_routing",
+        description=(
+            "Set a device's input routing (sidechain source) by display_name. "
+            "Uniform mechanism: works on any device exposing Live's "
+            "input_routing_* API — Compressor / Compressor2, plus third-party "
+            "VST3/AU plugins with declared sidechain inputs. Devices without "
+            "the API (Glue Compressor, Gate, Multiband Dynamics, older "
+            "plugins) raise a teaching error pointing at workarounds."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1),
+            ParamSpec(
+                name="type_display_name",
+                type="str",
+                description=(
+                    "Source name as shown in Live's UI: track name "
+                    "('1-Drums'), return name ('A-Reverb'), 'Main' "
+                    "(master), or 'No Input' to disable."
+                ),
+            ),
+            ParamSpec(
+                name="channel_display_name",
+                type="str",
+                required=False,
+                description=(
+                    "Optional sub-routing: 'Pre FX' / 'Post FX' / "
+                    "'Post Mixer'. Omit to leave the channel unchanged."
+                ),
+            ),
+        ),
+        handler=device_handlers.set_input_routing_handler,
+        example=(
+            "ableton_device(action='set_input_routing', track_index=4, "
+            "device_index=1, type_display_name='1-Drums', "
+            "channel_display_name='Post FX')"
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
+        name="get_input_routing",
+        description=(
+            "Read a device's input routing surface — current type + channel "
+            "and the available enums for each. Returns "
+            "has_input_routing=False (no raise) for devices that lack the API "
+            "— symmetric with capability probing."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1),
+        ),
+        handler=device_handlers.get_input_routing_handler,
+        example=(
+            "ableton_device(action='get_input_routing', track_index=4, "
+            "device_index=1)"
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
         name="set_sidechain",
         description=(
-            "Configure a Compressor's sidechain (M-4 supports Compressor / "
-            "Compressor2; wider device-class support is a backlog item). "
-            "enabled=False bypasses sidechain. enabled=True requires "
-            "source_track_index; optional gain_db sets the SC Gain parameter."
+            "Configure sidechain on any device that exposes the canonical "
+            "S/C parameter family (native: Compressor / Compressor2 / Glue "
+            "Compressor / Gate / Multiband Dynamics; third-party plugins "
+            "matching common naming variants). Convenience bundle: toggles "
+            "S/C On, optionally sets source via set_input_routing primitive, "
+            "optionally sets S/C Gain. Devices with non-canonical parameter "
+            "names should call get_parameters for discovery and set_parameter "
+            "directly."
         ),
         params=(
             *_parent_addressing_specs(),
             ParamSpec(name="device_index", type="int", minimum=1),
             ParamSpec(name="enabled", type="bool"),
             ParamSpec(
-                name="source_track_index",
-                type="int",
+                name="source_display_name",
+                type="str",
                 required=False,
-                minimum=1,
-                description="1-based track to use as the sidechain source.",
+                description=(
+                    "Sidechain source display_name (e.g. '1-Drums', "
+                    "'A-Reverb'). Requires the device to expose "
+                    "input_routing_*; otherwise the call raises a teaching "
+                    "error after toggling enable."
+                ),
             ),
             ParamSpec(
                 name="gain_db",
                 type="float",
                 required=False,
-                description="Optional SC Gain in dB.",
+                description=(
+                    "Optional S/C Gain in dB. Raises a teaching error if "
+                    "the device has no canonical gain param."
+                ),
             ),
         ),
         handler=device_handlers.set_sidechain_handler,
         example=(
             "ableton_device(action='set_sidechain', track_index=4, "
-            "device_index=1, enabled=True, source_track_index=2, gain_db=0.0)"
+            "device_index=1, enabled=True, source_display_name='1-Drums')"
         ),
     )
 )
@@ -349,8 +460,10 @@ register(
         tool="ableton_device",
         name="get_routing",
         description=(
-            "Read a device's input routing summary: input_routing name + "
-            "sidechain_active flag."
+            "Read a device's input routing summary — input_routing_type "
+            "display_name (or None if device lacks the API). For the "
+            "available enums use get_input_routing; for a fuller capability "
+            "report use capabilities."
         ),
         params=(
             *_parent_addressing_specs(),

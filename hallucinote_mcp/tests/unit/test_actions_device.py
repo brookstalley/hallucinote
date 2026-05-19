@@ -62,15 +62,20 @@ class FakeDevice:
     ):
         self.name = name
         self.class_name = class_name
+        self.class_display_name = class_name
         self.is_active = True
         self.parameters = tuple(parameters or [])
         self.can_have_chains = False
-        self.sidechain_active = False
-        self.input_routing_type = None
+        self.can_have_drum_pads = False
+        # input_routing_type / available_input_routing_types intentionally
+        # absent — devices opt in by setting these on the instance. Mirrors
+        # the W6-E-1 real-Live finding that Glue / Gate / Multiband Dynamics
+        # don't expose the API at all on their Device class.
         self.selected_preset_index = 0
         self.selected_preset_name = "Default"
         if is_drum_rack:
             self.drum_pads = []
+            self.can_have_drum_pads = True
 
 
 class FakeMixer:
@@ -232,12 +237,15 @@ def loaded_actions():
 
 _EXPECTED_DEVICE_ACTIONS = {
     "help", "list", "info", "load", "delete", "enable", "disable",
-    "set_parameter", "get_parameters", "set_sidechain", "get_routing",
+    "set_parameter", "get_parameters",
+    # W6-E-2 capability-probing primitives + retained legacy-named actions:
+    "capabilities", "set_input_routing", "get_input_routing",
+    "set_sidechain", "get_routing",
     "navigate_preset", "pad_info",
 }
 
 
-def test_device_registers_thirteen_actions(loaded_actions):
+def test_device_registers_expected_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_device")}
     assert names == _EXPECTED_DEVICE_ACTIONS
 
@@ -875,40 +883,320 @@ def test_set_parameter_unknown_name(loaded_actions):
     assert "Threshold" in (resp.error or "")  # lists what's available
 
 
-# ---------- set_sidechain ----------
+# ---------- capability-probing primitives (W6-E-2) ----------
+#
+# The previous tests pinned a Compressor-class whitelist + a fictional
+# sidechain_active attribute. W6-E-1 empirical probing (real-Live, 2026-
+# 05-19) found that (a) sidechain enable is the 'S/C On' parameter, not
+# any device attribute; (b) source routing uses Live's unified
+# input_routing_* API, which Glue / Gate / Multiband Dynamics don't
+# expose; (c) third-party plugins follow the same patterns when they
+# declare sidechain inputs. The new primitives probe capabilities
+# instead of registering classes.
 
 
-def test_set_sidechain_enabled_with_source(loaded_actions):
-    class _Routing:
-        def __init__(self, name):
-            self.display_name = name
+class _Routing:
+    """Mirrors Live's RoutingType / RoutingChannel — display_name +
+    category + attached_object. Tests only need display_name."""
 
-    comp = FakeDevice("Comp", class_name="Compressor2",
-                      parameters=[FakeParam("SC Gain", 0.0, min=-24.0, max=24.0)])
-    comp.available_input_routing_types = [_Routing("Drums"), _Routing("Bass")]
-    drums = FakeTrack("Drums", devices=[comp])
-    bass = FakeTrack("Bass")
-    ctx = FakeCtx(FakeSong(tracks=[drums, bass]))
+    def __init__(self, name: str, category: int = 0):
+        self.display_name = name
+        self.category = category
+        self.attached_object = None
+
+
+def _compressor_with_routing() -> FakeDevice:
+    """A faked Compressor2 with the full sidechain surface: S/C params
+    plus the input_routing_* API."""
+    comp = FakeDevice(
+        "Comp",
+        class_name="Compressor2",
+        parameters=[
+            FakeParam("Device On", 1.0),
+            FakeParam("Threshold", 0.85),
+            FakeParam("S/C On", 0.0),
+            FakeParam("S/C Gain", 0.4, min=-24.0, max=24.0),
+            FakeParam("S/C Mix", 1.0),
+        ],
+    )
+    comp.input_routing_type = _Routing("No Input")
+    comp.input_routing_channel = _Routing("Post FX")
+    comp.available_input_routing_types = [
+        _Routing("1-Drums"), _Routing("2-Bass"), _Routing("Main"), _Routing("No Input"),
+    ]
+    comp.available_input_routing_channels = [
+        _Routing("Pre FX"), _Routing("Post FX"), _Routing("Post Mixer"),
+    ]
+    return comp
+
+
+def _glue_compressor_without_routing() -> FakeDevice:
+    """A faked Glue Compressor: has S/C params, NO input_routing_*."""
+    return FakeDevice(
+        "Glue",
+        class_name="GlueCompressor",
+        parameters=[
+            FakeParam("Device On", 1.0),
+            FakeParam("Threshold", 0.0),
+            FakeParam("S/C On", 0.0),
+            FakeParam("S/C Gain", 0.4),
+            FakeParam("S/C Mix", 1.0),
+        ],
+    )
+
+
+# ---------- capabilities ----------
+
+
+def test_capabilities_compressor_reports_full_surface(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_sidechain",
+            tool="ableton_device", action="capabilities",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    r = resp.result
+    assert r["class_name"] == "Compressor2"
+    assert r["has_input_routing"] is True
+    assert r["is_third_party_plugin"] is False
+    # Sidechain-shaped params surfaced by substring match.
+    assert "S/C On" in r["sidechain_param_names"]
+    assert "S/C Gain" in r["sidechain_param_names"]
+    assert "S/C Mix" in r["sidechain_param_names"]
+    # Non-sidechain params don't sneak in.
+    assert "Threshold" not in r["sidechain_param_names"]
+
+
+def test_capabilities_glue_reports_no_input_routing(loaded_actions):
+    """Glue Compressor exposes S/C params but no input_routing_* API —
+    capabilities snapshot reflects that asymmetry honestly."""
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="capabilities",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_input_routing"] is False
+    assert "S/C On" in resp.result["sidechain_param_names"]
+
+
+def test_capabilities_third_party_plugin_flag(loaded_actions):
+    plugin = FakeDevice("My Plugin", class_name="PluginDevice")
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[plugin])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="capabilities",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["is_third_party_plugin"] is True
+
+
+# ---------- set_input_routing ----------
+
+
+def test_set_input_routing_finds_by_display_name(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_input_routing",
             params={
                 "track_index": 1, "device_index": 1,
-                "enabled": True, "source_track_index": 2, "gain_db": 3.0,
+                "type_display_name": "1-Drums",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert comp.input_routing_type.display_name == "1-Drums"
+    assert resp.result["input_routing_type"] == "1-Drums"
+
+
+def test_set_input_routing_with_channel(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_input_routing",
+            params={
+                "track_index": 1, "device_index": 1,
+                "type_display_name": "2-Bass",
+                "channel_display_name": "Pre FX",
             },
         ),
         context=ctx,
     )
     assert resp.ok is True
-    assert comp.sidechain_active is True
-    assert comp.parameters[0].value == 3.0
+    assert comp.input_routing_type.display_name == "2-Bass"
+    assert comp.input_routing_channel.display_name == "Pre FX"
 
 
-def test_set_sidechain_disabled_clears_active(loaded_actions):
-    comp = FakeDevice("Comp", class_name="Compressor2")
-    comp.sidechain_active = True
-    track = FakeTrack("T1", devices=[comp])
-    ctx = FakeCtx(FakeSong(tracks=[track]))
+def test_set_input_routing_unknown_type_lists_available(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_input_routing",
+            params={
+                "track_index": 1, "device_index": 1,
+                "type_display_name": "Nonexistent",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "1-Drums" in err and "2-Bass" in err  # available list surfaced
+
+
+def test_set_input_routing_missing_api_raises_teaching_error(loaded_actions):
+    """Glue Compressor (and the other older natives, and older plugins)
+    don't expose input_routing_* — the call must fail loudly with a
+    workaround pointer, not silently no-op."""
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_input_routing",
+            params={
+                "track_index": 1, "device_index": 1,
+                "type_display_name": "1-Drums",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "GlueCompressor" in err
+    assert "UI configuration" in err or "set the sidechain source manually" in err.lower()
+
+
+# ---------- get_input_routing ----------
+
+
+def test_get_input_routing_returns_current_and_available(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_input_routing",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    r = resp.result
+    assert r["has_input_routing"] is True
+    assert r["current_type"] == "No Input"
+    assert "1-Drums" in r["available_types"]
+    assert "Post FX" in r["available_channels"]
+
+
+def test_get_input_routing_no_api_returns_false_no_raise(loaded_actions):
+    """Symmetric with capabilities — get_ should not raise on devices
+    without the API; it returns has_input_routing=False so the agent
+    knows the surface is absent without a try/except."""
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_input_routing",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_input_routing"] is False
+    assert "current_type" not in resp.result
+
+
+# ---------- set_sidechain (post-W6-E-2: no class whitelist) ----------
+
+
+def test_set_sidechain_enables_via_canonical_param(loaded_actions):
+    """No more class whitelist — set_sidechain works on ANY device that
+    exposes the canonical S/C On parameter (Compressor, Compressor2,
+    Glue, Gate, Multiband Dynamics, third-party plugins matching the
+    naming hints)."""
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={
+                "track_index": 1, "device_index": 1, "enabled": True,
+                "source_display_name": "1-Drums", "gain_db": 3.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    sc_on = next(p for p in comp.parameters if p.name == "S/C On")
+    sc_gain = next(p for p in comp.parameters if p.name == "S/C Gain")
+    assert sc_on.value == 1.0
+    assert sc_gain.value == 3.0
+    assert comp.input_routing_type.display_name == "1-Drums"
+
+
+def test_set_sidechain_works_on_glue_for_enable_only(loaded_actions):
+    """Glue Compressor has S/C params but no input_routing_* — enable
+    succeeds; source routing without a source_display_name doesn't
+    attempt the routing primitive."""
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={"track_index": 1, "device_index": 1, "enabled": True},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    sc_on = next(p for p in glue.parameters if p.name == "S/C On")
+    assert sc_on.value == 1.0
+
+
+def test_set_sidechain_glue_with_source_falls_through_to_routing_error(loaded_actions):
+    """Requesting source routing on a device without input_routing_*
+    raises the teaching error from set_input_routing — but enable has
+    ALREADY toggled (the call partially succeeds before the failure
+    point). Documented behavior: the agent gets a precise error
+    location, not a silent no-op."""
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={
+                "track_index": 1, "device_index": 1, "enabled": True,
+                "source_display_name": "1-Drums",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "GlueCompressor" in (resp.error or "")
+    # Enable still toggled before the routing failure.
+    sc_on = next(p for p in glue.parameters if p.name == "S/C On")
+    assert sc_on.value == 1.0
+
+
+def test_set_sidechain_disable_via_canonical_param(loaded_actions):
+    comp = _compressor_with_routing()
+    sc_on = next(p for p in comp.parameters if p.name == "S/C On")
+    sc_on.value = 1.0  # start enabled
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
@@ -917,24 +1205,62 @@ def test_set_sidechain_disabled_clears_active(loaded_actions):
         context=ctx,
     )
     assert resp.ok is True
-    assert comp.sidechain_active is False
+    assert sc_on.value == 0.0
 
 
-def test_set_sidechain_rejects_non_compressor(loaded_actions):
-    eq = FakeDevice("EQ", class_name="EQ8")
+def test_set_sidechain_no_canonical_enable_param_raises(loaded_actions):
+    """Device with no S/C On (or naming variants) gets a teaching error
+    pointing at set_parameter — the structural fallback for third-party
+    plugins with non-canonical naming."""
+    eq = FakeDevice("EQ", class_name="EQ8",
+                    parameters=[FakeParam("Frequency", 0.5)])
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[eq])]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
-            params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_track_index": 1,
-            },
+            params={"track_index": 1, "device_index": 1, "enabled": True},
         ),
         context=ctx,
     )
     assert resp.ok is False
-    assert "Compressor" in (resp.error or "")
+    err = resp.error or ""
+    assert "set_parameter" in err  # points at the workaround
+    assert "get_parameters" in err  # and at the discovery primitive
+
+
+# ---------- get_routing (legacy-named, retained) ----------
+
+
+def test_get_routing_reports_current_input_routing(loaded_actions):
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_routing",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["input_routing"] == "No Input"
+    assert resp.result["has_input_routing"] is True
+    # Fictional sidechain_active retired — must NOT appear.
+    assert "sidechain_active" not in resp.result
+
+
+def test_get_routing_no_api_reports_none(loaded_actions):
+    glue = _glue_compressor_without_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_routing",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["input_routing"] is None
+    assert resp.result["has_input_routing"] is False
 
 
 # ---------- navigate_preset / pad_info ----------

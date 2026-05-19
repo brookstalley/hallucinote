@@ -2027,7 +2027,6 @@ def _apply_devices_for_parent(
         conn,
         chain_id=chain_id,
         entries=devices_in,
-        position_field="device_index",
         label=f"{parent_kind} device",
         context_label=f"{parent_kind}_devices for {parent_id!r}",
         out=out,
@@ -2042,7 +2041,6 @@ def _diff_chain_devices(
     *,
     chain_id: str,
     entries: list[dict[str, Any]],
-    position_field: str,
     label: str,
     context_label: str,
     out: ApplyResult,
@@ -2057,10 +2055,11 @@ def _diff_chain_devices(
     Removals: any DB row at a position absent from `entries`.
 
     Shared by `_apply_devices_for_parent` (top-level chain, entries from
-    `ableton_device(action='list')`, position lives in ``device_index``)
-    and `_apply_nested_rack_chains_for_device` (nested chain, entries from
-    `ableton_device(action='get_device_chains')`, position lives in
-    ``position``).
+    `ableton_device(action='list')`) and
+    `_apply_nested_rack_chains_for_device` (nested chain, entries from
+    `ableton_device(action='get_device_chains')`). Both pre-normalize to
+    use ``device_index`` for the slot — the wire-shape `position` field
+    on nested entries is renamed at the caller.
 
     `label` is the per-row prefix in details lines (e.g. ``"track device"``,
     ``"rack chain 2 device"``). `context_label` is the prefix for warnings
@@ -2071,11 +2070,11 @@ def _diff_chain_devices(
 
     seen_positions: set[int] = set()
     for entry in entries:
-        idx = entry.get(position_field)
+        idx = entry.get("device_index")
         if not isinstance(idx, int) or idx < 1:
             out.warnings.append(
                 f"{context_label}: entry missing or invalid "
-                f"{position_field}: {entry!r}"
+                f"device_index: {entry!r}"
             )
             continue
         kind_in = entry.get("class_name") or ""
@@ -2258,7 +2257,6 @@ def _apply_nested_rack_chains_for_device(
             conn,
             chain_id=chain_id,
             entries=normalized,
-            position_field="device_index",
             label=f"nested chain {ci} on rack {rack['kind']} device",
             context_label=f"nested_rack_chains for rack {rack_device_id!r}, "
                           f"chain {ci}",

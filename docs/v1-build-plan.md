@@ -4,7 +4,7 @@
 
 **Release posture.** **Quality is the gate; there is no calendar.** v1 ships when a moderately sophisticated Claude Code + Ableton user can sit down and be productive *reliably*. Edge cases matter. The "ship if time" bucket is much smaller than typical because the bar is reliability, not feature count.
 
-**Status of Wave 8 (already in flight on `feat/wave-7`).** Wave 8 (Song Metadata Layer — annotations + provenance via markdown corpus + FTS5 + events) closes walkthrough findings **#5** and **#6**. W8-A and W8-B shipped 2026-05-19; W8-C's framework-coupled wiring (briefing surface + CLAUDE.md addendum) is descoped to backlog pending upstream sync. **No further W8 work in this plan.** Song-aware context in CLAUDE.md is folded into Wave 9's documentation.
+**Status of Wave 8 (in flight on `feat/wave-8-song-metadata`, separate branch).** Wave 8 (Song Metadata Layer — annotations + provenance via markdown corpus + FTS5 + events) closes walkthrough findings **#5** and **#6**. W8-A, W8-B, and W8-C shipped 2026-05-19 on `feat/wave-8-song-metadata` (commits c9fe09d / 3d5279d / 9dfc291 / 2a37560). W8-C's framework-coupled wiring (briefing surface + CLAUDE.md addendum) is descoped to backlog pending upstream sync. **No further W8 work in this plan.** Song-aware context in CLAUDE.md is folded into Wave 9's documentation.
 
 **Branching.** Each wave gets its own feature branch off `develop`. Per project preferences gitflow + `PR creation: wait_for_user`.
 

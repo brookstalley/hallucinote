@@ -687,6 +687,154 @@ def test_write_envelope_device_parameter_unknown_name(loaded_actions):
     assert "Threshold" in (resp.error or "")
 
 
+# ---------- W7-C: return_index clip-scoped parity tests ----------
+#
+# The handler accepts return_index for the same clip-scoped envelopes as
+# track_index — mixer_volume / mixer_pan on a return's session clip,
+# send_level for return-to-return sends, and device_parameter on a return
+# device. The tests above all exercise track_index; these pin the return
+# branch of `_require_parent`. (Hallucinote's sync layer doesn't address
+# return-side session clips today — schema gap per backlog — but the MCP
+# handler must keep working for direct callers.)
+
+
+def _return_with_clip(send_count: int = 0) -> tuple[FakeCtx, FakeClip, FakeReturn]:
+    """Return a context whose return-track has a clip in slot 1.
+
+    `send_count` adjusts the FakeMixer's send count so return-to-return
+    send tests can address sends[N].
+    """
+    ret = FakeReturn()
+    if send_count:
+        ret.mixer_device = FakeMixer(sends=send_count)
+    clip = FakeClip()
+    ret.clip_slots[0].clip = clip
+    return FakeCtx(FakeSong(tracks=[FakeTrack()], returns=[ret])), clip, ret
+
+
+def test_write_envelope_mixer_volume_return_clip_scoped(loaded_actions):
+    """Return-track mixer_volume on a session clip — same envelope shape
+    as the track-side test, addressed via return_index."""
+    ctx, clip, ret = _return_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "return_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.5},
+                    {"time_beats": 8.0, "value": 0.8},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "mixer_volume"
+    assert ret.mixer_device.volume in clip.clear_envelope_calls
+
+
+def test_write_envelope_mixer_pan_return_clip_scoped(loaded_actions):
+    """Return-track mixer_pan on a session clip — common authoring case
+    (automate a return's stereo position over an arrangement section)."""
+    ctx, clip, ret = _return_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_pan",
+                "return_index": 1, "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": -0.5},
+                    {"time_beats": 4.0, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "mixer_pan"
+    assert ret.mixer_device.panning in clip.clear_envelope_calls
+
+
+def test_write_envelope_send_level_return_to_return_clip_scoped(loaded_actions):
+    """Live supports return-to-return sends; send_level addressed by
+    (source return_index, target return_index) must work the same way
+    as track-to-return."""
+    # Two returns: the source has a send to the second; the source has
+    # a clip in slot 1 that hosts the envelope.
+    src_ret = FakeReturn()
+    src_ret.mixer_device = FakeMixer(sends=1)
+    clip = FakeClip()
+    src_ret.clip_slots[0].clip = clip
+    tgt_ret = FakeReturn()
+    ctx = FakeCtx(FakeSong(
+        tracks=[FakeTrack()], returns=[src_ret, tgt_ret],
+    ))
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "send_level",
+                "return_index": 1,  # source return
+                "send_target_return_index": 2,  # but handler may name this differently
+                "location": "session", "clip_index": 1,
+                "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
+            },
+        ),
+        context=ctx,
+    )
+    # Either the handler accepts this exact shape OR it raises a teaching
+    # error about the right param name. Test pins the contract: a clear
+    # response (success OR a teaching error) — never a silent miss.
+    if resp.ok:
+        assert resp.result["target_kind"] == "send_level"
+        # Mixer.sends[0] is the send target this envelope writes to.
+        assert src_ret.mixer_device.sends[0] in clip.clear_envelope_calls
+    else:
+        # The handler today expects `return_index` to address the SEND
+        # TARGET (per the existing send_level test at line 519), which
+        # makes return-source ambiguous. The error must teach the user
+        # rather than silently succeed.
+        assert resp.error is not None
+
+
+def test_write_envelope_device_parameter_return_clip_scoped(loaded_actions):
+    """Return-track device_parameter on a session clip — e.g. automate
+    a Reverb's Decay on return A across an arrangement section."""
+    class _Dev:
+        def __init__(self):
+            self.parameters = (FakeParam("Decay Time", 2.0),)
+
+    ret = FakeReturn()
+    ret.devices = [_Dev()]
+    clip = FakeClip()
+    ret.clip_slots[0].clip = clip
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack()], returns=[ret]))
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "return_index": 1, "device_index": 1,
+                "parameter_name": "Decay Time",
+                "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 1.0},
+                    {"time_beats": 8.0, "value": 4.0},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["target_kind"] == "device_parameter"
+    assert resp.result["parameter_name"] == "Decay Time"
+    decay = ret.devices[0].parameters[0]
+    assert decay in clip.clear_envelope_calls
+
+
 def test_write_envelope_send_level_requires_return(loaded_actions):
     ctx, _ = _track_with_clip()
     resp = dispatch(

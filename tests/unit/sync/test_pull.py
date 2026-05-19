@@ -3397,6 +3397,89 @@ def test_pull_cli_clip_notes_domain_emits_plan(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_clip_notes_end_to_end_round_trip(conn, song, session):
+    """W7-C: end-to-end note round-trip pin — push DB state into a
+    simulated Ableton payload, pull it back, confirm convergence.
+
+    Individual diff classes (no-op / update / delete / insert) are
+    covered by sibling tests; this is the end-to-end contract pin.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0, name="A")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(
+        conn, clip_id=cid,
+        notes=[
+            {"pitch": 60, "start_beats": 0.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+            {"pitch": 62, "start_beats": 1.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+            {"pitch": 64, "start_beats": 2.0, "duration_beats": 0.5,
+             "velocity": 100, "mute": 0},
+        ],
+    )
+    db_notes_before = Q.get_notes_for_clip(conn, cid)
+    db_note_ids_by_key = {
+        (n["pitch"], n["start_beats"], n["duration_beats"]): n["id"]
+        for n in db_notes_before
+    }
+
+    # Round-trip 1: Ableton state mirrors DB — convergent, zero
+    # mutations. The simulated note_id values are arbitrary (Live
+    # regenerates them on every write; apply doesn't persist them).
+    same_state = [
+        _result(f"clip_notes:{cid}", _notes_payload(
+            (10, 60, 0.0, 0.5, 100, False),
+            (11, 62, 1.0, 0.5, 100, False),
+            (12, 64, 2.0, 0.5, 100, False),
+        )),
+    ]
+    out1 = pull.apply_pull_results(
+        conn, same_state, song_id=song, session_id=session,
+    )
+    assert out1.mutations == 0
+    assert out1.no_ops == 3
+    # UUIDs preserved across the no-op pull.
+    db_notes_after_noop = Q.get_notes_for_clip(conn, cid)
+    after_ids_by_key = {
+        (n["pitch"], n["start_beats"], n["duration_beats"]): n["id"]
+        for n in db_notes_after_noop
+    }
+    assert after_ids_by_key == db_note_ids_by_key
+
+    # Round-trip 2: user dragged a velocity, removed one note, added one.
+    # Pitch 62's velocity 100 -> 80 (UPDATE — same key, vel drift).
+    # Pitch 64 disappears (DELETE).
+    # New pitch 67 at start 3.0 (INSERT).
+    drifted_state = [
+        _result(f"clip_notes:{cid}", _notes_payload(
+            (20, 60, 0.0, 0.5, 100, False),
+            (21, 62, 1.0, 0.5,  80, False),
+            (22, 67, 3.0, 0.5, 100, False),
+        )),
+    ]
+    out2 = pull.apply_pull_results(
+        conn, drifted_state, song_id=song, session_id=session,
+    )
+    assert out2.mutations >= 3, (out2.mutations, out2.details)
+    db_notes_after = Q.get_notes_for_clip(conn, cid)
+    by_pitch_start = {(n["pitch"], n["start_beats"]): n for n in db_notes_after}
+    assert (60, 0.0) in by_pitch_start
+    assert by_pitch_start[(62, 1.0)]["velocity"] == 80
+    assert (64, 2.0) not in by_pitch_start
+    assert (67, 3.0) in by_pitch_start
+    # Pitch-60 + pitch-62 UUIDs preserved (velocity update is in-place).
+    assert by_pitch_start[(60, 0.0)]["id"] == db_note_ids_by_key[(60, 0.0, 0.5)]
+    assert by_pitch_start[(62, 1.0)]["id"] == db_note_ids_by_key[(62, 1.0, 0.5)]
+
+    # Round-trip 3: re-applying drifted_state is now a full no-op.
+    out3 = pull.apply_pull_results(
+        conn, drifted_state, song_id=song, session_id=session,
+    )
+    assert out3.mutations == 0
+
+
 def test_round_trip_push_then_pull(conn, song, session, master):
     """Set DB state, simulate Ableton drift, pull, confirm DB caught up."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")

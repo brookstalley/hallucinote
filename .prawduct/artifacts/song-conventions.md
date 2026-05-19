@@ -1,0 +1,109 @@
+# Song Conventions
+
+How composer intent + decision rationale live alongside the structured song data, and how the LLM retrieves it before composing.
+
+Canonical example: `songs/falling-walking/` — copy its layout when starting a new song.
+
+## Directory layout
+
+```
+songs/<song-name>/
+  <song-name>.md          ← curated overview: concept, specs, form, build notes
+  <song-name>.db          ← structured song data (gitignored)
+  build.py                ← programmatic builder
+  captured_session.json   ← optional initial-mix snapshot
+  decisions/
+    YYYY-MM-DD-slug.md    ← one deliberate choice per file (ADR-shaped)
+  annotations/
+    slug.md               ← scoped intent notes (timeless, no date required)
+  tests/
+    test_*.py
+```
+
+Files in `decisions/` and `annotations/` are atomic — one decision or one scoped intent per file. The `<song-name>.md` is the curated overview; the dated/scoped files are the high-volume detail layer.
+
+## When does something become a `decisions/` file vs an `annotations/` file vs stay in the overview?
+
+**Decision** (`decisions/`) — a deliberate choice with rationale that future composers should see. ADR-shaped: dated, with the *why* behind it.
+
+> Example: "On 2026-05-26 we dropped the chorus pad re-articulation stabs because they retrigger the patch's slow-attack envelope, killing the bloom. The MIDI showed an 8-beat sustain but the audible note effectively ended at the first stab. Each chord now holds 7.5 beats — short breath at chord change, long bloom in between."
+
+**Annotation** (`annotations/`) — timeless scoped intent. Not dated. Describes how a section/track/song *is* or *should feel*, not a change.
+
+> Example: "Verse is sad, like weight getting worse. 8 bars of Dm = the 'seeking' — ear hunts for movement that won't come. Bass walks D → G → B♭ → A; harmonic rhythm accelerates."
+
+**Overview** (`<song-name>.md`) — the orienting document. Concept, structural specs, harmony tables, form chart, track index mapping, MIDI pitch reference, "where things live." This is what a new agent reads first.
+
+The boundary heuristic: if it has a **date and a change**, → `decisions/`. If it describes **what something is or should feel like**, → `annotations/`. If it's **reference data** (table of bar positions, MIDI pitch map, track list), → overview.
+
+## Frontmatter schema
+
+Every file in `decisions/` and `annotations/` opens with a YAML-subset frontmatter block:
+
+```yaml
+---
+date: 2026-05-26          # required for decisions; ISO YYYY-MM-DD
+kind: decision            # decision | annotation | structural-fact
+scope: track-time         # song | time | track | track-time
+track: 03 Synth Bass      # required when scope ∈ {track, track-time}; matches tracks.name
+bars: [33, 40]            # required when scope ∈ {time, track-time}; [start] for point, [start, end] for range
+tags: [dim7, bridge]      # optional; inline-list literal
+related: [decisions/2026-05-19-bridge.md]   # optional cross-links
+---
+```
+
+Then the prose body.
+
+### Field reference
+
+| Field | Type | Required when | Notes |
+|---|---|---|---|
+| `kind` | enum | always | `decision`, `annotation`, or `structural-fact` |
+| `scope` | enum | always | `song`, `time`, `track`, or `track-time` |
+| `date` | ISO date | `kind=decision` | `YYYY-MM-DD`; optional for annotations |
+| `track` | string | `scope ∈ {track, track-time}` | Matches `tracks.name` in the DB (resolves to track_id on reindex) |
+| `bars` | inline list of numbers | `scope ∈ {time, track-time}` | `[start]` (point) or `[start, end]` (half-open range); end > start |
+| `tags` | inline list of strings | optional | Free-form taxonomy; queryable via FTS5 |
+| `related` | inline list of paths | optional | Cross-links to other refs (path-relative-to-repo-root) |
+
+### Parser rules
+
+- Inline lists only — `[a, b, c]`. Block lists (`- a\n- b`) are NOT supported.
+- Strings may be quoted (`"01 Drums"`) or bare (`01 Drums`).
+- Unknown keys raise an error — catches typos at index time.
+- Duplicate keys raise an error.
+- Blank lines and `# comments` inside the frontmatter block are ignored.
+
+## Retrieval
+
+The LLM retrieves relevant decisions + annotations via the `/song-context` skill before non-trivial composition work. The skill queries `markdown_refs` (the SQLite projection) with FTS5 fulltext, tag, kind, scope, track, and bar-range filters.
+
+The skill returns matching paths + previews. The LLM then `Read()`s the full files it wants.
+
+## Indexing
+
+`markdown_refs` is a rebuildable projection. Run:
+
+```bash
+python3 tools/reindex_markdown.py songs/<song-name>/<song-name>.db
+```
+
+The reindexer walks the corpus, upserts rows, refreshes FTS5, and tombstones rows whose file vanished. Idempotent — running twice in a row produces no diff.
+
+## Authoring discipline
+
+- One decision per file. Don't append to an existing decision file when a new decision arises — write a new dated file.
+- Reference cross-cutting decisions via the `related` field, not by prose mention.
+- Decision rationale captures *why* + *trade-off*, not just *what*. The mechanical change ("we dropped the stabs") belongs in the commit message; the *why* ("they retrigger the slow-attack envelope") belongs in the decision file.
+- Annotations describe intent that should drive future work. If an annotation becomes stale (the intent changed), update it in place — annotations are timeless, but they evolve with the song.
+- Filenames use lowercase letters, digits, hyphens. For decisions: `YYYY-MM-DD-short-slug.md`. For annotations: `short-slug.md`.
+
+## Relationship to the structured DB
+
+The DB stores the *what* — notes, envelopes, devices, arrangement positions. The markdown corpus stores the *why*. Both are queryable; they reference each other:
+
+- `markdown_refs.track_id` FK to `tracks(id)` resolves the frontmatter `track` field on reindex.
+- `markdown_refs.song_id` FK to `songs(id)` resolves the `songs/<slug>/` path.
+- The `related` cross-links are markdown-internal (point at other ref paths).
+
+When the LLM records a deliberate decision during a compose session, it writes a `decisions/` file AND emits a `MARKDOWN_REF_RECORDED` event tied to the active `request_id` — that's the audit trail linking "this compose session produced this decision." (Event emission lives in W8-B; the markdown convention here is the read surface.)

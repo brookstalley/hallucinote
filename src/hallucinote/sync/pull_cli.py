@@ -23,8 +23,13 @@ non-standard layouts. Exactly one is required.
   - `score-globals`     — global tempo + signature only (bar-1 rows in each map)
   - `cue-points`        — arrangement cue point positions (names gap-flagged)
   - `devices`           — top-level device chain on each linked track + return
-                          (positional kind/display_name diff; nested rack
-                          chains and per-device parameters are gap-blocked)
+                          (positional kind/display_name diff). Nested rack
+                          chains are a separate domain (`nested-rack-chains`);
+                          per-device parameters are `device-parameters`.
+  - `nested-rack-chains` — one level of nested chains per rack device (W7-B).
+                          Iterates DB rack rows; emits one
+                          `get_device_chains` probe each. Requires `devices`
+                          to have run first to populate top-level device rows.
   - `arrangement-clips` — per-track arrangement-clip placements (start/end
                           bars). Ableton-only placements warn (V1 cannot
                           auto-create a `clips` row); name diffs not detected
@@ -45,8 +50,9 @@ non-standard layouts. Exactly one is required.
                           note whose pitch/start/duration moves
                           surfaces as delete + insert (UUID rotates).
 
-Envelope pull, device-parameter pull, and nested rack pull are still
-MCP-gap-blocked — they are not domains here.
+All round-trip domains land here as of W7-B. (Earlier waves staged
+envelopes / device-parameters / nested-rack-chains behind MCP gaps; those
+are now reachable through the unified surface.)
 """
 from __future__ import annotations
 
@@ -61,14 +67,16 @@ from hallucinote.sync import pull
 
 
 _DOMAINS = {
-    "mix-state":         pull.plan_pull_mix,
-    "score-globals":     pull.plan_pull_score_globals,
-    "cue-points":        pull.plan_pull_cue_points,
-    "devices":           pull.plan_pull_devices,
-    "device-parameters": pull.plan_pull_device_parameters,
-    "arrangement-clips": pull.plan_pull_arrangement_clips,
-    "session-clips":     pull.plan_pull_session_clips,
-    "clip-notes":        pull.plan_pull_notes_for_clips,
+    "mix-state":          pull.plan_pull_mix,
+    "score-globals":      pull.plan_pull_score_globals,
+    "cue-points":         pull.plan_pull_cue_points,
+    "devices":            pull.plan_pull_devices,
+    "nested-rack-chains": pull.plan_pull_nested_rack_chains,
+    "device-parameters":  pull.plan_pull_device_parameters,
+    "arrangement-clips":  pull.plan_pull_arrangement_clips,
+    "session-clips":      pull.plan_pull_session_clips,
+    "clip-notes":         pull.plan_pull_notes_for_clips,
+    "envelopes":          pull.plan_pull_envelopes,
 }
 
 

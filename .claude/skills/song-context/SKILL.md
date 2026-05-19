@@ -9,6 +9,17 @@ allowed-tools: Bash, Read
 
 You are retrieving relevant composer intent + decision rationale for a song. This keeps the caller's context clean by returning only matching refs.
 
+## When to invoke
+
+**Run `/song-context` proactively before any non-trivial composition or arrangement work on a song.** Composition examples that warrant a pre-task retrieval:
+
+- "Add a counter-melody to the bridge" → query `--bars 48:56` and topic 'bridge counter-melody'.
+- "Adjust the chorus bass" → query `--track "03 Synth Bass" --kind decision` to surface prior bass decisions.
+- "Make the chorus brighter" → query topic 'chorus brightness' or 'chorus pad' to surface tone-related prior choices.
+- "Why is this passage like this?" → query `--bars <bar>:<bar+1>` to find decisions touching that range.
+
+Skip retrieval only for purely mechanical edits (typos, renaming a clip, fixing a wrong note) where prior rationale won't change the answer. When in doubt, query — the cost is one Bash call returning markdown.
+
 ## How it works
 
 Each song in `songs/<name>/` carries composer intent in two atomic-file directories:

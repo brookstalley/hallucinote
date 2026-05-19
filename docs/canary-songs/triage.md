@@ -41,30 +41,32 @@ All three canaries hit this on step 1 of every run. **Wave 9 is correctly scoped
 
 | # | Finding | Severity | Canary | Disposition |
 |---|---|---|---|---|
-| C1 | `devices` phase emits `load` unconditionally even when an equivalent device already sits at that chain index — duplicates the device (`A-Reverb` → `Reverb \| Reverb`) | **important** | spa-8 | **W10-A — EXPAND**: idempotency check covers devices phase too. |
-| C2 | `returns` phase emits `create` even when a functionally-equivalent return exists in Live (default A-Reverb / B-Delay vs. snapshot's `Reverb` / `Delay`) | **important** | ome-7d | **W10-A — EXPAND**: idempotency check covers returns phase too. |
+| C1 | `devices` phase emits `load` unconditionally even when an equivalent device already sits at that chain index — duplicates the device (`A-Reverb` → `Reverb \| Reverb`) | **important** | spa-8 | **W10-A (expanded)**: idempotency check covers devices phase too. |
+| C2 | `returns` phase emits `create` even when a functionally-equivalent return exists in Live (default A-Reverb / B-Delay vs. snapshot's `Reverb` / `Delay`) | **important** | ome-7d | **W10-A (expanded)**: idempotency check covers returns phase too. |
 | C3 | `arrangement` phase plan tells the agent "must clear existing arrangement clips" with no `clear_track` MCP action suggested | paper-cut | spa-7e | **W10-A** (already in scope). |
 
-**Net plan change:** W10-A's investigation broadens from arrangement-only to "phase planners that emit creates/loads against potentially-occupied Live state." Recommend re-titling W10-A as "Push idempotency: arrangement + devices + returns" and renaming `feat/wave-10-sync-ux` chunk accordingly.
+**Net plan change:** W10-A's investigation broadens from arrangement-only to "phase planners that emit creates/loads against potentially-occupied Live state." `build-plan.md` already reflects the rename to "Push idempotency: arrangement + devices + returns."
 
 ---
 
-## Group D — Envelope reach (RESOLVED 2026-05-19)
+## Group D — Envelope reach (RESOLVED 2026-05-19, corrected after PR reviewer caught LOM error)
 
-The first-pass triage flagged D1/D2/D3 as architectural blockers and recommended v1.1 punts. User challenge + a focused D2 investigation (`docs/canary-songs/d2-master-envelope-investigation.md`) reshaped this group: D1/D3 are tractable W10-F engineering; D2 ships loud refusal in v1.
+The first-pass triage flagged D1/D2/D3 as architectural blockers and recommended v1.1 punts. User challenge + a focused D2 investigation reshaped the group. A subsequent PR review (2026-05-19) caught a factual error in the D1/D3 disposition: the triage cited `_TRACK_LEVEL_GAP_HINT` at `handlers/automation.py:75-82` which claims envelopes work on "arrangement (or session)" clips, but the empirically-enforced code at `automation.py:839-858` (Wave 2 finding W2-10, see `.prawduct/artifacts/bug-triage-wave2.md:166-178`) REJECTS mixer/pan/send/device_parameter envelopes on arrangement clips — these target_kinds work on **session clips only**, then `duplicate_to_arrangement` carries the envelope along. Dispositions below are corrected for the actual constraint.
 
-| # | Finding | Severity | Canary | Disposition (resolved) |
+| # | Finding | Severity | Canary | Disposition (corrected) |
 |---|---|---|---|---|
-| D1 | Long envelopes spanning multiple session clips can't be pushed today. Solo-piano-ambient's headline target | **important** | spa-7d | **W10-F — engineering, not a punt.** Live LOM accepts envelopes on EITHER session OR arrangement clips (see `automation.py:75-82` `_TRACK_LEVEL_GAP_HINT` — "Provide location='arrangement' (or 'session')"). Today's planner routes exclusively through session clips. Fix: investigation-first; either (a) reorder phases `arrangement → envelopes` so arrangement clips exist when envelopes plan, or (b) emit covering arrangement clips on demand for ranges no clip covers. |
-| D2 | Master envelopes silently dropped on push | **blocker** | fbr-7c | **W10-F — ship loud refusal in v1.** D2 investigation (Angle 1 + 2 + 3) confirmed no LOM path: `create_automation_envelope` lives only on `Clip`; master can't host clips; Utility-on-master dies at the same boundary; M4L mirror is a sub-bus pattern not an MCP path. **Decision (user 2026-05-19): reject at BOTH DB-mutator AND planner layers; teaching message points users at the sub-bus pattern (no M4L mention).** |
-| D3 | Mixer envelopes on audio tracks unreachable — same shape as D1, surfaced via the lead-vocal sidechain placeholder | **important** | fbr-7c | **W10-F — resolved by D1's fix.** Audio tracks host arrangement clips fine; the blocker was the same session-clip-only planner choice. |
+| D1 | Long envelopes spanning multiple session clips can't be pushed today. Solo-piano-ambient's headline target | **important** | spa-7d | **W10-F — refuse with teaching for v1; partition as v1.1.** Live 12.4 LOM requires mixer/send/device_parameter envelopes on a SESSION clip; the existing teaching error at `automation.py:846-857` spells out the path ("author on session clip, then `duplicate_to_arrangement`"). The real D1 problem: when no single session clip covers the envelope's beat range, today's planner skips with a vague warn. **v1 fix**: planner-side refuse-with-teaching matching the D2 pattern ("envelope spans beats [X,Y] but no session clip covers it; extend or split a session clip to host it, or partition the envelope by hand into per-section sub-envelopes"). **v1.1 enhancement**: planner auto-partitions the envelope across existing per-section session clips; pull stitches adjacent identical envelopes back into one logical envelope. |
+| D2 | Master envelopes silently dropped on push | **blocker** | fbr-7c | **W10-F — ship loud refusal in v1.** D2 investigation confirmed no LOM path: `create_automation_envelope` lives only on `Clip`; master can't host clips; Utility-on-master dies at the same boundary; M4L mirror is a sub-bus pattern not an MCP path. **Decision (user 2026-05-19): reject at BOTH DB-mutator AND planner layers; teaching message points users at the sub-bus pattern (no M4L mention).** |
+| D3 | Mixer envelopes on audio tracks unreachable — surfaced via the lead-vocal sidechain placeholder | **important** | fbr-7c | **W10-F — refuse with teaching for v1.** Audio tracks can't host MIDI session clips (Hallucinote's DB models clips as MIDI-only for v1; audio clips are `scope.later`). Live's audio session clip slots could in principle host envelopes via LOM, but Hallucinote can't address them until audio clips land in the DB. **v1 fix**: planner refuses with teaching message ("mixer/send envelopes on audio tracks require audio session clips, not modeled in v1; route the source to a sub-bus group track and automate the group's volume"). **v1.1 enhancement** (gated on audio-clip DB model): support envelopes on audio session clips once they're addressable. |
 
-**W10-F scope (consolidated):**
-- (a) D1 + D3 — investigate phase reorder vs. covering-clip approach; implement the chosen path; regression tests covering long-envelope spanning multiple sections AND audio-track sidechain
-- (b) D2 — DB-mutator validation + planner refusal for master-targeted envelopes; teaching message pointing at sub-bus pattern; extend `handlers/automation.py` docstring with D2 finding; add `ableton://guides/gaps` entry
-- (c) Tests covering all three
+**W10-F scope (consolidated, corrected):**
+- (a) D1 — planner-side refuse-with-teaching when no single session clip covers the envelope's beat range; teaching message points at "extend/split session clip OR partition envelope by hand"
+- (b) D2 — DB-mutator validation + planner refusal for master-targeted envelopes; teaching message pointing at sub-bus pattern; extend `handlers/automation.py` module docstring with D2 finding; add `ableton://guides/gaps` entry
+- (c) D3 — planner refuses mixer/send envelopes on audio tracks; teaching message points at sub-bus group pattern; same dual-layer (DB-mutator + planner) rejection
+- (d) **Fix the stale `_TRACK_LEVEL_GAP_HINT` text (lines 75-82) and module docstring (lines 13-18)** — both currently claim "arrangement (or session)" which contradicts the enforced session-only rule. Either rewrite to "session only — `duplicate_to_arrangement` carries the envelope" or remove the parenthetical
+- (e) Tests covering all three refusal paths + the stale-hint fix
 
-Size: ~250-400 LoC + ~6-10 tests. **Critic mark: yes** (touches the load-bearing envelope-emitter family + locks in non-support contract for D2). 1 chunk.
+Size: ~300-500 LoC + ~8-12 tests. **Critic mark: yes** (locks in three non-support contracts; touches the load-bearing envelope-emitter family). 1 chunk. The matching v1.1 partition + audio-clip-envelope work are filed as backlog items separately.
 
 ---
 
@@ -113,7 +115,7 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
 
 | # | Finding | Severity | Canary | Disposition (recommended) |
 |---|---|---|---|---|
-| H1 | Within-section meter ratchet **silently dropped on push**. DB models all 10 `time_signature_map` rows; planner emits only bar-1 + warns about the rest. Live 12.4 MCP has no per-bar meter automation | **blocker** for the meter-ratchet feature | ome-7b | **Recommend punt to v1.1 + ship loud refusal for v1.** New chunk **W10-H** (or fold into W10-F's authoring-time-validation philosophy): `plan_push_time_signature_map` refuses at planning time when >1 row is present and an alternative authoring pattern (per-bar arrangement clips) isn't in use. Document the non-support in `docs/meter-changes.md`. **User sign-off needed.** |
+| H1 | Within-section meter ratchet **silently dropped on push**. DB models all 10 `time_signature_map` rows; planner emits only bar-1 + warns about the rest. Live 12.4 MCP has no per-bar meter automation | **blocker** for the meter-ratchet feature | ome-7b | **W10-H — ship loud refusal in v1; punt working impl to v1.1 (user 2026-05-19).** `plan_push_time_signature_map` refuses at plan time when >1 row is present; teaching message points at "single global meter for v1, per-bar-arrangement-clip workaround coming in v1.1." Same dual-layer pattern as D2. |
 | H2 | **Every generator in `src/hallucinote/generators/` hard-codes `bar * 4.0`** — unusable for non-4/4 songs. No doc warns | **important** | ome-3 | **Triggers W14-B** (Generator library audit). Recommend the W14-B audit's first task is: parametrize every generator on `beats_per_bar`, OR rename to `*_4_4` and document. The triage's read: the audit was contingent on Wave 0 finding "same primitive hand-rolled 5×"; we got a stronger signal — "every generator is meter-overfit." **W14-B is triggered.** |
 | H3 | No library helper for "convert pulse-of-meter BPM to Live's quarter BPM" (eighth-pulse 168 → quarter 84 for 7/8) | paper-cut | ome-7a | **Backlog**: add `hallucinote.tempo.to_live_bpm(pulse_bpm, pulse_kind, time_signature)` helper or a docs sentence. |
 
@@ -173,13 +175,15 @@ Canary 3 (`odd-meter-experimental`) was designed to find these. Two are blockers
 - ADD: `docs/song-authoring-conventions.md` covering repeated-section pattern (I1)
 
 ### Wave 10 — add four chunks (E/F/G/H)
-- **W10-A** (existing) — expand scope: arrangement + devices + returns idempotency (was arrangement-only). Recommend retitle.
+- **W10-A** (existing) — expanded scope: arrangement + devices + returns idempotency (build-plan.md retitled).
 - **W10-E (NEW)** — push_cli `execute` subcommand for streamed plan→MCP→results, removing the per-phase ceremony tax. **Critic mark: chunk** (touches the push surface that every wave depends on).
-- **W10-F (NEW, RESOLVED)** — Envelope reach (D1/D2/D3 consolidated):
-  - D1+D3: route long envelopes through arrangement clips (investigate phase-reorder vs. covering-clip; implement)
+- **W10-F (NEW, RESOLVED, corrected post-PR-review)** — Envelope reach (D1/D2/D3 consolidated):
+  - D1: planner refuse-with-teaching when no single session clip covers the envelope's range; v1.1 enhancement = auto-partition
+  - D3: planner refuses mixer/send envelopes on audio tracks (no MIDI session clip path; audio clips not in v1 DB); teaching points at sub-bus group
   - D2: DB-mutator + planner refusal for master-targeted envelopes; teaching message points at sub-bus pattern (no M4L mention)
-  - Tests for all three; gaps-guide entry
-  - **Critic mark: chunk**. Size ~250-400 LoC + 6-10 tests.
+  - Fix stale `_TRACK_LEVEL_GAP_HINT` text + module docstring (both falsely claim "arrangement or session" works for these target_kinds)
+  - Tests for all three refusal paths + the stale-hint fix; gaps-guide entry
+  - **Critic mark: chunk**. Size ~300-500 LoC + 8-12 tests.
 - **W10-G (NEW)** — Partial-state normalization across phase planners (E1 — no more uncaught `ValueError` in arrangement).
 - **W10-H (NEW, RESOLVED)** — Meter-ratchet authoring-time refusal + docs (H1). DB-mutator + planner refuse when >1 `time_signature_map` row present; teaching message points at "single global meter for v1, per-bar-arrangement-clip workaround coming in v1.1." Same dual-layer pattern as D2.
 

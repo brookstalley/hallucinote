@@ -15,7 +15,7 @@
 - The "Utility on master" workaround (Angle 2) is also dead: even if we shipped master-strip device-load support, the envelope on the Utility's Gain parameter would STILL need a containing session clip on master — which is the same structural block.
 - The third-party "Automate Master Track Volume" device referenced in the Ableton Drummer blog is a Max-for-Live device that lives on a **regular** track and exposes a parameter whose value is wired into master volume; the automation breakpoints live on the regular track's clip envelope, not on master. This is a UI/composition pattern, not an MCP-shippable mechanism.
 
-W10-I should ship authoring-time validation + a teaching refusal pointing the user at the sub-bus pattern.
+W10-F should ship authoring-time validation + a teaching refusal pointing the user at the sub-bus pattern.
 
 ## Angle 1: Direct master_track LOM
 
@@ -118,7 +118,7 @@ No new path found.
 
 ## Recommendation
 
-### W10-I scope (formerly D2)
+### W10-F scope (formerly D2)
 
 **Ship loud refusal at planner time.** Concrete plan:
 
@@ -143,4 +143,4 @@ No new path found.
 1. **DB-layer reject vs. planner-layer reject?** Recommendation: BOTH (DB rejects writes, planner provides defense-in-depth + teaching messages on legacy data). Sign-off on the dual-layer approach.
 2. **Should we also surface this in the DB schema as a CHECK constraint?** `CHECK (target_kind NOT IN ('mixer_volume','mixer_pan','send_level','device_parameter') OR target_track.kind != 'master')` — clean but cross-table CHECKs aren't sqlite-native. Probably skip — mutator-layer validation is sufficient.
 3. **M4L "Automate Master Track Volume" workaround in the refusal message — link it or omit?** Recommendation: mention by name, don't link (link rot is real). The user can search.
-4. **Naming**: keep this as W10-I (renamed from D2) or fold into an existing wave? Triage.md line 171 calls it W10-F. Reconcile the numbering before starting.
+4. **Naming**: settled — this work consolidates as **W10-F** along with D1 + D3 (envelope reach). Triage.md and build-plan.md align.

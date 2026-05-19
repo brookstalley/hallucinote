@@ -30,10 +30,16 @@ breakpoints are written as stepped regions. The wire's ``curve`` field is
 accepted for forward compatibility but recorded as a note when non-step
 hints appear (Live 12.4 has no way to apply them).
 
-The handler is push-direction. ``clear`` / ``clear_all`` destroy
-envelopes; ``get_envelope`` / ``list`` are gap-blocked stubs (the MCP
-read surface for envelopes hasn't landed yet — Hallucinote's pull skill
-documents this as a blocked domain).
+The module covers both directions. ``write_envelope`` is the write
+keystone; ``clear`` / ``clear_all`` destroy envelopes; ``read_envelope``
+/ ``get_envelope`` (alias) read via sampling-based reconstruction
+(W6-G/H 2026-05-19) — Live exposes only ``envelope.value_at_time(t)``,
+not breakpoint enumeration, so the handler samples and reconstructs
+step transitions. Covers 5 of 7 target_kinds; clip_cc / clip_pitch_bend
+remain LOM-blocked on the read side same as the write side. ``list``
+(target-less enumeration) stays blocked — Live's
+``Clip.automation_envelopes`` yields envelope objects but their
+bound targets aren't readable.
 
 Time is in **beats** on the wire. The Hallucinote planner converts from
 bar-based song positions via its time-signature map before emit. MCP
@@ -41,6 +47,7 @@ stays meter-agnostic — same principle as ``ableton_clip``.
 """
 from __future__ import annotations
 
+import math as _math
 from typing import Any
 
 from ..dispatcher import LiveContext
@@ -78,15 +85,32 @@ _TRACK_LEVEL_GAP_HINT = (
 # ---------------------------------------------------------------------------
 
 
-_ENVELOPE_READ_GAP_HINT = (
-    "ableton_automation read operations (list, get_envelope) are blocked "
-    "by the MCP envelope read surface gap — Live's API does not yet "
-    "expose a stable iterator over a clip's / track's existing envelopes "
-    "through the Remote Script. Schema is registered for surface "
-    "stability; implementation lands once the underlying read surface is "
-    "in place. To write a fresh envelope, use "
-    "ableton_automation(action='write_envelope', target_kind=...). To "
-    "destroy envelopes, use action='clear' or action='clear_all'."
+# W6-G/W6-H: envelope read surface.
+#
+# Live 12's AutomationEnvelope exposes only two public methods:
+# insert_step(time, duration, value) and value_at_time(time). There is
+# NO breakpoint enumeration API. To read an envelope's shape we must
+# sample value_at_time() across the clip's range and reconstruct step
+# transitions from the sample sequence. The reconstruction is lossy at
+# the sample resolution but musically faithful at 1/96 beat resolution
+# (~3ms at 120BPM, well below human perception).
+#
+# `list_handler` and `get_envelope_handler` are retained as the
+# original action names; `read_envelope_handler` is the new keystone
+# that reads a specific target_kind. list_handler remains gap-blocked
+# (Clip.automation_envelopes is exposed but enumerating envelopes
+# without knowing their targets requires LOM features Live doesn't
+# expose; W6-G focuses on the targeted read path).
+
+
+_ENVELOPE_LIST_GAP_HINT = (
+    "ableton_automation(action='list') — enumerating a clip's existing "
+    "envelopes without target identifiers isn't exposed by Live 10–12's "
+    "LOM. Clip.automation_envelopes yields envelope objects but the "
+    "target each one is bound to isn't readable from the envelope side. "
+    "Use ableton_automation(action='read_envelope', target_kind=..., ...) "
+    "with a specific target instead — the same addressing args as "
+    "write_envelope / clear."
 )
 
 
@@ -98,7 +122,187 @@ def list_handler(
     clip_index: int | None = None,
     location: str | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError(_ENVELOPE_READ_GAP_HINT)
+    raise NotImplementedError(_ENVELOPE_LIST_GAP_HINT)
+
+
+# Sampling resolution for value_at_time reconstruction. 1/96 beat
+# ≈ 3.1ms at 120BPM, finer than Live's MIDI tick resolution. Tuneable
+# per-call via the `resolution_beats` param.
+_DEFAULT_ENVELOPE_READ_RESOLUTION = 1.0 / 96.0
+
+
+def _sample_envelope_to_breakpoints(
+    envelope: Any,
+    *,
+    start_beats: float,
+    end_beats: float,
+    resolution_beats: float,
+) -> list[dict[str, float]]:
+    """Sample envelope.value_at_time across [start_beats, end_beats] at
+    resolution_beats, emit a breakpoint at every detected step
+    transition.
+
+    Reconstruction quality scales with resolution. Same-value runs collapse
+    to a single breakpoint (Live's stepped envelope is already idempotent
+    on repeated identical values — same audible behavior). Step
+    transitions are localized to within resolution_beats of their actual
+    position; for finer fidelity, callers can pass a smaller resolution.
+
+    Always emits a breakpoint at start_beats (the envelope's anchor) so
+    callers can round-trip an envelope that begins with the same value
+    as its initial state without losing the anchor.
+    """
+    if end_beats <= start_beats:
+        return []
+    if resolution_beats <= 0:
+        raise ValueError(f"resolution_beats must be > 0, got {resolution_beats}")
+    n_steps = int(_math.ceil((end_beats - start_beats) / resolution_beats))
+    breakpoints: list[dict[str, float]] = []
+    prev: float | None = None
+    for i in range(n_steps + 1):
+        t = min(start_beats + i * resolution_beats, end_beats)
+        v = float(envelope.value_at_time(t))
+        if prev is None or abs(v - prev) > 1e-9:
+            breakpoints.append({"time_beats": float(t), "value": v})
+            prev = v
+    return breakpoints
+
+
+def _find_existing_envelope(clip: Any, target: Any) -> Any | None:
+    """Try to find an existing envelope on `clip` for the given target.
+
+    Live exposes envelope-creation via ``clip.create_automation_envelope(target)``
+    which is idempotent — it returns an existing envelope if one is
+    bound. So the cheap probe is: ask Live to create-or-return for the
+    target, then check whether the envelope has any breakpoints (sample
+    once; if the value matches the parameter's default at all sample
+    points, treat as empty). This is the only path that works without
+    a dedicated ``get_automation_envelope`` API.
+
+    Returns the envelope object (which is always reachable via
+    create_automation_envelope) — callers decide whether it's
+    populated via the sampling pass.
+    """
+    creator = getattr(clip, "create_automation_envelope", None)
+    if creator is None:
+        return None
+    try:
+        return creator(target)
+    except (TypeError, RuntimeError):
+        # Live raises these for invalid targets / arrangement-vs-session
+        # mismatches. Mirror write_envelope's handling.
+        return None
+
+
+def _resolve_read_envelope_target_and_clip(
+    context: LiveContext,
+    *,
+    target_kind: str,
+    track_index: int | None,
+    return_index: int | None,
+    clip_index: int | None,
+    location: str | None,
+    device_index: int | None,
+    parameter_name: str | None,
+    cc_number: int | None,
+    note_pitch: int | None,
+    note_start_beats: float | None,
+    axis: str | None,
+) -> tuple[Any, Any]:
+    """Resolve (clip, target) for a read_envelope call. Mirrors the
+    target-resolution branches of write_envelope_handler — clip-scoped
+    kinds need `clip_index + location`; track/return-scoped kinds route
+    through the parent track's session clip too (Live 12.4 limitation
+    documented in write_envelope)."""
+    if target_kind == "clip_cc":
+        if cc_number is None:
+            raise ValueError(
+                "read_envelope target_kind='clip_cc' requires cc_number"
+            )
+        clip = _require_clip(
+            context, track_index=track_index, location=location,
+            clip_index=clip_index,
+        )
+        target = _midi_cc_envelope_target(clip, int(cc_number))
+        return clip, target
+    if target_kind == "clip_pitch_bend":
+        clip = _require_clip(
+            context, track_index=track_index, location=location,
+            clip_index=clip_index,
+        )
+        target = _midi_pitch_bend_envelope_target(clip)
+        return clip, target
+    if target_kind == "note_expression":
+        _require_note_expression_args(
+            note_pitch=note_pitch,
+            note_start_beats=note_start_beats,
+            axis=axis,
+        )
+        clip = _require_clip(
+            context, track_index=track_index, location=location,
+            clip_index=clip_index,
+        )
+        envelope = clip.envelope_for_note(
+            int(note_pitch), float(note_start_beats), axis  # type: ignore[arg-type]
+        )
+        # For note_expression, envelope IS the target — clip.envelope_for_note
+        # returns the envelope directly. Return (clip, envelope) and let
+        # the caller skip the _find_existing_envelope step.
+        return clip, envelope
+    # device_parameter / mixer_volume / mixer_pan / send_level — clip-scoped
+    # on Live 12.4.
+    if clip_index is None or location is None:
+        raise NotImplementedError(
+            _TRACK_LEVEL_GAP_HINT.format(target_kind=target_kind)
+        )
+    if location == "arrangement":
+        raise NotImplementedError(
+            f"read_envelope target_kind={target_kind!r} on an arrangement "
+            "clip is not supported by Live 12.4's LOM (same constraint as "
+            "write_envelope). Read the envelope on the source session clip "
+            "instead — duplicate_to_arrangement copies envelope state to "
+            "the arrangement clip."
+        )
+    if target_kind == "device_parameter":
+        if device_index is None or parameter_name is None:
+            raise ValueError(
+                "read_envelope target_kind='device_parameter' requires "
+                "device_index and parameter_name"
+            )
+        parent = _require_parent(
+            context, track_index=track_index, return_index=return_index,
+        )
+        device = _resolve_device_on(parent, device_index)
+        target = _find_parameter(device, parameter_name)
+        clip = _resolve_clip(parent, location, clip_index)
+        return clip, target
+    if target_kind in ("mixer_volume", "mixer_pan"):
+        parent = _require_parent(
+            context, track_index=track_index, return_index=return_index,
+        )
+        mixer = parent.mixer_device
+        target = mixer.volume if target_kind == "mixer_volume" else mixer.panning
+        clip = _resolve_clip(parent, location, clip_index)
+        return clip, target
+    # send_level
+    if return_index is None:
+        raise ValueError(
+            "read_envelope target_kind='send_level' requires return_index"
+        )
+    if track_index is None:
+        raise ValueError(
+            "read_envelope target_kind='send_level' requires track_index"
+        )
+    track = _resolve_track(context, track_index)
+    sends = track.mixer_device.sends
+    if return_index < 1 or return_index > len(sends):
+        raise IndexError(
+            f"return_index {return_index} out of range "
+            f"[1, {len(sends)}] for track {track_index}"
+        )
+    target = sends[return_index - 1]
+    clip = _resolve_clip(track, location, clip_index)
+    return clip, target
 
 
 def get_envelope_handler(
@@ -115,8 +319,179 @@ def get_envelope_handler(
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
     axis: str | None = None,
+    resolution_beats: float | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError(_ENVELOPE_READ_GAP_HINT)
+    """Alias for read_envelope (legacy action name). Same shape."""
+    return read_envelope_handler(
+        context,
+        target_kind=target_kind,
+        track_index=track_index,
+        return_index=return_index,
+        clip_index=clip_index,
+        location=location,
+        device_index=device_index,
+        parameter_name=parameter_name,
+        cc_number=cc_number,
+        note_pitch=note_pitch,
+        note_start_beats=note_start_beats,
+        axis=axis,
+        resolution_beats=resolution_beats,
+    )
+
+
+def read_envelope_handler(
+    context: LiveContext,
+    *,
+    target_kind: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    clip_index: int | None = None,
+    location: str | None = None,
+    device_index: int | None = None,
+    parameter_name: str | None = None,
+    cc_number: int | None = None,
+    note_pitch: int | None = None,
+    note_start_beats: float | None = None,
+    axis: str | None = None,
+    resolution_beats: float | None = None,
+) -> dict[str, Any]:
+    """Read an envelope by target_kind + addressing args, return
+    reconstructed breakpoints.
+
+    Sampling-based: Live exposes only ``envelope.value_at_time(t)`` —
+    breakpoint enumeration isn't reachable. The handler samples at
+    ``resolution_beats`` (default 1/96 beat ≈ 3ms at 120BPM) across the
+    clip's [0, length_beats] range and emits a breakpoint at each
+    detected step transition. Step changes are localized to within
+    resolution_beats; for finer fidelity pass a smaller resolution.
+
+    Returns:
+      {
+        target_kind: str,
+        exists: bool,                # whether any non-default samples found
+        time_range_beats: [start, end],
+        resolution_beats: float,
+        breakpoints: [{time_beats, value}, ...],
+        ...echo of addressing args
+      }
+
+    Mirrors write_envelope's target-resolution branches and gap-blocked
+    target kinds. clip_cc / clip_pitch_bend on Live 12.4 raise the same
+    gap error as the write side (Clip.create_automation_envelope rejects
+    those targets at the C++ boundary)."""
+    if target_kind not in TARGET_KINDS:
+        raise ValueError(
+            f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
+        )
+    if target_kind == "clip_cc":
+        # Same Live 12.4 LOM gap as the write side — surface the same
+        # teaching error so agents understand the constraint.
+        raise NotImplementedError(
+            "Live 12.4 LOM doesn't expose envelope creation/read for "
+            "MIDI CC targets — Clip.envelope_target_for_cc returns "
+            "sentinels rejected by Clip.create_automation_envelope at "
+            "the C++ boundary. CC envelopes can be encoded as MIDI "
+            "control-change notes via ableton_clip(action='replace_notes'); "
+            "read them back via ableton_clip's note read path."
+        )
+    if target_kind == "clip_pitch_bend":
+        raise NotImplementedError(
+            "Live 12.4 LOM doesn't expose envelope creation/read for "
+            "clip pitch-bend targets — same constraint as clip_cc. Author "
+            "pitch-bend manually in Live's clip envelope editor, or use "
+            "target_kind='note_expression' with axis='pitch'."
+        )
+
+    res = resolution_beats if resolution_beats is not None else _DEFAULT_ENVELOPE_READ_RESOLUTION
+    if res <= 0:
+        raise ValueError(f"resolution_beats must be > 0, got {res}")
+
+    clip, target = _resolve_read_envelope_target_and_clip(
+        context,
+        target_kind=target_kind,
+        track_index=track_index,
+        return_index=return_index,
+        clip_index=clip_index,
+        location=location,
+        device_index=device_index,
+        parameter_name=parameter_name,
+        cc_number=cc_number,
+        note_pitch=note_pitch,
+        note_start_beats=note_start_beats,
+        axis=axis,
+    )
+
+    # note_expression's resolver returns the envelope directly; for all
+    # other target_kinds we resolve via create-or-return on the clip.
+    if target_kind == "note_expression":
+        envelope = target  # the resolver returned the envelope as `target`
+    else:
+        envelope = _find_existing_envelope(clip, target)
+    if envelope is None:
+        # Target is valid but Live couldn't bind an envelope to it.
+        # Surface as exists=False rather than raising — read-shouldn't-raise
+        # parallels capabilities / get_input_routing on the device side.
+        return _read_envelope_empty_result(
+            target_kind=target_kind,
+            resolution_beats=res,
+            track_index=track_index, return_index=return_index,
+            clip_index=clip_index, location=location,
+            device_index=device_index, parameter_name=parameter_name,
+            cc_number=cc_number, note_pitch=note_pitch,
+            note_start_beats=note_start_beats, axis=axis,
+        )
+
+    clip_length = float(getattr(clip, "length", 0.0))
+    breakpoints = _sample_envelope_to_breakpoints(
+        envelope, start_beats=0.0, end_beats=clip_length,
+        resolution_beats=res,
+    )
+    # Heuristic: an envelope with exactly one breakpoint at t=0 carrying
+    # the parameter's current value is "empty in the musical sense" —
+    # Live returns this default when no insert_step has ever fired.
+    exists = len(breakpoints) > 1
+    result: dict[str, Any] = {
+        "target_kind": target_kind,
+        "exists": exists,
+        "time_range_beats": [0.0, clip_length],
+        "resolution_beats": res,
+        "breakpoints": breakpoints,
+    }
+    _echo_addressing_args(
+        result,
+        track_index=track_index, return_index=return_index,
+        clip_index=clip_index, location=location,
+        device_index=device_index, parameter_name=parameter_name,
+        cc_number=cc_number, note_pitch=note_pitch,
+        note_start_beats=note_start_beats, axis=axis,
+    )
+    return result
+
+
+def _read_envelope_empty_result(
+    *,
+    target_kind: str,
+    resolution_beats: float,
+    **addressing: Any,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "target_kind": target_kind,
+        "exists": False,
+        "time_range_beats": [0.0, 0.0],
+        "resolution_beats": resolution_beats,
+        "breakpoints": [],
+    }
+    _echo_addressing_args(result, **addressing)
+    return result
+
+
+def _echo_addressing_args(result: dict[str, Any], **addressing: Any) -> None:
+    """Copy non-None addressing args into result. Mirrors write_envelope's
+    "echo what the caller passed in" convention so read/write responses
+    have symmetric shape."""
+    for k, v in addressing.items():
+        if v is not None:
+            result[k] = v
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +552,37 @@ def _find_parameter(device: Any, parameter_name: str) -> Any:
     raise ValueError(
         f"parameter {parameter_name!r} not found; available: {available}"
     )
+
+
+_NOTE_EXPRESSION_AXES = ("pitch", "pressure", "timbre")
+
+
+def _require_note_expression_args(
+    *,
+    note_pitch: int | None,
+    note_start_beats: float | None,
+    axis: str | None,
+) -> None:
+    """Validate the trio of args every ``note_expression`` path requires.
+
+    Called by ``write_envelope`` (where the gap is closed and the args
+    drive the actual ``envelope_for_note`` call) AND by ``clear`` (where
+    the gap is open today but the args ARE part of the target's address
+    — validating them up front matches ``clear``'s ``clip_cc`` precedent
+    which validates ``cc_number`` before raising the Live-API failure).
+
+    Raises ``ValueError`` on missing or invalid args; raises nothing on
+    a valid trio.
+    """
+    if note_pitch is None or note_start_beats is None or axis is None:
+        raise ValueError(
+            "target_kind='note_expression' requires note_pitch, "
+            "note_start_beats, and axis (one of 'pitch'|'pressure'|'timbre')"
+        )
+    if axis not in _NOTE_EXPRESSION_AXES:
+        raise ValueError(
+            f"axis {axis!r} not in {list(_NOTE_EXPRESSION_AXES)}"
+        )
 
 
 _CURVE_KINDS = ("linear", "hold", "fast", "slow")
@@ -331,15 +737,11 @@ def write_envelope_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
     elif target_kind == "note_expression":
-        if note_pitch is None or note_start_beats is None or axis is None:
-            raise ValueError(
-                "target_kind='note_expression' requires note_pitch, "
-                "note_start_beats, and axis (one of 'pitch'|'pressure'|'timbre')"
-            )
-        if axis not in ("pitch", "pressure", "timbre"):
-            raise ValueError(
-                f"axis {axis!r} not in ['pitch', 'pressure', 'timbre']"
-            )
+        _require_note_expression_args(
+            note_pitch=note_pitch,
+            note_start_beats=note_start_beats,
+            axis=axis,
+        )
         clip = _require_clip(
             context, track_index=track_index, location=location,
             clip_index=clip_index,
@@ -508,6 +910,16 @@ def clear_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         return {"target_kind": target_kind, "cleared": True}
     if target_kind == "note_expression":
+        # Validate required addressing args FIRST — matches the clip_cc
+        # branch above (which validates cc_number before invoking Live)
+        # and matches write_envelope's note_expression branch. Without
+        # this, the gap raise below would mask "missing axis" errors
+        # behind "not supported," giving the agent two things to debug.
+        _require_note_expression_args(
+            note_pitch=note_pitch,
+            note_start_beats=note_start_beats,
+            axis=axis,
+        )
         # Live 12.4 has no documented per-axis clear for note-expression
         # envelopes through Clip.clear_envelope (which expects a Parameter-
         # shaped target, not the note-expression envelope target). Direct
@@ -756,6 +1168,7 @@ __all__ = [
     "TARGET_KINDS",
     "list_handler",
     "get_envelope_handler",
+    "read_envelope_handler",
     "write_envelope_handler",
     "clear_handler",
     "clear_all_handler",

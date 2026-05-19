@@ -642,6 +642,245 @@ def set_parameter_handler(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Capability-probing primitives (W6-E-2; project memory:
+# feedback_third_party_devices_require_capability_probing)
+#
+# The previous set_sidechain handler hard-coded a Compressor/Compressor2
+# class whitelist + a fictional `sidechain_active` attribute that doesn't
+# exist on real Live devices. Both broke immediately against the
+# third-party VST/AU ecosystem, where naming and routing capabilities
+# vary per plugin author. The primitives below replace that pattern with
+# probe + adapt: each action discovers what the device actually exposes
+# and acts uniformly when possible, raises a structured teaching error
+# when not. See W6-E-1 findings in .prawduct/.session-reflected for the
+# empirical basis (real-Live probe of Compressor / Compressor2 / Glue /
+# Gate / Multiband Dynamics, 2026-05-19).
+# ---------------------------------------------------------------------------
+
+
+# Substring patterns used to recognize sidechain-related parameters across
+# native devices AND third-party plugins. Live natives use 'S/C *'; common
+# third-party variants include 'External Side*', 'SC *', 'Side *',
+# 'Sidechain *'. Match case-insensitively; the LLM picks the right name
+# from the returned candidates when there's ambiguity.
+_SIDECHAIN_NAME_HINTS = ("s/c", "sidechain", "side ", "external side", "ext side")
+
+
+def _looks_like_sidechain_param(name: str) -> bool:
+    lower = (name or "").lower()
+    return any(hint in lower for hint in _SIDECHAIN_NAME_HINTS)
+
+
+def _find_routing_by_display_name(
+    available: Any, display_name: str
+) -> Any | None:
+    """Walk a Live RoutingTypeVector / RoutingChannelVector finding
+    the first entry whose ``display_name`` matches exactly.
+
+    Returns None when not found — caller composes a teaching error
+    with the available names listed.
+    """
+    if available is None:
+        return None
+    for entry in available:
+        if getattr(entry, "display_name", "") == display_name:
+            return entry
+    return None
+
+
+def _enumerate_available(available: Any) -> list[str]:
+    """Walk a routing vector and collect display_names for teaching errors."""
+    if available is None:
+        return []
+    out: list[str] = []
+    for entry in available:
+        dn = getattr(entry, "display_name", None)
+        if dn is not None:
+            out.append(dn)
+    return out
+
+
+def set_input_routing_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    type_display_name: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    channel_display_name: str | None = None,
+) -> dict[str, Any]:
+    """Set a device's input routing (sidechain source) by display_name.
+
+    Uniform mechanism — works for ANY device that exposes Live's modern
+    ``input_routing_*`` API on the Device class. That includes Compressor,
+    Compressor2, and third-party VST3/AU plugins that declare sidechain
+    inputs in their plugin manifest. Devices that don't expose the API
+    (Glue Compressor, Gate, Multiband Dynamics, older plugins without
+    sidechain input declarations) raise a structured teaching error
+    pointing at the workarounds.
+
+    ``type_display_name`` is the routing source's display name as it
+    appears in Live's UI ("1-Drums", "A-Reverb", "Main", "No Input", etc.).
+    Pass "No Input" to disable the sidechain source without removing the
+    device. ``channel_display_name`` optionally sets the sub-routing
+    (Pre FX / Post FX / Post Mixer); omit to leave the channel unchanged.
+    """
+    parent, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    dev = _resolve_device(parent, device_index)
+    available_types = getattr(dev, "available_input_routing_types", None)
+    if available_types is None:
+        class_name = getattr(dev, "class_name", "<unknown>")
+        raise NotImplementedError(
+            f"device {class_name!r} does not expose input_routing_* on the "
+            "Device class — Live restricts source routing to UI "
+            "configuration for this device family (Glue Compressor, Gate, "
+            "Multiband Dynamics, and older plugins without declared "
+            "sidechain inputs are the common cases). Workarounds: "
+            "(a) set the sidechain source manually in Live's device view; "
+            "(b) configure via the plugin's own parameters if it exposes "
+            "internal sidechain routing (call ableton_device(action="
+            "'get_parameters') to discover names)."
+        )
+
+    matched_type = _find_routing_by_display_name(
+        available_types, type_display_name
+    )
+    if matched_type is None:
+        raise ValueError(
+            f"input routing type {type_display_name!r} not in available "
+            f"types {_enumerate_available(available_types)!r}"
+        )
+    dev.input_routing_type = matched_type
+
+    matched_channel = None
+    if channel_display_name is not None:
+        available_channels = getattr(dev, "available_input_routing_channels", None)
+        if available_channels is None:
+            raise NotImplementedError(
+                f"device exposes input_routing_type but not "
+                f"input_routing_channel — cannot set channel_display_name"
+            )
+        matched_channel = _find_routing_by_display_name(
+            available_channels, channel_display_name
+        )
+        if matched_channel is None:
+            raise ValueError(
+                f"input routing channel {channel_display_name!r} not in "
+                f"available channels "
+                f"{_enumerate_available(available_channels)!r}"
+            )
+        dev.input_routing_channel = matched_channel
+
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "input_routing_type": type_display_name,
+        "parent_kind": kind,
+    }
+    if matched_channel is not None:
+        result["input_routing_channel"] = channel_display_name
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+def get_input_routing_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    track_index: int | None = None,
+    return_index: int | None = None,
+) -> dict[str, Any]:
+    """Read a device's input routing surface.
+
+    Returns the current selection AND the available enums, so agents can
+    discover what's configurable before attempting a write. Returns a
+    ``has_input_routing: False`` flag (instead of raising) when the
+    device doesn't expose the API — symmetric with capability probing.
+    """
+    parent, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    dev = _resolve_device(parent, device_index)
+    available_types = getattr(dev, "available_input_routing_types", None)
+    current_type = getattr(dev, "input_routing_type", None)
+    available_channels = getattr(dev, "available_input_routing_channels", None)
+    current_channel = getattr(dev, "input_routing_channel", None)
+
+    has_routing = available_types is not None
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "has_input_routing": has_routing,
+        "parent_kind": kind,
+    }
+    if has_routing:
+        result["current_type"] = (
+            getattr(current_type, "display_name", None)
+            if current_type is not None else None
+        )
+        result["available_types"] = _enumerate_available(available_types)
+        result["current_channel"] = (
+            getattr(current_channel, "display_name", None)
+            if current_channel is not None else None
+        )
+        result["available_channels"] = _enumerate_available(available_channels)
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+def capabilities_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    track_index: int | None = None,
+    return_index: int | None = None,
+) -> dict[str, Any]:
+    """Structured snapshot of what a device supports.
+
+    Single-call probe that summarizes the device's API surface so an
+    agent can decide what to do with it without firing multiple
+    introspect calls. Returns a stable shape across every device class
+    (Live natives + third-party plugins).
+    """
+    parent, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    dev = _resolve_device(parent, device_index)
+
+    parameters = getattr(dev, "parameters", ())
+    param_names = [p.name for p in parameters]
+    sidechain_param_names = [n for n in param_names if _looks_like_sidechain_param(n)]
+
+    class_name = getattr(dev, "class_name", None)
+    class_display_name = getattr(dev, "class_display_name", None)
+    # PluginDevice / AuPluginDevice are Live's third-party wrappers.
+    is_third_party = bool(
+        class_name and (
+            "Plugin" in class_name
+            or class_name in ("PluginDevice", "AuPluginDevice", "Vst3PluginDevice")
+        )
+    )
+
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "class_name": class_name,
+        "class_display_name": class_display_name,
+        "is_third_party_plugin": is_third_party,
+        "parameter_count": len(parameters),
+        "sidechain_param_names": sidechain_param_names,
+        "has_input_routing": (
+            getattr(dev, "available_input_routing_types", None) is not None
+        ),
+        "can_have_chains": bool(getattr(dev, "can_have_chains", False)),
+        "can_have_drum_pads": bool(getattr(dev, "can_have_drum_pads", False)),
+        "is_active": bool(getattr(dev, "is_active", True)),
+        "parent_kind": kind,
+    }
+    result.update(_parent_address(kind, idx))
+    return result
+
+
 def set_sidechain_handler(
     context: LiveContext,
     *,
@@ -649,93 +888,103 @@ def set_sidechain_handler(
     enabled: bool,
     track_index: int | None = None,
     return_index: int | None = None,
-    source_track_index: int | None = None,
+    source_display_name: str | None = None,
     gain_db: float | None = None,
 ) -> dict[str, Any]:
-    """Configure a Compressor's sidechain routing.
+    """Configure sidechain on any device that exposes the standard
+    S/C parameter family — Live natives (Compressor, Compressor2, Glue
+    Compressor, Gate, Multiband Dynamics) AND third-party plugins that
+    use the same naming pattern.
 
-    Live exposes the Compressor's sidechain via four routing properties:
-    ``input_routing_type``, ``input_routing_channel``, plus an
-    ``input_meter_left/right`` for monitoring. The Compressor2 device
-    additionally has ``sidechain_active`` and a ``sidechain_gain`` parameter.
+    Convenience wrapper that delegates to the primitives:
+      - source routing via set_input_routing (when source_display_name
+        given AND the device exposes input_routing_*)
+      - sidechain enable / gain via set_parameter on the discovered
+        ``S/C On`` / ``S/C Gain`` (or substring variants)
 
-    This handler is intentionally device-class-aware: it expects a Compressor
-    or Compressor2; on other devices it raises a teaching error. Wider
-    sidechain support (Glue Compressor, gates) is a backlog candidate.
+    Raises a structured teaching error when capabilities are missing —
+    no class whitelist, no fictional attributes. Third-party plugins
+    with non-canonical naming should configure via
+    set_parameter directly after discovery via get_parameters.
     """
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
     )
     dev = _resolve_device(parent, device_index)
-    class_name = getattr(dev, "class_name", "")
-    if "Compressor" not in class_name:
+
+    # Find sidechain enable + gain params by substring match. Native Live
+    # devices: 'S/C On' / 'S/C Gain'. Naming variants captured by the
+    # substring hints (caller can also use set_parameter directly).
+    enable_param = None
+    gain_param = None
+    for p in getattr(dev, "parameters", ()):
+        lname = (p.name or "").lower()
+        if enable_param is None and (
+            "s/c on" in lname
+            or "sidechain on" in lname
+            or "sidechain active" in lname
+            or "side enable" in lname
+            or "external sidechain" in lname
+        ):
+            enable_param = p
+        if gain_param is None and (
+            "s/c gain" in lname
+            or "sidechain gain" in lname
+            or "side gain" in lname
+        ):
+            gain_param = p
+
+    if enable_param is None:
+        class_name = getattr(dev, "class_name", "<unknown>")
         raise NotImplementedError(
-            f"sidechain configuration is only supported on Compressor "
-            f"devices in M-4; got class_name={class_name!r}"
+            f"set_sidechain: device {class_name!r} exposes no canonical "
+            "sidechain-enable parameter (no S/C On / Sidechain On / "
+            "External Sidechain found). For third-party plugins with "
+            "non-canonical naming, call ableton_device(action="
+            "'get_parameters') to discover names, then "
+            "ableton_device(action='set_parameter') directly. For the "
+            "source-routing primitive, use ableton_device(action="
+            "'set_input_routing')."
         )
 
-    if not enabled:
-        # Simplest disable: set sidechain_active off.
-        active = getattr(dev, "sidechain_active", None)
-        if active is None:
-            raise NotImplementedError(
-                f"device {class_name} does not expose sidechain_active"
-            )
-        dev.sidechain_active = False
-        result: dict[str, Any] = {
-            "device_index": device_index,
-            "enabled": False,
-            "parent_kind": kind,
-        }
-        result.update(_parent_address(kind, idx))
-        return result
+    # Toggle enable.
+    enable_param.value = 1.0 if enabled else 0.0
 
-    if source_track_index is None:
-        raise ValueError(
-            "set_sidechain: enabled=True requires source_track_index "
-            "(1-based)"
+    routing_result: dict[str, Any] | None = None
+    if enabled and source_display_name is not None:
+        # Delegate source routing to the primitive; bubbles its teaching
+        # error if the device lacks input_routing_*.
+        routing_result = set_input_routing_handler(
+            context,
+            device_index=device_index,
+            track_index=track_index,
+            return_index=return_index,
+            type_display_name=source_display_name,
         )
-    song = context.song
-    if source_track_index < 1 or source_track_index > len(song.tracks):
-        raise IndexError(
-            f"source_track_index {source_track_index} out of range "
-            f"[1, {len(song.tracks)}]"
-        )
-    source_track = song.tracks[source_track_index - 1]
 
-    # Walk Live's Compressor sidechain routing properties.
-    if hasattr(dev, "sidechain_active"):
-        dev.sidechain_active = True
-    routings = getattr(dev, "available_input_routing_types", None)
-    if routings is not None:
-        # Find the matching routing object for source_track.
-        matched = None
-        for r in routings:
-            if getattr(r, "display_name", "") == source_track.name:
-                matched = r
-                break
-        if matched is None:
-            raise ValueError(
-                f"source track {source_track.name!r} not in available "
-                f"sidechain routings for {class_name}"
-            )
-        dev.input_routing_type = matched
     if gain_db is not None:
-        gain_param = None
-        for p in getattr(dev, "parameters", ()):
-            if p.name in ("SC Gain", "Sidechain Gain"):
-                gain_param = p
-                break
-        if gain_param is not None:
-            gain_param.value = float(gain_db)
-    result = {
+        if gain_param is None:
+            class_name = getattr(dev, "class_name", "<unknown>")
+            raise NotImplementedError(
+                f"set_sidechain: device {class_name!r} has a sidechain-"
+                "enable param but no canonical gain param (no S/C Gain "
+                "found). Set gain via ableton_device(action='set_parameter') "
+                "after discovering the right name with get_parameters."
+            )
+        gain_param.value = float(gain_db)
+
+    result: dict[str, Any] = {
         "device_index": device_index,
-        "enabled": True,
-        "source_track_index": source_track_index,
+        "enabled": enabled,
+        "enable_param_name": enable_param.name,
         "parent_kind": kind,
     }
+    if routing_result is not None:
+        result["input_routing_type"] = routing_result.get("input_routing_type")
     if gain_db is not None:
         result["gain_db"] = float(gain_db)
+        if gain_param is not None:
+            result["gain_param_name"] = gain_param.name
     result.update(_parent_address(kind, idx))
     return result
 
@@ -747,7 +996,15 @@ def get_routing_handler(
     track_index: int | None = None,
     return_index: int | None = None,
 ) -> dict[str, Any]:
-    """Read a device's input routing summary (sidechain source, etc.)."""
+    """Read a device's input routing summary.
+
+    Retained as the legacy-named action. Returns the input_routing_type
+    display_name (or None if device lacks the API). The previous
+    ``sidechain_active`` field has been retired — it referenced an
+    attribute that doesn't exist on real Live devices. Use
+    ``capabilities`` for a fuller picture, or ``get_input_routing`` for
+    the routing surface including available enums.
+    """
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
     )
@@ -757,7 +1014,9 @@ def get_routing_handler(
     result: dict[str, Any] = {
         "device_index": device_index,
         "input_routing": routing_name,
-        "sidechain_active": bool(getattr(dev, "sidechain_active", False)),
+        "has_input_routing": (
+            getattr(dev, "available_input_routing_types", None) is not None
+        ),
         "parent_kind": kind,
     }
     result.update(_parent_address(kind, idx))
@@ -873,6 +1132,356 @@ def pad_info_handler(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Nested rack chains (W6-I/W6-J)
+#
+# Live's rack devices (InstrumentGroupDevice, AudioEffectGroupDevice,
+# DrumGroupDevice) own nested device chains. Each chain has its own
+# device list, mixer, and (for drum-rack pads) a parent DrumPad. The
+# unified Live API for rack chains:
+#   rack_device.chains -> tuple[Chain] (always present on rack devices)
+#   drum_rack.drum_pads -> tuple[DrumPad] (drum racks only; each pad
+#       has .chains, but typically just one chain per pad)
+#   Chain.devices -> tuple[Device] (the nested device list)
+#   Chain.name -> str
+#   Chain.mixer_device -> ChainMixerDevice (volume, panning, sends, etc.)
+#
+# W6-I/J expose three actions:
+#   get_device_chains — read-only probe; lists the nested structure
+#   load_in_rack — load a device into a specific nested chain
+#   set_parameter_in_rack — write a parameter on a nested device
+#
+# These do NOT recurse into nested-nested racks. The schema supports it
+# (device_chains.parent_rack_device_id can chain), but the agent surface
+# is one-level-deep for now — recursive racks would require addressing
+# beyond what (chain_index, device_index) supports. Filed as a future
+# backlog item.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_rack_chains(dev: Any) -> tuple[Any, ...]:
+    """Return the nested chains of a rack device.
+
+    For Instrument/Audio Effect Group Devices: ``device.chains`` is the
+    canonical list. For Drum Group Devices: ``device.chains`` flattens
+    every non-empty pad's chain (Live exposes both
+    ``drum_rack.chains`` and ``drum_rack.drum_pads[N].chains``; the
+    flattened list is what `chains` gives). Raises a teaching error
+    on non-rack devices.
+    """
+    chains = getattr(dev, "chains", None)
+    if chains is None:
+        class_name = getattr(dev, "class_name", "<unknown>")
+        raise NotImplementedError(
+            f"device {class_name!r} is not a rack device — has no `chains` "
+            "collection. Rack-only actions (get_device_chains, "
+            "load_in_rack, set_parameter_in_rack) apply only to "
+            "InstrumentGroupDevice, AudioEffectGroupDevice, and "
+            "DrumGroupDevice."
+        )
+    return tuple(chains)
+
+
+def _resolve_chain_by_index(chains: tuple[Any, ...], chain_index: int) -> Any:
+    if chain_index < 1 or chain_index > len(chains):
+        raise IndexError(
+            f"chain_index {chain_index} out of range [1, {len(chains)}]"
+        )
+    return chains[chain_index - 1]
+
+
+def get_device_chains_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    detail: str = "summary",
+) -> dict[str, Any]:
+    """Probe a rack device's nested chains.
+
+    Returns ``{device_index, chains: [{chain_index, name, devices:
+    [{position, name, class_name, ...}]}], ...}``. With
+    ``detail='summary'`` the device entries are identity-only (name +
+    class_name + parameter_count + is_active); with ``detail='full'``
+    each device also gains its mixer state (volume / panning) and
+    chain-mute / chain-solo flags.
+
+    Raises a teaching error on non-rack devices via `_resolve_rack_chains`.
+    """
+    if detail not in ("summary", "full"):
+        raise ValueError(f"detail must be 'summary' or 'full', got {detail!r}")
+    parent, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    dev = _resolve_device(parent, device_index)
+    chains = _resolve_rack_chains(dev)
+
+    chains_out: list[dict[str, Any]] = []
+    for ci, chain in enumerate(chains, start=1):
+        chain_devices = list(getattr(chain, "devices", ()) or ())
+        devices_out: list[dict[str, Any]] = []
+        for di, cd in enumerate(chain_devices, start=1):
+            entry: dict[str, Any] = {
+                "position": di,
+                "name": getattr(cd, "name", ""),
+                "class_name": getattr(cd, "class_name", ""),
+                "parameter_count": len(getattr(cd, "parameters", ())),
+                "is_active": bool(getattr(cd, "is_active", True)),
+            }
+            if detail == "full":
+                cd_mixer = getattr(cd, "mixer_device", None)
+                if cd_mixer is not None:
+                    vol = getattr(cd_mixer, "volume", None)
+                    pan = getattr(cd_mixer, "panning", None)
+                    entry["mixer"] = {
+                        "volume": float(vol.value) if vol is not None else None,
+                        "panning": float(pan.value) if pan is not None else None,
+                    }
+            devices_out.append(entry)
+        chain_mixer = getattr(chain, "mixer_device", None)
+        chain_entry: dict[str, Any] = {
+            "chain_index": ci,
+            "name": getattr(chain, "name", ""),
+            "device_count": len(chain_devices),
+            "devices": devices_out,
+            "is_muted": bool(getattr(chain, "mute", False)),
+            "is_soloed": bool(getattr(chain, "solo", False)),
+        }
+        if detail == "full" and chain_mixer is not None:
+            vol = getattr(chain_mixer, "volume", None)
+            pan = getattr(chain_mixer, "panning", None)
+            chain_entry["mixer"] = {
+                "volume": float(vol.value) if vol is not None else None,
+                "panning": float(pan.value) if pan is not None else None,
+            }
+        chains_out.append(chain_entry)
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "class_name": getattr(dev, "class_name", ""),
+        "chain_count": len(chains_out),
+        "chains": chains_out,
+        "parent_kind": kind,
+    }
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+def load_in_rack_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    chain_index: int,
+    kind: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    preset_uri: str | None = None,
+) -> dict[str, Any]:
+    """Load a device into a specific nested chain of a rack device.
+
+    Uses the same `application.browser.load_item` mechanism as the
+    top-level load_handler, but selects the destination CHAIN via
+    `song.view.selected_chain = chain` (or, if Live doesn't expose
+    `selected_chain` on the View, the chain's `mixer_device.is_active`
+    path serves the same purpose). The new device appears at the END
+    of the chain's device list — Live exposes no public reorder API
+    for nested chains either.
+
+    Raises a teaching error if the parent device isn't a rack, or if
+    Live can't bind the chain as the load destination.
+    """
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("kind must be a non-empty Live device class name")
+    parent, parent_kind, parent_idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    rack = _resolve_device(parent, device_index)
+    chains = _resolve_rack_chains(rack)
+    chain = _resolve_chain_by_index(chains, chain_index)
+
+    application = getattr(context, "application", None)
+    if application is None:
+        raise NotImplementedError(
+            "LiveContext.application is unreachable — browser cannot be "
+            "opened for rack-chain load"
+        )
+    browser = getattr(application, "browser", None)
+    if browser is None:
+        raise NotImplementedError(
+            "application.browser not exposed in this Live version"
+        )
+
+    item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+    if item is None:
+        if preset_uri is not None:
+            criteria = f"preset_uri={preset_uri!r}"
+        else:
+            translated = device_names.class_name_to_display(kind)
+            if translated is not None and translated != kind:
+                criteria = (
+                    f"kind={kind!r} (also tried translated display name "
+                    f"{translated!r} via device_names)"
+                )
+            else:
+                criteria = f"kind={kind!r}"
+        raise ValueError(
+            f"no loadable browser item found for {criteria}; verify via "
+            "ableton_browser(action='tree', ...) or pass preset_uri from "
+            "ableton_browser(action='at_path', ...)"
+        )
+
+    view = getattr(context.song, "view", None)
+    if view is None:
+        raise NotImplementedError(
+            "song.view not exposed — cannot select destination chain for "
+            "browser.load_item"
+        )
+    # Live's chain-selection API: `selected_chain` exists on the view of
+    # rack devices (`rack.view.selected_chain`) in Live 10+. Drum racks
+    # also expose `selected_drum_pad`. Set selected_chain directly on the
+    # rack's view if available; fall back to song.view.selected_track for
+    # the parent track + setting selected_chain on the rack's view.
+    rack_view = getattr(rack, "view", None)
+    if rack_view is None or not hasattr(rack_view, "selected_chain"):
+        raise NotImplementedError(
+            f"rack device {getattr(rack, 'class_name', '?')!r} doesn't "
+            "expose view.selected_chain — Live's nested-chain load path "
+            "is gated on this surface. Drum-rack pads can be selected via "
+            "view.selected_drum_pad; instrument/effect racks expose "
+            "view.selected_chain. If your Live version differs, file an "
+            "issue with the empirical probe (capabilities action + "
+            "introspect on the rack device)."
+        )
+    chain_before = len(chain.devices)
+    rack_view.selected_chain = chain
+    # Also select the parent track so the browser-load fires in the right
+    # context — Live's browser.load_item routes through the highlighted
+    # surface chain.
+    view.selected_track = parent
+    browser.load_item(item)
+
+    fresh_rack = _refresh_parent(
+        context, parent_kind=parent_kind, parent_idx=parent_idx
+    ).devices[device_index - 1]
+    fresh_chains = _resolve_rack_chains(fresh_rack)
+    fresh_chain = _resolve_chain_by_index(fresh_chains, chain_index)
+    chain_after = list(fresh_chain.devices)
+    if len(chain_after) <= chain_before:
+        raise RuntimeError(
+            f"load_in_rack: Live did not append a device on chain "
+            f"{chain_index} of rack {device_index} after browser.load_item; "
+            "the item may not be loadable on this rack type, or the "
+            "chain-selection step didn't take effect"
+        )
+    new_device = chain_after[-1]
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "chain_index": chain_index,
+        "nested_device_position": len(chain_after),
+        "kind": kind,
+        "name": getattr(new_device, "name", ""),
+        "parent_kind": parent_kind,
+    }
+    if preset_uri is not None:
+        result["preset_uri"] = preset_uri
+    result.update(_parent_address(parent_kind, parent_idx))
+    return result
+
+
+def set_parameter_in_rack_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    chain_index: int,
+    nested_device_position: int,
+    parameter_name: str,
+    value: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    value_type: str = "continuous",
+) -> dict[str, Any]:
+    """Write a parameter on a device inside a rack's nested chain.
+
+    Addresses the parameter via (rack device_index, chain_index,
+    nested_device_position, parameter_name). Reuses the
+    continuous-vs-enum dispatch logic from set_parameter_handler so
+    the write semantics match exactly. Value is schema-permissive (str)
+    and coerced per value_type — mirrors set_parameter.
+    """
+    if value_type not in ("continuous", "enum"):
+        raise ValueError(
+            f"value_type must be 'continuous' or 'enum', got {value_type!r}"
+        )
+    parent, parent_kind, parent_idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index
+    )
+    rack = _resolve_device(parent, device_index)
+    chains = _resolve_rack_chains(rack)
+    chain = _resolve_chain_by_index(chains, chain_index)
+    chain_devices = list(getattr(chain, "devices", ()) or ())
+    if nested_device_position < 1 or nested_device_position > len(chain_devices):
+        raise IndexError(
+            f"nested_device_position {nested_device_position} out of range "
+            f"[1, {len(chain_devices)}] on chain {chain_index}"
+        )
+    nested_device = chain_devices[nested_device_position - 1]
+    param = None
+    for p in getattr(nested_device, "parameters", ()):
+        if p.name == parameter_name:
+            param = p
+            break
+    if param is None:
+        available = [p.name for p in getattr(nested_device, "parameters", ())]
+        raise ValueError(
+            f"parameter {parameter_name!r} not found on nested device "
+            f"{nested_device_position}; available: {available}"
+        )
+
+    if value_type == "enum":
+        items = tuple(getattr(param, "value_items", ()) or ())
+        if not items:
+            raise ValueError(
+                f"parameter {parameter_name!r} on nested device "
+                f"{nested_device_position} is not a quantized enum"
+            )
+        try:
+            idx = items.index(value)
+        except ValueError:
+            raise ValueError(
+                f"enum value {value!r} not in {parameter_name!r}'s value_items {list(items)!r}"
+            ) from None
+        param.value = float(idx)
+        result: dict[str, Any] = {
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "nested_device_position": nested_device_position,
+            "parameter_name": parameter_name,
+            "value_type": value_type,
+            "value": value,
+            "parent_kind": parent_kind,
+        }
+    else:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"value_type='continuous' requires a numeric value (parseable as float); "
+                f"got {value!r}"
+            ) from None
+        param.value = numeric
+        result = {
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "nested_device_position": nested_device_position,
+            "parameter_name": parameter_name,
+            "value_type": value_type,
+            "value": numeric,
+            "parent_kind": parent_kind,
+        }
+    result.update(_parent_address(parent_kind, parent_idx))
+    return result
+
+
 __all__ = [
     "list_handler",
     "info_handler",
@@ -883,7 +1492,13 @@ __all__ = [
     "disable_handler",
     "set_parameter_handler",
     "set_sidechain_handler",
+    "set_input_routing_handler",
+    "get_input_routing_handler",
+    "capabilities_handler",
     "get_routing_handler",
     "navigate_preset_handler",
     "pad_info_handler",
+    "get_device_chains_handler",
+    "load_in_rack_handler",
+    "set_parameter_in_rack_handler",
 ]

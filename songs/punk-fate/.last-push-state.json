@@ -1,0 +1,66 @@
+{
+  "ts": "2026-05-20T18:44:21Z",
+  "song_id": "18efbbc83ada4d1d8ebafa9b81268e45",
+  "session_id": "507d6daacf0d496d9dbeb92ada9964af",
+  "outcome": "ok",
+  "phase_halted": null,
+  "phases": [
+    {
+      "name": "tempo_map",
+      "status": "ok",
+      "calls_ok": 1,
+      "calls_failed": 0
+    },
+    {
+      "name": "time_signature_map",
+      "status": "ok",
+      "calls_ok": 1,
+      "calls_failed": 0
+    },
+    {
+      "name": "tracks",
+      "status": "ok",
+      "calls_ok": 4,
+      "calls_failed": 0
+    },
+    {
+      "name": "returns",
+      "status": "skipped"
+    },
+    {
+      "name": "clips",
+      "status": "ok",
+      "calls_ok": 28,
+      "calls_failed": 0
+    },
+    {
+      "name": "mix",
+      "status": "ok",
+      "calls_ok": 22,
+      "calls_failed": 0
+    },
+    {
+      "name": "devices",
+      "status": "ok",
+      "calls_ok": 6,
+      "calls_failed": 0
+    },
+    {
+      "name": "envelopes",
+      "status": "skipped"
+    },
+    {
+      "name": "arrangement",
+      "status": "ok",
+      "calls_ok": 28,
+      "calls_failed": 0
+    },
+    {
+      "name": "cues",
+      "status": "ok",
+      "calls_ok": 1,
+      "calls_failed": 0
+    }
+  ],
+  "errors_file": null
+}

@@ -4,7 +4,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 
 **Two roles for snapshots:**
 1. **Captured** — `tools/capture.py` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
-2. **Synthetic** — `/new-song` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
+2. **Synthetic** — `/song-new` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
 
 W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snapshot updates rows whose state changed and is a no-op for unchanged rows. The "song already exists" guard was removed; underlying mutators converge.
 
@@ -131,6 +131,51 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 - `params_total` (optional) — informational; count of all params on the device.
 - `chains` (optional) — nested chains for rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`). One level only — nested-nested racks raise on encounter (filed in backlog).
 
+### Multi-device chains (sound is composition)
+
+Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-pick-instruments`), a track's `devices[]` typically holds a *chain* — instrument + post-instrument processing — not a single device. The chain is part of authorship and ships in the snapshot, not as a "mix-time follow-up":
+
+```json
+"devices": [
+  {
+    "index": 1,
+    "name": "Hot Rod Kit",
+    "class": "DrumGroupDevice",
+    "kind": "instrument",
+    "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"}
+  },
+  {
+    "index": 2,
+    "name": "Saturator",
+    "class": "Saturator",
+    "kind": "audio_effect",
+    "params_dialed": {"Drive": {"value": "5.0 dB", "normalized": 0.55}}
+  },
+  {
+    "index": 3,
+    "name": "Glue Compressor",
+    "class": "Glue",
+    "kind": "audio_effect",
+    "params_dialed": {"Ratio": {"value": "4", "normalized": 0.50}, "Threshold": {"value": "-8.0 dB", "normalized": 0.60}}
+  }
+]
+```
+
+Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order, so the chain ends up on the track in the same shape on the consumer's machine. The push planner (W12-A + Sweep B) drives `ableton_device(action='load')` once per device; `params_dialed` is applied after load.
+
+---
+
+## Canonical workflow: stage chain → push → recapture
+
+For songs that need verified-against-Live chain state (most "make-me-X" prompts), use this loop instead of pure hand-authoring:
+
+1. **Pick chains via `/song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
+2. **Push the song with `/ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.
+3. **Stage in Live** (only if the picker couldn't fully specify). Dial in params that need ear-driven tuning (Saturator Drive, Glue threshold). Most picks shouldn't need this — `/song-pick-instruments` aims to ship sound-correct defaults.
+4. **Recapture via `/song-snapshot` (or `tools/capture.py`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
+
+The recapture step is what makes step 3 ("staging in Live") part of authorship and not a sidecar. The on-disk snapshot is the source of truth for sound design once you've recaptured. See `/song-snapshot` for the diff-and-confirm flow.
+
 ---
 
 ## What `replay_capture` doesn't ingest
@@ -153,7 +198,7 @@ For built-in Live content (Operator presets, Impulse drum kits, Drum Rack conten
 
 ## Hand-authoring tips
 
-- **Start from the `/new-song` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
+- **Start from the `/song-new` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
 - **Names must match across `sends` keys and `returns[].name`** (after slot-prefix stripping). A `sends` entry to `"Reverb"` resolves to the return named `"Reverb"` (or originally `"A-Reverb"`).
 - **The `"index"` keys are 1-based across the board** (Live convention; also enforced by schema CHECKs on the DB side).
 - **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `tools/capture.py`) once you've staged Live.

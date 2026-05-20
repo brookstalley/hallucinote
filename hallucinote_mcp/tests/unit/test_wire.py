@@ -96,7 +96,7 @@ def test_check_version_compat_mismatch_names_both_versions():
     assert "0.2.0" in (resp.error or "")
     # The hint must cover both recovery branches — Remote Script stale
     # (re-install + full Live restart) and MCP server stale (pip + /mcp).
-    assert "ableton-install-mcp" in (resp.hint or "")
+    assert "ableton-mcp-install" in (resp.hint or "")
     assert "/mcp" in (resp.hint or "")
 
 

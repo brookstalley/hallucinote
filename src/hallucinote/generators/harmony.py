@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from hallucinote.generators.primitives import Feel, apply_feel
+
 NoteDict = dict[str, Any]
 
 
@@ -59,10 +61,12 @@ def tresillo_pluck(
     start_beat: float = 0.0,
     beats_per_bar: float = 4.0,
     duration: float = 0.2,
+    feel: Feel = None,
 ) -> list[NoteDict]:
     """Calypso-style pluck cycling through voicing on tresillo hits.
     4/4-shaped within a bar (see module docstring); ``beats_per_bar`` only
-    scales the inter-bar step.
+    scales the inter-bar step. ``feel`` (W17-E) shifts pluck positions
+    {0.0, 0.75, 1.5, 2.0, 2.75, 3.5}.
     """
     hits = [(0.0, 95), (0.75, 100), (1.5, 90), (2.0, 75), (2.75, 95), (3.5, 100)]
     out: list[NoteDict] = []
@@ -70,7 +74,7 @@ def tresillo_pluck(
         bs = start_beat + b * beats_per_bar
         for i, (t, v) in enumerate(hits):
             p = voicing[i % len(voicing)]
-            out.append(_note(p, bs + t, duration, v, ["pluck", "tresillo_hit"]))
+            out.append(_note(p, bs + apply_feel(t, feel), duration, v, ["pluck", "tresillo_hit"]))
     return out
 
 

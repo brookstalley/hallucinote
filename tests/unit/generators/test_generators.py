@@ -1,6 +1,8 @@
 """Smoke + tag-correctness tests for generators."""
 from __future__ import annotations
 
+import pytest
+
 from hallucinote.generators import drums, bass, harmony
 
 
@@ -251,3 +253,102 @@ def test_chord_tone_embellishment_takes_no_beats_per_bar():
     import inspect
     sig = inspect.signature(bass.chord_tone_embellishment)
     assert "beats_per_bar" not in sig.parameters
+
+
+# ---------------------------------------------------------------------------
+# W17-E: per-part feel parameter
+# ---------------------------------------------------------------------------
+
+
+def test_feel_none_preserves_canonical_positions():
+    """``feel=None`` is the documented default — the pattern is unchanged."""
+    baseline = drums.kick_stumble(2)
+    feel_none = drums.kick_stumble(2, feel=None)
+    assert [n["start_beats"] for n in baseline] == [n["start_beats"] for n in feel_none]
+
+
+def test_kick_stumble_feel_shifts_downbeat_early():
+    """Pushing the downbeat earlier nudges every bar's kick on beat 0.0."""
+    notes = drums.kick_stumble(2, feel={0.0: -0.02})
+    downbeats = [n for n in notes if "downbeat" in n["tags"]]
+    assert len(downbeats) == 2
+    starts = sorted(n["start_beats"] for n in downbeats)
+    assert starts == [pytest.approx(-0.02), pytest.approx(3.98)]
+
+
+def test_kick_stumble_feel_only_shifts_matching_positions():
+    """Feel keys not present in the generator's positions don't apply anywhere."""
+    notes = drums.kick_stumble(1, feel={1.5: -0.1})
+    starts = sorted(n["start_beats"] for n in notes)
+    assert 1.5 not in starts
+    assert all(s in (0.0, 2.0, 2.75) for s in starts)
+
+
+def test_lazy_snare_feel_stacks_with_lay_back():
+    """Feel shifts the canonical 1.0 / 3.0 positions; lay_back stacks on top."""
+    notes = drums.lazy_snare(1, feel={1.0: -0.05}, lay_back=0.04)
+    starts = sorted(n["start_beats"] for n in notes)
+    assert starts == [pytest.approx(0.99), pytest.approx(3.04)]
+
+
+def test_trip_hop_hats_swing_eighths_via_feel():
+    """A swing-8ths feel nudges the off-beats {0.5, 1.5, 2.5, 3.5} late;
+    downbeats stay put."""
+    swing = {0.5: +0.08, 1.5: +0.08, 2.5: +0.08, 3.5: +0.08}
+    notes = drums.trip_hop_hats(1, feel=swing)
+    starts = sorted(n["start_beats"] for n in notes)
+    expected = [0.0, 0.58, 1.0, 1.58, 2.0, 2.58, 3.0, 3.58]
+    assert starts == [pytest.approx(e) for e in expected]
+
+
+def test_tresillo_bass_and_pluck_share_feel():
+    """Coordinated feel: bass + pluck on the same tresillo cell share the
+    same feel dict — keeps them in lockstep (bossa-style coordination)."""
+    feel = {0.75: +0.015, 3.5: +0.02}
+    bass_notes = bass.tresillo_bass(40, bars=1, feel=feel)
+    pluck_notes = harmony.tresillo_pluck([60, 64, 67], bars=1, feel=feel)
+    bass_at_0_765 = [n for n in bass_notes if n["start_beats"] == pytest.approx(0.765)]
+    pluck_at_0_765 = [n for n in pluck_notes if n["start_beats"] == pytest.approx(0.765)]
+    assert bass_at_0_765 and pluck_at_0_765
+
+
+def test_per_part_feel_punk_drums_lazy_pluck_independent():
+    """Punk drums (push) + lazy bluegrass-style pluck (drag) in the same
+    section — two calls, two feel dicts, independent intents."""
+    punk_feel = {2.75: -0.025, 2.0: -0.02}
+    lazy_feel = {0.75: +0.04, 1.5: +0.04, 3.5: +0.04}
+
+    drums_notes = drums.kick_stumble(1, feel=punk_feel)
+    pluck_notes = harmony.tresillo_pluck([60, 64, 67], bars=1, feel=lazy_feel)
+
+    late_kick = [n for n in drums_notes if n["start_beats"] == pytest.approx(2.725)]
+    assert late_kick
+
+    dragged = [n for n in pluck_notes if n["start_beats"] in (
+        pytest.approx(0.79), pytest.approx(1.54), pytest.approx(3.54)
+    )]
+    assert dragged
+
+
+def test_per_clip_feel_verse_vs_chorus_same_generator():
+    """Same generator, two calls (verse vs chorus), two different feels —
+    the granularity is the call, not the song or section."""
+    verse = drums.kick_stumble(8, feel={2.75: -0.02})
+    chorus = drums.kick_stumble(8, feel={2.75: +0.025})
+
+    verse_late = [n for n in verse if n["start_beats"] == pytest.approx(2.73)]
+    chorus_late = [n for n in chorus if n["start_beats"] == pytest.approx(2.775)]
+    assert verse_late and chorus_late
+    assert verse_late[0]["start_beats"] != chorus_late[0]["start_beats"]
+
+
+def test_feel_threads_through_aggregate_trip_hop_drum_pattern():
+    """The aggregate forwards feel uniformly to all sub-primitives."""
+    feel = {0.0: -0.01}
+    notes = drums.trip_hop_drum_pattern(1, feel=feel)
+    downbeat_kicks = [n for n in notes if "kick" in n["tags"] and "downbeat" in n["tags"]]
+    assert downbeat_kicks[0]["start_beats"] == pytest.approx(-0.01)
+    downbeat_hats = [n for n in notes
+                     if "hat" in n["tags"] and "downbeat" in n["tags"]
+                     and n["start_beats"] == pytest.approx(-0.01)]
+    assert downbeat_hats

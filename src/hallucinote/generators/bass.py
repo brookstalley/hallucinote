@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hallucinote.generators.primitives import TRESILLO_HITS
+from hallucinote.generators.primitives import TRESILLO_HITS, Feel, apply_feel
 
 NoteDict = dict[str, Any]
 
@@ -32,16 +32,18 @@ def tresillo_bass(
     start_beat: float = 0.0,
     beats_per_bar: float = 4.0,
     note_duration: float = 0.5,
+    feel: Feel = None,
 ) -> list[NoteDict]:
     """Plain tresillo on the chord root. Tagged "bass" + "tresillo_hit".
     4/4-shaped within a bar (see module docstring); ``beats_per_bar``
-    only scales the inter-bar step.
+    only scales the inter-bar step. ``feel`` (W17-E) shifts tresillo
+    positions {0.0, 0.75, 1.5, 2.0, 2.75, 3.5}.
     """
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
         for t, v in TRESILLO_HITS:
-            out.append(_note(root_pitch, bs + t, note_duration, v,
+            out.append(_note(root_pitch, bs + apply_feel(t, feel), note_duration, v,
                              ["bass", "tresillo_hit"]))
     return out
 
@@ -55,13 +57,15 @@ def walking_bass_to_next_chord(
     accent_velocity: int = 100,
     walk_velocity: int = 88,
     note_duration: float = 1.0,
+    feel: Feel = None,
 ) -> list[NoteDict]:
     """Walk through `walk` pitches across `bar_count` bars at beats [0, 1.5, 2, 3.5].
 
     Convention: walk[0] = chord root, walk[1:] = passing tones leading to next chord.
     Tagged "bass" + "walk" with first note also "downbeat". 4/4-shaped
     within a bar (see module docstring); ``beats_per_bar`` only scales
-    the inter-bar step.
+    the inter-bar step. ``feel`` (W17-E) shifts the walking positions
+    {0.0, 1.5, 2.0, 3.5}.
     """
     out: list[NoteDict] = []
     for bar in range(bar_count):
@@ -74,7 +78,7 @@ def walking_bass_to_next_chord(
                 vel = accent_velocity
             else:
                 vel = walk_velocity
-            out.append(_note(p, bs + beat, note_duration, vel, tags))
+            out.append(_note(p, bs + apply_feel(beat, feel), note_duration, vel, tags))
     return out
 
 
@@ -86,6 +90,7 @@ def chord_tone_embellishment(
     octave_offset: int = 12,
     start_beat: float = 0.0,
     walk_to_next: int | None = None,
+    feel: Feel = None,
 ) -> list[NoteDict]:
     """One bar of bass-player embellishment: root + 3rd + octave + walk note.
 
@@ -95,15 +100,16 @@ def chord_tone_embellishment(
     Note: this is a SINGLE-BAR generator and is 4/4-shaped (positions at
     0.0 / 0.75 / 1.5 / 2.0 / 2.75 / 3.5 within the bar). It takes no
     ``beats_per_bar`` because there's no inter-bar iteration; caller controls
-    placement via ``start_beat``.
+    placement via ``start_beat``. ``feel`` (W17-E) shifts the within-bar
+    positions.
     """
     notes = [
-        _note(root_pitch, start_beat + 0.0, 0.5, 100, ["bass", "downbeat"]),
-        _note(root_pitch + third_offset, start_beat + 0.75, 0.4, 88, ["bass", "third"]),
-        _note(root_pitch, start_beat + 1.5, 0.4, 85, ["bass"]),
-        _note(root_pitch + octave_offset, start_beat + 2.0, 0.5, 95, ["bass", "octave"]),
-        _note(root_pitch, start_beat + 2.75, 0.4, 82, ["bass"]),
+        _note(root_pitch, start_beat + apply_feel(0.0, feel), 0.5, 100, ["bass", "downbeat"]),
+        _note(root_pitch + third_offset, start_beat + apply_feel(0.75, feel), 0.4, 88, ["bass", "third"]),
+        _note(root_pitch, start_beat + apply_feel(1.5, feel), 0.4, 85, ["bass"]),
+        _note(root_pitch + octave_offset, start_beat + apply_feel(2.0, feel), 0.5, 95, ["bass", "octave"]),
+        _note(root_pitch, start_beat + apply_feel(2.75, feel), 0.4, 82, ["bass"]),
     ]
     if walk_to_next is not None:
-        notes.append(_note(walk_to_next, start_beat + 3.5, 0.5, 88, ["bass", "walk_in"]))
+        notes.append(_note(walk_to_next, start_beat + apply_feel(3.5, feel), 0.5, 88, ["bass", "walk_in"]))
     return notes

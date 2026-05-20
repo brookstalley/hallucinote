@@ -172,7 +172,7 @@ def check_version_compat(
     * **mismatch**: both set but different → typically the Remote Script
       is stale (the MCP server side updates more freely; the Remote Script
       requires a re-copy plus Live restart). The user should re-run
-      ``/ableton-install-mcp`` and restart Live.
+      ``/ableton-mcp-install`` and restart Live.
     """
     if not request_version:
         return error(
@@ -201,7 +201,7 @@ def check_version_compat(
             f"differ.",
             hint=(
                 "If the Remote Script side is stale (the common case): "
-                "run `/ableton-install-mcp` to refresh the vendored copy "
+                "run `/ableton-mcp-install` to refresh the vendored copy "
                 "in Live's User Library, then fully quit and reopen Live "
                 "(Live caches Control Surface modules at startup, so a "
                 "restart is required — `/mcp` alone won't help). If the "

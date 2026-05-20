@@ -230,7 +230,15 @@ def _build_verse(conn, song_id: str, tracks: dict[str, str]) -> dict:
     clips: dict[str, str] = {}
 
     # ---- Drums: trip-hop with fills on bars 4/8/12 + bar 15 fill ----
-    verse_drum_notes = drums.trip_hop_drum_pattern(bars=14, fill_bars=[3, 7, 11])
+    # Per-part feel (W17-E): nudge the off-beat hats slightly late for a
+    # subtle trip-hop drag on top of the snare's intrinsic lay_back. Verse
+    # only — chorus drums below stay canonical so the section contrast is
+    # audible. Demonstrates the per-part-per-clip granularity from
+    # docs/song-authoring-conventions.md "Per-part feel".
+    verse_feel = {0.5: 0.01, 1.5: 0.01, 2.5: 0.01, 3.5: 0.01}
+    verse_drum_notes = drums.trip_hop_drum_pattern(
+        bars=14, fill_bars=[3, 7, 11], feel=verse_feel,
+    )
     # Bar 15: real fill (toms + snare roll + crash).
     bs = 56.0
     verse_drum_notes.extend([

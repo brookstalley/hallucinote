@@ -4,17 +4,17 @@
 
 **Procedure.** Each numbered finding here corresponds to one or more runbook entries (cited). Severity is the synthesis of the agent's "Severity guess" + cross-canary corroboration (a finding three agents hit is harder to dismiss than one). Disposition maps each finding to a downstream wave/chunk in `.prawduct/artifacts/build-plan.md` and `docs/v1-build-plan.md`, OR to `.prawduct/backlog.md`, OR to an **explicit v1 punt with rationale**.
 
-**Triage outcome at a glance.** 3 architectural blockers that need a v1 disposition decision (D1, D2-D3, H1). 5 important findings that fit existing waves with minor scope adjustment. ~10 paper-cuts that go to backlog. **No build-plan reshape is forced** — the existing wave skeleton holds — but Wave 10 (sync UX) and Wave 9 (new-song) each need 1-2 chunks added, and the envelope-reach + meter-ratchet questions need explicit "ship vs. document non-support" calls. Recommendations below; user sign-off needed on the punt calls.
+**Triage outcome at a glance.** 3 architectural blockers that need a v1 disposition decision (D1, D2-D3, H1). 5 important findings that fit existing waves with minor scope adjustment. ~10 paper-cuts that go to backlog. **No build-plan reshape is forced** — the existing wave skeleton holds — but Wave 10 (sync UX) and Wave 9 (song-new) each need 1-2 chunks added, and the envelope-reach + meter-ratchet questions need explicit "ship vs. document non-support" calls. Recommendations below; user sign-off needed on the punt calls.
 
 ---
 
-## Group A — Authoring path / new-song chicken-and-egg
+## Group A — Authoring path / song-new chicken-and-egg
 
 All three canaries hit this on step 1 of every run. **Wave 9 is correctly scoped already**; the triage adds two specific sub-asks.
 
 | # | Finding | Severity | Canary | Disposition |
 |---|---|---|---|---|
-| A1 | No `/new-song` skill — agent must reverse-engineer from `falling-walking` | **important** | spa-1, fbr-1, ome-1 | **W9-A** (existing plan). |
+| A1 | No `/song-new` skill — agent must reverse-engineer from `falling-walking` | **important** | spa-1, fbr-1, ome-1 | **W9-A** (existing plan; shipped). |
 | A2 | No documented snapshot schema; `captured_session.json` shape lives only in `capture.py` docstring | **important** | spa-2, fbr-2, ome-2 | **W9-A — ADD**: snapshot schema doc (`docs/snapshot-schema.md`) + JSON Schema file the templates reference. |
 | A3 | Chicken-and-egg: capture wants a real Live set; new song has none → user must hand-author the snapshot | **important** | spa-2, fbr-2, ome-2 | **W9-A — ADD**: a minimal "hello-world" song under `tools/templates/song/` so new authors copy a template, not the historical falling-walking. |
 | A4 | README promises "Claude scaffolds `songs/punk-fate/`" — aspirational; no helper exists | important | spa-1 | **W9-A** (subsumed). |
@@ -103,7 +103,7 @@ Wave 13 is correctly scoped for the cross-machine plugin story. Canaries surface
 | G1 | `PluginDevice` fails identically whether VST is missing or URI is wrong — error message indistinguishable | **important** | fbr-7b | **W13-B** (existing plan — compat check + REQUIREMENTS report). |
 | G2 | Stock device class names don't always match loader `kind` — `AnalogDevice` is rejected, `Compressor2` works as `Compressor`, etc. — no canonical mapping table | **important** | fbr-7b | **Backlog — new entry**: "device kind canonical mapping table + loader auto-fallback (`AnalogDevice` → search for `Analog`)." Probably fits as a W13-A sub-task. |
 | G3 | Snapshot for VSTs carries `{class, name, guess_uri}` only — no manufacturer / format / unique fingerprint | **important** | fbr open Q2 | **W13-A** (existing plan — capture extension for `(class, display_name, manufacturer, pack_name, params_dialed)` already in spec). |
-| G4 | No higher-level "load Live's stock Grand Piano on this track" affordance — author has to know the URI | **important** | spa-7c | **W14-A** (existing plan — `pick_instruments_for_song` MCP prompt). |
+| G4 | No higher-level "load Live's stock Grand Piano on this track" affordance — author has to know the URI | **important** | spa-7c | **W14-A** — shipped as the `/song-pick-instruments` skill (originally specced as an MCP prompt; migrated to skill in v0.9 because MCP prompts aren't assistant-callable in Claude Code). |
 
 **Net plan change:** G2 → backlog with W13-A linkage. Others fit existing plan.
 

@@ -45,7 +45,7 @@ This works on macOS for anyone who already has `python3` and pip. But:
 
 ### 1.2 Installing the Remote Script + MCP entry
 
-README §2: quit Ableton, run `/ableton-install-mcp` from Claude Code.
+README §2: quit Ableton, run `/ableton-mcp-install` from Claude Code.
 
 This skill is unusually thorough — preflight detection, Live-version targeting, OneDrive redirection, atomic config write, version-handshake debugging guide. The orchestration is sound.
 
@@ -138,7 +138,7 @@ There is **no song scaffolding skill or template**. Claude is expected to create
 
 Note: falling-walking has a sidecar `falling-walking.md` (concept doc — key/tempo/harmony/groove tables). That file pre-dates the annotations-in-DB direction the team is now planning. **A new song should not mirror it.** Composer intent ("verse seeks; chorus finds," "don't sidechain the bass on the bridge") is the home turf of the planned `annotations` table (HIGH PRIORITY backlog) — same data the .md held, but addressable by song / track / time range, queryable, and round-trippable. Until annotations land, intent is homeless either way; mirroring the .md would just create a doc-rot vector. (See §3.5.)
 
-- **FINDING (gap, high):** **No scaffolding command/skill. `/new-song <slug>` does not exist.** Claude has to (a) reverse-engineer the convention from falling-walking each time, (b) hand-write a build.py from scratch, (c) decide what to put in `captured_session.json`, (d) decide whether to also fabricate a `falling-walking.md`-shaped sidecar (and the answer should be "no" — see the note above — but Claude can't know that from looking at the example). Failure modes:
+- **FINDING (gap, high):** **No scaffolding command/skill. `/song-new <slug>` does not exist.** *(Resolved in W9-A — the `/song-new` skill now scaffolds songs/<slug>/ with build.py, synthetic captured_session.json, tests, decisions/, annotations/. Originally specced as `/new-song`; renamed to `/song-new` in v0.9 for naming-convention consistency.)* Claude has to (a) reverse-engineer the convention from falling-walking each time, (b) hand-write a build.py from scratch, (c) decide what to put in `captured_session.json`, (d) decide whether to also fabricate a `falling-walking.md`-shaped sidecar (and the answer should be "no" — see the note above — but Claude can't know that from looking at the example). Failure modes:
   1. Claude misses a convention (e.g., the 1-based bar CHECK constraint, or the `slug` regex, or the `songs.title` vs `songs.name` split). The build fails at a CHECK constraint with a SQL error.
   2. Claude reproduces falling-walking's structure but with subtle drift (different section names, slightly different envelope authoring pattern). The next session sees inconsistency.
   3. Claude doesn't know whether `captured_session.json` should be filled in from a real Live set or fabricated. Falling-walking's snapshot was captured from a real Ableton session — for a brand-new song, there is no such session yet.
@@ -209,7 +209,7 @@ End state: Maya has a Live set with 4 fresh tracks named the way Claude named th
 
   The MCP surface supports loading instruments (`ableton_browser` + `ableton_device(action='load')`); the install includes the browser resource. But the *workflow* of "compose a new song" doesn't include an instrument-picking phase. The README handwaves this entirely.
 
-- **FINDING (gap, medium):** **No `compose_new_song` MCP prompt.** The MCP package ships 5 prompts (`create_midi_track_with_instrument`, `setup_sidechain_compression`, `build_return_bus`, `humanize_clip_velocity`, `compose_section_pattern`). None of them assembles an entire song. A `start_new_song(genre, tempo, sections, instruments)` prompt that orchestrates scaffold + instrument choices + push would directly support the README promise.
+- **FINDING (gap, medium) — RESOLVED ARCHITECTURALLY in v0.9:** *originally framed as "No `compose_new_song` MCP prompt."* The workflow primitives that were specced as MCP prompts (`create_midi_track_with_instrument`, `setup_sidechain_compression`, `build_return_bus`, `humanize_clip_velocity`, `compose_section_pattern`) were migrated to Claude Code skills (`.claude/skills/track-new-with-instrument`, `/mix-sidechain`, `/return-new`, `/clip-humanize`, `/pattern-compose`) because MCP prompts are not assistant-callable in Claude Code. The compose-orchestration content originally proposed as `start_new_song` folded into the `/song-new` skill itself.
 
 ### 3.5 First listen
 
@@ -408,7 +408,7 @@ Falling-walking has `songs/falling-walking/tests/test_build.py` and friends. The
 ### High severity — block v1 promises if unaddressed
 
 0. **falling-walking is a misleading exemplar.** Its sidecar `.md` predates the annotations direction; a scaffolding agent will mirror it by default. Either annotate the file as historical or migrate it. (§3.1.5)
-1. **No song scaffolding command/skill.** `/new-song <slug>` should exist. (§3.1)
+1. **No song scaffolding command/skill.** `/song-new <slug>` should exist. *(Shipped W9-A.)* (§3.1)
 2. **`captured_session.json` chicken-and-egg.** No documented path for "compose a new song against no Live set." (§3.1)
 3. **Generators library is genre-narrow.** Composing punk requires inlined raw notes; VISION's "structured access lets the model collaborate musically" leans on a library that doesn't exist yet. (§3.2)
 4. **No instrument-picking phase in compose flow.** Push without devices = silent Live set. (§3.4)
@@ -425,7 +425,7 @@ Falling-walking has `songs/falling-walking/tests/test_build.py` and friends. The
 12. **No DB-aware MCP read path for inline iteration.** Forces `python3 -c "..."` improvisation. (§4.1)
 13. **Arrangement-clip placements may not be idempotent on re-push** — needs verification + smoke test. (§4.3)
 14. **Pull doesn't pulse-summarize timing or skip-unchanged.** Acceptable for v1, painful at scale. (§4.4)
-15. **No `start_new_song` / `compose_section` MCP prompt** that captures the full "new song from a prompt" workflow. (§3.4)
+15. **No `start_new_song` / `compose_section` MCP prompt** that captures the full "new song from a prompt" workflow. *(Resolved architecturally in v0.9: the workflow lives in the `/song-new` skill rather than an MCP prompt. See §3.4 + the entries there.)* (§3.4)
 16. **Note-move-rotates-UUID surfaces zero warning** at pull time. (§4.4)
 17. **Two-branch-one-Live-set Frankenstein** when branches both push without resetting Live. (§5)
 18. **`captured_session.json` is a one-shot seed**; no refresh workflow when Live drifts. (§5)
@@ -451,7 +451,7 @@ Falling-walking has `songs/falling-walking/tests/test_build.py` and friends. The
 
 If we had to ship in two weeks and could fix only a handful of these, the bang-for-buck list:
 
-1. **Build `/new-song <slug>`** with a build.py template, a no-Live `captured_session.json` template (4 generic tracks + 2 returns), and a `tests/` skeleton. Closes #1, #2, parts of #4.
+1. **Build `/song-new <slug>`** with a build.py template, a no-Live `captured_session.json` template (4 generic tracks + 2 returns), and a `tests/` skeleton. Closes #1, #2, parts of #4.
 2. **Auto-bootstrap `session_id`** in `/ableton-push` when none exists, with a one-line user confirmation. Closes #10.
 3. **README troubleshooting section** covering the top 5 install/runtime failures. Closes #11.
 4. **Post-push UX message** that names the two Live UI quirks. Closes #21.

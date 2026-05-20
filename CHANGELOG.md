@@ -6,6 +6,44 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Workflow skills replace MCP prompts.** The 7 MCP prompts shipped in
+  v0.9.0 (`create_midi_track_with_instrument`,
+  `setup_sidechain_compression`, `build_return_bus`,
+  `humanize_clip_velocity`, `compose_section_pattern`, `start_new_song`,
+  `pick_instruments_for_song`) are deleted — MCP prompts surface only as
+  user-facing slash commands in Claude Code; the agent could never reach
+  them autonomously. The recipes moved into assistant-callable Claude Code
+  skills under `.claude/skills/`:
+  - `start_new_song` content folded into `/song-new` (the scaffold skill).
+  - `pick_instruments_for_song` → `/song-pick-instruments`.
+  - `create_midi_track_with_instrument` → `/track-new-with-instrument`.
+  - `build_return_bus` → `/return-new`.
+  - `setup_sidechain_compression` → `/mix-sidechain`.
+  - `humanize_clip_velocity` → `/clip-humanize`.
+  - `compose_section_pattern` → `/pattern-compose`.
+- **Skill namespace standardized to `<scope>-<action>`** for Hallucinote-
+  specific skills. Renames:
+  - `/new-song` → `/song-new` (matches existing `/song-snapshot`,
+    `/song-context`).
+  - `/ableton-install-mcp` → `/ableton-mcp-install`.
+  - `/ableton-uninstall-mcp` → `/ableton-mcp-uninstall`.
+  Framework-shaped skills (`/critic`, `/pr`, `/janitor`, `/learnings`,
+  `/prawduct-doctor`) keep their scope-less names — they aren't
+  operations on a Hallucinote object.
+- **`docs/new-song-checklist.md`** renamed to
+  `docs/song-new-checklist.md` for namespace consistency.
+
+### Fixed
+
+- **Stale MCP action names in skill descriptions / docstrings.**
+  `/song-snapshot` skill description referenced `list_return_tracks` /
+  `get_track_info` (the actual actions are `ableton_return(action='list')`
+  / `ableton_track(action='info')`). `src/hallucinote/capture.py`
+  docstring + `capture_plan()` runtime emit referenced
+  `ableton_track(action='get_info')` (actual: `'info'`).
+
 ### Added
 
 - **`ableton_browser(action='search')`** — pattern-match nodes under a
@@ -23,7 +61,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matches (no fuzzy match shipping by accident). The cross-machine
   portability path for built-in Live content (drum kits, instrument
   presets) so snapshots transfer cleanly across installations.
-- **`docs/new-song-checklist.md`** — authoritative 14-item must / should
+- **`docs/song-new-checklist.md`** — authoritative 14-item must / should
   / emergent pre-composition checklist. The agent infers aggressively,
   states inferences explicitly, asks for must-haves it can't infer.
   Decisions persist as markdown under `songs/<slug>/decisions/` so the
@@ -32,15 +70,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **`/new-song` SKILL** — restructured around two explicit phases
+- **`/song-new` SKILL** — restructured around two explicit phases
   (pre-composition elicitation, then scaffold + decisions + pick
   instruments). The final report now points at next-steps
   (pick instruments → push → recapture → compose) instead of just
-  naming the scaffolded directory.
-- **`start_new_song` MCP prompt** — mirrors the new-song checklist.
-  Adds an explicit elicitation step (Step 0) and decisions-persistence
-  step (1a). Step 2b (`pick_instruments_for_song`) cross-references
-  `preset_query` as the portable selector for built-in content.
+  naming the scaffolded directory. The orchestration content that v0.9
+  shipped as the `start_new_song` MCP prompt now lives in this skill
+  (see the "Workflow skills replace MCP prompts" entry above for the
+  rationale).
 - **Scaffold template** (`tools/templates/song/captured_session.json.tmpl`)
   — return names use the stripped form (`Reverb`, `Delay`) instead of
   Live's auto-slot-prefixed form (`A-Reverb`, `B-Delay`). Closes the

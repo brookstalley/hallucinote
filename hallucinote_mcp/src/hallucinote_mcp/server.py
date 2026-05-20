@@ -43,8 +43,8 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools + 11 resources + 7 prompts for Ableton
-Live, structured for low-context-cost agent interaction.
+hallucinote-mcp — 10 unified tools + 11 resources for Ableton Live,
+structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
   ableton_session       global state, master, transport, view, tempo, signature
@@ -64,10 +64,10 @@ Resources (read via resources/read, no turn cost):
   ableton://reference/{scales,device-params}     static lookups
   ableton://guides/{getting-started,conventions,error-recovery,gaps}
 
-Prompts (invoke via prompts/get for multi-step workflow templates):
-  create_midi_track_with_instrument, setup_sidechain_compression,
-  build_return_bus, humanize_clip_velocity, compose_section_pattern,
-  start_new_song, pick_instruments_for_song
+Multi-step workflows live as Claude Code skills (.claude/skills/) — not
+MCP prompts — so the agent can invoke them directly. Reach for:
+  /song-new, /song-pick-instruments, /track-new-with-instrument,
+  /return-new, /mix-sidechain, /clip-humanize, /pattern-compose.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
@@ -100,10 +100,6 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     # the client immediately on initialize.
     from .resources import register_resources
     register_resources(mcp)
-
-    # Wave M-7: register 7 workflow prompts.
-    from .prompts import register_prompts
-    register_prompts(mcp)
 
     # Define the ten tool entry points. Each is a thin wrapper around the
     # shared dispatcher; the wrapper exists only so FastMCP can register a
@@ -256,28 +252,6 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     mcp.tool(name=tool_name, description=wrapper.__doc__)(wrapper)
 
 
-def registered_prompt_names(mcp: FastMCP) -> list[str]:
-    """Return the names of all prompts registered on the FastMCP instance.
-
-    Symmetric to ``registered_tool_names`` / ``registered_resource_uris``
-    but introspects the prompt manager. Used by tests to assert the
-    expected prompt surface (see ``_EXPECTED_PROMPTS`` in
-    ``hallucinote_mcp/tests/unit/test_prompts.py``) is wired.
-    """
-    for attr in ("_prompt_manager", "prompt_manager"):
-        manager = getattr(mcp, attr, None)
-        if manager is None:
-            continue
-        for store_attr in ("_prompts", "prompts"):
-            store = getattr(manager, store_attr, None)
-            if isinstance(store, dict):
-                return sorted(store.keys())
-    raise RuntimeError(
-        "Could not introspect FastMCP prompt registry — FastMCP API may "
-        "have changed"
-    )
-
-
 def registered_resource_uris(mcp: FastMCP) -> list[str]:
     """Return the URIs of all resources registered on the FastMCP instance.
 
@@ -332,5 +306,4 @@ __all__ = [
     "handle_tool_call",
     "registered_tool_names",
     "registered_resource_uris",
-    "registered_prompt_names",
 ]

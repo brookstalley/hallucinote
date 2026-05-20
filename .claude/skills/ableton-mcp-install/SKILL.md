@@ -1,9 +1,9 @@
 ---
-name: ableton-install-mcp
+name: ableton-mcp-install
 description: Install Hallucinote MCP for use with Ableton Live. Copies the Remote Script package into Live's User Library, writes the MCP server entry into `.mcp.json` (or `~/.claude.json` if requested), and tells the user the one-time Ableton Preferences click. Use when the user wants to set up Hallucinote MCP for the first time, reinstall after a Python or Ableton update, or move the install to a different Live version.
 ---
 
-# /ableton-install-mcp
+# /ableton-mcp-install
 
 You install `hallucinote-mcp` for the user. Three pieces:
 
@@ -269,7 +269,7 @@ are ALSO Live-side changes, because the Control Surface re-imports
 these packages from Live's User Library copy at startup. After
 editing any `actions/*.py` or `handlers/*.py`, you must:
 
-1. Run `/ableton-install-mcp` to refresh Live's vendored copy.
+1. Run `/ableton-mcp-install` to refresh Live's vendored copy.
 2. Fully quit and reopen Live (Live caches Control Surface modules
    at startup; `/mcp` alone doesn't refresh the Live-side copy).
 3. `/mcp` to respawn the server subprocess.
@@ -372,7 +372,7 @@ Once you're back in Claude Code, try one of these to get going:
   • "/ableton-pull <slug> <id> everything"
                                    — pull current Live state into the DB
 
-If something looks broken, /ableton-uninstall-mcp reverses every step.
+If something looks broken, /ableton-mcp-uninstall reverses every step.
 ```
 
 The "Try:" lines are deliberately phrased the way a user would speak them, not as MCP tool invocations — the install skill is the first surface a brand-new user touches, and `ableton_session(action='help')` is developer syntax. The two suggested entry points (`load falling-walking` / `start a new song`) cover the two real first-time paths.
@@ -416,7 +416,7 @@ Quick recovery (the error's `hint` field names both versions so you can
 tell which side is stale):
 
 - **Remote Script side stale (common):** rerun this skill
-  (`/ableton-install-mcp`) to refresh the vendored copy, then fully quit
+  (`/ableton-mcp-install`) to refresh the vendored copy, then fully quit
   and reopen Live. **`/mcp` reconnect alone won't help** because Live
   caches Control Surface modules at startup — the staleness lives inside
   Live's Python.
@@ -446,4 +446,4 @@ in the Control Surface dropdown:
 
 ## Uninstall
 
-`/ableton-uninstall-mcp` reverses every step of this skill.
+`/ableton-mcp-uninstall` reverses every step of this skill.

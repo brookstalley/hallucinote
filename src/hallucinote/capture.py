@@ -53,7 +53,7 @@ populated by build.py hand-authored sections.
 Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
 MCP probes against the v1 unified-action-dispatch surface
 (`ableton_session(action='info')`, `ableton_return(action='list')`,
-`ableton_track(action='get_info'|'get_sends')`,
+`ableton_track(action='info'|'get_sends')`,
 `ableton_device(action='get_parameters'|'get_device_chains')`) and assembles
 the dict via `compile_snapshot`. See `tools/capture.py` for the probe sequence.
 """
@@ -514,7 +514,7 @@ def capture_plan() -> list[dict[str, str]]:
         {"tool": "ableton_return(action='list')",
          "purpose": "return tracks: name + volume + pan per return; "
                     "chunk 4a: include each return's top-level device chain"},
-        {"tool": "ableton_track(action='get_info')",
+        {"tool": "ableton_track(action='info')",
          "purpose": "per-track: name, type, volume, pan, mute/solo/arm, "
                     "top-level device chain (kind + display_name + position) "
                     "— loop over tracks"},

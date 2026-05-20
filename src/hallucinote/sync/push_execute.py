@@ -109,6 +109,135 @@ def _summarize_args(args: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# M1-B: cross-machine device-load fallback
+# ---------------------------------------------------------------------------
+#
+# When a `device.load` call carries a `preset_uri` captured on the author's
+# machine and that URI is not resolvable on the consumer's machine (Live
+# FileIds differ across installs), the executor falls back to an MCP
+# `ableton_browser(action='search')` keyed on the device's `display_name`
+# and retries the load with the first match's URI. The subsequent
+# parameter-write phase fires unchanged against the fallback device, so
+# the dialed parameter state still lands.
+#
+# This is NOT generic retry (the module docstring's "no internal retry"
+# rule still holds) — it's a one-shot URI substitution that addresses a
+# structural cross-machine mismatch, not a transient error.
+
+# Error-message substrings that indicate a preset_uri resolution miss.
+# When the original load fails with a message containing any of these,
+# the fallback is attempted. Other failure modes (instrument-on-return
+# preconditions, connection drops, etc.) skip the fallback unchanged.
+_PRESET_URI_MISS_HINTS = (
+    "preset_uri",
+    "no loadable browser item",
+)
+
+
+def _search_root_for_kind(kind: str) -> str:
+    """Pick the canonical browser root for a fallback search by device kind.
+
+    Plugin classes go to the ``plugins`` root (PluginDevice / AuPluginDevice /
+    Vst3PluginDevice etc. — substring 'Plugin' matches the lot per
+    ``sync/compat.py`` discriminator). Drum racks go to ``drums``. All
+    others (instruments + unknown built-ins) default to ``instruments``,
+    which is the broadest signal for missing-built-in cases.
+    """
+    if "Plugin" in kind:
+        return "plugins"
+    if kind == "DrumGroupDevice":
+        return "drums"
+    return "instruments"
+
+
+def _attempt_load_fallback(
+    *,
+    failed_call: Any,
+    conn: sqlite3.Connection,
+    send_fn: Callable[..., Any],
+    request_cls: type,
+) -> tuple[Any, str] | None:
+    """Try a cross-machine fallback for a failed ``device.load`` call.
+
+    Returns ``(retry_response, fallback_uri)`` if the search-then-load
+    fallback succeeded; ``None`` if no fallback was attempted (call shape
+    didn't qualify) or the fallback didn't find a match.
+
+    The fallback fires only when:
+    1. The call is ``ableton_device(action='load')``.
+    2. The call carried a ``preset_uri`` (kind-only loads have no
+       per-machine URI to miss, so the original error already covers
+       them).
+    3. The call key identifies a device row in the DB (``device:<uuid>``).
+    4. The device row has a non-empty ``display_name`` to search by.
+    5. The search call itself succeeds and returns at least one match
+       with a non-empty URI.
+    6. The retry load with the fallback URI succeeds.
+    """
+    if failed_call.tool != "ableton_device":
+        return None
+    if failed_call.args.get("action") != "load":
+        return None
+    if not failed_call.args.get("preset_uri"):
+        return None
+    key = failed_call.key or ""
+    if not key.startswith("device:"):
+        return None
+    device_id = key.split(":", 1)[1]
+    row = conn.execute(
+        "SELECT kind, display_name FROM devices WHERE id = ?",
+        (device_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    kind = row["kind"]
+    display_name = (row["display_name"] or "").strip()
+    if not display_name:
+        return None
+
+    root = _search_root_for_kind(kind)
+    search_req = request_cls(
+        tool="ableton_browser",
+        action="search",
+        params={
+            "pattern": display_name,
+            "root": root,
+            "loadable_only": True,
+            "mode": "substring",
+            "limit": 5,
+        },
+    )
+    try:
+        search_resp = send_fn(search_req)
+    except Exception:  # prawduct:ok-broad-except — fallback must not crash the push loop; failure → no fallback
+        return None
+    if not bool(getattr(search_resp, "ok", False)):
+        return None
+    matches = (getattr(search_resp, "result", None) or {}).get("matches") or []
+    fallback_uri = ""
+    for m in matches:
+        uri = m.get("uri") if isinstance(m, dict) else None
+        if uri:
+            fallback_uri = uri
+            break
+    if not fallback_uri:
+        return None
+
+    retry_args = {k: v for k, v in failed_call.args.items() if k != "action"}
+    retry_args["preset_uri"] = fallback_uri
+    retry_req = request_cls(
+        tool=failed_call.tool, action="load", params=retry_args,
+    )
+    try:
+        retry_resp = send_fn(retry_req)
+    except Exception:  # prawduct:ok-broad-except — fallback must not crash the push loop; failure → no fallback
+        return None
+    if not bool(getattr(retry_resp, "ok", False)):
+        return None
+    return retry_resp, fallback_uri
+
+
 def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group error records by message substring for pattern-spotting.
 
@@ -234,17 +363,46 @@ def execute_push(
                 break
 
             ok = bool(getattr(resp, "ok", False))
-            result_payload = getattr(resp, "result", None) if ok else None
             err_msg = getattr(resp, "error", None) if not ok else None
+
+            # M1-B: cross-machine device-load fallback. When a `device.load`
+            # with a captured-on-the-author's-machine `preset_uri` fails
+            # because the URI is unresolvable on this machine, try a search
+            # by display_name and retry with the discovered URI.
+            fallback_uri: str | None = None
+            if (
+                not ok
+                and call.tool == "ableton_device"
+                and action == "load"
+                and call.args.get("preset_uri")
+                and err_msg
+                and any(hint in err_msg for hint in _PRESET_URI_MISS_HINTS)
+            ):
+                fb = _attempt_load_fallback(
+                    failed_call=call, conn=conn, send_fn=send_fn,
+                    request_cls=Request,
+                )
+                if fb is not None:
+                    resp, fallback_uri = fb
+                    ok = True
+                    err_msg = None
+
+            result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
 
-            results.append({
+            result_entry: dict[str, Any] = {
                 "key": call.key,
                 "tool": call.tool,
                 "ok": ok,
                 "result": result_payload,
                 "error": err_msg,
-            })
+            }
+            if fallback_uri is not None:
+                # Surface in the state file so the agent can see that the
+                # fallback fired (and which URI was substituted). The DB's
+                # preset_uri stays untouched — the song remains portable.
+                result_entry["fallback_preset_uri"] = fallback_uri
+            results.append(result_entry)
 
             if not ok:
                 error_records.append({

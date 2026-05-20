@@ -126,28 +126,15 @@ def test_build_runs_clean_and_produces_canary_shape(build_module):
         assert cue_names.count("chorus") == 3, cue_names
         assert cue_names.count("verse") == 2, cue_names
 
-        # Envelopes — 2: master fade + lead-vocal sidechain (mixer_volume both).
+        # Envelopes — 0. The canary's brief named two envelope targets
+        # (master fade-out + lead-vocal sidechain ducking) and Wave 0
+        # surfaced both as architectural blockers. W10-F refuses these
+        # at the DB-mutator layer (D2 master / D3 audio-track). The
+        # build no longer attempts them; the v1 canary documents the
+        # refusal via the build's docstrings + the ableton://guides/gaps
+        # Group-D entries. v1.1 will demo the sub-bus workaround.
         envs = Q.get_envelopes_for_song(conn, song_id)
-        assert len(envs) == 2, [e["target_kind"] for e in envs]
-
-        # The master fade-out envelope targets the master track.
-        master_id = tracks_by_name["Master"]["id"]
-        master_envs = [e for e in envs if e["target_track_id"] == master_id]
-        assert len(master_envs) == 1
-        master_env = master_envs[0]
-        assert master_env["target_kind"] == "mixer_volume"
-        bps = Q.get_breakpoints(conn, envelope_id=master_env["id"])
-        assert len(bps) == 2  # linear fade: start + end
-        assert bps[0]["value"] == 0.82
-        assert bps[-1]["value"] == 0.00
-
-        # Sidechain envelope: target_kind=mixer_volume on lead vocal track.
-        # (The DB has no sidechain target_kind; this is the workaround.)
-        lead_vox_id = tracks_by_name["07 Lead Vocal"]["id"]
-        sc_envs = [e for e in envs if e["target_track_id"] == lead_vox_id]
-        assert len(sc_envs) == 1, (
-            "lead vocal should have one sidechain placeholder envelope"
-        )
+        assert len(envs) == 0, [e["target_kind"] for e in envs]
 
         # Total notes: reasonable upper bound (this is not a dense song).
         total = 0

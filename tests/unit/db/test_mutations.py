@@ -541,3 +541,131 @@ def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
     rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE returns SET solo = -1 WHERE id = ?", (rid,))
+
+
+# ---------------------------------------------------------------------------
+# W10-F: envelope-target track-kind refusals (D2 master / D3 audio / group)
+# ---------------------------------------------------------------------------
+
+
+def test_create_envelope_mixer_volume_refuses_master_target(conn, song):
+    """D2: mixer_volume on the master track has no LOM path (master can't
+    host clips). The mutator refuses with a teaching error pointing at the
+    sub-bus workaround."""
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="mixer_volume",
+            target_track_id=master,
+        )
+    msg = str(excinfo.value)
+    assert "master" in msg
+    assert "sub-bus" in msg
+    assert "guides/gaps" in msg
+
+
+def test_create_envelope_mixer_pan_refuses_master_target(conn, song):
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="mixer_pan",
+            target_track_id=master,
+        )
+    assert "master" in str(excinfo.value)
+
+
+def test_create_envelope_mixer_volume_refuses_audio_target(conn, song):
+    """D3: audio tracks can't host MIDI session clips in v1, so the routing
+    surface for mixer_volume envelopes is unreachable."""
+    audio = M.create_track(conn, song_id=song, track_index=3, name="Guitar",
+                           kind="audio")
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="mixer_volume",
+            target_track_id=audio,
+        )
+    msg = str(excinfo.value)
+    assert "audio" in msg
+    assert "sub-bus" in msg
+
+
+def test_create_envelope_send_level_refuses_audio_target(conn, song):
+    audio = M.create_track(conn, song_id=song, track_index=3, name="Guitar",
+                           kind="audio")
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="send_level",
+            target_track_id=audio, target_send_return_id=ret,
+        )
+    assert "audio" in str(excinfo.value)
+
+
+def test_create_envelope_refuses_group_track_target(conn, song):
+    """Group tracks in Live are routing-only and host no clips of any kind
+    — same failure mode as D3, different teaching message."""
+    group = M.create_track(conn, song_id=song, track_index=2, name="Bus",
+                           kind="group")
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="mixer_volume",
+            target_track_id=group,
+        )
+    assert "group" in str(excinfo.value)
+
+
+def test_create_envelope_device_parameter_refuses_master_device(conn, song):
+    """device_parameter on a device in the master's chain is also D2:
+    the routing path through a Clip is unreachable."""
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    chain = M.create_device_chain(conn, parent_track_id=master, position=0)
+    device = M.create_device(
+        conn, chain_id=chain, position=1, kind="Compressor2",
+        display_name="Compressor",
+    )
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="device_parameter",
+            target_device_id=device, parameter_path="Threshold",
+        )
+    assert "master" in str(excinfo.value)
+
+
+def test_create_envelope_device_parameter_accepts_midi_track_device(conn, song, track):
+    """Positive control: device_parameter on a device whose chain belongs
+    to a kind='midi' track is accepted by the mutator (the `track` fixture
+    creates kind='midi' by default)."""
+    chain = M.create_device_chain(conn, parent_track_id=track, position=0)
+    device = M.create_device(
+        conn, chain_id=chain, position=1, kind="Operator",
+        display_name="Operator",
+    )
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=device, parameter_path="Volume",
+    )
+    assert env_id
+
+
+def test_create_envelope_mixer_volume_accepts_midi_track(conn, song, track):
+    """Positive control: kind='midi' is the host kind the v1 routing path
+    supports."""
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=track,
+    )
+    assert env_id
+
+
+def test_create_envelope_clip_cc_unaffected_by_track_kind_check(conn, song, clip):
+    """Sanity: clip_cc envelopes target a Clip (not a track), so the W10-F
+    track-kind check should NOT fire for them — they're separately blocked
+    by the LOM gap at push time, not by D2/D3 at DB time."""
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="clip_cc",
+        target_clip_id=clip, parameter_path="64",
+    )
+    assert env_id

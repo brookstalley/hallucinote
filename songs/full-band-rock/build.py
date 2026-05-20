@@ -35,7 +35,6 @@ from pathlib import Path
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.generators import bass, drums, harmony
-from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
 
 DB_PATH = Path(__file__).parent / "full-band-rock.db"
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
@@ -81,26 +80,6 @@ def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
 
 def _returns_by_name(conn, song_id: str) -> dict[str, str]:
     return {row["name"]: row["id"] for row in Q.get_returns_for_song(conn, song_id)}
-
-
-def _apply_envelopes(conn, song_id, output, *, actor="generator", reason=None):
-    """Persist every envelope spec in `output.envelopes` via mutators.
-
-    Copied verbatim from solo-piano-ambient/build.py — there is no shared
-    library helper. Same scaffold gap as Step 1 of the solo-piano-ambient
-    runbook.
-    """
-    for env_spec in output.envelopes:
-        spec = dict(env_spec)
-        bps = spec.pop("breakpoints", [])
-        env_id = M.create_envelope(
-            conn, song_id=song_id, actor=actor, reason=reason, **spec,
-        )
-        if bps:
-            M.replace_breakpoints(
-                conn, envelope_id=env_id, breakpoints=bps,
-                actor=actor, reason=reason,
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -414,58 +393,40 @@ def _arrange_section(conn, song_id, tracks, clips: dict[str, str],
 
 
 def _author_envelopes(conn, song_id, tracks, returns) -> None:
-    """Author the song's automation envelopes.
+    """Envelope authoring — WAVE 0 FINDINGS REIFIED AT V1.
 
-    Three demonstrations:
-      1. MASTER FADE-OUT: mixer_volume envelope on the master track over the
-         outro's first 4 bars (bars 73-77 = beats 288-304). This is the brief's
-         central target — exercises whether master is a first-class envelope
-         target. The master track was created by replay_capture with
-         track_index=0 (sentinel). We look it up by name "Master".
-      2. SIDECHAIN PLACEHOLDER on lead vocal (sidechain_trigger envelope on
-         the lead-vocal track ducking by drum kick hits in chorus #3). The
-         lead-vocal track is AUDIO — `mixer_volume` envelopes on an audio
-         track are legal in the DB schema, but whether push routes them is
-         a question.
-      3. Verse-pad swell — skipped, the only "pad" is backing vox which
-         doesn't need swell. (Omitted intentionally to keep the focus.)
+    The original canary brief named two envelope targets:
+      1. Master fade-out (mixer_volume on the master track)
+      2. Sidechain placeholder ducking lead vocal (mixer_volume on
+         the `07 Lead Vocal` audio track)
+
+    Wave 0 surfaced both as architectural blockers. The follow-up
+    investigation (bug-triage-wave2 Group D) confirmed no LOM path
+    exists in v1:
+      - Master envelopes require a Clip; the master track cannot host
+        clips. The supported pattern is a sub-bus GROUP track that the
+        sources are routed into; the envelope rides the group's mixer.
+      - Audio-track mixer/send envelopes require an audio session
+        clip to host them; Hallucinote v1 models clips as MIDI-only.
+
+    W10-F now refuses both at the DB-mutator AND planner layers with
+    a teaching error pointing at the sub-bus workaround. Attempting
+    either here would raise `ValueError` at `create_envelope`. Per
+    the v1 canary's role (demonstrate the v1 surface a sophisticated
+    user actually has), this function intentionally authors NO
+    envelopes — the unreachable surfaces are documented in their
+    docstrings + `docs/canary-songs/full-band-rock.md` + the
+    `ableton://guides/gaps.md` Group-D entries.
+
+    v1.1 enhancements (filed in backlog):
+      - The full sub-bus pattern demo (requires adding a kind='midi'
+        group track to the snapshot + routing audio tracks into it).
+      - Audio-clip DB model so D3 can be lifted directly.
     """
-    # --- 1. Master fade-out (the brief's target) ---
-    # bars 73-77 = beats 288-304 (4 bars at 4 beats/bar).
-    outro_start_beat = (OUTRO_BAR - 1) * 4.0   # = 288.0
-    fade_end_beat    = outro_start_beat + 16.0  # = 304.0 (4 bars of fade)
-    master_id = tracks["Master"]
-    fade_env = M.create_envelope(
-        conn, song_id=song_id, target_kind="mixer_volume",
-        target_track_id=master_id,
-        actor="generator",
-        reason="master fade-out at outro (canary target)",
-    )
-    M.replace_breakpoints(
-        conn, envelope_id=fade_env, actor="generator",
-        reason="linear fade from full to silent over 4 bars",
-        breakpoints=[
-            {"time_beats": outro_start_beat, "value": 0.82, "curve_kind": "linear"},
-            {"time_beats": fade_end_beat,    "value": 0.00, "curve_kind": "linear"},
-        ],
-    )
-
-    # --- 2. Sidechain placeholder: kick-synced ducking on lead vocal.
-    # Chorus #3 (bar 65-73): kicks land on beat 1 of each bar (8 kicks over
-    # 32 beats). Beat 0 of chorus #3 = (65-1)*4 = 256.
-    # NOTE: same generator-emits-pre-attack issue as falling-walking; we shift
-    # by attack_beats to keep the envelope inside the section.
-    chorus3_start = (CHORUS3_BAR - 1) * 4.0  # = 256.0
-    attack_beats = 0.02
-    kick_beats = [chorus3_start + attack_beats + b * 4.0 for b in range(8)]
-    duck = sidechain_trigger(
-        target_track_id=tracks["07 Lead Vocal"],
-        at_beats=kick_beats,
-        rest_value=0.85, duck_value=0.55,
-        attack_beats=attack_beats, recovery_beats=0.6,
-    )
-    _apply_envelopes(conn, song_id, duck,
-                     reason="lead vocal sidechained to drum bus (placeholder)")
+    # Intentionally empty. See docstring — both Wave 0 envelope targets are
+    # refused-with-teaching by W10-F; v1 surfaces no envelopes for this
+    # canary. Variables retained for v1.1 sub-bus pattern integration.
+    _ = (tracks, returns)
 
 
 # ---------------------------------------------------------------------------

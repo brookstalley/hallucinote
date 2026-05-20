@@ -63,6 +63,22 @@ clip inherits the envelope. (clip_cc / clip_pitch_bend / note_expression
 on arrangement clips do work; only the track-level targets are
 restricted.)
 
+### Mixer / pan / send / device-parameter envelopes on the MASTER or audio tracks
+**Status:** Live 12.4's `Clip.create_automation_envelope` is the only
+envelope-creation surface, and the **master track cannot host clips of
+any kind** — there's no Clip object to address. Audio tracks accept
+audio clips, but Hallucinote v1 models clips as MIDI-only (audio-clip
+support is v1.1 scope), so the v1 routing path through
+`location='session' + clip_index` doesn't reach audio tracks either.
+Wave 0 investigation (Group D, 2026-05-19) confirmed there's no LOM
+path: `Utility` on master is dead-end (envelope creation still wants
+`Clip`); Max-for-Live mirror is a sub-bus pattern, not an MCP path.
+**Working alternative:** author a **sub-bus group track** (kind=`midi`)
+that receives the source(s), and put the volume / pan / send / device
+envelope on the group's mixer instead. The DB-mutator `create_envelope`
+refuses these target kinds on master / audio / group hosts with a
+teaching error (W10-F dual-layer refusal — DB + planner).
+
 ### MIDI CC and pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
 **Status:** Live 12.4's LOM exposes neither
 `Clip.envelope_target_for_cc(N)` nor

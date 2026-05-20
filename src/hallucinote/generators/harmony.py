@@ -1,4 +1,12 @@
-"""Harmony / pad / pluck / bell generators."""
+"""Harmony / pad / pluck / bell generators.
+
+Meter (W14-B). Most generators here take explicit ``start_beat`` +
+``length_beats`` / ``section_length_beats``, so they're already
+meter-agnostic. ``tresillo_pluck`` is the exception: it iterates bars
+internally and uses the 4/4-shaped tresillo cell. ``beats_per_bar``
+(default 4.0) controls bar iteration only; the within-bar pattern
+stays 4/4-shaped.
+"""
 from __future__ import annotations
 
 from typing import Any, Sequence
@@ -49,13 +57,17 @@ def tresillo_pluck(
     *,
     bars: int = 1,
     start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
     duration: float = 0.2,
 ) -> list[NoteDict]:
-    """Calypso-style pluck cycling through voicing on tresillo hits."""
+    """Calypso-style pluck cycling through voicing on tresillo hits.
+    4/4-shaped within a bar (see module docstring); ``beats_per_bar`` only
+    scales the inter-bar step.
+    """
     hits = [(0.0, 95), (0.75, 100), (1.5, 90), (2.0, 75), (2.75, 95), (3.5, 100)]
     out: list[NoteDict] = []
     for b in range(bars):
-        bs = start_beat + b * 4.0
+        bs = start_beat + b * beats_per_bar
         for i, (t, v) in enumerate(hits):
             p = voicing[i % len(voicing)]
             out.append(_note(p, bs + t, duration, v, ["pluck", "tresillo_hit"]))

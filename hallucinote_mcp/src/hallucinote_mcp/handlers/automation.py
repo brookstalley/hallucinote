@@ -10,17 +10,22 @@ to walk the right Live API path:
   - **device_parameter** — `clip.create_automation_envelope(parameter)` where
     parameter is resolved by name on the device's chain
   - **mixer_volume** / **mixer_pan** / **send_level** — likewise routed
-    through a containing arrangement (or session) clip's
-    ``create_automation_envelope``.
+    through a containing **session** clip's ``create_automation_envelope``;
+    then ``ableton_clip(action='duplicate_to_arrangement')`` snapshot-copies
+    the envelope into the arrangement.
 
-All seven target kinds require a containing ``Clip`` (session or
-arrangement). Live 12.4's LOM does NOT expose track-level / parameter-level
-envelope creation: ``Track.create_automation_envelope`` and
-``Parameter.automation_*`` are not in the public surface (verified against
-Live 12 Suite's bundled ``LomTypes`` plus the first-party Push code in
-``pushbase/automation_component.py``). The handler surfaces a
-``NotImplementedError`` with a teaching message when callers omit
-``clip_index + location`` for the mixer/send/device-parameter kinds.
+All seven target kinds require a containing ``Clip``. Live 12.4's LOM does
+NOT expose track-level / parameter-level envelope creation:
+``Track.create_automation_envelope`` and ``Parameter.automation_*`` are not
+in the public surface (verified against Live 12 Suite's bundled ``LomTypes``
+plus the first-party Push code in ``pushbase/automation_component.py``).
+For mixer/pan/send/device_parameter targets the clip MUST be a session
+clip — Live raises ``RuntimeError("Not a session clip or parameter belongs
+to another track.")`` when called on an arrangement clip (W2-10 finding).
+The handler surfaces a ``NotImplementedError`` with a teaching message when
+callers omit ``clip_index + location`` for the mixer/send/device-parameter
+kinds, and a second ``NotImplementedError`` when ``location='arrangement'``
+is passed for those kinds.
 
 Each path takes a breakpoints list of ``{time_beats, value, curve?}`` dicts
 and writes via ``Envelope.insert_step(time, duration, value)``. Live 12.4's
@@ -76,9 +81,11 @@ _TRACK_LEVEL_GAP_HINT = (
     "target_kind={target_kind!r} requires clip_index + location on Live "
     "12.4: the LOM does not expose track-level (clip-less) envelope "
     "creation for mixer / send / device-parameter automation. Provide "
-    "location='arrangement' (or 'session') and clip_index pointing at "
-    "the containing clip. Live's UI shows free track lanes, but the "
-    "Python API only addresses envelopes through Clip."
+    "location='session' and clip_index pointing at a session clip on the "
+    "target track; then ableton_clip(action='duplicate_to_arrangement') "
+    "carries the envelope into the arrangement. Live 12.4 rejects these "
+    "target kinds on arrangement clips outright. Live's UI shows free "
+    "track lanes, but the Python API only addresses envelopes through Clip."
 )
 
 

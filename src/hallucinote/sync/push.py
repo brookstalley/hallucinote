@@ -635,8 +635,9 @@ def plan_push_cue_points(
     7e): when any cue's ``position_bar`` exceeds ``max(arrangement_clips
     .end_bar)`` — the DB's planned arrangement extent — emit a warn so
     the agent / user sees the prerequisite issue before round-tripping
-    to Live. Treats an empty arrangement as extent=0 (every cue past
-    bar 1 will fail until arrangement is populated).
+    to Live. An empty arrangement gets a distinct, more descriptive warn
+    naming the missing prereq instead of a generic extent-exceeded
+    message.
 
     Result key: ``cue_batch:{song_id}``. The batch handler returns a list
     of per-cue results; ``apply_push_results`` consumes it via the

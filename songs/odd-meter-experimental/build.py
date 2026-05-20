@@ -45,6 +45,7 @@ from pathlib import Path
 
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.tempo import to_live_bpm
 
 DB_PATH = Path(__file__).parent / "odd-meter-experimental.db"
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
@@ -529,8 +530,6 @@ def build(reset: bool = False) -> str:
         M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
         # Notional tempo 168 BPM (eighth-note pulse). Live's "BPM" is the
         # quarter-note pulse; `to_live_bpm` does the conversion.
-        from hallucinote.tempo import to_live_bpm
-
         M.add_tempo_point(
             conn, song_id=song_id, start_bar=1.0,
             tempo_bpm=to_live_bpm(168.0, "eighth"),

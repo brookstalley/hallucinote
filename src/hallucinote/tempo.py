@@ -53,10 +53,10 @@ def to_live_bpm(
         bpm = to_live_bpm(168.0, "eighth")  # -> 84.0
         M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=bpm)
 
-    ``pulse_kind`` accepts the keys of ``_PULSE_TO_QUARTER`` (plain + dotted
-    + triplet of whole / half / quarter / eighth / sixteenth). Unknown
-    values raise ``ValueError`` listing the accepted set, so callers
-    discover the canonical names without docs drift.
+    ``pulse_kind`` accepts plain + dotted + triplet variants of whole / half
+    / quarter / eighth / sixteenth. Unknown values raise ``ValueError``
+    listing the accepted set — that's the canonical source so docs don't
+    drift.
 
     ``time_signature`` is informational and currently unused — it's part of
     the signature so callers don't have to refactor if a future convention

@@ -173,6 +173,25 @@ def test_classify_device_third_party_missing():
     assert lookup == "Massive X"
 
 
+def test_classify_device_empty_display_name_fails_closed():
+    """Empty/whitespace display_name has no signal to match against.
+    Without this guard, `'' in any_string` is True and the device
+    would falsely match the first installed plugin as third_party_ok.
+    """
+    status, lookup = C.classify_device(
+        "PluginDevice", display_name="",
+        installed_plugin_names=frozenset({"Serum"}),
+    )
+    assert status == "third_party_missing"
+    assert lookup == ""
+
+    status_ws, _ = C.classify_device(
+        "PluginDevice", display_name="   ",
+        installed_plugin_names=frozenset({"Serum"}),
+    )
+    assert status_ws == "third_party_missing"
+
+
 def test_classify_device_au_plugin_class():
     status, _ = C.classify_device(
         "AuPluginDevice", display_name="Omnisphere",

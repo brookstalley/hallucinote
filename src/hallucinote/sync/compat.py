@@ -213,6 +213,13 @@ def classify_device(
     lookup_name = display_name
     if installed_plugin_names is None:
         return "third_party_unverified", lookup_name
+    # Empty display_name → no signal to match against. Schema allows
+    # empty strings (NOT NULL but no length check), so this can arise
+    # from incomplete authoring or a future probe path that doesn't
+    # populate the name. `'' in any_string` is always True, which would
+    # spuriously match the first installed plugin — fail closed instead.
+    if not lookup_name.strip():
+        return "third_party_missing", lookup_name
     needle = lookup_name.lower()
     for installed in installed_plugin_names:
         hay = installed.lower()

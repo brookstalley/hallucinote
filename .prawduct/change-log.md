@@ -28,7 +28,7 @@ W11 (inline `hallucinote://` DB read surface), W13-A (instrument
 fallback identity — blocked on missing MCP `browser(search)` action),
 and W16-A (assertions module) explicitly deferred to v1.0.
 
-Suite 1510 → 1547 (+37 tests, 11.30s). All four canary songs
+Suite 1510 → 1549 (+39 tests, ~11.8s). All four canary songs
 (`falling-walking`, `full-band-rock`, `solo-piano-ambient`,
 `odd-meter-experimental`) have REQUIREMENTS.md generated — all-native,
 no install needed.

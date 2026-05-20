@@ -4,39 +4,40 @@ Ableton Live MCP server with **10 unified tools** and action dispatch — design
 agents that need broad Ableton control without paying the context cost of a 50-tool
 surface.
 
-## Why ten?
+This package ships as part of the [Hallucinote](https://github.com/brookstalley/hallucinote)
+composition environment but can also be used standalone by any MCP-capable agent
+that wants structured access to a running Ableton Live set.
+
+## Why ten tools?
 
 Empirical research (Anthropic, Speakeasy, Copilot) shows model effectiveness degrades
 sharply past ~25 MCP tools and collapses past ~50. Most narrow setters can be
 consolidated: `ableton_track(action='set_property', property='volume', value=0.7)`
-replaces a separate `set_track_volume` tool. The full architectural rationale lives
-in the parent repo at `docs/mcp-tool-design.md`.
-
-## Status
-
-**Active scaffold.** Wave M-0 lays the package, dispatcher, wire protocol, and
-install skills. Tool actions land chunk-by-chunk in M-1 through M-7. See
-`.prawduct/artifacts/build-plan.md` in the parent repo for the chunk schedule.
+replaces a separate `set_track_volume` tool. The architectural rationale lives in
+the parent repo at [`docs/mcp-tool-design.md`](../docs/mcp-tool-design.md).
 
 ## Install
 
+`hallucinote-mcp` is not published to PyPI. Install it from the Hallucinote
+repository as an editable package:
+
 ```bash
-pip install hallucinote-mcp
+git clone https://github.com/brookstalley/hallucinote.git
+cd hallucinote
+pip install -e ./hallucinote_mcp
 ```
 
-Then open Claude Code in any project and run the install skill — it locates Ableton
-Live's User Library, copies the Remote Script into place, writes the MCP config,
-and tells you the one-line Ableton Preferences click:
+Then run the install skill from Claude Code to copy the Remote Script into Ableton
+Live's User Library and write `.mcp.json` for your project:
 
 ```
 /ableton-install-mcp
 ```
 
-The skill body lives at `.claude/skills/ableton-install-mcp/SKILL.md` in the
-Hallucinote repo. Claude Code discovers it automatically when the repo is
-checked out; no manual copy step needed.
-
 Uninstall is symmetric: `/ableton-uninstall-mcp`.
+
+See the [main README](../README.md) for full setup including wiring Hallucinote into
+Live's Control Surface slot.
 
 ## The ten tools
 
@@ -57,6 +58,11 @@ Every tool answers `action='help'` with a structured menu — required / optiona
 params, examples, tips — generated from the shared schema. Errors carry recovery
 hints: valid action list, missing-param list, an example, a `hint` string.
 
+In addition to the 10 tools, the server exposes **11 resources** for low-context-cost
+reads (`ableton://session/snapshot`, `ableton://browser/*`, `ableton://plugins/installed`,
+`ableton://reference/*`, `ableton://guides/*`) and **7 workflow prompts** for
+multi-step recipes.
+
 ## Development
 
 ```bash
@@ -69,14 +75,6 @@ embedded Python 3.7+ and has no access to PyPI) only depends on the standard
 library. The FastMCP server side (which runs as a normal Python process) imports
 `mcp`. See `hallucinote_mcp/install_paths.py` for the file partition.
 
-## Thanks
-
-Inspired by [AbletonMCP](https://github.com/ahujasid/ableton-mcp) and
-[ableton-mcp-extended](https://github.com/uisato/ableton-mcp-extended) — they proved
-the concept that an MCP can usefully drive Ableton Live. `hallucinote-mcp` is a
-ground-up reimplementation with a different tool surface (10 unified instead of
-~50 narrow) and a declarative-first dispatcher; no source code is carried over.
-
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

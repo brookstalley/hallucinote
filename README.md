@@ -2,21 +2,30 @@
 
 **An LLM-native music composition and production environment.**
 
-You describe musical intent in plain language — *"write a stereotypical metal ballad using I–V–IV"*, *"make a 10-minute ambient soundscape in E major"* — and Claude composes the song against a SQLite source of truth, then pushes it into Ableton Live through an in-repo MCP server. Edits in Live pull back through the same path. The DB holds notes, mix, devices, automation, and arrangement; Live is the rendering engine. Songs become forkable like git repos.
+You describe musical intent in plain language — *"write a stereotypical metal ballad using I–V–IV"*, *"make a 10-minute ambient soundscape in E major"* — and Claude composes the song against a SQLite source of truth, then pushes it into Ableton Live through an in-repo MCP server. Edits in Live pull back through the same path. Songs become forkable like git repos.
 
-See [`docs/VISION.md`](docs/VISION.md) for the full bet.
+See [`docs/VISION.md`](docs/VISION.md) for the bet behind this. See [`CHANGELOG.md`](CHANGELOG.md) for what shipped.
 
-> **Status:** Pre-alpha. The push/pull round-trip works for the v1 surface. Outstanding capability gaps live in [`docs/mcp-requirements.md`](docs/mcp-requirements.md) and `.prawduct/backlog.md`.
+## Status
 
-## Quick start
+**v0.9.0 — first user-facing release.** Compose end-to-end, push into Live, pull edits back. The release target is *"a moderately sophisticated Claude Code + Ableton user can sit down and be productive reliably"*. v1.0 will add an inline DB read surface (`hallucinote://`) and broader cross-machine instrument fallback; current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
-You need:
+## What you can do
 
-- **Ableton Live 11 or 12** on **macOS or Windows**. Linux isn't supported for v1 — Ableton doesn't ship a Linux build, and Hallucinote isn't tested under Wine / CrossOver. The install skill will warn and ask before proceeding if you try.
+- **Compose a song from a prompt.** `/new-song <slug>` scaffolds the directory; the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
+- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
+- **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
+- **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
+
+## Requirements
+
+- **Ableton Live 11 or 12** on **macOS or Windows**. Linux isn't supported — Ableton doesn't ship a Linux build, and Hallucinote isn't tested under Wine / CrossOver. The install skill warns and asks before proceeding if you try.
 - **Python 3.10 or newer.** On Windows, if `python` opens the Microsoft Store, use `py -3` everywhere `python` appears below.
 - **Claude Code.** Install instructions: <https://claude.ai/code>.
 
-### 1. Clone and install
+## Install
+
+### 1. Clone and install both packages
 
 **macOS / Linux:**
 ```bash
@@ -35,21 +44,19 @@ py -3 -m venv .venv
 pip install -e . -e .\hallucinote_mcp
 ```
 
-Both packages must be installed even when driving from Claude Code: Claude Code spawns `hallucinote-mcp` as a separate subprocess, and the song build scripts import the `hallucinote` library directly.
+Both packages must be installed even when driving from Claude Code: Claude Code spawns `hallucinote-mcp` as a separate subprocess, and song build scripts import the `hallucinote` library directly.
 
-**If you want to run the test suite**, add the `[dev]` extras (pytest, pytest-xdist, hypothesis) on either package:
+To run the test suite, add the `[dev]` extras (pytest, pytest-xdist, hypothesis) on either package:
 
 ```bash
 pip install -e '.[dev]' -e './hallucinote_mcp[dev]'
 ```
 
-The `[dev]` extras are test-only — the runtime doesn't need them.
+### 2. Install the Ableton Remote Script and MCP entry
 
-### 2. Install the Ableton Remote Script + MCP entry
+**Quit Ableton Live first.** The installer refuses to copy into a running Live (on Windows the copy may fail silently because Live holds the old files locked).
 
-**Quit Ableton Live first** — the installer refuses to copy into a running Live (on Windows the copy may even fail silently because Live has the old files locked).
-
-Then start Claude Code in this directory and ask it to run the install skill:
+Start Claude Code in this directory and run the install skill:
 
 ```bash
 claude
@@ -66,36 +73,40 @@ In Ableton Live's menu bar:
 1. **Live → Preferences** (macOS) or **Options → Preferences** (Windows).
 2. Open the **Link, Tempo & MIDI** tab.
 3. In any free **Control Surface** slot (the first column in the MIDI Ports table), open the dropdown and select **Hallucinote**.
-4. Leave the **Input** and **Output** columns set to **None** — Hallucinote doesn't use MIDI in/out; it talks to Live through the Control Surface socket only.
+4. Leave the **Input** and **Output** columns set to **None** — Hallucinote talks to Live through the Control Surface socket only.
 5. Close Preferences.
 
 Then **quit and reopen Claude Code in this repo** so it picks up the new `.mcp.json`.
 
-Verify the bridge from Claude Code:
+### 4. Verify the bridge
+
+From Claude Code:
 
 > *"call ableton_session with action=info"*
 
 You should get back tempo, signature, track counts, and master strip state from the current Live set.
 
-## Using it
+## Try it
 
 Setup is one-time. Day to day: open Live, start Claude Code in this repo, talk.
 
-### Load the example song into Live
+### Load the example song
 
-1. Open Ableton Live (Hallucinote already selected as Control Surface from setup).
+`songs/falling-walking/` is the canary song — a D-minor electronic piece used to gate every push planner and mutator change.
+
+1. Open Ableton Live with an empty set (Hallucinote already selected as the Control Surface from setup).
 2. In this repo, run `claude`.
 3. Say:
 
 > *"load falling-walking into Live"*
 
-Claude builds `songs/falling-walking/falling-walking.db` from its `build.py`, then drives `/ableton-push` to materialize it through MCP — tempo → meter → tracks → returns → clips → mix → devices → envelopes → arrangement → cues. When it finishes you have a fully-built session in Live.
+Claude builds `songs/falling-walking/falling-walking-<branch>.db` from `build.py`, then drives `/ableton-push` to materialize it through MCP — tempo → meter → tracks → returns → clips → mix → devices → envelopes → arrangement → cues. When it finishes you have a fully-built session in Live.
 
-### Compose a new song from a prompt
+### Compose a new song
 
-> *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on synth pad. Make the vocal melody consistent with the harmonic structure. Make the whole thing super punk. Call it punk-fate."*
+> *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on synth pad. Call it punk-fate."*
 
-Claude scaffolds `songs/punk-fate/`, writes a `build.py` against the library's generators, builds `punk-fate.db`, and pushes the result into Live. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"*, *"swap the chorus walk for a fill at bar 12"* — and ask Claude to push again.
+The agent runs `/new-song punk-fate` to scaffold `songs/punk-fate/`, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again.
 
 ### Pull manual edits back
 
@@ -103,7 +114,11 @@ After tweaking faders, mutes, or sends in Live:
 
 > *"pull my Ableton edits back into the DB"*
 
-`/ableton-pull` diffs Ableton against the DB and writes the changes through the standard mutator path; events fall out naturally.
+`/ableton-pull` diffs Ableton against the DB and writes the changes through the standard mutator path.
+
+### Share a song with a collaborator
+
+Commit `songs/<slug>/` to git and push. The collaborator clones the repo, installs Hallucinote, then runs `/ableton-push <slug>` — the skill probes Live's installed plugins, runs the compat check, and refuses-and-confirms before pushing if any third-party plugin in the song is missing on their machine. Full walkthrough plus the three portability cases in [`docs/collaboration.md`](docs/collaboration.md).
 
 ## Troubleshooting
 
@@ -141,18 +156,18 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 
 **Fix:** open Live; check **Preferences → Link, Tempo & MIDI** shows **Hallucinote** in a Control Surface slot; quit Claude Code and reopen it in the project directory.
 
-## Layout
+## Project layout
 
 ```
-src/hallucinote/             # composition library: db, generators, sync, capture
-hallucinote_mcp/             # in-repo MCP server (10 unified action tools)
-songs/falling-walking/       # example song: build.py + .db + tests
-docs/                        # VISION, mcp-tool-design, mcp-requirements
+src/hallucinote/      # composition library: db, generators, sync, capture
+hallucinote_mcp/      # in-repo MCP server (10 unified Ableton tools)
+songs/<slug>/         # one directory per song: build.py + snapshot + tests
+tools/                # scaffolding + maintenance scripts
+docs/                 # VISION, collaboration, MCP design + requirements
+tests/                # platform-level tests (per-song tests live under songs/<slug>/tests/)
 ```
 
-## Architecture in one paragraph
-
-Every state change goes through mutators in `db/mutations.py`, which write the row AND emit an event in the same transaction — the DB is materialized state, the event log is the audit trail. Push is plan-based: `plan_push_*` returns `PushPlan` / `ToolCall` objects; Claude executes the plan through MCP and feeds results back via `apply_push_results`. Pull is symmetric. Generators are pure functions that emit note arrays with semantic tags (ghost, downbeat, section role) — no DB or MCP coupling.
+Each song under `songs/` is self-contained — `build.py`, `captured_session.json`, `tests/`, `decisions/`, `annotations/`, and a per-branch SQLite DB (gitignored). See [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) for the conventions and [`docs/snapshot-schema.md`](docs/snapshot-schema.md) for the snapshot format.
 
 ## Development
 
@@ -161,6 +176,10 @@ pytest -n auto --dist loadgroup            # full suite (requires [dev] extras)
 python -m hallucinote_mcp.cli preflight    # inspect install state
 ```
 
-`.mcp.json` is gitignored — its `command` field is per-environment. See `.mcp.json.example` for the canonical entry shape.
+`.mcp.json` is gitignored — its `command` field is per-environment. See `.mcp.json.example` for the canonical shape.
 
 After editing anything under `hallucinote_mcp/actions/` or `hallucinote_mcp/handlers/`, rerun `/ableton-install-mcp` and fully quit + reopen Live — the Control Surface caches at startup, so Live's copy must be refreshed for changes to take effect.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

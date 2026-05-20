@@ -136,6 +136,49 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert any("not linked" in n for n in plan.notes)
 
 
+def test_plan_push_devices_threads_preset_query_to_load(
+    conn, song, session, linked_track,
+):
+    """Sweep B: stored preset_query (JSON) is parsed back into a dict and
+    threaded to ableton_device(action='load', preset_query={...}). The MCP
+    handler resolves on the consumer's machine."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        display_name="Some 909 Kit",
+        preset_query={"root": "drums", "pattern": "909", "mode": "substring"},
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+        and c.key == f"device:{did}"
+    )
+    assert "preset_uri" not in load.args
+    assert load.args["preset_query"] == {
+        "root": "drums", "pattern": "909", "mode": "substring",
+    }
+
+
+def test_plan_push_devices_preset_query_precedence_when_only_query_set(
+    conn, song, session, linked_track,
+):
+    """When only preset_query is set (preset_uri is None), threading is
+    straightforward — preset_query lands in load_args."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        display_name="Kit", preset_query={"root": "drums", "pattern": "x"},
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args.get("preset_query") == {"root": "drums", "pattern": "x"}
+    assert "preset_uri" not in load.args
+
+
 def test_plan_push_devices_skips_params_when_device_unlinked(
     conn, song, session, linked_track,
 ):

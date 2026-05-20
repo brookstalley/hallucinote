@@ -160,13 +160,21 @@ def _replay_devices(
             raise ValueError(
                 f"snapshot device missing required keys (index, class): {d!r}"
             )
+        # Sweep B: snapshot device entries may carry preset_query as the
+        # compose-time portable alternative to per-machine preset_uri.
+        # The two are mutually exclusive — create_device refuses both at once.
+        # Hand-authored snapshots use this to express "load a 909 kit"
+        # without baking in this machine's FileId.
+        preset_query = d.get("preset_query")
+        preset_uri = d.get("guess_uri") if preset_query is None else None
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
             position=int(d["index"]),
             kind=d["class"],
             display_name=d.get("name", d["class"]),
-            preset_uri=d.get("guess_uri"),
+            preset_uri=preset_uri,
+            preset_query=preset_query,
             actor=actor,
             request_id=request_id,
             reason=reason,

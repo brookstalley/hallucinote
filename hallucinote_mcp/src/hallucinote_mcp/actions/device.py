@@ -183,8 +183,23 @@ register(
                 required=False,
                 description=(
                     "Canonical Live browser URI for a specific preset / "
-                    "instrument / plugin. Preferred over kind-only matching "
-                    "for anything beyond built-in Live device classes."
+                    "instrument / plugin. Per-machine (FileIds differ "
+                    "across machines) but unambiguous on this one. Use "
+                    "preset_query for cross-machine portability."
+                ),
+            ),
+            ParamSpec(
+                name="preset_query",
+                type="dict",
+                required=False,
+                description=(
+                    "Compose-time portable preset selection. Dict with "
+                    "{root, pattern, mode?, path_prefix?, case_sensitive?} "
+                    "resolved at load time via the search primitive. The "
+                    "composer expresses 'a 909 kit' or 'the Late Nite drum "
+                    "rack'; the installed library on each machine decides "
+                    "the actual URI. Strict — refuses if 0 or 2+ matches. "
+                    "Mutually exclusive with preset_uri."
                 ),
             ),
         ),
@@ -194,9 +209,12 @@ register(
         ),
         tips=(
             "Returns {device_index, name, kind} — capture device_index for "
-            "subsequent parameter writes. To target a specific preset, "
-            "resolve its URI with ableton_browser(action='at_path', ...) "
-            "and pass it as preset_uri.",
+            "subsequent parameter writes.",
+            "For portable compose-time selection (cross-machine, no "
+            "per-machine FileIds in the snapshot), use preset_query: "
+            "{root: 'drums', pattern: 'Late Nite Kit'}.",
+            "For an unambiguous per-machine URI, resolve via "
+            "ableton_browser(action='at_path', ...) and pass as preset_uri.",
         ),
     )
 )

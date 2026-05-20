@@ -103,9 +103,17 @@ Long envelopes spanning multiple session clips are also W10-F-refused — see th
 
 ## Tempo of non-4/4 BPM
 
-Live's BPM is always the **quarter-note pulse**, regardless of meter. If you're thinking in eighth-note pulses (common for 7/8), divide by 2 before passing to `M.add_tempo_point`.
+Live's BPM is always the **quarter-note pulse**, regardless of meter. If you're thinking in another pulse (eighth in 7/8, dotted-quarter in 6/8, etc.), use the `hallucinote.tempo.to_live_bpm` helper:
 
-A `hallucinote.tempo.to_live_bpm(pulse_bpm, pulse_kind, time_signature)` helper is on the backlog.
+```python
+from hallucinote.tempo import to_live_bpm
+
+# 168 BPM eighth-pulse in 7/8 -> 84 BPM quarter-pulse (Live)
+bpm = to_live_bpm(168.0, "eighth")
+M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=bpm)
+```
+
+Accepted `pulse_kind`: `whole`, `half`, `dotted_half`, `quarter`, `dotted_quarter`, `triplet_quarter`, `eighth`, `dotted_eighth`, `triplet_eighth`, `sixteenth`, `dotted_sixteenth`, `triplet_sixteenth`. Unknown values refuse with the accepted list.
 
 ---
 

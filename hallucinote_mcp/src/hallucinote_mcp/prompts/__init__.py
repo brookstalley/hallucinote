@@ -363,9 +363,10 @@ def _start_new_song(
         f"For each section: pick clips, generate or hand-author notes, "
         f"call `M.create_clip` + `M.replace_clip_notes`, then "
         f"`M.add_arrangement_clip` to place them. Generators in "
-        f"`hallucinote.generators.*` are 4/4-only today (Wave 0 finding "
-        f"H2); for non-4/4 songs hand-author until W14-B parametrizes "
-        f"them.\n\n"
+        f"`hallucinote.generators.*` accept a `beats_per_bar` kwarg "
+        f"(W14-B) so bar iteration scales through non-4/4 sections; "
+        f"within-bar layout still assumes a 4/4 shape, so hand-author "
+        f"non-4/4 patterns where that matters.\n\n"
         f"4. **Iterate**: re-run `python3 songs/{slug}/build.py` "
         f"(no --reset) after each edit. W12-A guarantees re-runs are "
         f"no-ops if nothing changed — events only emit for real diffs. "
@@ -520,7 +521,7 @@ def _pick_instruments_for_song(
 
 
 def register_prompts(mcp: Any) -> None:
-    """Wire all 5 workflow prompts onto a FastMCP instance.
+    """Wire all 7 workflow prompts onto a FastMCP instance.
 
     Called once at server boot from ``server.create_server``. Each
     prompt is a function whose signature defines the prompt arguments;

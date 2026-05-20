@@ -88,6 +88,28 @@ def test_plan_push_devices_silent_for_track_without_chain(conn, song, session, l
     assert plan.notes == []
 
 
+# ---------- placeholder devices (W13-B v0.9.0) ----------
+
+
+def test_plan_push_devices_skips_placeholder_with_warn(
+    conn, song, session, linked_track,
+):
+    """Placeholder devices represent author-intentional empty slots.
+    Push leaves the chain position empty + warns so the agent surfaces
+    the gap without trying (and failing) to load anything.
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="placeholder",
+        display_name="future warm pad",
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    assert plan.calls == []  # no load, no set_parameter
+    assert any(
+        "placeholder" in n and "future warm pad" in n for n in plan.notes
+    )
+
+
 # ---------- load_device emission for unlinked devices ----------
 
 

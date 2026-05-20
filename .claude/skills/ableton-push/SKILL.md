@@ -2,7 +2,7 @@
 description: Push the Hallucinote DB into Ableton Live. Drives ten ordered phases (tempo → meter → tracks → returns → clips → mix → devices → envelopes → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
+allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
@@ -31,15 +31,17 @@ If the slug is missing, ask the user. For session, default to `--auto-session` o
 ## Workflow overview
 
 ```
-0. Probe Live for tracks + returns         → snapshot.json
-1. python -m hallucinote.sync.push_cli probe-and-link → ableton_links rows for matches
-2. python -m hallucinote.sync.push_cli phases → ten phase names
-3. For each phase, in order:
-     a. python -m hallucinote.sync.push_cli plan <phase> → plan.json
-     b. Execute every call in plan.calls via MCP
-     c. Assemble results.json
-     d. python -m hallucinote.sync.push_cli apply --results results.json
-4. Report total counts + any failures.
+0.  Probe Live for tracks + returns         → snapshot.json
+0a. Probe Live for installed plugins         → plugins.json
+0b. python -m hallucinote.sync.compat check  → refuse-and-confirm gate
+1.  python -m hallucinote.sync.push_cli probe-and-link → ableton_links rows for matches
+2.  python -m hallucinote.sync.push_cli phases → ten phase names
+3.  For each phase, in order:
+      a. python -m hallucinote.sync.push_cli plan <phase> → plan.json
+      b. Execute every call in plan.calls via MCP
+      c. Assemble results.json
+      d. python -m hallucinote.sync.push_cli apply --results results.json
+4.  Report total counts + any failures.
 ```
 
 Steps 3a–3d must run **strictly in order**, one phase at a time. Phases later in the list inspect `ableton_links` written by earlier phases — if you batch-plan everything up front, later phases will see stale state and emit either redundant creates or strict-precondition errors.
@@ -58,6 +60,38 @@ Assemble the snapshot as JSON and write it to `/tmp/ableton-push-snapshot.json`:
   "returns": [{"return_index": 1, "name": "A-Reverb"}, ...]
 }
 ```
+
+### Step 0a — Probe Live for installed plugins
+
+Call `ableton_browser(action='plugins_list')` to enumerate VST/AU plugins Live has scanned. Write the response to `/tmp/ableton-push-plugins.json` via Write. The shape is `{"plugins": [{"name": "...", "uri": "..."}, ...], "count": N}` — pass through unchanged; the compat CLI accepts the wrapper.
+
+Skipping this step is supported: if the MCP call fails (transient connection issue) or returns nothing useful, you can omit `--installed-plugins` in Step 0b. The compat report will mark every third-party plugin `third_party_unverified` instead of cleanly partitioning into ok / missing, and Step 0b's gate will require user confirmation. The plugin probe is cheap (one MCP round-trip), so the default is to run it.
+
+### Step 0b — Compat check (cross-machine portability gate, W13-B)
+
+Run:
+```
+python3 -m hallucinote.sync.compat check <slug> \
+    --installed-plugins /tmp/ableton-push-plugins.json
+```
+
+The CLI walks the song's DB, classifies every device (including devices nested inside racks), and emits a JSON report with five status buckets:
+
+- `native` — Live built-in. No install needed.
+- `placeholder` — Author intentionally left empty; push will skip it cleanly (the consumer fills it in).
+- `third_party_ok` — Plugin needed AND found in `--installed-plugins`. Safe to push.
+- `third_party_missing` — Plugin needed but NOT in the installed list. The consumer hasn't installed it.
+- `third_party_unverified` — Plugin needed but `--installed-plugins` was omitted; status unknown.
+
+**Exit code contract.** `0` = clean (only `native` / `placeholder` / `third_party_ok` entries). `1` = at least one device is `third_party_missing` OR `third_party_unverified` — the user must confirm before pushing.
+
+**On exit 1, refuse-and-confirm.** Display the `missing` + `unverified` lists from the report's `entries` array (filter by status). For each, show: track / chain path, position, display name, kind, lookup name. Then ask the user explicitly:
+
+> "These third-party plugins this song needs are either missing on this machine or couldn't be verified. Pushing now will fail at device-load for the missing ones (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
+
+Proceed only on explicit `yes`. If `no`, point the user at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) so they know what to install, and stop.
+
+**Re-running with no changes is idempotent** — the CLI is read-only against the DB. Run it again after the user installs the missing plugins; expect exit 0.
 
 ### Step 1 — Probe-and-link
 

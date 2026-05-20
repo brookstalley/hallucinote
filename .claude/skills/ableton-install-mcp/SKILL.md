@@ -88,6 +88,15 @@ The report has these blocks:
 
 ### Preflight decisions
 
+- **`platform == "linux"`** (W15-C): Ableton Live doesn't ship for Linux. The
+  install proceeds for Wine / CrossOver users — the `user_library.candidates`
+  list points at `~/Ableton/User Library`, where most Wine setups land Live's
+  User Library — but Hallucinote is **not tested on Linux** and the
+  push/pull bridge depends on Live behaviors that may differ under Wine.
+  Warn the user, show the candidate path, and ask whether to proceed. If
+  they confirm, continue with the regular flow. If they back out, suggest
+  macOS or Windows — those are the supported platforms for v1. Don't refuse
+  outright; some users do run Live under Wine and have working setups.
 - **`live.is_running == true`**: refuse to proceed. Live caches Control
   Surface listings at startup; copying while Live is open won't appear until
   restart, and on Windows the copy may fail silently because Live has the

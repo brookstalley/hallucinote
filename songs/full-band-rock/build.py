@@ -5,9 +5,12 @@ Canary Wave 0 song (run #2). Exercises:
     keys MIDI w/ third-party VST, backing-vox pad MIDI, lead vocal AUDIO,
     parallel-comp bus AUDIO routing target) + 3 returns + master.
   - Repeated sections in the arrangement: verse x2, chorus x3.
-  - Master fade-out automation (mixer_volume envelope on master track).
-  - Sidechain placeholder on lead vocal (DB has no sidechain-routing model;
-    the routing intent is only in the snapshot's _note).
+  - Originally targeted master fade-out automation + lead-vocal sidechain
+    ducking. Wave 0 surfaced both as architectural blockers (Group D);
+    W10-F (2026-05-20) refuses them at the DB-mutator layer with
+    teaching errors pointing at the sub-bus group pattern. This canary
+    no longer authors envelopes (see `_author_envelopes` docstring);
+    the v1.1 sub-bus pattern demo is backlogged.
   - Third-party VST guessed on Keys (Spitfire LABS Soft Piano) — likely
     will fail to load at push time, surfacing W13-A's design need.
 
@@ -19,7 +22,7 @@ Section bar layout (1-based, half-open):
     chorus #2 bars 49- 57   ( 8 bars / 32 beats) — repeat chorus
     bridge    bars 57- 65   ( 8 bars / 32 beats) — keys + lead vocal only
     chorus #3 bars 65- 73   ( 8 bars / 32 beats) — final chorus, all in
-    outro     bars 73- 81   ( 8 bars / 32 beats) — chorus tag, master fade
+    outro     bars 73- 81   ( 8 bars / 32 beats) — chorus tag (v1.1: + master fade via sub-bus)
 
 Total: 80 bars / 320 beats. At 108 BPM: ~2:58.
 
@@ -333,10 +336,13 @@ def _build_bridge(conn, song_id, tracks) -> dict:
 
 
 def _build_outro(conn, song_id, tracks) -> dict:
-    """Outro — 8 bars / 32 beats. Chorus tag with master fade automation.
+    """Outro — 8 bars / 32 beats. Chorus tag.
 
     Uses chord pattern from chorus, but trimmed (4 bars Em-G-D-C, then 4 bars
-    Em sustained). Fade-out is on the master via a separate envelope.
+    Em sustained). The brief originally called for a master fade-out via
+    `mixer_volume` envelope on the master track; W10-F refuses that target
+    (D2 — no LOM path). The v1.1 sub-bus pattern would put the fade on a
+    group track instead; until then the outro tag is structural only.
     """
     clips: dict[str, str] = {}
 
@@ -534,7 +540,8 @@ def build(reset: bool = False) -> str:
         _arrange_section(conn, song_id, tracks, outro_clips,
                          start_bar=float(OUTRO_BAR),   end_bar=float(END_BAR))
 
-        # Master fade + sidechain ducking on lead vocal.
+        # No envelopes — Wave 0's master fade + lead-vocal sidechain are
+        # refused by W10-F; see _author_envelopes docstring.
         _author_envelopes(conn, song_id, tracks, returns)
 
         return song_id

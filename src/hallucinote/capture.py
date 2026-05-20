@@ -51,16 +51,17 @@ in each track's `sends` map, keyed by return name), top-level device chains
 populated by build.py hand-authored sections.
 
 Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
-MCP probes (`ableton_session(action='info')`, `get_track_info`,
-`list_return_tracks`, `get_track_sends`, `get_track_volume`) and assembles
-the dict via `compile_snapshot`. The non-session-domain probes retarget to
-the unified surface in Wave M-2 onward. See `tools/capture.py` for the probe
-sequence.
+MCP probes against the v1 unified-action-dispatch surface
+(`ableton_session(action='info')`, `ableton_return(action='list')`,
+`ableton_track(action='get_info'|'get_sends')`,
+`ableton_device(action='get_parameters'|'get_device_chains')`) and assembles
+the dict via `compile_snapshot`. See `tools/capture.py` for the probe sequence.
 """
 from __future__ import annotations
 
 import re
 import sqlite3
+import warnings
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
@@ -97,6 +98,15 @@ def strip_return_slot_prefix(name: str | None) -> str | None:
     Idempotent: names without the prefix (already-stripped, or never had it)
     pass through unchanged. The DB stores SUFFIX-only return names; push
     re-emits the suffix and Live re-adds its slot prefix.
+
+    **Author trap (Wave 0 canary, solo-piano-ambient runbook step 3).** The
+    regex strips ANY single uppercase-letter prefix, not just `A-` / `B-`.
+    Hand-authored snapshots that put `"name": "A-Reverb"` lose the prefix on
+    replay — `Q.get_return_by_name(..., "A-Reverb")` then returns None
+    because the row was stored as `"Reverb"`. `replay_capture` emits a
+    `UserWarning` summarizing strips so this isn't silent. See
+    `docs/snapshot-schema.md` ("Return names: stored stripped") for the
+    canonical form.
     """
     if name is None:
         return None
@@ -341,11 +351,14 @@ def replay_capture(
             )
 
     return_ids_by_name: dict[str, str] = {}
+    stripped_pairs: list[tuple[str, str]] = []
     for r in snapshot.get("returns") or []:
         # W4-C: strip Live's `<letter>-` slot prefix on the way into the DB.
         # The snapshot's `t["sends"]` is keyed by the SAME prefixed names
         # Live reports, so we strip on the lookup side too (below).
         stripped_name = strip_return_slot_prefix(r["name"])
+        if stripped_name != r["name"]:
+            stripped_pairs.append((r["name"], stripped_name))
         rid = M.create_return(
             conn,
             song_id=song_id,
@@ -375,6 +388,19 @@ def replay_capture(
                 request_id=request_id,
                 reason=reason,
             )
+
+    if stripped_pairs:
+        pretty = ", ".join(f"{orig!r} -> {stripped!r}" for orig, stripped in stripped_pairs)
+        warnings.warn(
+            "replay_capture: stripped Live's <letter>- slot prefix from "
+            f"{len(stripped_pairs)} return name(s): {pretty}. The DB stores "
+            "SUFFIX-only return names (W4-C convention) — hand-authored "
+            "snapshots should use the stripped form, and build.py lookups "
+            "(Q.get_return_by_name) should pass the stripped form too. See "
+            "docs/snapshot-schema.md ('Return names: stored stripped').",
+            UserWarning,
+            stacklevel=2,
+        )
 
     track_ids_by_name: dict[str, str] = {}
     for t in snapshot.get("tracks") or []:
@@ -477,16 +503,16 @@ def capture_plan() -> list[dict[str, str]]:
     return [
         {"tool": "ableton_session(action='info')",
          "purpose": "global state: tempo, signature, master volume/pan, track counts"},
-        {"tool": "list_return_tracks",
+        {"tool": "ableton_return(action='list')",
          "purpose": "return tracks: name + volume + pan per return; "
                     "chunk 4a: include each return's top-level device chain"},
-        {"tool": "get_track_info",
+        {"tool": "ableton_track(action='get_info')",
          "purpose": "per-track: name, type, volume, pan, mute/solo/arm, "
                     "top-level device chain (kind + display_name + position) "
                     "— loop over tracks"},
-        {"tool": "get_track_sends",
+        {"tool": "ableton_track(action='get_sends')",
          "purpose": "per-track: sends map keyed by return name (loop over tracks)"},
-        {"tool": "get_device_parameters",
+        {"tool": "ableton_device(action='get_parameters')",
          "purpose": "per-device: dialed parameter map "
                     "(name -> {value, normalized}) — loop over each device"},
         {"tool": "ableton_device(action='get_device_chains')",

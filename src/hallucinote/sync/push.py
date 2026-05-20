@@ -628,9 +628,16 @@ def plan_push_cue_points(
     Sequencing precondition (W3-I): cue creation must run AFTER
     arrangement-clip placement, because Live's ``set_or_delete_cue`` is
     clamped to ``[0, song.last_event_time]``. The agent / push-skill is
-    responsible for phase order; this planner emits no internal warn —
-    a cue past the arrangement's extent surfaces as a teaching error
-    from the handler at execution time.
+    responsible for phase order; a cue past the arrangement's extent
+    will surface as a teaching error from the handler at execution time.
+
+    Plan-time visibility (Wave 0 paper-cut, full-band-rock runbook step
+    7e): when any cue's ``position_bar`` exceeds ``max(arrangement_clips
+    .end_bar)`` — the DB's planned arrangement extent — emit a warn so
+    the agent / user sees the prerequisite issue before round-tripping
+    to Live. An empty arrangement gets a distinct, more descriptive warn
+    naming the missing prereq instead of a generic extent-exceeded
+    message.
 
     Result key: ``cue_batch:{song_id}``. The batch handler returns a list
     of per-cue results; ``apply_push_results`` consumes it via the
@@ -646,6 +653,34 @@ def plan_push_cue_points(
         plan.warn(
             "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
+
+    # Plan-time arrangement-extent check. The DB-side max end_bar is the
+    # PLANNED extent — if arrangement is pushed in the same plan_push_song
+    # cycle, Live's last_event_time will match this by the time cues run.
+    arrangement_rows = Q.get_arrangement_for_song(conn, song_id)
+    if not arrangement_rows:
+        plan.warn(
+            f"{len(rows)} cue point(s) but the DB has no arrangement_clips — "
+            "Live's set_or_delete_cue is clamped to [0, last_event_time], so "
+            "every cue past bar 1 will fail. Push arrangement first, OR add "
+            "arrangement_clips rows covering each cue's position_bar."
+        )
+    else:
+        max_end_bar = max(float(r["end_bar"]) for r in arrangement_rows)
+        late_cues = [r for r in rows if float(r["position_bar"]) > max_end_bar]
+        if late_cues:
+            preview = ", ".join(
+                f"{r['name'] or '(unnamed)'}@bar{float(r['position_bar']):.2f}"
+                for r in late_cues[:5]
+            )
+            ellipsis = " ..." if len(late_cues) > 5 else ""
+            plan.warn(
+                f"{len(late_cues)} of {len(rows)} cue(s) sit past the DB's "
+                f"arrangement extent (max end_bar={max_end_bar:.2f}): "
+                f"[{preview}{ellipsis}]. Live's set_or_delete_cue is clamped "
+                "to [0, last_event_time]; these cues will fail unless "
+                "arrangement is extended to cover them first."
+            )
 
     cues = [
         {

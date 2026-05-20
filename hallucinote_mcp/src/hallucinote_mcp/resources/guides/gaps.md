@@ -157,6 +157,23 @@ Device class; third-party plugins with declared sidechain inputs
 in their VST3/AU manifest do too. Older Live natives without the
 API surface their constraint honestly.
 
+### Interactive notes-read: no `ableton_clip(action='read_notes')`
+**Status:** Not in the V1 surface. The `ableton_clip` action set exposes
+`create / delete / duplicate_to_arrangement / fire / list / rename /
+replace_notes / set_property / stop` but no read-direction analog of
+`replace_notes`. The capability EXISTS — Live's
+`Clip.get_notes_extended()` works on Live 12.4 and is used by the pull
+pipeline (see project_state.yaml V1 close-out 2026-05-17: "Note pull via
+stable-ID read + whole-clip write"). It's just not exposed as a one-off
+read action today.
+**Working alternative:** run an `ableton-pull` cycle scoped to the song.
+Note state lands in the DB; `Q.get_notes_for_clip(conn, clip_id)` then
+returns the array. The agent inspects DB-side. For interactive "did my
+replace_notes round-trip correctly?" checks, this is the V1 path —
+fast for a single song's clips, but heavier than a direct read action
+would be. Long-term this is the read-direction analog of gap #4
+(see Wave 0 canary `odd-meter-experimental` runbook step 7e, 2026-05-19).
+
 ### Session-view audio clip creation
 `ableton_clip(action='create', location='session', kind='audio')`
 raises NotImplementedError — Live's `clip_slot.create_audio_clip` isn't

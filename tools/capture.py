@@ -9,10 +9,10 @@ Workflow:
 
   1. Open the target Ableton set.
   2. Have the agent run the probes listed by `hallucinote.capture.capture_plan()`:
-       - `ableton_session(action='info')`  -> tempo, signature, master, counts
-       - `list_return_tracks()`            -> return tracks list
-       - `get_track_info(track_index=N)`   -> for each main track
-       - `get_track_sends(track_index=N)`  -> for each main track
+       - `ableton_session(action='info')`              -> tempo, signature, master, counts
+       - `ableton_return(action='list')`               -> return tracks list
+       - `ableton_track(action='get_info', track_index=N)`   -> for each main track
+       - `ableton_track(action='get_sends', track_index=N)`  -> for each main track
   3. Agent assembles the per-track / per-return / session dicts and calls
      `hallucinote.capture.compile_snapshot(...)`.
   4. Agent writes the result to `songs/<name>/captured_session.json`.

@@ -101,7 +101,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     from .resources import register_resources
     register_resources(mcp)
 
-    # Wave M-7: register 5 workflow prompts.
+    # Wave M-7: register 7 workflow prompts.
     from .prompts import register_prompts
     register_prompts(mcp)
 

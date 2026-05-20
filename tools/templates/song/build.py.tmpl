@@ -101,8 +101,10 @@ def build(reset: bool = False) -> str:
             #
             # See songs/falling-walking/build.py for a worked example —
             # but note that falling-walking is historical, not a literal
-            # template. Generators today are 4/4-only (per Wave 0 finding H2);
-            # for non-4/4 songs hand-author until W14-B parametrizes them.
+            # template. Generators accept a `beats_per_bar` kwarg (W14-B)
+            # so bar iteration scales through non-4/4 sections; within-bar
+            # layout still assumes a 4/4 shape, so hand-author non-4/4
+            # patterns where that matters.
 
         return song_id
     finally:

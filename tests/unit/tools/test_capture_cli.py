@@ -1,4 +1,4 @@
-"""Tests for `tools/capture.py` CLI surface (W12-B `diff` subcommand)."""
+"""Tests for `tools/capture_cli.py` CLI surface (W12-B `diff` subcommand)."""
 from __future__ import annotations
 
 import json
@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CAPTURE_CLI = REPO_ROOT / "tools" / "capture.py"
+CAPTURE_CLI = REPO_ROOT / "tools" / "capture_cli.py"
 
 
 def _run(*args: str, check: bool = False) -> subprocess.CompletedProcess:
-    """Run `tools/capture.py` with the given args, no shell."""
+    """Run `tools/capture_cli.py` with the given args, no shell."""
     return subprocess.run(
         [sys.executable, str(CAPTURE_CLI), *args],
         capture_output=True,

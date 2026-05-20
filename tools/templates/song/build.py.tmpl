@@ -55,14 +55,20 @@ def build(reset: bool = False) -> str:
     tombstoned automatically at session exit. Pulled rows (actor='sync')
     and LLM-authored edits survive.
 
-    `--reset` remains an escape hatch for "wipe the DB and start fresh"
-    but is no longer required in the normal flow.
+    `--reset` is a soft reset (W18-C): wipes rebuild-by-build.py content
+    (clips, notes, arrangement, sections, tempo/meter maps, cue points,
+    envelopes) but preserves the mix layout (tracks, returns, devices,
+    sends) AND the Ableton projection (`ableton_sessions` + `ableton_links`).
+    The session_id presented to a push session survives the natural
+    compose-iterate loop. For a full clean slate (drop bindings too),
+    delete the DB file directly.
     """
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
-
     conn = init_db(DB_PATH)
     try:
+        if reset:
+            song = Q.get_song_by_name(conn, "{{slug}}")
+            if song is not None:
+                M.reset_song_content(conn, song_id=song["id"])
         with M.build_session(conn, song_name="{{slug}}", owner="build.py"):
             # Mix-half: replay the captured (or synthetic) Ableton session.
             snapshot = json.loads(SNAPSHOT_PATH.read_text())

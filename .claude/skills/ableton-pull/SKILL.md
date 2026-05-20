@@ -144,3 +144,7 @@ Do not retry MCP calls automatically — Ableton transient failures are rare and
 - Do not skip the `plan` step ("I already know what to probe"). The planner walks `ableton_links` to pick the right linked tracks; you don't have that context.
 - Do not change `actor` or invent new domains. If the user asks for something not in the table above, surface it as a gap and stop.
 - Do not "be helpful" by also pushing afterward. Pull is one direction; if the user wants a round-trip, they will say so.
+
+## Provenance
+
+Every `pull_cli apply` invocation opens one `requests` row with `kind='pull'`, threads its id through the mutators (so every event the apply layer emits is attributed), and closes it with `outcome='ok'` (or `'failed'` if apply raises). Future sessions answer "what was the last pull" via `Q.get_latest_request_for_song(conn, song_id, kind='pull')` and drill into "what did it touch" via `Q.get_events_for_request(conn, rid)`. The CLI does this automatically — no skill-side ceremony.

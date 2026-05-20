@@ -369,6 +369,26 @@ def test_delete_removes_track(loaded_actions):
     assert target not in ctx.song.tracks
 
 
+def test_delete_refuses_last_remaining_track(loaded_actions):
+    """W18-E: Live requires the set to contain at least one track. Deleting
+    the last surviving track must surface a teaching error (with a
+    recoverable hint) instead of letting Live's bare RuntimeError through.
+    """
+    song = FakeSong(tracks=[FakeTrack(name="OnlyOne")])
+    ctx = FakeCtx(song=song)
+    resp = dispatch(
+        Request(tool="ableton_track", action="delete", params={"track_index": 1}),
+        context=ctx,
+    )
+    assert resp.ok is False
+    # Track wasn't deleted — refusal preceded Live's API call.
+    assert len(song.tracks) == 1
+    assert song._deleted_tracks == []
+    # Error explains the constraint AND the path forward.
+    assert "at least one track" in resp.error
+    assert "ableton_track(action='create')" in resp.error
+
+
 def test_delete_passes_int_to_live_api(loaded_actions):
     """Regression for Wave-2 W2-2 / Wave-1 B-23: ``Song.delete_track`` must
     receive a 0-based int, not the Track wrapper. The tightened FakeSong

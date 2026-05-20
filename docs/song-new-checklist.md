@@ -101,7 +101,7 @@ Once the must-haves are settled (or confidently inferred + confirmed):
 1. **Scaffold** with `/song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
 2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via Sweep B's `preset_query` (composer-time, portable) or via load-then-recapture.
 3. **Push the scaffold to a fresh Live set** so the device chains materialize.
-4. **Recapture** with `tools/capture.py` so device URIs / params land in `captured_session.json`.
+4. **Recapture** with `tools/capture_cli.py` so device URIs / params land in `captured_session.json`.
 5. **Compose** — open `build.py`'s `=== Compose-half ===` and author clips/notes/arrangement against the now-realistic snapshot.
 
 The decisions you recorded here are durable — re-opening this song in a future session, the agent reads `decisions/` and picks up where you left off without re-eliciting.

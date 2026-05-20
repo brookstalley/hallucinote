@@ -61,7 +61,7 @@ import json
 import sys
 from pathlib import Path
 
-from hallucinote.db import queries as Q
+from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import connect
 from hallucinote.sync import pull
 
@@ -140,14 +140,34 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     # (older plan files without the field).
     song_id = plan_dict.get("song_id") or _resolve_song_id(conn, args.session_id)
 
-    out = pull.apply_pull_results(
+    # W23-C: every pull-apply is one attributed request. Closes 'ok' on
+    # success; the apply layer's own try/except boundary catches errors that
+    # would otherwise leave the request open — exceptions propagate after we
+    # mark the request failed so the test/CLI signal isn't swallowed.
+    domain = plan_dict.get("domain") or "unknown"
+    request_id = M.create_request(
         conn,
-        results,
-        song_id=song_id,
-        session_id=args.session_id,
         actor="sync",
-        reason=args.reason or f"pull from session {args.session_id}",
+        intent=f"pull_cli apply domain={domain} session={args.session_id}",
+        kind="pull",
+        payload={"domain": domain, "session_id": args.session_id, "song_id": song_id},
+        song_id=song_id,
+        reason=args.reason,
     )
+    try:
+        out = pull.apply_pull_results(
+            conn,
+            results,
+            song_id=song_id,
+            session_id=args.session_id,
+            actor="sync",
+            request_id=request_id,
+            reason=args.reason or f"pull from session {args.session_id}",
+        )
+    except Exception:
+        M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
+        raise
+    M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

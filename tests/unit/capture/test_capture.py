@@ -542,6 +542,8 @@ def test_capture_plan_lists_expected_probes():
         "ableton_device(action='get_parameters')",
         # W7-B: nested rack chain probe (one level only)
         "ableton_device(action='get_device_chains')",
+        # M1-C: per-Drum-Rack pad layout probe
+        "ableton_device(action='pad_info')",
     }
 
 
@@ -558,3 +560,117 @@ def test_compile_snapshot_passes_through_inputs():
     assert snap["song"]["master"]["volume"] == 0.85
     assert snap["returns"][0]["name"] == "A"
     assert snap["tracks"][0]["name"] == "x"
+
+
+def test_compile_snapshot_preserves_nested_rack_chains():
+    """W19-B: the agent assembles each rack device's nested chains via
+    `ableton_device(action='get_device_chains')` and attaches them as the
+    device's `chains` field. compile_snapshot is pass-through for those —
+    lock the round-trip shape here so a future refactor that "normalises"
+    nested chains away surfaces as a test failure, not as silent drop on
+    push."""
+    nested_chains = [
+        {
+            "chain_index": 1,
+            "name": "Kick",
+            "devices": [{"position": 1, "class": "Simpler", "name": "Kick.als"}],
+        },
+        {
+            "chain_index": 2,
+            "name": "Snare",
+            "devices": [{"position": 1, "class": "Simpler", "name": "Snare.als"}],
+        },
+    ]
+    track = {
+        "index": 1, "name": "Drums", "type": "midi",
+        "volume": 0.7, "panning": 0.0,
+        "devices": [{
+            "position": 1, "class": "DrumGroupDevice", "name": "Drum Kit",
+            "chains": nested_chains,
+        }],
+    }
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4",
+                      "master": {"volume": 0.85, "panning": 0.0}},
+        returns=[],
+        tracks=[track],
+    )
+    assert snap["tracks"][0]["devices"][0]["chains"] == nested_chains
+
+
+# ---------- M1-C: Drum Rack pad mapping replay ----------
+
+
+def _snapshot_with_drum_rack(*, drum_pads: list[dict] | None) -> dict:
+    """Build a single-track snapshot with one Drum Rack carrying drum_pads."""
+    device = {
+        "index": 1, "name": "Late Nite Kit",
+        "class": "DrumGroupDevice",
+    }
+    if drum_pads is not None:
+        device["drum_pads"] = drum_pads
+    return {
+        "song": {},
+        "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [device],
+        }],
+    }
+
+
+def test_replay_persists_drum_pads_into_drum_pad_mappings(conn):
+    snap = _snapshot_with_drum_rack(drum_pads=[
+        {"chain_name": "Kick Drum", "midi_note": 36},
+        {"chain_name": "Snare Top", "midi_note": 38},
+        {"chain_name": "Closed Hat", "midi_note": 42},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    rows = Q.get_drum_pad_mappings(conn, rack["id"])
+    assert [(r["chain_name"], r["midi_note"]) for r in rows] == [
+        ("Kick Drum", 36), ("Snare Top", 38), ("Closed Hat", 42),
+    ]
+
+
+def test_replay_accepts_note_alias_for_midi_note(conn):
+    """The MCP pad_info handler returns ``{note: int, name: str, chain_name:
+    str}`` per pad — the snapshot may carry either ``midi_note`` (canonical
+    snapshot field) or ``note`` (raw passthrough from the MCP probe). Both
+    are accepted so the agent can wire either shape."""
+    snap = _snapshot_with_drum_rack(drum_pads=[
+        {"chain_name": "Kick", "note": 36},
+        {"chain_name": "Snare", "note": 38},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    rows = Q.get_drum_pad_mappings(conn, rack["id"])
+    assert [r["midi_note"] for r in rows] == [36, 38]
+
+
+def test_replay_rejects_drum_pads_on_non_drum_rack(conn):
+    """`drum_pads` only makes sense on DrumGroupDevice."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Synth", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Wavetable", "class": "InstrumentVector",
+                "drum_pads": [{"chain_name": "Pad", "midi_note": 36}],
+            }],
+        }],
+    }
+    with pytest.raises(ValueError, match="not DrumGroupDevice"):
+        replay_capture(conn, snap, song_name="t")
+
+
+def test_replay_drum_rack_without_drum_pads_field_still_works(conn):
+    """Drum Racks captured by a pre-M1-C agent (no pad_info probe) replay
+    cleanly without drum_pads — no error, just no pad mappings persisted."""
+    snap = _snapshot_with_drum_rack(drum_pads=None)
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    rack = Q.get_devices_for_track(conn, track["id"])[0]
+    assert Q.get_drum_pad_mappings(conn, rack["id"]) == []

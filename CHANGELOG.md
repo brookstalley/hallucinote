@@ -6,6 +6,213 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_No unreleased work — v1.0 is the active development line._
+
+## [1.0.0] — 2026-05-21
+
+**Beta-readiness release.** The v1.0 gate: a beta tester can prompt
+"make me song X", get a finished-sounding result, share it with another
+tester, and not bounce on common papercuts. v1.0 closes the device-load
+forgiveness, cross-machine portability, drum-kit portability, push-state
+coherence, and provenance gaps that v0.9 left exposed. The skills the
+agent reaches for daily (`/song-new`, `/song-pick-instruments`,
+`/ableton-push`) now operate against a hardened surface; the composer
+workflow described in `CLAUDE.md` "Hallucinote Behavioral Norms" is
+codified in product code, not in per-user agent memory.
+
+### Added
+
+#### Composer-experience overhaul (Wave 17)
+
+- **`CLAUDE.md` Hallucinote Behavioral Norms appendix** — four
+  product-level rules promoted from per-user agent memory: "Stop only
+  on high-stakes decisions or must-answer questions," "Creative product
+  prompts vs planning prompts," "Sound design IS composition," and
+  "Microtiming feel is authorship, not post-hoc humanize." These shape
+  how every agent collaborates on a song.
+- **`docs/song-authoring-conventions.md`** — new "Sound design is
+  authorship" + "Per-part feel (microtiming is authorship)" sections
+  with verse-vs-chorus examples.
+- **Per-part `feel` parameter** — 11 generator helpers (drums × 8 +
+  bass × 3 + harmony tresillo_pluck) gain `feel: Mapping[float, float]
+  | None`; the LLM resolves verbal genre intent ("lazy back-half",
+  "push hard") into structured offset dicts at compose time. `apply_feel`
+  helper lives in `primitives.py`. Per-part-per-call granularity — verse
+  drums and chorus drums can have different feels; punk drums + lazy
+  bluegrass guitar in the same section is a valid intent.
+- **`/song-pick-instruments`** rewrite — picks instrument CHAINS
+  (instrument + post-FX + initial sends) rather than bare instruments.
+  Default chain shapes per role (drums / bass / lead / pads / vocals);
+  rationale persisted as `songs/<slug>/decisions/NN-signal-chains.md`
+  after user confirmation.
+- **`docs/snapshot-schema.md`** — new "Multi-device chains (sound is
+  composition)" subsection + canonical "stage chain → push →
+  recapture" workflow section.
+
+#### Push reliability (Wave 18)
+
+- **Push coherence layer** — `push.check_coherence` + `push_cli
+  check-coherence` + `push_cli execute --snapshot` opt-in. Pure
+  validation that refuses on session / link / snapshot mismatch before
+  any push phase fires.
+- **Probe-driven `/ableton-push`** — skill rewrite makes the
+  orchestrator own the snapshot probe + session mint + link
+  reconciliation in that order, every push. New `--probe` flag on
+  `probe-and-link` / `execute` / `check-coherence` runs an in-process
+  MCP TCP probe (no tmp snapshot file). `M.unlink_db_from_ableton`
+  mutator + strict reconciliation in `push.probe_and_link` deletes
+  links whose `ableton_index` is gone from the fresh probe.
+- **Soft reset** — `M.reset_song_content` narrows `build.py --reset`
+  scope to song-content tables; preserves `ableton_sessions` +
+  `ableton_links` + `device_links`. Closes the punk-fate state-drift
+  bug where `--reset` wiped Ableton bindings mid-iteration.
+- **First-push clean-default-scaffold** — `default_scaffold_unmatched_
+  tracks` field on `ProbeAndLinkResult` (fires when auto-session was
+  created AND every unmatched Live track is in the canonical default
+  `{1-MIDI, 2-MIDI, 3-Audio, 4-Audio}`). Skill Step 2a documents the
+  push-then-delete-defaults flow with descending track-index delete
+  order + post-delete reconciliation.
+- **Last-track / last-scene refuse-and-teach** — `ableton_track(action=
+  'delete')` and `ableton_scene(action='delete')` raise a teaching
+  precondition error before Live's bare RuntimeError fires.
+
+#### Capture polish (Wave 19)
+
+- **`tools/capture.py` → `tools/capture_cli.py`** rename — closes the
+  capture/load name collision; 8 reference updates across skills, docs,
+  MCP guide, and tests.
+- **Cue auto-disambiguation** — push planner appends `-N` suffix when
+  multiple cues share a name (`chorus-1` / `chorus-2` / `chorus-3`)
+  so Live's locator strip stays readable. Singletons unsuffixed;
+  nameless cues left empty.
+- **Nested-rack capture** — `_replay_rack_chains` walks one level +
+  populates `device_chains` with `parent_rack_device_id`; rejects
+  two-level nesting with a teaching error.
+
+#### Push planner hygiene (Wave 20)
+
+- **Device probe-and-link by `(class_name, chain_position)`** —
+  `probe_and_link` accepts `live_devices_by_parent`, walks each matched
+  track/return's chain in parallel with DB devices, writes
+  `db_kind='device'` links on (position, class_name) match. Closes the
+  device-duplication path on re-push when Live has pre-existing
+  matching devices. `push_cli --probe` auto-populates via a new
+  `_probe_live_devices_via_mcp` helper.
+- **Query consolidation** — `sync/push.py` raw `SELECT`s factored into
+  `queries.py` (`Q.get_clips_for_song`, `Q.get_device_parent_chain`,
+  `Q.get_note`). `_track_kind_for_envelope` uses `Q.get_track`. Dropped
+  dead `pan` alias from capture's mixer/return field lists (all real
+  snapshots use `panning`).
+
+#### Provenance + annotations (Wave 23)
+
+- **Provenance read surface** — `Q.list_requests_for_song(song_id,
+  kind=...)`, `Q.get_latest_request_for_song`,
+  `Q.get_events_for_request`, `Q.get_request_event_summary`. Stable
+  ordering via `ts DESC, rowid DESC` tiebreaker. Sessions can now
+  query "what did I do last time on this song" without re-deriving from
+  scattered files.
+- **Structured song annotations** — new `annotations` table (song /
+  time / track scopes via column nullability), 3 mutators
+  (add/update/delete) + 3 events, 3 queries
+  (`get_annotations_for_song`, `get_annotations_for_track`,
+  `get_annotations_at_bar` with half-open `[start, end)` intervals +
+  open-ended forward). Coexists with markdown-file annotations: the
+  table is for live composing notes; markdown is for ADR-shaped
+  decisions.
+- **Push/pull request lifecycle** — `push_execute.execute_push` opens
+  `kind='push'` request, threads `request_id` through
+  `apply_push_results`, closes with outcome mapped from push's
+  tri-state (ok / partial / failed). `pull_cli._cmd_apply` mirror with
+  `kind='pull'`.
+
+#### Device-load forgiveness (M1-A)
+
+- **`device_names.strip_device_suffix`** — algorithmic fallback for
+  Live's `*Device` class-name pattern (`AnalogDevice → Analog`,
+  `OperatorDevice → Operator`, etc.). Runs after the explicit
+  `_CLASS_TO_DISPLAY` translation table so bespoke renames like
+  `AnalogSimplerDevice → Simpler` still win.
+- **`device_names.browser_root_for_rack_kind`** — restricts the
+  display-name walk for all four rack kinds (Drum / Instrument / Audio
+  Effect / MIDI Effect) to their canonical browser root. Fixes the
+  W7-0 finding where `kind='Drum Rack'` matched a user-saved
+  Instrument Rack preset named "Drum Rack" in the instruments root
+  before the canonical empty Drum Rack node. Restriction applies to
+  translated candidates too, so `kind='DrumGroupDevice'` (translates
+  to "Drum Rack") gets the same cross-category protection.
+- **Bare `kind='Instrument Rack'`** — finds the canonical empty rack
+  when exposed under the instruments root, or surfaces a teaching
+  error pointing at Cmd+G grouping / `preset_uri` workaround when
+  absent. Replaces the prior bare "did not append" runtime error.
+
+#### Cross-machine instrument fallback (M1-B)
+
+- **`push_execute._attempt_load_fallback`** — when an
+  `ableton_device(action='load')` call carrying a `preset_uri`
+  captured on the author's machine fails because the URI is
+  unresolvable on the consumer's machine (Live FileIds differ across
+  installs), the executor composes an `ableton_browser(action=
+  'search', pattern=display_name, root=<kind-routed>)` call and
+  retries the load with the first match's URI. Root selection: Plugin
+  classes → `plugins`; DrumGroupDevice → `drums`; others →
+  `instruments`. The subsequent parameter-write phase fires unchanged
+  against the fallback device, so dialed parameter state still lands.
+  The DB's `preset_uri` stays untouched (song stays portable); the
+  fallback URI surfaces in the state file via `fallback_preset_uri`.
+
+#### Drum-kit portability (M1-C)
+
+- **`drum_pad_mappings` table** — per-Drum-Rack pad layout captured
+  via `ableton_device(action='pad_info')` and persisted as `(device_id,
+  chain_name, midi_note)` rows. Chain names stored verbatim from
+  Live; canonicalization happens at READ time.
+- **`Kit` class** (`src/hallucinote/generators/kit.py`) — typed read
+  surface. Three constructors: `Kit.from_device(conn, device_id)`
+  loads from the DB; `Kit.from_dict({canonical: note})` is
+  test-friendly; `Kit.gm_default()` returns a standard
+  General-MIDI layout. `pitch_of()` does fuzzy chain-name matching —
+  "Kick Drum" / "BD Big" / "Bass Drum" all resolve to canonical
+  "kick"; "Closed Hat" / "Hi-Hat Closed" / "CHH" all resolve to
+  "hat_closed". Missing pads warn-and-fall-through to GM defaults so
+  composition flow stays unblocked.
+- **`capture_plan` adds `ableton_device(action='pad_info')`** for
+  every `DrumGroupDevice`. Replay reads `device['drum_pads']` and
+  calls `M.replace_drum_pad_mappings`.
+
+#### MCP surface
+
+- **`ableton_browser(action='search')`** — pattern-match nodes under a
+  browser root. Lets agents find instruments / presets / plugins without
+  knowing exact names. Default mode is case-insensitive substring; glob
+  and regex modes available as opt-ins. Bounded by depth (default 8,
+  max 12) and match limit (default 20, max 200); `path_prefix` narrows
+  the walk to a sub-tree. Returns matches with name + uri + full path +
+  is_loadable so the agent can disambiguate among same-name results.
+- **`ableton_device(action='load', preset_query={...})`** — compose-time
+  portable preset selector. Snapshot stores `preset_query` (e.g.
+  `{root: "drums", pattern: "Late Nite Kit"}`) instead of (or alongside)
+  per-machine `preset_uri`. The MCP handler resolves on the consumer's
+  machine via the search primitive. Strict-mode — refuses if 0 or 2+
+  matches (no fuzzy match shipping by accident). The cross-machine
+  portability path for built-in Live content (drum kits, instrument
+  presets) so snapshots transfer cleanly across installations.
+
+#### Onboarding
+
+- **`docs/song-new-checklist.md`** — authoritative 14-item must / should
+  / emergent pre-composition checklist. The agent infers aggressively,
+  states inferences explicitly, asks for must-haves it can't infer.
+  Decisions persist as markdown under `songs/<slug>/decisions/` so the
+  song's intent survives `/clear` and future-session re-opens via
+  `/song-context`.
+- **`push_cli execute`** — agent-bypassing dispatcher (W10-E2). The
+  ten-phase push planner emits plans the agent has historically
+  dispatched itself via MCP tool calls; for large songs that's a
+  context ceiling. `execute` dispatches directly against Live's Remote
+  Script via `hallucinote_mcp.client.send` so bytes never enter the
+  agent's context.
+
 ### Changed
 
 - **Workflow skills replace MCP prompts.** The 7 MCP prompts shipped in
@@ -24,16 +231,38 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `humanize_clip_velocity` → `/clip-humanize`.
   - `compose_section_pattern` → `/pattern-compose`.
 - **Skill namespace standardized to `<scope>-<action>`** for Hallucinote-
-  specific skills. Renames:
-  - `/new-song` → `/song-new` (matches existing `/song-snapshot`,
-    `/song-context`).
-  - `/ableton-install-mcp` → `/ableton-mcp-install`.
-  - `/ableton-uninstall-mcp` → `/ableton-mcp-uninstall`.
-  Framework-shaped skills (`/critic`, `/pr`, `/janitor`, `/learnings`,
-  `/prawduct-doctor`) keep their scope-less names — they aren't
-  operations on a Hallucinote object.
-- **`docs/new-song-checklist.md`** renamed to
+  specific skills. Renames: `/new-song` → `/song-new` (matches existing
+  `/song-snapshot`, `/song-context`); `/ableton-install-mcp` →
+  `/ableton-mcp-install`; `/ableton-uninstall-mcp` →
+  `/ableton-mcp-uninstall`. Framework-shaped skills (`/critic`, `/pr`,
+  `/janitor`, `/learnings`, `/prawduct-doctor`) keep their scope-less
+  names. `docs/new-song-checklist.md` renamed to
   `docs/song-new-checklist.md` for namespace consistency.
+- **`/song-new` SKILL restructured** — two explicit phases
+  (pre-composition elicitation, then scaffold + decisions + pick
+  instruments). Mode detection (`make-me-X` vs `scaffold-only`)
+  determines the final-report shape. The orchestration content that
+  v0.9 shipped as the `start_new_song` MCP prompt now lives in this
+  skill body.
+- **Drum helper API: `kit: Kit` is required (M1-C breaking change).**
+  All 9 `drums.X` helpers (`kick_stumble`, `lazy_snare`, `trip_hop_hats`,
+  `tresillo_hats`, `bossa_shaker`, `ghost_kicks`, `ghost_snares`,
+  `open_hat_lifts`, `trip_hop_drum_pattern`) now require a `kit: Kit`
+  keyword-only argument; the `pitch: int = KICK / SNARE / HAT_CLOSED`
+  defaults are gone. Composers express intent ("a kick pattern") and the
+  loaded kit decides which MIDI note that means. `bossa_shaker` now uses
+  `kit.pitch_of("shaker")` (canonically right — GM note 70) instead of
+  `HAT_CLOSED` (the original "best fit" hack — GM note 42); songs that
+  authored shaker-on-hat patterns need to construct an explicit
+  `Kit.from_dict({"shaker": HAT_CLOSED, ...})` to preserve the old
+  behavior. Pure inline-`_note(KICK, ...)` authoring (`neon-feedback`-
+  style) is unaffected — the GM constants in `primitives.py` remain
+  available for direct use.
+- **Scaffold template** (`tools/templates/song/captured_session.json.tmpl`)
+  — return names use the stripped form (`Reverb`, `Delay`) instead of
+  Live's auto-slot-prefixed form (`A-Reverb`, `B-Delay`). Closes the
+  noise on every fresh-scaffold build where `replay_capture` emitted
+  a (correct but distracting) strip warning.
 
 ### Fixed
 
@@ -44,52 +273,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   docstring + `capture_plan()` runtime emit referenced
   `ableton_track(action='get_info')` (actual: `'info'`).
 
-### Added
-
-- **`ableton_browser(action='search')`** — pattern-match nodes under a
-  browser root. Lets agents find instruments / presets / plugins without
-  knowing exact names. Default mode is case-insensitive substring; glob
-  and regex modes available as opt-ins. Bounded by depth (default 8,
-  max 12) and match limit (default 20, max 200); `path_prefix` narrows
-  the walk to a sub-tree. Returns matches with name + uri + full path +
-  is_loadable so the agent can disambiguate among same-name results.
-- **`ableton_device(action='load', preset_query={...})`** — compose-time
-  portable preset selector. Snapshot stores `preset_query` (e.g.
-  `{root: "drums", pattern: "Late Nite Kit"}`) instead of (or alongside)
-  per-machine `preset_uri`. The MCP handler resolves on the consumer's
-  machine via the search primitive. Strict-mode — refuses if 0 or 2+
-  matches (no fuzzy match shipping by accident). The cross-machine
-  portability path for built-in Live content (drum kits, instrument
-  presets) so snapshots transfer cleanly across installations.
-- **`docs/song-new-checklist.md`** — authoritative 14-item must / should
-  / emergent pre-composition checklist. The agent infers aggressively,
-  states inferences explicitly, asks for must-haves it can't infer.
-  Decisions persist as markdown under `songs/<slug>/decisions/` so the
-  song's intent survives `/clear` and future-session re-opens via
-  `/song-context`.
-
-### Changed
-
-- **`/song-new` SKILL** — restructured around two explicit phases
-  (pre-composition elicitation, then scaffold + decisions + pick
-  instruments). The final report now points at next-steps
-  (pick instruments → push → recapture → compose) instead of just
-  naming the scaffolded directory. The orchestration content that v0.9
-  shipped as the `start_new_song` MCP prompt now lives in this skill
-  (see the "Workflow skills replace MCP prompts" entry above for the
-  rationale).
-- **Scaffold template** (`tools/templates/song/captured_session.json.tmpl`)
-  — return names use the stripped form (`Reverb`, `Delay`) instead of
-  Live's auto-slot-prefixed form (`A-Reverb`, `B-Delay`). Closes the
-  noise on every fresh-scaffold build where `replay_capture` emitted
-  a (correct but distracting) strip warning.
-
 ### Schema migration
 
 - **`devices.preset_query TEXT`** — JSON-serialized compose-time
-  portable preset selector. Added to existing v0.9.0 DBs via the
-  `_ADDED_COLUMNS` migration in `db/connection.py`; existing devices
+  portable preset selector (Sweep B). Added to existing v0.9.0 DBs via
+  the `_ADDED_COLUMNS` migration in `db/connection.py`; existing devices
   get NULL.
+- **`annotations` table** (W23-B) — structured song annotations with
+  song / time / track scopes via column nullability. New install
+  creates the table; existing DBs add it on first connection via
+  `init_db`.
+- **`drum_pad_mappings` table** (M1-C) — per-Drum-Rack pad layout
+  (`device_id, chain_name, midi_note`). Populated by capture replay;
+  empty until a song's snapshot has been refreshed via
+  `tools/capture_cli.py`.
+
+### Test counts
+
+Main suite: **1725 passing** (up from 1452 at v0.9.0; net +273 across
+W17 → M1-C). MCP suite: **653 passing** (up from 581 at v0.9.0; net
++72 across the M1-A device-load forgiveness work).
 
 ## [0.9.0] — 2026-05-20
 

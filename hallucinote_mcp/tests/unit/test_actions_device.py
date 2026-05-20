@@ -682,6 +682,139 @@ def test_load_no_chain_growth_is_runtime_error(loaded_actions):
     assert "did not append" in (resp.error or "")
 
 
+# ---------- M1-A: device-load forgiveness (suffix strip + rack disambiguation) ----------
+
+
+def test_load_resolves_analog_device_via_suffix_strip(loaded_actions):
+    """``kind='AnalogDevice'`` has no explicit table entry; the loader
+    falls through to ``strip_device_suffix`` and resolves it as ``Analog``
+    in the instruments root. Backlog #27 + W21-A.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "instruments", "Analog", uri="query:Analog")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "AnalogDevice"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["kind"] == "AnalogDevice"  # caller's identity preserved
+    assert len(ctx.song.tracks[0].devices) == 1
+    assert ctx.application.browser.load_calls[0].name == "Analog"
+
+
+def test_load_drum_rack_ignores_cross_category_namesake(loaded_actions):
+    """W7-0: user has an Instrument Rack preset named ``Drum Rack`` in the
+    instruments root. The canonical empty Drum Rack lives under drums.
+    Restricted-root walk MUST pick the drums-root node, never the
+    instruments imposter.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    imposter = FakeBrowserItem(
+        "Drum Rack", uri="query:Instruments#Imposter", is_loadable=True,
+    )
+    canonical = FakeBrowserItem(
+        "Drum Rack", uri="query:Drums#Empty", is_loadable=True,
+    )
+    ctx.application.browser.instruments.children.append(imposter)
+    ctx.application.browser.drums.children.append(canonical)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#Empty"
+
+
+def test_load_drum_group_device_translation_restricted_to_drums(loaded_actions):
+    """``kind='DrumGroupDevice'`` translates to ``Drum Rack`` (via table),
+    and the rack-root restriction applies to the translated candidate —
+    not just to the original kind. An instruments-root imposter named
+    ``Drum Rack`` must NOT match.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.instruments.children.append(
+        FakeBrowserItem("Drum Rack", uri="query:Instruments#Imposter"),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Drum Rack", uri="query:Drums#Empty"),
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "DrumGroupDevice"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#Empty"
+
+
+def test_load_audio_effect_rack_restricted_to_audio_effects_root(loaded_actions):
+    """Parallel to the Drum Rack case for Audio Effect Rack."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.instruments.children.append(
+        FakeBrowserItem("Audio Effect Rack", uri="query:Instruments#Wrong"),
+    )
+    ctx.application.browser.audio_effects.children.append(
+        FakeBrowserItem("Audio Effect Rack", uri="query:AudioEffects#Right"),
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Audio Effect Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:AudioEffects#Right"
+
+
+def test_load_instrument_rack_finds_canonical_under_instruments(loaded_actions):
+    """When an empty Instrument Rack node IS exposed under the
+    instruments root, the rack-kind walk finds it.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.instruments.children.append(
+        FakeBrowserItem("Instrument Rack", uri="query:Instruments#Empty"),
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Instrument Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:Instruments#Empty"
+
+
+def test_load_instrument_rack_missing_node_teaches_workaround(loaded_actions):
+    """Backlog #35: bare ``kind='Instrument Rack'`` with no loadable node
+    surfaces a teaching error pointing at the Cmd+G workaround instead of
+    Live's bare ``did not append`` runtime error.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # No nodes added — restricted walk on instruments finds nothing.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Instrument Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Instrument Rack" in err
+    assert "instruments" in err  # canonical-root mention
+    assert "Cmd+G" in err or "preset_uri" in err  # workaround pointer
+
+
 # ---------- preset_query (Sweep B — compose-time portable selection) ----------
 
 

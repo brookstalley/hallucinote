@@ -83,7 +83,7 @@ songs/<slug>/
 ```
 
 Two important defaults the scaffold uses:
-- **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Capture today is manual via `tools/capture.py`.
+- **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Capture today is manual via `tools/capture_cli.py`.
 - **State-converger build.py.** Re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op when nothing changed in build.py — W12-A guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
 
 ## Final report to user
@@ -102,7 +102,7 @@ Then immediately invoke `/song-pick-instruments` and continue. Compose work happ
 >
 > 1. **Pick instruments** — I'll invoke `/song-pick-instruments` to translate the instrumentation we discussed ("vintage analog poly + acoustic drums + ...") into actual device chains (instrument + saturation + bus processing). Default `portability=strict` — stock Live content only. Tell me if you want to allow third-party plugins.
 > 2. **Push the scaffold to a fresh Live set** with `/ableton-push <slug> --new-session` so the device chains materialize.
-> 3. **Recapture** with `tools/capture.py` so the resolved device URIs / params land in `captured_session.json`.
+> 3. **Recapture** with `tools/capture_cli.py` so the resolved device URIs / params land in `captured_session.json`.
 > 4. **Compose** — open `songs/<slug>/build.py` and replace the `=== Compose-half ===` placeholder. `songs/falling-walking/build.py` is the worked example (historical, not a literal template).
 
 Stop after the scaffold + decisions + picks land, so the user can review and drive composition themselves.

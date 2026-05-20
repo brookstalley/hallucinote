@@ -28,6 +28,16 @@ from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import GeneratorOutput, bass, drums, harmony
 from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
+from hallucinote.generators.kit import Kit
+
+# M1-C: every drums.X(..., kit=_DRUM_KIT) helper requires a Kit. falling-walking was
+# authored against GM-standard pad layout (kick=36, snare=38, etc.) so
+# Kit.gm_default() preserves the historical note output exactly. When
+# the song's captured_session.json is refreshed against a real Live set
+# whose Drum Rack is captured by `tools/capture_cli.py`, switch this to
+# `Kit.from_device(conn, <drum-rack-device-id>)` to make the drum parts
+# kit-portable.
+_DRUM_KIT = Kit.gm_default()
 
 # W12-A: per-branch DB filename. Branch switches pick up the right DB
 # silently; outside a repo / detached HEAD falls back to falling-walking.db.
@@ -113,13 +123,13 @@ def _build_intro(conn, song_id: str, tracks: dict[str, str]) -> dict:
         bs = b * 4.0
         drum_notes.append(_note(42, bs, 0.1, 50 + b * 3))
     # Bars 5-8: bossa shaker (16ths with accents), fading in.
-    drum_notes.extend(drums.bossa_shaker(4, start_beat=16.0))
+    drum_notes.extend(drums.bossa_shaker(4, kit=_DRUM_KIT, start_beat=16.0))
     # Bars 9-12: tresillo hats, gradually louder.
-    drum_notes.extend(drums.tresillo_hats(4, start_beat=32.0))
+    drum_notes.extend(drums.tresillo_hats(4, kit=_DRUM_KIT, start_beat=32.0))
     # Bars 13-16: trip-hop 8ths + kick stumble + snare from bar 15.
-    drum_notes.extend(drums.trip_hop_hats(4, start_beat=48.0))
-    drum_notes.extend(drums.kick_stumble(4, start_beat=48.0))
-    drum_notes.extend(drums.lazy_snare(2, start_beat=56.0))
+    drum_notes.extend(drums.trip_hop_hats(4, kit=_DRUM_KIT, start_beat=48.0))
+    drum_notes.extend(drums.kick_stumble(4, kit=_DRUM_KIT, start_beat=48.0))
+    drum_notes.extend(drums.lazy_snare(2, kit=_DRUM_KIT, start_beat=56.0))
     # Open hat lift on the final 16th to push into the verse.
     drum_notes.append(_note(46, 63.5, 0.5, 95))
 
@@ -237,7 +247,7 @@ def _build_verse(conn, song_id: str, tracks: dict[str, str]) -> dict:
     # docs/song-authoring-conventions.md "Per-part feel".
     verse_feel = {0.5: 0.01, 1.5: 0.01, 2.5: 0.01, 3.5: 0.01}
     verse_drum_notes = drums.trip_hop_drum_pattern(
-        bars=14, fill_bars=[3, 7, 11], feel=verse_feel,
+        bars=14, kit=_DRUM_KIT, fill_bars=[3, 7, 11], feel=verse_feel,
     )
     # Bar 15: real fill (toms + snare roll + crash).
     bs = 56.0
@@ -751,11 +761,12 @@ def build(reset: bool = False) -> str:
     `--reset` remains an escape hatch for "wipe the DB and start fresh" but
     is no longer required in the normal flow.
     """
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
-
     conn = init_db(DB_PATH)
     try:
+        if reset:
+            song = Q.get_song_by_name(conn, "falling-walking")
+            if song is not None:
+                M.reset_song_content(conn, song_id=song["id"])
         with M.build_session(conn, song_name="falling-walking",
                               owner="build.py"):
             # Mix-half: replay the captured Ableton session.

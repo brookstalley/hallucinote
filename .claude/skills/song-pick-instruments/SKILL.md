@@ -89,7 +89,7 @@ Reject unknown modes with a teaching error listing the valid choices.
 
    This decision file IS the sound design. Treat post-instrument processing as authorship, not as a "mix-time follow-up." Older songs that have an `08-instrument-picks.md` with a "mix-time follow-ups" section: leave it as historical (don't backport), and write the new chains decision alongside.
 
-6. **Capture for the DB.** After loading, run `tools/capture.py` (or invoke `/song-snapshot`) so `captured_session.json` reflects the full chain per track. The captured `devices[]` array preserves chain order; each device's `(class, display_name, manufacturer, pack_name, params_dialed)` is what W13-A's fallback-identity path uses to re-find equivalents on another machine.
+6. **Capture for the DB.** After loading, run `tools/capture_cli.py` (or invoke `/song-snapshot`) so `captured_session.json` reflects the full chain per track. The captured `devices[]` array preserves chain order; each device's `(class, display_name, manufacturer, pack_name, params_dialed)` is what W13-A's fallback-identity path uses to re-find equivalents on another machine.
 
 7. **For unrestricted mode only:** tell the user explicitly that the song is not strict-portable; collaborators will need to install whatever `compat check` flags before their push.
 

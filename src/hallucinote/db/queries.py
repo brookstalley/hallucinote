@@ -39,6 +39,50 @@ def get_clips_for_track(conn: sqlite3.Connection, track_id: str) -> list[sqlite3
     ).fetchall()
 
 
+def get_clips_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
+    """All clips on any track of `song_id`. Used by the push planner to
+    enumerate the song's clip surface in one go (replaces a raw IN-subquery
+    that lived in `plan_push_clips` pre-W20-E).
+
+    Order: clip name then id (stable for the same DB read twice).
+    """
+    return conn.execute(
+        """SELECT c.* FROM clips c
+           JOIN tracks t ON t.id = c.track_id
+           WHERE t.song_id = ?
+           ORDER BY c.name, c.id""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_device_parent_chain(
+    conn: sqlite3.Connection, device_id: str,
+) -> sqlite3.Row | None:
+    """Return the `device_chains` row owning `device_id`. Joins through
+    `devices` so the caller gets ``parent_track_id`` / ``parent_return_id``
+    / ``parent_rack_device_id`` in one query. None when the device is gone.
+
+    Used by the envelope planner to walk a device-parameter envelope's
+    routing surface (track vs return vs nested rack) without a raw SQL
+    JOIN inside the planner.
+    """
+    return conn.execute(
+        """SELECT dc.parent_track_id, dc.parent_return_id,
+                  dc.parent_rack_device_id
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE d.id = ?""",
+        (device_id,),
+    ).fetchone()
+
+
+def get_note(conn: sqlite3.Connection, note_id: str) -> sqlite3.Row | None:
+    """Look up one notes row by id. None when the note has been deleted."""
+    return conn.execute(
+        "SELECT * FROM notes WHERE id = ?", (note_id,)
+    ).fetchone()
+
+
 def get_clip(conn: sqlite3.Connection, clip_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
 
@@ -326,6 +370,23 @@ def get_device_parameters(
     ).fetchall()
 
 
+def get_drum_pad_mappings(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    """Return Drum Rack pad mappings for a device, ordered by midi_note ASC.
+
+    Each row: ``{id, device_id, chain_name, midi_note}``. Empty list when
+    no mappings have been captured for this device yet (caller should
+    fall through to `Kit.gm_default()` per `hallucinote.generators.kit`).
+    """
+    return conn.execute(
+        """SELECT * FROM drum_pad_mappings
+           WHERE device_id = ? ORDER BY midi_note""",
+        (device_id,),
+    ).fetchall()
+
+
 # ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------
@@ -461,6 +522,184 @@ def get_request(
     return conn.execute(
         "SELECT * FROM requests WHERE id = ?", (request_id,)
     ).fetchone()
+
+
+# ---------------------------------------------------------------------------
+# W23-A: provenance read surface
+# ---------------------------------------------------------------------------
+#
+# These queries let the agent answer "what did I do last time on this song?"
+# without scanning the events table by hand. All four are read-only over
+# the existing requests + events tables — no schema change. The intent
+# vocabulary matches REQUEST_KINDS in mutations.py: 'compose', 'push',
+# 'pull', 'capture', 'analyze', 'mutate'.
+
+
+def list_requests_for_song(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    kind: str | None = None,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    """List recent requests on `song_id`, most-recent first.
+
+    `kind` filters to one cycle type (e.g. ``'push'`` to see only push
+    cycles); leave None to see every cycle. `limit` defaults to 50 — the
+    last ~5 days of activity for a heavily-worked song. The list shape
+    (request id, actor, intent, kind, outcome, duration_ms, ts) is what
+    the agent needs to summarise "what's been happening here lately."
+    """
+    # `ts` is millisecond-precision; two rapid calls can tie. Secondary
+    # order by `rowid DESC` is SQLite's stable insertion-order tiebreaker
+    # so "latest" stays deterministic within a tie.
+    if kind is not None:
+        return conn.execute(
+            """SELECT * FROM requests
+               WHERE song_id = ? AND kind = ?
+               ORDER BY ts DESC, rowid DESC LIMIT ?""",
+            (song_id, kind, limit),
+        ).fetchall()
+    return conn.execute(
+        """SELECT * FROM requests WHERE song_id = ?
+           ORDER BY ts DESC, rowid DESC LIMIT ?""",
+        (song_id, limit),
+    ).fetchall()
+
+
+def get_latest_request_for_song(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    kind: str | None = None,
+) -> sqlite3.Row | None:
+    """The single most-recent request on `song_id`, optionally filtered by
+    kind. Returns None if no matching request exists.
+
+    Common use: "what was the last push for this song?" answers via
+    ``get_latest_request_for_song(conn, song_id, kind='push')``.
+    """
+    rows = list_requests_for_song(conn, song_id, kind=kind, limit=1)
+    return rows[0] if rows else None
+
+
+def get_events_for_request(
+    conn: sqlite3.Connection,
+    request_id: str,
+    *,
+    limit: int = 500,
+) -> list[sqlite3.Row]:
+    """Every event threaded back to one request, in seq order (oldest first).
+
+    Use to drill into "what did this push actually do?": the agent reads
+    the request from :func:`get_request`, then pulls its events here.
+    Default limit of 500 covers a heavy compose round (W12-A's converger
+    can emit hundreds of touched-rows events); raise the limit for an
+    audit dump.
+    """
+    return conn.execute(
+        """SELECT * FROM events WHERE request_id = ?
+           ORDER BY seq ASC LIMIT ?""",
+        (request_id, limit),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# W23-B: song annotation reads
+# ---------------------------------------------------------------------------
+
+
+def get_annotations_for_song(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    kind: str | None = None,
+) -> list[sqlite3.Row]:
+    """All annotations attached to ``song_id`` (any scope).
+
+    Order: track_id NULLs first (song-scoped / time-scoped surface
+    before track-scoped), then by start_bar (song-scoped → bar 1 →
+    bar 17 → …), then by created_at. Stable for the same agent reading
+    the same DB twice in a row.
+
+    ``kind`` filters to one of the ``ANNOTATION_KINDS`` values; None
+    returns all kinds.
+    """
+    if kind is not None:
+        return conn.execute(
+            """SELECT * FROM annotations WHERE song_id = ? AND kind = ?
+               ORDER BY track_id IS NOT NULL,
+                        COALESCE(start_bar, -1.0),
+                        created_at, id""",
+            (song_id, kind),
+        ).fetchall()
+    return conn.execute(
+        """SELECT * FROM annotations WHERE song_id = ?
+           ORDER BY track_id IS NOT NULL,
+                    COALESCE(start_bar, -1.0),
+                    created_at, id""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_annotations_for_track(
+    conn: sqlite3.Connection,
+    track_id: str,
+) -> list[sqlite3.Row]:
+    """All annotations whose ``track_id`` matches. Excludes song-scoped /
+    time-scoped (which have ``track_id IS NULL``). Order: start_bar then
+    created_at."""
+    return conn.execute(
+        """SELECT * FROM annotations WHERE track_id = ?
+           ORDER BY COALESCE(start_bar, -1.0), created_at, id""",
+        (track_id,),
+    ).fetchall()
+
+
+def get_annotations_at_bar(
+    conn: sqlite3.Connection,
+    song_id: str,
+    bar: float,
+) -> list[sqlite3.Row]:
+    """All annotations on ``song_id`` active at ``bar`` (regardless of
+    track scope — caller filters by track if narrower).
+
+    Active means: song-scoped (start_bar IS NULL → always active), OR
+    a bar range containing ``bar`` as a half-open interval
+    [start_bar, end_bar). Open-ended forward ranges (end_bar IS NULL)
+    are active for all bars ≥ start_bar.
+    """
+    return conn.execute(
+        """SELECT * FROM annotations WHERE song_id = ?
+             AND (
+               start_bar IS NULL
+               OR (start_bar <= ? AND (end_bar IS NULL OR end_bar > ?))
+             )
+           ORDER BY track_id IS NOT NULL,
+                    COALESCE(start_bar, -1.0),
+                    created_at, id""",
+        (song_id, bar, bar),
+    ).fetchall()
+
+
+def get_request_event_summary(
+    conn: sqlite3.Connection,
+    request_id: str,
+) -> dict[str, int]:
+    """``{event_kind: count}`` for one request's event stream.
+
+    The agent uses this as a one-look "what did this request touch?"
+    summary — e.g. ``{'track_created': 8, 'clip_created': 24,
+    'arrangement_clip_added': 24, 'request_created': 1, 'request_closed': 1}``
+    tells you a full push of an 8-track song. Cheaper than reading every
+    event for the common "how big was this cycle" question.
+    """
+    rows = conn.execute(
+        """SELECT kind, COUNT(*) AS n FROM events
+           WHERE request_id = ? GROUP BY kind""",
+        (request_id,),
+    ).fetchall()
+    return {r["kind"]: r["n"] for r in rows}
 
 
 def find_markdown_refs_for_request(

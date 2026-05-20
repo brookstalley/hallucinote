@@ -92,4 +92,60 @@ def class_name_to_display(class_name: str) -> str | None:
     return _CLASS_TO_DISPLAY.get(class_name)
 
 
-__all__ = ["class_name_to_display"]
+_DEVICE_SUFFIX = "Device"
+
+
+def strip_device_suffix(class_name: str) -> str | None:
+    """Algorithmic fallback for Live's ``*Device`` class-name pattern.
+
+    Some Live built-ins surface as ``<Name>Device`` on ``class_name``
+    (``AnalogDevice``, ``OperatorDevice`` in certain probe contexts)
+    while the browser indexes them under the suffix-stripped name
+    (``Analog``, ``Operator``). Returns the stripped form when
+    ``class_name`` ends with ``Device`` and the result is non-empty;
+    otherwise ``None``.
+
+    Used as a *fallback* after the explicit ``_CLASS_TO_DISPLAY``
+    translation table — table entries like ``AnalogSimplerDevice →
+    Simpler`` or ``DrumGroupDevice → Drum Rack`` need exact-match
+    translation and would resolve to the wrong browser node under
+    naive suffix stripping.
+    """
+    if (
+        class_name
+        and class_name.endswith(_DEVICE_SUFFIX)
+        and len(class_name) > len(_DEVICE_SUFFIX)
+    ):
+        return class_name[: -len(_DEVICE_SUFFIX)]
+    return None
+
+
+# Live's rack display names → canonical browser root. Each rack lives in
+# exactly one category; restricting the load-by-name walk to that root
+# prevents cross-category collisions (W7-0: a user-saved Instrument Rack
+# preset named "Drum Rack" in the instruments root would otherwise match
+# before the canonical empty Drum Rack node in the drums root).
+_RACK_KIND_TO_BROWSER_ROOT: dict[str, str] = {
+    "Drum Rack": "drums",
+    "Instrument Rack": "instruments",
+    "Audio Effect Rack": "audio_effects",
+    "MIDI Effect Rack": "midi_effects",
+}
+
+
+def browser_root_for_rack_kind(kind: str) -> str | None:
+    """Return the canonical browser-root attribute for a rack display name.
+
+    Returns one of ``"drums"`` / ``"instruments"`` / ``"audio_effects"`` /
+    ``"midi_effects"`` for the four rack display names; ``None`` for
+    everything else. Callers loading a rack ``kind`` should restrict
+    their browser walk to this root.
+    """
+    return _RACK_KIND_TO_BROWSER_ROOT.get(kind)
+
+
+__all__ = [
+    "class_name_to_display",
+    "strip_device_suffix",
+    "browser_root_for_rack_kind",
+]

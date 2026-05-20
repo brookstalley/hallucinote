@@ -352,6 +352,74 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
     return found_items[0]
 
 
+def _kind_candidates(kind: str) -> list[str]:
+    """Return browser-name candidates to try for a ``kind``, in priority order.
+
+    1. The kind as-given (handles third-party plugins + built-ins whose
+       class name already matches the browser display).
+    2. The explicit ``device_names`` translation (handles renames like
+       ``Compressor2 → Compressor``, ``DrumGroupDevice → Drum Rack``).
+    3. The algorithmic ``*Device`` suffix strip (handles ``AnalogDevice
+       → Analog`` and similar without enumerating every entry).
+
+    Duplicates are removed while preserving order.
+    """
+    candidates: list[str] = [kind]
+    translated = device_names.class_name_to_display(kind)
+    if translated is not None and translated not in candidates:
+        candidates.append(translated)
+    stripped = device_names.strip_device_suffix(kind)
+    if stripped is not None and stripped not in candidates:
+        candidates.append(stripped)
+    return candidates
+
+
+def _roots_for_candidate(candidate: str) -> tuple[str, ...]:
+    """Pick the browser roots to walk for a name candidate.
+
+    Rack display names ("Drum Rack", "Instrument Rack", etc.) restrict
+    the walk to their canonical category root — a user-saved preset
+    named "Drum Rack" in the instruments root must not shadow the
+    canonical empty Drum Rack node in the drums root (W7-0 finding).
+    """
+    rack_root = device_names.browser_root_for_rack_kind(candidate)
+    if rack_root is not None:
+        return (rack_root,)
+    return _BROWSER_LOAD_ROOTS
+
+
+def _format_kind_failure_criteria(kind: str) -> str:
+    """Build the failure-criteria string for an unresolvable ``kind``.
+
+    Surfaces every candidate the loader tried — table translation +
+    suffix strip + canonical-root restriction — so the agent can see
+    where the resolution path stopped.
+    """
+    candidates = _kind_candidates(kind)
+    if len(candidates) == 1:
+        base = f"kind={kind!r}"
+    else:
+        extras = ", ".join(repr(c) for c in candidates[1:])
+        base = (
+            f"kind={kind!r} (also tried browser name(s) {extras} via "
+            "device_names translation / *Device suffix strip)"
+        )
+    rack_root = device_names.browser_root_for_rack_kind(kind)
+    if rack_root is None:
+        for cand in candidates[1:]:
+            rack_root = device_names.browser_root_for_rack_kind(cand)
+            if rack_root is not None:
+                break
+    if rack_root is not None:
+        base += (
+            f"; rack kinds are searched only in the '{rack_root}' browser "
+            "root (W7-0 cross-category disambiguation). For an empty "
+            "Instrument Rack, group devices in Live (Cmd+G) or pass "
+            "preset_uri to a saved .adg"
+        )
+    return base
+
+
 def _find_browser_item(
     browser: Any, *, kind: str, preset_uri: str | None
 ) -> Any:
@@ -359,14 +427,11 @@ def _find_browser_item(
 
     With ``preset_uri``: walk every root (including plugins / packs / user
     library) looking for an exact ``uri`` match. With ``kind`` only:
-    walk the built-in roots, matching on the first ``is_loadable`` node
-    whose ``name`` equals ``kind``. If that fails, try a second pass with
-    ``kind`` translated through the class-name → display-name table
-    (``device_names``) — Live exposes built-ins under two name spaces
-    (``device.class_name`` returns ``Compressor2`` / ``Eq8`` /
-    ``StereoGain``, but the browser indexes them as ``Compressor`` /
-    ``EQ Eight`` / ``Utility``), and captured songs reach the planner
-    with the class name.
+    walk for each candidate in :func:`_kind_candidates` (original kind,
+    explicit-table translation, algorithmic suffix-strip) against the
+    roots returned by :func:`_roots_for_candidate` — typically the four
+    built-in roots, but restricted to the canonical category root for
+    rack display names.
 
     Agents loading non-built-in devices (plugins, presets) should always
     pass ``preset_uri`` — captured via
@@ -385,24 +450,12 @@ def _find_browser_item(
                 return match
         return None
 
-    # Pass 1: direct name match (third-party plugins + Live built-ins
-    # whose class name matches the browser display name).
-    for root_name in _BROWSER_LOAD_ROOTS:
-        root_node = getattr(browser, root_name, None)
-        if root_node is None:
-            continue
-        match = _walk_for_name(root_node, kind, _BROWSER_WALK_DEPTH)
-        if match is not None:
-            return match
-
-    # Pass 2: try the class-name → display-name translation.
-    translated = device_names.class_name_to_display(kind)
-    if translated is not None and translated != kind:
-        for root_name in _BROWSER_LOAD_ROOTS:
+    for candidate in _kind_candidates(kind):
+        for root_name in _roots_for_candidate(candidate):
             root_node = getattr(browser, root_name, None)
             if root_node is None:
                 continue
-            match = _walk_for_name(root_node, translated, _BROWSER_WALK_DEPTH)
+            match = _walk_for_name(root_node, candidate, _BROWSER_WALK_DEPTH)
             if match is not None:
                 return match
     return None
@@ -490,14 +543,7 @@ def load_handler(
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"
         else:
-            translated = device_names.class_name_to_display(kind)
-            if translated is not None and translated != kind:
-                criteria = (
-                    f"kind={kind!r} (also tried translated display name "
-                    f"{translated!r} via device_names)"
-                )
-            else:
-                criteria = f"kind={kind!r}"
+            criteria = _format_kind_failure_criteria(kind)
         raise ValueError(
             f"no loadable browser item found for {criteria}; verify via "
             "ableton_browser(action='tree', ...) or pass preset_uri from "
@@ -1447,14 +1493,7 @@ def load_in_rack_handler(
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"
         else:
-            translated = device_names.class_name_to_display(kind)
-            if translated is not None and translated != kind:
-                criteria = (
-                    f"kind={kind!r} (also tried translated display name "
-                    f"{translated!r} via device_names)"
-                )
-            else:
-                criteria = f"kind={kind!r}"
+            criteria = _format_kind_failure_criteria(kind)
         raise ValueError(
             f"no loadable browser item found for {criteria}; verify via "
             "ableton_browser(action='tree', ...) or pass preset_uri from "

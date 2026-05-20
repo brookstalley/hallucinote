@@ -632,6 +632,156 @@ def test_plan_push_arrangement_clear_warn_still_fires_on_truly_new_push(
     )
 
 
+# --- check_coherence (W18-A) ---
+
+
+def test_check_coherence_ok_when_links_match_probe(conn, song, session):
+    """Happy path: links written by probe-and-link match a fresh probe →
+    coherence passes, execute is safe."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
+    push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 5, "name": "Drums", "kind": "midi"}],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[{"track_index": 5, "name": "Drums"}],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+    assert result.ok is True
+    assert result.errors == []
+
+
+def test_check_coherence_refuses_when_session_missing(conn):
+    """Session row absent (e.g. build.py --reset wiped ableton_sessions) →
+    refuse with session_missing + recovery hint pointing at --auto-session."""
+    result = push.check_coherence(
+        conn,
+        session_id="nonexistent-session-id",
+        live_tracks=[],
+        live_returns=[],
+    )
+    assert result.ok is False
+    assert len(result.errors) == 1
+    err = result.errors[0]
+    assert err["kind"] == "session_missing"
+    assert "nonexistent-session-id" in err["detail"]
+    assert "--auto-session" in err["recovery"]
+
+
+def test_check_coherence_refuses_on_stale_track_link(conn, song, session):
+    """The punk-fate post-cleanup repro: user deletes Live track 5 after
+    probe-and-link wrote the link → fresh probe omits index 5 → refuse
+    and surface recovery hint."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+
+    # Fresh probe shows index 5 gone (user deleted that track in Live).
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI"}],
+        live_returns=[],
+    )
+    assert result.ok is False
+    assert len(result.errors) == 1
+    err = result.errors[0]
+    assert err["kind"] == "stale_track_links"
+    assert "5" in err["detail"]
+    assert "probe-and-link" in err["recovery"]
+
+
+def test_check_coherence_refuses_on_stale_return_link(conn, song, session):
+    """Same shape for returns: link points at return_index that's no longer
+    in the live probe."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+    assert result.ok is False
+    assert len(result.errors) == 1
+    assert result.errors[0]["kind"] == "stale_return_links"
+
+
+def test_check_coherence_accumulates_track_and_return_errors(conn, song, session):
+    """Both stale track and stale return → two distinct error entries so
+    the user sees the full picture in one refusal."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=7,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=3,
+    )
+
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[{"track_index": 1, "name": "T"}],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+    assert result.ok is False
+    kinds = {e["kind"] for e in result.errors}
+    assert kinds == {"stale_track_links", "stale_return_links"}
+
+
+def test_check_coherence_passes_session_with_no_links_yet(conn, song, session):
+    """First-push scenario: session minted via --auto-session but no
+    probe-and-link links exist yet → check passes with an informational
+    note (push will create from scratch — fine if Live truly has no
+    matching tracks)."""
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI"}],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+    assert result.ok is True
+    assert result.errors == []
+    assert any("no ableton_links rows" in n for n in result.notes)
+
+
+def test_check_coherence_ignores_nested_link_kinds(conn, song, session):
+    """clip / device / device_chain links are nested under track / return;
+    a stale parent link cascade-invalidates them. The check focuses on
+    parent-level integrity — nested kinds aren't validated directly
+    (would require deep MCP traffic for marginal extra safety)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="c")
+    # Link the track validly, plus a clip link whose ableton_index we
+    # don't have probe data for.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=3,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+
+    # Probe shows track 3 still there. Nested clip link is not validated;
+    # check passes.
+    result = push.check_coherence(
+        conn,
+        session_id=session,
+        live_tracks=[{"track_index": 3, "name": "T"}],
+        live_returns=[],
+    )
+    assert result.ok is True
+
+
 # --- apply_push_results ---
 
 

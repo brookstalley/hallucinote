@@ -113,8 +113,21 @@ def create_handler(
 def delete_handler(
     context: LiveContext, *, scene_index: int
 ) -> dict[str, Any]:
+    """W18-E: refuse-and-teach symmetry with ``ableton_track(action='delete')``.
+    Live requires the set to contain at least one scene; deleting the last
+    surviving scene fails inside Live's API. Refuse before the call with a
+    recoverable hint (create a new scene first) instead of surfacing the
+    bare LOM error.
+    """
     song = context.song
     _ = _resolve_scene(context, scene_index)  # validate
+    if len(song.scenes) <= 1:
+        raise ValueError(
+            "delete: Live requires the set to contain at least one scene; "
+            "refusing to delete the last surviving scene. Create a new "
+            "scene first (ableton_scene(action='create')), then retry "
+            "the delete."
+        )
     delete_fn = getattr(song, "delete_scene", None)
     if delete_fn is None:
         raise NotImplementedError(

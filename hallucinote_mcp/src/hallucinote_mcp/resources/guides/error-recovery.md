@@ -158,6 +158,21 @@ the pip-installed package):
 The error message names both versions so you can copy them into a bug
 report if the symptom persists after reinstall + restart.
 
+**Diagnose before reinstalling (W12-D):** the preflight CLI now reports
+the vendored Remote Script's version per-User-Library candidate, so you
+can see exactly which side is stale without restarting anything:
+
+```bash
+hallucinote-mcp preflight
+```
+
+Compare `package.version` (the server side, what's pip-installed) against
+each `remote_script.candidates[*].version` (the vendored copy in that
+candidate's `Remote Scripts/Hallucinote/`). The `matches_mcp_server`
+field on each candidate is the same boolean the runtime handshake would
+produce; `installed: false` means there's no vendored copy at that
+candidate location (so the handshake won't even reach that path).
+
 ## Gap-blocked actions (intentional)
 
 ### `ableton_note operations are blocked by MCP gap #4 — ...`

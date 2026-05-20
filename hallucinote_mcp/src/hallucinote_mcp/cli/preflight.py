@@ -21,9 +21,26 @@ def _build_report() -> dict:
     """
     cmd_path, cmd_on_path = P.hallucinote_mcp_command()
     pkg_root = P.package_root()
+    server_version = __version__
+    remote_script_candidates: list[dict] = []
+    for cand in P.candidate_user_libraries():
+        rs_dir = P.remote_script_install_dir(cand)
+        installed = (rs_dir / "hallucinote_mcp").is_dir()
+        vendored_version = (
+            P.installed_remote_script_version(cand) if installed else None
+        )
+        remote_script_candidates.append({
+            "user_library": str(cand),
+            "remote_script_dir": str(rs_dir),
+            "installed": installed,
+            "version": vendored_version,
+            "matches_mcp_server": (
+                vendored_version == server_version if vendored_version else None
+            ),
+        })
     return {
         "package": {
-            "version": __version__,
+            "version": server_version,
             "root": str(pkg_root),
             # Structured excludes — top-level files are anchored to the
             # package root; any-position dirs/globs match anywhere in the
@@ -56,6 +73,13 @@ def _build_report() -> dict:
         "mcp_command": {
             "path": str(cmd_path) if cmd_path else None,
             "on_path": cmd_on_path,
+        },
+        # MCP/Remote Script version-match per User Library candidate.
+        # Surfaces drift BEFORE the runtime handshake fires — the install
+        # skill uses ``matches_mcp_server`` to suggest re-running install
+        # when the vendored copy is stale (W12-D MCP/Live drift visibility).
+        "remote_script": {
+            "candidates": remote_script_candidates,
         },
         "mcp_configs": {
             "local_path": str(P.mcp_config_local_path()),

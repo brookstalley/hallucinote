@@ -286,6 +286,55 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_snapshot_file(path_str: str, *, subcmd: str) -> tuple[list, list]:
+    """Read a {tracks, returns} JSON snapshot. Returns (live_tracks, live_returns).
+
+    Shared between probe-and-link and check-coherence so both subcommands
+    refuse with the same teaching errors on a malformed file.
+    """
+    snapshot = json.loads(Path(path_str).read_text())
+    if not isinstance(snapshot, dict):
+        raise SystemExit(
+            f"push_cli {subcmd}: snapshot file must be a JSON object "
+            'with "tracks" and "returns" arrays'
+        )
+    live_tracks = snapshot.get("tracks") or []
+    live_returns = snapshot.get("returns") or []
+    if not isinstance(live_tracks, list) or not isinstance(live_returns, list):
+        raise SystemExit(
+            f"push_cli {subcmd}: snapshot.tracks and snapshot.returns "
+            "must be JSON arrays"
+        )
+    return live_tracks, live_returns
+
+
+def _cmd_check_coherence(args: argparse.Namespace) -> int:
+    """W18-A: refuse-and-teach before ``execute`` mutates Live.
+
+    Validates that ``ableton_sessions`` + ``ableton_links`` rows are
+    consistent with a freshly-probed Live snapshot. The skill probes Live
+    (via ``ableton_track(action='list')`` + ``ableton_return(action='list')``)
+    and feeds the snapshot file in.
+
+    Exits 0 on coherent state; non-zero with a JSON error summary on stdout
+    if any check fails. The skill uses the recovery hints to fix the state
+    before retrying.
+    """
+    conn = connect(_resolve_db_path(args))
+    live_tracks, live_returns = _load_snapshot_file(args.snapshot, subcmd="check-coherence")
+    result = push.check_coherence(
+        conn,
+        session_id=args.session_id,
+        live_tracks=live_tracks,
+        live_returns=live_returns,
+    )
+    out = result.to_dict()
+    out["session_id"] = args.session_id
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0 if result.ok else 1
+
+
 def _cmd_execute(args: argparse.Namespace) -> int:
     """W10-E2: dispatch the full ten-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
@@ -294,10 +343,30 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     Writes ``.last-push-state.json`` (always) + ``.last-push-errors.json``
     (on failure) into the song's directory. Prints a one-page summary to
     stdout.
+
+    W18-A: when ``--snapshot <path>`` is provided, runs the coherence
+    check before dispatching phases. Refuses with a teaching error and
+    exits non-zero if any link is stale or the session row is missing.
     """
     db_path = _resolve_db_path(args)
     conn = connect(db_path)
     song_id = _resolve_song_id(conn, args.session_id)
+
+    if args.snapshot:
+        live_tracks, live_returns = _load_snapshot_file(args.snapshot, subcmd="execute")
+        check = push.check_coherence(
+            conn,
+            session_id=args.session_id,
+            live_tracks=live_tracks,
+            live_returns=live_returns,
+        )
+        if not check.ok:
+            sys.stderr.write(
+                "push_cli execute: refused — coherence check failed (W18-A).\n"
+            )
+            json.dump(check.to_dict(), sys.stderr, indent=2)
+            sys.stderr.write("\n")
+            return 1
 
     if args.state_dir:
         state_dir = Path(args.state_dir)
@@ -429,9 +498,27 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("--state-dir", default=None,
                         help="directory for .last-push-state.json + "
                              ".last-push-errors.json (default: DB directory)")
+    p_exec.add_argument("--snapshot", default=None,
+                        help="W18-A: optional freshly-probed Live snapshot "
+                             "({tracks, returns} JSON, same shape as "
+                             "probe-and-link consumes). When provided, runs "
+                             "the coherence check before dispatching phases "
+                             "and refuses on stale link / missing session.")
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
     p_exec.set_defaults(func=_cmd_execute)
+
+    p_cc = sub.add_parser(
+        "check-coherence",
+        help="W18-A: refuse-and-teach validation of ableton_sessions + "
+             "ableton_links against a freshly-probed Live snapshot",
+    )
+    p_cc.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_cc)
+    p_cc.add_argument("--snapshot", required=True,
+                      help="path to a freshly-probed {tracks: [...], "
+                           "returns: [...]} JSON snapshot")
+    p_cc.set_defaults(func=_cmd_check_coherence)
 
     p_cs = sub.add_parser(
         "create-session",

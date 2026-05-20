@@ -415,6 +415,87 @@ def test_cli_probe_and_link_via_snapshot_file(
         fresh.close()
 
 
+# ---------------------------------------------------------------------------
+# check-coherence (W18-A)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_check_coherence_exits_zero_on_match(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """Coherent state → exit 0, ok=true in JSON output."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=4,
+    )
+    conn.commit()
+
+    snap = {"tracks": [{"track_index": 4, "name": "Drums"}], "returns": []}
+    spath = tmp_path / "snap.json"
+    spath.write_text(json.dumps(snap))
+
+    rc = push_cli.main([
+        "check-coherence", session, "--db", str(db_path), "--snapshot", str(spath),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["ok"] is True
+    assert out["errors"] == []
+
+
+def test_cli_check_coherence_exits_nonzero_on_stale_link(
+    conn, song, session, db_path, tmp_path, capsys,
+):
+    """Stale link → exit non-zero with stale_track_links in JSON output."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    conn.commit()
+
+    # Snapshot omits index 5 (user deleted that track in Live).
+    snap = {"tracks": [{"track_index": 1, "name": "1-MIDI"}], "returns": []}
+    spath = tmp_path / "snap.json"
+    spath.write_text(json.dumps(snap))
+
+    rc = push_cli.main([
+        "check-coherence", session, "--db", str(db_path), "--snapshot", str(spath),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0
+    assert out["ok"] is False
+    assert any(e["kind"] == "stale_track_links" for e in out["errors"])
+
+
+def test_cli_check_coherence_refuses_missing_session(db_path, tmp_path, conn, capsys):
+    """Session row absent → exit non-zero with session_missing."""
+    snap = {"tracks": [], "returns": []}
+    spath = tmp_path / "snap.json"
+    spath.write_text(json.dumps(snap))
+
+    rc = push_cli.main([
+        "check-coherence", "definitely-not-a-real-id",
+        "--db", str(db_path), "--snapshot", str(spath),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0
+    assert out["errors"][0]["kind"] == "session_missing"
+
+
+def test_cli_check_coherence_rejects_malformed_snapshot(
+    db_path, tmp_path, conn, session,
+):
+    """Snapshot file not shaped like {tracks, returns} → SystemExit with
+    same teaching text probe-and-link uses."""
+    spath = tmp_path / "bad.json"
+    spath.write_text(json.dumps([1, 2, 3]))
+    with pytest.raises(SystemExit, match="must be a JSON object"):
+        push_cli.main([
+            "check-coherence", session, "--db", str(db_path),
+            "--snapshot", str(spath),
+        ])
+
+
 def test_cli_song_slug_resolves_to_canonical_path(tmp_path, monkeypatch, capsys):
     """``--song <slug>`` resolves to ``songs/<slug>/<slug>.db``. Verify
     by chdir'ing into a tmp dir with that layout."""

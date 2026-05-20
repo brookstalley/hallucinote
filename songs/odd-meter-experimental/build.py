@@ -508,15 +508,14 @@ def _author_envelopes(conn, song_id: str, tracks: dict[str, str]) -> None:
 
 
 def build(reset: bool = False) -> str:
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
-
     conn = init_db(DB_PATH)
     try:
         existing = Q.get_song_by_name(conn, "odd-meter-experimental")
         if existing and not reset:
             print(f"song already exists (id={existing['id']}); use --reset to rebuild")
             return existing["id"]
+        if reset and existing is not None:
+            M.reset_song_content(conn, song_id=existing["id"])
 
         snapshot = json.loads(SNAPSHOT_PATH.read_text())
         song_id = replay_capture(

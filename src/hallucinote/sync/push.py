@@ -2348,6 +2348,156 @@ def _flag_case_near_matches(
 
 
 # ---------------------------------------------------------------------------
+# Coherence check (W18-A)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CoherenceResult:
+    """Outcome of :func:`check_coherence`. Tri-state: ``ok=True`` with no
+    errors means execute is safe; ``ok=False`` with errors means refuse and
+    surface recovery hints. ``notes`` carries informational findings (e.g.
+    "session has no links yet, push will create from scratch") that don't
+    block execute.
+    """
+    ok: bool = True
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def add_error(self, *, kind: str, detail: str, recovery: str) -> None:
+        self.errors.append({"kind": kind, "detail": detail, "recovery": recovery})
+        self.ok = False
+
+
+def check_coherence(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    live_tracks: list[dict[str, Any]],
+    live_returns: list[dict[str, Any]],
+) -> CoherenceResult:
+    """Validate that ``ableton_sessions`` + ``ableton_links`` rows are
+    consistent with a freshly-probed Live snapshot, before ``execute``
+    starts mutating Live.
+
+    Closes the punk-fate 2026-05-20 state-drift class: three pieces of
+    per-machine state (snapshot file, ``ableton_sessions``, ``ableton_links``)
+    with independent invalidation rules and no consistency check. This
+    function refuses execute on any of:
+
+    1. **Session row missing.** ``session_id`` doesn't resolve in
+       ``ableton_sessions`` (e.g. ``build.py --reset`` wiped it).
+    2. **Stale track link.** An ``ableton_links`` row points at a
+       ``track_index`` no longer in the live probe (e.g. the user deleted
+       the linked Live track).
+    3. **Stale return link.** Same shape for ``return_index``.
+
+    Callers pass a FRESH probe (re-run ``ableton_track(action='list')`` +
+    ``ableton_return(action='list')`` against Live just before this check).
+    The function reads links from the DB and validates against that probe.
+
+    Nested links (clip / device / device_chain) aren't validated directly
+    here — a stale parent track link cascade-invalidates them, and the
+    parent check is sufficient to refuse the push. Probing every nested
+    binding would require deep MCP traffic; the parent-level check buys
+    the same safety at a tenth the cost.
+
+    Returns a :class:`CoherenceResult`. Callers should refuse to execute
+    when ``ok`` is False and surface the per-error ``recovery`` hints.
+    """
+    result = CoherenceResult()
+
+    if Q.get_ableton_session(conn, session_id) is None:
+        result.add_error(
+            kind="session_missing",
+            detail=f"no ableton_sessions row with id {session_id!r}",
+            recovery=(
+                "Mint a fresh session: run "
+                "`push_cli probe-and-link --auto-session --song <slug> "
+                "--snapshot <path>`. This is the usual repro after "
+                "`build.py --reset` wipes the sessions table."
+            ),
+        )
+        # No session → no point checking links; they're orphaned anyway.
+        return result
+
+    live_track_indexes = {lt["track_index"] for lt in live_tracks}
+    live_return_indexes = {lr["return_index"] for lr in live_returns}
+
+    links = Q.get_ableton_links_for_session(conn, session_id)
+    if not links:
+        result.notes.append(
+            "session has no ableton_links rows — push will create tracks/returns "
+            "from scratch (this is fine for a first push, but probe-and-link "
+            "should have run if Live already contained any of the song's tracks)"
+        )
+        return result
+
+    stale_track_links: list[dict[str, Any]] = []
+    stale_return_links: list[dict[str, Any]] = []
+    for link in links:
+        db_kind = link["db_kind"]
+        ableton_index = link["ableton_index"]
+        if db_kind == "track":
+            if ableton_index not in live_track_indexes:
+                stale_track_links.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": ableton_index,
+                })
+        elif db_kind == "return":
+            if ableton_index not in live_return_indexes:
+                stale_return_links.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": ableton_index,
+                })
+        # Other kinds (clip / device / device_chain) are nested under a
+        # track or return; a stale parent link cascade-invalidates them
+        # and the parent-level error is sufficient.
+
+    if stale_track_links:
+        indexes = sorted({l["ableton_index"] for l in stale_track_links})
+        result.add_error(
+            kind="stale_track_links",
+            detail=(
+                f"{len(stale_track_links)} ableton_links row(s) point at "
+                f"track_index(es) {indexes} that no longer exist in Live "
+                f"(live tracks: {sorted(live_track_indexes)}). "
+                "Common cause: user deleted the linked Live track after "
+                "probe-and-link wrote the link row."
+            ),
+            recovery=(
+                "Re-run `push_cli probe-and-link` against a freshly-probed "
+                "snapshot — it upserts matches but doesn't delete stale "
+                "rows today, so for now you may also need to mint a fresh "
+                "session via `--auto-session`. (W18 will land strict "
+                "reconciliation in probe-and-link itself.)"
+            ),
+        )
+
+    if stale_return_links:
+        indexes = sorted({l["ableton_index"] for l in stale_return_links})
+        result.add_error(
+            kind="stale_return_links",
+            detail=(
+                f"{len(stale_return_links)} ableton_links row(s) point at "
+                f"return_index(es) {indexes} that no longer exist in Live "
+                f"(live returns: {sorted(live_return_indexes)}). "
+                "Common cause: user deleted the linked Live return after "
+                "probe-and-link wrote the link row."
+            ),
+            recovery=(
+                "Re-run `push_cli probe-and-link` against a freshly-probed "
+                "snapshot, or mint a fresh session via `--auto-session`."
+            ),
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Result application
 # ---------------------------------------------------------------------------
 

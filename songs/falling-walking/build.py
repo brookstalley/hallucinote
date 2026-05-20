@@ -751,11 +751,12 @@ def build(reset: bool = False) -> str:
     `--reset` remains an escape hatch for "wipe the DB and start fresh" but
     is no longer required in the normal flow.
     """
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
-
     conn = init_db(DB_PATH)
     try:
+        if reset:
+            song = Q.get_song_by_name(conn, "falling-walking")
+            if song is not None:
+                M.reset_song_content(conn, song_id=song["id"])
         with M.build_session(conn, song_name="falling-walking",
                               owner="build.py"):
             # Mix-half: replay the captured Ableton session.

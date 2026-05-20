@@ -669,3 +669,161 @@ def test_create_envelope_clip_cc_unaffected_by_track_kind_check(conn, song, clip
         target_clip_id=clip, parameter_path="64",
     )
     assert env_id
+
+
+# ---------- W18-C reset_song_content (soft reset) ----------
+
+
+def test_reset_song_content_preserves_tracks_and_returns(conn, song):
+    """The whole point: track / return UUIDs survive, so ableton_links
+    pointing at them remain valid across the iterate-loop reset."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+
+    M.reset_song_content(conn, song_id=song)
+
+    assert Q.get_track(conn, tid)["id"] == tid
+    returns_rows = list(Q.get_returns_for_song(conn, song))
+    assert any(r["id"] == rid for r in returns_rows)
+
+
+def test_reset_song_content_preserves_ableton_sessions_and_links(conn, song):
+    """The W18-C goal: session_id presented as a durable handle survives
+    a soft reset, so the natural compose-iterate loop doesn't break push."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    sess = M.create_ableton_session(conn, song_id=song, name="draft")
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=5,
+    )
+
+    M.reset_song_content(conn, song_id=song)
+
+    assert Q.get_ableton_session(conn, sess) is not None
+    assert Q.get_ableton_link(
+        conn, session_id=sess, db_kind="track", db_id=tid,
+    ) == 5
+
+
+def test_reset_song_content_wipes_clips_notes_and_arrangement(conn, song):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="c")
+    M.insert_notes(
+        conn, clip_id=cid,
+        notes=[{"pitch": 36, "start_beats": 0.0,
+                "duration_beats": 0.25, "velocity": 100}],
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=2.0,
+    )
+
+    counts = M.reset_song_content(conn, song_id=song)
+
+    assert counts["clips"] >= 1
+    assert counts["notes"] >= 1
+    assert counts["arrangement_clips"] >= 1
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM arrangement_clips"
+    ).fetchone()[0] == 0
+
+
+def test_reset_song_content_wipes_score_half(conn, song):
+    M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=5.0)
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=120.0)
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="start")
+
+    counts = M.reset_song_content(conn, song_id=song)
+
+    assert counts["sections"] == 1
+    assert counts["tempo_map"] == 1
+    assert counts["time_signature_map"] == 1
+    assert counts["cue_points"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM sections").fetchone()[0] == 0
+
+
+def test_reset_song_content_emits_event(conn, song):
+    """Audit-log invariant: the soft reset emits one song_content_reset
+    event with table counts in the payload."""
+    M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=5.0)
+
+    M.reset_song_content(conn, song_id=song, actor="build", reason="test")
+
+    last = conn.execute(
+        "SELECT kind, actor, reason, payload_json FROM events "
+        "ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    assert last["kind"] == "song_content_reset"
+    assert last["actor"] == "build"
+    assert last["reason"] == "test"
+    payload = json.loads(last["payload_json"])
+    assert payload["counts"]["sections"] == 1
+
+
+def test_reset_song_content_scoped_to_one_song(conn):
+    """Wiping song A's content must not touch song B's."""
+    a = M.create_song(conn, name="a", key="C")
+    b = M.create_song(conn, name="b", key="G")
+    M.create_section(conn, song_id=a, name="A-verse", start_bar=1.0, end_bar=5.0)
+    M.create_section(conn, song_id=b, name="B-verse", start_bar=1.0, end_bar=5.0)
+
+    M.reset_song_content(conn, song_id=a)
+
+    b_sections = conn.execute(
+        "SELECT name FROM sections WHERE song_id = ?", (b,)
+    ).fetchall()
+    assert len(b_sections) == 1
+    assert b_sections[0]["name"] == "B-verse"
+
+
+def test_reset_song_content_round_trips_punk_fate_scenario(conn, song):
+    """The exact W18-C repro: probe-and-link writes a track link, then
+    --reset, then build re-creates the track (same UUID via upsert), then
+    a fresh push observes the link is still pointing at a valid track.
+
+    This is the "session_id presented as durable handle must survive the
+    iterate-loop" guarantee made by W18-C."""
+    # First build pass.
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    sess = M.create_ableton_session(conn, song_id=song, name="draft")
+    M.link_db_to_ableton(
+        conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=5,
+    )
+
+    # User edits build.py and runs --reset.
+    M.reset_song_content(conn, song_id=song)
+
+    # Build re-runs create_track with same (song_id, track_index) → upsert
+    # path returns the SAME tid.
+    tid_again = M.create_track(
+        conn, song_id=song, track_index=1, name="Drums", kind="midi",
+    )
+    # MutatorResult is comparable with == to the string UUID for the
+    # tid_again, but the test ergonomic is to compare the raw IDs.
+    assert str(tid_again) == str(tid)
+
+    # The ableton_links row survived AND still points at the same valid
+    # track UUID. Push planner would skip the create.
+    assert Q.get_ableton_link(
+        conn, session_id=sess, db_kind="track", db_id=tid,
+    ) == 5
+
+
+def test_reset_song_content_preserves_markdown_refs(conn, song):
+    """Decisions / annotations are author-managed, not rebuilt by
+    build.py. A soft reset must not wipe them."""
+    conn.execute(
+        """INSERT INTO markdown_refs
+               (path, kind, scope, song_id, content_hash)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("songs/t/decisions/01-foo.md", "decision", "song", song, "abc123"),
+    )
+    M.reset_song_content(conn, song_id=song)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM markdown_refs WHERE song_id = ?", (song,)
+    ).fetchone()[0]
+    assert n == 1

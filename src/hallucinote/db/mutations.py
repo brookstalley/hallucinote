@@ -2885,6 +2885,122 @@ def replace_breakpoints(
 
 
 # ---------------------------------------------------------------------------
+# Soft reset (W18-C)
+# ---------------------------------------------------------------------------
+
+
+def reset_song_content(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    actor: str = "build",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> dict[str, int]:
+    """Soft-reset a song: wipe rebuild-by-build.py content while preserving
+    the mix layout (tracks, returns, sends, devices) AND the Ableton
+    projection (ableton_sessions, ableton_links).
+
+    W18-C: closes the punk-fate state-drift bug where ``build.py --reset``
+    wiped ``ableton_sessions`` + ``ableton_links``, invalidating session_ids
+    presented as durable handles. Soft reset keeps those bindings so the
+    natural compose-iterate loop (edit build.py → re-run --reset → push
+    again) doesn't surface "no ableton_sessions row" errors mid-flow.
+
+    Track / return / device UUIDs survive because the mix-layout mutators
+    (``create_track``, ``create_return``, ``create_device``, etc.) are
+    upsert-shaped by ``(song_id, track_index)`` / ``(song_id, position)``
+    keys (W12-A). ``replay_capture`` re-runs after reset return the same
+    UUIDs, and ``ableton_links`` stay pointed at valid targets.
+
+    Wiped tables (scoped to this song):
+
+    * ``sections``, ``tempo_map``, ``time_signature_map``, ``cue_points``
+      (score-half)
+    * ``arrangement_clips``, ``clips``, ``notes`` (clip content)
+    * ``envelopes``, ``automation_breakpoints`` (automation)
+
+    Preserved (scoped to this song):
+
+    * ``songs`` (the song row itself)
+    * ``tracks``, ``returns``, ``sends``
+    * ``device_chains``, ``devices``, ``device_parameters``
+    * ``ableton_sessions``, ``ableton_links``
+    * ``markdown_refs`` (decisions / annotations are author-managed)
+    * ``events``, ``requests`` (audit log — append-only by invariant)
+
+    Cross-song preserves: ``kits``, ``preset_chains``.
+
+    For a full clean slate (drop bindings too), unlink the DB file
+    directly — that's the explicit "I really want to start over" path.
+
+    Returns a counts dict mapping table name -> deleted row count, and
+    emits one ``song_content_reset`` event with those counts in the
+    payload.
+    """
+    counts: dict[str, int] = {}
+
+    # Leaf-first, even though FK CASCADEs would handle dependents — we want
+    # accurate row counts per table for the emitted event payload.
+
+    cur = conn.execute(
+        "DELETE FROM automation_breakpoints WHERE envelope_id IN "
+        "(SELECT id FROM envelopes WHERE song_id = ?)",
+        (song_id,),
+    )
+    counts["automation_breakpoints"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM envelopes WHERE song_id = ?", (song_id,))
+    counts["envelopes"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM arrangement_clips WHERE song_id = ?", (song_id,),
+    )
+    counts["arrangement_clips"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM notes WHERE clip_id IN "
+        "(SELECT c.id FROM clips c JOIN tracks t ON t.id = c.track_id "
+        " WHERE t.song_id = ?)",
+        (song_id,),
+    )
+    counts["notes"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM clips WHERE track_id IN "
+        "(SELECT id FROM tracks WHERE song_id = ?)",
+        (song_id,),
+    )
+    counts["clips"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM cue_points WHERE song_id = ?", (song_id,))
+    counts["cue_points"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM time_signature_map WHERE song_id = ?", (song_id,),
+    )
+    counts["time_signature_map"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM tempo_map WHERE song_id = ?", (song_id,))
+    counts["tempo_map"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM sections WHERE song_id = ?", (song_id,))
+    counts["sections"] = cur.rowcount
+
+    _emit(
+        conn,
+        "song_content_reset",
+        {"counts": counts},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason or "reset_song_content (W18-C soft reset)",
+    )
+    conn.commit()
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection: sessions + links
 # ---------------------------------------------------------------------------
 

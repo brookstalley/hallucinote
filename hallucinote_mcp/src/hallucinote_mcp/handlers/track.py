@@ -174,9 +174,23 @@ def delete_handler(context: LiveContext, *, track_index: int) -> dict[str, Any]:
     Track wrapper raises ``ArgumentError``). ``_resolve_track`` still runs so
     out-of-range indices surface as a teaching error before we touch Live's
     API, but the C++ side only sees the int.
+
+    W18-E: refuse-and-teach before Live rejects with ``RuntimeError:
+    Couldn't delete track``. Live requires the set to contain at least
+    one track, so deleting the last surviving track is structurally
+    impossible — surface that constraint with a recoverable hint
+    (create a new track first, then re-delete) instead of a bare
+    runtime error from the LOM.
     """
     song = context.song
     _resolve_track(context, track_index)  # range check + teaching error
+    if len(song.tracks) <= 1:
+        raise ValueError(
+            "delete: Live requires the set to contain at least one track; "
+            "refusing to delete the last surviving track. Create a new "
+            "track first (ableton_track(action='create')), then retry "
+            "the delete."
+        )
     song.delete_track(track_index - 1)
     return {"deleted_track_index": track_index}
 

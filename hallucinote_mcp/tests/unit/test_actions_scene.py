@@ -281,6 +281,25 @@ def test_delete_removes_scene(loaded_actions):
     assert [s.name for s in ctx.song.scenes] == ["Intro", "Chorus"]
 
 
+def test_delete_refuses_last_remaining_scene(loaded_actions):
+    """W18-E symmetry with track delete: Live requires the set to contain
+    at least one scene. Refuse with a teaching error before the LOM raises."""
+    song = FakeSong(scenes=[FakeScene("OnlyOne")])
+    ctx = FakeCtx(song)
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="delete",
+            params={"scene_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert len(song.scenes) == 1
+    assert song._deleted == []
+    assert "at least one scene" in resp.error
+    assert "ableton_scene(action='create')" in resp.error
+
+
 # ---------- rename / fire ----------
 
 

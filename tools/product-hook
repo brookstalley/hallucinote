@@ -2460,20 +2460,33 @@ def cmd_stop(project_dir: Path) -> int:
                         pass
 
                 if has_pr:
-                    # Check for review evidence with content validation
-                    branch_file = current_branch.replace("/", "--") + ".json"
-                    evidence_path = pr_reviews_dir / branch_file
-                    pr_review_valid = False
-                    if evidence_path.is_file():
-                        try:
-                            data = json.loads(evidence_path.read_text())
-                            if isinstance(data.get("findings"), list) and data.get("summary"):
-                                pr_review_valid = True
-                        except (json.JSONDecodeError, OSError):
-                            pass
-                    if not pr_review_valid:
-                        pr_would_block = True
-                        pr_block_branch = current_branch
+                    # Symmetry with `/pr create` Step 1b: when the PR diff is
+                    # currently doc-only (merge-base...HEAD all .md), the
+                    # cumulative-Critic and PR-reviewer gates were legitimately
+                    # skipped at create-time and no evidence file was written.
+                    # Gate 3 would otherwise block session end with a misleading
+                    # "no review evidence" error for a PR that doesn't need one.
+                    # If a later session adds non-.md changes, this check returns
+                    # False and the gate fires as intended — matching the create-
+                    # flow contract.
+                    pr_is_doc_only, _ = _pr_diff_is_doc_only(project_dir)
+                    if pr_is_doc_only:
+                        pass  # PR diff is all .md — no evidence required
+                    else:
+                        # Check for review evidence with content validation
+                        branch_file = current_branch.replace("/", "--") + ".json"
+                        evidence_path = pr_reviews_dir / branch_file
+                        pr_review_valid = False
+                        if evidence_path.is_file():
+                            try:
+                                data = json.loads(evidence_path.read_text())
+                                if isinstance(data.get("findings"), list) and data.get("summary"):
+                                    pr_review_valid = True
+                            except (json.JSONDecodeError, OSError):
+                                pass
+                        if not pr_review_valid:
+                            pr_would_block = True
+                            pr_block_branch = current_branch
         except Exception:  # prawduct:ok-broad-except — gate check must not crash session end
             pass
 
@@ -3175,10 +3188,142 @@ def cmd_regen_views(project_dir: Path) -> int:
     return 0
 
 
+def cmd_check_operator_verification(project_dir: Path) -> int:
+    """Structural gate for `/pr create`: refuse open when queue has pending entries.
+
+    Mirrors :func:`cmd_check_cumulative_critic` semantics — exit 0 only
+    when the gate is satisfied, exit 1 with stderr describing the
+    blocker. The gate is only active when ``operator_verification_required:
+    true`` is set in ``project-state.yaml``; otherwise the command is a
+    no-op exit 0.
+    """
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+
+    result = ov.run_check_operator_verification(project_dir)
+    if not result["required"]:
+        return 0
+    if result["pending"] == 0:
+        print(result["message"])
+        return 0
+    print(result["message"], file=sys.stderr)
+    return 1
+
+
+def cmd_accept_operator_verification(
+    project_dir: Path, rationale: str | None
+) -> int:
+    """Flip all pending entries to ``accepted`` with the supplied rationale.
+
+    Invoked by ``/pr create --accept-pending-verification "rationale"``.
+    Refuses an empty or missing rationale — the work-log capture is the
+    whole point of the override.
+    """
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+
+    if rationale is None or not rationale.strip():
+        print(
+            "error: accept-operator-verification requires a non-empty "
+            "rationale argument — `/pr create --accept-pending-verification "
+            '"rationale"`. The override is recorded in operator-verification.md '
+            "as the work-log entry.",
+            file=sys.stderr,
+        )
+        return 1
+
+    result = ov.run_accept_pending(project_dir, rationale)
+    if "error" in result:
+        print(f"error: {result['error']}", file=sys.stderr)
+        return 1
+
+    for action in result["actions"]:
+        print(action)
+    for note in result["notes"]:
+        print(f"  * {note}")
+    return 0
+
+
+def _pr_diff_is_doc_only(project_dir: Path) -> tuple[bool, str]:
+    """Shared helper: is the PR diff (``merge-base...HEAD``) all ``.md``?
+
+    Returns ``(is_doc_only, status_message)``. ``is_doc_only`` is True only
+    when the diff is non-empty AND every file ends in ``.md``. The status
+    message names the specific reason for False (``no-base``, ``git-failed``,
+    ``empty-diff``, ``not-doc-only: <files>``) so both the CLI gate and the
+    stop-hook Gate 3 can surface actionable detail without re-implementing
+    the diff inspection. Base resolution mirrors ``_coverage_resolve_base``
+    so the helper sees the same diff surface as the cumulative-Critic flow.
+    """
+    base, base_note = _coverage_resolve_base(project_dir)
+    if base is None:
+        return False, f"no-base: {base_note}"
+
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", f"{base}...HEAD"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return False, f"git-failed: git diff {base}...HEAD failed: {proc.stderr.strip()}"
+
+    files = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not files:
+        return False, f"empty-diff: no files changed in {base}...HEAD"
+
+    non_md = [f for f in files if not f.endswith(".md")]
+    if non_md:
+        sample = ", ".join(non_md[:3])
+        more = f" (+{len(non_md) - 3} more)" if len(non_md) > 3 else ""
+        return False, f"not-doc-only: PR includes non-.md files: {sample}{more}"
+
+    return True, f"doc-only: {len(files)} file(s) in {base}...HEAD all .md"
+
+
+def cmd_check_pr_doc_only(project_dir: Path) -> int:
+    """Fast-path gate for `/pr create`: report whether the PR diff is doc-only.
+
+    Exit 0 when every file in ``merge-base...HEAD`` ends in ``.md`` and the
+    diff is non-empty — the `/pr` skill uses this to skip the cumulative-
+    Critic and PR-reviewer gates, mirroring the session-end stop-hook
+    behavior (`_session_changes_are_doc_only`) at the PR boundary. The
+    stop hook's PR-review evidence gate (Gate 3) consults the same helper
+    so a doc-only PR doesn't get blocked at session end for missing
+    evidence — symmetric behavior across both gates.
+
+    Exit 1 otherwise (any non-``.md`` file, empty diff, no resolvable base
+    branch, or git failure). Fails closed: when the gate cannot be evaluated,
+    fall through to the full review path rather than silently skipping it.
+    """
+    is_doc_only, status = _pr_diff_is_doc_only(project_dir)
+    if is_doc_only:
+        print(
+            f"{status} — cumulative-Critic and PR-reviewer gates may be skipped."
+        )
+        return 0
+    suffix = (
+        ". Doc-only fast-path is not applicable."
+        if status.startswith("empty-diff")
+        else ". Falling back to full review path."
+        if status.startswith(("no-base", "git-failed"))
+        else ". Full review required."
+    )
+    print(f"{status}{suffix}", file=sys.stderr)
+    return 1
+
+
 _USAGE = (
     "Usage: product-hook "
     "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
-    "verify-chunk-refs [chunk_id]|verify-coverage|regen-views}"
+    "verify-chunk-refs [chunk_id]|verify-coverage|"
+    "check-operator-verification|accept-operator-verification <rationale>|"
+    "check-pr-doc-only|regen-views}"
 )
 
 
@@ -3205,6 +3350,13 @@ def main() -> int:
         return cmd_verify_chunk_refs(project_dir, chunk_id)
     elif command == "verify-coverage":
         return cmd_verify_coverage(project_dir)
+    elif command == "check-operator-verification":
+        return cmd_check_operator_verification(project_dir)
+    elif command == "accept-operator-verification":
+        rationale = sys.argv[2] if len(sys.argv) > 2 else None
+        return cmd_accept_operator_verification(project_dir, rationale)
+    elif command == "check-pr-doc-only":
+        return cmd_check_pr_doc_only(project_dir)
     elif command == "regen-views":
         return cmd_regen_views(project_dir)
     else:

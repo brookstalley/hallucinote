@@ -2125,7 +2125,7 @@ def create_device(
     kind: str,
     display_name: str,
     preset_uri: str | None = None,
-    preset_query: dict | None = None,
+    preset_query: dict[str, Any] | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,

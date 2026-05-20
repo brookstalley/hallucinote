@@ -110,7 +110,7 @@ from hallucinote.tempo import to_live_bpm
 
 # 168 BPM eighth-pulse in 7/8 -> 84 BPM quarter-pulse (Live)
 bpm = to_live_bpm(168.0, "eighth")
-M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, bpm=bpm)
+M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=bpm)
 ```
 
 Accepted `pulse_kind`: `whole`, `half`, `dotted_half`, `quarter`, `dotted_quarter`, `triplet_quarter`, `eighth`, `dotted_eighth`, `triplet_eighth`, `sixteenth`, `dotted_sixteenth`, `triplet_sixteenth`. Unknown values refuse with the accepted list.

@@ -996,6 +996,18 @@ def _emit_device_calls(
     yet linked in this session, emit the load and skip parameter writes —
     the agent must call apply_push_results to record the new device_index
     before parameters can be addressed."""
+    # W13-B (v0.9.0): placeholder devices represent an author-intentional
+    # empty slot. Push leaves the chain position empty; the consumer
+    # picks an instrument/effect to fill it. Skip cleanly with a warn so
+    # the agent UI surfaces the gap.
+    if device["kind"] == "placeholder":
+        plan.warn(
+            f"placeholder device {device['display_name']!r} at position "
+            f"{device['position']} on {parent_kind} {parent_name!r} — "
+            "skipping load (author left this slot intentionally empty; "
+            "load any instrument/effect there in Live before producing)"
+        )
+        return
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device["id"]
     )

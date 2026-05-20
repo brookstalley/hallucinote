@@ -528,3 +528,310 @@ def compile_snapshot(
         "returns": returns,
         "tracks": tracks,
     }
+
+
+# ---------------------------------------------------------------------------
+# Snapshot diff (W12-B)
+# ---------------------------------------------------------------------------
+# W12-B's `/song-snapshot` skill drives a fresh capture, then diffs the result
+# against the on-disk `captured_session.json` so the user can see what changed
+# before overwriting. The diff lives here (not in the skill body) so the
+# matching logic is testable and the LLM doesn't have to re-derive it from a
+# 50KB JSON every refresh.
+#
+# Identity rules:
+#   - Returns matched by `index` (Live's 1-based return slot)
+#   - Tracks matched by `index` (Live's 1-based track slot)
+#   - Devices inside a chain matched by `index` within that chain
+# Name drift is reported as a field_change, not as add/remove. Reordering
+# Live's tracks moves the indices; we report that as removed-from-old-index
+# + added-at-new-index rather than trying to track-by-name (Live allows
+# duplicate track names, so name is not a reliable identity).
+#
+# Per-device dialed-param drift is diffed in full; nested rack chains are
+# walked one level (matching `_replay_devices`). Recursively nested racks
+# are reported as a single "subtree_changed" flag — keeping the depth bounded
+# matches what replay supports anyway.
+
+
+_MIXER_FIELDS = ("volume", "panning", "pan", "mute", "solo", "arm", "color")
+_RETURN_FIELDS = ("name", "volume", "panning", "pan", "color")
+_TRACK_IDENTITY_FIELDS = ("name", "type")
+_DEVICE_IDENTITY_FIELDS = ("name", "class", "kind", "guess_uri")
+
+
+def _field_diff(old: dict[str, Any], new: dict[str, Any], fields: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """Compare each named field in two dicts; return {field: {old, new}} entries
+    where the value differs. Fields absent from one side are reported only when
+    the other side has a non-None value (avoids spurious None-vs-missing churn)."""
+    out: dict[str, dict[str, Any]] = {}
+    for f in fields:
+        o = old.get(f)
+        n = new.get(f)
+        if o == n:
+            continue
+        if o is None and n is None:
+            continue
+        out[f] = {"old": o, "new": n}
+    return out
+
+
+def _sends_diff(
+    old_sends: dict[str, Any] | None,
+    new_sends: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Diff two sends maps (return_name -> level). Returns
+    {added: {name: level}, removed: {name: level}, changed: {name: {old, new}}}.
+    Empty fields are omitted from the result."""
+    old = old_sends or {}
+    new = new_sends or {}
+    added = {k: new[k] for k in new.keys() - old.keys()}
+    removed = {k: old[k] for k in old.keys() - new.keys()}
+    changed: dict[str, dict[str, Any]] = {}
+    for k in old.keys() & new.keys():
+        if old[k] != new[k]:
+            changed[k] = {"old": old[k], "new": new[k]}
+    out: dict[str, Any] = {}
+    if added:
+        out["added"] = added
+    if removed:
+        out["removed"] = removed
+    if changed:
+        out["changed"] = changed
+    return out
+
+
+def _params_diff(
+    old_params: dict[str, Any] | None,
+    new_params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Diff two `params_dialed` maps. Each entry is `{value, normalized}`; an
+    entry differs if either subfield differs."""
+    old = old_params or {}
+    new = new_params or {}
+    added = {k: new[k] for k in new.keys() - old.keys()}
+    removed = {k: old[k] for k in old.keys() - new.keys()}
+    changed: dict[str, dict[str, Any]] = {}
+    for k in old.keys() & new.keys():
+        if old[k] != new[k]:
+            changed[k] = {"old": old[k], "new": new[k]}
+    out: dict[str, Any] = {}
+    if added:
+        out["added"] = added
+    if removed:
+        out["removed"] = removed
+    if changed:
+        out["changed"] = changed
+    return out
+
+
+def _devices_diff(
+    old_devices: list[dict[str, Any]] | None,
+    new_devices: list[dict[str, Any]] | None,
+    _depth: int = 0,
+) -> dict[str, Any]:
+    """Diff two device arrays (top-level or nested-chain). Matches by `index`."""
+    old = old_devices or []
+    new = new_devices or []
+    old_by_idx = {int(d["index"]): d for d in old if "index" in d}
+    new_by_idx = {int(d["index"]): d for d in new if "index" in d}
+    added = [new_by_idx[i] for i in sorted(new_by_idx.keys() - old_by_idx.keys())]
+    removed = [old_by_idx[i] for i in sorted(old_by_idx.keys() - new_by_idx.keys())]
+    changed: list[dict[str, Any]] = []
+    for i in sorted(old_by_idx.keys() & new_by_idx.keys()):
+        od = old_by_idx[i]
+        nd = new_by_idx[i]
+        entry: dict[str, Any] = {"index": i}
+        fc = _field_diff(od, nd, _DEVICE_IDENTITY_FIELDS)
+        if fc:
+            entry["field_changes"] = fc
+        pd = _params_diff(od.get("params_dialed"), nd.get("params_dialed"))
+        if pd:
+            entry["params"] = pd
+        # Nested rack chains: walk one level, matching capture/replay depth.
+        old_chains = od.get("chains")
+        new_chains = nd.get("chains")
+        if old_chains or new_chains:
+            if _depth > 0:
+                # Deeper-than-one-level nested chains: flag as opaque change.
+                if old_chains != new_chains:
+                    entry["nested_chains_subtree_changed"] = True
+            else:
+                cd = _chains_diff(old_chains, new_chains)
+                if cd:
+                    entry["chains"] = cd
+        if len(entry) > 1:
+            entry["name"] = nd.get("name", od.get("name"))
+            changed.append(entry)
+    out: dict[str, Any] = {}
+    if added:
+        out["added"] = added
+    if removed:
+        out["removed"] = removed
+    if changed:
+        out["changed"] = changed
+    return out
+
+
+def _chains_diff(
+    old_chains: list[dict[str, Any]] | None,
+    new_chains: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Diff two `chains` arrays (rack-device nested chains). Matches by
+    `chain_index`. Each chain's devices are diffed at `_depth=1` so the
+    'one level only' invariant from replay holds."""
+    old = old_chains or []
+    new = new_chains or []
+    old_by_idx = {int(c["chain_index"]): c for c in old if "chain_index" in c}
+    new_by_idx = {int(c["chain_index"]): c for c in new if "chain_index" in c}
+    added = [new_by_idx[i] for i in sorted(new_by_idx.keys() - old_by_idx.keys())]
+    removed = [old_by_idx[i] for i in sorted(old_by_idx.keys() - new_by_idx.keys())]
+    changed: list[dict[str, Any]] = []
+    for i in sorted(old_by_idx.keys() & new_by_idx.keys()):
+        oc = old_by_idx[i]
+        nc = new_by_idx[i]
+        entry: dict[str, Any] = {"chain_index": i}
+        if oc.get("name") != nc.get("name"):
+            entry["name_change"] = {"old": oc.get("name"), "new": nc.get("name")}
+        dd = _devices_diff(oc.get("devices"), nc.get("devices"), _depth=1)
+        if dd:
+            entry["devices"] = dd
+        if len(entry) > 1:
+            changed.append(entry)
+    out: dict[str, Any] = {}
+    if added:
+        out["added"] = added
+    if removed:
+        out["removed"] = removed
+    if changed:
+        out["changed"] = changed
+    return out
+
+
+def _entity_diff(old: dict[str, Any], new: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    """Diff a track or return: mixer/identity fields + sends + devices.
+    `fields` selects the named-field set (different for track vs return)."""
+    entry: dict[str, Any] = {"index": int(new.get("index", old.get("index")))}
+    fc = _field_diff(old, new, fields)
+    if fc:
+        entry["field_changes"] = fc
+    sd = _sends_diff(old.get("sends"), new.get("sends"))
+    if sd:
+        entry["sends"] = sd
+    dd = _devices_diff(old.get("devices"), new.get("devices"))
+    if dd:
+        entry["devices"] = dd
+    return entry
+
+
+def diff_snapshots(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Compute a structured diff between two captured-session snapshots.
+
+    Identity: tracks/returns matched by `index`; devices within a chain matched
+    by `index` within that chain. Name drift is a field-change, not an
+    add/remove (Live track names aren't unique enough to use as identity).
+
+    Returns a dict with keys (only those with non-empty content):
+
+      ``song``    : ``{field: {old, new}}`` for tempo / signature changes
+      ``master``  : ``{field: {old, new}}`` for master volume/pan changes
+      ``returns`` : ``{added: [...], removed: [...], changed: [entity_diff]}``
+      ``tracks``  : same shape as ``returns``
+
+    An ``entity_diff`` is:
+
+      ``{index, field_changes, sends, devices}`` — any field is omitted if the
+      sub-diff is empty.
+
+    The whole result is empty (`{}`) when snapshots are identical at this
+    schema's resolution. Caller checks ``not result`` to know "no changes."
+    """
+    out: dict[str, Any] = {}
+
+    old_song = old.get("song") or {}
+    new_song = new.get("song") or {}
+    song_fc = _field_diff(old_song, new_song, ("tempo", "signature"))
+    if song_fc:
+        out["song"] = song_fc
+    master_fc = _field_diff(
+        old_song.get("master") or {},
+        new_song.get("master") or {},
+        ("volume", "panning", "pan"),
+    )
+    if master_fc:
+        out["master"] = master_fc
+
+    for kind, fields in (("returns", _RETURN_FIELDS), ("tracks", _MIXER_FIELDS + _TRACK_IDENTITY_FIELDS)):
+        old_items = old.get(kind) or []
+        new_items = new.get(kind) or []
+        old_by_idx = {int(it["index"]): it for it in old_items if "index" in it}
+        new_by_idx = {int(it["index"]): it for it in new_items if "index" in it}
+        added = [new_by_idx[i] for i in sorted(new_by_idx.keys() - old_by_idx.keys())]
+        removed = [old_by_idx[i] for i in sorted(old_by_idx.keys() - new_by_idx.keys())]
+        changed: list[dict[str, Any]] = []
+        for i in sorted(old_by_idx.keys() & new_by_idx.keys()):
+            entry = _entity_diff(old_by_idx[i], new_by_idx[i], fields)
+            if len(entry) > 1:
+                changed.append(entry)
+        sub: dict[str, Any] = {}
+        if added:
+            sub["added"] = added
+        if removed:
+            sub["removed"] = removed
+        if changed:
+            sub["changed"] = changed
+        if sub:
+            out[kind] = sub
+
+    return out
+
+
+def format_diff_summary(diff: dict[str, Any]) -> str:
+    """One-screen human-readable summary of a diff dict. The skill prints this
+    for the user, then asks to confirm overwrite. Detailed per-param drift is
+    summarized as counts; users who want the full per-field detail read the
+    JSON itself."""
+    if not diff:
+        return "No changes — snapshot is up to date."
+    lines: list[str] = []
+    if "song" in diff:
+        for f, ch in diff["song"].items():
+            lines.append(f"  song.{f}: {ch['old']!r} -> {ch['new']!r}")
+    if "master" in diff:
+        for f, ch in diff["master"].items():
+            lines.append(f"  master.{f}: {ch['old']!r} -> {ch['new']!r}")
+    for kind in ("returns", "tracks"):
+        sub = diff.get(kind)
+        if not sub:
+            continue
+        for item in sub.get("added") or []:
+            lines.append(f"  +{kind[:-1]} {item.get('index')} {item.get('name')!r}")
+        for item in sub.get("removed") or []:
+            lines.append(f"  -{kind[:-1]} {item.get('index')} {item.get('name')!r}")
+        for item in sub.get("changed") or []:
+            idx = item["index"]
+            bits: list[str] = []
+            if "field_changes" in item:
+                bits.append(f"{len(item['field_changes'])} field(s)")
+            if "sends" in item:
+                s = item["sends"]
+                send_bits = []
+                if s.get("added"):
+                    send_bits.append(f"+{len(s['added'])}")
+                if s.get("removed"):
+                    send_bits.append(f"-{len(s['removed'])}")
+                if s.get("changed"):
+                    send_bits.append(f"~{len(s['changed'])}")
+                bits.append(f"sends {' '.join(send_bits)}")
+            if "devices" in item:
+                d = item["devices"]
+                dev_bits = []
+                if d.get("added"):
+                    dev_bits.append(f"+{len(d['added'])}")
+                if d.get("removed"):
+                    dev_bits.append(f"-{len(d['removed'])}")
+                if d.get("changed"):
+                    dev_bits.append(f"~{len(d['changed'])}")
+                bits.append(f"devices {' '.join(dev_bits)}")
+            lines.append(f"  ~{kind[:-1]} {idx}: {', '.join(bits)}")
+    return "\n".join(lines) if lines else "No changes — snapshot is up to date."

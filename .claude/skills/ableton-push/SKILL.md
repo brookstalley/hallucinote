@@ -35,16 +35,13 @@ If the slug is missing, ask the user. For session, default to `--auto-session` o
 0a. Probe Live for installed plugins         → plugins.json
 0b. python -m hallucinote.sync.compat check  → refuse-and-confirm gate
 1.  python -m hallucinote.sync.push_cli probe-and-link → ableton_links rows for matches
-2.  python -m hallucinote.sync.push_cli phases → ten phase names
-3.  For each phase, in order:
-      a. python -m hallucinote.sync.push_cli plan <phase> → plan.json
-      b. Execute every call in plan.calls via MCP
-      c. Assemble results.json
-      d. python -m hallucinote.sync.push_cli apply --results results.json
-4.  Report total counts + any failures.
+2.  python -m hallucinote.sync.push_cli execute → dispatches all ten phases
+3.  Read .last-push-state.json + report.
 ```
 
-Steps 3a–3d must run **strictly in order**, one phase at a time. Phases later in the list inspect `ableton_links` written by earlier phases — if you batch-plan everything up front, later phases will see stale state and emit either redundant creates or strict-precondition errors.
+The `execute` subcommand (W10-E2) runs all ten phases inside the CLI process, dispatching every MCP call directly to Live's Remote Script over TCP. The agent doesn't touch the per-call MCP path for the bulk-data phases. **This is the default and only path for full-song pushes** — agent-side per-phase dispatch is the v1.0 ceiling (each `ableton_clip(create, notes=[…])` carries ~10–30 KB of inline JSON in the agent's tool-use block; a 29-clip song burned ~500 KB of context). `execute` removes that cost entirely.
+
+The per-call MCP path documented at the bottom of this file is the **fallback** for interactive iteration (single clip edits, parameter nudges, A/B parameter comparisons) — not full-song pushes.
 
 ### Step 0 — Probe Live for the snapshot
 
@@ -111,74 +108,49 @@ Display to the user:
 
 Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched — push is additive.
 
-### Step 2 — Enumerate phases
+### Step 2 — Execute the push
 
 Run:
 ```
-python3 -m hallucinote.sync.push_cli phases <session_id> --song <slug>
+python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug>
 ```
 
-Output is a JSON document with a `phases` array, each entry `{"name", "description"}`. Hold this list in mind — the loop below iterates it in order.
+This walks all ten phases in order, dispatching every MCP call directly to Live's Remote Script over TCP. Each phase's results are applied to the DB before the next phase plans, so `ableton_links` updates propagate as expected.
 
-### Step 3 — Drive each phase
+**Exit code contract:**
 
-For **each** phase in the list (top to bottom):
+| Code | Meaning | What to do |
+|------|---------|------------|
+| 0 | All phases ok | Proceed to Step 3. |
+| 1 | Partial — halted at a phase boundary | Read `.last-push-errors.json`, diagnose, fix in `build.py` (or fix the snapshot), rebuild, re-execute. Idempotent re-run skips already-applied rows. |
+| 2 | Connection lost | Confirm Live is open + Hallucinote is selected as a Control Surface. Re-execute. |
 
-**3a. Emit the plan.**
-```
-python3 -m hallucinote.sync.push_cli plan <phase-name> <session_id> --song <slug>
-```
+`execute` writes two files into the song directory (`songs/<slug>/`):
 
-Save stdout to `/tmp/ableton-push-plan-<phase>.json` using Write — `<phase>` substituted with the actual phase name (e.g., `tempo_map`, `tracks`). The apply step (3c) re-reads this file via `--plan`, so use the same path consistently in 3a and 3c.
+- **`.last-push-state.json`** — per-phase status (`ok` / `skipped` / `halted` / `pending`), counts, the halted phase name. Always written.
+- **`.last-push-errors.json`** — per-error forensics (key, tool, action, `args_summary`, error message, hint). Written only on failure. Stale files from prior partial runs are deleted on a clean re-run.
 
-Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
+`args_summary` strips large payloads (notes arrays, breakpoints) to counts (`notes_count`, `breakpoints_count`). That's deliberate: this file is agent-readable, and reintroducing inline notes here would defeat the whole point of `execute`. Diagnose from the summary + the original `build.py`.
 
-If `plan.calls` is empty, skip to the next phase. Common reasons: nothing in the DB for this phase (e.g., no devices), or every entity already linked (idempotent re-push).
+**Do not retry transient failures inside the loop.** `execute` doesn't retry. Idempotent re-run IS the retry — push is idempotent (W10-A), so already-applied rows skip on a second pass.
 
-**3b. Execute each call (minimal format).**
+**Tempo / signature: bar-1 only.** Same constraint as the per-call path. Live's MCP exposes `ableton_session(set_tempo / set_signature)` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (see `hallucinote_mcp/.../guides/gaps.md`). The planner emits the bar-1 row and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
 
-For each `call` in `plan.calls`, in plan-list order:
+### Step 3 — Final report
 
-- `call.tool` always starts with `ableton_` — every emitter routes to a real `hallucinote-mcp` tool. (As of W5-A there are no emulator placeholders — `mcp_names.ALIASES_TODAY` is empty.)
-- Route to the matching MCP namespace: `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "create", ...}`).
-- **W10-E minimal format (recommended)**: build a compact `{"ok": true, "result": <response>}` per call — ~half the JSON of the legacy format. The CLI re-derives `key` + `tool` from the plan via `--plan`.
-- On failure (MCP raises), build `{"ok": false, "error": "<message>"}` and continue. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
+Read `songs/<slug>/.last-push-state.json` for the per-phase outcome. The CLI's stdout summary already includes the headline; the state file has the structured detail.
 
-Order in the results list MUST match the order of calls in `plan.calls`. The CLI zips them by position.
+Surface the following to the user **in this order**:
 
-**Tempo / signature: bar-1 only.** Live's MCP exposes `ableton_session(set_tempo)` and `set_signature` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (`ableton_automation` has no `song_tempo` / `song_signature` `target_kind` — see `hallucinote_mcp/.../guides/gaps.md`). The planner emits `ableton_session(set_tempo/set_signature)` for the bar-1 row of each map and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
-
-**3c. Apply with --plan (minimal format).**
-
-Write the minimal results array to `/tmp/ableton-push-results.json` and run:
-```
-python3 -m hallucinote.sync.push_cli apply <session_id> --song <slug> \
-    --results /tmp/ableton-push-results.json \
-    --plan /tmp/ableton-push-plan-<phase>.json
-```
-
-The `--plan` arg points the CLI at the plan that produced the results, so it can re-derive `key` + `tool` and dispatch to the right apply path per call.
-
-The CLI prints `{"applied": N, "failed": M, "details": [...]}`. The apply call writes `ableton_links` rows from successful results so the next phase's planner sees the new state.
-
-**Legacy fallback**: if you already have `{"key", "ok", "tool", "result"}` entries (e.g., from a pre-W10-E playbook), pass them WITHOUT `--plan`. The CLI sniffs the format and accepts either.
-
-**3d. Report per-phase.**
-
-Tell the user concisely: `"<phase>: <N> calls, <K> applied, <F> failed"`. If any failed, list the keys + errors. Then move to the next phase.
-
-### Step 4 — Final report
-
-After all ten phases, surface the following to the user **in this order**:
-
-1. **Totals.** Total applied / failed across phases.
-2. **Per-domain summary.** A short line (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written; 2 emulator-gap calls skipped"`).
-3. **Live 12.4 UI heads-up — conditional, only emit the rows that apply to this push.** These two behaviors are not bugs; they look broken until the user knows the gesture that reveals state. Mention each only when the push's actual output makes the user likely to hit it:
+1. **Outcome + totals.** `outcome` field (ok / partial / connection_lost) + per-phase ok/skipped/halted/pending counts.
+2. **Per-domain summary.** A short line built from the phase counts (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written"`).
+3. **On partial / connection_lost: surface the top error patterns** from `.last-push-errors.json`'s `grouped_by_error` block — the CLI stdout already shows the top 3, but cite the file path so the user can read the full forensics if they want. Then tell the user the diagnose-and-fix loop: read the errors file, fix the underlying issue (usually in `build.py` or the snapshot), rebuild, re-run `push_cli execute`. Idempotent re-run skips the rows that landed cleanly.
+4. **Live 12.4 UI heads-up — conditional, only emit the rows that apply to this push.** These two behaviors are not bugs; they look broken until the user knows the gesture that reveals state. Mention each only when the push's actual output makes the user likely to hit it:
    - **Mixer column hides on tracks with empty device chains.** Emit if any track in the push has zero devices (typically when the song's DB lists no devices for a track, or when the `devices` phase was skipped). One-liner: "Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders." Name each affected track.
    - **Mixer / pan / send envelopes hidden in the MIDI clip envelope dropdown.** Emit if the `envelopes` phase wrote any `mixer_volume` / `mixer_pan` / `send_level` envelope on a MIDI clip. One-liner: "Mixer envelope(s) pushed onto MIDI clip 'Y' are playing (the fader will visibly move) but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider in Live and choose 'Show Modulation' to draw/edit them. Live remembers the choice per-set."
 
    If neither applies, skip this section entirely — don't add ceremony to a clean push.
-4. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase wrote at least one cue point — operationally: Step 3d reported `applied >= 1` for the `cues` phase (which emits a single batched `cue_create_batch` call) — append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip when no cues were pushed.
+5. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase status is `ok` in `.last-push-state.json` and `calls_ok >= 1`, append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip when the cues phase was skipped or halted.
 
 If the user opens the Live set now, the song should be there.
 
@@ -217,20 +189,25 @@ All other key kinds (`track_volume`, `send`, `cue_batch`, `master_*`, `tempo_poi
 ## Failure modes
 
 - **`probe-and-link` exits non-zero** — snapshot file malformed, DB path wrong, or session_id unknown. Show stderr.
-- **`plan` exits non-zero** — usually a strict-precondition raise (`plan_push_clip: track 'X' is not linked …`). Investigate: did Step 1's probe-and-link skip a track that should have matched? Did the previous phase's apply fail silently? Show the user the error and stop the run — pushing forward with a broken plan will multiply the damage.
-- **An MCP call fails** — record with `ok=false` and continue. The apply layer skips failed results. The user sees the failure in Step 3d.
-- **`apply` exits non-zero** — usually an unknown key kind (planner / apply contract drift). Show stderr; stop the run.
+- **`execute` exits 1 (partial)** — one or more calls failed; `execute` halted at the phase boundary. Read `.last-push-errors.json` for full forensics. Phases that ran cleanly are committed in Live + DB; the halted phase has partial state (`calls_ok` calls applied, `calls_failed` calls rejected); downstream phases didn't run. Fix the underlying issue (usually in `build.py` or the snapshot), rebuild, re-run `execute`. Push is idempotent — already-applied rows skip on re-run.
+- **`execute` exits 2 (connection lost)** — Live wasn't reachable mid-push. Confirm Live is open + Hallucinote is selected as a Control Surface. Re-run `execute`.
+- **`execute` raises a `ValueError` from inside a planner** — usually a strict-precondition issue (`plan_push_clip: track 'X' is not linked …`). Investigate: did Step 1's probe-and-link skip a track that should have matched? Show the user the error and stop the run.
 
-Do not retry MCP calls automatically.
+Do not retry inside the loop. `execute` doesn't retry; re-running it is the retry.
 
 ## What NOT to do
 
-- Do **not** plan all ten phases up front and then execute them. Later phases inspect `ableton_links` written by earlier phases; batch-planning silently breaks the dependency chain.
+- Do **not** drive the per-phase plan/apply loop yourself when doing a full-song push. `execute` is the canonical path; reverting to per-call MCP dispatch reintroduces the v1.0 context-budget ceiling (~500 KB inline JSON per 29-clip song).
 - Do **not** skip probe-and-link "because the Live set is fresh." It's idempotent and cheap; running it always means the skill works the same against fresh and half-built sets.
 - Do **not** invent new phases or reorder them. The order is set by Live's API constraints (W4-A: envelopes before arrangement; cue clamp: cues after arrangement). The planner enforces the order in `_PHASE_NAMES`.
-- Do **not** retry MCP calls. Failures are rare and meaningful.
-- Do **not** try to "improve" the plan by collapsing calls before executing — the planner has already done that work (W3-C dedupe; Wave M+1 atomic creates).
+- Do **not** retry MCP calls inside `execute`. Failures are rare and meaningful; re-running `execute` is the retry.
 - Do **not** offer to pull back after pushing. Push is one direction; round-trips are a separate user request.
+
+## Per-call MCP path (interactive iteration only)
+
+For single-element edits — tweaking one clip's notes, nudging one parameter, A/B comparing two envelope shapes — the per-call MCP path is still available. Drive the relevant MCP namespace (`ableton_clip`, `ableton_device`, etc.) directly. Don't use it for full-song pushes; that's what `execute` is for.
+
+`push_cli` still exposes `phases`, `plan`, and `apply` subcommands for development / debugging (e.g., "what would phase X emit right now?"). They're the same building blocks `execute` uses internally.
 
 ## Notes
 
@@ -239,7 +216,7 @@ Do not retry MCP calls automatically.
 
 ## Post-push Live UX quirks the user should know about
 
-Two Live 12.4 UI behaviors are inherent to Live's LOM + UI defaults, not Hallucinote bugs. Step 4 of the workflow surfaces them to the user **conditionally** — only when the push's actual content makes the user likely to hit them. Reference detail kept here so the skill body can stay concise:
+Two Live 12.4 UI behaviors are inherent to Live's LOM + UI defaults, not Hallucinote bugs. Step 3 of the workflow surfaces them to the user **conditionally** — only when the push's actual content makes the user likely to hit them. Reference detail kept here so the skill body can stay concise:
 
 1. **Mixer column hides on tracks with empty device chains.** Tracks that didn't have any devices loaded yet (e.g. before phase 7 runs, or after phase 7 if the song's DB lists no devices for a track) show no volume/pan/sends/master faders in Live's UI. The mixer state is still settable + functional via MCP; the UI just collapses. Loading any device into the chain restores the full column.
 

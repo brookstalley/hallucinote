@@ -46,7 +46,7 @@ from pathlib import Path
 
 from hallucinote.db import mutations as M, queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
-from hallucinote.sync import push
+from hallucinote.sync import push, push_execute
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
@@ -275,6 +275,36 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_execute(args: argparse.Namespace) -> int:
+    """W10-E2: dispatch the full ten-phase push directly against Live's
+    Remote Script, bypassing the agent's tool-use channel.
+
+    See ``.prawduct/artifacts/push-execute-design.md`` for the contract.
+    Writes ``.last-push-state.json`` (always) + ``.last-push-errors.json``
+    (on failure) into the song's directory. Prints a one-page summary to
+    stdout.
+    """
+    db_path = _resolve_db_path(args)
+    conn = connect(db_path)
+    song_id = _resolve_song_id(conn, args.session_id)
+
+    if args.state_dir:
+        state_dir = Path(args.state_dir)
+    else:
+        state_dir = db_path.parent
+
+    result = push_execute.execute_push(
+        conn=conn,
+        song_id=song_id,
+        session_id=args.session_id,
+        state_dir=state_dir,
+        actor="sync",
+        reason=args.reason or f"push_cli execute (session={args.session_id})",
+    )
+    sys.stdout.write(push_execute.format_summary(result))
+    return result.exit_code
+
+
 def _cmd_create_session(args: argparse.Namespace) -> int:
     """W9-B: low-level helper. Creates an ableton_sessions row for the song,
     prints its id on stdout. Used by ableton-push skill when the user hasn't
@@ -377,6 +407,20 @@ def main(argv: list[str] | None = None) -> int:
                       help="optional name for the auto-created session "
                            "(default: <slug>-<utc-timestamp>)")
     p_pl.set_defaults(func=_cmd_probe_and_link)
+
+    p_exec = sub.add_parser(
+        "execute",
+        help="W10-E2: dispatch the full ten-phase push directly against Live "
+             "(bypasses agent tool-use channel for bulk-data phases)",
+    )
+    p_exec.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_exec)
+    p_exec.add_argument("--state-dir", default=None,
+                        help="directory for .last-push-state.json + "
+                             ".last-push-errors.json (default: DB directory)")
+    p_exec.add_argument("--reason", default=None,
+                        help="optional reason annotation for emitted events")
+    p_exec.set_defaults(func=_cmd_execute)
 
     p_cs = sub.add_parser(
         "create-session",

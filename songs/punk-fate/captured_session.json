@@ -1,0 +1,83 @@
+{
+  "_note": "Hand-authored snapshot for punk-fate. Four MIDI tracks (Drums/Bass/Lead Guitar/Synth-Vox) with composer-time preset_query selectors so the picks resolve on the consumer's machine at push time. No Live capture has happened yet; recapture once the song has been pushed and Live state has been staged.",
+  "_capture_status": "synthetic: scaffold defaults + composer-time instrument picks",
+  "song": {
+    "tempo": 180.0,
+    "signature": "4/4",
+    "track_count": 4,
+    "return_track_count": 2,
+    "master": {"volume": 0.85, "panning": 0.0}
+  },
+  "returns": [
+    {
+      "index": 1, "name": "Reverb", "volume": 0.85, "panning": 0.0,
+      "devices": [
+        {"index": 1, "name": "Reverb", "class": "Reverb"}
+      ]
+    },
+    {
+      "index": 2, "name": "Delay", "volume": 0.85, "panning": 0.0,
+      "devices": [
+        {"index": 1, "name": "Delay", "class": "Delay"}
+      ]
+    }
+  ],
+  "tracks": [
+    {
+      "index": 1, "name": "01 Drums", "type": "midi", "volume": 0.85, "panning": 0.0,
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
+      "devices": [
+        {
+          "index": 1,
+          "name": "Hot Rod Kit",
+          "class": "DrumGroupDevice",
+          "kind": "instrument",
+          "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"},
+          "_note": "Punk-leaning acoustic Drum Rack kit; Suite-pack content."
+        }
+      ]
+    },
+    {
+      "index": 2, "name": "02 Bass", "type": "midi", "volume": 0.85, "panning": 0.0,
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
+      "devices": [
+        {
+          "index": 1,
+          "name": "Electric Bass Raw",
+          "class": "InstrumentGroupDevice",
+          "kind": "instrument_rack",
+          "preset_query": {"root": "instruments", "pattern": "Electric Bass Raw", "path_prefix": ["Simpler"]},
+          "_note": "Sampled electric bass rack. Standard-tier; cross-edition portable."
+        }
+      ]
+    },
+    {
+      "index": 3, "name": "03 Lead Guitar", "type": "midi", "volume": 0.85, "panning": 0.0,
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
+      "devices": [
+        {
+          "index": 1,
+          "name": "Power Chords Guitar",
+          "class": "Operator",
+          "kind": "instrument",
+          "preset_query": {"root": "instruments", "pattern": "Power Chords Guitar"},
+          "_note": "Operator FM preset tuned for power chords. Add Saturator/Amp at mix time to sell distorted-electric tone."
+        }
+      ]
+    },
+    {
+      "index": 4, "name": "04 Synth Vox", "type": "midi", "volume": 0.85, "panning": 0.0,
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
+      "devices": [
+        {
+          "index": 1,
+          "name": "Square Dirty Lead",
+          "class": "Operator",
+          "kind": "instrument",
+          "preset_query": {"root": "instruments", "pattern": "Square Dirty Lead"},
+          "_note": "Dirty square-wave lead carrying the vocal line. Tighten envelope release at mix time for staccato vocal-syllable feel."
+        }
+      ]
+    }
+  ]
+}

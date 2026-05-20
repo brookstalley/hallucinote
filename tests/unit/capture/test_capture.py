@@ -537,7 +537,7 @@ def test_capture_plan_lists_expected_probes():
     assert tools == {
         "ableton_session(action='info')",
         "ableton_return(action='list')",
-        "ableton_track(action='get_info')",
+        "ableton_track(action='info')",
         "ableton_track(action='get_sends')",
         "ableton_device(action='get_parameters')",
         # W7-B: nested rack chain probe (one level only)

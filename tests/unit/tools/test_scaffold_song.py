@@ -1,6 +1,6 @@
 """W9-A: tests for `tools.scaffold_song`.
 
-The scaffold tool is the testable core; the `/new-song` skill is just an
+The scaffold tool is the testable core; the `/song-new` skill is just an
 interactive wrapper. Covers: slug validation, signature parsing, section
 parsing, template rendering, atomic write + rollback, refusal cases,
 generated file shape (build.py imports + runs the converger on the

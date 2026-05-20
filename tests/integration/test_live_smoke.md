@@ -21,7 +21,7 @@ Smokes here are gates for round-trip reliability — when a Live API behavior is
 ### Prerequisites
 
 - Ableton Live 12.4 installed and the active version Hallucinote MCP targets.
-- Hallucinote MCP installed into Live (`/ableton-install-mcp` if not already; if reinstalling for a code change, `/mcp` to reconnect Claude Code's bridge and **fully quit + reopen Live** so the Control Surface module reloads — see project memory `project_mcp_reconnect_workflow`).
+- Hallucinote MCP installed into Live (`/ableton-mcp-install` if not already; if reinstalling for a code change, `/mcp` to reconnect Claude Code's bridge and **fully quit + reopen Live** so the Control Surface module reloads — see project memory `project_mcp_reconnect_workflow`).
 - A new empty Live set (`File → New Live Set`).
 
 ### Steps

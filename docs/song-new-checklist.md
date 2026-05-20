@@ -1,6 +1,6 @@
-# New-song checklist
+# Song-new checklist
 
-**Authoritative pre-composition checklist.** Use this when starting a new song. Both `/new-song` (skill path) and `start_new_song` (MCP-prompt path) cross-link here — one source of truth.
+**Authoritative pre-composition checklist.** Use this when starting a new song. The `/song-new` skill cross-links here — one source of truth.
 
 ## How to use this
 
@@ -46,7 +46,7 @@ Three options, not binary:
 
 The palette. Doesn't need exact device picks at this stage — "vintage analog poly + acoustic drums + electric bass + tape-saturated guitar" is enough.
 
-*Why it's must-have:* shapes the snapshot's track structure and feeds `pick_instruments_for_song` (the post-scaffold step that resolves these descriptions to real devices via `ableton_browser`).
+*Why it's must-have:* shapes the snapshot's track structure and feeds `/song-pick-instruments` (the post-scaffold skill that resolves these descriptions to real devices via `ableton_browser`).
 
 ---
 
@@ -98,8 +98,8 @@ Sparse vs busy. Layer count at each moment. Affects how the agent picks generato
 
 Once the must-haves are settled (or confidently inferred + confirmed):
 
-1. **Scaffold** with `/new-song <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
-2. **Pick instruments** via `pick_instruments_for_song` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability='strict'` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via Sweep B's `preset_query` (composer-time, portable) or via load-then-recapture.
+1. **Scaffold** with `/song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
+2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via Sweep B's `preset_query` (composer-time, portable) or via load-then-recapture.
 3. **Push the scaffold to a fresh Live set** so the device chains materialize.
 4. **Recapture** with `tools/capture.py` so device URIs / params land in `captured_session.json`.
 5. **Compose** — open `build.py`'s `=== Compose-half ===` and author clips/notes/arrangement against the now-realistic snapshot.
@@ -110,6 +110,6 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `.claude/skills/new-song/SKILL.md` (skill path) + `hallucinote_mcp/.../prompts/__init__.py` (`start_new_song` MCP prompt).
+- Implementation: `.claude/skills/song-new/SKILL.md`. Sibling workflow skills under `.claude/skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `pattern-compose`.
 - Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `.claude/skills/ableton-push/SKILL.md` for the push flow.
 - Decision retrieval: `/song-context` skill (queries `decisions/` + `annotations/`).

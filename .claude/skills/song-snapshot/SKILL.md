@@ -1,6 +1,6 @@
 ---
 name: song-snapshot
-description: Refresh a song's `captured_session.json` against the currently open Ableton set. Re-runs the capture probes (`ableton_session(action='info')`, `list_return_tracks`, per-track `get_track_info` + sends, per-device parameter probes, nested rack-chain walks), writes a `captured_session.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
+description: Refresh a song's `captured_session.json` against the currently open Ableton set. Re-runs the capture probes (`ableton_session(action='info')`, `ableton_return(action='list')`, per-track `ableton_track(action='info')` + `ableton_track(action='get_sends')`, per-device parameter probes, nested rack-chain walks), writes a `captured_session.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
 ---
 
 # /song-snapshot

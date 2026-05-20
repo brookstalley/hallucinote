@@ -64,3 +64,7 @@ uv.lock
 .prawduct/.getting-started-prompts.md
 .prawduct/push-orchestrator.py
 .getting-started-prompts.md
+
+# Per-machine push state (carries this machine's session/song UUIDs + timestamps)
+songs/*/.last-push-state.json
+songs/*/.last-push-errors.json

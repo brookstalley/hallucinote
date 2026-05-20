@@ -1,9 +1,9 @@
 # falling-walking
 
 > **Historical, not a template** (W9-A, 2026-05-19). This song predates
-> the `/new-song` scaffolding skill — its `build.py` was hand-authored
+> the `/song-new` scaffolding skill — its `build.py` was hand-authored
 > against early versions of the mutator API and accreted song-specific
-> patterns. For NEW songs, run `/new-song <slug>` instead of copying
+> patterns. For NEW songs, run `/song-new <slug>` instead of copying
 > this directory. The scaffold uses W12-A's state-converger
 > `build_session` pattern, the per-branch DB filename convention, and a
 > unique per-song test basename (`test_<slug>_build.py`). falling-walking

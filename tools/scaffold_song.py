@@ -1,6 +1,6 @@
 """W9-A: scaffold a new song from templates.
 
-The `/new-song` skill orchestrates user input; this module does the
+The `/song-new` skill orchestrates user input; this module does the
 filesystem work — parameterized + unit-testable + no I/O surprises.
 
 CLI:
@@ -17,7 +17,7 @@ Refuses on:
 Returns 0 on success; non-zero exit code + stderr message on refusal.
 Successful scaffold prints the new directory + next-step hint to stdout.
 
-Designed to be invoked from `.claude/skills/new-song/SKILL.md` after the
+Designed to be invoked from `.claude/skills/song-new/SKILL.md` after the
 skill has prompted the user for slug/title/tempo/signature/sections.
 """
 from __future__ import annotations

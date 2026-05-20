@@ -1,7 +1,29 @@
 """Low-level musical building blocks shared across drum / bass / harmony generators."""
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
+
+# Per-part microtiming feel (W17-E). `feel` maps within-bar beat positions to
+# shifts in beats. {0.0: -0.01, 2.0: -0.015} = downbeat 10 ticks early, beat 3
+# 15 ticks early. Generators apply the lookup at each note's within-bar
+# position via `apply_feel`. None preserves the canonical pattern timing.
+#
+# Per-part, per-helper-call. Granularity is the call, not the song or
+# section — so verse drums and chorus drums can have different feels (two
+# calls, two feel dicts), and so can two parts in the same clip (kick +
+# guitar with opposite microtiming intents). No song-level or section-level
+# shared groove instance (see docs/song-authoring-conventions.md "Per-part
+# feel"). For string feels ("push hard", "drag eighths", "swing-8ths heavy")
+# the LLM resolves the string to a structured dict at compose time; the
+# generator API is dict-only.
+Feel = Mapping[float, float] | None
+
+
+def apply_feel(within_bar_position: float, feel: Feel) -> float:
+    """Return the within-bar position with the feel shift applied, or unchanged when feel is None."""
+    if feel is None:
+        return within_bar_position
+    return within_bar_position + feel.get(within_bar_position, 0.0)
 
 # Standard GM-ish drum pitches (MIDI). Match the kit used in falling-walking;
 # override at the kit level when other songs use different mappings.

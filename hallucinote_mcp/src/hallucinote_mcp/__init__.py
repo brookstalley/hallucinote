@@ -12,7 +12,7 @@ the Remote Script side — the W2-5 root cause behind hours of debugging
 when chunks A/B/C/D's source updates hadn't propagated into Live's User
 Library. Any change to those files invalidates the fingerprint; the
 handshake then surfaces a structured "Remote Script outdated, re-run
-/ableton-install-mcp" error.
+/ableton-mcp-install" error.
 """
 from __future__ import annotations
 

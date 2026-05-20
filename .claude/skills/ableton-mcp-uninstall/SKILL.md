@@ -1,11 +1,11 @@
 ---
-name: ableton-uninstall-mcp
+name: ableton-mcp-uninstall
 description: Cleanly remove Hallucinote MCP. Deletes the Remote Script from Ableton Live's User Library, removes the `hallucinote-mcp` entry from `.mcp.json` (or `~/.claude.json`), and tells the user the one-time Ableton Preferences click to undo. Use when the user wants to remove Hallucinote MCP, switch to a different MCP server, or troubleshoot by reinstalling from scratch.
 ---
 
-# /ableton-uninstall-mcp
+# /ableton-mcp-uninstall
 
-Symmetric counterpart to `/ableton-install-mcp`. Reverses every step using the
+Symmetric counterpart to `/ableton-mcp-install`. Reverses every step using the
 same detection helpers.
 
 ## Step 1 — Preflight
@@ -46,7 +46,7 @@ For each User Library candidate that exists, check for:
 ```
 
 If found, **list its contents before deleting** and compare against the
-expected layout (see `/ableton-install-mcp` Step 3c). The expected tree
+expected layout (see `/ableton-mcp-install` Step 3c). The expected tree
 is `__init__.py` at the root plus a `hallucinote_mcp/` subtree. If you
 see anything else — the user might have edited files or dropped notes
 there — ask before removing.

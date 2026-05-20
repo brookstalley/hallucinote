@@ -80,18 +80,18 @@ Individual chunks below don't carry Critic marks; assume wave-end unless otherwi
 
 ---
 
-## Wave 9 — New-song onboarding
+## Wave 9 — Song-new onboarding
 
-**Wave goal.** Make "compose a new song from a prompt" work end-to-end. Closes findings **#0** (misleading exemplar), **#1** (no `/new-song`), **#2** (snapshot chicken-and-egg), **#10** (session_id bootstrap), **#15** (no compose MCP prompt). Subject to revision based on Wave 0 findings.
+**Wave goal.** Make "compose a new song from a prompt" work end-to-end. Closes findings **#0** (misleading exemplar), **#1** (no `/song-new`), **#2** (snapshot chicken-and-egg), **#10** (session_id bootstrap), **#15** (no compose MCP prompt). Subject to revision based on Wave 0 findings.
 
 **Wave branch.** `feat/wave-9-new-song-onboarding`.
 
-### W9-A — `/new-song <slug>` skill
+### W9-A — `/song-new <slug>` skill
 
 **Goal.** Scaffolding skill that creates `songs/<slug>/` with build.py template, captured_session.json template, tests/ skeleton, W8-convention directories.
 
 **Scope.**
-- `.claude/skills/new-song/SKILL.md` — prompts for slug, title, tempo, signature, sections. Refuses on bad slug or existing path.
+- `.claude/skills/song-new/SKILL.md` — prompts for slug, title, tempo, signature, sections. Refuses on bad slug or existing path.
 - `tools/scaffold_song.py` — parameterized filesystem work, unit-tested.
 - Templates under `tools/templates/song/`: minimal `build.py.tmpl` (section markers, no inlined song-specific notes), generic `captured_session.json.tmpl` (4 MIDI tracks + 2 returns + master), `tests/test_build.py.tmpl` (shape-only assertions), `decisions/.gitkeep`, `annotations/.gitkeep`.
 - One-line addendum at top of `songs/falling-walking/falling-walking.md` noting it's historical and not a template.
@@ -110,15 +110,14 @@ Individual chunks below don't carry Critic marks; assume wave-end unless otherwi
 
 **Done when.** First-time push works.
 
-### W9-C — `start_new_song` MCP prompt
+### W9-C — Orchestration content in `/song-new` *(was: `start_new_song` MCP prompt)*
 
-**Goal.** A canonical prompt that orchestrates scaffold → musical specification → first push.
+**Goal.** Canonical scaffold → musical specification → first push orchestration.
 
 **Scope.**
-- New prompt: `start_new_song(slug, title, tempo, signature, sections, intent_hint=None)`. Returns user-role messages instructing the agent through the workflow.
-- Update `PROMPT_NAMES` tuple + lock-the-surface test.
+- Originally specced as a `start_new_song` MCP prompt. **Migrated to skill in v0.9** because MCP prompts are not assistant-callable in Claude Code (they surface only as user-facing slash commands). The orchestration content folded into `.claude/skills/song-new/SKILL.md` — same workflow steps, but reachable by the agent without user mediation.
 
-**Done when.** Prompt registered + lock-test passes.
+**Done when.** `/song-new` orchestrates the full flow; sibling workflow skills (`/song-pick-instruments`, etc.) handle the post-scaffold steps.
 
 **PR:** W9-A solo; W9-B + W9-C bundled.
 
@@ -302,11 +301,12 @@ Individual chunks below don't carry Critic marks; assume wave-end unless otherwi
 **Goal.** Close finding **#4**. After scaffolding, before first push, propose instrument choices per track via `ableton_browser`.
 
 **Scope.**
-- New MCP prompt: `pick_instruments_for_song(tracks, portability='strict'|'relaxed'|'unrestricted')`. Returns instructions to read `ableton://browser/instruments`, propose per-track matches, confirm with user.
-- `portability='strict'` = native Live only (guarantees round-trip). `'relaxed'` = native + common third-party. `'unrestricted'` = anything Maya wants, with W13-B's REQUIREMENTS handling whatever Devon lacks.
-- Integrates with W9-C's `start_new_song` flow.
+- Originally specced as a `pick_instruments_for_song` MCP prompt. **Migrated to skill in v0.9** (`.claude/skills/song-pick-instruments/`) because MCP prompts are not assistant-callable in Claude Code.
+- The skill takes `<tracks-csv>`, optional `<portability>` (`strict` / `relaxed` / `unrestricted`), and optional `<style-hint>`. It reads `ableton://browser/instruments` (and `ableton://plugins/installed` in non-strict modes), proposes per-track matches with rationale, confirms with the user, then loads via `ableton_device(action='load')`.
+- `portability=strict` = native Live only (guarantees round-trip). `relaxed` = native + common third-party. `unrestricted` = anything, with W13-B's REQUIREMENTS handling the consumer side.
+- Composes with `/song-new`'s scaffold flow as the post-scaffold instrument-picking step.
 
-**Done when.** Prompt registered; one smoke conversation works.
+**Done when.** Skill scaffolded; one smoke conversation works.
 
 ### W14-B — Generator library audit (CONTINGENT on Wave 0)
 
@@ -421,7 +421,7 @@ Individual chunks below don't carry Critic marks; assume wave-end unless otherwi
 
 1. **Wave 0** first. The canaries probably reshape parts of the plan; better to find out now.
 2. **Wave 12-A** second. It's the largest single chunk, foundational, and every later wave benefits from idempotent mutators (build.py templates in W9, push idempotency in W10, DB read surface in W11 all simplify). Doing it early avoids retrofit.
-3. **Wave 9** (new-song onboarding) after W12-A — the build.py template can be written against the new idempotent semantics.
+3. **Wave 9** (song-new onboarding) after W12-A — the build.py template can be written against the new idempotent semantics.
 4. **Waves 10, 11, 12-B/C/D in parallel** — focused, independent, can run on independent branches.
 5. **Wave 13** after Waves 9 + 10 — depends on the snapshot extensions from W12-B.
 6. **Wave 14-A** after Wave 9 — natural extension of the compose flow.

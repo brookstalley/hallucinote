@@ -148,3 +148,30 @@ CLAUDE.md is *working instructions* (dev commands, test workflows, key conventio
 When compacting, preserve: what's being built, current work and governance level, unresolved issues, instruction to re-read CLAUDE.md, Critic review requirement, reflection requirement, in-progress learnings. Do NOT inline full file contents — summarize what was learned and reference file paths for re-reading.
 
 <!-- PRAWDUCT:END -->
+
+## Hallucinote Behavioral Norms
+
+### Stop only on high-stakes decisions or must-answer questions
+
+Once a workflow is authorized, don't stop between steps to summarize-and-ask. Continue until you hit one of:
+
+- A **high-stakes decision** — expensive to reverse (deletes Live state, modifies shared files, creative lock-in like "what key is this song in").
+- A **must-answer question** — you genuinely cannot proceed without input the user hasn't given.
+
+Status updates are fine; status-updates-that-end-in-"what next" are the anti-pattern. Once you've received "keep going" (or equivalent) once, the burden of proof for stopping again is high — you need a *specific* new decision point, not "I finished a phase."
+
+### Creative product prompts vs planning prompts
+
+**Creative product prompt** — "make me / build me / write me X" where X is a thing-to-be-experienced (a song, an app, a document, a feature). The implicit deliverable is the *finished thing*, not "scaffolded with a follow-up list." Drive the workflow end-to-end (scaffold → compose → sound design → mix → verify) before declaring done. The phase boundaries inside the agent's skill chain (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are implementation details, not user-facing checkpoints.
+
+**Planning prompt** — "what would be involved in X?" / "how should we approach Y?". Don't barrel into implementation; produce a plan, not code. The signal is in verb tense and demand shape.
+
+Misreading creative-as-planning produces an unfinished scaffold the user has to manually finish. Misreading planning-as-creative produces an unwanted implementation. When ambiguous, infer-confirm-proceed: state your read of which it is in one sentence, then proceed unless corrected.
+
+### Sound design is composition
+
+For audio products, device chains (saturation, drum bus, room reverb sends) ship in the snapshot — they're authorship, not a mix-time todo list. A finished song has the sound it's supposed to have *as part of being finished*, not pending in a "post-push mix pass." This shapes `/song-pick-instruments` (chains, not bare instruments) and `/song-new`'s definition of done for creative product prompts.
+
+### Microtiming feel is authorship
+
+Per-part `feel` (push/pull, swing, drag) is part of how a part is written — bake it into the pattern at generation time via the per-helper `feel` parameter, coordinated across instruments where the genre calls for it. Not a post-hoc humanize pass; not a song-level or section-level shared groove instance. Punk drums + lazy bluegrass guitar in the same section is a valid intent.

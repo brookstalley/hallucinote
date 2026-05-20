@@ -59,6 +59,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("requests", "kind", "TEXT"),
     ("requests", "duration_ms", "INTEGER"),
     ("requests", "outcome", "TEXT"),
+    # Sweep B: devices gain a compose-time portable preset selector.
+    # JSON-serialized {root, pattern, mode?, path_prefix?, case_sensitive?}.
+    # Existing devices get NULL; mutators set it when build.py / the
+    # snapshot uses preset_query instead of preset_uri.
+    ("devices", "preset_query", "TEXT"),
 )
 
 

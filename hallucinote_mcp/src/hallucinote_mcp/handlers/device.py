@@ -257,9 +257,15 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
 
     Strict — refuses ambiguity. Exactly one match is required. 0 matches
     or 2+ matches raise ValueError with a teaching error so the composer
-    knows to tighten or loosen the query.
+    knows to tighten or loosen the query. The ambiguity error includes
+    each match's full path so the agent can disambiguate by adding
+    ``path_prefix``.
     """
-    from .browser import _search_walk, _SearchTruncated  # local import — avoid cycle at module load
+    # Local imports avoid a module-load cycle: device.py is imported by
+    # actions/device.py at registration time; browser handler imports
+    # the same dispatcher base. Importing at call time keeps the load
+    # graph linear.
+    from .browser import _name_matches, _navigate_path_prefix
     if not isinstance(query, dict):
         raise ValueError("preset_query must be an object")
     pattern = query.get("pattern")
@@ -285,50 +291,44 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
     if path_prefix:
         if not isinstance(path_prefix, list):
             raise ValueError("preset_query.path_prefix must be a list")
-        walked: list[str] = []
-        for segment in [str(s) for s in path_prefix]:
-            next_node = None
-            for child in getattr(scope_node, "children", ()) or ():
-                if str(getattr(child, "name", "")) == segment:
-                    next_node = child
-                    break
-            if next_node is None:
-                available = [
-                    str(getattr(c, "name", ""))
-                    for c in (getattr(scope_node, "children", ()) or ())
-                ]
-                raise ValueError(
-                    f"preset_query.path_prefix segment {segment!r} not found "
-                    f"under {' / '.join(walked) or root!r}; available: {available}"
-                )
-            scope_node = next_node
-            walked.append(segment)
-        scope_path = [root] + walked
+        try:
+            scope_node = _navigate_path_prefix(
+                root_node, [str(s) for s in path_prefix],
+            )
+        except ValueError as exc:
+            # Re-raise with the preset_query prefix so the agent knows
+            # the failure originated from the preset_query path.
+            raise ValueError(f"preset_query.{exc}") from None
+        scope_path = [root] + [str(s) for s in path_prefix]
 
     # Cap matches at 2 — we only need to know "exactly 1" vs "0 or 2+".
+    # Inline the walk here (rather than reusing browser._search_walk) so
+    # we keep references to the BrowserItem objects themselves, not just
+    # their dict-serialized form — browser.load_item needs the live item.
     matches: list[dict[str, Any]] = []
     found_items: list[Any] = []
 
-    # Inline the walk here so we keep references to the BrowserItem objects
-    # themselves (not just their dict-serialized form). The search walk in
-    # the browser handler returns dicts; for load we need the live items.
-    def _walk(node: Any, depth_left: int) -> bool:
-        from .browser import _name_matches
+    def _walk(node: Any, path: list[str], depth_left: int) -> bool:
         name = str(getattr(node, "name", ""))
         is_loadable = bool(getattr(node, "is_loadable", False))
         if is_loadable and _name_matches(name, pattern, mode, case_sensitive):
             found_items.append(node)
-            matches.append({"name": name, "uri": getattr(node, "uri", None)})
+            matches.append({
+                "name": name,
+                "uri": getattr(node, "uri", None),
+                "path": list(path),
+            })
             if len(found_items) >= 2:
                 return True  # done — we know it's ambiguous
         if depth_left <= 0:
             return False
         for child in getattr(node, "children", ()) or ():
-            if _walk(child, depth_left - 1):
+            child_name = str(getattr(child, "name", ""))
+            if _walk(child, path + [child_name], depth_left - 1):
                 return True
         return False
 
-    _walk(scope_node, _BROWSER_WALK_DEPTH)
+    _walk(scope_node, scope_path, _BROWSER_WALK_DEPTH)
 
     if not found_items:
         raise ValueError(
@@ -339,11 +339,15 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
             "ableton_browser(action='search', ...)."
         )
     if len(found_items) >= 2:
-        names = ", ".join(repr(m["name"]) for m in matches[:2])
+        details = ", ".join(
+            f"{m['name']!r} at {'/'.join(m['path'])}"
+            for m in matches[:2]
+        )
         raise ValueError(
-            f"preset_query is ambiguous — matched at least 2: {names}. "
+            f"preset_query is ambiguous — matched at least 2: {details}. "
             "Strict-mode loader refuses fuzzy matches. Tighten pattern "
-            "or add path_prefix to narrow the scope."
+            "or add path_prefix to narrow the scope (the paths above "
+            "are the disambiguating segments)."
         )
     return found_items[0]
 

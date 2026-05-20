@@ -63,9 +63,10 @@ codified in product code, not in per-user agent memory.
   mutator + strict reconciliation in `push.probe_and_link` deletes
   links whose `ableton_index` is gone from the fresh probe.
 - **Soft reset** — `M.reset_song_content` narrows `build.py --reset`
-  scope to song-content tables; preserves `ableton_sessions` +
-  `ableton_links` + `device_links`. Closes the punk-fate state-drift
-  bug where `--reset` wiped Ableton bindings mid-iteration.
+  scope to song-content tables; preserves `ableton_sessions` and the
+  `ableton_links` projection rows (including `db_kind='device'` links).
+  Closes the punk-fate state-drift bug where `--reset` wiped Ableton
+  bindings mid-iteration.
 - **First-push clean-default-scaffold** — `default_scaffold_unmatched_
   tracks` field on `ProbeAndLinkResult` (fires when auto-session was
   created AND every unmatched Live track is in the canonical default

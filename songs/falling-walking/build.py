@@ -30,14 +30,42 @@ from hallucinote.generators import GeneratorOutput, bass, drums, harmony
 from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
 from hallucinote.generators.kit import Kit
 
-# M1-C: every drums.X(..., kit=_DRUM_KIT) helper requires a Kit. falling-walking was
-# authored against GM-standard pad layout (kick=36, snare=38, etc.) so
-# Kit.gm_default() preserves the historical note output exactly. When
-# the song's captured_session.json is refreshed against a real Live set
-# whose Drum Rack is captured by `tools/capture_cli.py`, switch this to
-# `Kit.from_device(conn, <drum-rack-device-id>)` to make the drum parts
-# kit-portable.
-_DRUM_KIT = Kit.gm_default()
+# M1-C: every drums.X(..., kit=_DRUM_KIT) helper requires a Kit.
+# falling-walking was authored before kit-portable drum mapping; the
+# author's intent for `bossa_shaker` in the intro is documented as
+# "16th shaker on closed hat (vel ~30-42)" in
+# `annotations/groove-conventions.md` — the loaded Drum Rack has no
+# dedicated shaker pad, so the part doubles on the hi-hat closed pad.
+# Construct the Kit directly so pad 42's chain name matches BOTH the
+# 'hat_closed' AND 'shaker' canonical lookups (Kit's fuzzy matcher
+# checks substring + a few bespoke heuristics — see
+# `generators/kit.py:_chain_matches_canonical`). When
+# `captured_session.json` is refreshed against a Live set whose Drum
+# Rack DOES have a discrete shaker pad, drop this construction and use
+# `Kit.from_device(conn, <drum-rack-device-id>)` directly.
+_DRUM_KIT = Kit(
+    name="falling-walking (shaker doubled on closed hat)",
+    device_id=None,
+    mappings_by_note={
+        36: "Kick",
+        37: "Rim",
+        38: "Snare",
+        39: "Clap",
+        42: "Closed Hat + shaker",  # matches both 'hat_closed' and 'shaker' lookups
+        46: "Open Hat",
+        47: "Tom Lo",
+        48: "Tom Mid",
+        49: "Crash 1",
+        50: "Tom Hi",
+        51: "Ride",
+        52: "China",
+        53: "Ride Bell",
+        54: "Tambourine",
+        55: "Splash",
+        56: "Cowbell",
+        57: "Crash 2",
+    },
+)
 
 # W12-A: per-branch DB filename. Branch switches pick up the right DB
 # silently; outside a repo / detached HEAD falls back to falling-walking.db.

@@ -125,7 +125,8 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 - `index` is 1-based, position in the chain.
 - `class` is Live's device class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`, ...). Source of truth for "what kind of device is this." Note: Wave 0 surfaced that `class` doesn't always map 1:1 to the loader's accepted `kind` value (`AnalogDevice` rejection — backlog item filed).
 - `name` is the user-set display name (often equal to class; preset names like "Late Nite Kit" persist).
-- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Hand-authoring URIs is unreliable** (Wave 0 spa-7c). Prefer probing via `ableton_browser` first.
+- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
+- `preset_query` (optional, mutually exclusive with `guess_uri`) — **Sweep B: cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. Example: `"preset_query": {"root": "drums", "pattern": "Late Nite Kit"}`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match). Use this for built-in Live content that has a stable name across machines (drum kits, instrument presets) so the snapshot doesn't bake in this machine's FileId.
 - `params_dialed` (optional) — only **dialed** params (defaults are implied by absence). Discrete-enum params (Filter Type = "Lowpass") have `"normalized": null` because there's no continuous form.
 - `params_total` (optional) — informational; count of all params on the device.
 - `chains` (optional) — nested chains for rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`). One level only — nested-nested racks raise on encounter (filed in backlog).
@@ -137,6 +138,16 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 - **Clips** and **notes**. The snapshot can carry `"clips": [...]` on tracks but `replay_capture` ignores them. Clips are authored by `build.py` (the compose-half).
 - **Score-half**: tempo map, time signature map, sections, cue points. All authored by `build.py`.
 - **Automation envelopes**. The capture pipeline doesn't ingest envelopes (MCP envelope-read landed W6; capture-side reading is still backlog).
+
+---
+
+## Picking built-in content presets (drum kits, instrument presets)
+
+For built-in Live content (Operator presets, Impulse drum kits, Drum Rack content) you have three options, in order of portability:
+
+1. **`preset_query`** (most portable, recommended for hand-authored snapshots). Express the kit by name + scope: `{"root": "drums", "pattern": "Late Nite Kit"}`. The push planner resolves it on the consumer's machine via `ableton_browser(action='search')`. Strict — refuses if 0 or 2+ matches. No FileId baked in; transfers cross-machine cleanly. Best for built-ins whose names are stable across Live installations.
+2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python tools/capture.py` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
+3. **Hand-authored `guess_uri`** — discouraged. Hand-written URIs are unreliable per Wave 0 (spa-7c). If you do this, verify the URI exists via `ableton_browser(action='at_path', ...)` first.
 
 ---
 

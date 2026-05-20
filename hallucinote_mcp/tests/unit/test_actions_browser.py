@@ -120,10 +120,10 @@ def loaded_actions():
 # ---------- Schema sanity ----------
 
 
-_EXPECTED_BROWSER_ACTIONS = {"help", "tree", "at_path", "plugins_list"}
+_EXPECTED_BROWSER_ACTIONS = {"help", "tree", "at_path", "search", "plugins_list"}
 
 
-def test_browser_registers_four_actions(loaded_actions):
+def test_browser_registers_five_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_browser")}
     assert names == _EXPECTED_BROWSER_ACTIONS
 
@@ -274,6 +274,306 @@ def test_browser_execution_marshals_to_main_thread(loaded_actions):
     ctx = FakeCtx()
     dispatch(
         Request(tool="ableton_browser", action="plugins_list"),
+        context=ctx,
+    )
+    assert ctx.run_on_main_calls == 1
+
+
+# ---------- search ----------
+
+
+def _drum_browser() -> FakeBrowser:
+    """Browser fake with a realistic drums-root shape: engine folders + presets.
+
+    Mirrors what the real Live browser exposes — engine nodes (Impulse,
+    Drum Rack) are loadable folders with preset children that are
+    loadable leaves. Categories like 'Bass'/'Pad' under instruments
+    engines are non-loadable category folders. Confirmed against real
+    Live introspection 2026-05-20.
+    """
+    b = FakeBrowser()
+    # Replace the empty drums tree with one that has presets.
+    b.drums = FakeBrowserItem(
+        "Drums", children=[
+            FakeBrowserItem(
+                "Drum Hits", children=[
+                    FakeBrowserItem(
+                        "Kit-Core 909", uri="query:Drums#FileId_5418",
+                        is_loadable=True, is_folder=False,
+                    ),
+                    FakeBrowserItem(
+                        "Kit-Vintage 909", uri="query:Drums#FileId_5419",
+                        is_loadable=True, is_folder=False,
+                    ),
+                    FakeBrowserItem(
+                        "Kit-Acoustic", uri="query:Drums#FileId_5420",
+                        is_loadable=True, is_folder=False,
+                    ),
+                ],
+            ),
+            FakeBrowserItem(
+                "Late Night", uri="query:Drums#FileId_5500",
+                is_loadable=True, is_folder=False,
+            ),
+        ],
+    )
+    return b
+
+
+def _ctx_with_drums() -> FakeCtx:
+    app = FakeApp()
+    app.browser = _drum_browser()
+    return FakeCtx(application=app)
+
+
+def test_search_substring_default_mode(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "909", "root": "drums"},
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    names = sorted(m["name"] for m in resp.result["matches"])
+    assert names == ["Kit-Core 909", "Kit-Vintage 909"]
+    assert resp.result["count"] == 2
+    assert resp.result["truncated"] is False
+    assert resp.result["depth_exhausted"] is False
+
+
+def test_search_returns_full_path_for_disambiguation(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "Kit-Core", "root": "drums"},
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    m = resp.result["matches"][0]
+    # path starts with the root key (lowercase agent-facing form),
+    # not the browser node's display name.
+    assert m["path"] == ["drums", "Drum Hits", "Kit-Core 909"]
+    assert m["uri"] == "query:Drums#FileId_5418"
+    assert m["is_loadable"] is True
+
+
+def test_search_glob_mode(loaded_actions):
+    # 'Kit-*909' = 'Kit-' + any chars + '909'. Matches "Kit-Core 909"
+    # and "Kit-Vintage 909" but NOT "Kit-Acoustic" (no trailing 909).
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "Kit-*909", "root": "drums", "mode": "glob",
+            },
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    names = sorted(m["name"] for m in resp.result["matches"])
+    assert names == ["Kit-Core 909", "Kit-Vintage 909"]
+
+
+def test_search_regex_mode(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": r"^Kit-(Core|Acoustic)",
+                "root": "drums", "mode": "regex",
+            },
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    names = sorted(m["name"] for m in resp.result["matches"])
+    assert names == ["Kit-Acoustic", "Kit-Core 909"]
+
+
+def test_search_regex_invalid_pattern_rejected(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "[unbalanced",
+                "mode": "regex",
+            },
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is False
+    assert "invalid regex" in (resp.error or "")
+
+
+def test_search_case_insensitive_default(loaded_actions):
+    # Operator in the basic fake is a folder (loadable_only filters it),
+    # so the pattern hits its loadable children instead. Searching for the
+    # uppercase 'BASS' must match the Operator/Bass leaf in case-insensitive
+    # mode (the default).
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "BASS", "root": "instruments"},
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is True
+    names = [m["name"] for m in resp.result["matches"]]
+    assert "Bass" in names
+
+
+def test_search_case_sensitive_opt_in(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "BASS", "root": "instruments",
+                "case_sensitive": True,
+            },
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is True
+    names = [m["name"] for m in resp.result["matches"]]
+    assert "Bass" not in names
+    assert resp.result["count"] == 0
+
+
+def test_search_path_prefix_scopes_the_walk(loaded_actions):
+    # Pattern 'Bass' would match the Operator/Bass node as well as Wavetable;
+    # path_prefix narrows to only the Operator subtree.
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "Bass", "root": "instruments",
+                "path_prefix": ["Operator"],
+            },
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is True
+    matches = resp.result["matches"]
+    assert all(m["path"][:2] == ["instruments", "Operator"] for m in matches)
+    assert any(m["name"] == "Bass" for m in matches)
+
+
+def test_search_path_prefix_unknown_segment_lists_available(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "anything", "root": "instruments",
+                "path_prefix": ["Bogus"],
+            },
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is False
+    assert "Bogus" in (resp.error or "")
+    # Helpful error: names what IS at that level
+    assert "available" in (resp.error or "")
+
+
+def test_search_loadable_only_filters_category_folders(loaded_actions):
+    # In the fake instruments tree, "Operator" is a folder (is_folder=True
+    # in the default fake, is_loadable=False). With loadable_only=True
+    # (default), the Operator folder itself is filtered out — only the
+    # loadable Bass/Lead children make it through.
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "Operator", "root": "instruments"},
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is True
+    # Operator is a folder in the basic fake → filtered out by default.
+    assert resp.result["count"] == 0
+
+    # With loadable_only=False, the folder is returned too.
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "Operator", "root": "instruments",
+                "loadable_only": False,
+            },
+        ),
+        context=FakeCtx(),
+    )
+    assert resp.ok is True
+    names = [m["name"] for m in resp.result["matches"]]
+    assert "Operator" in names
+
+
+def test_search_truncated_at_limit(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "Kit", "root": "drums", "limit": 2,
+            },
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    assert resp.result["count"] == 2
+    assert resp.result["truncated"] is True
+
+
+def test_search_depth_exhausted_flag(loaded_actions):
+    # depth=1 from the drums root reaches "Drum Hits" + "Late Night" but
+    # NOT inside Drum Hits' children. The Kit presets are at depth 2, so
+    # they're missed — depth_exhausted should fire.
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={
+                "pattern": "Kit", "root": "drums", "depth": 1,
+            },
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is True
+    assert resp.result["count"] == 0
+    assert resp.result["depth_exhausted"] is True
+
+
+def test_search_empty_pattern_rejected(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "", "root": "drums"},
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is False
+    assert "non-empty" in (resp.error or "")
+
+
+def test_search_unknown_mode_rejected(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "x", "mode": "fuzzy"},
+        ),
+        context=_ctx_with_drums(),
+    )
+    assert resp.ok is False
+    # Caught by ParamSpec enum validation, not the handler.
+    assert "fuzzy" in (resp.error or "") or "enum" in (resp.error or "")
+
+
+def test_search_runs_on_main_thread(loaded_actions):
+    ctx = _ctx_with_drums()
+    dispatch(
+        Request(
+            tool="ableton_browser", action="search",
+            params={"pattern": "Kit", "root": "drums"},
+        ),
         context=ctx,
     )
     assert ctx.run_on_main_calls == 1

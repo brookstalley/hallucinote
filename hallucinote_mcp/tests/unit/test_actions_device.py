@@ -682,6 +682,176 @@ def test_load_no_chain_growth_is_runtime_error(loaded_actions):
     assert "did not append" in (resp.error or "")
 
 
+# ---------- preset_query (Sweep B — compose-time portable selection) ----------
+
+
+def _load_with_query(ctx, **query_fields):
+    """Helper — invoke load with a preset_query dict."""
+    return dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "DrumGroupDevice",
+                "preset_query": query_fields,
+            },
+        ),
+        context=ctx,
+    )
+
+
+def test_load_preset_query_unique_match_loads_that_item(loaded_actions):
+    """preset_query resolves to exactly one loadable node; load picks it."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Only one '909' kit in the browser → unambiguous.
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Late Nite Kit", uri="query:Drums#FileId_5500",
+                        is_loadable=True),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Vintage Funk", uri="query:Drums#FileId_5600",
+                        is_loadable=True),
+    )
+    resp = _load_with_query(ctx, root="drums", pattern="Late Nite")
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == \
+        "query:Drums#FileId_5500"
+
+
+def test_load_preset_query_no_match_refuses_with_teaching_error(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Late Nite Kit", uri="query:Drums#FileId_5500"),
+    )
+    resp = _load_with_query(ctx, root="drums", pattern="Nonexistent")
+    assert resp.ok is False
+    assert "no loadable matches" in (resp.error or "")
+    assert "Tighten the scope" in (resp.error or "") or \
+        "ableton_browser" in (resp.error or "")
+
+
+def test_load_preset_query_ambiguous_match_refuses(loaded_actions):
+    """Strict mode — two matches must refuse, not silently pick first."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Kit-Core 909", uri="query:Drums#FileId_5418"),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Kit-Vintage 909", uri="query:Drums#FileId_5419"),
+    )
+    resp = _load_with_query(ctx, root="drums", pattern="909")
+    assert resp.ok is False
+    assert "ambiguous" in (resp.error or "")
+    assert "Kit-Core 909" in (resp.error or "")
+    assert "Kit-Vintage 909" in (resp.error or "")
+    # Refusal must mean no load was issued.
+    assert ctx.application.browser.load_calls == []
+
+
+def test_load_preset_query_path_prefix_disambiguates(loaded_actions):
+    """Same pattern, two parent folders — path_prefix narrows to one."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    impulse_folder = FakeBrowserItem(
+        "Impulse", is_loadable=False, children=(
+            FakeBrowserItem("Kit-909", uri="query:Impulse#909",
+                            is_loadable=True),
+        ),
+    )
+    drumrack_folder = FakeBrowserItem(
+        "Drum Rack", is_loadable=False, children=(
+            FakeBrowserItem("Kit-909", uri="query:DrumRack#909",
+                            is_loadable=True),
+        ),
+    )
+    ctx.application.browser.drums.children.extend([impulse_folder, drumrack_folder])
+    resp = _load_with_query(
+        ctx, root="drums", pattern="909", path_prefix=["Impulse"],
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:Impulse#909"
+
+
+def test_load_preset_query_glob_mode(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Kit-Core 909", uri="query:Drums#5418"),
+    )
+    # Other entries don't match the pattern Kit-Core* → unambiguous.
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Vintage Funk", uri="query:Drums#5500"),
+    )
+    resp = _load_with_query(
+        ctx, root="drums", pattern="Kit-Core*", mode="glob",
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#5418"
+
+
+def test_load_preset_query_invalid_mode_rejected(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("X", uri="q:x"),
+    )
+    resp = _load_with_query(ctx, root="drums", pattern="X", mode="fuzzy")
+    assert resp.ok is False
+    assert "mode" in (resp.error or "")
+
+
+def test_load_preset_query_unknown_root_errors(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    resp = _load_with_query(ctx, root="bogus", pattern="x")
+    assert resp.ok is False
+    assert "root" in (resp.error or "")
+
+
+def test_load_preset_query_path_prefix_unknown_segment_lists_available(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Impulse", is_loadable=False, children=()),
+    )
+    resp = _load_with_query(
+        ctx, root="drums", pattern="x", path_prefix=["NoSuchFolder"],
+    )
+    assert resp.ok is False
+    assert "NoSuchFolder" in (resp.error or "")
+    assert "available" in (resp.error or "")
+
+
+def test_load_preset_query_and_preset_uri_mutually_exclusive(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "DrumGroupDevice",
+                "preset_uri": "query:Drums#1",
+                "preset_query": {"root": "drums", "pattern": "x"},
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "mutually exclusive" in (resp.error or "")
+
+
+def test_load_preset_query_skips_non_loadable_match(loaded_actions):
+    """A folder named 'Kit-909' that ISN'T loadable + a leaf named '909 Kit'
+    that IS loadable: the resolver returns the loadable one (no double-match
+    because the folder is filtered)."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("909-Folder", is_loadable=False, children=(
+            FakeBrowserItem("Leaf inside", uri="q:1"),
+        )),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("909 Kit", uri="query:909-leaf", is_loadable=True),
+    )
+    resp = _load_with_query(ctx, root="drums", pattern="909")
+    # Only the loadable leaf matches; folder is filtered.
+    assert resp.ok is True, resp.error
+    assert ctx.application.browser.load_calls[0].uri == "query:909-leaf"
+
+
 def test_delete_removes_device(loaded_actions):
     track = FakeTrack("T1", devices=[FakeDevice("A"), FakeDevice("B")])
     ctx = FakeCtx(FakeSong(tracks=[track]))

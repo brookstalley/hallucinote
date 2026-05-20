@@ -139,6 +139,49 @@ def test_device_upserts_per_chain_position(conn, song, track):
     assert d3 == d1
 
 
+def test_create_device_with_preset_query_stores_json(conn, song, track):
+    """Sweep B: preset_query is stored as JSON-serialized string in the DB."""
+    cid = M.create_device_chain(conn, parent_track_id=track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        display_name="Some Kit",
+        preset_query={"root": "drums", "pattern": "909", "mode": "substring"},
+    )
+    row = Q.get_device(conn, did)
+    assert row["preset_uri"] is None
+    assert row["preset_query"] is not None
+    import json
+    parsed = json.loads(row["preset_query"])
+    assert parsed == {"root": "drums", "pattern": "909", "mode": "substring"}
+
+
+def test_create_device_refuses_both_preset_uri_and_preset_query(conn, song, track):
+    """Strict — mutually exclusive selectors."""
+    cid = M.create_device_chain(conn, parent_track_id=track)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        M.create_device(
+            conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+            display_name="X",
+            preset_uri="query:Drums#FileId_1",
+            preset_query={"root": "drums", "pattern": "x"},
+        )
+
+
+def test_create_device_preset_query_idempotent_unchanged(conn, song, track):
+    """Idempotent re-create with the same preset_query is 'unchanged'."""
+    cid = M.create_device_chain(conn, parent_track_id=track)
+    q = {"root": "drums", "pattern": "909"}
+    d1 = M.create_device(
+        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        display_name="K", preset_query=q,
+    )
+    d2 = M.create_device(
+        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        display_name="K", preset_query=q,
+    )
+    assert d2.kind == "unchanged"
+
+
 def test_delete_device_emits_event(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")

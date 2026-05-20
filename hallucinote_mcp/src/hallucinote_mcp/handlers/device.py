@@ -245,6 +245,113 @@ def _walk_for_name(node: Any, name: str, depth_left: int) -> Any:
     return None
 
 
+def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
+    """Resolve a ``preset_query`` dict to a single loadable BrowserItem.
+
+    Compose-time portable preset selection: snapshot stores a query
+    (root + pattern + optional mode/path_prefix) instead of a per-machine
+    ``preset_uri`` (FileIds differ across machines). At push time the
+    handler walks the browser via the same primitive used by
+    ``ableton_browser(action='search')`` and picks the single matching
+    loadable.
+
+    Strict — refuses ambiguity. Exactly one match is required. 0 matches
+    or 2+ matches raise ValueError with a teaching error so the composer
+    knows to tighten or loosen the query. The ambiguity error includes
+    each match's full path so the agent can disambiguate by adding
+    ``path_prefix``.
+    """
+    # Local imports avoid a module-load cycle: device.py is imported by
+    # actions/device.py at registration time; browser handler imports
+    # the same dispatcher base. Importing at call time keeps the load
+    # graph linear.
+    from .browser import _name_matches, _navigate_path_prefix
+    if not isinstance(query, dict):
+        raise ValueError("preset_query must be an object")
+    pattern = query.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        raise ValueError("preset_query.pattern must be a non-empty string")
+    root = query.get("root", "instruments")
+    mode = query.get("mode", "substring")
+    case_sensitive = bool(query.get("case_sensitive", False))
+    path_prefix = query.get("path_prefix")
+    if mode not in {"substring", "glob", "regex"}:
+        raise ValueError(
+            f"preset_query.mode={mode!r}; expected 'substring', 'glob', or 'regex'"
+        )
+
+    root_node = getattr(browser, root, None)
+    if root_node is None:
+        raise ValueError(
+            f"preset_query.root={root!r} not in browser; this Live version "
+            f"may not expose that root"
+        )
+    scope_node = root_node
+    scope_path = [root]
+    if path_prefix:
+        if not isinstance(path_prefix, list):
+            raise ValueError("preset_query.path_prefix must be a list")
+        try:
+            scope_node = _navigate_path_prefix(
+                root_node, [str(s) for s in path_prefix],
+            )
+        except ValueError as exc:
+            # Re-raise with the preset_query prefix so the agent knows
+            # the failure originated from the preset_query path.
+            raise ValueError(f"preset_query.{exc}") from None
+        scope_path = [root] + [str(s) for s in path_prefix]
+
+    # Cap matches at 2 — we only need to know "exactly 1" vs "0 or 2+".
+    # Inline the walk here (rather than reusing browser._search_walk) so
+    # we keep references to the BrowserItem objects themselves, not just
+    # their dict-serialized form — browser.load_item needs the live item.
+    matches: list[dict[str, Any]] = []
+    found_items: list[Any] = []
+
+    def _walk(node: Any, path: list[str], depth_left: int) -> bool:
+        name = str(getattr(node, "name", ""))
+        is_loadable = bool(getattr(node, "is_loadable", False))
+        if is_loadable and _name_matches(name, pattern, mode, case_sensitive):
+            found_items.append(node)
+            matches.append({
+                "name": name,
+                "uri": getattr(node, "uri", None),
+                "path": list(path),
+            })
+            if len(found_items) >= 2:
+                return True  # done — we know it's ambiguous
+        if depth_left <= 0:
+            return False
+        for child in getattr(node, "children", ()) or ():
+            child_name = str(getattr(child, "name", ""))
+            if _walk(child, path + [child_name], depth_left - 1):
+                return True
+        return False
+
+    _walk(scope_node, scope_path, _BROWSER_WALK_DEPTH)
+
+    if not found_items:
+        raise ValueError(
+            f"preset_query found no loadable matches for "
+            f"pattern={pattern!r} mode={mode!r} root={root!r} "
+            f"path_prefix={path_prefix!r}. Tighten the scope or "
+            "verify the preset is installed via "
+            "ableton_browser(action='search', ...)."
+        )
+    if len(found_items) >= 2:
+        details = ", ".join(
+            f"{m['name']!r} at {'/'.join(m['path'])}"
+            for m in matches[:2]
+        )
+        raise ValueError(
+            f"preset_query is ambiguous — matched at least 2: {details}. "
+            "Strict-mode loader refuses fuzzy matches. Tighten pattern "
+            "or add path_prefix to narrow the scope (the paths above "
+            "are the disambiguating segments)."
+        )
+    return found_items[0]
+
+
 def _find_browser_item(
     browser: Any, *, kind: str, preset_uri: str | None
 ) -> Any:
@@ -264,7 +371,9 @@ def _find_browser_item(
     Agents loading non-built-in devices (plugins, presets) should always
     pass ``preset_uri`` — captured via
     ``ableton_browser(action='at_path', ...)`` — which is the
-    unambiguous load contract.
+    unambiguous load contract. For compose-time portable selection
+    (cross-machine, no per-machine FileId) use ``preset_query`` — see
+    :func:`_resolve_preset_query`.
     """
     if preset_uri is not None:
         for root_name in _BROWSER_URI_ROOTS:
@@ -319,21 +428,34 @@ def load_handler(
     *,
     kind: str,
     preset_uri: str | None = None,
+    preset_query: dict[str, Any] | None = None,
     track_index: int | None = None,
     return_index: int | None = None,
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
 
     ``kind`` is the Live device class / display name (e.g. ``'Compressor2'``,
-    ``'Operator'``). ``preset_uri`` is the optional, canonical Live browser
-    URI for a specific preset — pass it when you need a specific
-    instrument or preset, captured from
-    ``ableton_browser(action='at_path', ...)``. The handler resolves the
-    URI (preferred) or the name (fallback) to a ``BrowserItem``, selects
-    the destination track via ``song.view.selected_track = parent``, and
-    calls ``application.browser.load_item(item)`` — the path Live 12.4
-    exposes for programmatic device loading. The new device appears at
-    the tail of the destination's top-level device chain; Live 12.4
+    ``'Operator'``). Three selector paths, in precedence order:
+
+    1. ``preset_query`` (most portable): a dict ``{root, pattern, mode?,
+       path_prefix?, case_sensitive?}`` resolved at load time via the
+       same primitive as ``ableton_browser(action='search')``. Strict —
+       must match exactly one loadable. The composer expresses
+       "a 909 kit" or "the Late Nite drum rack"; this machine's
+       installed library decides the actual URI. The cross-machine
+       portability path (no per-machine FileId in the snapshot).
+    2. ``preset_uri``: the canonical Live browser URI captured via
+       ``ableton_browser(action='at_path', ...)``. Per-machine
+       (FileIds differ across machines) but unambiguous on this one.
+    3. ``kind`` only: walk the built-in roots for the first loadable
+       node whose display name matches. Adequate for built-in classes.
+
+    ``preset_query`` and ``preset_uri`` are mutually exclusive — pass one
+    or the other (or neither, for kind-only).
+
+    Selects the destination via ``song.view.selected_track = parent`` and
+    calls ``application.browser.load_item(item)``. The new device appears
+    at the tail of the destination's top-level device chain; Live 12.4
     exposes no public re-ordering API, so the position is fixed.
     """
     parent, parent_kind, parent_idx = _resolve_parent(
@@ -341,6 +463,12 @@ def load_handler(
     )
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
+    if preset_query is not None and preset_uri is not None:
+        raise ValueError(
+            "preset_query and preset_uri are mutually exclusive — pass "
+            "one (preset_query for portable compose-time selection, "
+            "preset_uri for an unambiguous per-machine URI)"
+        )
 
     application = getattr(context, "application", None)
     if application is None:
@@ -354,7 +482,10 @@ def load_handler(
             "application.browser not exposed in this Live version"
         )
 
-    item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+    if preset_query is not None:
+        item = _resolve_preset_query(browser, preset_query)
+    else:
+        item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
     if item is None:
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"

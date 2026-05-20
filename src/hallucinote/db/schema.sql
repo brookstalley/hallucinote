@@ -268,6 +268,12 @@ CREATE TABLE IF NOT EXISTS devices (
     kind            TEXT NOT NULL,
     display_name    TEXT NOT NULL,
     preset_uri      TEXT,
+    -- Sweep B: compose-time portable preset selector. JSON-serialized
+    -- {root, pattern, mode?, path_prefix?, case_sensitive?}. Resolved at
+    -- push time by ableton_device(action='load', preset_query=...) on the
+    -- consumer's machine — bypasses per-machine FileId in preset_uri so
+    -- snapshots transfer cross-machine.
+    preset_query    TEXT,
     UNIQUE(chain_id, position)
 );
 

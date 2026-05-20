@@ -9,6 +9,7 @@ from hallucinote_mcp.prompts import (
     _compose_section_pattern,
     _create_midi_track_with_instrument,
     _humanize_clip_velocity,
+    _pick_instruments_for_song,
     _setup_sidechain_compression,
 )
 from hallucinote_mcp.server import create_server, registered_prompt_names
@@ -25,6 +26,8 @@ _EXPECTED_PROMPTS = {
     "compose_section_pattern",
     # W9-C: scaffold-then-compose orchestration for new songs.
     "start_new_song",
+    # W14-A: browser-driven instrument picker with portability modes.
+    "pick_instruments_for_song",
 }
 
 
@@ -231,6 +234,8 @@ def test_start_new_song_renders_required_steps():
         "/new-song",        # step 1: invoke scaffold skill
         "build.py --reset", # step 2: confirm scaffold
         "pytest",
+        # W14-A integration: step 2b cites the picker prompt.
+        "pick_instruments_for_song",
         "Compose-half",     # step 3: where to author
         "no-ops if nothing changed",  # step 4: iterate via converger
         "/ableton-push",    # step 5: push
@@ -258,3 +263,111 @@ def test_start_new_song_omits_optional_clauses_when_unset():
     text = msgs[0]["content"]
     assert "in key " not in text
     assert "Composer intent:" not in text
+
+
+# ---------- pick_instruments_for_song (W14-A) ----------
+
+
+def test_pick_instruments_for_song_strict_uses_browser_only():
+    """Strict mode tells the agent to use browser/instruments and NOT
+    pull from plugins/installed — that's the portability guarantee.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass,Lead,Pads")
+    blob = out[0]["content"]
+    # Tracks echoed for context.
+    assert "Drums" in blob and "Bass" in blob and "Lead" in blob and "Pads" in blob
+    # Default mode is strict.
+    assert "strict" in blob.lower()
+    # Browser resource cited.
+    assert "ableton://browser/instruments" in blob
+    # Stock-only language present.
+    assert "stock" in blob.lower()
+    # Agent told to load via the device tool.
+    assert "ableton_device(action='load'" in blob
+    # `kind` required call-out (same convention as create_midi_track_with_instrument).
+    assert "kind" in blob
+
+
+def test_pick_instruments_for_song_strict_skips_plugins_installed():
+    """Strict mode must NOT direct the agent to plugins/installed —
+    that's the whole point of the mode.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Drums,Bass", portability="strict",
+    )
+    blob = out[0]["content"]
+    # The unrestricted/relaxed flag should appear nowhere in the load-time
+    # instruction (the mode clause itself may name the resource only to say
+    # "do NOT pull from"). Assert the negative instruction is present.
+    assert "Do NOT pull from" in blob or "do NOT pull from" in blob
+    assert "ableton://plugins/installed" in blob  # cited as the thing to skip
+
+
+def test_pick_instruments_for_song_relaxed_lists_both_resources():
+    """Relaxed mode tells the agent to read both stock and third-party."""
+    out = _pick_instruments_for_song(
+        tracks="Drums,Bass", portability="relaxed",
+    )
+    blob = out[0]["content"]
+    assert "relaxed" in blob.lower()
+    assert "ableton://browser/instruments" in blob
+    assert "ableton://plugins/installed" in blob
+    # Names a few well-known third-party plugins as guidance.
+    assert "Serum" in blob or "Massive" in blob or "Diva" in blob
+
+
+def test_pick_instruments_for_song_unrestricted_flags_requirements():
+    """Unrestricted mode must surface the consumer-side REQUIREMENTS
+    handoff (W13-B integration) so the user understands the trade-off.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Lead,Pads", portability="unrestricted",
+    )
+    blob = out[0]["content"]
+    assert "unrestricted" in blob.lower()
+    # Cross-refs W13-B's compat check + REQUIREMENTS.md.
+    assert "REQUIREMENTS" in blob
+    assert "compat check" in blob
+    # Extra step 6 calls out the not-strict-portable trade-off explicitly.
+    assert "not strict-portable" in blob
+
+
+def test_pick_instruments_for_song_rejects_unknown_mode():
+    """Unknown portability mode returns a teaching message listing the
+    valid choices — NOT a raised exception (FastMCP wraps prompt
+    exceptions opaquely).
+    """
+    out = _pick_instruments_for_song(
+        tracks="Drums", portability="paranoid",
+    )
+    blob = out[0]["content"]
+    assert "paranoid" in blob
+    assert "strict" in blob and "relaxed" in blob and "unrestricted" in blob
+
+
+def test_pick_instruments_for_song_includes_style_hint_when_provided():
+    """Optional style_hint flows into the prompt text so the agent
+    can steer tonal choice.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Lead", style_hint="warm vintage analog",
+    )
+    blob = out[0]["content"]
+    assert "warm vintage analog" in blob
+
+
+def test_pick_instruments_for_song_omits_style_hint_clause_when_unset():
+    out = _pick_instruments_for_song(tracks="Drums")
+    blob = out[0]["content"]
+    assert "Style hint" not in blob
+
+
+def test_pick_instruments_for_song_calls_out_drum_kit_special_case():
+    """Drum tracks must pick Drum Rack / Impulse — not single-pitch
+    synths. The prompt teaches this directly so the agent doesn't
+    propose an Operator patch for a drum bus.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass,Lead")
+    blob = out[0]["content"]
+    assert "DrumGroupDevice" in blob or "Drum Rack" in blob
+    assert "Impulse" in blob

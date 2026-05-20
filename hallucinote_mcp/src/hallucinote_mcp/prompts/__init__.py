@@ -26,6 +26,13 @@ Wave 9 (1):
     /new-song to scaffold the song dir, then guides composition + the
     first push with --auto-session bootstrap (W9-C).
 
+Wave 14 (1):
+  - ``pick_instruments_for_song`` — browser-driven instrument picker
+    with portability modes (strict / relaxed / unrestricted). Tells the
+    agent how to filter against ``ableton://browser/instruments`` and
+    ``ableton://plugins/installed``, suggest a fit per track, and load
+    via ``ableton_device(action='load')`` (W14-A).
+
 Carry-forward principle #9 (M-6 pattern): prompts live in their own
 module, registered via ``register_prompts(mcp)`` called from
 ``server.create_server``. The same lock-the-surface negative-test
@@ -54,7 +61,17 @@ PROMPT_NAMES: tuple[str, ...] = (
     "compose_section_pattern",
     # W9-C: scaffold-then-compose orchestration for new songs.
     "start_new_song",
+    # W14-A: browser-driven instrument picker with portability modes.
+    "pick_instruments_for_song",
 )
+
+
+# Portability modes for pick_instruments_for_song. Strict = stock Live
+# devices only (guarantees round-trip on any Live install with the same
+# edition); relaxed = stock + common third-party (collaborators may need
+# to install a few well-known plugins); unrestricted = anything installed
+# (W13-B's REQUIREMENTS.md emerges on the consumer side).
+_PORTABILITY_MODES: tuple[str, ...] = ("strict", "relaxed", "unrestricted")
 
 
 # Message shape FastMCP accepts: {role: "user"|"assistant", content: str | dict}.
@@ -329,6 +346,18 @@ def _start_new_song(
         f"2. **Confirm scaffold**: run `python3 songs/{slug}/build.py "
         f"--reset` and `pytest songs/{slug}/tests/ -v`. Both should pass "
         f"on first run.\n\n"
+        f"2b. **Pick instruments** (W14-A): invoke the "
+        f"`pick_instruments_for_song` prompt to browse "
+        f"`ableton://browser/instruments` (and "
+        f"`ableton://plugins/installed` if you go past `strict`) and "
+        f"suggest a fit per track. Default to `portability='strict'` "
+        f"unless the user signals tolerance for third-party plugins or "
+        f"the style hint demands something the stock devices can't "
+        f"reach. Confirm picks with the user, then load them via "
+        f"`ableton_device(action='load', ...)` after the first push "
+        f"(step 5) so the loaded instrument lives on the real Live "
+        f"track. Re-run `tools/capture.py` so the picks land in "
+        f"`captured_session.json`.\n\n"
         f"3. **Compose**: open `songs/{slug}/build.py` and replace the "
         f"`=== Compose-half ===` placeholder with your musical authoring. "
         f"For each section: pick clips, generate or hand-author notes, "
@@ -353,6 +382,128 @@ def _start_new_song(
         f"Re-run build to converge.\n\n"
         f"Stop at any step if a prerequisite fails — surface the error "
         f"to the user rather than guessing past it."
+    )
+    return [_msg(text)]
+
+
+def _pick_instruments_for_song(
+    tracks: str,
+    portability: str = "strict",
+    style_hint: str | None = None,
+) -> list[_Msg]:
+    """W14-A: browser-driven instrument picker with portability modes.
+
+    `tracks` is a CSV of track descriptors — names alone ("Drums,Bass,
+    Lead,Pads") or name + role ("Drums (kit), Bass (sub), Lead (mono
+    saw), Pads (warm)"). The prompt instructs the agent to read the
+    browser + plugin resources, filter by portability mode, and
+    suggest a fit per track.
+
+    The cross-machine portability story lives in Wave 13: strict mode
+    side-steps it (stock devices are everywhere), relaxed mode trusts
+    the few well-known third-party plugins, unrestricted mode hands the
+    consumer-side problem to W13-B (``compat check`` + REQUIREMENTS.md).
+    """
+    if portability not in _PORTABILITY_MODES:
+        return [_msg(
+            f"`portability={portability!r}` is not a recognized mode. "
+            f"Choose one of: {list(_PORTABILITY_MODES)}."
+        )]
+
+    if portability == "strict":
+        mode_clause = (
+            "**Strict**: stock Live devices only. Read "
+            "`ableton://browser/instruments` — every node there ships "
+            "with Live (modulo edition tier: Operator / Analog / "
+            "Electric / Tension / Collision / Drift / Meld are Suite-"
+            "only; Wavetable / Simpler / Sampler / Drum Rack / Impulse "
+            "ship with Standard). Do NOT pull from "
+            "`ableton://plugins/installed`. Strict guarantees the "
+            "resulting song opens on any Live install of the same "
+            "edition with no missing-device errors — the Wave 13 "
+            "portability problem is structurally avoided."
+        )
+    elif portability == "relaxed":
+        mode_clause = (
+            "**Relaxed**: stock + common third-party. Read "
+            "`ableton://browser/instruments` (stock) AND "
+            "`ableton://plugins/installed` (third-party). When picking "
+            "third-party, prefer well-known names a collaborator "
+            "plausibly already owns (e.g. Serum / Massive X / Diva / "
+            "Spire / Omnisphere / Kontakt). Avoid niche / boutique "
+            "plugins in this mode — those belong in `unrestricted`. "
+            "Consumers may still need to install one or two of the "
+            "third-party picks; W13-B's `compat check` will flag them."
+        )
+    else:  # unrestricted
+        mode_clause = (
+            "**Unrestricted**: anything in `ableton://plugins/installed` "
+            "OR `ableton://browser/instruments`. Pick the best musical "
+            "fit without portability concern — assume the consumer "
+            "side will resolve missing plugins via W13-B's "
+            "`python -m hallucinote.sync.compat check <slug>` and the "
+            "emitted `songs/<slug>/REQUIREMENTS.md`. Tell the user "
+            "explicitly that this song is not strict-portable and that "
+            "collaborators will need to install whatever's listed in "
+            "REQUIREMENTS before pushing."
+        )
+
+    style_clause = (
+        f"\n\nStyle hint from the user: {style_hint!r}. Let this steer "
+        "tonal choice (e.g. 'warm vintage analog' → Operator FM bells, "
+        "Analog subtractive; 'aggressive modern EDM' → Wavetable "
+        "saws, Serum-style sounds in relaxed/unrestricted)."
+        if style_hint else ""
+    )
+
+    tracks_clean = tracks.strip()
+    text = (
+        f"Workflow: pick instruments for the tracks [{tracks_clean}] "
+        f"under portability mode `{portability}`.\n\n"
+        f"{mode_clause}{style_clause}\n\n"
+        f"Steps:\n\n"
+        f"1. **Read the catalogue.** Open the resources listed in the "
+        f"mode clause above. They return JSON trees / lists with "
+        f"loader nodes — each node carries a `uri` (the "
+        f"`query:...` or `plugins:...` string passable to "
+        f"`ableton_device(action='load', preset_uri=...)`) and a "
+        f"`class_name` (the Live device class name needed for "
+        f"`ableton_device(action='load', kind=...)`).\n\n"
+        f"2. **Match per track.** For each of [{tracks_clean}], propose "
+        f"ONE primary pick + 1-2 alternates. Each pick records: track "
+        f"name, suggested instrument display name, `class_name`, "
+        f"`preset_uri`, and a one-sentence rationale (why this fits "
+        f"this track's role). Drum tracks should pick Drum Rack "
+        f"(`class_name='DrumGroupDevice'`) or Impulse "
+        f"(`class_name='Impulse'`) — single-pitch synths don't make "
+        f"sense for a kit.\n\n"
+        f"3. **Confirm with the user.** Present the picks as a compact "
+        f"table (track / pick / rationale). Wait for OK or "
+        f"substitutions before loading anything. The user may steer "
+        f"individual picks (\"use Wavetable instead of Analog for "
+        f"Lead\"); honour the steer and re-confirm.\n\n"
+        f"4. **Load instruments.** For each confirmed pick, either:\n"
+        f"   - Use the `create_midi_track_with_instrument` prompt "
+        f"(creates the track + loads the instrument in one workflow), "
+        f"OR\n"
+        f"   - If the tracks already exist, call "
+        f"`ableton_device(action='load', track_index=<i>, "
+        f"kind=<class_name>, preset_uri=<uri>)` directly. `kind` is "
+        f"REQUIRED — the URI's browser path is NOT a substitute, Live "
+        f"won't infer the class.\n\n"
+        f"5. **Capture for the DB.** After loading, run "
+        f"`tools/capture.py` (or invoke the `/song-snapshot` skill) so "
+        f"the song's `captured_session.json` reflects the picks. The "
+        f"instrument's `(class, display_name, manufacturer, pack_name, "
+        f"params_dialed)` is what Wave 13-A's fallback-identity path "
+        f"will use to re-find the same instrument on another machine."
+        + (
+            "\n\n6. **Flag the unrestricted scope.** Tell the user the "
+            "song is not strict-portable; collaborators will need to "
+            "install whatever W13-B's `compat check` flags before "
+            "their push."
+            if portability == "unrestricted" else ""
+        )
     )
     return [_msg(text)]
 
@@ -423,6 +574,19 @@ def register_prompts(mcp: Any) -> None:
             "--auto-session bootstrap."
         ),
     )(_start_new_song)
+
+    mcp.prompt(
+        name="pick_instruments_for_song",
+        description=(
+            "Browser-driven instrument picker: filter "
+            "ableton://browser/instruments and ableton://plugins/installed "
+            "by portability mode (strict / relaxed / unrestricted) and "
+            "suggest a fit per track. Integrates with start_new_song for "
+            "the compose-half. Strict mode side-steps Wave 13 portability "
+            "concerns; unrestricted hands the cross-machine problem to "
+            "W13-B's compat check + REQUIREMENTS.md."
+        ),
+    )(_pick_instruments_for_song)
 
 
 __all__ = ["PROMPT_NAMES", "register_prompts"]

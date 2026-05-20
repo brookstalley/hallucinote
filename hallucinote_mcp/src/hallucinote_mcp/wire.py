@@ -185,7 +185,11 @@ def check_version_compat(
                 "Upgrade the MCP server side — `pip install -U "
                 "hallucinote-mcp` — then run `/mcp` in Claude Code to "
                 "respawn the server (a full Claude Code restart works too "
-                "but isn't necessary)."
+                "but isn't necessary). To inspect which versions are on "
+                "disk before reinstalling, run "
+                "`python -m hallucinote_mcp.cli preflight` and check the "
+                "`package.version` and `remote_script.candidates[*].version` "
+                "fields."
             ),
         )
     if request_version != local_version:
@@ -202,7 +206,11 @@ def check_version_compat(
                 "(Live caches Control Surface modules at startup, so a "
                 "restart is required — `/mcp` alone won't help). If the "
                 "MCP server side is stale: `pip install -U hallucinote-mcp` "
-                "then run `/mcp` in Claude Code to respawn it."
+                "then run `/mcp` in Claude Code to respawn it. To confirm "
+                "which side is which BEFORE reinstalling, run "
+                "`python -m hallucinote_mcp.cli preflight` and compare "
+                "`package.version` (server) against "
+                "`remote_script.candidates[*].version` (vendored copy)."
             ),
         )
     return None

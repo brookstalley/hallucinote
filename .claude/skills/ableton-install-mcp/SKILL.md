@@ -84,6 +84,14 @@ The report has these blocks:
   objects locating every existing `hallucinote-mcp` registration —
   including the `projects.<cwd>.mcpServers` scope that `claude mcp add`
   uses by default), `malformed` (configs that didn't parse as JSON).
+- **`remote_script`** (W12-D) — `candidates` is one entry per User Library
+  candidate: `{user_library, remote_script_dir, installed, version,
+  matches_mcp_server}`. `version` is the vendored copy's `__version__`
+  string (or `null` when nothing's installed there); `matches_mcp_server`
+  is `true` when the vendored fingerprint matches `package.version`,
+  `false` on drift, `null` when no install. Surfaces stale Remote Scripts
+  BEFORE Live's runtime handshake catches them — drift here is the same
+  failure mode as the handshake error users see at first MCP dispatch.
 - **`platform`** — `darwin` / `win32` / `linux`.
 
 ### Preflight decisions
@@ -113,6 +121,17 @@ The report has these blocks:
 - **`mcp_configs.malformed` is non-empty**: stop and tell the user. Show
   the path and ask them to fix or delete the file before you proceed —
   overwriting a hand-edited config could destroy state.
+- **`remote_script.candidates[*].installed == true` AND
+  `matches_mcp_server == false`** (W12-D): a vendored Remote Script
+  exists but is out-of-sync with the running MCP server. Show the user
+  the vendored `version` vs `package.version` and explain that a fresh
+  copy is needed — the user is reinstalling already, so this is the
+  "we're about to fix the drift you'd otherwise discover at runtime"
+  signal. Continue with the install (Step 3 overwrites the vendored
+  copy after confirmation). If `installed == true` AND
+  `matches_mcp_server == true`, mention briefly that the vendored copy
+  is already current; the user may want to skip Step 3 and just run
+  Step 4 to re-confirm the MCP config entry.
 
 ## Step 2 — Choose the User Library
 

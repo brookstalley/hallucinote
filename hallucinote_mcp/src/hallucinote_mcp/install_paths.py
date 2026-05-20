@@ -204,6 +204,27 @@ def remote_script_install_dir(user_library: pathlib.Path | str) -> pathlib.Path:
     return pathlib.Path(user_library) / "Remote Scripts" / "Hallucinote"
 
 
+def installed_remote_script_version(user_library: pathlib.Path | str) -> str | None:
+    """The vendored Remote Script's ``__version__`` string, or ``None`` if absent.
+
+    Reads ``<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp/__init__.py``
+    and parses ``BASE_VERSION`` + recomputes the content fingerprint via
+    :func:`hallucinote_mcp.compute_version_for`. The result string is
+    directly comparable to the running server's ``__version__`` — a match
+    means the next runtime handshake will succeed.
+
+    Surfaced through preflight (``remote_script.candidates[*].version``)
+    so the install / uninstall skills can detect drift before Live
+    rejects a dispatch (W12-D MCP/Live drift visibility).
+    """
+    from . import compute_version_for
+
+    vendored_pkg = remote_script_install_dir(user_library) / "hallucinote_mcp"
+    if not vendored_pkg.is_dir():
+        return None
+    return compute_version_for(vendored_pkg)
+
+
 def describe_install_layout(user_library: pathlib.Path | str) -> str:
     """Human-readable summary of what the install will create.
 
@@ -509,6 +530,7 @@ __all__ = [
     "existing_mcp_config_files",
     "hallucinote_mcp_command",
     "installed_live_versions",
+    "installed_remote_script_version",
     "live_is_running",
     "live_log_path",
     "malformed_mcp_config_files",

@@ -270,6 +270,229 @@ def test_probe_and_link_is_idempotent(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# W18-B: strict link reconciliation
+# ---------------------------------------------------------------------------
+
+
+def test_probe_and_link_unlinks_stale_track_link(conn, song, session):
+    """User deleted a Live track that was previously linked → re-probing
+    drops the now-orphaned link row instead of silently leaving it (which
+    would make the next push dispatch clip-creates at a dead index)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    # Fresh probe — index 5 is gone. The DB track 'Drums' isn't matched by
+    # name in the new probe either (different track at index 1).
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 5}]
+    # The link row is gone.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+
+
+def test_probe_and_link_unlinks_stale_return_link(conn, song, session):
+    """Same shape for returns: deleted Live return → stale link cleared."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=3,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Delay"}],
+    )
+    assert result.unlinked_stale_returns == [{"db_id": rid, "ableton_index": 3}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="return", db_id=rid,
+    ) is None
+
+
+def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, session):
+    """Live track survives but at a new index (e.g., earlier track was
+    deleted, this one shifted down). Name still matches → link rewritten
+    to the new index; no stale-link entry surfaces (the upsert handled it)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    # 'Drums' now lives at index 1 (the four defaults that used to sit
+    # ahead of it were deleted).
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.matched_tracks == [
+        {"db_id": tid, "name": "Drums", "ableton_index": 1},
+    ]
+    assert result.unlinked_stale_tracks == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) == 1
+
+
+def test_probe_and_link_does_not_touch_nested_links_on_stale_parent(
+    conn, song, session,
+):
+    """A stale parent-track link doesn't make this function touch nested
+    clip/device/envelope links — they cascade-invalidate at next push and
+    walking deep would require extra MCP probes. Document the boundary."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],  # parent at index 5 gone
+        live_returns=[],
+    )
+    # Parent link cleared, nested link left intact (will be re-emitted by
+    # the next push's clips phase).
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) == 0
+
+
+def test_probe_and_link_emits_link_removed_event_on_stale_unlink(
+    conn, song, session,
+):
+    """Strict reconciliation goes through the mutator so the event log
+    records the removal (audit-trail seed for the future event-store flip)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[], live_returns=[],
+    )
+    events = conn.execute(
+        "SELECT kind, payload_json FROM events WHERE kind = 'ableton_link_removed'"
+    ).fetchall()
+    assert len(events) == 1
+    body = json.loads(events[0]["payload_json"])
+    assert body["db_kind"] == "track"
+    assert body["db_id"] == tid
+    assert body["ableton_index"] == 5
+
+
+# ---------------------------------------------------------------------------
+# W18-D: canonical default-scaffold detection
+# ---------------------------------------------------------------------------
+
+
+def test_probe_and_link_detects_default_scaffold_on_auto_session(conn, song, session):
+    """Auto-session + all unmatched Live tracks are canonical defaults →
+    populate default_scaffold_unmatched_tracks so the skill can offer to
+    clean up. Strategy (b) from backlog #59: push first (creates song
+    tracks), then delete the now-safe defaults."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[
+            {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+            {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+            {"track_index": 3, "name": "3-Audio", "kind": "audio"},
+            {"track_index": 4, "name": "4-Audio", "kind": "audio"},
+        ],
+        live_returns=[],
+        auto_session_created=True,
+    )
+    assert len(result.default_scaffold_unmatched_tracks) == 4
+    assert {t["track_index"] for t in result.default_scaffold_unmatched_tracks} == {1, 2, 3, 4}
+
+
+def test_probe_and_link_detects_partial_default_scaffold(conn, song, session):
+    """Subset of the canonical set still qualifies — the user may have
+    already deleted some of the defaults manually."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+        auto_session_created=True,
+    )
+    assert result.default_scaffold_unmatched_tracks == [
+        {"track_index": 1, "name": "1-MIDI"},
+    ]
+
+
+def test_probe_and_link_no_default_scaffold_when_not_auto_session(conn, song, session):
+    """Without the auto_session_created flag, the skill is in a "user is
+    pushing onto a known Live set" mode — never offer to clean defaults
+    there even if the names happen to match (could be another song's tracks
+    renamed coincidentally)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+        auto_session_created=False,
+    )
+    assert result.default_scaffold_unmatched_tracks == []
+
+
+def test_probe_and_link_no_default_scaffold_when_extras_present(conn, song, session):
+    """If even one unmatched Live track has a non-canonical name, the set
+    isn't a fresh scaffold (could be someone else's song with the defaults
+    still alongside). Fall back to the generic unmatched-Live confirmation."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[
+            {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+            {"track_index": 2, "name": "SomeoneElsesTrack", "kind": "midi"},
+        ],
+        live_returns=[],
+        auto_session_created=True,
+    )
+    assert result.default_scaffold_unmatched_tracks == []
+
+
+def test_probe_and_link_no_default_scaffold_when_nothing_unmatched(conn, song, session):
+    """User opened a known Live set with their song's actual tracks already
+    present — nothing unmatched, no detection. (auto_session_created=True
+    only signals "this run minted the session," not "this is a fresh Live
+    set.")"""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+        auto_session_created=True,
+    )
+    assert result.matched_tracks
+    assert result.default_scaffold_unmatched_tracks == []
+
+
+def test_probe_and_link_default_scaffold_is_case_sensitive(conn, song, session):
+    """Live's defaults are exact-cased ('1-MIDI'); a renamed track in the
+    same shape ('1-midi') is not a default. The user may have intentionally
+    customised, so don't auto-suggest deletion."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-midi", "kind": "midi"}],
+        live_returns=[],
+        auto_session_created=True,
+    )
+    assert result.default_scaffold_unmatched_tracks == []
+
+
+# ---------------------------------------------------------------------------
 # push_cli — argument plumbing
 # ---------------------------------------------------------------------------
 
@@ -787,6 +1010,143 @@ def test_cli_probe_and_link_requires_session_id_when_no_auto(
             "probe-and-link", "--song", "t", "--db", str(db_path),
             "--snapshot", str(snapshot),
         ])
+
+
+# ---------------------------------------------------------------------------
+# W18-B: --probe flag (in-process MCP TCP probe; no tmp snapshot file)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResp:
+    """Minimal stand-in for hallucinote_mcp.wire.Response. The CLI reads
+    .ok / .error / .result via getattr, so a SimpleNamespace would do, but
+    a named class makes intent obvious in test failures."""
+    def __init__(self, *, ok: bool, result=None, error: str | None = None):
+        self.ok = ok
+        self.result = result
+        self.error = error
+
+
+def _fake_send(tracks, returns):
+    """Build a send_fn that returns the right shape for the two probe
+    calls. Use for --probe tests; mirrors how push_execute tests inject
+    a send_fn to avoid touching hallucinote_mcp or Live."""
+    def send(req):
+        if req.tool == "ableton_track" and req.action == "list":
+            return _FakeResp(ok=True, result={"tracks": list(tracks)})
+        if req.tool == "ableton_return" and req.action == "list":
+            return _FakeResp(ok=True, result={"returns": list(returns)})
+        return _FakeResp(ok=False, error=f"unexpected probe call: {req.tool}/{req.action}")
+    return send
+
+
+def test_cli_probe_and_link_via_probe_flag(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """--probe replaces --snapshot: live probe happens in-process via the
+    injected send_fn, no tmp file involved."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    monkeypatch.setattr(
+        push_cli, "_probe_live_via_mcp",
+        lambda send_fn=None: ([{"track_index": 7, "name": "Drums", "kind": "midi"}], []),
+    )
+    push_cli.main([
+        "probe-and-link", session, "--db", str(db_path), "--probe",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert out["matched_tracks"] == [
+        {"db_id": tid, "name": "Drums", "ableton_index": 7},
+    ]
+
+
+def test_cli_probe_and_link_probe_and_snapshot_are_mutex(
+    conn, song, session, db_path, tmp_path,
+):
+    """--probe and --snapshot can't both be given (argparse mutex)."""
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"tracks": [], "returns": []}))
+    with pytest.raises(SystemExit):
+        push_cli.main([
+            "probe-and-link", session, "--db", str(db_path),
+            "--probe", "--snapshot", str(snapshot),
+        ])
+
+
+def test_cli_probe_and_link_requires_probe_or_snapshot(
+    conn, song, session, db_path,
+):
+    """Neither --probe nor --snapshot → argparse refuses (the mutex group
+    is required=True so a forgotten flag isn't silently a stale read)."""
+    with pytest.raises(SystemExit):
+        push_cli.main([
+            "probe-and-link", session, "--db", str(db_path),
+        ])
+
+
+def test_cli_probe_and_link_probe_threads_auto_session_created(
+    conn, song, db_path, capsys, monkeypatch,
+):
+    """W18-D wiring: --probe + --auto-session + canonical defaults →
+    default_scaffold_unmatched_tracks surfaces in CLI output."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    monkeypatch.setattr(
+        push_cli, "_probe_live_via_mcp",
+        lambda send_fn=None: (
+            [
+                {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+                {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+            ],
+            [],
+        ),
+    )
+    push_cli.main([
+        "probe-and-link", "--song", "t", "--db", str(db_path),
+        "--probe", "--auto-session",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert out["auto_session_created"] is True
+    assert len(out["default_scaffold_unmatched_tracks"]) == 2
+
+
+def test_cli_check_coherence_via_probe_flag(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """check-coherence accepts --probe symmetrically with probe-and-link."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=4,
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        push_cli, "_probe_live_via_mcp",
+        lambda send_fn=None: ([{"track_index": 4, "name": "Drums"}], []),
+    )
+    rc = push_cli.main([
+        "check-coherence", session, "--db", str(db_path), "--probe",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["ok"] is True
+
+
+def test_probe_live_via_mcp_surfaces_track_list_failure():
+    """If Live's ableton_track(list) reports ok=false, the CLI raises a
+    teaching SystemExit instead of silently returning empty lists."""
+    def send(req):
+        return _FakeResp(ok=False, error="connection refused")
+    with pytest.raises(SystemExit, match="ableton_track\\(list\\) failed"):
+        push_cli._probe_live_via_mcp(send_fn=send)
+
+
+def test_probe_live_via_mcp_returns_flat_lists():
+    """Unwraps the {tracks: [...]} + {returns: [...]} payload shape."""
+    send = _fake_send(
+        tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        returns=[{"return_index": 1, "name": "A-Reverb"}],
+    )
+    live_tracks, live_returns = push_cli._probe_live_via_mcp(send_fn=send)
+    assert live_tracks == [{"track_index": 1, "name": "Drums", "kind": "midi"}]
+    assert live_returns == [{"return_index": 1, "name": "A-Reverb"}]
 
 
 # ---------------------------------------------------------------------------

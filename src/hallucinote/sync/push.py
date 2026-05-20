@@ -2155,17 +2155,44 @@ def plan_push_song(
 # ---------------------------------------------------------------------------
 
 
+# W18-D: Live 12.x's brand-new-set scaffold ships these track names. Detection
+# of the "first push onto a fresh default set" case keys off this exact set —
+# any drift (rename, locale change, user customization) means the tracks are
+# no longer recognisable defaults and we fall back to the standard "continue
+# alongside?" confirmation.
+CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES: frozenset[str] = frozenset({
+    "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
+})
+
+
 @dataclass
 class ProbeAndLinkResult:
     """Outcome of :func:`probe_and_link`. The skill displays the
     matched / unmatched lists so the user can spot rename drift
-    (e.g. DB has 'Drums', Live has 'Drum Kit')."""
+    (e.g. DB has 'Drums', Live has 'Drum Kit').
+
+    W18-B added ``unlinked_stale_tracks`` / ``unlinked_stale_returns``: links
+    whose ``ableton_index`` no longer matches a Live entity in the fresh
+    probe and were deleted by strict reconciliation. The skill surfaces the
+    counts so the user sees that probe-and-link recovered from a deleted-
+    Live-track drift instead of silently leaving stale rows.
+
+    W18-D added ``default_scaffold_unmatched_tracks``: present (non-empty)
+    only when the caller passed ``auto_session_created=True`` AND every
+    entry in ``unmatched_live_tracks`` matches a canonical Live default
+    name. The skill keys its "delete defaults after push?" prompt off this
+    field, not off ``unmatched_live_tracks`` directly — that way an unrelated
+    set with the same names doesn't trigger destructive cleanup.
+    """
     matched_tracks: list[dict[str, Any]] = field(default_factory=list)
     matched_returns: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_tracks: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_returns: list[dict[str, Any]] = field(default_factory=list)
     unmatched_live_tracks: list[dict[str, Any]] = field(default_factory=list)
     unmatched_live_returns: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_returns: list[dict[str, Any]] = field(default_factory=list)
+    default_scaffold_unmatched_tracks: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -2181,6 +2208,7 @@ def probe_and_link(
     live_returns: list[dict[str, Any]],
     actor: str = "sync",
     reason: str | None = None,
+    auto_session_created: bool = False,
 ) -> ProbeAndLinkResult:
     """Match Live tracks/returns by name against DB rows; write the
     matches as ``ableton_links`` so subsequent phases skip the
@@ -2210,7 +2238,26 @@ def probe_and_link(
     enforced at link time).
 
     Re-runnable: calling ``probe_and_link`` a second time on the same
-    inputs is a no-op (link_db_to_ableton is upsert-by-(session, db_kind, db_id)).
+    inputs is a no-op for the link upserts (link_db_to_ableton is
+    upsert-by-(session, db_kind, db_id)) and a no-op for the strict
+    reconciliation (no stale links to delete the second time).
+
+    **W18-B: strict link reconciliation.** After the name-matching pass,
+    any ``ableton_links`` row whose ``ableton_index`` no longer appears in
+    the fresh probe is deleted (track + return kinds; nested kinds —
+    clip / device / envelope — are not validated here, the parent-track
+    deletion cascade-invalidates them and the next push re-creates them).
+    This closes the punk-fate drift bug where a deleted Live track left a
+    stale link pointing at a now-vacant index, causing the next push to
+    silently dispatch clip creates against the wrong track.
+
+    **W18-D: default-scaffold detection.** When the caller flags
+    ``auto_session_created=True`` AND every entry in
+    ``unmatched_live_tracks`` matches a canonical Live-default name
+    (``1-MIDI`` / ``2-MIDI`` / ``3-Audio`` / ``4-Audio``), the unmatched
+    list is also surfaced as ``default_scaffold_unmatched_tracks`` so the
+    skill can offer "delete defaults after push?" as the prompt default
+    instead of the generic "continue alongside?" gate.
     """
     result = ProbeAndLinkResult()
 
@@ -2307,6 +2354,60 @@ def probe_and_link(
         notes=result.notes,
         live_normalize=strip_return_slot_prefix,
     )
+
+    # W18-B: strict reconciliation — sweep ableton_links for rows whose
+    # ableton_index no longer appears in the fresh probe. Only track + return
+    # kinds: nested kinds (clip/device/envelope/note/arrangement_clip) are
+    # cascade-invalidated when their parent track is deleted, and the next
+    # push's create-call path re-establishes them. Iterate over a snapshot of
+    # the rows because the unlink mutator deletes from the same table.
+    live_track_indexes = {lt["track_index"] for lt in live_tracks}
+    live_return_indexes = {lr["return_index"] for lr in live_returns}
+    for link in list(Q.get_ableton_links_for_session(conn, session_id)):
+        db_kind = link["db_kind"]
+        ableton_index = link["ableton_index"]
+        if db_kind == "track" and ableton_index not in live_track_indexes:
+            M.unlink_db_from_ableton(
+                conn,
+                session_id=session_id,
+                db_kind=db_kind,
+                db_id=link["db_id"],
+                actor=actor,
+                reason=reason or "probe-and-link: stale track link",
+            )
+            result.unlinked_stale_tracks.append({
+                "db_id": link["db_id"],
+                "ableton_index": ableton_index,
+            })
+        elif db_kind == "return" and ableton_index not in live_return_indexes:
+            M.unlink_db_from_ableton(
+                conn,
+                session_id=session_id,
+                db_kind=db_kind,
+                db_id=link["db_id"],
+                actor=actor,
+                reason=reason or "probe-and-link: stale return link",
+            )
+            result.unlinked_stale_returns.append({
+                "db_id": link["db_id"],
+                "ableton_index": ableton_index,
+            })
+
+    # W18-D: detect "first push onto Live's brand-new-set default scaffold."
+    # Fires only on auto-session bootstraps where every unmatched Live track
+    # is a canonical default — that name set is the unambiguous signature.
+    # When ANY unmatched-Live track has a non-canonical name, this is "some
+    # other song's tracks" territory and we deliberately don't suggest
+    # cleanup; the standard "continue alongside?" gate handles that case.
+    if (
+        auto_session_created
+        and result.unmatched_live_tracks
+        and all(
+            t["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+            for t in result.unmatched_live_tracks
+        )
+    ):
+        result.default_scaffold_unmatched_tracks = list(result.unmatched_live_tracks)
 
     return result
 
@@ -2469,11 +2570,9 @@ def check_coherence(
                 "probe-and-link wrote the link row."
             ),
             recovery=(
-                "Re-run `push_cli probe-and-link` against a freshly-probed "
-                "snapshot — it upserts matches but doesn't delete stale "
-                "rows today, so for now you may also need to mint a fresh "
-                "session via `--auto-session`. (W18 will land strict "
-                "reconciliation in probe-and-link itself.)"
+                "Re-run `push_cli probe-and-link --probe` (or supply a fresh "
+                "--snapshot). W18-B's strict reconciliation will delete the "
+                "stale link rows and re-match anything still present."
             ),
         )
 
@@ -2489,8 +2588,8 @@ def check_coherence(
                 "probe-and-link wrote the link row."
             ),
             recovery=(
-                "Re-run `push_cli probe-and-link` against a freshly-probed "
-                "snapshot, or mint a fresh session via `--auto-session`."
+                "Re-run `push_cli probe-and-link --probe` (or supply a fresh "
+                "--snapshot) to drop the stale link rows."
             ),
         )
 

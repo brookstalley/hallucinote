@@ -23,11 +23,13 @@ Subcommands:
            the original plan.json so keys + tools get re-derived. The legacy
            full format ({key, ok, tool, result}) still works without --plan.
 
-    push_cli probe-and-link <session_id> (--song SLUG | --db PATH) --snapshot S
-        -> read a {"tracks": [...], "returns": [...]} snapshot
-           (the skill assembles it from ``ableton_track(action='list')``
-           and ``ableton_return(action='list')`` MCP probes), match by
-           name, write ableton_links rows for matches, emit a
+    push_cli probe-and-link <session_id> (--song SLUG | --db PATH) (--probe | --snapshot S)
+        -> probe Live for {"tracks": [...], "returns": [...]} (default via
+           ``--probe``: in-process MCP TCP call; W18-B canonical path with no
+           tmp-file staleness risk), or accept a pre-probed snapshot via
+           ``--snapshot`` (test/debug fallback). Match by name, write
+           ableton_links for matches, strict-reconcile any link whose
+           ableton_index no longer matches the fresh probe, emit a
            ProbeAndLinkResult JSON. Re-runnable.
 
     push_cli execute <session_id> (--song SLUG | --db PATH) [--state-dir D]
@@ -58,6 +60,45 @@ from pathlib import Path
 from hallucinote.db import mutations as M, queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
 from hallucinote.sync import push, push_execute
+
+
+def _probe_live_via_mcp(
+    send_fn=None,
+) -> tuple[list[dict], list[dict]]:
+    """W18-B: probe Live's tracks + returns directly via the MCP TCP client.
+
+    Returns ``(live_tracks, live_returns)`` shaped exactly like the legacy
+    ``--snapshot`` JSON ({track_index, name, kind} / {return_index, name}).
+    Same dispatch path as :func:`push_execute.execute_push` — reuses
+    ``hallucinote_mcp.client.send`` so probe-and-link no longer relies on the
+    agent maintaining ``/tmp/ableton-push-snapshot.json`` between invocations.
+
+    ``send_fn`` injection is for tests; the real path resolves the MCP
+    client lazily so import of this module doesn't require ``hallucinote_mcp``
+    to be installed (mirrors :func:`push_execute.execute_push`).
+    """
+    if send_fn is None:
+        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+        send_fn = _client.send
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    track_resp = send_fn(Request(tool="ableton_track", action="list", params={}))
+    if not getattr(track_resp, "ok", False):
+        raise SystemExit(
+            "push_cli --probe: ableton_track(list) failed — "
+            f"{getattr(track_resp, 'error', 'unknown error')}"
+        )
+    return_resp = send_fn(Request(tool="ableton_return", action="list", params={}))
+    if not getattr(return_resp, "ok", False):
+        raise SystemExit(
+            "push_cli --probe: ableton_return(list) failed — "
+            f"{getattr(return_resp, 'error', 'unknown error')}"
+        )
+    track_payload = getattr(track_resp, "result", None) or {}
+    return_payload = getattr(return_resp, "result", None) or {}
+    live_tracks = list(track_payload.get("tracks") or [])
+    live_returns = list(return_payload.get("returns") or [])
+    return live_tracks, live_returns
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
@@ -215,18 +256,20 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         raise SystemExit(
             "push_cli probe-and-link: need --song <slug> or --db <path>"
         )
-    snapshot = json.loads(Path(args.snapshot).read_text())
-    if not isinstance(snapshot, dict):
-        raise SystemExit(
-            "push_cli probe-and-link: snapshot file must be a JSON object "
-            'with "tracks" and "returns" arrays'
-        )
-    live_tracks = snapshot.get("tracks") or []
-    live_returns = snapshot.get("returns") or []
-    if not isinstance(live_tracks, list) or not isinstance(live_returns, list):
-        raise SystemExit(
-            'push_cli probe-and-link: snapshot.tracks and snapshot.returns '
-            "must be JSON arrays"
+    # W18-B: --probe (canonical) probes Live in-process; --snapshot (fallback)
+    # reads a pre-probed JSON file. The argparse mutex makes exactly one
+    # active; require one explicitly so a forgotten flag isn't silently a
+    # stale-snapshot read.
+    if args.probe:
+        live_tracks, live_returns = _probe_live_via_mcp()
+    else:
+        if not args.snapshot:
+            raise SystemExit(
+                "push_cli probe-and-link: pass --probe (W18-B canonical) "
+                "or --snapshot <path> (test/debug fallback)"
+            )
+        live_tracks, live_returns = _load_snapshot_file(
+            args.snapshot, subcmd="probe-and-link",
         )
 
     conn = connect(_resolve_db_path(args))
@@ -276,6 +319,7 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_returns=live_returns,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
+        auto_session_created=auto_created,
     )
     out = result.to_dict()
     out["song_id"] = song_id
@@ -308,6 +352,22 @@ def _load_snapshot_file(path_str: str, *, subcmd: str) -> tuple[list, list]:
     return live_tracks, live_returns
 
 
+def _cmd_check_coherence_probe_or_snapshot(
+    args: argparse.Namespace, *, subcmd: str
+) -> tuple[list[dict], list[dict]]:
+    """Shared --probe vs --snapshot resolver. Used by check-coherence and
+    execute; both need the same {tracks, returns} shape from one of the two
+    sources, refused identically on missing flag."""
+    if getattr(args, "probe", False):
+        return _probe_live_via_mcp()
+    if not args.snapshot:
+        raise SystemExit(
+            f"push_cli {subcmd}: pass --probe (W18-B canonical) "
+            "or --snapshot <path> (test/debug fallback)"
+        )
+    return _load_snapshot_file(args.snapshot, subcmd=subcmd)
+
+
 def _cmd_check_coherence(args: argparse.Namespace) -> int:
     """W18-A: refuse-and-teach before ``execute`` mutates Live.
 
@@ -321,7 +381,9 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
     before retrying.
     """
     conn = connect(_resolve_db_path(args))
-    live_tracks, live_returns = _load_snapshot_file(args.snapshot, subcmd="check-coherence")
+    live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
+        args, subcmd="check-coherence",
+    )
     result = push.check_coherence(
         conn,
         session_id=args.session_id,
@@ -344,16 +406,20 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     (on failure) into the song's directory. Prints a one-page summary to
     stdout.
 
-    W18-A: when ``--snapshot <path>`` is provided, runs the coherence
-    check before dispatching phases. Refuses with a teaching error and
-    exits non-zero if any link is stale or the session row is missing.
+    W18-A/B: when ``--snapshot <path>`` is provided OR ``--probe`` is set,
+    runs the coherence check before dispatching phases. Refuses with a
+    teaching error and exits non-zero if any link is stale or the session
+    row is missing. Omit both to skip the check (legacy behavior; not
+    recommended).
     """
     db_path = _resolve_db_path(args)
     conn = connect(db_path)
     song_id = _resolve_song_id(conn, args.session_id)
 
-    if args.snapshot:
-        live_tracks, live_returns = _load_snapshot_file(args.snapshot, subcmd="execute")
+    if args.probe or args.snapshot:
+        live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
+            args, subcmd="execute",
+        )
         check = push.check_coherence(
             conn,
             session_id=args.session_id,
@@ -476,8 +542,17 @@ def main(argv: list[str] | None = None) -> int:
     # Non-mutex: --auto-session needs --song for the slug; tests may pass
     # --db for an explicit override.
     _add_db_args(p_pl, mutex=False)
-    p_pl.add_argument("--snapshot", required=True,
-                      help="path to {tracks: [...], returns: [...]} JSON")
+    # W18-B: --probe (canonical; in-process MCP TCP call) and --snapshot
+    # (test/debug fallback; reads a pre-probed JSON file) are mutually
+    # exclusive. Exactly one must be provided so callers don't silently
+    # fall back to a stale snapshot from a prior run.
+    probe_group = p_pl.add_mutually_exclusive_group(required=True)
+    probe_group.add_argument("--probe", action="store_true",
+                             help="W18-B canonical: probe Live's tracks + returns "
+                                  "in-process via the MCP TCP client; no tmp file")
+    probe_group.add_argument("--snapshot", default=None,
+                             help="test/debug fallback: path to a pre-probed "
+                                  "{tracks: [...], returns: [...]} JSON file")
     p_pl.add_argument("--reason", default=None,
                       help="optional reason annotation for emitted link events")
     p_pl.add_argument("--auto-session", action="store_true",
@@ -498,12 +573,17 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("--state-dir", default=None,
                         help="directory for .last-push-state.json + "
                              ".last-push-errors.json (default: DB directory)")
-    p_exec.add_argument("--snapshot", default=None,
-                        help="W18-A: optional freshly-probed Live snapshot "
-                             "({tracks, returns} JSON, same shape as "
-                             "probe-and-link consumes). When provided, runs "
-                             "the coherence check before dispatching phases "
-                             "and refuses on stale link / missing session.")
+    # W18-A: opt-in coherence check before dispatch. --probe is the W18-B
+    # canonical refresh (probe Live in-process); --snapshot is the test/debug
+    # fallback (pre-probed JSON file). Both optional; omit either to skip.
+    p_exec_probe = p_exec.add_mutually_exclusive_group(required=False)
+    p_exec_probe.add_argument("--probe", action="store_true",
+                              help="W18-B: probe Live in-process before "
+                                   "executing and run the coherence check")
+    p_exec_probe.add_argument("--snapshot", default=None,
+                              help="W18-A: pre-probed snapshot path; runs "
+                                   "the coherence check before dispatching "
+                                   "phases (alternative to --probe)")
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
     p_exec.set_defaults(func=_cmd_execute)
@@ -515,9 +595,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_cc.add_argument("session_id", help="ableton_sessions.id (always explicit)")
     _add_db_args(p_cc)
-    p_cc.add_argument("--snapshot", required=True,
-                      help="path to a freshly-probed {tracks: [...], "
-                           "returns: [...]} JSON snapshot")
+    # W18-B: --probe (canonical) | --snapshot (test/debug). Mutually exclusive,
+    # exactly one required — same shape as probe-and-link.
+    p_cc_probe = p_cc.add_mutually_exclusive_group(required=True)
+    p_cc_probe.add_argument("--probe", action="store_true",
+                            help="W18-B canonical: probe Live's tracks + returns "
+                                 "in-process via the MCP TCP client")
+    p_cc_probe.add_argument("--snapshot", default=None,
+                            help="test/debug fallback: path to a pre-probed "
+                                 "{tracks: [...], returns: [...]} JSON file")
     p_cc.set_defaults(func=_cmd_check_coherence)
 
     p_cs = sub.add_parser(

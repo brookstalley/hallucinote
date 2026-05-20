@@ -3101,6 +3101,62 @@ def link_db_to_ableton(
     )
 
 
+def unlink_db_from_ableton(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    db_kind: str,
+    db_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> bool:
+    """Remove the (session, db_kind, db_id) link row. Returns True if a row
+    was deleted, False if no link existed.
+
+    Used by W18-B's strict reconciliation in
+    :func:`hallucinote.sync.push.probe_and_link`: when the freshly-probed Live
+    snapshot no longer contains an entity at the link's ``ableton_index``
+    (typical repro: user deleted the linked Live track), the link is stale and
+    must be removed before the next push so phases don't dispatch against a
+    dead index.
+    """
+    if db_kind not in ABLETON_LINK_KINDS:
+        raise ValueError(
+            f"invalid db_kind {db_kind!r}; expected one of {sorted(ABLETON_LINK_KINDS)}"
+        )
+    row = conn.execute(
+        """SELECT id, ableton_index FROM ableton_links
+           WHERE session_id = ? AND db_kind = ? AND db_id = ?""",
+        (session_id, db_kind, db_id),
+    ).fetchone()
+    if row is None:
+        return False
+    link_id = row["id"]
+    ableton_index = row["ableton_index"]
+    conn.execute("DELETE FROM ableton_links WHERE id = ?", (link_id,))
+    song_row = conn.execute(
+        "SELECT song_id FROM ableton_sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+    _emit(
+        conn,
+        E.ABLETON_LINK_REMOVED,
+        {
+            "link_id": link_id,
+            "session_id": session_id,
+            "db_kind": db_kind,
+            "db_id": db_id,
+            "ableton_index": ableton_index,
+        },
+        song_id=song_row["song_id"] if song_row else None,
+        clip_id=db_id if db_kind == "clip" else None,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # W12-A: BuildSession — state-converger context manager
 # ---------------------------------------------------------------------------

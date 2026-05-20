@@ -12,7 +12,7 @@ $ARGUMENTS
 
 ## What push does
 
-Push is the **DB → Ableton** direction. The DB is the source of truth; Live is built from it. Push is **additive**: it does not delete Live state that isn't in the DB. If the user wants to start clean, they should open a fresh Live set first.
+Push is the **DB → Ableton** direction. The DB is the source of truth; Live is built from it. Push is **additive**: `execute` itself does not delete Live state that isn't in the DB. The one exception is W18-D's clean-default-scaffold workflow (Step 2a): on a first push (`--auto-session`) onto Live's canonical default scaffold, the skill offers to delete the leftover defaults *after* execute has populated the song's tracks alongside them — an explicit, user-opted-in cleanup, not silent destruction.
 
 The ten phases run in a strict order set by Live's API constraints (e.g., envelopes must be written on session clips BEFORE `duplicate_to_arrangement`, per W4-A; cues must be written AFTER the arrangement is laid down, per Live's `[0, last_event_time]` clamp). The orchestrator (`push_cli execute`) owns this order — your job is to set up the session (probe-and-link + confirmation gates), invoke `execute` once, then read the on-disk state file and report. The per-call MCP path is preserved for interactive single-element iteration (see end of this file), not for full-song pushes.
 
@@ -28,35 +28,30 @@ You need TWO pieces of information from `$ARGUMENTS`:
 
 If the slug is missing, ask the user. For session, default to `--auto-session` only if the user explicitly signaled "this is the first push for this song / new session" — otherwise ask.
 
-## Workflow overview
+## Workflow overview (probe-driven; W18-B)
 
 ```
-0.  Probe Live for tracks + returns         → snapshot.json
-0a. Probe Live for installed plugins         → plugins.json
+0a. Probe Live for installed plugins         → /tmp/ableton-push-plugins.json
 0b. python -m hallucinote.sync.compat check  → refuse-and-confirm gate
-1.  python -m hallucinote.sync.push_cli probe-and-link → ableton_links rows for matches
-2.  python -m hallucinote.sync.push_cli execute → dispatches all ten phases
+1.  python -m hallucinote.sync.push_cli probe-and-link --probe → orchestrator
+        probes Live, mints session if needed, upserts matches,
+        reconciles stale links (one canonical entrypoint owns all three
+        pieces of state: snapshot, sessions, links).
+2.  python -m hallucinote.sync.push_cli execute --probe → coherence check
+        + dispatch all ten phases against Live's Remote Script.
+2a. (W18-D, only if probe-and-link surfaced default_scaffold_unmatched_tracks
+     AND the user opted in) delete the canonical default tracks now that
+     the song's own tracks survive as the ≥1-track guarantee — descending
+     track-index order so the lower defaults don't renumber under you —
+     then re-run probe-and-link --probe to relink to the shifted indices.
 3.  Read .last-push-state.json + report.
 ```
+
+**Probe-driven means the orchestrator owns the three pieces of per-machine state.** The DB carries `ableton_sessions` (this DB ↔ this Live set) and `ableton_links` (DB rows ↔ Live indices); the snapshot of Live's current track/return shape is regenerated on every probe-and-link invocation via `--probe`, which dispatches `ableton_track(list)` + `ableton_return(list)` in-process over the same MCP TCP client `execute` uses. **No tmp snapshot file persists between runs.** Strict reconciliation in probe-and-link removes any `ableton_links` row whose `ableton_index` doesn't appear in the fresh probe, so deleting a linked Live track no longer leaves a stale binding that the next push would dispatch against.
 
 The `execute` subcommand (W10-E2) runs all ten phases inside the CLI process, dispatching every MCP call directly to Live's Remote Script over TCP. The agent doesn't touch the per-call MCP path for the bulk-data phases. **This is the default and only path for full-song pushes** — agent-side per-phase dispatch is the v1.0 ceiling (each `ableton_clip(create, notes=[…])` carries ~10–30 KB of inline JSON in the agent's tool-use block; a 29-clip song burned ~500 KB of context). `execute` removes that cost entirely.
 
 The per-call MCP path documented at the bottom of this file is the **fallback** for interactive iteration (single clip edits, parameter nudges, A/B parameter comparisons) — not full-song pushes.
-
-### Step 0 — Probe Live for the snapshot
-
-Call:
-- `ableton_track(action='list')` → returns `{"tracks": [{"track_index": N, "name": ..., "kind": "midi"|"audio"|"group"}, ...]}`. Master is NOT included.
-- `ableton_return(action='list')` → returns `{"returns": [{"return_index": N, "name": ..., "color": ...}, ...]}`. Names carry Live's auto slot-letter prefix (`"A-Reverb"`, `"B-Delay"`).
-
-Assemble the snapshot as JSON and write it to `/tmp/ableton-push-snapshot.json`:
-
-```json
-{
-  "tracks": [{"track_index": 1, "name": "Drums", "kind": "midi"}, ...],
-  "returns": [{"return_index": 1, "name": "A-Reverb"}, ...]
-}
-```
 
 ### Step 0a — Probe Live for installed plugins
 
@@ -94,26 +89,47 @@ Proceed only on explicit `yes`. If `no`, point the user at `songs/<slug>/REQUIRE
 
 Run:
 ```
-python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> --snapshot /tmp/ableton-push-snapshot.json
+python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> --probe
 ```
 
-The CLI matches by name (track names directly; return names after stripping Live's `<letter>-` prefix per W4-C) and writes `ableton_links` rows for each match. Re-runnable: if the link already exists, it's an upsert.
+(For first-push bootstrap, replace `<session_id>` with `--auto-session` and the CLI mints the row, prints its id, and uses it for this run. Note the id and reuse it for subsequent pushes — one session per Live set, not per push.)
+
+`--probe` is the W18-B canonical path: the CLI calls `ableton_track(list)` + `ableton_return(list)` in-process over the MCP TCP client and feeds the fresh shape straight into matching. No tmp snapshot file involved. Strict reconciliation runs at the end of the pass — any `ableton_links` row whose `ableton_index` no longer appears in the live probe is deleted (closes the "user deleted a Live track between pushes" drift bug; surfaces in `unlinked_stale_tracks` / `unlinked_stale_returns`).
+
+(The `--snapshot <path>` form is preserved for tests and offline debugging — it reads a pre-probed JSON file instead of dispatching to Live. Don't use it during normal authoring; staleness is what `--probe` is designed to eliminate.)
+
+The CLI matches by name (track names directly; return names after stripping Live's `<letter>-` prefix per W4-C) and writes `ableton_links` rows for each match. Re-runnable: if the link already exists, it's an upsert; if the link is stale, strict reconciliation drops it.
 
 Display to the user:
 - The matched lists (concise — `"linked 3 of 5 DB tracks; 2 will be created"`).
+- If `unlinked_stale_tracks` or `unlinked_stale_returns` is non-empty, mention the count — "cleared 1 stale link (the previously-linked Live track at index 5 is gone)." This is recovery, not an error.
 - The `notes` list verbatim if non-empty. Notes cover duplicate names, kind mismatches, and **case-only near-matches** (W5-B). If a DB track 'Drums' and a Live track 'drums' both appear unmatched, the note flags them as a case-variant pair so the user can decide whether to rename one before push (otherwise phase 3 silently creates a duplicate `Drums` next to the existing `drums`).
 - The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch.
 
-**Confirmation gate when `unmatched_live_tracks` or `unmatched_live_returns` is non-empty (W12-C).** Live's default new-set scaffolding (`1-MIDI` / `2-MIDI` / `A-Reverb` / `B-Delay`) lands on the unmatched-Live side because the song's DB doesn't name those entities. That's almost always fine — the song will sit alongside them. But the same code path fires when the Live set already contains *another song*: those tracks/returns surface as "unmatched Live" too, and pushing additively on top of them silently jumbles two songs in one set. The signature you can't distinguish from probe-and-link's output alone is "default scaffolding" vs "someone else's song." So when either list is non-empty, **show the lists, then explicitly ask the user**: "These exist in Live and the push will not touch them — do you want to continue, or open a fresh Live set first? (yes/no)" Proceed only on explicit `yes`. If the lists are empty, no confirmation needed.
+**Confirmation gates when `unmatched_live_tracks` is non-empty.** Two distinct cases; the CLI tells you which.
 
-Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched — push is additive.
+**Case 1: clean-default-scaffold (W18-D).** When `auto_session_created==true` AND `default_scaffold_unmatched_tracks` is non-empty (every unmatched Live track has a canonical default name — `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`), this is a first push onto a fresh Live set. The user almost certainly wants the song's tracks to be the only tracks, not alongside the defaults. **Default the prompt to "yes, clean":**
+
+> "Live has its default scaffold tracks ({1-MIDI, 2-MIDI, 3-Audio, 4-Audio}) that this song doesn't use. Delete them after the push so only the song's tracks remain? (Y/n)"
+
+If the user accepts, hold the `default_scaffold_unmatched_tracks` list — Step 2a will delete them **after** `execute` runs. Push-then-delete (strategy (b) from backlog #59) avoids the ≥1-track Live constraint: by the time the deletes fire, the song's own tracks are already in Live, so removing the defaults never leaves Live with zero tracks. The opposite ordering (delete first, push after) trips W18-E's last-track refuse-and-teach when the fourth default is the last surviving track.
+
+**Case 2: generic unmatched-Live (W12-C).** Either `auto_session_created` is false (the user is pushing to a known Live session), OR the unmatched Live tracks include non-canonical names. We can't distinguish "another song's tracks already in Live" from "user customised the defaults" from probe output alone, so refuse-and-confirm without offering destructive cleanup:
+
+> "These exist in Live and the push will not touch them — do you want to continue, or open a fresh Live set first? (yes/no)"
+
+Proceed only on explicit `yes`. If the unmatched-Live lists are empty, no confirmation needed.
+
+Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched by `execute` itself — push is additive. Step 2a's post-execute cleanup is the only destructive path, and it fires only on explicit user opt-in in Case 1.
 
 ### Step 2 — Execute the push
 
 Run:
 ```
-python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug>
+python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 ```
+
+`--probe` runs the W18-A coherence check on a freshly-probed Live snapshot before dispatching phases — refuses with a teaching error if any link is stale or the session row is missing, so a state-drift case the previous step missed (or that opened up between probe-and-link and execute) doesn't quietly corrupt the push. The `--snapshot <path>` form is preserved for the same offline-debugging reason as in Step 1; the `--probe` shape is the canonical one in normal flow.
 
 This walks all ten phases in order, dispatching every MCP call directly to Live's Remote Script over TCP. Each phase's results are applied to the DB before the next phase plans, so `ableton_links` updates propagate as expected.
 
@@ -135,6 +151,30 @@ This walks all ten phases in order, dispatching every MCP call directly to Live'
 **Do not retry transient failures inside the loop.** `execute` doesn't retry. Idempotent re-run IS the retry — push is idempotent (W10-A), so already-applied rows skip on a second pass.
 
 **Tempo / signature: bar-1 only.** Same constraint as the per-call path. Live's MCP exposes `ableton_session(set_tempo / set_signature)` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (see `hallucinote_mcp/.../guides/gaps.md`). The planner emits the bar-1 row and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
+
+### Step 2a — Clean default-scaffold tracks (W18-D; conditional)
+
+Run this step **only** when Step 1 returned a non-empty `default_scaffold_unmatched_tracks` list AND the user accepted the cleanup prompt AND Step 2's `execute` exited 0 (`outcome == "ok"`). Skip otherwise — destructive cleanup on a partial push is a bigger drift bug than the cosmetic defaults it would solve.
+
+**Why this step lives after `execute`, not before.** Live requires ≥1 track in a set (W18-E refuses-and-teaches at the MCP layer on the last-track delete). If we deleted the defaults before `execute`, the fourth delete would fail — Live would still have only the three remaining defaults, and removing the last default would leave Live with zero tracks. The song's own tracks have to land first; once they're alongside the defaults, deleting any of the defaults is safe because the song's tracks satisfy the ≥1 guarantee.
+
+**Order of operations.**
+
+1. Sort the `default_scaffold_unmatched_tracks` indexes in **descending** order. Lower indexes shift downward when a higher index is deleted, so descending-order deletion lets the remaining captured indexes stay valid through the loop. Ascending-order deletion would silently delete the wrong tracks after the first iteration.
+
+2. For each index in that order, call:
+   ```
+   ableton_track(action='delete', track_index=N)
+   ```
+   If one delete refuses (e.g., Live shifted differently than expected, or the user interactively edited the set between Step 2 and Step 2a), stop the loop. Tell the user what landed, what remains, and that the rest can be cleaned up manually.
+
+3. After the deletes complete, **re-run probe-and-link to reconcile the shifted indexes**:
+   ```
+   python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> --probe
+   ```
+   The song's tracks survived but their `track_index` shifted downward as defaults were removed. The strict reconciliation pass deletes the now-stale links pointing at the deleted defaults; the name-matching pass re-binds the song's DB tracks to their new Live indexes. The link rewrites go through `M.link_db_to_ableton`'s upsert path, so the per-`(session, db_kind, db_id)` rows update in place — no orphans, no duplicates.
+
+You don't need a fresh `execute` after the cleanup — the song is already materialised; the re-link only repairs the index bookkeeping so the next iteration's push lands cleanly.
 
 ### Step 3 — Final report
 

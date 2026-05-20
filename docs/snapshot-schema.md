@@ -63,7 +63,7 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 ```
 
 - `index` is 1-based, matching Live's slot ordering.
-- **Name handling**: Live unconditionally prefixes return names with `<slot-letter>-` (A-, B-, ...). `replay_capture` strips this on the way in — the DB stores `Reverb`, not `A-Reverb`. Push re-emits the suffix and Live re-adds its slot prefix.
+- **Name handling — return names: stored stripped.** Live unconditionally prefixes return names with `<slot-letter>-` (A-, B-, ...). `replay_capture` strips this on the way in — the DB stores `Reverb`, not `A-Reverb`. Push re-emits the suffix and Live re-adds its slot prefix. **Author trap**: hand-authored snapshots that write `"name": "A-Reverb"` get the prefix stripped silently; downstream `Q.get_return_by_name(..., "A-Reverb")` will fail to find the row because it's stored as `"Reverb"`. `replay_capture` emits a `UserWarning` summarizing strips so this isn't completely silent. Write the stripped form in hand-authored snapshots, and pass the stripped form to lookups. The regex strips any single uppercase-letter prefix (`[A-Z]-`), so names like `"Ghost-Reverb"` or `"Bus-A"` pass through unchanged.
 - `volume` / `panning` optional; default is whatever Live applies to a freshly-created return.
 - `devices` (optional) — see "Device chain shape" below.
 

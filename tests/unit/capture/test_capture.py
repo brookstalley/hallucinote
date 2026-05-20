@@ -41,6 +41,44 @@ def conn(tmp_path):
     c.close()
 
 
+def test_replay_warns_when_stripping_slot_prefix(conn):
+    """Wave 0 paper-cut: silent strips were a hand-authoring trap. Now warns."""
+    snapshot = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [
+            {"index": 1, "name": "A-Reverb", "volume": 0.8, "panning": 0.0},
+            {"index": 2, "name": "B-Delay", "volume": 0.7, "panning": 0.0},
+        ],
+        "tracks": [],
+    }
+    with pytest.warns(UserWarning, match=r"stripped Live's <letter>- slot prefix"):
+        replay_capture(conn, snapshot, song_name="stripwarn")
+    # Both originals appear in the message so the author sees what got changed.
+    with pytest.warns(UserWarning, match=r"'A-Reverb'.*'Reverb'"):
+        replay_capture(conn, snapshot, song_name="stripwarn2")
+    with pytest.warns(UserWarning, match=r"'B-Delay'.*'Delay'"):
+        replay_capture(conn, snapshot, song_name="stripwarn3")
+
+
+def test_replay_does_not_warn_when_no_strip_needed(conn, recwarn):
+    """No prefixed returns -> no warning."""
+    snapshot = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [
+            {"index": 1, "name": "Reverb", "volume": 0.8, "panning": 0.0},
+            {"index": 2, "name": "Bus-A", "volume": 0.7, "panning": 0.0},  # not stripped
+        ],
+        "tracks": [],
+    }
+    replay_capture(conn, snapshot, song_name="nostrip")
+    strip_warnings = [
+        w for w in recwarn.list
+        if issubclass(w.category, UserWarning)
+        and "slot prefix" in str(w.message)
+    ]
+    assert strip_warnings == []
+
+
 def _sample_snapshot() -> dict:
     return {
         "song": {
@@ -466,14 +504,12 @@ def test_capture_plan_lists_expected_probes():
     plan = capture_plan()
     tools = {p["tool"] for p in plan}
     assert tools == {
-        # Session-domain probe under the unified surface (Wave M-1 retarget):
         "ableton_session(action='info')",
-        "list_return_tracks",  # retargets in M-2
-        "get_track_info",      # retargets in M-2
-        "get_track_sends",     # retargets in M-2
-        # Chunk 4a additions:
-        "get_device_parameters",
-        # W7-B addition: nested rack chain probe (one level only)
+        "ableton_return(action='list')",
+        "ableton_track(action='get_info')",
+        "ableton_track(action='get_sends')",
+        "ableton_device(action='get_parameters')",
+        # W7-B: nested rack chain probe (one level only)
         "ableton_device(action='get_device_chains')",
     }
 

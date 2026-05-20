@@ -364,6 +364,69 @@ def test_plan_push_cue_points_respects_meter_change(conn, song):
     assert cues == [{"position_beats": 22.0, "name": "post-change"}]
 
 
+# ---------- plan_push_cue_points arrangement-extent warn (Wave 0) ----------
+
+
+def _make_arrangement_clip(conn, song_id: str, start_bar: float, end_bar: float):
+    """Helper: create a minimal track+clip+arrangement-clip row at the given span."""
+    tid = M.create_track(conn, song_id=song_id, track_index=1, name="t1")
+    # length_beats covers the full placement span at 4 beats/bar (test default).
+    cid = M.create_clip(
+        conn, track_id=tid, name="c1", slot=0,
+        length_beats=(end_bar - start_bar) * 4.0,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song_id, track_id=tid, clip_id=cid,
+        start_bar=start_bar, end_bar=end_bar,
+    )
+
+
+def test_plan_push_cue_points_warns_when_no_arrangement(conn, song):
+    """Wave 0: cues exist but DB has no arrangement_clips — every cue past
+    bar 1 will fail Live's [0, last_event_time] clamp. Plan-time warn."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert any("no arrangement_clips" in n for n in plan.notes)
+    # Plan still emits the batch — the warn surfaces the prereq; it doesn't
+    # block the push (the agent / user decides whether to proceed).
+    assert len(plan.calls) == 1
+
+
+def test_plan_push_cue_points_warns_when_cue_past_arrangement_extent(conn, song):
+    """Wave 0: arrangement covers bars 1–17 but a cue sits at bar 32 →
+    plan-time warn names the cue and the gap."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _make_arrangement_clip(conn, song, start_bar=1.0, end_bar=17.0)
+    M.add_cue_point(conn, song_id=song, position_bar=8.0, name="mid")
+    M.add_cue_point(conn, song_id=song, position_bar=32.0, name="late")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    late_notes = [n for n in plan.notes if "past the DB's arrangement extent" in n]
+    assert len(late_notes) == 1
+    assert "late@bar32.00" in late_notes[0]
+    assert "max end_bar=17.00" in late_notes[0]
+    # The mid cue (within extent) is not in the warn message.
+    assert "mid@bar" not in late_notes[0]
+
+
+def test_plan_push_cue_points_no_warn_when_all_cues_within_arrangement(conn, song):
+    """Cues at bars 1, 5, 16; arrangement extends to bar 17. No late-cue warn."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _make_arrangement_clip(conn, song, start_bar=1.0, end_bar=17.0)
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="b")
+    M.add_cue_point(conn, song_id=song, position_bar=16.0, name="c")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert not any("past the DB's arrangement extent" in n for n in plan.notes)
+    assert not any("no arrangement_clips" in n for n in plan.notes)
+
+
 # ---------- plan_push_sections ----------
 
 

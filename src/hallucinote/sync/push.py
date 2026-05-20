@@ -394,19 +394,30 @@ def plan_push_arrangement(
     sees actionable notes per skipped row and continues; nothing in Live
     gets half-built because the row simply isn't emitted as a call.
 
+    Idempotency (W10-A): each row whose ``arrangement_clip`` link is
+    already recorded in ``ableton_links`` is silently skipped. Without
+    this, re-running a successful push would silently duplicate every
+    arrangement placement (the canary triage Group C / C-original). The
+    skip count surfaces as a tracking warn so the agent / UI can show
+    "nothing to do" instead of going dark.
+
     Position conversion: each row's 1-based fractional ``start_bar`` is
     converted to cumulative beats from song start via
     :func:`_position_bar_to_beats`. The agent doesn't see bars; the MCP
     surface is meter-agnostic (beats throughout).
 
-    Clear pass: not emitted here. The agent / push-skill should wipe
-    existing arrangement clips on the involved tracks before running the
-    plan. Adding explicit delete ops requires probing Live first (no DB
-    knowledge of what's currently in the arrangement) — out of scope for
-    pure-DB planners; see W3-I.
+    Clear pass: not emitted here. When unlinked rows exist (first push,
+    or partial-apply recovery), the agent / push-skill should wipe
+    existing arrangement clips on the involved tracks before running
+    the plan. The planner can't emit a pre-clear: no MCP
+    ``arrangement_clip_delete`` action exists and the planner has no DB
+    knowledge of Live's current arrangement state. The idempotent-skip
+    above means this only matters for genuinely-new placements; see
+    W3-I for the long-term direction.
 
     Returns N decomposed calls (one per row whose track + clip are both
-    linked). Each call's result must carry ``arrangement_clip_index`` so
+    linked AND whose arrangement_clip link is NOT yet recorded). Each
+    call's result must carry ``arrangement_clip_index`` so
     :func:`apply_push_results` can record the binding under the
     ``arrangement_clip:{db_id}`` key.
     """
@@ -422,7 +433,19 @@ def plan_push_arrangement(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
         )
 
+    already_linked = 0
     for row in arr_rows:
+        # W10-A: re-pushes must be idempotent. apply_push_results writes
+        # an `arrangement_clip` link after a successful duplicate; if it
+        # exists, the placement is already in Live and re-emitting would
+        # silently double the clip on every re-run.
+        arr_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="arrangement_clip",
+            db_id=row["id"],
+        )
+        if arr_at is not None:
+            already_linked += 1
+            continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
@@ -460,11 +483,28 @@ def plan_push_arrangement(
             ),
         ))
 
+    if already_linked:
+        # Surface the idempotent skip so the agent/UI can show
+        # "nothing to do" instead of going silent.
+        plan.warn(
+            f"{already_linked} arrangement placement(s) already linked "
+            f"in session {session_id!r} — already in the arrangement, "
+            "skipping (idempotent re-push)"
+        )
     if plan.calls:
+        # Post-W10-A this warn fires for the unlinked-placements path
+        # only — first push, or a partial-apply recovery where some
+        # placements landed in Live but apply_push_results hadn't yet
+        # written their bindings. The agent should ensure those slots
+        # are empty in Live before running the duplicates (the planner
+        # can't emit a pre-clear: no MCP `arrangement_clip_delete`
+        # action exists, and the planner has no DB knowledge of Live's
+        # current arrangement state regardless).
         plan.warn(
             "agent must clear existing arrangement clips on the involved tracks "
             "before running these duplicates (planner emits no pre-clear ops "
-            "because it has no DB knowledge of Live's current arrangement state)"
+            "because no MCP arrangement-clip-delete action exists and the "
+            "planner has no DB knowledge of Live's current arrangement state)"
         )
     return plan
 

@@ -3245,6 +3245,99 @@ def test_apply_notes_handles_mixed_diff(conn, song, session):
     assert pitches == [60, 62, 67]
 
 
+def test_apply_notes_warns_on_likely_uuid_rotation(conn, song, session):
+    """A note moved in time (same pitch + velocity + mute, different
+    start/duration) surfaces as delete + insert because the content
+    key includes start + duration. The UUID rotates, which is a
+    documented V1 limitation — warn so the user knows to edit DB-side
+    by UUID if note identity matters to them. (W10-C)"""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+         "velocity": 100, "mute": 0},
+        {"pitch": 62, "start_beats": 2.0, "duration_beats": 1.0,
+         "velocity": 80, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload(
+                (101, 60, 0.5, 1.0, 100, False),  # moved +0.5 beats
+                (102, 62, 2.0, 1.0, 80, False),   # unchanged - no-op
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert any(
+        "look moved" in w and "UUID rotates" in w
+        for w in out.warnings
+    ), out.warnings
+    # Warning names the moved note(s) so the user can act on it.
+    assert any(
+        "pitch 60 0->0.5" in w and "note_id" in w for w in out.warnings
+    ), out.warnings
+    # The diff still applies as delete + insert; warning is informational.
+    pitches = sorted(
+        n["pitch"] for n in Q.get_notes_for_clip(conn, cid)
+    )
+    assert pitches == [60, 62]
+
+
+def test_apply_notes_no_uuid_warning_when_pitch_differs(
+    conn, song, session,
+):
+    """Independent delete + insert (different pitches) — not a moved
+    note, no warning."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+         "velocity": 100, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 67, 0.0, 1.0, 100, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert not any("look moved" in w for w in out.warnings), out.warnings
+
+
+def test_apply_notes_no_uuid_warning_when_velocity_differs(
+    conn, song, session,
+):
+    """Same pitch but different velocity is ambiguous (could be a
+    new note at the same pitch). Stay quiet rather than crying wolf."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=8.0)
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=1)
+    M.insert_notes(conn, clip_id=cid, notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+         "velocity": 100, "mute": 0},
+    ])
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 60, 2.0, 1.0, 80, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert not any("look moved" in w for w in out.warnings), out.warnings
+
+
 def test_apply_notes_warns_on_duplicate_ableton_key(conn, song, session):
     """Two Ableton notes at identical (pitch, start, duration) — first
     entry wins for the diff; subsequent entry surfaces a warning so the

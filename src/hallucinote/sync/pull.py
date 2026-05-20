@@ -2862,6 +2862,54 @@ def _apply_notes_for_clip(
         else:
             out.no_ops += 1
 
+    # DB-only notes (queued for delete) — captured before deletion so we can
+    # cross-reference against inserts to detect likely UUID rotation.
+    db_only = [db_note for k, db_note in db_by_key.items() if k not in seen]
+
+    # Likely UUID-rotation pairs: a DB note and an Ableton-only note that
+    # share pitch + velocity + mute but differ in start/duration. Most often
+    # this is the user nudging a note (or changing its length) in Ableton —
+    # the diff is correctly modeled as delete + insert (the new note gets
+    # a fresh UUID), and we warn so the user can edit DB-side by UUID
+    # instead if note identity matters to them.
+    #
+    # `mute` is part of the bucket key by design: a move-AND-mute-toggle in
+    # the same pull won't pair up (and won't warn). Better to miss that
+    # rare combined case than to fire when "different pitch + same velocity"
+    # is a coincidence — the warning earns its keep only when it points at
+    # a genuinely-moved note.
+    if db_only and to_insert:
+        ins_pool: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
+        for ins in to_insert:
+            ins_pool.setdefault(
+                (ins["pitch"], ins["velocity"], ins["mute"]), []
+            ).append(ins)
+        pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for db_note in db_only:
+            mute_db = 1 if bool(db_note["mute"]) else 0
+            bucket = ins_pool.get(
+                (int(db_note["pitch"]), int(db_note["velocity"]), mute_db)
+            )
+            if bucket:
+                pairs.append((db_note, bucket.pop(0)))
+        if pairs:
+            # Name the moved notes so the user can act on the warning —
+            # `pitch start_beats -> start_beats (note_id <prefix>)` mirrors
+            # the neighboring `update_note` detail-line shape.
+            moves = ", ".join(
+                f"pitch {db['pitch']} {db['start_beats']:g}"
+                f"->{ins['start_beats']:g} (note_id {db['id'][:8]})"
+                for db, ins in pairs
+            )
+            out.warnings.append(
+                f"clip {clip_row['name']!r}: {len(pairs)} note(s) "
+                f"look moved (same pitch + velocity + mute, different "
+                f"start/duration) — the diff applies as delete + insert "
+                f"so the UUID rotates; if you want UUID preserved, "
+                f"undo in Ableton and edit DB-side by UUID instead. "
+                f"Moves: {moves}."
+            )
+
     # Batch insert: one event with all new notes.
     if to_insert:
         new_ids = M.insert_notes(
@@ -2875,20 +2923,15 @@ def _apply_notes_for_clip(
         )
 
     # Batch delete: DB notes whose key Ableton didn't report.
-    to_delete = [
-        db_note["id"]
-        for k, db_note in db_by_key.items()
-        if k not in seen
-    ]
-    if to_delete:
+    if db_only:
         M.delete_notes(
-            conn, note_ids=to_delete,
+            conn, note_ids=[d["id"] for d in db_only],
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1
         out.details.append(
             f"clip {clip_row['name']!r}: deleted "
-            f"{len(to_delete)} DB note(s) absent from Ableton"
+            f"{len(db_only)} DB note(s) absent from Ableton"
         )
 
 

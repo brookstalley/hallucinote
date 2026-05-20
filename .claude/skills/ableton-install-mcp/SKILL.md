@@ -23,21 +23,32 @@ the natural-language steps adaptable while the detection stays reliable.
 
 Before running preflight, do two cheap checks:
 
-**Python version (refuse on < 3.10).** `hallucinote_mcp` requires Python 3.10+ (PEP 604 unions, etc.). Run:
+**Python version (refuse on < 3.10).** `hallucinote_mcp` requires Python 3.10+ (PEP 604 unions, etc.). Use whichever python identifier the user will use for pip + preflight downstream (`python` / `python3` / `py -3`) — picking the same identifier here ensures the version we check is the one preflight will run. If `command not found`, ask the user which python they use before retrying; don't conflate "missing python" with "too old".
 
 ```bash
 python -c "import sys; assert sys.version_info >= (3, 10), f'hallucinote-mcp requires Python 3.10+, got {sys.version_info.major}.{sys.version_info.minor}'; print(sys.version)"
 ```
 
-If that command exits non-zero, **stop**. Tell the user the version their `python` resolves to, and that they need 3.10 or newer (pyenv / Homebrew / apt / the python.org installer all work — pick whichever they already use). Don't suggest a fix path that requires sudo. Same flow for `python3` / `py -3` if the user's preferred command differs.
+If that command exits non-zero on the assert, **stop**. Tell the user the version their python resolves to, and that they need 3.10 or newer (pyenv / Homebrew / apt / the python.org installer all work — pick whichever they already use). Don't suggest a fix path that requires sudo.
 
-**cwd looks like a project (warn if not).** `.mcp.json` lands in `cwd`. If `cwd` is the user's `$HOME`, `/`, `/tmp`, or has no `.git` / `pyproject.toml` / `package.json` / `Cargo.toml` / `go.mod` / equivalent project marker, that's almost certainly wrong — the user probably wants `.mcp.json` in a specific project's directory, not in their shell-default. Quick check:
+**cwd looks like a project (warn if not).** `.mcp.json` lands in `cwd`. If `cwd` is the user's `$HOME`, `/`, `/tmp`, or has no `.git` / `pyproject.toml` / `package.json` / `Cargo.toml` / `go.mod` / equivalent project marker, that's almost certainly wrong — the user probably wants `.mcp.json` in a specific project's directory, not in their shell-default. Quick checks (use the one that fits the user's shell — the install skill is the one place we expect a fresh user, so meet them where they are):
 
 ```bash
+# bash / zsh / fish (macOS, Linux, WSL, Git Bash on Windows)
 [ -d .git ] || [ -f pyproject.toml ] || [ -f package.json ] || [ -f Cargo.toml ] || [ -f go.mod ] || [ -f deno.json ]
 ```
 
-If it returns non-zero (no markers found), **show the user the current directory** and ask explicitly: "Install into `<cwd>`? If you meant another project, `cd` there first and rerun this skill." Don't refuse outright — some setups legitimately have no marker file — but make the user confirm. The cost of writing `.mcp.json` to the wrong place is high (the user will wonder for hours why Claude Code in their actual project doesn't see the MCP).
+```powershell
+# PowerShell (Windows)
+Test-Path .git,pyproject.toml,package.json,Cargo.toml,go.mod,deno.json | Where-Object { $_ } | Select-Object -First 1
+```
+
+```cmd
+:: cmd.exe (Windows; native if neither PowerShell nor Git Bash is preferred)
+if exist .git\ (echo found) else if exist pyproject.toml (echo found) else if exist package.json (echo found) else if exist Cargo.toml (echo found) else if exist go.mod (echo found) else if exist deno.json (echo found)
+```
+
+If none returns a hit (no markers found), **show the user the current directory** and ask explicitly: "Install into `<cwd>`? If you meant another project, `cd` there first and rerun this skill." Don't refuse outright — some setups legitimately have no marker file — but make the user confirm. The cost of writing `.mcp.json` to the wrong place is high (the user will wonder for hours why Claude Code in their actual project doesn't see the MCP).
 
 ### Step 1.1 — Run preflight
 

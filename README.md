@@ -8,12 +8,12 @@ See [`docs/VISION.md`](docs/VISION.md) for the big picture. See [`CHANGELOG.md`]
 
 ## Status
 
-**v0.9.0 — first user-facing release.** Compose end-to-end, push into Live, pull edits back. The release target is *"a moderately sophisticated Claude Code + Ableton user can sit down and be productive reliably"*. Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
+**v1.0.0 — beta-readiness release.** Compose end-to-end, push into Live, pull edits back, on any installed Drum Rack and across machines. The release gate is *"a beta tester can prompt 'make me song X', get a finished-sounding result, share it with another tester, and not bounce on common papercuts"*. Highlights: composer-experience overhaul (creative-vs-planning detection, sound-as-composition, per-part `feel`), push-state coherence (probe-driven `/ableton-push` + soft reset), cross-machine instrument fallback (search-and-retry on preset-URI miss), Drum Rack pad-mapping discovery (kit-portable drum parts via the new `Kit` class). Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
 ## What you can do
 
-- **Compose a song from a prompt.** `/new-song <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
-- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
+- **Compose a song from a prompt.** `/song-new <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
+- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chrous drums"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
 - **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
 - **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
 
@@ -60,7 +60,7 @@ Start Claude Code in this directory and run the install skill:
 claude
 ```
 
-> *"/ableton-install-mcp"*
+> *"/ableton-mcp-install"*
 
 The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and instructs the user the enable the MCP plugin in Live's settings. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
 
@@ -102,9 +102,9 @@ Claude builds `songs/falling-walking/falling-walking-<branch>.db` from `build.py
 
 ### Compose a new song
 
-> *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on synth pad. Call it punk-fate."*
+> *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-The agent runs `/new-song punk-fate` to scaffold `songs/punk-fate/`, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again.
+The agent runs `/song-new punk-fate` to scaffold `songs/punk-fate/`, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again.
 
 ### Pull manual edits back
 
@@ -126,7 +126,7 @@ The first five things that go wrong, in roughly the order people hit them.
 
 The MCP server (`hallucinote-mcp` running as a subprocess) and the Live-side Remote Script have diverged. After a `git pull` that touched `hallucinote_mcp/`, the Remote Script copy in Live's User Library is stale.
 
-**Fix:** rerun `/ableton-install-mcp`, then **fully quit and reopen Ableton Live**. The `/mcp` reconnect command in Claude Code is not enough — Live caches Control Surface modules at startup, and the stale module lives inside Live's process. Quit Live (not just close the document), then reopen it.
+**Fix:** rerun `/ableton-mcp-install`, then **fully quit and reopen Ableton Live**. The `/mcp` reconnect command in Claude Code is not enough — Live caches Control Surface modules at startup, and the stale module lives inside Live's process. Quit Live (not just close the document), then reopen it.
 
 To preview the drift without reinstalling, run `python -m hallucinote_mcp.cli preflight` and look at the `remote_script.candidates[*]` block. `matches_mcp_server: false` is the signal.
 
@@ -140,13 +140,13 @@ To preview the drift without reinstalling, run `python -m hallucinote_mcp.cli pr
 
 `.mcp.json` is per-project. The install skill writes it into the current working directory; if you ran the skill from `~` or `/tmp`, that's where `.mcp.json` landed — not in your project.
 
-**Fix:** `cd` into your project directory first, then rerun `/ableton-install-mcp`. The skill's Step 1.0 checks cwd for project markers (`.git`, `pyproject.toml`, etc.) and warns when none are present, but you can land in this trap on a project with no markers.
+**Fix:** `cd` into your project directory first, then rerun `/ableton-mcp-install`. The skill's Step 1.0 checks cwd for project markers (`.git`, `pyproject.toml`, etc.) and warns when none are present, but you can land in this trap on a project with no markers.
 
 ### Live's Preferences shows no "Hallucinote" in the Control Surface dropdown
 
 The Remote Script didn't end up in the User Library Live is actually using. Common causes: Ableton was running during install (silent file lock on Windows); the wrong Live version's User Library got picked when multiple installs exist; you moved your User Library in Live's Preferences and the installer didn't know.
 
-**Fix:** `python -m hallucinote_mcp.cli preflight` shows `user_library.candidates` and `live.installed_versions`. Confirm Live is closed, then rerun `/ableton-install-mcp` and explicitly pick the User Library matching the Live version you actually use. If your User Library has been relocated, give the install skill that path when it asks.
+**Fix:** `python -m hallucinote_mcp.cli preflight` shows `user_library.candidates` and `live.installed_versions`. Confirm Live is closed, then rerun `/ableton-mcp-install` and explicitly pick the User Library matching the Live version you actually use. If your User Library has been relocated, give the install skill that path when it asks.
 
 ### `ableton_session(action='info')` hangs or returns "no connection"
 
@@ -176,7 +176,7 @@ python -m hallucinote_mcp.cli preflight    # inspect install state
 
 `.mcp.json` is gitignored — its `command` field is per-environment. See `.mcp.json.example` for the canonical shape.
 
-After editing anything under `hallucinote_mcp/actions/` or `hallucinote_mcp/handlers/`, rerun `/ableton-install-mcp` and fully quit + reopen Live — the Control Surface caches at startup, so Live's copy must be refreshed for changes to take effect.
+After editing anything under `hallucinote_mcp/actions/` or `hallucinote_mcp/handlers/`, rerun `/ableton-mcp-install` and fully quit + reopen Live — the Control Surface caches at startup, so Live's copy must be refreshed for changes to take effect.
 
 ## License
 

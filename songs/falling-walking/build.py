@@ -28,6 +28,44 @@ from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import GeneratorOutput, bass, drums, harmony
 from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
+from hallucinote.generators.kit import Kit
+
+# M1-C: every drums.X(..., kit=_DRUM_KIT) helper requires a Kit.
+# falling-walking was authored before kit-portable drum mapping; the
+# author's intent for `bossa_shaker` in the intro is documented as
+# "16th shaker on closed hat (vel ~30-42)" in
+# `annotations/groove-conventions.md` — the loaded Drum Rack has no
+# dedicated shaker pad, so the part doubles on the hi-hat closed pad.
+# Construct the Kit directly so pad 42's chain name matches BOTH the
+# 'hat_closed' AND 'shaker' canonical lookups (Kit's fuzzy matcher
+# checks substring + a few bespoke heuristics — see
+# `generators/kit.py:_chain_matches_canonical`). When
+# `captured_session.json` is refreshed against a Live set whose Drum
+# Rack DOES have a discrete shaker pad, drop this construction and use
+# `Kit.from_device(conn, <drum-rack-device-id>)` directly.
+_DRUM_KIT = Kit(
+    name="falling-walking (shaker doubled on closed hat)",
+    device_id=None,
+    mappings_by_note={
+        36: "Kick",
+        37: "Rim",
+        38: "Snare",
+        39: "Clap",
+        42: "Closed Hat + shaker",  # matches both 'hat_closed' and 'shaker' lookups
+        46: "Open Hat",
+        47: "Tom Lo",
+        48: "Tom Mid",
+        49: "Crash 1",
+        50: "Tom Hi",
+        51: "Ride",
+        52: "China",
+        53: "Ride Bell",
+        54: "Tambourine",
+        55: "Splash",
+        56: "Cowbell",
+        57: "Crash 2",
+    },
+)
 
 # W12-A: per-branch DB filename. Branch switches pick up the right DB
 # silently; outside a repo / detached HEAD falls back to falling-walking.db.
@@ -113,13 +151,13 @@ def _build_intro(conn, song_id: str, tracks: dict[str, str]) -> dict:
         bs = b * 4.0
         drum_notes.append(_note(42, bs, 0.1, 50 + b * 3))
     # Bars 5-8: bossa shaker (16ths with accents), fading in.
-    drum_notes.extend(drums.bossa_shaker(4, start_beat=16.0))
+    drum_notes.extend(drums.bossa_shaker(4, kit=_DRUM_KIT, start_beat=16.0))
     # Bars 9-12: tresillo hats, gradually louder.
-    drum_notes.extend(drums.tresillo_hats(4, start_beat=32.0))
+    drum_notes.extend(drums.tresillo_hats(4, kit=_DRUM_KIT, start_beat=32.0))
     # Bars 13-16: trip-hop 8ths + kick stumble + snare from bar 15.
-    drum_notes.extend(drums.trip_hop_hats(4, start_beat=48.0))
-    drum_notes.extend(drums.kick_stumble(4, start_beat=48.0))
-    drum_notes.extend(drums.lazy_snare(2, start_beat=56.0))
+    drum_notes.extend(drums.trip_hop_hats(4, kit=_DRUM_KIT, start_beat=48.0))
+    drum_notes.extend(drums.kick_stumble(4, kit=_DRUM_KIT, start_beat=48.0))
+    drum_notes.extend(drums.lazy_snare(2, kit=_DRUM_KIT, start_beat=56.0))
     # Open hat lift on the final 16th to push into the verse.
     drum_notes.append(_note(46, 63.5, 0.5, 95))
 
@@ -230,7 +268,15 @@ def _build_verse(conn, song_id: str, tracks: dict[str, str]) -> dict:
     clips: dict[str, str] = {}
 
     # ---- Drums: trip-hop with fills on bars 4/8/12 + bar 15 fill ----
-    verse_drum_notes = drums.trip_hop_drum_pattern(bars=14, fill_bars=[3, 7, 11])
+    # Per-part feel (W17-E): nudge the off-beat hats slightly late for a
+    # subtle trip-hop drag on top of the snare's intrinsic lay_back. Verse
+    # only — chorus drums below stay canonical so the section contrast is
+    # audible. Demonstrates the per-part-per-clip granularity from
+    # docs/song-authoring-conventions.md "Per-part feel".
+    verse_feel = {0.5: 0.01, 1.5: 0.01, 2.5: 0.01, 3.5: 0.01}
+    verse_drum_notes = drums.trip_hop_drum_pattern(
+        bars=14, kit=_DRUM_KIT, fill_bars=[3, 7, 11], feel=verse_feel,
+    )
     # Bar 15: real fill (toms + snare roll + crash).
     bs = 56.0
     verse_drum_notes.extend([
@@ -743,11 +789,12 @@ def build(reset: bool = False) -> str:
     `--reset` remains an escape hatch for "wipe the DB and start fresh" but
     is no longer required in the normal flow.
     """
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
-
     conn = init_db(DB_PATH)
     try:
+        if reset:
+            song = Q.get_song_by_name(conn, "falling-walking")
+            if song is not None:
+                M.reset_song_content(conn, song_id=song["id"])
         with M.build_session(conn, song_name="falling-walking",
                               owner="build.py"):
             # Mix-half: replay the captured Ableton session.

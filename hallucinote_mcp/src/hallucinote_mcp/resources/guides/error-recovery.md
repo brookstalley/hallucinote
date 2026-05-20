@@ -103,7 +103,7 @@ Control Surface. Re-run the call.
 ### `live connection failed for <tool>(<action>): ...`
 The server tried to forward but the TCP connection to the Remote Script
 failed. Live may not be running, or the Remote Script may not be installed.
-The `/ableton-install-mcp` Claude Code skill walks through fresh install.
+The `/ableton-mcp-install` Claude Code skill walks through fresh install.
 
 ## Version-handshake errors
 
@@ -143,7 +143,7 @@ Script side**, because the MCP server side updates more freely (every
 pip install / editable-install reload) while the Remote Script side
 only updates when explicitly reinstalled:
 
-1. `/ableton-install-mcp` — re-runs the install, refreshing the vendored
+1. `/ableton-mcp-install` — re-runs the install, refreshing the vendored
    copy in Live's User Library.
 2. Fully quit Live (⌘Q / Alt+F4) and reopen it. **Live caches Control
    Surface modules at startup**, so a restart is required — `/mcp` alone

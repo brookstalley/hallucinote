@@ -86,7 +86,7 @@ def test_check_version_compat_detects_fingerprint_drift():
     assert drifted in (resp.error or "")
     assert __version__ in (resp.error or "")
     # Hint points at the install skill.
-    assert "ableton-install-mcp" in (resp.hint or "")
+    assert "ableton-mcp-install" in (resp.hint or "")
 
 
 def test_check_version_compat_passes_when_fingerprints_match():

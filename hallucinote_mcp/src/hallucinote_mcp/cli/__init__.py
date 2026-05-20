@@ -5,7 +5,7 @@ Console scripts declared in ``pyproject.toml``:
     referenced from ``.mcp.json``).
 
 Install is skill-mediated, not console-script-mediated: see the
-``ableton-install-mcp`` skill in the Hallucinote repo's ``.claude/skills/``.
+``ableton-mcp-install`` skill in the Hallucinote repo's ``.claude/skills/``.
 """
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ def _print_help(out=None) -> None:
         "  help               Show this message\n"
         "\n"
         "Install is skill-mediated: open Claude Code in the Hallucinote repo,\n"
-        "then run /ableton-install-mcp to set up the Remote Script and MCP\n"
-        "config. The skill body lives at .claude/skills/ableton-install-mcp/.\n",
+        "then run /ableton-mcp-install to set up the Remote Script and MCP\n"
+        "config. The skill body lives at .claude/skills/ableton-mcp-install/.\n",
         file=out,
     )
 

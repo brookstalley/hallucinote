@@ -9,7 +9,7 @@
 ## TL;DR
 
 - **Where we are.** 52 MCP tools on AbletonMCP today. Many are per-property setters (`set_track_volume`, `set_track_panning`, ...) that should collapse into one tool with an action grammar. Hallucinote's `sync/mcp_names.py` already encodes 27 of these as `_emulate_*` placeholders — the pain is visible.
-- **Where we're going.** Ten unified tools — `ableton_session`, `ableton_track`, `ableton_return`, `ableton_clip`, `ableton_note`, `ableton_device`, `ableton_automation`, `ableton_arrangement`, `ableton_browser`, `ableton_help` — each with an `action` parameter and self-service help. The narrow setters fold into actions (`ableton_track(action='set_property', track_index=5, property='volume', value=0.7)`). Reads that don't need per-call parameters become **resources** (`ableton://browser/instruments`, `ableton://plugins/installed`, `ableton://session/snapshot`). Multi-step recipes become **prompts** (`setup_sidechain_compression`, `build_return_bus`).
+- **Where we're going.** Ten unified tools — `ableton_session`, `ableton_track`, `ableton_return`, `ableton_clip`, `ableton_note`, `ableton_device`, `ableton_automation`, `ableton_arrangement`, `ableton_browser`, `ableton_help` — each with an `action` parameter and self-service help. The narrow setters fold into actions (`ableton_track(action='set_property', track_index=5, property='volume', value=0.7)`). Reads that don't need per-call parameters become **resources** (`ableton://browser/instruments`, `ableton://plugins/installed`, `ableton://session/snapshot`). Multi-step recipes become **Claude Code skills** under `.claude/skills/` (e.g. `/mix-sidechain`, `/return-new`) — see §6.
 - **Why now.** The research is unambiguous: tool count past ~25 measurably degrades model effectiveness, and past ~50 collapses it. AbletonMCP sits at 52 and growing. Hallucinote (the primary consumer) has been the canary.
 - **Cost of inaction.** Every chunk of Hallucinote (W3-3, W3-4, future note pull) carries an "MCP gap" appendix that's actually a tool-count problem in disguise. Each new capability adds a new narrow tool. Consolidation pays the cost once and then becomes a free side-effect of every future capability.
 - **Hallucinote-side cost of the change.** Small. `mcp_names.ALIASES_TODAY` was designed for exactly this transition — the table is the boundary. Push planners already emit canonical names; we just retarget the aliases. The `apply_push_results._ACK_ONLY_KINDS` set shrinks; `mcp_names.py` line count drops by ~half.
@@ -368,23 +368,23 @@ These tools should become resource reads, not tool calls:
 
 ## 6. Prompts
 
-Prompts are MCP's user-controlled workflow templates.<sup>[5]</sup> They don't crowd tool selection; they're invoked by name.
+Multi-step workflows live as **Claude Code skills** under `.claude/skills/`, not as MCP prompts. Original design (M-7) shipped them as MCP prompts; that was reversed in v0.9 because Claude Code's MCP integration surfaces prompts only as user-facing slash commands, not assistant-callable surfaces — so the agent could never reach them autonomously. Skills are both assistant-callable (via the Skill tool) AND user-callable (via `/<skill-name>`), with no protocol detour.
 
-### 6.1 Proposed prompt set
+### 6.1 Shipped workflow skills
 
-| Prompt | Args | Workflow |
+| Skill | Args | Workflow |
 |---|---|---|
-| `create_midi_track_with_instrument` | `name`, `instrument_uri`, `index?`, `initial_volume?` | One-shot: track create + name + instrument load + volume set + return new index |
-| `setup_sidechain_compression` | `target_track`, `source_track`, `compressor_uri?` | Load compressor, dial conservative defaults, configure sidechain, return device_index |
-| `build_return_bus` | `name`, `effect_uri`, `initial_sends_from?` (list of track_index) | Create return, load effect, set initial sends from listed tracks at conservative level |
-| `humanize_clip_velocity` | `track_index`, `clip_index`, `jitter_percent?` | Read clip notes, jitter velocity within range, write back |
-| `compose_section_pattern` | `track_index`, `pattern_kind: trip-hop\|tresillo\|bossa\|...`, `bars`, `start_bar` | One-shot: create clip + generate notes + place in arrangement |
+| `/song-new` | `<slug>`, `<title>`, `<tempo>`, `<signature>`, `<sections-csv>`, optional `<key>`, `<intent>` | Scaffold a new song from templates: directory, build.py, synthetic snapshot, tests, decisions/, annotations/ |
+| `/song-pick-instruments` | `<tracks-csv>`, optional `<portability>`, `<style-hint>` | Browser-driven instrument picker with portability modes (strict / relaxed / unrestricted) |
+| `/track-new-with-instrument` | `<name>`, `<instrument-uri>`, optional `<index>`, `<initial-volume>` | One-shot: track create + name + instrument load + volume set + return new index |
+| `/return-new` | `<name>`, `<effect-uri>`, optional `<sends-from>` | Create return + load effect + initialize sends from a list of source tracks |
+| `/mix-sidechain` | `<target-track>`, `<source-track>`, optional `<compressor-uri>` | Detect or load Compressor, configure sidechain routing via capability-probed `set_sidechain` |
+| `/clip-humanize` | `<track-index>`, `<clip-index>`, optional `<jitter-percent>` | Source notes from DB (gap #4 — Live can't read notes), jitter velocity, push via `replace_notes` |
+| `/pattern-compose` | `<track-index>`, `<pattern-kind>`, `<bars>`, `<start-bar>` | Generate a named rhythmic pattern (trip-hop / tresillo / bossa / ...) into an arrangement clip |
 
-### 6.2 Why prompts and not tools
+### 6.2 Why skills and not MCP prompts
 
-Prompts are workflows the user *invokes by name*. A user-typed "set up sidechain on my synth bass from drums" maps cleanly to `setup_sidechain_compression(target_track=7, source_track=5)`. The LLM doesn't have to plan the 4-call sequence — the prompt does.
-
-This shifts complexity out of the LLM's decision space and into reusable artifacts. The cost is naming and discoverability — solved by `ableton_help(action='list_prompts')`.
+The agent must invoke workflow recipes autonomously mid-conversation — that's the whole point. Claude Code's MCP integration exposes tools (assistant-callable) and resources (assistant-readable) to the agent, but exposes MCP **prompts** only as user-facing slash commands in the prompt picker (`/<server>:<prompt-name>`). There is no assistant-callable `prompts/get` path. Skills are the native Claude Code workflow primitive — `Skill` tool for the assistant, `/<skill-name>` for the user — with no surface mismatch. Other MCP clients that DO support assistant-callable prompts lose access to these workflows under this design; we accept that because the product targets the Claude Code consumer specifically. The cross-client path would be MCP resources (`ableton://recipes/<name>`) rather than prompts — left as future work if portability becomes load-bearing.
 
 ---
 
@@ -417,8 +417,9 @@ Resources: ableton://session/snapshot, ableton://browser/{cat},
 ableton://plugins/installed, ableton://reference/device-params,
 ableton://guides/{name}.
 
-Prompts: create_midi_track_with_instrument, setup_sidechain_compression,
-build_return_bus, humanize_clip_velocity, compose_section_pattern.
+Workflow skills (`.claude/skills/`): /song-new, /song-pick-instruments,
+/track-new-with-instrument, /return-new, /mix-sidechain, /clip-humanize,
+/pattern-compose. Assistant-callable via the Skill tool.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
@@ -439,9 +440,9 @@ This is the agent's first read on every session. ~250 tokens to orient against a
 
 `resources/list` and `resources/read` are the primary mechanism for static / slow-changing knowledge. The agent learns what's there from server instructions (§7.1) and uses on demand.
 
-### 7.4 Prompts
+### 7.4 Workflow skills
 
-`prompts/list` and `prompts/get` for workflow templates. Same pattern as resources.
+Skills under `.claude/skills/` (assistant-invoked via the Skill tool, user-invoked via `/<name>`) replace what M-7 originally shipped as MCP prompts. See §6 for the catalogue and the why.
 
 ### 7.5 Error responses
 
@@ -524,7 +525,7 @@ The old fork (`brookstalley/ableton-mcp-extended`) gets archived after Wave M co
 The `hallucinote_mcp/` package (publishable as `hallucinote-mcp` on PyPI) ships two coordinated Python components:
 
 - **MCP server side** (`hallucinote_mcp/server.py`) — FastMCP-based. Exposes the 10 unified tools to MCP clients (Claude Desktop, Claude Code, etc.). One `@mcp.tool()` decorator per unified tool with `action` dispatch.
-- **Remote Script side** (`hallucinote_mcp/remote_script/__init__.py`) — installs into Ableton Live's `Remote Scripts` folder via the `/ableton-install-mcp` skill. Registers as a Control Surface, opens a UDP server, dispatches commands to the Live API. ~10 unified handlers, mirroring the MCP server side one-to-one.
+- **Remote Script side** (`hallucinote_mcp/remote_script/__init__.py`) — installs into Ableton Live's `Remote Scripts` folder via the `/ableton-mcp-install` skill. Registers as a Control Surface, opens a UDP server, dispatches commands to the Live API. ~10 unified handlers, mirroring the MCP server side one-to-one.
 - **Shared schema** (`hallucinote_mcp/schema.py`) — Python dataclasses defining every tool, every action, every parameter. Imported by *both* server + Remote Script. **Single source of truth.** No drift, no sync tests required.
 - **Wire protocol** — canonical message format both directions:
   - Request: `{tool: str, action: str, params: dict}`
@@ -606,15 +607,15 @@ There is intentionally **no `register` console script and no post-install hook**
 
 | Skill | What it does |
 |---|---|
-| `/ableton-install-mcp` | Detects OS (macOS / Windows), locates the Ableton User Library, copies (or symlinks for dev) the Remote Script into `<User Library>/Remote Scripts/Hallucinote/`, writes/updates the MCP config (`.mcp.json` or Claude Desktop config), prints the one-time Ableton preference click for the user. |
-| `/ableton-uninstall-mcp` | Symmetric cleanup: removes Remote Script directory, removes MCP config entry, tells the user the Ableton preference change to undo. |
+| `/ableton-mcp-install` | Detects OS (macOS / Windows), locates the Ableton User Library, copies (or symlinks for dev) the Remote Script into `<User Library>/Remote Scripts/Hallucinote/`, writes/updates the MCP config (`.mcp.json` or Claude Desktop config), prints the one-time Ableton preference click for the user. |
+| `/ableton-mcp-uninstall` | Symmetric cleanup: removes Remote Script directory, removes MCP config entry, tells the user the Ableton preference change to undo. |
 
 End-user experience:
 
 ```
 pip install hallucinote-mcp          # post-install hook runs `hallucinote-mcp register` automatically
 # in Claude Code:
-/ableton-install-mcp                 # LLM-mediated, platform-aware install
+/ableton-mcp-install                 # LLM-mediated, platform-aware install
 # in Ableton: Preferences → Link/Tempo/MIDI → Control Surface → "Hallucinote"
 ```
 
@@ -740,7 +741,7 @@ Naming these so we don't reinvent them.
 2. **Note pull when gap #4 lands.** The `ableton_note` tool design here assumes note IDs become available. Validate against whatever shape the MCP gap fix actually delivers — adjust the action signatures before exposing them.
 3. **Drum-rack chains.** Cordyceps handles nested clusters carefully. AbletonMCP's nested rack chains (`InstrumentGroupDevice`, `DrumGroupDevice`) are the analog — should `ableton_device` action `info` recurse into chains, or is that a separate action `chain_info`? Lean toward recursive `info` with a depth parameter.
 4. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
-5. **Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design. Should it instead be `ableton_track(action='create', instrument_uri=...)` with the load folded into create? Arguably yes — and the prompt becomes thinner. Worth a design pass during Phase 1.
+5. ~~**Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design.~~ **RESOLVED (v0.9):** the prompts went away entirely — they became Claude Code skills (`/track-new-with-instrument`, etc.) because MCP prompts are not assistant-callable in Claude Code. See §6.
 6. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
 7. ~~**Quantize and swing folding.**~~ **RESOLVED (Wave M-3, 2026-05-17).** Quantize, swing, and groove operations are NOT MCP actions. They are pure-math transforms of a note array that live in Hallucinote (Python/SQL space) where the DB-as-source-of-truth makes them testable, cross-DAW portable, and round-trippable as DB-row templates. Pre-grooved notes push via `ableton_clip(action='replace_notes', ...)`. See §6.2.
 

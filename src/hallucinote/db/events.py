@@ -34,6 +34,7 @@ DEVICE_CREATED = "device_created"
 DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"
 DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
+DRUM_PAD_MAPPINGS_REPLACED = "drum_pad_mappings_replaced"
 
 # Mix: automation envelopes + breakpoints
 ENVELOPE_CREATED = "envelope_created"
@@ -80,6 +81,14 @@ MARKDOWN_REF_RECORDED = "markdown_ref_recorded"
 # Ableton projection (sessions + links replace the per-row link kinds)
 ABLETON_SESSION_CREATED = "ableton_session_created"
 ABLETON_LINK_SET = "ableton_link_set"
+# W18-B: strict link reconciliation — probe-and-link removes links whose
+# ableton_index no longer matches a Live entity in the fresh probe.
+ABLETON_LINK_REMOVED = "ableton_link_removed"
+
+# W23-B: structured song annotations (composer intent, stylistic notes)
+ANNOTATION_ADDED = "annotation_added"
+ANNOTATION_UPDATED = "annotation_updated"
+ANNOTATION_REMOVED = "annotation_removed"
 
 # Valid actor values for events.actor / requests.actor.
 # 'build' marks rows created/updated by a song's build.py running under

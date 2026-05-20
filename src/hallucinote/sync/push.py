@@ -683,12 +683,36 @@ def plan_push_cue_points(
                 "arrangement is extended to cover them first."
             )
 
+    # W19-E: auto-disambiguate repeated cue names. Live's locator strip
+    # lists cues by display name; three cues named "chorus" produce three
+    # visually-identical entries. The DB intentionally allows the duplicate
+    # (the name describes the section, not its ordinal position), so we
+    # rewrite at plan time: when a name appears N>1 times, every occurrence
+    # gets a "-K" suffix in declaration order ("chorus-1" / "chorus-2" /
+    # "chorus-3"). Singletons stay unsuffixed — no churn on songs that
+    # already follow the convention. Empty / null names are exempt (Live
+    # surfaces those as "Unnamed" already; suffixing would only make them
+    # harder to read).
+    raw_names = [r["name"] or "" for r in rows]
+    name_counts: dict[str, int] = {}
+    for name in raw_names:
+        if name:
+            name_counts[name] = name_counts.get(name, 0) + 1
+    name_running_index: dict[str, int] = {}
+    display_names: list[str] = []
+    for name in raw_names:
+        if name and name_counts[name] > 1:
+            name_running_index[name] = name_running_index.get(name, 0) + 1
+            display_names.append(f"{name}-{name_running_index[name]}")
+        else:
+            display_names.append(name)
+
     cues = [
         {
             "position_beats": _position_bar_to_beats(r["position_bar"], ts_points),
-            "name": r["name"] or "",
+            "name": display_names[i],
         }
-        for r in rows
+        for i, r in enumerate(rows)
     ]
     plan.add(ToolCall(
         tool="ableton_arrangement",
@@ -1263,9 +1287,7 @@ def _track_kind_for_envelope(
     """
     if track_id is None:
         return None
-    row = conn.execute(
-        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
-    ).fetchone()
+    row = Q.get_track(conn, track_id)
     return None if row is None else row["kind"]
 
 
@@ -1476,11 +1498,7 @@ def _emit_note_expression_envelope(
     """note_expression emission — MPE per-note envelopes addressed by
     (clip, pitch, start_beats). Note links aren't tracked, so the canonical
     args identify the note in-band."""
-    note_row = conn.execute(
-        """SELECT n.pitch, n.start_beats, n.clip_id
-           FROM notes n WHERE n.id = ?""",
-        (envelope["target_note_id"],),
-    ).fetchone()
+    note_row = Q.get_note(conn, envelope["target_note_id"])
     if note_row is None:
         plan.warn(
             f"envelope {envelope['id']} (note_expression): note "
@@ -1658,13 +1676,7 @@ def _emit_device_parameter_envelope(
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device_id,
     )
-    chain_row = conn.execute(
-        """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
-           FROM devices d
-           JOIN device_chains dc ON dc.id = d.chain_id
-           WHERE d.id = ?""",
-        (device_id,),
-    ).fetchone()
+    chain_row = Q.get_device_parent_chain(conn, device_id)
     if chain_row is None:
         plan.warn(
             f"envelope {envelope['id']} (device_parameter): device "
@@ -1955,11 +1967,7 @@ def plan_push_clips(
     a silent skip would leave Live missing clips with no signal.
     """
     plan = PushPlan()
-    rows = conn.execute(
-        "SELECT id, name FROM clips WHERE track_id IN "
-        "(SELECT id FROM tracks WHERE song_id=?) ORDER BY name, id",
-        (song_id,),
-    ).fetchall()
+    rows = Q.get_clips_for_song(conn, song_id)
     for c in rows:
         sub = plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
         plan.calls.extend(sub.calls)
@@ -2155,17 +2163,52 @@ def plan_push_song(
 # ---------------------------------------------------------------------------
 
 
+# W18-D: Live 12.x's brand-new-set scaffold ships these track names. Detection
+# of the "first push onto a fresh default set" case keys off this exact set —
+# any drift (rename, locale change, user customization) means the tracks are
+# no longer recognisable defaults and we fall back to the standard "continue
+# alongside?" confirmation.
+CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES: frozenset[str] = frozenset({
+    "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
+})
+
+
 @dataclass
 class ProbeAndLinkResult:
     """Outcome of :func:`probe_and_link`. The skill displays the
     matched / unmatched lists so the user can spot rename drift
-    (e.g. DB has 'Drums', Live has 'Drum Kit')."""
+    (e.g. DB has 'Drums', Live has 'Drum Kit').
+
+    W18-B added ``unlinked_stale_tracks`` / ``unlinked_stale_returns``: links
+    whose ``ableton_index`` no longer matches a Live entity in the fresh
+    probe and were deleted by strict reconciliation. The skill surfaces the
+    counts so the user sees that probe-and-link recovered from a deleted-
+    Live-track drift instead of silently leaving stale rows.
+
+    W18-D added ``default_scaffold_unmatched_tracks``: present (non-empty)
+    only when the caller passed ``auto_session_created=True`` AND every
+    entry in ``unmatched_live_tracks`` matches a canonical Live default
+    name. The skill keys its "delete defaults after push?" prompt off this
+    field, not off ``unmatched_live_tracks`` directly — that way an unrelated
+    set with the same names doesn't trigger destructive cleanup.
+
+    W20-A added ``matched_devices``: per-device bindings created when
+    ``live_devices_by_parent`` is supplied. Matching by ``(parent track or
+    return, position, class_name)`` closes the punk-fate re-push drift
+    where Live's default ``A-Reverb``'s built-in Reverb matched a DB
+    device but wasn't yet linked, causing ``_emit_device_calls`` to load
+    a duplicate Reverb on each subsequent push.
+    """
     matched_tracks: list[dict[str, Any]] = field(default_factory=list)
     matched_returns: list[dict[str, Any]] = field(default_factory=list)
+    matched_devices: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_tracks: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_returns: list[dict[str, Any]] = field(default_factory=list)
     unmatched_live_tracks: list[dict[str, Any]] = field(default_factory=list)
     unmatched_live_returns: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_tracks: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_returns: list[dict[str, Any]] = field(default_factory=list)
+    default_scaffold_unmatched_tracks: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -2179,8 +2222,10 @@ def probe_and_link(
     session_id: str,
     live_tracks: list[dict[str, Any]],
     live_returns: list[dict[str, Any]],
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
     actor: str = "sync",
     reason: str | None = None,
+    auto_session_created: bool = False,
 ) -> ProbeAndLinkResult:
     """Match Live tracks/returns by name against DB rows; write the
     matches as ``ableton_links`` so subsequent phases skip the
@@ -2210,7 +2255,26 @@ def probe_and_link(
     enforced at link time).
 
     Re-runnable: calling ``probe_and_link`` a second time on the same
-    inputs is a no-op (link_db_to_ableton is upsert-by-(session, db_kind, db_id)).
+    inputs is a no-op for the link upserts (link_db_to_ableton is
+    upsert-by-(session, db_kind, db_id)) and a no-op for the strict
+    reconciliation (no stale links to delete the second time).
+
+    **W18-B: strict link reconciliation.** After the name-matching pass,
+    any ``ableton_links`` row whose ``ableton_index`` no longer appears in
+    the fresh probe is deleted (track + return kinds; nested kinds —
+    clip / device / envelope — are not validated here, the parent-track
+    deletion cascade-invalidates them and the next push re-creates them).
+    This closes the punk-fate drift bug where a deleted Live track left a
+    stale link pointing at a now-vacant index, causing the next push to
+    silently dispatch clip creates against the wrong track.
+
+    **W18-D: default-scaffold detection.** When the caller flags
+    ``auto_session_created=True`` AND every entry in
+    ``unmatched_live_tracks`` matches a canonical Live-default name
+    (``1-MIDI`` / ``2-MIDI`` / ``3-Audio`` / ``4-Audio``), the unmatched
+    list is also surfaced as ``default_scaffold_unmatched_tracks`` so the
+    skill can offer "delete defaults after push?" as the prompt default
+    instead of the generic "continue alongside?" gate.
     """
     result = ProbeAndLinkResult()
 
@@ -2308,7 +2372,158 @@ def probe_and_link(
         live_normalize=strip_return_slot_prefix,
     )
 
+    # W18-B: strict reconciliation — sweep ableton_links for rows whose
+    # ableton_index no longer appears in the fresh probe. Only track + return
+    # kinds: nested kinds (clip/device/envelope/note/arrangement_clip) are
+    # cascade-invalidated when their parent track is deleted, and the next
+    # push's create-call path re-establishes them. Iterate over a snapshot of
+    # the rows because the unlink mutator deletes from the same table.
+    live_track_indexes = {lt["track_index"] for lt in live_tracks}
+    live_return_indexes = {lr["return_index"] for lr in live_returns}
+    for link in list(Q.get_ableton_links_for_session(conn, session_id)):
+        db_kind = link["db_kind"]
+        ableton_index = link["ableton_index"]
+        if db_kind == "track" and ableton_index not in live_track_indexes:
+            M.unlink_db_from_ableton(
+                conn,
+                session_id=session_id,
+                db_kind=db_kind,
+                db_id=link["db_id"],
+                actor=actor,
+                reason=reason or "probe-and-link: stale track link",
+            )
+            result.unlinked_stale_tracks.append({
+                "db_id": link["db_id"],
+                "ableton_index": ableton_index,
+            })
+        elif db_kind == "return" and ableton_index not in live_return_indexes:
+            M.unlink_db_from_ableton(
+                conn,
+                session_id=session_id,
+                db_kind=db_kind,
+                db_id=link["db_id"],
+                actor=actor,
+                reason=reason or "probe-and-link: stale return link",
+            )
+            result.unlinked_stale_returns.append({
+                "db_id": link["db_id"],
+                "ableton_index": ableton_index,
+            })
+
+    # W20-A: bind devices by (parent, position, class_name). Run after track
+    # + return matching so we know each parent's ableton_index. Closes the
+    # re-push device duplication path where pre-existing Live devices that
+    # match DB devices in shape were not yet in ableton_links, so
+    # `_emit_device_calls` would dispatch a (duplicate) load on the next push.
+    if live_devices_by_parent:
+        _match_devices_for_linked_parents(
+            conn,
+            session_id=session_id,
+            result=result,
+            live_devices_by_parent=live_devices_by_parent,
+            actor=actor,
+            reason=reason,
+        )
+
+    # W18-D: detect "first push onto Live's brand-new-set default scaffold."
+    # Fires only on auto-session bootstraps where every unmatched Live track
+    # is a canonical default — that name set is the unambiguous signature.
+    # When ANY unmatched-Live track has a non-canonical name, this is "some
+    # other song's tracks" territory and we deliberately don't suggest
+    # cleanup; the standard "continue alongside?" gate handles that case.
+    if (
+        auto_session_created
+        and result.unmatched_live_tracks
+        and all(
+            t["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+            for t in result.unmatched_live_tracks
+        )
+    ):
+        result.default_scaffold_unmatched_tracks = list(result.unmatched_live_tracks)
+
     return result
+
+
+def _match_devices_for_linked_parents(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    result: ProbeAndLinkResult,
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]],
+    actor: str,
+    reason: str | None,
+) -> None:
+    """W20-A: bind DB devices to Live device-chain slots by
+    (parent, chain position, class_name).
+
+    For each linked track/return, walk the parent's top-level device chain
+    in parallel: at position P we have a DB device (with ``kind`` and
+    ``display_name``) and, if Live's chain runs that deep, a Live device
+    (with ``class_name`` and ``name``). When the class names agree, write
+    an ``ableton_links`` row binding the DB device's id to Live's
+    ``device_index`` so the next push's ``_emit_device_calls`` skips this
+    slot instead of dispatching a duplicate ``load``.
+
+    Match rule: position equality (DB ``devices.position`` = Live
+    ``device_index``) AND class equality (DB ``devices.kind`` =
+    Live ``class_name``). Mismatched class at the same position is a
+    drift note — push will still load over the wrong device, but the
+    note surfaces the situation so the user can rename or rebuild.
+
+    Nested rack chains (Drum Rack / Instrument Rack contents) are not
+    walked here — they're addressed by chain_index + nested device_position
+    and need a separate probe (W22-B's nested-rack push). Top-level
+    device match is the high-frequency case that resolves the punk-fate
+    bug; nested can wait.
+    """
+    for matched, parent_kind, get_devices_fn in (
+        (result.matched_tracks, "track", Q.get_devices_for_track),
+        (result.matched_returns, "return", Q.get_devices_for_return),
+    ):
+        for parent in matched:
+            ableton_index = parent["ableton_index"]
+            live_devices = live_devices_by_parent.get((parent_kind, ableton_index))
+            if not live_devices:
+                continue
+            db_devices = list(get_devices_fn(conn, parent["db_id"]))
+            # Devices are 1-based by position in both spaces.
+            live_by_pos = {
+                d["device_index"]: d for d in live_devices
+            }
+            for db_dev in db_devices:
+                pos = db_dev["position"]
+                live_dev = live_by_pos.get(pos)
+                if live_dev is None:
+                    # Live's chain is shorter — push will create the
+                    # missing devices via _emit_device_calls. No link
+                    # to write yet.
+                    continue
+                db_class = db_dev["kind"]
+                live_class = live_dev.get("class_name", "")
+                if db_class != live_class:
+                    result.notes.append(
+                        f"device drift at {parent_kind}#{ableton_index} "
+                        f"position {pos}: DB has {db_class!r}, Live has "
+                        f"{live_class!r}; not linking (push will load "
+                        f"the DB device over Live's at this slot)"
+                    )
+                    continue
+                M.link_db_to_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="device",
+                    db_id=db_dev["id"],
+                    ableton_index=pos,
+                    actor=actor,
+                    reason=reason or f"probe-and-link: device match at {parent_kind}#{ableton_index} pos {pos}",
+                )
+                result.matched_devices.append({
+                    "db_id": db_dev["id"],
+                    "parent_kind": parent_kind,
+                    "parent_index": ableton_index,
+                    "position": pos,
+                    "class_name": db_class,
+                })
 
 
 def _flag_case_near_matches(
@@ -2345,6 +2560,154 @@ def _flag_case_near_matches(
                     f"{live['name']!r} (case differs); intentional? "
                     "Rename one to match if not."
                 )
+
+
+# ---------------------------------------------------------------------------
+# Coherence check (W18-A)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CoherenceResult:
+    """Outcome of :func:`check_coherence`. Tri-state: ``ok=True`` with no
+    errors means execute is safe; ``ok=False`` with errors means refuse and
+    surface recovery hints. ``notes`` carries informational findings (e.g.
+    "session has no links yet, push will create from scratch") that don't
+    block execute.
+    """
+    ok: bool = True
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def add_error(self, *, kind: str, detail: str, recovery: str) -> None:
+        self.errors.append({"kind": kind, "detail": detail, "recovery": recovery})
+        self.ok = False
+
+
+def check_coherence(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    live_tracks: list[dict[str, Any]],
+    live_returns: list[dict[str, Any]],
+) -> CoherenceResult:
+    """Validate that ``ableton_sessions`` + ``ableton_links`` rows are
+    consistent with a freshly-probed Live snapshot, before ``execute``
+    starts mutating Live.
+
+    Closes the punk-fate 2026-05-20 state-drift class: three pieces of
+    per-machine state (snapshot file, ``ableton_sessions``, ``ableton_links``)
+    with independent invalidation rules and no consistency check. This
+    function refuses execute on any of:
+
+    1. **Session row missing.** ``session_id`` doesn't resolve in
+       ``ableton_sessions`` (e.g. ``build.py --reset`` wiped it).
+    2. **Stale track link.** An ``ableton_links`` row points at a
+       ``track_index`` no longer in the live probe (e.g. the user deleted
+       the linked Live track).
+    3. **Stale return link.** Same shape for ``return_index``.
+
+    Callers pass a FRESH probe (re-run ``ableton_track(action='list')`` +
+    ``ableton_return(action='list')`` against Live just before this check).
+    The function reads links from the DB and validates against that probe.
+
+    Nested links (clip / device / device_chain) aren't validated directly
+    here — a stale parent track link cascade-invalidates them, and the
+    parent check is sufficient to refuse the push. Probing every nested
+    binding would require deep MCP traffic; the parent-level check buys
+    the same safety at a tenth the cost.
+
+    Returns a :class:`CoherenceResult`. Callers should refuse to execute
+    when ``ok`` is False and surface the per-error ``recovery`` hints.
+    """
+    result = CoherenceResult()
+
+    if Q.get_ableton_session(conn, session_id) is None:
+        result.add_error(
+            kind="session_missing",
+            detail=f"no ableton_sessions row with id {session_id!r}",
+            recovery=(
+                "Mint a fresh session: run "
+                "`push_cli probe-and-link --auto-session --song <slug> "
+                "--snapshot <path>`. This is the usual repro after "
+                "`build.py --reset` wipes the sessions table."
+            ),
+        )
+        # No session → no point checking links; they're orphaned anyway.
+        return result
+
+    live_track_indexes = {lt["track_index"] for lt in live_tracks}
+    live_return_indexes = {lr["return_index"] for lr in live_returns}
+
+    links = Q.get_ableton_links_for_session(conn, session_id)
+    if not links:
+        result.notes.append(
+            "session has no ableton_links rows — push will create tracks/returns "
+            "from scratch (this is fine for a first push, but probe-and-link "
+            "should have run if Live already contained any of the song's tracks)"
+        )
+        return result
+
+    stale_track_links: list[dict[str, Any]] = []
+    stale_return_links: list[dict[str, Any]] = []
+    for link in links:
+        db_kind = link["db_kind"]
+        ableton_index = link["ableton_index"]
+        if db_kind == "track":
+            if ableton_index not in live_track_indexes:
+                stale_track_links.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": ableton_index,
+                })
+        elif db_kind == "return":
+            if ableton_index not in live_return_indexes:
+                stale_return_links.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": ableton_index,
+                })
+        # Other kinds (clip / device / device_chain) are nested under a
+        # track or return; a stale parent link cascade-invalidates them
+        # and the parent-level error is sufficient.
+
+    if stale_track_links:
+        indexes = sorted({l["ableton_index"] for l in stale_track_links})
+        result.add_error(
+            kind="stale_track_links",
+            detail=(
+                f"{len(stale_track_links)} ableton_links row(s) point at "
+                f"track_index(es) {indexes} that no longer exist in Live "
+                f"(live tracks: {sorted(live_track_indexes)}). "
+                "Common cause: user deleted the linked Live track after "
+                "probe-and-link wrote the link row."
+            ),
+            recovery=(
+                "Re-run `push_cli probe-and-link --probe` (or supply a fresh "
+                "--snapshot). W18-B's strict reconciliation will delete the "
+                "stale link rows and re-match anything still present."
+            ),
+        )
+
+    if stale_return_links:
+        indexes = sorted({l["ableton_index"] for l in stale_return_links})
+        result.add_error(
+            kind="stale_return_links",
+            detail=(
+                f"{len(stale_return_links)} ableton_links row(s) point at "
+                f"return_index(es) {indexes} that no longer exist in Live "
+                f"(live returns: {sorted(live_return_indexes)}). "
+                "Common cause: user deleted the linked Live return after "
+                "probe-and-link wrote the link row."
+            ),
+            recovery=(
+                "Re-run `push_cli probe-and-link --probe` (or supply a fresh "
+                "--snapshot) to drop the stale link rows."
+            ),
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------------

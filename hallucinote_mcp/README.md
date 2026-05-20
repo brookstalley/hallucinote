@@ -31,10 +31,10 @@ Then run the install skill from Claude Code to copy the Remote Script into Ablet
 Live's User Library and write `.mcp.json` for your project:
 
 ```
-/ableton-install-mcp
+/ableton-mcp-install
 ```
 
-Uninstall is symmetric: `/ableton-uninstall-mcp`.
+Uninstall is symmetric: `/ableton-mcp-uninstall`.
 
 See the [main README](../README.md) for full setup including wiring Hallucinote into
 Live's Control Surface slot.
@@ -60,8 +60,10 @@ hints: valid action list, missing-param list, an example, a `hint` string.
 
 In addition to the 10 tools, the server exposes **11 resources** for low-context-cost
 reads (`ableton://session/snapshot`, `ableton://browser/*`, `ableton://plugins/installed`,
-`ableton://reference/*`, `ableton://guides/*`) and **7 workflow prompts** for
-multi-step recipes.
+`ableton://reference/*`, `ableton://guides/*`). Multi-step workflows live as Claude
+Code skills (`.claude/skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
+`/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,
+`/pattern-compose` — so they're assistant-callable, not just user-facing slash commands.
 
 ## Development
 

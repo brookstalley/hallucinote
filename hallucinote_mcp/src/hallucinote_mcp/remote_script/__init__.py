@@ -1,5 +1,5 @@
 """Hallucinote Remote Script — installed into Ableton Live's Remote Scripts
-folder by the ``ableton-install-mcp`` skill.
+folder by the ``ableton-mcp-install`` skill.
 
 Ableton Live's Python embedding (Python 3.7 in Live 11, 3.11 in Live 12)
 imports this package as a Control Surface when the user selects "Hallucinote"

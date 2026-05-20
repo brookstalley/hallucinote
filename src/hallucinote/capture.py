@@ -53,9 +53,9 @@ populated by build.py hand-authored sections.
 Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
 MCP probes against the v1 unified-action-dispatch surface
 (`ableton_session(action='info')`, `ableton_return(action='list')`,
-`ableton_track(action='get_info'|'get_sends')`,
+`ableton_track(action='info'|'get_sends')`,
 `ableton_device(action='get_parameters'|'get_device_chains')`) and assembles
-the dict via `compile_snapshot`. See `tools/capture.py` for the probe sequence.
+the dict via `compile_snapshot`. See `tools/capture_cli.py` for the probe sequence.
 """
 from __future__ import annotations
 
@@ -216,6 +216,33 @@ def _replay_devices(
                 conn,
                 rack_device_id=device_id,
                 chains_array=nested,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+        # M1-C: Drum Rack pad mapping. Each DrumGroupDevice may carry a
+        # `drum_pads` array captured via `ableton_device(action='pad_info')`:
+        # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
+        # `drum_pad_mappings` so the song's generators can resolve
+        # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        pads = d.get("drum_pads")
+        if pads:
+            if d["class"] != "DrumGroupDevice":
+                raise ValueError(
+                    f"snapshot device {d.get('name')!r} carries `drum_pads` "
+                    f"but class {d['class']!r} is not DrumGroupDevice — "
+                    "pad_info only applies to Drum Racks"
+                )
+            M.replace_drum_pad_mappings(
+                conn,
+                device_id=device_id,
+                mappings=[
+                    {
+                        "chain_name": str(p.get("chain_name", p.get("name", ""))),
+                        "midi_note": int(p["midi_note"] if "midi_note" in p else p["note"]),
+                    }
+                    for p in pads
+                ],
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
@@ -514,7 +541,7 @@ def capture_plan() -> list[dict[str, str]]:
         {"tool": "ableton_return(action='list')",
          "purpose": "return tracks: name + volume + pan per return; "
                     "chunk 4a: include each return's top-level device chain"},
-        {"tool": "ableton_track(action='get_info')",
+        {"tool": "ableton_track(action='info')",
          "purpose": "per-track: name, type, volume, pan, mute/solo/arm, "
                     "top-level device chain (kind + display_name + position) "
                     "— loop over tracks"},
@@ -533,6 +560,15 @@ def capture_plan() -> list[dict[str, str]]:
                     "rack devices any more — the capture path now walks "
                     "one level. Recursively nested racks (rack-in-rack) "
                     "remain out of scope; replay raises on encounter."},
+        {"tool": "ableton_device(action='pad_info')",
+         "purpose": "per-Drum-Rack: pad layout (midi_note + chain_name per "
+                    "non-empty pad). M1-C. Emit ONLY for devices whose "
+                    "class_name is 'DrumGroupDevice'. The agent attaches "
+                    "the result as the device's `drum_pads` field on the "
+                    "snapshot: ``[{midi_note: int, chain_name: str}, ...]``. "
+                    "Replay persists into `drum_pad_mappings` so songs can "
+                    "use `Kit.from_device(conn, device_id)` to author kit-"
+                    "portable drum patterns instead of GM-assumed MIDI notes."},
     ]
 
 
@@ -588,8 +624,8 @@ def compile_snapshot(
 # matches what replay supports anyway.
 
 
-_MIXER_FIELDS = ("volume", "panning", "pan", "mute", "solo", "arm", "color")
-_RETURN_FIELDS = ("name", "volume", "panning", "pan", "color")
+_MIXER_FIELDS = ("volume", "panning", "mute", "solo", "arm", "color")
+_RETURN_FIELDS = ("name", "volume", "panning", "color")
 _TRACK_IDENTITY_FIELDS = ("name", "type")
 _DEVICE_IDENTITY_FIELDS = ("name", "class", "kind", "guess_uri")
 
@@ -790,7 +826,7 @@ def diff_snapshots(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     master_fc = _field_diff(
         old_song.get("master") or {},
         new_song.get("master") or {},
-        ("volume", "panning", "pan"),
+        ("volume", "panning"),
     )
     if master_fc:
         out["master"] = master_fc

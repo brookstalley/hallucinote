@@ -329,6 +329,170 @@ def request(
         )
 
 
+# W23-B: structured composer-intent annotations. Distinct from the
+# markdown_refs corpus (which holds ADR-shaped decision/annotation files on
+# disk) — this surface is for short-form, bar-range-scoped, live-composing
+# observations the agent updates as composition progresses.
+ANNOTATION_KINDS = frozenset(
+    {"intent", "stylistic", "structure", "reference", "todo"}
+)
+
+
+def add_annotation(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    kind: str,
+    body: str,
+    track_id: str | None = None,
+    start_bar: float | None = None,
+    end_bar: float | None = None,
+    actor: str = "llm",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Create one annotations row. Returns the new annotation id.
+
+    Scoping levels (enforced by schema CHECK constraints):
+      - **Song-scoped**:  ``track_id=None``, ``start_bar=None``, ``end_bar=None``
+      - **Time-scoped**:  ``track_id=None``, ``start_bar`` set, ``end_bar``
+        optional (None = open-ended forward from start_bar)
+      - **Track-scoped**: ``track_id`` set, time optional
+
+    The agent uses this during composition for "live composing notes" —
+    distinct from durable decisions, which live as markdown files under
+    ``songs/<slug>/decisions/`` and are indexed via ``markdown_refs``.
+    """
+    if kind not in ANNOTATION_KINDS:
+        raise ValueError(
+            f"invalid annotation kind {kind!r}; expected one of "
+            f"{sorted(ANNOTATION_KINDS)}"
+        )
+    if end_bar is not None and start_bar is None:
+        raise ValueError("end_bar requires start_bar (open-ended-only ranges are not supported)")
+    if end_bar is not None and end_bar <= start_bar:
+        raise ValueError(f"end_bar ({end_bar}) must be greater than start_bar ({start_bar})")
+    aid = _uuid()
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    conn.execute(
+        """INSERT INTO annotations
+               (id, song_id, track_id, start_bar, end_bar, kind, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (aid, song_id, track_id, start_bar, end_bar, kind, body),
+    )
+    _emit(
+        conn,
+        E.ANNOTATION_ADDED,
+        {
+            "annotation_id": aid,
+            "song_id": song_id,
+            "track_id": track_id,
+            "start_bar": start_bar,
+            "end_bar": end_bar,
+            "kind": kind,
+            "body": body,
+        },
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    return aid
+
+
+def update_annotation(
+    conn: sqlite3.Connection,
+    *,
+    annotation_id: str,
+    body: str | None = None,
+    kind: str | None = None,
+    start_bar: float | None = None,
+    end_bar: float | None = None,
+    actor: str = "llm",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Update one annotation. Any of body/kind/start_bar/end_bar may be set;
+    None means "leave unchanged." Bumps ``updated_at``.
+
+    Use ``set_*_to_null`` semantics? Not today — clearing a bar range means
+    rewriting the row's scope, which is rare enough that delete + recreate
+    is simpler. If a callsite ever needs "clear end_bar," add an explicit
+    flag rather than overloading None.
+    """
+    row = conn.execute(
+        "SELECT * FROM annotations WHERE id = ?", (annotation_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"annotation {annotation_id!r} not found")
+    if kind is not None and kind not in ANNOTATION_KINDS:
+        raise ValueError(
+            f"invalid annotation kind {kind!r}; expected one of "
+            f"{sorted(ANNOTATION_KINDS)}"
+        )
+    new_body = body if body is not None else row["body"]
+    new_kind = kind if kind is not None else row["kind"]
+    new_start = start_bar if start_bar is not None else row["start_bar"]
+    new_end = end_bar if end_bar is not None else row["end_bar"]
+    if new_end is not None and new_start is None:
+        raise ValueError("end_bar requires start_bar")
+    if new_end is not None and new_end <= new_start:
+        raise ValueError(f"end_bar ({new_end}) must be greater than start_bar ({new_start})")
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    conn.execute(
+        """UPDATE annotations
+               SET body = ?, kind = ?, start_bar = ?, end_bar = ?,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+        (new_body, new_kind, new_start, new_end, annotation_id),
+    )
+    _emit(
+        conn,
+        E.ANNOTATION_UPDATED,
+        {
+            "annotation_id": annotation_id,
+            "song_id": row["song_id"],
+            "body": new_body,
+            "kind": new_kind,
+            "start_bar": new_start,
+            "end_bar": new_end,
+        },
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
+def delete_annotation(
+    conn: sqlite3.Connection,
+    *,
+    annotation_id: str,
+    actor: str = "llm",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Remove one annotation. No-ops cleanly if already gone (the agent
+    might race two delete prompts; emitting the event twice is worse than
+    silent absence)."""
+    row = conn.execute(
+        "SELECT song_id FROM annotations WHERE id = ?", (annotation_id,)
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM annotations WHERE id = ?", (annotation_id,))
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    _emit(
+        conn,
+        E.ANNOTATION_REMOVED,
+        {"annotation_id": annotation_id, "song_id": row["song_id"]},
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
 def record_markdown_ref(
     conn: sqlite3.Connection,
     *,
@@ -2370,6 +2534,100 @@ def remove_device_parameter(
 
 
 # ---------------------------------------------------------------------------
+# Mix: Drum Rack pad mappings (M1-C)
+# ---------------------------------------------------------------------------
+# Each row binds one MIDI note on a Drum Rack to the verbatim Live chain
+# name at that pad. Canonicalization (chain_name → "kick" / "snare" /
+# "hat_closed") happens at READ time in `hallucinote.generators.kit.Kit`,
+# not on the way in — preserves Live's name so canonicalization rules can
+# evolve without DB rewrites.
+#
+# Replace-style mutator (mirrors `replace_breakpoints`). A capture probe
+# emits a full pad list per Drum Rack device; the mutator atomically
+# deletes the old set and inserts the new one in a single transaction
+# with a single event.
+
+
+def replace_drum_pad_mappings(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    mappings: Sequence[dict[str, Any]],
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> list[str]:
+    """Atomic: delete every drum_pad_mappings row for ``device_id``, insert
+    the new set. Returns the new mapping ids in insertion order. One event.
+
+    Each mapping dict: ``{chain_name: str, midi_note: int}``. The mutator
+    rejects mappings with midi_note outside [0, 127] (the schema CHECK
+    enforces too, but surfacing it here gives a better error).
+
+    W12-A: idempotent — when the existing rows already match the incoming
+    set (by content), the function is a no-op and emits no event.
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    incoming_sig: list[tuple[str, int]] = []
+    for m in mappings:
+        chain_name = str(m.get("chain_name", ""))
+        midi_note = int(m["midi_note"])
+        if midi_note < 0 or midi_note > 127:
+            raise ValueError(
+                f"replace_drum_pad_mappings: midi_note {midi_note} out of "
+                "MIDI range [0, 127]"
+            )
+        if not chain_name:
+            raise ValueError(
+                "replace_drum_pad_mappings: chain_name must be non-empty "
+                f"(got {m!r})"
+            )
+        incoming_sig.append((chain_name, midi_note))
+    existing_rows = conn.execute(
+        """SELECT id, chain_name, midi_note FROM drum_pad_mappings
+           WHERE device_id = ? ORDER BY midi_note""",
+        (device_id,),
+    ).fetchall()
+    existing_sig = [(r["chain_name"], r["midi_note"]) for r in existing_rows]
+    if sorted(existing_sig) == sorted(incoming_sig):
+        return [r["id"] for r in existing_rows]
+    with transaction(conn):
+        prev_count = len(existing_rows)
+        conn.execute(
+            "DELETE FROM drum_pad_mappings WHERE device_id = ?",
+            (device_id,),
+        )
+        new_ids: list[str] = []
+        for chain_name, midi_note in incoming_sig:
+            mid = _uuid()
+            conn.execute(
+                """INSERT INTO drum_pad_mappings
+                       (id, device_id, chain_name, midi_note)
+                   VALUES (?, ?, ?, ?)""",
+                (mid, device_id, chain_name, midi_note),
+            )
+            new_ids.append(mid)
+        song_id = _resolve_device_song(conn, device_id=device_id)
+        _emit(
+            conn,
+            E.DRUM_PAD_MAPPINGS_REPLACED,
+            {
+                "device_id": device_id,
+                "prev_count": prev_count,
+                "new_count": len(new_ids),
+                "mapping_ids": new_ids,
+            },
+            song_id=song_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        if song_id:
+            _touch_song(conn, song_id)
+    return new_ids
+
+
+# ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------
 # Unified shape per target_kind. The mutator validates that the right target
@@ -2885,6 +3143,122 @@ def replace_breakpoints(
 
 
 # ---------------------------------------------------------------------------
+# Soft reset (W18-C)
+# ---------------------------------------------------------------------------
+
+
+def reset_song_content(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    actor: str = "build",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> dict[str, int]:
+    """Soft-reset a song: wipe rebuild-by-build.py content while preserving
+    the mix layout (tracks, returns, sends, devices) AND the Ableton
+    projection (ableton_sessions, ableton_links).
+
+    W18-C: closes the punk-fate state-drift bug where ``build.py --reset``
+    wiped ``ableton_sessions`` + ``ableton_links``, invalidating session_ids
+    presented as durable handles. Soft reset keeps those bindings so the
+    natural compose-iterate loop (edit build.py → re-run --reset → push
+    again) doesn't surface "no ableton_sessions row" errors mid-flow.
+
+    Track / return / device UUIDs survive because the mix-layout mutators
+    (``create_track``, ``create_return``, ``create_device``, etc.) are
+    upsert-shaped by ``(song_id, track_index)`` / ``(song_id, position)``
+    keys (W12-A). ``replay_capture`` re-runs after reset return the same
+    UUIDs, and ``ableton_links`` stay pointed at valid targets.
+
+    Wiped tables (scoped to this song):
+
+    * ``sections``, ``tempo_map``, ``time_signature_map``, ``cue_points``
+      (score-half)
+    * ``arrangement_clips``, ``clips``, ``notes`` (clip content)
+    * ``envelopes``, ``automation_breakpoints`` (automation)
+
+    Preserved (scoped to this song):
+
+    * ``songs`` (the song row itself)
+    * ``tracks``, ``returns``, ``sends``
+    * ``device_chains``, ``devices``, ``device_parameters``
+    * ``ableton_sessions``, ``ableton_links``
+    * ``markdown_refs`` (decisions / annotations are author-managed)
+    * ``events``, ``requests`` (audit log — append-only by invariant)
+
+    Cross-song preserves: ``kits``, ``preset_chains``.
+
+    For a full clean slate (drop bindings too), unlink the DB file
+    directly — that's the explicit "I really want to start over" path.
+
+    Returns a counts dict mapping table name -> deleted row count, and
+    emits one ``song_content_reset`` event with those counts in the
+    payload.
+    """
+    counts: dict[str, int] = {}
+
+    # Leaf-first, even though FK CASCADEs would handle dependents — we want
+    # accurate row counts per table for the emitted event payload.
+
+    cur = conn.execute(
+        "DELETE FROM automation_breakpoints WHERE envelope_id IN "
+        "(SELECT id FROM envelopes WHERE song_id = ?)",
+        (song_id,),
+    )
+    counts["automation_breakpoints"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM envelopes WHERE song_id = ?", (song_id,))
+    counts["envelopes"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM arrangement_clips WHERE song_id = ?", (song_id,),
+    )
+    counts["arrangement_clips"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM notes WHERE clip_id IN "
+        "(SELECT c.id FROM clips c JOIN tracks t ON t.id = c.track_id "
+        " WHERE t.song_id = ?)",
+        (song_id,),
+    )
+    counts["notes"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM clips WHERE track_id IN "
+        "(SELECT id FROM tracks WHERE song_id = ?)",
+        (song_id,),
+    )
+    counts["clips"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM cue_points WHERE song_id = ?", (song_id,))
+    counts["cue_points"] = cur.rowcount
+
+    cur = conn.execute(
+        "DELETE FROM time_signature_map WHERE song_id = ?", (song_id,),
+    )
+    counts["time_signature_map"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM tempo_map WHERE song_id = ?", (song_id,))
+    counts["tempo_map"] = cur.rowcount
+
+    cur = conn.execute("DELETE FROM sections WHERE song_id = ?", (song_id,))
+    counts["sections"] = cur.rowcount
+
+    _emit(
+        conn,
+        "song_content_reset",
+        {"counts": counts},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason or "reset_song_content (W18-C soft reset)",
+    )
+    conn.commit()
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Ableton projection: sessions + links
 # ---------------------------------------------------------------------------
 
@@ -2983,6 +3357,62 @@ def link_db_to_ableton(
         request_id=request_id,
         reason=reason,
     )
+
+
+def unlink_db_from_ableton(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    db_kind: str,
+    db_id: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> bool:
+    """Remove the (session, db_kind, db_id) link row. Returns True if a row
+    was deleted, False if no link existed.
+
+    Used by W18-B's strict reconciliation in
+    :func:`hallucinote.sync.push.probe_and_link`: when the freshly-probed Live
+    snapshot no longer contains an entity at the link's ``ableton_index``
+    (typical repro: user deleted the linked Live track), the link is stale and
+    must be removed before the next push so phases don't dispatch against a
+    dead index.
+    """
+    if db_kind not in ABLETON_LINK_KINDS:
+        raise ValueError(
+            f"invalid db_kind {db_kind!r}; expected one of {sorted(ABLETON_LINK_KINDS)}"
+        )
+    row = conn.execute(
+        """SELECT id, ableton_index FROM ableton_links
+           WHERE session_id = ? AND db_kind = ? AND db_id = ?""",
+        (session_id, db_kind, db_id),
+    ).fetchone()
+    if row is None:
+        return False
+    link_id = row["id"]
+    ableton_index = row["ableton_index"]
+    conn.execute("DELETE FROM ableton_links WHERE id = ?", (link_id,))
+    song_row = conn.execute(
+        "SELECT song_id FROM ableton_sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+    _emit(
+        conn,
+        E.ABLETON_LINK_REMOVED,
+        {
+            "link_id": link_id,
+            "session_id": session_id,
+            "db_kind": db_kind,
+            "db_id": db_id,
+            "ableton_index": ableton_index,
+        },
+        song_id=song_row["song_id"] if song_row else None,
+        clip_id=db_id if db_kind == "clip" else None,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------

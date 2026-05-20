@@ -182,6 +182,63 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert by_name["clips"]["status"] in {"ok"}
 
 
+# ---------- W23-C: request lifecycle wrap ----------
+
+
+def test_execute_push_opens_and_closes_request_with_outcome_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """One push → one requests row, kind='push', outcome='ok'. Provenance
+    layer can then list it via Q.list_requests_for_song(..., kind='push')."""
+    from hallucinote.db import queries as Q
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    requests = Q.list_requests_for_song(conn, song, kind="push")
+    assert len(requests) == 1
+    assert requests[0]["outcome"] == "ok"
+    assert requests[0]["kind"] == "push"
+
+
+def test_execute_push_threads_request_id_into_link_events(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Every link-binding event apply_push_results emits gets the request_id
+    threaded. Provenance can drill in via Q.get_events_for_request(rid)."""
+    from hallucinote.db import queries as Q
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    rid = Q.get_latest_request_for_song(conn, song, kind="push")["id"]
+    events = Q.get_events_for_request(conn, rid)
+    # At minimum: request_created + request_closed + any links the apply
+    # layer wrote. The fixture has at least one ableton_link_set per push.
+    kinds = {e["kind"] for e in events}
+    assert "request_created" in kinds
+    assert "request_closed" in kinds
+    assert "ableton_link_set" in kinds
+
+
+def test_execute_push_request_outcome_partial_when_phase_halts(
+    conn, song, session, tiny_song, state_dir,
+):
+    """A phase failure flips the push's outcome to 'partial'; the request
+    closes with outcome='partial' (not 'ok'), so a provenance-side audit
+    sees "the last push half-landed" rather than a false success."""
+    from hallucinote.db import queries as Q
+    bad_send = _make_send_fn(fail_keys={"ableton_clip:create"})
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=bad_send,
+    )
+    assert result.outcome == "partial"
+    rid = Q.get_latest_request_for_song(conn, song, kind="push")["id"]
+    req = Q.get_request(conn, rid)
+    assert req["outcome"] == "partial"
+
+
 def test_execute_writes_link_to_db_between_phases(
     conn, song, session, tiny_song, state_dir, db_path,
 ):
@@ -470,3 +527,310 @@ def test_format_summary_connection_lost(
     )
     text = push_execute.format_summary(result)
     assert "CONNECTION LOST" in text
+
+
+# ---------------------------------------------------------------------------
+# M1-B: cross-machine device-load fallback
+# ---------------------------------------------------------------------------
+#
+# Author's machine captures `preset_uri=query:Drums#FileId_5418`. The
+# consumer's Live has a different FileId for the same preset (or the
+# preset's missing). On load failure the executor should search by
+# display_name and retry with the discovered URI.
+
+
+@pytest.fixture
+def song_with_device(conn, song):
+    """1 MIDI track + 1 top-level device with a per-machine preset_uri.
+
+    Authored by `system` and unlinked from any session — the push planner
+    will emit a device.load call referencing this device's UUID via
+    `device:<uuid>` key.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Drums", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="DrumGroupDevice", display_name="Late Nite Kit",
+        preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
+    )
+    return {"track_id": tid, "device_id": did, "song_id": song}
+
+
+def _make_fallback_send_fn(
+    *,
+    fail_preset_uri: str,
+    search_matches: list[dict],
+    succeed_on_fallback_uri: str | None = None,
+):
+    """Build a fake send_fn for M1-B fallback scenarios.
+
+    * `device.load` with `preset_uri == fail_preset_uri` → ok=False with
+      a message that contains both 'preset_uri' and the original URI
+      (matches what the real handler emits — see test_actions_device.py
+      `test_load_unknown_preset_uri_errors`).
+    * `device.load` with `preset_uri == succeed_on_fallback_uri` → ok=True
+      with a fresh device_index.
+    * `browser.search` → ok=True with the provided matches list.
+    * Everything else → ok=True with a synthetic link index.
+    """
+    counters: dict[str, int] = {}
+    call_log: list[dict] = []
+
+    _LINK_KIND_FOR = {
+        ("ableton_track", "create"): "track",
+        ("ableton_return", "create"): "return",
+        ("ableton_clip", "create"): "clip",
+        ("ableton_device", "load"): "device",
+        ("ableton_arrangement", "duplicate_to_arrangement"): "arrangement_clip",
+        ("ableton_automation", "write_envelope"): "envelope",
+    }
+
+    def send(req):
+        call_log.append({
+            "tool": req.tool, "action": req.action,
+            "params": dict(req.params),
+        })
+        if req.tool == "ableton_browser" and req.action == "search":
+            return FakeResponse(ok=True, result={
+                "matches": search_matches,
+                "count": len(search_matches),
+                "truncated": False,
+                "depth_exhausted": False,
+            })
+        if req.tool == "ableton_device" and req.action == "load":
+            preset_uri = req.params.get("preset_uri")
+            if preset_uri == fail_preset_uri:
+                return FakeResponse(
+                    ok=False,
+                    error=(
+                        f"no loadable browser item found for "
+                        f"preset_uri={preset_uri!r}; verify via "
+                        f"ableton_browser(action='tree', ...)"
+                    ),
+                )
+            if (
+                succeed_on_fallback_uri is not None
+                and preset_uri == succeed_on_fallback_uri
+            ):
+                counters["device"] = counters.get("device", 0) + 1
+                return FakeResponse(
+                    ok=True, result={"device_index": counters["device"]},
+                )
+            # Any other URI on load — treat as success too (covers retry
+            # scenarios that don't strictly match succeed_on_fallback_uri).
+            counters["device"] = counters.get("device", 0) + 1
+            return FakeResponse(
+                ok=True, result={"device_index": counters["device"]},
+            )
+        kind = _LINK_KIND_FOR.get((req.tool, req.action))
+        if kind is None:
+            return FakeResponse(ok=True, result={})
+        counters[kind] = counters.get(kind, 0) + 1
+        return FakeResponse(
+            ok=True, result={_LINK_FIELDS[kind]: counters[kind]},
+        )
+
+    send.call_log = call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_falls_back_when_device_load_preset_uri_misses(
+    conn, song, session, song_with_device, state_dir,
+):
+    """Happy path: load fails with preset_uri miss → search finds match →
+    retry with new URI → device load recorded as success."""
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
+        search_matches=[{
+            "name": "Late Nite Kit",
+            "uri": "query:Drums#FileId_CONSUMER_MACHINE",
+            "path": ["drums", "Drum Kits", "Late Nite Kit"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Drums#FileId_CONSUMER_MACHINE",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    # Overall ok — fallback fixed the load.
+    assert result.outcome == "ok", result.phase_halted
+    # The errors file should NOT be written for a cleanly-fallback-resolved push.
+    assert not (state_dir / ".last-push-errors.json").exists()
+    # The state file should record the fallback URI substitution.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "ok"
+    # Verify the search call fired with the device's display_name.
+    search_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_browser" and c["action"] == "search"
+    ]
+    assert len(search_calls) == 1
+    assert search_calls[0]["params"]["pattern"] == "Late Nite Kit"
+    assert search_calls[0]["params"]["root"] == "drums"  # DrumGroupDevice → drums
+
+
+def test_execute_fallback_not_triggered_without_preset_uri(
+    conn, song, session, song_with_device, state_dir,
+):
+    """Kind-only loads (no preset_uri) skip the fallback — the original
+    failure surfaces unchanged."""
+    # Mutate the device row to drop preset_uri so the planner emits a
+    # kind-only load.
+    conn.execute(
+        "UPDATE devices SET preset_uri = NULL WHERE id = ?",
+        (song_with_device["device_id"],),
+    )
+    conn.commit()
+
+    def send(req):
+        if req.tool == "ableton_device" and req.action == "load":
+            return FakeResponse(
+                ok=False, error="no loadable browser item found for kind='X'",
+            )
+        # Pass through for other phases.
+        return FakeResponse(ok=True, result={"track_index": 1})
+
+    send.call_log = []  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    # Search must NOT have been attempted — no preset_uri means no fallback.
+    # (And the push halts at the devices phase.)
+    assert result.outcome == "partial"
+
+
+def test_execute_fallback_no_search_matches_preserves_original_error(
+    conn, song, session, song_with_device, state_dir,
+):
+    """Search returns empty → fallback aborts → original error stands."""
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
+        search_matches=[],
+        succeed_on_fallback_uri=None,
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "partial"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    # The original preset_uri error survives.
+    assert any(
+        "FileId_AUTHOR_MACHINE" in e.get("error", "")
+        for e in errors["errors"]
+    )
+
+
+def test_execute_fallback_retry_failure_preserves_original_error(
+    conn, song, session, song_with_device, state_dir,
+):
+    """Search finds a URI but the retry load also fails → original
+    error stands; no false-success."""
+    def send(req):
+        if req.tool == "ableton_browser" and req.action == "search":
+            return FakeResponse(ok=True, result={
+                "matches": [{
+                    "name": "Late Nite Kit",
+                    "uri": "query:Drums#FileId_DEAD_END",
+                    "path": ["drums"],
+                    "is_loadable": True,
+                }],
+                "count": 1, "truncated": False, "depth_exhausted": False,
+            })
+        if req.tool == "ableton_device" and req.action == "load":
+            # ALL load attempts fail (primary + retry).
+            return FakeResponse(
+                ok=False,
+                error=(
+                    f"no loadable browser item found for "
+                    f"preset_uri={req.params.get('preset_uri')!r}"
+                ),
+            )
+        return FakeResponse(ok=True, result={"track_index": 1})
+
+    send.call_log = []  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "partial"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    # The original AUTHOR_MACHINE preset_uri error (the FIRST attempt's
+    # failure) is what's recorded — not the retry's. apply_push_results
+    # only sees the first per-call result, and the executor's error_record
+    # was already built before the fallback ran.
+    err_messages = [e.get("error", "") for e in errors["errors"]]
+    assert any("FileId_AUTHOR_MACHINE" in m for m in err_messages)
+
+
+def test_execute_fallback_routes_plugin_kind_to_plugins_root(
+    conn, song, session, state_dir,
+):
+    """Plugin classes (e.g. AuPluginDevice) search the 'plugins' root."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Synth", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="AuPluginDevice", display_name="Spitfire LABS",
+        preset_uri="query:plugins#FileId_AUTHOR_AU",
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:plugins#FileId_AUTHOR_AU",
+        search_matches=[{
+            "name": "Spitfire LABS",
+            "uri": "query:plugins#FileId_CONSUMER_AU",
+            "path": ["plugins"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:plugins#FileId_CONSUMER_AU",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok"
+    search_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_browser" and c["action"] == "search"
+    ]
+    assert search_calls and search_calls[0]["params"]["root"] == "plugins"
+
+
+def test_execute_fallback_routes_default_kind_to_instruments_root(
+    conn, song, session, state_dir,
+):
+    """Non-rack, non-plugin kinds default to the 'instruments' root."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Bass", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Operator", display_name="Sub Bass",
+        preset_uri="query:Instruments#FileId_OLD_PATCH",
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Instruments#FileId_OLD_PATCH",
+        search_matches=[{
+            "name": "Sub Bass", "uri": "query:Instruments#FileId_NEW",
+            "path": ["instruments"], "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Instruments#FileId_NEW",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok"
+    search_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_browser" and c["action"] == "search"
+    ]
+    assert search_calls and search_calls[0]["params"]["root"] == "instruments"

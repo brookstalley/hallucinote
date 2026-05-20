@@ -800,7 +800,7 @@ def test_existing_finds_per_project_entry_via_resolved_cwd(fake_home, tmp_path):
 def _write_fake_vendored_install(user_library: pathlib.Path, base_version: str) -> pathlib.Path:
     """Stand up a minimal vendored Remote Script tree for version tests.
 
-    Mirrors the layout `/ableton-install-mcp` creates: a `__init__.py`
+    Mirrors the layout `/ableton-mcp-install` creates: a `__init__.py`
     declaring `BASE_VERSION` plus the fingerprint-relevant source files
     (`wire.py`, `schema.py`, `dispatcher.py`, `actions/`, `handlers/`,
     `remote_script/`). `compute_version_for` parses BASE_VERSION and

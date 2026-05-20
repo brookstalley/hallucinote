@@ -282,8 +282,10 @@ def scaffold_song(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             written.append(path)
-    except Exception:
+    except OSError:
         # Roll back: rmtree the partial dir so re-runs aren't poisoned.
+        # OSError covers the realistic write failures (FileNotFoundError,
+        # PermissionError, OSError on full-disk, etc.); we re-raise.
         shutil.rmtree(song_dir, ignore_errors=True)
         raise
 

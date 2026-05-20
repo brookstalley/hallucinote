@@ -10,7 +10,7 @@ See [`docs/VISION.md`](docs/VISION.md) for the full bet.
 
 ## Quick start
 
-You need Ableton Live (11 or 12), Python 3.11+, and Claude Code on **macOS or Windows**. Linux is not supported for v1 — Ableton doesn't ship a native Linux build, and Hallucinote isn't tested under Wine / CrossOver (the install skill will warn and ask before proceeding if you try).
+You need Ableton Live (11 or 12), Python 3.10+, and Claude Code on **macOS or Windows**. Linux is not supported for v1 — Ableton doesn't ship a native Linux build, and Hallucinote isn't tested under Wine / CrossOver (the install skill will warn and ask before proceeding if you try).
 
 ### 1. Clone and install
 

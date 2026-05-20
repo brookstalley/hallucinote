@@ -683,12 +683,36 @@ def plan_push_cue_points(
                 "arrangement is extended to cover them first."
             )
 
+    # W19-E: auto-disambiguate repeated cue names. Live's locator strip
+    # lists cues by display name; three cues named "chorus" produce three
+    # visually-identical entries. The DB intentionally allows the duplicate
+    # (the name describes the section, not its ordinal position), so we
+    # rewrite at plan time: when a name appears N>1 times, every occurrence
+    # gets a "-K" suffix in declaration order ("chorus-1" / "chorus-2" /
+    # "chorus-3"). Singletons stay unsuffixed — no churn on songs that
+    # already follow the convention. Empty / null names are exempt (Live
+    # surfaces those as "Unnamed" already; suffixing would only make them
+    # harder to read).
+    raw_names = [r["name"] or "" for r in rows]
+    name_counts: dict[str, int] = {}
+    for name in raw_names:
+        if name:
+            name_counts[name] = name_counts.get(name, 0) + 1
+    name_running_index: dict[str, int] = {}
+    display_names: list[str] = []
+    for name in raw_names:
+        if name and name_counts[name] > 1:
+            name_running_index[name] = name_running_index.get(name, 0) + 1
+            display_names.append(f"{name}-{name_running_index[name]}")
+        else:
+            display_names.append(name)
+
     cues = [
         {
             "position_beats": _position_bar_to_beats(r["position_bar"], ts_points),
-            "name": r["name"] or "",
+            "name": display_names[i],
         }
-        for r in rows
+        for i, r in enumerate(rows)
     ]
     plan.add(ToolCall(
         tool="ableton_arrangement",

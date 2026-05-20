@@ -28,7 +28,7 @@ Then verify:
 ls songs/<slug>/captured_session.json
 ```
 
-If the file doesn't exist, this isn't a refresh — it's an initial capture. Tell the user; they probably want `tools/capture.py --plan` walked by hand for the first capture, then this skill for subsequent refreshes.
+If the file doesn't exist, this isn't a refresh — it's an initial capture. Tell the user; they probably want `tools/capture_cli.py --plan` walked by hand for the first capture, then this skill for subsequent refreshes.
 
 Verify the bridge:
 
@@ -41,7 +41,7 @@ If it errors, stop. The user needs to open Live, load the song's set, and verify
 Get the probe list from the canonical source so you don't drift from what `compile_snapshot` expects:
 
 ```bash
-python tools/capture.py plan
+python tools/capture_cli.py plan
 ```
 
 Execute each probe in order. The output is the same as the procedure documented in `src/hallucinote/capture.py` (capture_plan docstring) — global session info, return tracks, per-track info, per-track sends, per-device parameters, per-rack-device nested chains. Loop over every track and every device.
@@ -77,7 +77,7 @@ pathlib.Path("songs/<slug>/captured_session.refresh.json").write_text(
 Run the diff CLI. It prints the structured diff as JSON to stdout and a one-screen human summary to stderr. Exit code is `0` when nothing changed and `1` when there are changes — branch on it.
 
 ```bash
-python tools/capture.py diff \
+python tools/capture_cli.py diff \
   songs/<slug>/captured_session.json \
   songs/<slug>/captured_session.refresh.json
 ```

@@ -55,7 +55,7 @@ MCP probes against the v1 unified-action-dispatch surface
 (`ableton_session(action='info')`, `ableton_return(action='list')`,
 `ableton_track(action='info'|'get_sends')`,
 `ableton_device(action='get_parameters'|'get_device_chains')`) and assembles
-the dict via `compile_snapshot`. See `tools/capture.py` for the probe sequence.
+the dict via `compile_snapshot`. See `tools/capture_cli.py` for the probe sequence.
 """
 from __future__ import annotations
 

@@ -125,7 +125,7 @@ workstream.
 **Capture-side note:** the capture layer's
 `{_note: "Rack — internal chain instruments not captured"}` flag
 is now closeable via `get_device_chains` per top-level rack;
-extending `tools/capture.py` to populate `device_chains` with
+extending `tools/capture_cli.py` to populate `device_chains` with
 `parent_rack_device_id` is filed in the backlog.
 
 ## Partial gaps (works in V1 with restrictions)

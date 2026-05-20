@@ -558,3 +558,39 @@ def test_compile_snapshot_passes_through_inputs():
     assert snap["song"]["master"]["volume"] == 0.85
     assert snap["returns"][0]["name"] == "A"
     assert snap["tracks"][0]["name"] == "x"
+
+
+def test_compile_snapshot_preserves_nested_rack_chains():
+    """W19-B: the agent assembles each rack device's nested chains via
+    `ableton_device(action='get_device_chains')` and attaches them as the
+    device's `chains` field. compile_snapshot is pass-through for those —
+    lock the round-trip shape here so a future refactor that "normalises"
+    nested chains away surfaces as a test failure, not as silent drop on
+    push."""
+    nested_chains = [
+        {
+            "chain_index": 1,
+            "name": "Kick",
+            "devices": [{"position": 1, "class": "Simpler", "name": "Kick.als"}],
+        },
+        {
+            "chain_index": 2,
+            "name": "Snare",
+            "devices": [{"position": 1, "class": "Simpler", "name": "Snare.als"}],
+        },
+    ]
+    track = {
+        "index": 1, "name": "Drums", "type": "midi",
+        "volume": 0.7, "panning": 0.0,
+        "devices": [{
+            "position": 1, "class": "DrumGroupDevice", "name": "Drum Kit",
+            "chains": nested_chains,
+        }],
+    }
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4",
+                      "master": {"volume": 0.85, "panning": 0.0}},
+        returns=[],
+        tracks=[track],
+    )
+    assert snap["tracks"][0]["devices"][0]["chains"] == nested_chains

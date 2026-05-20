@@ -352,6 +352,53 @@ def test_plan_push_cue_points_nameless_emits_empty_string(conn, song):
     assert cues == [{"position_beats": 0.0, "name": ""}]
 
 
+def test_plan_push_cue_points_disambiguates_repeated_names(conn, song):
+    """W19-E: a song with 3 cues named 'chorus' renders as
+    'chorus-1' / 'chorus-2' / 'chorus-3' in Live's locator strip.
+    Disambiguation is in declaration order (matches what the user wrote
+    in build.py)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=9.0, name="chorus")
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+    M.add_cue_point(conn, song_id=song, position_bar=25.0, name="chorus")
+    M.add_cue_point(conn, song_id=song, position_bar=33.0, name="chorus")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    names = [c["name"] for c in plan.calls[0].args["cues"]]
+    assert names == ["intro", "chorus-1", "verse", "chorus-2", "chorus-3"]
+
+
+def test_plan_push_cue_points_singleton_names_unsuffixed(conn, song):
+    """W19-E: names that appear exactly once stay unsuffixed (the suffix
+    convention is purely for disambiguation, not a stylistic marker)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=9.0, name="verse")
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="chorus")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    names = [c["name"] for c in plan.calls[0].args["cues"]]
+    assert names == ["intro", "verse", "chorus"]
+
+
+def test_plan_push_cue_points_does_not_disambiguate_unnamed_cues(conn, song):
+    """W19-E: empty/null names stay empty — Live displays them as
+    'Unnamed' already, so suffixing would only make the locator strip
+    less readable. The disambiguation is for the user-meaningful name
+    collision case."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name=None)
+    M.add_cue_point(conn, song_id=song, position_bar=9.0, name=None)
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    names = [c["name"] for c in plan.calls[0].args["cues"]]
+    assert names == ["", ""]
+
+
 def test_plan_push_cue_points_respects_meter_change(conn, song):
     """Cue at bar 7 across a 4/4→6/8 change at bar 5 = 22 beats."""
     M.add_time_signature_point(

@@ -3,7 +3,7 @@
 The snapshot is a JSON document describing the mix layout of an Ableton Live set. `hallucinote.capture.replay_capture` reads it and creates DB rows for tracks, returns, sends, master, devices, dialed parameters, and one level of nested rack chains.
 
 **Two roles for snapshots:**
-1. **Captured** — `tools/capture.py` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
+1. **Captured** — `tools/capture_cli.py` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
 2. **Synthetic** — `/song-new` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
 
 W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snapshot updates rows whose state changed and is a no-op for unchanged rows. The "song already exists" guard was removed; underlying mutators converge.
@@ -125,7 +125,7 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 - `index` is 1-based, position in the chain.
 - `class` is Live's device class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`, ...). Source of truth for "what kind of device is this." Note: Wave 0 surfaced that `class` doesn't always map 1:1 to the loader's accepted `kind` value (`AnalogDevice` rejection — backlog item filed).
 - `name` is the user-set display name (often equal to class; preset names like "Late Nite Kit" persist).
-- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
+- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture_cli.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
 - `preset_query` (optional, mutually exclusive with `guess_uri`) — **Sweep B: cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. Example: `"preset_query": {"root": "drums", "pattern": "Late Nite Kit"}`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match). Use this for built-in Live content that has a stable name across machines (drum kits, instrument presets) so the snapshot doesn't bake in this machine's FileId.
 - `params_dialed` (optional) — only **dialed** params (defaults are implied by absence). Discrete-enum params (Filter Type = "Lowpass") have `"normalized": null` because there's no continuous form.
 - `params_total` (optional) — informational; count of all params on the device.
@@ -172,7 +172,7 @@ For songs that need verified-against-Live chain state (most "make-me-X" prompts)
 1. **Pick chains via `/song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
 2. **Push the song with `/ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.
 3. **Stage in Live** (only if the picker couldn't fully specify). Dial in params that need ear-driven tuning (Saturator Drive, Glue threshold). Most picks shouldn't need this — `/song-pick-instruments` aims to ship sound-correct defaults.
-4. **Recapture via `/song-snapshot` (or `tools/capture.py`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
+4. **Recapture via `/song-snapshot` (or `tools/capture_cli.py`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
 
 The recapture step is what makes step 3 ("staging in Live") part of authorship and not a sidecar. The on-disk snapshot is the source of truth for sound design once you've recaptured. See `/song-snapshot` for the diff-and-confirm flow.
 
@@ -191,7 +191,7 @@ The recapture step is what makes step 3 ("staging in Live") part of authorship a
 For built-in Live content (Operator presets, Impulse drum kits, Drum Rack content) you have three options, in order of portability:
 
 1. **`preset_query`** (most portable, recommended for hand-authored snapshots). Express the kit by name + scope: `{"root": "drums", "pattern": "Late Nite Kit"}`. The push planner resolves it on the consumer's machine via `ableton_browser(action='search')`. Strict — refuses if 0 or 2+ matches. No FileId baked in; transfers cross-machine cleanly. Best for built-ins whose names are stable across Live installations.
-2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python tools/capture.py` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
+2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python tools/capture_cli.py` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
 3. **Hand-authored `guess_uri`** — discouraged. Hand-written URIs are unreliable per Wave 0 (spa-7c). If you do this, verify the URI exists via `ableton_browser(action='at_path', ...)` first.
 
 ---
@@ -201,7 +201,7 @@ For built-in Live content (Operator presets, Impulse drum kits, Drum Rack conten
 - **Start from the `/song-new` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
 - **Names must match across `sends` keys and `returns[].name`** (after slot-prefix stripping). A `sends` entry to `"Reverb"` resolves to the return named `"Reverb"` (or originally `"A-Reverb"`).
 - **The `"index"` keys are 1-based across the board** (Live convention; also enforced by schema CHECKs on the DB side).
-- **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `tools/capture.py`) once you've staged Live.
+- **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `tools/capture_cli.py`) once you've staged Live.
 
 ---
 

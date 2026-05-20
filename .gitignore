@@ -34,6 +34,10 @@ uv.lock
 **/*.flac
 **/* Project/
 
+# W12-B `/song-snapshot` side-by-side: skill writes this, mv/rm's on user
+# decision. Crashed/aborted flow can leave it behind — keep it untrackable.
+**/captured_session.refresh.json
+
 # Prawduct session files
 .claude/settings.local.json
 .prawduct/.critic-findings.json

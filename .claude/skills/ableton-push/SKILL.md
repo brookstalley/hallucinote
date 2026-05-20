@@ -71,7 +71,9 @@ The CLI matches by name (track names directly; return names after stripping Live
 Display to the user:
 - The matched lists (concise — `"linked 3 of 5 DB tracks; 2 will be created"`).
 - The `notes` list verbatim if non-empty. Notes cover duplicate names, kind mismatches, and **case-only near-matches** (W5-B). If a DB track 'Drums' and a Live track 'drums' both appear unmatched, the note flags them as a case-variant pair so the user can decide whether to rename one before push (otherwise phase 3 silently creates a duplicate `Drums` next to the existing `drums`).
-- The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch. The user often wants to know "the song will live alongside `1-MIDI`, `2-MIDI`, ..." so they can clean those up manually if desired.
+- The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch.
+
+**Confirmation gate when `unmatched_live_tracks` or `unmatched_live_returns` is non-empty (W12-C).** Live's default new-set scaffolding (`1-MIDI` / `2-MIDI` / `A-Reverb` / `B-Delay`) lands on the unmatched-Live side because the song's DB doesn't name those entities. That's almost always fine — the song will sit alongside them. But the same code path fires when the Live set already contains *another song*: those tracks/returns surface as "unmatched Live" too, and pushing additively on top of them silently jumbles two songs in one set. The signature you can't distinguish from probe-and-link's output alone is "default scaffolding" vs "someone else's song." So when either list is non-empty, **show the lists, then explicitly ask the user**: "These exist in Live and the push will not touch them — do you want to continue, or open a fresh Live set first? (yes/no)" Proceed only on explicit `yes`. If the lists are empty, no confirmation needed.
 
 Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched — push is additive.
 
@@ -142,6 +144,7 @@ After all ten phases, surface the following to the user **in this order**:
    - **Mixer / pan / send envelopes hidden in the MIDI clip envelope dropdown.** Emit if the `envelopes` phase wrote any `mixer_volume` / `mixer_pan` / `send_level` envelope on a MIDI clip. One-liner: "Mixer envelope(s) pushed onto MIDI clip 'Y' are playing (the fader will visibly move) but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider in Live and choose 'Show Modulation' to draw/edit them. Live remembers the choice per-set."
 
    If neither applies, skip this section entirely — don't add ceremony to a clean push.
+4. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase wrote at least one cue point — operationally: Step 3d reported `applied >= 1` for the `cues` phase (which emits a single batched `cue_create_batch` call) — append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip when no cues were pushed.
 
 If the user opens the Live set now, the song should be there.
 

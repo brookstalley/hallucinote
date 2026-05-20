@@ -4,6 +4,37 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release
+
+First user-facing tagged release. Bundles W13-B (missing-plugin detection
++ REQUIREMENTS.md + push preflight refuse-and-confirm), W13-C
+(`docs/collaboration.md` walkthrough naming three portability cases), the
+v0.9.0 CHANGELOG, and a hygiene sweep deleting four stale `.prawduct/`
+investigation/triage artifacts (`bug-triage.md`, `bug-triage-wave2.md`,
+`build-plan-wave-SD-paused.md`, `w12-a-investigation.md` — all covered
+shipped work; git history preserves them).
+
+New module `hallucinote.sync.compat` with five tagged status values
+(`native`, `placeholder`, `third_party_ok`, `third_party_missing`,
+`third_party_unverified`), nested-rack-recursive song walk, and a
+`check | write-requirements` CLI surface. Push planner gains a clean
+skip-with-warn for `kind='placeholder'` devices. The `/ableton-push`
+skill adds Steps 0a (probe Live for installed plugins) and 0b (run
+compat check, refuse-and-confirm on exit 1) before any push phase
+fires. Express non-goal pinned in CHANGELOG: Hallucinote will never
+substitute plugins or bundle audio.
+
+W11 (inline `hallucinote://` DB read surface), W13-A (instrument
+fallback identity — blocked on missing MCP `browser(search)` action),
+and W16-A (assertions module) explicitly deferred to v1.0.
+
+Suite 1510 → 1547 (+37 tests, 11.30s). All four canary songs
+(`falling-walking`, `full-band-rock`, `solo-piano-ambient`,
+`odd-meter-experimental`) have REQUIREMENTS.md generated — all-native,
+no install needed.
+
+<!-- chunks=W13-B|W13-C|hygiene status=shipped release=v0.9.0 scope=cross-machine-portability+v0.9.0-cut -->
+
 ## 2026-05-17 — `arrangement` → `arrangement_clip` rename
 
 DB table `arrangement` becomes `arrangement_clips`; indexes follow.

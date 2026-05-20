@@ -80,6 +80,23 @@ def test_is_plugin_class_substring_for_future_versions():
     assert C._is_plugin_class("ImaginaryPluginDevice")
 
 
+def test_classify_device_substring_branch_routes_to_third_party():
+    """The substring branch ('Plugin' in class_name) must classify the
+    same as the explicit-set branch — both feed third-party status.
+
+    Pairs with test_plugin_classes_lock_matches_mcp_side to pin BOTH
+    halves of the discriminator. Without this, a future Live release
+    that introduces a new ``*PluginDevice`` class would silently route
+    to ``native`` if the lock-test only pinned the explicit set.
+    """
+    status, lookup = C.classify_device(
+        "Vst4PluginDevice", display_name="Hypothetical Plugin",
+        installed_plugin_names=None,
+    )
+    assert status == "third_party_unverified"
+    assert lookup == "Hypothetical Plugin"
+
+
 def test_is_plugin_class_rejects_native():
     for native in ("Operator", "Eq8", "DrumGroupDevice", "Compressor2",
                    "InstrumentMeld", "LoungeLizard", "Reverb"):

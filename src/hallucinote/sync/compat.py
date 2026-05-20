@@ -521,7 +521,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="hallucinote.sync.compat",
         description=(
             "Detect third-party plugins a song needs and generate "
-            "REQUIREMENTS.md (W13-B)."
+            "REQUIREMENTS.md (W13-B). Both subcommands resolve the song's "
+            "DB and write REQUIREMENTS.md relative to the current working "
+            "directory — run from the repo root."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)

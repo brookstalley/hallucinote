@@ -1,6 +1,6 @@
 ---
 name: song-snapshot
-description: Refresh a song's `captured_session.json` against the currently open Ableton set. Re-runs the capture probes (`ableton_session(action='info')`, `list_return_tracks`, per-track `get_track_info` + sends, per-device parameter probes, nested rack-chain walks), writes a `.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
+description: Refresh a song's `captured_session.json` against the currently open Ableton set. Re-runs the capture probes (`ableton_session(action='info')`, `list_return_tracks`, per-track `get_track_info` + sends, per-device parameter probes, nested rack-chain walks), writes a `captured_session.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
 ---
 
 # /song-snapshot
@@ -56,7 +56,7 @@ For rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupD
 
 ## Step 2 — Write the fresh capture to a side-by-side file
 
-Compile the dict and write it to `songs/<slug>/captured_session.json.refresh` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Use this Python invocation so the assembly goes through the canonical helper:
+Compile the dict and write it to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Use this Python invocation so the assembly goes through the canonical helper:
 
 ```python
 from hallucinote.capture import compile_snapshot
@@ -67,7 +67,7 @@ snapshot = compile_snapshot(
     returns=<list>,
     tracks=<list>,
 )
-pathlib.Path("songs/<slug>/captured_session.json.refresh").write_text(
+pathlib.Path("songs/<slug>/captured_session.refresh.json").write_text(
     json.dumps(snapshot, indent=2)
 )
 ```
@@ -79,7 +79,7 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
 ```bash
 python tools/capture.py diff \
   songs/<slug>/captured_session.json \
-  songs/<slug>/captured_session.json.refresh
+  songs/<slug>/captured_session.refresh.json
 ```
 
 **If exit 0 (no changes):** tell the user the snapshot is already up to date, delete the `.refresh` file, and stop.
@@ -88,7 +88,7 @@ python tools/capture.py diff \
 
 Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes / no / show full diff)"*
 
-- **yes** → `mv songs/<slug>/captured_session.json.refresh songs/<slug>/captured_session.json` and confirm.
+- **yes** → `mv songs/<slug>/captured_session.refresh.json songs/<slug>/captured_session.json` and confirm.
 - **no** → delete the `.refresh` file and stop. Tell the user "no changes written."
 - **show full diff** → cat the stdout JSON and re-ask.
 

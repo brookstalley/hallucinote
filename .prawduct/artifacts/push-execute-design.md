@@ -181,7 +181,10 @@ Top error patterns:
 | 0    | All phases ok                         | n/a                                      |
 | 1    | Partial — halted at phase boundary    | Idempotent re-run picks up where it left |
 | 2    | Connection lost                       | Re-run after Live is reachable           |
-| 64   | Usage error (bad args)                | Fix args                                 |
+
+Usage errors (bad args) follow argparse's default — the parser exits before
+`execute_push` runs. We don't define a distinct exit code for that case;
+ill-formed invocations are operator errors, not state errors.
 
 ### What stays on the MCP per-call path
 
@@ -204,9 +207,10 @@ gates via MCP → `push_cli execute` once → read state file → report.
     `send_fn: Callable[[Request], Response]` so tests can inject a fake
 - `src/hallucinote/sync/push_execute.py` (new): the dispatch loop + state
   writers. Pure Python, no I/O outside the file writes + the `send_fn` calls.
-- `tests/unit/test_push_execute.py` (new): exercises happy path, per-call
-  error accumulation, halt-at-phase-boundary, LiveConnectionError immediate
-  halt, idempotent re-execute, state/errors file shape.
+- `tests/unit/sync/test_push_execute.py` (new): exercises happy path,
+  per-call error accumulation, halt-at-phase-boundary, LiveConnectionError
+  immediate halt, idempotent re-execute, state/errors file shape, and a
+  mid-execute probe asserting per-phase link visibility.
 
 ## Out of scope
 

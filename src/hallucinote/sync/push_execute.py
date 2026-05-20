@@ -161,6 +161,15 @@ def execute_push(
     # inject send_fn directly may pass anything that round-trips; the dispatch
     # loop builds plain Request objects unconditionally for the real path.
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+    # Connection-class exceptions we treat as halt-immediate. Anything else
+    # (e.g. wire.FrameError — protocol bugs, not network issues; programming
+    # errors from planner contract drift) propagates so the failure mode
+    # surfaces honestly instead of mislabeling as 'connection lost'.
+    try:
+        from hallucinote_mcp.client import LiveConnectionError as _LiveConnectionError  # type: ignore[import-not-found]
+        _CONNECTION_EXCS: tuple[type[BaseException], ...] = (_LiveConnectionError, OSError)
+    except ImportError:
+        _CONNECTION_EXCS = (OSError,)
 
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / ".last-push-state.json"
@@ -190,12 +199,11 @@ def execute_push(
             req = Request(tool=call.tool, action=action or "", params=params)
             try:
                 resp = send_fn(req)
-            except Exception as exc:  # prawduct:ok-broad-except — connection-class errors from the wire client; we want to halt without leaking specifics here
-                # LiveConnectionError lives in hallucinote_mcp.client; rather
-                # than import-and-isinstance (and pull the MCP package into
-                # the unit-test graph), treat any send_fn exception as a
-                # connection-class failure. Tests that want to simulate this
-                # raise a stand-in.
+            except _CONNECTION_EXCS as exc:
+                # Connection-class failure (Live unreachable, socket error).
+                # Halt immediately — no point continuing without Live. Wire
+                # protocol bugs (wire.FrameError) and other unexpected
+                # exceptions propagate so they're not mislabeled here.
                 connection_lost = True
                 error_records.append({
                     "key": call.key,

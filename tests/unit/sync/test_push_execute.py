@@ -208,6 +208,40 @@ def test_execute_writes_link_to_db_between_phases(
         fresh.close()
 
 
+def test_execute_track_link_visible_to_clip_phase_mid_run(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Mid-execute probe: when the clip-create call arrives at the wire, the
+    track link must ALREADY be visible in the DB — otherwise plan_push_clips
+    would have raised on the unlinked track. Catches a hypothetical regression
+    where execute reads ableton_links once at start and never refreshes
+    (e.g. a refactor that pre-builds all ten plans before dispatching)."""
+    observed: list[bool] = []
+    base_send = _make_send_fn()
+
+    def send_with_mid_probe(req):
+        if req.tool == "ableton_clip" and req.action == "create":
+            # At this point in the dispatch loop, the tracks phase has
+            # already applied. The link must be readable from the shared
+            # conn the planner used.
+            link = Q.get_ableton_link(
+                conn, session_id=session, db_kind="track",
+                db_id=tiny_song["track_id"],
+            )
+            observed.append(link is not None)
+        return base_send(req)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_with_mid_probe,
+    )
+    assert result.outcome == "ok"
+    assert observed == [True], (
+        "track link must be visible to the conn at the moment the clip "
+        "create call is dispatched"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-call error accumulation + halt-at-phase-boundary
 # ---------------------------------------------------------------------------

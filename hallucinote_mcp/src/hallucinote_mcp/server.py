@@ -260,8 +260,9 @@ def registered_prompt_names(mcp: FastMCP) -> list[str]:
     """Return the names of all prompts registered on the FastMCP instance.
 
     Symmetric to ``registered_tool_names`` / ``registered_resource_uris``
-    but introspects the prompt manager. Used by tests to assert "the 5
-    expected prompts are wired."
+    but introspects the prompt manager. Used by tests to assert the
+    expected prompt surface (see ``_EXPECTED_PROMPTS`` in
+    ``hallucinote_mcp/tests/unit/test_prompts.py``) is wired.
     """
     for attr in ("_prompt_manager", "prompt_manager"):
         manager = getattr(mcp, attr, None)

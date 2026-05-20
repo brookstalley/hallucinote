@@ -288,6 +288,50 @@ def test_pick_instruments_for_song_strict_uses_browser_only():
     assert "kind" in blob
 
 
+def test_pick_instruments_for_song_describes_resource_shape_accurately():
+    """The prompt's Step 1 must describe the fields each browser/plugin
+    node actually carries — `{name, uri, is_loadable}` per
+    `handlers/browser.py::_walk` and `plugins_list_handler`. A prior
+    version of this prompt invented a `class_name` field that doesn't
+    exist on those nodes (PR #49 review note 1). The fields the prompt
+    teaches must match the actual handler payload to avoid sending the
+    agent on a doomed lookup.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass")
+    blob = out[0]["content"]
+    # Describes the actual node shape.
+    assert "name" in blob
+    assert "uri" in blob
+    assert "is_loadable" in blob
+    # Does NOT claim `class_name` is a node field (it isn't).
+    # The translation table can be MENTIONED as the resolution path
+    # (display → class), but the prompt must not tell the agent to
+    # READ a `class_name` field off the resource node.
+    # Use a tight assertion: the substring "node carries a `class_name`"
+    # (or any "each node ... class_name") must not appear in the Step 1
+    # context. Allow `class_name` to appear elsewhere (e.g. in a
+    # translation example) by anchoring the negative check to the
+    # specific stale phrasing.
+    assert "carries a `class_name`" not in blob
+    assert "node carries a `class_name`" not in blob
+
+
+def test_pick_instruments_for_song_explains_kind_resolution():
+    """Step 4 tells the agent to pass the browser node's `name` as
+    `kind` and cites the project's display→class translation table.
+    This is the actual load contract per `actions/device.py::load` +
+    `device_names.class_name_to_display`.
+    """
+    out = _pick_instruments_for_song(tracks="Drums")
+    blob = out[0]["content"]
+    # Cites the translation source so a curious agent can verify.
+    assert "device_names" in blob
+    # Shows at least one concrete display→class example.
+    assert "Drum Rack" in blob and "DrumGroupDevice" in blob
+    # Third-party plugin behavior called out (same string both spaces).
+    assert "Third-party plugins use the same string" in blob
+
+
 def test_pick_instruments_for_song_strict_skips_plugins_installed():
     """Strict mode must NOT direct the agent to plugins/installed —
     that's the whole point of the mode.

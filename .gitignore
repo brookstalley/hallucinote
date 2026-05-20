@@ -49,6 +49,7 @@ uv.lock
 .prawduct/.session-start
 .prawduct/.subagent-briefing.md
 .prawduct/.gates-waived
+.prawduct/.sync-pending
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
@@ -63,6 +64,3 @@ uv.lock
 .prawduct/.getting-started-prompts.md
 .prawduct/push-orchestrator.py
 .getting-started-prompts.md
-
-# Prawduct session files
-.prawduct/.sync-pending

@@ -4,28 +4,28 @@
 
 You describe musical intent in plain language — *"write a stereotypical metal ballad using I–V–IV"*, *"make a 10-minute ambient soundscape in E major"* — and Claude composes the song against a SQLite source of truth, then pushes it into Ableton Live through an in-repo MCP server. Edits in Live pull back through the same path. Songs become forkable like git repos.
 
-See [`docs/VISION.md`](docs/VISION.md) for the bet behind this. See [`CHANGELOG.md`](CHANGELOG.md) for what shipped.
+See [`docs/VISION.md`](docs/VISION.md) for the big picture. See [`CHANGELOG.md`](CHANGELOG.md) for what shipped.
 
 ## Status
 
-**v0.9.0 — first user-facing release.** Compose end-to-end, push into Live, pull edits back. The release target is *"a moderately sophisticated Claude Code + Ableton user can sit down and be productive reliably"*. v1.0 will add an inline DB read surface (`hallucinote://`) and broader cross-machine instrument fallback; current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
+**v0.9.0 — first user-facing release.** Compose end-to-end, push into Live, pull edits back. The release target is *"a moderately sophisticated Claude Code + Ableton user can sit down and be productive reliably"*. Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
 ## What you can do
 
-- **Compose a song from a prompt.** `/new-song <slug>` scaffolds the directory; the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
+- **Compose a song from a prompt.** `/new-song <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
 - **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
 - **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
 - **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
 
 ## Requirements
 
-- **Ableton Live 11 or 12** on **macOS or Windows**. Linux isn't supported — Ableton doesn't ship a Linux build, and Hallucinote isn't tested under Wine / CrossOver. The install skill warns and asks before proceeding if you try.
+- **Ableton Live 12** on **macOS or Windows**. 
 - **Python 3.10 or newer.** On Windows, if `python` opens the Microsoft Store, use `py -3` everywhere `python` appears below.
 - **Claude Code.** Install instructions: <https://claude.ai/code>.
 
 ## Install
 
-### 1. Clone and install both packages
+### 1. Clone and install 
 
 **macOS / Linux:**
 ```bash
@@ -44,8 +44,6 @@ py -3 -m venv .venv
 pip install -e . -e .\hallucinote_mcp
 ```
 
-Both packages must be installed even when driving from Claude Code: Claude Code spawns `hallucinote-mcp` as a separate subprocess, and song build scripts import the `hallucinote` library directly.
-
 To run the test suite, add the `[dev]` extras (pytest, pytest-xdist, hypothesis) on either package:
 
 ```bash
@@ -62,27 +60,27 @@ Start Claude Code in this directory and run the install skill:
 claude
 ```
 
-> *"run /ableton-install-mcp"*
+> *"/ableton-install-mcp"*
 
-The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and tells you the one Ableton click left to do. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
+The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and instructs the user the enable the MCP plugin in Live's settings. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
 
 ### 3. Wire up Ableton, restart Claude Code
 
 In Ableton Live's menu bar:
 
 1. **Live → Preferences** (macOS) or **Options → Preferences** (Windows).
-2. Open the **Link, Tempo & MIDI** tab.
+2. Open the **Tempo & MIDI** tab.
 3. In any free **Control Surface** slot (the first column in the MIDI Ports table), open the dropdown and select **Hallucinote**.
 4. Leave the **Input** and **Output** columns set to **None** — Hallucinote talks to Live through the Control Surface socket only.
 5. Close Preferences.
 
-Then **quit and reopen Claude Code in this repo** so it picks up the new `.mcp.json`.
+Then **quit and reopen Claude Code in this repo** so it picks up the new `.mcp.json`. Leave Ableton running.
 
 ### 4. Verify the bridge
 
 From Claude Code:
 
-> *"call ableton_session with action=info"*
+> *"please get the current set's info from Ableton"*
 
 You should get back tempo, signature, track counts, and master strip state from the current Live set.
 

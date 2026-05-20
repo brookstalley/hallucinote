@@ -4,6 +4,56 @@ All notable changes to Hallucinote are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ableton_browser(action='search')`** — pattern-match nodes under a
+  browser root. Lets agents find instruments / presets / plugins without
+  knowing exact names. Default mode is case-insensitive substring; glob
+  and regex modes available as opt-ins. Bounded by depth (default 8,
+  max 12) and match limit (default 20, max 200); `path_prefix` narrows
+  the walk to a sub-tree. Returns matches with name + uri + full path +
+  is_loadable so the agent can disambiguate among same-name results.
+- **`ableton_device(action='load', preset_query={...})`** — compose-time
+  portable preset selector. Snapshot stores `preset_query` (e.g.
+  `{root: "drums", pattern: "Late Nite Kit"}`) instead of (or alongside)
+  per-machine `preset_uri`. The MCP handler resolves on the consumer's
+  machine via the search primitive. Strict-mode — refuses if 0 or 2+
+  matches (no fuzzy match shipping by accident). The cross-machine
+  portability path for built-in Live content (drum kits, instrument
+  presets) so snapshots transfer cleanly across installations.
+- **`docs/new-song-checklist.md`** — authoritative 14-item must / should
+  / emergent pre-composition checklist. The agent infers aggressively,
+  states inferences explicitly, asks for must-haves it can't infer.
+  Decisions persist as markdown under `songs/<slug>/decisions/` so the
+  song's intent survives `/clear` and future-session re-opens via
+  `/song-context`.
+
+### Changed
+
+- **`/new-song` SKILL** — restructured around two explicit phases
+  (pre-composition elicitation, then scaffold + decisions + pick
+  instruments). The final report now points at next-steps
+  (pick instruments → push → recapture → compose) instead of just
+  naming the scaffolded directory.
+- **`start_new_song` MCP prompt** — mirrors the new-song checklist.
+  Adds an explicit elicitation step (Step 0) and decisions-persistence
+  step (1a). Step 2b (`pick_instruments_for_song`) cross-references
+  `preset_query` as the portable selector for built-in content.
+- **Scaffold template** (`tools/templates/song/captured_session.json.tmpl`)
+  — return names use the stripped form (`Reverb`, `Delay`) instead of
+  Live's auto-slot-prefixed form (`A-Reverb`, `B-Delay`). Closes the
+  noise on every fresh-scaffold build where `replay_capture` emitted
+  a (correct but distracting) strip warning.
+
+### Schema migration
+
+- **`devices.preset_query TEXT`** — JSON-serialized compose-time
+  portable preset selector. Added to existing v0.9.0 DBs via the
+  `_ADDED_COLUMNS` migration in `db/connection.py`; existing devices
+  get NULL.
+
 ## [0.9.0] — 2026-05-20
 
 **First user-facing release.** Composes a song end-to-end against

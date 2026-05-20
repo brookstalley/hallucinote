@@ -14,6 +14,7 @@ to multiple Live sets at the same time without aliasing. Open one with
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
@@ -1027,7 +1028,24 @@ def _emit_device_calls(
             "action": "load",
             "kind": device["kind"],
         }
-        if device["preset_uri"] is not None:
+        # Sweep B: preset_query (portable) takes precedence over preset_uri
+        # (per-machine). The MCP load handler refuses if both are set, so
+        # the planner must pick one. Composer's expressed preference wins.
+        preset_query_raw = (
+            device["preset_query"] if "preset_query" in device.keys() else None
+        )
+        if preset_query_raw is not None:
+            try:
+                load_args["preset_query"] = json.loads(preset_query_raw)
+            except (json.JSONDecodeError, TypeError) as exc:
+                plan.warn(
+                    f"device {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r}: stored preset_query is not valid JSON "
+                    f"({exc}); falling back to preset_uri / kind-only load"
+                )
+                if device["preset_uri"] is not None:
+                    load_args["preset_uri"] = device["preset_uri"]
+        elif device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
         plan.add(ToolCall(
             tool="ableton_device",

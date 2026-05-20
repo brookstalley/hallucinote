@@ -9,19 +9,33 @@ argument-hint: <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <k
 
 # /new-song
 
-You scaffold a new Hallucinote song from templates.
+You scaffold a new Hallucinote song from templates AND run the pre-composition elicitation pass so the first composition decisions are defensible, not guessed.
 
 $ARGUMENTS
 
 ## What you do
 
-Given a slug + title + tempo + signature + sections (and optional key + intent), you:
+Two phases, in order:
+
+**Phase 1 — Pre-composition elicitation** (`docs/new-song-checklist.md`):
+
+Read what the user said. Infer everything you can. **State your inferences explicitly** — "you said 'disco prog-metal', so I'm assuming 120 BPM, 4/4, electric bass + acoustic drums, modal interchange in the bridge — say if you want different." Ask 2-3 targeted questions for the **must-haves** you genuinely can't infer (intent/purpose, genre, length/structure, vocals?, instrumentation). Default the **should-haves** (tempo/feel, time sig, harmonic strategy, production, arrangement arc) with "I'll go with N — say if you want different." Let **nice-to-haves** (references, hard constraints, hooks, density) emerge — only ask if the user volunteers something or the must-haves leave a gap.
+
+This is **guidance, not a script.** Freeform exploration is allowed. The point is to surface what the user would want to fix later if you guessed wrong, before you write code.
+
+For each non-trivial decision (especially must-haves), **write a markdown file under `songs/<slug>/decisions/`** (you'll do this in Phase 2 after the directory exists). Format: one file per decision, with the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/song-context` so the song's intent survives `/clear`.
+
+**Phase 2 — Scaffold + first compose**:
+
+Given the resolved slug + title + tempo + signature + sections (and optional key + intent from Phase 1), you:
 
 1. Validate the inputs (slug shape, signature shape, non-empty section list).
 2. Run `python3 -m tools.scaffold_song <slug> --title "..." --tempo X --signature N/D --sections ...` to produce `songs/<slug>/`.
 3. Run `python3 songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
-5. Report the result + tell the user what to do next.
+5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
+6. **Pick instruments** by invoking the `pick_instruments_for_song` MCP prompt with the user's resolved instrumentation. Default `portability='strict'` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
+7. Report the result + tell the user what to do next.
 
 ## Gathering input
 
@@ -65,9 +79,14 @@ Two important defaults the scaffold uses:
 
 After the build + tests succeed, tell the user:
 
-> Scaffolded `songs/<slug>/`. The synthetic snapshot gave you 4 MIDI tracks + 2 returns; replace `captured_session.json` once you've staged a real Live shape. Open `songs/<slug>/build.py` — the `=== Compose-half ===` placeholder is where your music goes. Push to Live with `/ableton-push <slug> <session_id>` once you've authored clips.
+> Scaffolded `songs/<slug>/` with N decisions recorded in `decisions/`. Next steps:
+>
+> 1. **Pick instruments** — I'll invoke `pick_instruments_for_song` to translate the instrumentation we discussed ("vintage analog poly + acoustic drums + ...") into actual device picks. Default `portability='strict'` — stock Live content only. Tell me if you want to allow third-party plugins.
+> 2. **Push the scaffold to a fresh Live set** with `/ableton-push <slug> --new-session` so the device chains materialize.
+> 3. **Recapture** with `tools/capture.py` so the resolved device URIs / params land in `captured_session.json`.
+> 4. **Compose** — open `songs/<slug>/build.py` and replace the `=== Compose-half ===` placeholder. `songs/falling-walking/build.py` is the worked example (historical, not a literal template).
 
-If you're collaborating with the user on composition immediately after scaffold, you can begin generator + mutator authoring inside the `=== Compose-half ===` block — `songs/falling-walking/build.py` is the worked example (note: historical, not a literal template).
+If the user signaled they want to keep going on composition right now, do step 1 and (if Live is open) step 2 + 3. Otherwise stop after the scaffold + decisions land, so the user can review.
 
 ## Workflow
 

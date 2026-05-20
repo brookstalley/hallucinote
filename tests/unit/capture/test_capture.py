@@ -1,6 +1,8 @@
 """Tests for capture.replay_capture and compile_snapshot."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hallucinote.capture import (
@@ -280,6 +282,35 @@ def test_replay_creates_dialed_params(conn):
     # Discrete-enum param carries display only.
     assert params["Filter Type"]["value_display"] == "Lowpass"
     assert params["Filter Type"]["value_normalized"] is None
+
+
+def test_replay_reads_preset_query_from_snapshot(conn):
+    """Sweep B: a snapshot device with `preset_query` should land in the DB
+    with the query JSON-serialized into the devices.preset_query column. The
+    push planner reads it back to thread into ableton_device(load,
+    preset_query=...) on the consumer's machine."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Some 909 Kit", "class": "DrumGroupDevice",
+                "preset_query": {
+                    "root": "drums",
+                    "pattern": "909",
+                    "mode": "substring",
+                },
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    devices = Q.get_devices_for_track(conn, track["id"])
+    assert devices[0]["preset_uri"] is None
+    stored = devices[0]["preset_query"]
+    assert stored is not None
+    parsed = json.loads(stored)
+    assert parsed == {"root": "drums", "pattern": "909", "mode": "substring"}
 
 
 def test_replay_handles_track_with_no_devices(conn):

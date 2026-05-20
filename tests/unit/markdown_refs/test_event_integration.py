@@ -49,6 +49,52 @@ def test_added_columns_present_on_requests(conn):
     assert "outcome" in cols
 
 
+def test_added_columns_present_on_devices(conn):
+    """Sweep B: devices.preset_query column landed via _ADDED_COLUMNS so
+    existing DBs from v0.9.0 don't crash on the first create_device call
+    after upgrade."""
+    info = conn.execute("PRAGMA table_info(devices)").fetchall()
+    cols = {r["name"] for r in info}
+    assert "preset_query" in cols
+
+
+def test_migration_adds_preset_query_to_pre_sweepb_devices_table(tmp_path: Path):
+    """Regression test for the schema-migration gap the Critic caught:
+    a DB created BEFORE Sweep B (no preset_query column) must gain the
+    column via _ADDED_COLUMNS on the next init_db open, not crash when
+    create_device is called."""
+    import sqlite3
+
+    db_path = tmp_path / "pre-sweepb.db"
+    # Simulate a v0.9.0 DB: build the devices table without preset_query.
+    raw = sqlite3.connect(db_path)
+    raw.execute(
+        """CREATE TABLE devices (
+            id              TEXT PRIMARY KEY,
+            chain_id        TEXT NOT NULL,
+            position        INTEGER NOT NULL,
+            kind            TEXT NOT NULL,
+            display_name    TEXT NOT NULL,
+            preset_uri      TEXT,
+            UNIQUE(chain_id, position)
+        )"""
+    )
+    raw.commit()
+    raw.close()
+
+    # Now open with init_db — migration must add preset_query.
+    c = init_db(db_path)
+    try:
+        info = c.execute("PRAGMA table_info(devices)").fetchall()
+        cols = {r["name"] for r in info}
+        assert "preset_query" in cols, (
+            "Sweep B's preset_query column missing on a pre-Sweep-B DB — "
+            "the _ADDED_COLUMNS migration must add it on init_db."
+        )
+    finally:
+        c.close()
+
+
 # ---------- create_request with kind ----------
 
 

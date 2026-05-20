@@ -2125,39 +2125,64 @@ def create_device(
     kind: str,
     display_name: str,
     preset_uri: str | None = None,
+    preset_query: dict[str, Any] | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
     """Create a device in `chain_id` at 1-based `position`. `kind` is Live's
     class name (Compressor2, Eq8, DrumGroupDevice, ...); `display_name` is
-    the user-visible name (often == kind, may be a preset name)."""
+    the user-visible name (often == kind, may be a preset name).
+
+    ``preset_uri`` and ``preset_query`` are mutually exclusive selectors —
+    pass one or the other (or neither, for kind-only loading). ``preset_query``
+    is the compose-time portable form (Sweep B): a dict
+    ``{root, pattern, mode?, path_prefix?, case_sensitive?}`` stored as
+    JSON; the push planner threads it through to
+    ``ableton_device(action='load', preset_query=...)`` which resolves on the
+    consumer's machine. ``preset_uri`` is the per-machine canonical URI.
+    """
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
+    if preset_uri is not None and preset_query is not None:
+        raise ValueError(
+            "preset_uri and preset_query are mutually exclusive — pass one "
+            "(preset_query for cross-machine portability, preset_uri for "
+            "an unambiguous per-machine URI)"
+        )
     actor, request_id = _resolve_actor_and_request(actor, request_id)
+    preset_query_json = (
+        json.dumps(preset_query, sort_keys=True) if preset_query is not None
+        else None
+    )
     existing = conn.execute(
-        """SELECT id, kind, display_name, preset_uri FROM devices
+        """SELECT id, kind, display_name, preset_uri, preset_query FROM devices
            WHERE chain_id = ? AND position = ?""",
         (chain_id, position),
     ).fetchone()
     if existing is not None:
         device_id = existing["id"]
-        if (existing["kind"], existing["display_name"], existing["preset_uri"]) == (
-            kind, display_name, preset_uri,
+        if (
+            existing["kind"], existing["display_name"], existing["preset_uri"],
+            existing["preset_query"],
+        ) == (
+            kind, display_name, preset_uri, preset_query_json,
         ):
             _record_touch_if_session("device", device_id)
             return MutatorResult(device_id, "unchanged")
         conn.execute(
-            """UPDATE devices SET kind = ?, display_name = ?, preset_uri = ?
+            """UPDATE devices SET kind = ?, display_name = ?, preset_uri = ?,
+                                  preset_query = ?
                WHERE id = ?""",
-            (kind, display_name, preset_uri, device_id),
+            (kind, display_name, preset_uri, preset_query_json, device_id),
         )
         song_id = _resolve_device_song(conn, device_id=device_id)
         _emit(
             conn, E.DEVICE_CREATED,
             {"device_id": device_id, "chain_id": chain_id, "position": position,
              "kind": kind, "display_name": display_name,
-             "preset_uri": preset_uri, "result_kind": "updated"},
+             "preset_uri": preset_uri, "preset_query": preset_query,
+             "result_kind": "updated"},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
         if song_id:
@@ -2166,9 +2191,11 @@ def create_device(
         return MutatorResult(device_id, "updated")
     device_id = _uuid()
     conn.execute(
-        """INSERT INTO devices (id, chain_id, position, kind, display_name, preset_uri)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (device_id, chain_id, position, kind, display_name, preset_uri),
+        """INSERT INTO devices (id, chain_id, position, kind, display_name,
+                                preset_uri, preset_query)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (device_id, chain_id, position, kind, display_name,
+         preset_uri, preset_query_json),
     )
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
@@ -2181,6 +2208,7 @@ def create_device(
             "kind": kind,
             "display_name": display_name,
             "preset_uri": preset_uri,
+            "preset_query": preset_query,
         },
         song_id=song_id,
         actor=actor,

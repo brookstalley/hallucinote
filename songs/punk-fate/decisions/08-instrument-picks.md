@@ -40,5 +40,5 @@ Three of four picks need Live Suite (Hot Rod Kit content is Suite-pack; Operator
 
 ## What this binds
 - `/ableton-push punk-fate --new-session` will resolve all four `preset_query` selectors via `ableton_browser(action='search')` and load the picks. If any pattern stops matching exactly one (Live update changed a name, pack uninstalled), push fails fast — that's the strict guarantee.
-- Recapture (`tools/capture.py` after push) will replace the `preset_query` with the per-machine `guess_uri` and capture the params actually loaded by Operator. That's the authoritative snapshot going forward.
+- Recapture (`tools/capture_cli.py` after push) will replace the `preset_query` with the per-machine `guess_uri` and capture the params actually loaded by Operator. That's the authoritative snapshot going forward.
 - The mix-time follow-ups above are NOT in the snapshot today — they happen post-push, manually or via subsequent `/song-snapshot` refresh after the chain is dialed in.

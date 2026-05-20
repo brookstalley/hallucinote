@@ -8,7 +8,7 @@ See [`docs/VISION.md`](docs/VISION.md) for the big picture. See [`CHANGELOG.md`]
 
 ## Status
 
-**v0.9.0 — first user-facing release.** Compose end-to-end, push into Live, pull edits back. The release target is *"a moderately sophisticated Claude Code + Ableton user can sit down and be productive reliably"*. Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
+**v1.0.0 — beta-readiness release.** Compose end-to-end, push into Live, pull edits back, on any installed Drum Rack and across machines. The release gate is *"a beta tester can prompt 'make me song X', get a finished-sounding result, share it with another tester, and not bounce on common papercuts"*. Highlights: composer-experience overhaul (creative-vs-planning detection, sound-as-composition, per-part `feel`), push-state coherence (probe-driven `/ableton-push` + soft reset), cross-machine instrument fallback (search-and-retry on preset-URI miss), Drum Rack pad-mapping discovery (kit-portable drum parts via the new `Kit` class). Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
 ## What you can do
 

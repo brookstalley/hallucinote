@@ -61,7 +61,7 @@ Developer preferences for how code is written in this project. Captured during d
   - `develop` → `main`: release PRs only; cut periodically when a batch of work is ready to ship. No direct commits to `main`.
 - **Protected branches**: `main`, `develop` (no direct commits).
 - **PR creation**: `wait_for_user` (default — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes).
-- **PR merge**: `wait_for_user` (default — present the PR for user review before merging; set to "automatic" to merge after CI passes and review is clean).
+- **PR merge**: `automatic` — merge after CI passes (or no CI configured) and PR review is clean. The cumulative Critic + independent PR reviewer gates already provide review independence; a second user-side confirmation adds friction without added safety.
 
 ---
 

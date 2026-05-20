@@ -298,6 +298,34 @@ CREATE TABLE IF NOT EXISTS device_parameters (
 
 CREATE INDEX IF NOT EXISTS idx_device_parameters_device ON device_parameters(device_id);
 
+-- M1-C: Drum Rack pad-mapping discovery.
+--
+-- Each row is one non-empty pad on a loaded Drum Rack: which MIDI note
+-- triggers which chain (and therefore which sound). Captured by
+-- `tools/capture_cli.py` via `ableton_device(action='pad_info', ...)`
+-- after the Drum Rack is loaded.
+--
+-- Stored VERBATIM from Live (chain_name is Live's chain.name as-is, e.g.
+-- "Kick Drum" / "Snare Top" / "Closed Hat" / "BD Big") — canonicalization
+-- to ("kick" / "snare" / "hat_closed") happens at read time in the Kit
+-- class via fuzzy substring match. Storing canonical names on the way IN
+-- would lose information if the canonicalization rules change.
+--
+-- A drum pad triggers exactly one MIDI note (Live's Drum Rack UI maps
+-- one note per pad slot), so UNIQUE(device_id, midi_note) holds.
+-- Multiple chain_names sharing the same canonical bucket ("Kick 1" +
+-- "Kick 2" both → "kick") are fine — the Kit class picks the first match.
+
+CREATE TABLE IF NOT EXISTS drum_pad_mappings (
+    id                  TEXT PRIMARY KEY,
+    device_id           TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    chain_name          TEXT NOT NULL,
+    midi_note           INTEGER NOT NULL CHECK (midi_note >= 0 AND midi_note <= 127),
+    UNIQUE(device_id, midi_note)
+);
+
+CREATE INDEX IF NOT EXISTS idx_drum_pad_mappings_device ON drum_pad_mappings(device_id);
+
 -- =============================================================================
 -- Mix: automation envelopes + breakpoints
 -- =============================================================================

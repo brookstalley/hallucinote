@@ -1123,3 +1123,108 @@ def test_reset_song_content_preserves_markdown_refs(conn, song):
         "SELECT COUNT(*) FROM markdown_refs WHERE song_id = ?", (song,)
     ).fetchone()[0]
     assert n == 1
+
+
+# ---------- M1-C replace_drum_pad_mappings ----------
+
+
+@pytest.fixture
+def drum_device(conn, song):
+    """A Drum Rack device on a midi track, ready for pad-mapping inserts."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Drums", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    return M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="DrumGroupDevice", display_name="Late Nite Kit",
+    )
+
+
+def test_replace_drum_pad_mappings_inserts_rows_and_emits_event(conn, song, drum_device):
+    ids = M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "Kick Drum", "midi_note": 36},
+            {"chain_name": "Snare", "midi_note": 38},
+            {"chain_name": "Closed Hat", "midi_note": 42},
+        ],
+    )
+    assert len(ids) == 3
+    rows = Q.get_drum_pad_mappings(conn, drum_device)
+    assert [(r["chain_name"], r["midi_note"]) for r in rows] == [
+        ("Kick Drum", 36), ("Snare", 38), ("Closed Hat", 42),
+    ]
+    events = [e for e in _events(conn) if e["kind"] == E.DRUM_PAD_MAPPINGS_REPLACED]
+    assert len(events) == 1
+    payload = json.loads(events[0]["payload_json"])
+    assert payload["device_id"] == drum_device
+    assert payload["prev_count"] == 0
+    assert payload["new_count"] == 3
+
+
+def test_replace_drum_pad_mappings_idempotent_no_event(conn, drum_device):
+    """Re-replacing with identical content is a no-op — no second event."""
+    M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "Kick", "midi_note": 36},
+        ],
+    )
+    n_before = len([e for e in _events(conn) if e["kind"] == E.DRUM_PAD_MAPPINGS_REPLACED])
+    M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "Kick", "midi_note": 36},
+        ],
+    )
+    n_after = len([e for e in _events(conn) if e["kind"] == E.DRUM_PAD_MAPPINGS_REPLACED])
+    assert n_after == n_before
+
+
+def test_replace_drum_pad_mappings_replaces_existing_rows_atomically(conn, drum_device):
+    M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "Old Kick", "midi_note": 36},
+        ],
+    )
+    M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "New Kick", "midi_note": 36},
+            {"chain_name": "New Snare", "midi_note": 40},
+        ],
+    )
+    rows = Q.get_drum_pad_mappings(conn, drum_device)
+    assert [(r["chain_name"], r["midi_note"]) for r in rows] == [
+        ("New Kick", 36), ("New Snare", 40),
+    ]
+
+
+def test_replace_drum_pad_mappings_rejects_out_of_range_midi(conn, drum_device):
+    with pytest.raises(ValueError, match="MIDI range"):
+        M.replace_drum_pad_mappings(
+            conn, device_id=drum_device, mappings=[
+                {"chain_name": "Bad Pad", "midi_note": 128},
+            ],
+        )
+
+
+def test_replace_drum_pad_mappings_rejects_empty_chain_name(conn, drum_device):
+    with pytest.raises(ValueError, match="chain_name"):
+        M.replace_drum_pad_mappings(
+            conn, device_id=drum_device, mappings=[
+                {"chain_name": "", "midi_note": 36},
+            ],
+        )
+
+
+def test_replace_drum_pad_mappings_cascade_on_device_delete(conn, drum_device):
+    """FK ON DELETE CASCADE: deleting the device wipes its pad mappings."""
+    M.replace_drum_pad_mappings(
+        conn, device_id=drum_device, mappings=[
+            {"chain_name": "Kick", "midi_note": 36},
+        ],
+    )
+    # Manual delete to test the FK behavior — production code goes through
+    # device-cascade paths that the schema already exercises.
+    conn.execute("DELETE FROM devices WHERE id = ?", (drum_device,))
+    conn.commit()
+    rows = Q.get_drum_pad_mappings(conn, drum_device)
+    assert rows == []

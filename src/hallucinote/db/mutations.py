@@ -2534,6 +2534,100 @@ def remove_device_parameter(
 
 
 # ---------------------------------------------------------------------------
+# Mix: Drum Rack pad mappings (M1-C)
+# ---------------------------------------------------------------------------
+# Each row binds one MIDI note on a Drum Rack to the verbatim Live chain
+# name at that pad. Canonicalization (chain_name → "kick" / "snare" /
+# "hat_closed") happens at READ time in `hallucinote.generators.kit.Kit`,
+# not on the way in — preserves Live's name so canonicalization rules can
+# evolve without DB rewrites.
+#
+# Replace-style mutator (mirrors `replace_breakpoints`). A capture probe
+# emits a full pad list per Drum Rack device; the mutator atomically
+# deletes the old set and inserts the new one in a single transaction
+# with a single event.
+
+
+def replace_drum_pad_mappings(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    mappings: Sequence[dict[str, Any]],
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> list[str]:
+    """Atomic: delete every drum_pad_mappings row for ``device_id``, insert
+    the new set. Returns the new mapping ids in insertion order. One event.
+
+    Each mapping dict: ``{chain_name: str, midi_note: int}``. The mutator
+    rejects mappings with midi_note outside [0, 127] (the schema CHECK
+    enforces too, but surfacing it here gives a better error).
+
+    W12-A: idempotent — when the existing rows already match the incoming
+    set (by content), the function is a no-op and emits no event.
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    incoming_sig: list[tuple[str, int]] = []
+    for m in mappings:
+        chain_name = str(m.get("chain_name", ""))
+        midi_note = int(m["midi_note"])
+        if midi_note < 0 or midi_note > 127:
+            raise ValueError(
+                f"replace_drum_pad_mappings: midi_note {midi_note} out of "
+                "MIDI range [0, 127]"
+            )
+        if not chain_name:
+            raise ValueError(
+                "replace_drum_pad_mappings: chain_name must be non-empty "
+                f"(got {m!r})"
+            )
+        incoming_sig.append((chain_name, midi_note))
+    existing_rows = conn.execute(
+        """SELECT id, chain_name, midi_note FROM drum_pad_mappings
+           WHERE device_id = ? ORDER BY midi_note""",
+        (device_id,),
+    ).fetchall()
+    existing_sig = [(r["chain_name"], r["midi_note"]) for r in existing_rows]
+    if sorted(existing_sig) == sorted(incoming_sig):
+        return [r["id"] for r in existing_rows]
+    with transaction(conn):
+        prev_count = len(existing_rows)
+        conn.execute(
+            "DELETE FROM drum_pad_mappings WHERE device_id = ?",
+            (device_id,),
+        )
+        new_ids: list[str] = []
+        for chain_name, midi_note in incoming_sig:
+            mid = _uuid()
+            conn.execute(
+                """INSERT INTO drum_pad_mappings
+                       (id, device_id, chain_name, midi_note)
+                   VALUES (?, ?, ?, ?)""",
+                (mid, device_id, chain_name, midi_note),
+            )
+            new_ids.append(mid)
+        song_id = _resolve_device_song(conn, device_id=device_id)
+        _emit(
+            conn,
+            E.DRUM_PAD_MAPPINGS_REPLACED,
+            {
+                "device_id": device_id,
+                "prev_count": prev_count,
+                "new_count": len(new_ids),
+                "mapping_ids": new_ids,
+            },
+            song_id=song_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        if song_id:
+            _touch_song(conn, song_id)
+    return new_ids
+
+
+# ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------
 # Unified shape per target_kind. The mutator validates that the right target

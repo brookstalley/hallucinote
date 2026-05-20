@@ -156,8 +156,9 @@ def test_as_generator_output_rejects_unknown_type():
 def test_normalizer_wraps_legacy_drum_generator_output():
     """Existing drum generators return list[NoteDict]; normalizer must wrap them."""
     from hallucinote.generators import drums
+    from hallucinote.generators.kit import Kit
 
-    legacy_return = drums.kick_stumble(4)
+    legacy_return = drums.kick_stumble(4, kit=Kit.gm_default())
     out = as_generator_output(legacy_return)
     assert isinstance(out, GeneratorOutput)
     assert out.notes is legacy_return  # wrapper does not copy

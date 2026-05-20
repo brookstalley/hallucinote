@@ -34,6 +34,7 @@ DEVICE_CREATED = "device_created"
 DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"
 DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
+DRUM_PAD_MAPPINGS_REPLACED = "drum_pad_mappings_replaced"
 
 # Mix: automation envelopes + breakpoints
 ENVELOPE_CREATED = "envelope_created"

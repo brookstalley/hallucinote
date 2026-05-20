@@ -370,6 +370,23 @@ def get_device_parameters(
     ).fetchall()
 
 
+def get_drum_pad_mappings(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    """Return Drum Rack pad mappings for a device, ordered by midi_note ASC.
+
+    Each row: ``{id, device_id, chain_name, midi_note}``. Empty list when
+    no mappings have been captured for this device yet (caller should
+    fall through to `Kit.gm_default()` per `hallucinote.generators.kit`).
+    """
+    return conn.execute(
+        """SELECT * FROM drum_pad_mappings
+           WHERE device_id = ? ORDER BY midi_note""",
+        (device_id,),
+    ).fetchall()
+
+
 # ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------

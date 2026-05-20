@@ -15,16 +15,18 @@ Section shape:
 | `chorus`    | 49–56  | Repeat chorus. |
 | `bridge`    | 57–64  | Drop to keys + lead vocal only. |
 | `chorus`    | 65–72  | Final chorus, all in. |
-| `outro`     | 73–80  | Tag of chorus, fade via master automation. |
+| `outro`     | 73–80  | Tag of chorus (original brief: fade via master automation — refused in v1, see below). |
 
 Mixing intent:
 
 - Drum bus → Return A (Drum Room reverb), ~25% send.
 - Vocals (lead + backing) → Return B (Vocal Verb), ~30% send.
 - Rhythm guitar + bass → bus-comped via Return C (Bus Comp send), ~100% send (parallel).
-- Lead vocal sidechained to drum bus via a dummy compressor on the lead-vocal track.
-- Master automation: -∞ to 0 over 4 bars at `outro` start (fade-out).
+- ~~Lead vocal sidechained to drum bus via a dummy compressor on the lead-vocal track.~~ Refused in v1 (W10-F D3 — the lead-vocal track is `kind='audio'`, which can't host MIDI session clips in v1, and Hallucinote routes mixer/send/device-parameter envelopes through them). v1.1 sub-bus pattern would route the lead vocal into a kind='midi' group track and host the sidechain envelope on the group's mixer.
+- ~~Master automation: -∞ to 0 over 4 bars at `outro` start (fade-out).~~ Refused in v1 (W10-F D2 — Live LOM has no master envelope creation path; master can't host clips). Same v1.1 sub-bus pattern applies (drum + bass + group route into a master sub-bus, fade lives there).
 - One third-party VST instrument on **Keys** (Spitfire LABS or whatever the agent guesses — point is to surface the case-B-missing-plugin path).
+
+**Status (2026-05-20):** Wave 0 surfaced the master-fade + lead-vocal-sidechain envelope targets as architectural blockers (bug-triage Group D); W10-F shipped dual-layer (DB + planner) refuse-with-teaching for D2 (master) + D3 (audio-track) hosts. The canary's `build.py::_author_envelopes` is now intentionally empty and documents the v1.1 sub-bus pattern as the working alternative. See `ableton://guides/gaps.md` Group D for the LOM rationale.
 
 ## What this canary exercises
 
@@ -38,7 +40,7 @@ Mixing intent:
 
 **Repeated sections (verse twice, chorus three times).** Falling-walking has one verse + one chorus + one chorus_twist. Three+ literal-repeats of the same section name exercises whether section identity is `(song_id, name)` or `(song_id, name, occurrence)` and how the arrangement planner places repeats.
 
-**Master automation tail.** Master-fader fade-out at outro is a full-clip-length envelope on the master track. Exercises whether master is treated as a first-class track for envelopes.
+**Master automation tail.** ~~Master-fader fade-out at outro is a full-clip-length envelope on the master track. Exercises whether master is treated as a first-class track for envelopes.~~ Wave 0 answer: master is NOT a first-class envelope target (Live LOM constraint — Clip.create_automation_envelope is the only path, and master can't host clips). W10-F now refuses these targets at the DB-mutator layer; the v1.1 sub-bus pattern is the working alternative.
 
 ## Out of scope for the canary
 

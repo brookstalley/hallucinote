@@ -2373,7 +2373,103 @@ _PARAMETER_PATH_REQUIRED = frozenset({
 # MPE axes accepted in parameter_path for note_expression envelopes.
 NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
 
+# W10-F: target_kinds that the planner routes through a MIDI session clip on
+# the target track. Live 12.4's LOM accepts Clip.create_automation_envelope
+# for these targets only on session clips, and Hallucinote v1 models clips as
+# MIDI-only — so the host track must be kind='midi'. Master/audio/group tracks
+# can't host the routing surface, so the mutator refuses early with teaching.
+_SESSION_CLIP_ROUTED_KINDS = frozenset({
+    "mixer_volume", "mixer_pan", "send_level", "device_parameter",
+})
+
 BREAKPOINT_CURVE_KINDS = frozenset({"linear", "hold", "fast", "slow"})
+
+
+def _track_kind(
+    conn: sqlite3.Connection, track_id: str,
+) -> str | None:
+    row = conn.execute(
+        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
+    ).fetchone()
+    return None if row is None else row["kind"]
+
+
+def _resolve_envelope_host_track(
+    conn: sqlite3.Connection,
+    *,
+    target_kind: str,
+    target_track_id: str | None,
+    target_device_id: str | None,
+) -> str | None:
+    """Return the track_id that hosts a session-clip-routed envelope, or None
+    if it can't be resolved yet (e.g. return-side device, which the planner
+    handles separately).
+
+    - mixer_volume / mixer_pan / send_level -> target_track_id directly.
+    - device_parameter -> the parent_track_id of the device's chain. Returns
+      None if the device lives on a return or doesn't exist (the planner
+      already warns on those paths).
+    """
+    if target_kind in ("mixer_volume", "mixer_pan", "send_level"):
+        return target_track_id
+    if target_kind == "device_parameter":
+        if target_device_id is None:
+            return None
+        row = conn.execute(
+            """SELECT dc.parent_track_id
+               FROM devices d
+               JOIN device_chains dc ON dc.id = d.chain_id
+               WHERE d.id = ?""",
+            (target_device_id,),
+        ).fetchone()
+        return None if row is None else row["parent_track_id"]
+    return None
+
+
+def _envelope_track_kind_refusal(target_kind: str, host_kind: str) -> str:
+    """Teaching message for D2 (master) / D3 (audio / group) refusals.
+
+    The phrasing names the LOM constraint, the v1 routing path, and the
+    supported workaround so callers can act without reading the source.
+    """
+    if host_kind == "master":
+        # D2 — confirmed no LOM path: Clip.create_automation_envelope lives
+        # only on Clip; master can't host clips.
+        return (
+            f"target_kind={target_kind!r} on a master track is not reachable: "
+            "Live 12.4's LOM exposes envelope creation only via "
+            "Clip.create_automation_envelope, and the master track cannot "
+            "host clips. Route the source(s) to a sub-bus group track and "
+            "author the envelope on the group's mixer instead. "
+            "See ableton://guides/gaps for the LOM constraint."
+        )
+    if host_kind == "audio":
+        # D3 — Hallucinote v1 models clips as MIDI-only; audio tracks can't
+        # host MIDI session clips, so the v1 routing path is unreachable.
+        return (
+            f"target_kind={target_kind!r} on an audio track is not reachable "
+            "in v1: Hallucinote routes mixer/send/device_parameter envelopes "
+            "through MIDI session clips, which audio tracks cannot host. "
+            "Route the source to a sub-bus group track (kind='midi') and "
+            "automate the group's mixer instead. Audio-clip envelopes are "
+            "v1.1 scope (gated on the audio-clip DB model)."
+        )
+    if host_kind == "group":
+        # Group tracks in Live host no clips of any kind — they're routing-
+        # only — so they share D3's "no host clip" failure mode.
+        return (
+            f"target_kind={target_kind!r} on a group track is not reachable: "
+            "group tracks in Live are routing-only and cannot host MIDI "
+            "session clips. Author the envelope on a member track or on the "
+            "group's parent sub-bus instead."
+        )
+    # Defensive — TRACK_KINDS allowlist is {midi,audio,master,group}; any new
+    # kind that lands here should explicitly choose a teaching path.
+    return (
+        f"target_kind={target_kind!r} on track kind={host_kind!r} is not "
+        "reachable: Hallucinote v1 routes these envelopes through MIDI "
+        "session clips; only kind='midi' tracks can host them."
+    )
 
 
 def create_envelope(
@@ -2469,6 +2565,25 @@ def create_envelope(
             raise ValueError(
                 f"clip_cc CC number {cc_number} out of MIDI range [0, 127]"
             )
+
+    # W10-F: enforce track-kind reachability for session-clip-routed envelopes.
+    # mixer/pan/send/device_parameter envelopes route through a MIDI session
+    # clip on the target track in v1. Master / audio / group tracks cannot host
+    # that routing surface, so reject with a teaching message that points at
+    # the supported workaround per kind. (See bug-triage-wave2 D2/D3.)
+    if target_kind in _SESSION_CLIP_ROUTED_KINDS:
+        host_track_id = _resolve_envelope_host_track(
+            conn,
+            target_kind=target_kind,
+            target_track_id=target_track_id,
+            target_device_id=target_device_id,
+        )
+        if host_track_id is not None:
+            host_kind = _track_kind(conn, host_track_id)
+            if host_kind is not None and host_kind != "midi":
+                raise ValueError(
+                    _envelope_track_kind_refusal(target_kind, host_kind)
+                )
 
     # Provenance: clip envelopes carry their target_clip_id; note_expression
     # envelopes resolve clip via the note's parent so audit-trail queries by

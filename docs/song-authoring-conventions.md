@@ -79,13 +79,14 @@ Planner-side auto-disambiguation is filed as a backlog item.
 
 ## Meter (4/4 vs. other)
 
-**Generators today are 4/4-only** (Wave 0 finding H2 — every generator in `src/hallucinote/generators/{drums,bass,primitives}.py` hard-codes `bar * 4.0`). For non-4/4 songs:
+**Generators take a `beats_per_bar` kwarg (W14-B, default 4.0).** Bar iteration scales correctly through non-4/4 sections — `kick_stumble(bars=4, beats_per_bar=3.5)` lands bar 2 at beat 3.5, not 4.0. The within-bar layout is still 4/4-shaped (kick on beat 1, snare on beats 2 + 4, tresillo hits at fixed positions). Patterns may overflow short bars or under-fill long ones; the docstrings call this out per generator.
 
-- Skip the library generators. Hand-author note arrays directly.
-- `BEATS_PER_BAR_7_8 = 3.5` (etc.) — name the constant in `build.py`.
-- Use the time-signature map (`M.add_time_signature_point`) for both the global meter AND for any future per-section meter changes (between sections only — within-section meter changes are not supported in v1; see W10-H).
+For non-4/4 sections:
 
-W14-B will parametrize generators on `beats_per_bar`. Until it lands, the canary `odd-meter-experimental/build.py` is the worked example for 7/8 + polyrhythm authoring.
+- Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
+- Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The canary `odd-meter-experimental/build.py` is the worked example for 7/8 + polyrhythm authoring.
+- Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
+- Use the time-signature map (`M.add_time_signature_point`) for both the global meter AND any future per-section meter changes (between sections only — within-section meter changes are not supported in v1; see W10-H).
 
 ---
 

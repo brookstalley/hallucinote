@@ -941,3 +941,150 @@ def test_lossy_warn_fires_on_note_expression_path(
     warns = _lossy_warns(plan)
     assert len(warns) == 1, plan.notes
     assert "note_expression" in warns[0]
+
+
+# ---------------------------------------------------------------------------
+# W10-F: D2/D3 planner safety-net + D1 teaching-message regression
+# ---------------------------------------------------------------------------
+
+
+def _force_track_kind(conn, track_id: str, kind: str) -> None:
+    """W10-F: bypass M.create_envelope's track-kind refusal by flipping the
+    track's kind AFTER envelope creation, to exercise the planner-side
+    safety net for legacy rows or pulled state.
+
+    Real callers can't hit this path through mutators today, but planner
+    defense-in-depth needs explicit coverage so a future schema change
+    doesn't silently regress it.
+    """
+    conn.execute("UPDATE tracks SET kind = ? WHERE id = ?", (kind, track_id))
+
+
+def test_planner_warns_when_mixer_envelope_targets_master_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """D2 planner safety-net: even if a mixer_volume envelope landed in
+    the DB pointing at a master track (legacy / pull / future-schema),
+    the planner warns and skips with the teaching message."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "master")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("master" in n and "sub-bus" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_mixer_envelope_targets_audio_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """D3 planner safety-net for audio-track host."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "audio")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("audio" in n and "sub-bus" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_mixer_envelope_targets_group_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Group tracks: same routing-unreachable failure mode as D3."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "group")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("group" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_send_envelope_targets_audio_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+    linked_return,
+):
+    """D3 safety net for send_level."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "audio")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("audio" in n and "send_level" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_device_parameter_targets_master_track(
+    conn, song, session, linked_track, linked_clip, arr_clip, linked_device,
+):
+    """D2 safety net for device_parameter: device's chain's parent_track is
+    the master."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "master")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("master" in n and "device_parameter" in n for n in plan.notes), \
+        plan.notes
+
+
+# --- D1 teaching-message regression: partition-by-hand suggestion ---
+
+
+def test_d1_teaching_message_includes_partition_suggestion_mixer(
+    conn, song, session, linked_track,
+):
+    """D1: no covering arrangement placement — the upgraded teaching
+    message lists the three options including (c) partition-by-hand."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]
+    assert "v1.1" in msgs[0]
+
+
+def test_d1_teaching_message_includes_partition_suggestion_send(
+    conn, song, session, linked_track, linked_return,
+):
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track, target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]
+
+
+def test_d1_teaching_message_includes_partition_suggestion_device(
+    conn, song, session, linked_track, linked_device,
+):
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]

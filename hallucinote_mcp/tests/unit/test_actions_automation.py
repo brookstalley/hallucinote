@@ -1782,3 +1782,31 @@ def test_dispatch_read_envelope_twice_returns_same_breakpoints(loaded_actions):
         "second read must return the SAME envelope contents as the first "
         "(non-destructive). Real Live failure mode S-1 was designed for."
     )
+
+
+# ---------------------------------------------------------------------------
+# W10-F: _TRACK_LEVEL_GAP_HINT no longer claims arrangement clips work
+# ---------------------------------------------------------------------------
+
+
+def test_track_level_gap_hint_recommends_session_only():
+    """W10-F: the canonical clip-less teaching hint must NOT say
+    "arrangement (or session)" — Wave-2 W2-10 confirmed Live 12.4
+    rejects arrangement clips for mixer/pan/send/device_parameter
+    target_kinds. The hint must steer users at session clips +
+    duplicate_to_arrangement only.
+    """
+    from hallucinote_mcp.handlers.automation import _TRACK_LEVEL_GAP_HINT
+    assert "(or session)" not in _TRACK_LEVEL_GAP_HINT
+    assert "session only" in _TRACK_LEVEL_GAP_HINT.lower() or \
+           "location='session'" in _TRACK_LEVEL_GAP_HINT
+    assert "duplicate_to_arrangement" in _TRACK_LEVEL_GAP_HINT
+
+
+def test_track_level_gap_hint_substitutes_target_kind():
+    """The hint is a format string with {target_kind!r}; substituting must
+    yield a usable error message."""
+    from hallucinote_mcp.handlers.automation import _TRACK_LEVEL_GAP_HINT
+    rendered = _TRACK_LEVEL_GAP_HINT.format(target_kind="mixer_volume")
+    assert "'mixer_volume'" in rendered
+    assert "duplicate_to_arrangement" in rendered

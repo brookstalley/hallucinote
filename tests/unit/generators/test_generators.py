@@ -142,3 +142,112 @@ def test_ghost_drum_helpers_take_start_beat():
     assert lifts[0]["start_beats"] == 7.0 + 3.5  # 10.5
 
 
+
+
+# ---------------------------------------------------------------------------
+# W14-B: beats_per_bar parameterization (Wave 0 trigger — every generator
+# previously hard-coded `b * 4.0`; non-4/4 sections silently produced
+# wrong bar starts)
+# ---------------------------------------------------------------------------
+
+
+def test_kick_stumble_default_beats_per_bar_unchanged():
+    """W14-B: default beats_per_bar=4.0 preserves the prior 4/4 layout."""
+    notes = drums.kick_stumble(2)
+    starts = sorted(n["start_beats"] for n in notes)
+    # Bar 0 downbeat=0, late=2.75; bar 1 downbeat=4, early=6 (b=1 → b%2==1).
+    assert starts == [0.0, 2.75, 4.0, 6.0]
+
+
+def test_kick_stumble_non_default_beats_per_bar_scales_bar_starts():
+    """7/8 bar (3.5 beats) — bar 1's downbeat lands at beat 3.5, not 4.0."""
+    notes = drums.kick_stumble(2, beats_per_bar=3.5)
+    downbeats = sorted(
+        n["start_beats"] for n in notes if "downbeat" in n["tags"]
+    )
+    assert downbeats == [0.0, 3.5]
+
+
+def test_lazy_snare_beats_per_bar_scales_bar_starts():
+    notes = drums.lazy_snare(2, beats_per_bar=6.0)  # e.g. 6/4
+    starts = sorted(n["start_beats"] for n in notes)
+    # Bar 0: lay_back snares at 1+lb, 3+lb; bar 1: 6+1+lb, 6+3+lb.
+    # Bar 1 backbeat lands at 6+1+lb = 7+lb, not 4+1+lb.
+    assert starts[2] > 6.0
+    assert starts[2] < 8.0
+
+
+def test_trip_hop_hats_beats_per_bar_scales_bar_starts():
+    notes = drums.trip_hop_hats(2, beats_per_bar=3.0)
+    # Each bar emits 8 hats. Bar 0 hat 0 = 0.0; bar 1 hat 0 = 3.0.
+    hats_bar1 = [n for n in notes if 3.0 <= n["start_beats"] < 6.0]
+    assert hats_bar1, [n["start_beats"] for n in notes]
+    # The bar-1 first hat lands at exactly beats_per_bar.
+    assert min(n["start_beats"] for n in hats_bar1) == 3.0
+
+
+def test_bossa_shaker_beats_per_bar_scales_bar_starts():
+    notes = drums.bossa_shaker(2, beats_per_bar=2.0)
+    # Bar 1's first 16th lands at beat 2.0 (not 4.0).
+    bar1_first = min(n["start_beats"] for n in notes if n["start_beats"] >= 2.0)
+    assert bar1_first == 2.0
+
+
+def test_ghost_kicks_beats_per_bar_scales_bar_offset():
+    notes = drums.ghost_kicks([0, 1], beats_per_bar=3.5)
+    # bar 0 → 0 + 3.5 = 3.5; bar 1 → 3.5 + 3.5 = 7.0.
+    starts = sorted(n["start_beats"] for n in notes)
+    assert starts == [3.5, 7.0]
+
+
+def test_tresillo_bass_beats_per_bar_scales_bar_starts():
+    """beats_per_bar=6.0 (e.g. 6/4) — TRESILLO_HITS fits well within 6 beats
+    so each bar's emitted positions stay disjoint and the bar-1 offset is
+    visible directly."""
+    notes = bass.tresillo_bass(38, bars=2, beats_per_bar=6.0)
+    # Bar 0 hits in [0, 4); bar 1 hits at offset 6 + each TRESILLO_HITS time.
+    bar1_min = min(n["start_beats"] for n in notes if n["start_beats"] >= 6.0)
+    bar0_max = max(n["start_beats"] for n in notes if n["start_beats"] < 6.0)
+    assert bar1_min == 6.0
+    assert bar0_max < 6.0
+
+
+def test_walking_bass_beats_per_bar_scales_bar_starts():
+    notes = bass.walking_bass_to_next_chord(
+        walk=[34, 36, 38, 41], start_beat=0.0, bar_count=2, beats_per_bar=3.5,
+    )
+    downbeats = sorted(n["start_beats"] for n in notes if "downbeat" in n["tags"])
+    assert downbeats == [0.0, 3.5]
+
+
+def test_tresillo_pluck_beats_per_bar_scales_bar_starts():
+    notes = harmony.tresillo_pluck(
+        [62, 65, 69], bars=2, beats_per_bar=3.5,
+    )
+    # First hit of each bar is at offset 0.0.
+    starts = sorted({
+        n["start_beats"] for n in notes if n["start_beats"] in (0.0, 3.5)
+    })
+    assert starts == [0.0, 3.5]
+
+
+def test_trip_hop_drum_pattern_threads_beats_per_bar_to_subprimitives():
+    notes = drums.trip_hop_drum_pattern(
+        2, fill_bars=[1], beats_per_bar=3.5,
+    )
+    # Bar 1's drum downbeats should appear at beat 3.5 not 4.0 — verify
+    # via the kick_stumble downbeat tag.
+    bar1_kicks = [
+        n for n in notes
+        if "kick" in n["tags"] and "downbeat" in n["tags"]
+        and n["start_beats"] == 3.5
+    ]
+    assert bar1_kicks, [n["start_beats"] for n in notes if "downbeat" in n["tags"]]
+
+
+def test_chord_tone_embellishment_takes_no_beats_per_bar():
+    """chord_tone_embellishment is a single-bar generator (4/4-shaped);
+    documented in its docstring. No beats_per_bar kwarg."""
+    import inspect
+    sig = inspect.signature(bass.chord_tone_embellishment)
+    assert "beats_per_bar" not in sig.parameters

@@ -1145,6 +1145,79 @@ def plan_push_envelopes(
     return plan
 
 
+def _track_kind_for_envelope(
+    conn: sqlite3.Connection, track_id: str | None,
+) -> str | None:
+    """Look up a track's `kind` column, or None when track_id is None / unknown.
+
+    W10-F planner-side safety net for D2/D3. The DB mutator now refuses to
+    create envelopes for session-clip-routed kinds (mixer / pan / send /
+    device_parameter) on non-MIDI tracks (master / audio / group). This
+    helper backs the parallel planner refusal, which catches legacy rows
+    that pre-date the mutator check or pulled state that bypassed it.
+    """
+    if track_id is None:
+        return None
+    row = conn.execute(
+        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
+    ).fetchone()
+    return None if row is None else row["kind"]
+
+
+def _warn_unreachable_track_kind(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    host_track_id: str,
+    host_kind: str,
+) -> bool:
+    """Emit a teaching warn + return True when the envelope's host track
+    can't host the v1 routing surface.
+
+    Mirrors the DB-mutator refusal phrasing (mutations.py
+    `_envelope_track_kind_refusal`) but in plan-warn shape — the planner
+    is the second layer of the W10-F dual-layer defense.
+    """
+    if host_kind == "midi":
+        return False
+    target_kind = envelope["target_kind"]
+    if host_kind == "master":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is the master, which Live 12.4's LOM can't "
+            "host envelopes on (Clip.create_automation_envelope lives only "
+            "on Clip; master can't host clips). Route source(s) to a "
+            "sub-bus group track and author on the group's mixer instead "
+            "(see ableton://guides/gaps). Skipping."
+        )
+    elif host_kind == "audio":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is an audio track, which v1 can't host "
+            "mixer/send/device_parameter envelopes on — Hallucinote routes "
+            "these through MIDI session clips, and audio tracks can't host "
+            "them. Route the source to a sub-bus group track and automate "
+            "the group's mixer instead. Audio-clip envelopes are v1.1 "
+            "scope. Skipping."
+        )
+    elif host_kind == "group":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is a group track, which can't host MIDI "
+            "session clips in Live. Author the envelope on a member track "
+            "or on the group's parent sub-bus. Skipping."
+        )
+    else:
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} has kind={host_kind!r}, which v1 doesn't "
+            "route envelopes through (only kind='midi' tracks host them). "
+            "Skipping."
+        )
+    plan.warn(msg)
+    return True
+
+
 def _clip_and_track_indices(
     conn: sqlite3.Connection,
     *,
@@ -1508,9 +1581,16 @@ def _emit_device_parameter_envelope(
             "domain)"
         )
         return
+    parent_track_id = chain_row["parent_track_id"]
+    host_kind = _track_kind_for_envelope(conn, parent_track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=parent_track_id,
+        host_kind=host_kind,
+    ):
+        return
     parent_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track",
-        db_id=chain_row["parent_track_id"],
+        db_id=parent_track_id,
     )
     if parent_at is None or device_at is None:
         plan.warn(
@@ -1522,7 +1602,7 @@ def _emit_device_parameter_envelope(
     env_min, env_max = _envelope_beat_range(breakpoints_mcp)
     placement = _resolve_envelope_session_clip(
         conn, song_id=song_id,
-        target_track_id=chain_row["parent_track_id"],
+        target_track_id=parent_track_id,
         env_min=env_min, env_max=env_max,
     )
     if placement is None:
@@ -1530,9 +1610,13 @@ def _emit_device_parameter_envelope(
             f"envelope {envelope['id']} (device_parameter): no arrangement "
             f"clip on track {parent_at} covers beat range [{env_min:g}, "
             f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "device_parameter envelopes (W4-B). Add an arrangement_clip "
-            "placement spanning the envelope's range or trim breakpoints "
-            "to fit an existing placement; skipping."
+            "device_parameter envelopes (W4-B). Options: (a) extend or "
+            "split an existing session clip on this track to cover the "
+            "range, (b) add an arrangement_clip placement that fully spans "
+            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope by "
+            "hand into per-section sub-envelopes whose ranges each fit a "
+            "session clip. Auto-partition is v1.1 scope (W10-F follow-up). "
+            "Skipping."
         )
         return
     clip_at = Q.get_ableton_link(
@@ -1586,6 +1670,11 @@ def _emit_mixer_envelope(
     envelopes on session clips, then ``duplicate_to_arrangement``
     snapshot-copies them to the arrangement."""
     track_id = envelope["target_track_id"]
+    host_kind = _track_kind_for_envelope(conn, track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=track_id, host_kind=host_kind,
+    ):
+        return
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=track_id,
     )
@@ -1606,9 +1695,13 @@ def _emit_mixer_envelope(
             f"envelope {envelope['id']} ({envelope['target_kind']}): no "
             f"arrangement clip on track {track_at} covers beat range "
             f"[{env_min:g}, {env_max:g}]; Live 12.4 requires session-clip "
-            f"routing for {envelope['target_kind']} envelopes (W4-B). Add "
-            "an arrangement_clip placement spanning the envelope's range "
-            "or trim breakpoints to fit an existing placement; skipping."
+            f"routing for {envelope['target_kind']} envelopes (W4-B). "
+            "Options: (a) extend or split an existing session clip on "
+            "this track to cover the range, (b) add an arrangement_clip "
+            f"placement that fully spans [{env_min:g}, {env_max:g}], or "
+            "(c) partition the envelope by hand into per-section "
+            "sub-envelopes whose ranges each fit a session clip. "
+            "Auto-partition is v1.1 scope (W10-F follow-up). Skipping."
         )
         return
     clip_at = Q.get_ableton_link(
@@ -1659,6 +1752,11 @@ def _emit_send_envelope(
     """send_level emission — addressed by (track, return) pair. Routes
     through a session clip on the source track (W4-A / W4-B)."""
     track_id = envelope["target_track_id"]
+    host_kind = _track_kind_for_envelope(conn, track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=track_id, host_kind=host_kind,
+    ):
+        return
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=track_id,
     )
@@ -1683,9 +1781,13 @@ def _emit_send_envelope(
             f"envelope {envelope['id']} (send_level): no arrangement clip "
             f"on track {track_at} covers beat range [{env_min:g}, "
             f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "send_level envelopes (W4-B). Add an arrangement_clip "
-            "placement spanning the envelope's range or trim breakpoints "
-            "to fit an existing placement; skipping."
+            "send_level envelopes (W4-B). Options: (a) extend or split an "
+            "existing session clip on this track to cover the range, "
+            "(b) add an arrangement_clip placement that fully spans "
+            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope "
+            "by hand into per-section sub-envelopes whose ranges each fit "
+            "a session clip. Auto-partition is v1.1 scope (W10-F "
+            "follow-up). Skipping."
         )
         return
     clip_at = Q.get_ableton_link(

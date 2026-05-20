@@ -588,8 +588,8 @@ def compile_snapshot(
 # matches what replay supports anyway.
 
 
-_MIXER_FIELDS = ("volume", "panning", "pan", "mute", "solo", "arm", "color")
-_RETURN_FIELDS = ("name", "volume", "panning", "pan", "color")
+_MIXER_FIELDS = ("volume", "panning", "mute", "solo", "arm", "color")
+_RETURN_FIELDS = ("name", "volume", "panning", "color")
 _TRACK_IDENTITY_FIELDS = ("name", "type")
 _DEVICE_IDENTITY_FIELDS = ("name", "class", "kind", "guess_uri")
 
@@ -790,7 +790,7 @@ def diff_snapshots(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     master_fc = _field_diff(
         old_song.get("master") or {},
         new_song.get("master") or {},
-        ("volume", "panning", "pan"),
+        ("volume", "panning"),
     )
     if master_fc:
         out["master"] = master_fc

@@ -450,6 +450,55 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 
 -- =============================================================================
+-- Song annotations (W23-B): structured composer intent
+-- =============================================================================
+-- Annotations capture the *meaning* behind the structural data ("verse is sad,
+-- like weight getting worse," "don't sidechain the bass on the bridge — let
+-- it bloom," "last chorus goes around once in minor, then once in min7").
+-- Every future agent session reads these for context before composing.
+--
+-- Two stores deliberately coexist:
+--   - `markdown_refs` (corpus + FTS5): full-prose ADR-shaped decisions
+--     and annotations under `songs/<slug>/decisions/` + `annotations/`.
+--     Markdown is the source of truth; FTS5 powers fulltext search.
+--     Use when the annotation is a deliberate documented thought.
+--   - `annotations` (this table): structured, short-form, bar-range-scoped
+--     composing notes. Updates without rewriting files; queryable by bar
+--     overlap; no on-disk overhead for transient observations.
+--     Use during live composition for "live composing notes."
+--
+-- Three scoping levels fall out of column nullability (enforced by CHECK):
+--   - **Song-scoped**:  track_id NULL, start_bar NULL, end_bar NULL.
+--     Applies to the whole song (always active in get_annotations_at_bar).
+--   - **Time-scoped**:  track_id NULL, start_bar set, end_bar optional.
+--     Applies to a bar range (open-ended forward if end_bar NULL).
+--   - **Track-scoped**: track_id set, time optional. Applies to a track,
+--     optionally constrained to a bar range.
+--
+-- `kind` is enumerated for future query/UI affordances; new values get added
+-- here when an agent or user surfaces a new annotation flavour.
+
+CREATE TABLE IF NOT EXISTS annotations (
+    id              TEXT PRIMARY KEY,
+    song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    track_id        TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+    start_bar       REAL,
+    end_bar         REAL,
+    kind            TEXT NOT NULL
+                        CHECK (kind IN ('intent', 'stylistic', 'structure',
+                                        'reference', 'todo')),
+    body            TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (end_bar IS NULL OR start_bar IS NOT NULL),
+    CHECK (end_bar IS NULL OR end_bar > start_bar)
+);
+
+CREATE INDEX IF NOT EXISTS idx_annotations_song  ON annotations(song_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_track ON annotations(track_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_kind  ON annotations(kind);
+
+-- =============================================================================
 -- Song metadata layer: markdown_refs + FTS5 index
 -- =============================================================================
 -- Composer intent + decision rationale live in atomic markdown files under

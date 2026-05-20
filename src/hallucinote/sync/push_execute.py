@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from hallucinote.db import mutations as M
 from hallucinote.sync import push
 
 # Imported lazily inside execute_push() to keep the unit-test import graph
@@ -175,6 +176,23 @@ def execute_push(
     state_file = state_dir / ".last-push-state.json"
     errors_file = state_dir / ".last-push-errors.json"
 
+    # W23-C: every full-song push is one attributed request. Threading the
+    # request_id through `apply_push_results`'s actor/request kwargs tags
+    # every link-binding event the apply layer emits, so the provenance
+    # read surface (`Q.list_requests_for_song(..., kind='push')` +
+    # `Q.get_events_for_request(rid)`) gives a complete cycle view.
+    # Outcome flips below if a phase halts; close_request writes 'partial' /
+    # 'failed' instead of 'ok'.
+    request_id = M.create_request(
+        conn,
+        actor=actor,
+        intent=f"push_cli execute (session={session_id})",
+        kind="push",
+        payload={"session_id": session_id, "song_id": song_id},
+        song_id=song_id,
+        reason=reason,
+    )
+
     phases = push.plan_push_song(conn, song_id=song_id, session_id=session_id)
 
     phase_outcomes: list[PhaseOutcome] = []
@@ -248,6 +266,7 @@ def execute_push(
                 results,
                 session_id=session_id,
                 actor=actor,
+                request_id=request_id,
                 reason=reason or f"push_cli execute phase={phase.name}",
             )
 
@@ -333,6 +352,20 @@ def execute_push(
         # confuse the agent reading state after a clean re-push.
         if errors_file.exists():
             errors_file.unlink()
+
+    # W23-C: close the request with the outcome the push reached.
+    # request_outcome maps the push's tri-state (ok / partial / connection_lost)
+    # onto REQUEST_OUTCOMES (ok / partial / failed). connection_lost lands as
+    # 'failed' because nothing further could happen; partial keeps its name.
+    request_outcome = {"ok": "ok", "partial": "partial",
+                       "connection_lost": "failed"}[outcome]
+    M.close_request(
+        conn,
+        request_id=request_id,
+        outcome=request_outcome,
+        actor=actor,
+        reason=reason,
+    )
 
     return ExecuteResult(
         outcome=outcome,

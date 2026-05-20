@@ -1287,9 +1287,7 @@ def _track_kind_for_envelope(
     """
     if track_id is None:
         return None
-    row = conn.execute(
-        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
-    ).fetchone()
+    row = Q.get_track(conn, track_id)
     return None if row is None else row["kind"]
 
 
@@ -1500,11 +1498,7 @@ def _emit_note_expression_envelope(
     """note_expression emission — MPE per-note envelopes addressed by
     (clip, pitch, start_beats). Note links aren't tracked, so the canonical
     args identify the note in-band."""
-    note_row = conn.execute(
-        """SELECT n.pitch, n.start_beats, n.clip_id
-           FROM notes n WHERE n.id = ?""",
-        (envelope["target_note_id"],),
-    ).fetchone()
+    note_row = Q.get_note(conn, envelope["target_note_id"])
     if note_row is None:
         plan.warn(
             f"envelope {envelope['id']} (note_expression): note "
@@ -1682,13 +1676,7 @@ def _emit_device_parameter_envelope(
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device_id,
     )
-    chain_row = conn.execute(
-        """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
-           FROM devices d
-           JOIN device_chains dc ON dc.id = d.chain_id
-           WHERE d.id = ?""",
-        (device_id,),
-    ).fetchone()
+    chain_row = Q.get_device_parent_chain(conn, device_id)
     if chain_row is None:
         plan.warn(
             f"envelope {envelope['id']} (device_parameter): device "
@@ -1979,11 +1967,7 @@ def plan_push_clips(
     a silent skip would leave Live missing clips with no signal.
     """
     plan = PushPlan()
-    rows = conn.execute(
-        "SELECT id, name FROM clips WHERE track_id IN "
-        "(SELECT id FROM tracks WHERE song_id=?) ORDER BY name, id",
-        (song_id,),
-    ).fetchall()
+    rows = Q.get_clips_for_song(conn, song_id)
     for c in rows:
         sub = plan_push_clip(conn, clip_id=c["id"], session_id=session_id)
         plan.calls.extend(sub.calls)
@@ -2207,9 +2191,17 @@ class ProbeAndLinkResult:
     name. The skill keys its "delete defaults after push?" prompt off this
     field, not off ``unmatched_live_tracks`` directly — that way an unrelated
     set with the same names doesn't trigger destructive cleanup.
+
+    W20-A added ``matched_devices``: per-device bindings created when
+    ``live_devices_by_parent`` is supplied. Matching by ``(parent track or
+    return, position, class_name)`` closes the punk-fate re-push drift
+    where Live's default ``A-Reverb``'s built-in Reverb matched a DB
+    device but wasn't yet linked, causing ``_emit_device_calls`` to load
+    a duplicate Reverb on each subsequent push.
     """
     matched_tracks: list[dict[str, Any]] = field(default_factory=list)
     matched_returns: list[dict[str, Any]] = field(default_factory=list)
+    matched_devices: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_tracks: list[dict[str, Any]] = field(default_factory=list)
     unmatched_db_returns: list[dict[str, Any]] = field(default_factory=list)
     unmatched_live_tracks: list[dict[str, Any]] = field(default_factory=list)
@@ -2230,6 +2222,7 @@ def probe_and_link(
     session_id: str,
     live_tracks: list[dict[str, Any]],
     live_returns: list[dict[str, Any]],
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
     actor: str = "sync",
     reason: str | None = None,
     auto_session_created: bool = False,
@@ -2417,6 +2410,21 @@ def probe_and_link(
                 "ableton_index": ableton_index,
             })
 
+    # W20-A: bind devices by (parent, position, class_name). Run after track
+    # + return matching so we know each parent's ableton_index. Closes the
+    # re-push device duplication path where pre-existing Live devices that
+    # match DB devices in shape were not yet in ableton_links, so
+    # `_emit_device_calls` would dispatch a (duplicate) load on the next push.
+    if live_devices_by_parent:
+        _match_devices_for_linked_parents(
+            conn,
+            session_id=session_id,
+            result=result,
+            live_devices_by_parent=live_devices_by_parent,
+            actor=actor,
+            reason=reason,
+        )
+
     # W18-D: detect "first push onto Live's brand-new-set default scaffold."
     # Fires only on auto-session bootstraps where every unmatched Live track
     # is a canonical default — that name set is the unambiguous signature.
@@ -2434,6 +2442,88 @@ def probe_and_link(
         result.default_scaffold_unmatched_tracks = list(result.unmatched_live_tracks)
 
     return result
+
+
+def _match_devices_for_linked_parents(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    result: ProbeAndLinkResult,
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]],
+    actor: str,
+    reason: str | None,
+) -> None:
+    """W20-A: bind DB devices to Live device-chain slots by
+    (parent, chain position, class_name).
+
+    For each linked track/return, walk the parent's top-level device chain
+    in parallel: at position P we have a DB device (with ``kind`` and
+    ``display_name``) and, if Live's chain runs that deep, a Live device
+    (with ``class_name`` and ``name``). When the class names agree, write
+    an ``ableton_links`` row binding the DB device's id to Live's
+    ``device_index`` so the next push's ``_emit_device_calls`` skips this
+    slot instead of dispatching a duplicate ``load``.
+
+    Match rule: position equality (DB ``devices.position`` = Live
+    ``device_index``) AND class equality (DB ``devices.kind`` =
+    Live ``class_name``). Mismatched class at the same position is a
+    drift note — push will still load over the wrong device, but the
+    note surfaces the situation so the user can rename or rebuild.
+
+    Nested rack chains (Drum Rack / Instrument Rack contents) are not
+    walked here — they're addressed by chain_index + nested device_position
+    and need a separate probe (W22-B's nested-rack push). Top-level
+    device match is the high-frequency case that resolves the punk-fate
+    bug; nested can wait.
+    """
+    for matched, parent_kind, get_devices_fn in (
+        (result.matched_tracks, "track", Q.get_devices_for_track),
+        (result.matched_returns, "return", Q.get_devices_for_return),
+    ):
+        for parent in matched:
+            ableton_index = parent["ableton_index"]
+            live_devices = live_devices_by_parent.get((parent_kind, ableton_index))
+            if not live_devices:
+                continue
+            db_devices = list(get_devices_fn(conn, parent["db_id"]))
+            # Devices are 1-based by position in both spaces.
+            live_by_pos = {
+                d["device_index"]: d for d in live_devices
+            }
+            for db_dev in db_devices:
+                pos = db_dev["position"]
+                live_dev = live_by_pos.get(pos)
+                if live_dev is None:
+                    # Live's chain is shorter — push will create the
+                    # missing devices via _emit_device_calls. No link
+                    # to write yet.
+                    continue
+                db_class = db_dev["kind"]
+                live_class = live_dev.get("class_name", "")
+                if db_class != live_class:
+                    result.notes.append(
+                        f"device drift at {parent_kind}#{ableton_index} "
+                        f"position {pos}: DB has {db_class!r}, Live has "
+                        f"{live_class!r}; not linking (push will load "
+                        f"the DB device over Live's at this slot)"
+                    )
+                    continue
+                M.link_db_to_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="device",
+                    db_id=db_dev["id"],
+                    ableton_index=pos,
+                    actor=actor,
+                    reason=reason or f"probe-and-link: device match at {parent_kind}#{ableton_index} pos {pos}",
+                )
+                result.matched_devices.append({
+                    "db_id": db_dev["id"],
+                    "parent_kind": parent_kind,
+                    "parent_index": ableton_index,
+                    "position": pos,
+                    "class_name": db_class,
+                })
 
 
 def _flag_case_near_matches(

@@ -182,6 +182,63 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert by_name["clips"]["status"] in {"ok"}
 
 
+# ---------- W23-C: request lifecycle wrap ----------
+
+
+def test_execute_push_opens_and_closes_request_with_outcome_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """One push → one requests row, kind='push', outcome='ok'. Provenance
+    layer can then list it via Q.list_requests_for_song(..., kind='push')."""
+    from hallucinote.db import queries as Q
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    requests = Q.list_requests_for_song(conn, song, kind="push")
+    assert len(requests) == 1
+    assert requests[0]["outcome"] == "ok"
+    assert requests[0]["kind"] == "push"
+
+
+def test_execute_push_threads_request_id_into_link_events(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Every link-binding event apply_push_results emits gets the request_id
+    threaded. Provenance can drill in via Q.get_events_for_request(rid)."""
+    from hallucinote.db import queries as Q
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    rid = Q.get_latest_request_for_song(conn, song, kind="push")["id"]
+    events = Q.get_events_for_request(conn, rid)
+    # At minimum: request_created + request_closed + any links the apply
+    # layer wrote. The fixture has at least one ableton_link_set per push.
+    kinds = {e["kind"] for e in events}
+    assert "request_created" in kinds
+    assert "request_closed" in kinds
+    assert "ableton_link_set" in kinds
+
+
+def test_execute_push_request_outcome_partial_when_phase_halts(
+    conn, song, session, tiny_song, state_dir,
+):
+    """A phase failure flips the push's outcome to 'partial'; the request
+    closes with outcome='partial' (not 'ok'), so a provenance-side audit
+    sees "the last push half-landed" rather than a false success."""
+    from hallucinote.db import queries as Q
+    bad_send = _make_send_fn(fail_keys={"ableton_clip:create"})
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=bad_send,
+    )
+    assert result.outcome == "partial"
+    rid = Q.get_latest_request_for_song(conn, song, kind="push")["id"]
+    req = Q.get_request(conn, rid)
+    assert req["outcome"] == "partial"
+
+
 def test_execute_writes_link_to_db_between_phases(
     conn, song, session, tiny_song, state_dir, db_path,
 ):

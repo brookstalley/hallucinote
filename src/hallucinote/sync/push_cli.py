@@ -101,6 +101,55 @@ def _probe_live_via_mcp(
     return live_tracks, live_returns
 
 
+def _probe_live_devices_via_mcp(
+    *,
+    live_tracks: list[dict],
+    live_returns: list[dict],
+    send_fn=None,
+) -> dict[tuple[str, int], list[dict]]:
+    """W20-A: probe ``ableton_device(action='list')`` per Live track + return
+    so probe-and-link can bind DB devices to existing Live device-chain slots
+    by ``(parent, position, class_name)`` — closing the re-push device
+    duplication path.
+
+    Returns a dict keyed by ``("track", track_index)`` / ``("return",
+    return_index)`` with values shaped like the device handler's list output
+    (``{device_index, name, class_name}``). Empty list when Live's chain is
+    empty. Errors per parent fall back to "no devices known" — a transient
+    failure on one parent shouldn't refuse the whole probe.
+
+    Issues ``1 + len(tracks) + len(returns)`` calls (one each for the two
+    list probes the caller already ran, plus N + M per-parent device list
+    probes); cheap in practice and the existing ``execute`` path's per-call
+    cost is the same shape.
+    """
+    if send_fn is None:
+        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+        send_fn = _client.send
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    by_parent: dict[tuple[str, int], list[dict]] = {}
+    for t in live_tracks:
+        idx = t["track_index"]
+        resp = send_fn(Request(
+            tool="ableton_device", action="list",
+            params={"track_index": idx},
+        ))
+        if getattr(resp, "ok", False):
+            payload = getattr(resp, "result", None) or {}
+            by_parent[("track", idx)] = list(payload.get("devices") or [])
+    for r in live_returns:
+        idx = r["return_index"]
+        resp = send_fn(Request(
+            tool="ableton_device", action="list",
+            params={"return_index": idx},
+        ))
+        if getattr(resp, "ok", False):
+            payload = getattr(resp, "result", None) or {}
+            by_parent[("return", idx)] = list(payload.get("devices") or [])
+    return by_parent
+
+
 def _resolve_db_path(args: argparse.Namespace) -> Path:
     """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
 
@@ -260,8 +309,16 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     # reads a pre-probed JSON file. The argparse mutex makes exactly one
     # active; require one explicitly so a forgotten flag isn't silently a
     # stale-snapshot read.
+    # W20-A: --probe also walks each parent's device chain so probe-and-link
+    # can bind devices by (position, class_name), closing the re-push device
+    # duplication path. The --snapshot path stays device-blind (the JSON
+    # file doesn't carry chain info); use --probe for the full coverage.
+    live_devices_by_parent: dict | None = None
     if args.probe:
         live_tracks, live_returns = _probe_live_via_mcp()
+        live_devices_by_parent = _probe_live_devices_via_mcp(
+            live_tracks=live_tracks, live_returns=live_returns,
+        )
     else:
         if not args.snapshot:
             raise SystemExit(
@@ -317,6 +374,7 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         session_id=session_id,
         live_tracks=live_tracks,
         live_returns=live_returns,
+        live_devices_by_parent=live_devices_by_parent,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
         auto_session_created=auto_created,

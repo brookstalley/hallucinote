@@ -253,6 +253,7 @@ For single-element edits — tweaking one clip's notes, nudging one parameter, A
 
 - Real-Live performance: each phase typically takes < 1 second for falling-walking; the bottleneck is the per-call MCP round-trip, not the planner. A song with hundreds of envelopes will be slower.
 - The throwaway `.prawduct/push-orchestrator.py` from Wave 3 is deleted by Wave 4 — this skill is now the only push driver. If you find references to that script in old reflections, they're historical.
+- **Provenance (W23-C).** Every `push_cli execute` invocation opens one `requests` row with `kind='push'` and closes it with the push's outcome (`ok` / `partial` / `failed`). Every link-binding event the apply layer emits is threaded back to that request_id. Future sessions can answer "what was the last push for this song" via `Q.get_latest_request_for_song(conn, song_id, kind='push')` and drill into "what did that push touch" via `Q.get_events_for_request(conn, rid)`. No skill-side ceremony required — the CLI does it.
 
 ## Post-push Live UX quirks the user should know about
 

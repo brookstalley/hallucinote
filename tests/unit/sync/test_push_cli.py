@@ -493,6 +493,170 @@ def test_probe_and_link_default_scaffold_is_case_sensitive(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# W20-A: device matching by (parent, position, class_name)
+# ---------------------------------------------------------------------------
+
+
+def _make_chain_with_device(conn, *, parent_track_id=None, parent_return_id=None,
+                            position=1, kind, display_name=None):
+    """Build the minimal device-chain + device shape so probe_and_link has
+    something to match. Mirrors what capture.replay_capture would produce on
+    a real song."""
+    chain_id = M.create_device_chain(
+        conn,
+        parent_track_id=parent_track_id,
+        parent_return_id=parent_return_id,
+        position=0,
+    )
+    device_id = M.create_device(
+        conn,
+        chain_id=chain_id,
+        position=position,
+        kind=kind,
+        display_name=display_name or kind,
+    )
+    return device_id
+
+
+def test_probe_and_link_binds_device_by_position_and_class(conn, song, session):
+    """The W20-A drift case: Live already has a Reverb at position 1 of the
+    A-Reverb return; the DB also has a Reverb there. Without W20-A, no link
+    exists → next push's _emit_device_calls loads a duplicate Reverb.
+    With W20-A: probe-and-link binds the existing pairing."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Reverb",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+        live_devices_by_parent={
+            ("return", 1): [
+                {"device_index": 1, "name": "Reverb", "class_name": "Reverb"},
+            ],
+        },
+    )
+    assert result.matched_devices == [{
+        "db_id": device_id,
+        "parent_kind": "return",
+        "parent_index": 1,
+        "position": 1,
+        "class_name": "Reverb",
+    }]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) == 1
+
+
+def test_probe_and_link_binds_track_device(conn, song, session):
+    """Track-side mirror of the return case."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    device_id = _make_chain_with_device(
+        conn, parent_track_id=tid, position=1, kind="DrumGroupDevice",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 4, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 4): [
+                {"device_index": 1, "name": "Kit", "class_name": "DrumGroupDevice"},
+            ],
+        },
+    )
+    assert len(result.matched_devices) == 1
+    assert result.matched_devices[0]["parent_index"] == 4
+    assert result.matched_devices[0]["class_name"] == "DrumGroupDevice"
+
+
+def test_probe_and_link_skips_class_mismatch_at_same_position(conn, song, session):
+    """DB has Reverb at position 1; Live has a Delay there. Don't link
+    (push will load the DB's Reverb over Live's Delay) and surface a note
+    so the user sees the drift."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Reverb",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+        live_devices_by_parent={
+            ("return", 1): [
+                {"device_index": 1, "name": "Delay", "class_name": "Delay"},
+            ],
+        },
+    )
+    assert result.matched_devices == []
+    assert any(
+        "device drift" in n and "Reverb" in n and "Delay" in n
+        for n in result.notes
+    ), result.notes
+
+
+def test_probe_and_link_partial_chain_match(conn, song, session):
+    """DB has 2 devices on the track; Live's chain has 1. Match what
+    overlaps (position 1) and leave the rest for push to create."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1, kind="Operator",
+                    display_name="Operator")
+    pos2_id = M.create_device(conn, chain_id=chain_id, position=2, kind="Reverb",
+                              display_name="Reverb")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Lead", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 1): [
+                {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+            ],
+        },
+    )
+    assert len(result.matched_devices) == 1
+    assert result.matched_devices[0]["position"] == 1
+    # Position 2 unmatched — no link for Reverb yet; push creates it.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=pos2_id,
+    ) is None
+
+
+def test_probe_and_link_no_devices_when_arg_omitted(conn, song, session):
+    """Back-compat: omitting live_devices_by_parent is a no-op for the
+    device side (existing callers see the same behaviour as before W20-A)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    _make_chain_with_device(
+        conn, parent_track_id=tid, position=1, kind="Operator",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Lead", "kind": "midi"}],
+        live_returns=[],
+        # live_devices_by_parent omitted
+    )
+    assert result.matched_devices == []
+
+
+def test_probe_and_link_skips_devices_on_unlinked_parent(conn, song, session):
+    """Live has devices on track 1 but DB's "Lead" doesn't match (Live has
+    "Bass" there). The devices probe entry exists but probe-and-link
+    only matches devices on linked parents."""
+    M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 1): [
+                {"device_index": 1, "name": "Compressor", "class_name": "Compressor2"},
+            ],
+        },
+    )
+    assert result.matched_devices == []
+
+
+# ---------------------------------------------------------------------------
 # push_cli — argument plumbing
 # ---------------------------------------------------------------------------
 
@@ -1050,6 +1214,10 @@ def test_cli_probe_and_link_via_probe_flag(
         push_cli, "_probe_live_via_mcp",
         lambda send_fn=None: ([{"track_index": 7, "name": "Drums", "kind": "midi"}], []),
     )
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
     push_cli.main([
         "probe-and-link", session, "--db", str(db_path), "--probe",
     ])
@@ -1099,6 +1267,10 @@ def test_cli_probe_and_link_probe_threads_auto_session_created(
             [],
         ),
     )
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
     push_cli.main([
         "probe-and-link", "--song", "t", "--db", str(db_path),
         "--probe", "--auto-session",
@@ -1147,6 +1319,63 @@ def test_probe_live_via_mcp_returns_flat_lists():
     live_tracks, live_returns = push_cli._probe_live_via_mcp(send_fn=send)
     assert live_tracks == [{"track_index": 1, "name": "Drums", "kind": "midi"}]
     assert live_returns == [{"return_index": 1, "name": "A-Reverb"}]
+
+
+def test_probe_live_devices_via_mcp_builds_parent_keyed_dict():
+    """W20-A: one device-list probe per Live track + return; result is keyed
+    by ``(parent_kind, ableton_index)``."""
+    def send(req):
+        if req.tool != "ableton_device" or req.action != "list":
+            return _FakeResp(ok=False, error=f"unexpected: {req.tool}/{req.action}")
+        if "track_index" in req.params:
+            idx = req.params["track_index"]
+            return _FakeResp(ok=True, result={
+                "devices": [
+                    {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+                ] if idx == 1 else [],
+            })
+        if "return_index" in req.params:
+            return _FakeResp(ok=True, result={
+                "devices": [
+                    {"device_index": 1, "name": "Reverb", "class_name": "Reverb"},
+                ],
+            })
+        return _FakeResp(ok=False, error="missing parent index")
+    by_parent = push_cli._probe_live_devices_via_mcp(
+        live_tracks=[
+            {"track_index": 1, "name": "Drums"},
+            {"track_index": 2, "name": "Bass"},
+        ],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+        send_fn=send,
+    )
+    assert by_parent[("track", 1)] == [
+        {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+    ]
+    assert by_parent[("track", 2)] == []
+    assert by_parent[("return", 1)] == [
+        {"device_index": 1, "name": "Reverb", "class_name": "Reverb"},
+    ]
+
+
+def test_probe_live_devices_via_mcp_tolerates_per_parent_failure():
+    """If one parent's device probe fails (ok=False), that parent gets
+    dropped from the dict; other parents still appear. The whole probe
+    doesn't abort on a single transient."""
+    def send(req):
+        if req.params.get("track_index") == 2:
+            return _FakeResp(ok=False, error="transient")
+        return _FakeResp(ok=True, result={"devices": []})
+    by_parent = push_cli._probe_live_devices_via_mcp(
+        live_tracks=[
+            {"track_index": 1, "name": "Drums"},
+            {"track_index": 2, "name": "Bass"},
+        ],
+        live_returns=[],
+        send_fn=send,
+    )
+    assert ("track", 1) in by_parent
+    assert ("track", 2) not in by_parent
 
 
 # ---------------------------------------------------------------------------

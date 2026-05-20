@@ -486,6 +486,302 @@ def test_emit_rejects_invalid_actor(conn, song):
         M.create_track(conn, song_id=song, track_index=2, name="x", actor="bogus")
 
 
+# ---------- W23-A: provenance read surface ----------
+
+
+def test_list_requests_for_song_orders_most_recent_first(conn, song):
+    """Ordering by ts DESC; agent reads the most recent cycle first."""
+    rid1 = M.create_request(conn, actor="user", intent="first", song_id=song)
+    rid2 = M.create_request(conn, actor="user", intent="second", song_id=song)
+    rid3 = M.create_request(conn, actor="user", intent="third", song_id=song)
+    rows = Q.list_requests_for_song(conn, song)
+    assert [r["id"] for r in rows] == [rid3, rid2, rid1]
+
+
+def test_list_requests_for_song_filters_by_kind(conn, song):
+    """`kind='push'` returns only push-kind requests; other kinds skipped."""
+    M.create_request(conn, actor="user", intent="compose v1", kind="compose", song_id=song)
+    rid_push = M.create_request(conn, actor="user", intent="push v1", kind="push", song_id=song)
+    M.create_request(conn, actor="user", intent="capture", kind="capture", song_id=song)
+    rows = Q.list_requests_for_song(conn, song, kind="push")
+    assert [r["id"] for r in rows] == [rid_push]
+
+
+def test_list_requests_for_song_respects_limit(conn, song):
+    for i in range(5):
+        M.create_request(conn, actor="user", intent=f"r{i}", song_id=song)
+    rows = Q.list_requests_for_song(conn, song, limit=2)
+    assert len(rows) == 2
+
+
+def test_list_requests_for_song_scopes_to_song(conn, song):
+    """Another song's requests don't bleed in."""
+    other_song = M.create_song(conn, name="other", key="Em")
+    M.create_request(conn, actor="user", intent="other", song_id=other_song)
+    M.create_request(conn, actor="user", intent="mine", song_id=song)
+    rows = Q.list_requests_for_song(conn, song)
+    assert [r["intent"] for r in rows] == ["mine"]
+
+
+def test_get_latest_request_for_song_returns_most_recent(conn, song):
+    M.create_request(conn, actor="user", intent="old", song_id=song)
+    rid_new = M.create_request(conn, actor="user", intent="new", song_id=song)
+    latest = Q.get_latest_request_for_song(conn, song)
+    assert latest["id"] == rid_new
+
+
+def test_get_latest_request_for_song_filters_by_kind(conn, song):
+    M.create_request(conn, actor="user", intent="compose", kind="compose", song_id=song)
+    rid_push = M.create_request(conn, actor="user", intent="push", kind="push", song_id=song)
+    M.create_request(conn, actor="user", intent="compose2", kind="compose", song_id=song)
+    latest_push = Q.get_latest_request_for_song(conn, song, kind="push")
+    assert latest_push["id"] == rid_push
+
+
+def test_get_latest_request_for_song_returns_none_when_empty(conn, song):
+    assert Q.get_latest_request_for_song(conn, song) is None
+    assert Q.get_latest_request_for_song(conn, song, kind="push") is None
+
+
+def test_get_events_for_request_returns_in_seq_order(conn, song):
+    """Oldest first — agent reads the cycle's events as a timeline."""
+    rid = M.create_request(conn, actor="user", intent="add tracks", song_id=song)
+    M.create_track(
+        conn, song_id=song, track_index=2, name="Bass",
+        actor="user", request_id=rid,
+    )
+    M.create_track(
+        conn, song_id=song, track_index=3, name="Lead",
+        actor="user", request_id=rid,
+    )
+    rows = Q.get_events_for_request(conn, rid)
+    seqs = [r["seq"] for r in rows]
+    assert seqs == sorted(seqs)
+
+
+def test_get_events_for_request_excludes_other_requests(conn, song):
+    rid1 = M.create_request(conn, actor="user", intent="r1", song_id=song)
+    rid2 = M.create_request(conn, actor="user", intent="r2", song_id=song)
+    M.create_track(conn, song_id=song, track_index=2, name="A",
+                   actor="user", request_id=rid1)
+    M.create_track(conn, song_id=song, track_index=3, name="B",
+                   actor="user", request_id=rid2)
+    rid1_events = Q.get_events_for_request(conn, rid1)
+    assert all(e["request_id"] == rid1 for e in rid1_events)
+    # rid1's REQUEST_CREATED + the track_created for "A" (2 events).
+    assert len(rid1_events) == 2
+
+
+def test_get_request_event_summary_counts_by_kind(conn, song):
+    rid = M.create_request(conn, actor="user", intent="bulk", song_id=song)
+    M.create_track(conn, song_id=song, track_index=2, name="A",
+                   actor="user", request_id=rid)
+    M.create_track(conn, song_id=song, track_index=3, name="B",
+                   actor="user", request_id=rid)
+    M.create_track(conn, song_id=song, track_index=4, name="C",
+                   actor="user", request_id=rid)
+    summary = Q.get_request_event_summary(conn, rid)
+    assert summary[E.TRACK_CREATED] == 3
+    assert summary[E.REQUEST_CREATED] == 1
+
+
+def test_get_request_event_summary_empty_for_unknown_request(conn):
+    """No matching events → empty dict (not an error)."""
+    assert Q.get_request_event_summary(conn, "deadbeef" * 4) == {}
+
+
+# ---------- W23-B: song annotations ----------
+
+
+def test_add_annotation_song_scoped(conn, song):
+    aid = M.add_annotation(
+        conn, song_id=song, kind="stylistic",
+        body="track is glitchy lo-fi throughout",
+    )
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["kind"] == "stylistic"
+    assert row["body"] == "track is glitchy lo-fi throughout"
+    assert row["track_id"] is None
+    assert row["start_bar"] is None
+    assert row["end_bar"] is None
+    last = _events(conn)[-1]
+    assert last["kind"] == E.ANNOTATION_ADDED
+
+
+def test_add_annotation_time_scoped(conn, song):
+    aid = M.add_annotation(
+        conn, song_id=song, kind="intent",
+        body="verse feels like weight getting worse",
+        start_bar=17.0, end_bar=33.0,
+    )
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["start_bar"] == 17.0
+    assert row["end_bar"] == 33.0
+    assert row["track_id"] is None
+
+
+def test_add_annotation_track_scoped(conn, song, track):
+    aid = M.add_annotation(
+        conn, song_id=song, track_id=track, kind="todo",
+        body="don't sidechain bass on the bridge",
+    )
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["track_id"] == track
+
+
+def test_add_annotation_open_ended_forward_range(conn, song):
+    """end_bar NULL with start_bar set means "active from start_bar onward."""
+    aid = M.add_annotation(
+        conn, song_id=song, kind="reference",
+        body="bass weaves at 95 BPM from here on",
+        start_bar=49.0,
+    )
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["start_bar"] == 49.0
+    assert row["end_bar"] is None
+
+
+def test_add_annotation_rejects_invalid_kind(conn, song):
+    with pytest.raises(ValueError, match="invalid annotation kind"):
+        M.add_annotation(conn, song_id=song, kind="bogus", body="x")
+
+
+def test_add_annotation_rejects_end_without_start(conn, song):
+    with pytest.raises(ValueError, match="end_bar requires start_bar"):
+        M.add_annotation(conn, song_id=song, kind="intent", body="x", end_bar=8.0)
+
+
+def test_add_annotation_rejects_end_le_start(conn, song):
+    with pytest.raises(ValueError, match="must be greater than start_bar"):
+        M.add_annotation(
+            conn, song_id=song, kind="intent", body="x",
+            start_bar=8.0, end_bar=8.0,
+        )
+
+
+def test_update_annotation_changes_body_and_kind(conn, song):
+    aid = M.add_annotation(conn, song_id=song, kind="todo", body="old")
+    M.update_annotation(conn, annotation_id=aid, body="new", kind="intent")
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["body"] == "new"
+    assert row["kind"] == "intent"
+    assert _events(conn)[-1]["kind"] == E.ANNOTATION_UPDATED
+
+
+def test_update_annotation_partial_leaves_others(conn, song, track):
+    aid = M.add_annotation(
+        conn, song_id=song, track_id=track, kind="intent",
+        body="original", start_bar=8.0, end_bar=16.0,
+    )
+    M.update_annotation(conn, annotation_id=aid, body="revised")
+    row = conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+    assert row["body"] == "revised"
+    assert row["kind"] == "intent"
+    assert row["start_bar"] == 8.0
+    assert row["end_bar"] == 16.0
+    assert row["track_id"] == track
+
+
+def test_update_annotation_rejects_missing(conn):
+    with pytest.raises(ValueError, match="not found"):
+        M.update_annotation(conn, annotation_id="deadbeef" * 4, body="x")
+
+
+def test_delete_annotation_removes_row_and_emits(conn, song):
+    aid = M.add_annotation(conn, song_id=song, kind="todo", body="ephemeral")
+    M.delete_annotation(conn, annotation_id=aid)
+    assert conn.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone() is None
+    assert _events(conn)[-1]["kind"] == E.ANNOTATION_REMOVED
+
+
+def test_delete_annotation_missing_is_noop(conn, song):
+    """Already-deleted is silent — agent races shouldn't double-emit."""
+    pre_count = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    M.delete_annotation(conn, annotation_id="deadbeef" * 4)
+    post_count = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    assert post_count == pre_count
+
+
+def test_song_delete_cascades_annotations(conn, song):
+    M.add_annotation(conn, song_id=song, kind="intent", body="x")
+    M.add_annotation(conn, song_id=song, kind="todo", body="y")
+    conn.execute("DELETE FROM songs WHERE id = ?", (song,))
+    n = conn.execute("SELECT COUNT(*) AS n FROM annotations").fetchone()["n"]
+    assert n == 0
+
+
+def test_track_delete_cascades_track_scoped_annotations(conn, song, track):
+    """Track-scoped annotations follow the track; song-scoped survive."""
+    M.add_annotation(conn, song_id=song, track_id=track, kind="todo", body="track")
+    M.add_annotation(conn, song_id=song, kind="intent", body="song")
+    conn.execute("DELETE FROM tracks WHERE id = ?", (track,))
+    rows = conn.execute("SELECT body FROM annotations").fetchall()
+    assert {r["body"] for r in rows} == {"song"}
+
+
+# ---------- W23-B: annotation queries ----------
+
+
+def test_get_annotations_for_song_returns_all_scopes(conn, song, track):
+    M.add_annotation(conn, song_id=song, kind="intent", body="song-scoped")
+    M.add_annotation(conn, song_id=song, kind="intent", body="time-scoped",
+                     start_bar=17.0, end_bar=33.0)
+    M.add_annotation(conn, song_id=song, track_id=track, kind="todo", body="track-scoped")
+    rows = Q.get_annotations_for_song(conn, song)
+    bodies = [r["body"] for r in rows]
+    # track_id-NULL first, then by start_bar, then created_at.
+    assert bodies == ["song-scoped", "time-scoped", "track-scoped"]
+
+
+def test_get_annotations_for_song_filters_by_kind(conn, song):
+    M.add_annotation(conn, song_id=song, kind="intent", body="a")
+    M.add_annotation(conn, song_id=song, kind="todo", body="b")
+    rows = Q.get_annotations_for_song(conn, song, kind="todo")
+    assert [r["body"] for r in rows] == ["b"]
+
+
+def test_get_annotations_for_track_excludes_song_scoped(conn, song, track):
+    M.add_annotation(conn, song_id=song, kind="intent", body="song")
+    M.add_annotation(conn, song_id=song, track_id=track, kind="todo", body="track")
+    rows = Q.get_annotations_for_track(conn, track)
+    assert [r["body"] for r in rows] == ["track"]
+
+
+def test_get_annotations_at_bar_includes_song_scoped(conn, song):
+    """Song-scoped (start_bar NULL) annotations are active at every bar."""
+    M.add_annotation(conn, song_id=song, kind="stylistic", body="lo-fi vibe")
+    rows = Q.get_annotations_at_bar(conn, song, 17.0)
+    assert [r["body"] for r in rows] == ["lo-fi vibe"]
+
+
+def test_get_annotations_at_bar_half_open_range(conn, song):
+    """Range [17, 33) means active at bar 17 inclusive, bar 33 exclusive."""
+    M.add_annotation(conn, song_id=song, kind="intent", body="verse",
+                     start_bar=17.0, end_bar=33.0)
+    assert [r["body"] for r in Q.get_annotations_at_bar(conn, song, 17.0)] == ["verse"]
+    assert [r["body"] for r in Q.get_annotations_at_bar(conn, song, 32.99)] == ["verse"]
+    assert Q.get_annotations_at_bar(conn, song, 33.0) == []
+    assert Q.get_annotations_at_bar(conn, song, 16.99) == []
+
+
+def test_get_annotations_at_bar_open_ended_forward(conn, song):
+    """end_bar NULL = active for every bar ≥ start_bar."""
+    M.add_annotation(conn, song_id=song, kind="reference",
+                     body="from here on", start_bar=49.0)
+    assert [r["body"] for r in Q.get_annotations_at_bar(conn, song, 49.0)] == ["from here on"]
+    assert [r["body"] for r in Q.get_annotations_at_bar(conn, song, 100.0)] == ["from here on"]
+    assert Q.get_annotations_at_bar(conn, song, 48.99) == []
+
+
+def test_get_annotations_at_bar_scopes_by_song(conn, song):
+    """Another song's annotations don't surface."""
+    other_song = M.create_song(conn, name="other", key="Em")
+    M.add_annotation(conn, song_id=other_song, kind="intent", body="other")
+    M.add_annotation(conn, song_id=song, kind="intent", body="mine")
+    rows = Q.get_annotations_at_bar(conn, song, 1.0)
+    assert [r["body"] for r in rows] == ["mine"]
+
+
 # ---------- events.seq ordering ----------
 
 

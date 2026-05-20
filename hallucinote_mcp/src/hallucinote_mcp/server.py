@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools + 11 resources + 5 prompts for Ableton
+hallucinote-mcp — 10 unified tools + 11 resources + 7 prompts for Ableton
 Live, structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -66,7 +66,8 @@ Resources (read via resources/read, no turn cost):
 
 Prompts (invoke via prompts/get for multi-step workflow templates):
   create_midi_track_with_instrument, setup_sidechain_compression,
-  build_return_bus, humanize_clip_velocity, compose_section_pattern
+  build_return_bus, humanize_clip_velocity, compose_section_pattern,
+  start_new_song, pick_instruments_for_song
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
@@ -100,7 +101,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     from .resources import register_resources
     register_resources(mcp)
 
-    # Wave M-7: register 5 workflow prompts.
+    # Wave M-7: register 7 workflow prompts.
     from .prompts import register_prompts
     register_prompts(mcp)
 
@@ -259,8 +260,9 @@ def registered_prompt_names(mcp: FastMCP) -> list[str]:
     """Return the names of all prompts registered on the FastMCP instance.
 
     Symmetric to ``registered_tool_names`` / ``registered_resource_uris``
-    but introspects the prompt manager. Used by tests to assert "the 5
-    expected prompts are wired."
+    but introspects the prompt manager. Used by tests to assert the
+    expected prompt surface (see ``_EXPECTED_PROMPTS`` in
+    ``hallucinote_mcp/tests/unit/test_prompts.py``) is wired.
     """
     for attr in ("_prompt_manager", "prompt_manager"):
         manager = getattr(mcp, attr, None)

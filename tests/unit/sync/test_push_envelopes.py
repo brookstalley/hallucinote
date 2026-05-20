@@ -500,6 +500,158 @@ def test_mixer_volume_warns_when_session_clip_has_multiple_placements(
     ), plan.notes
 
 
+# ---------- W7-C: W4-B defensive warns ----------
+
+
+def test_warns_when_multiple_distinct_clips_cover_envelope_range(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """W4-B defensive warn: two DISTINCT session clips on the same
+    track cover the envelope's beat range. Planner routes through the
+    earliest by start_bar but warns so the author can resolve."""
+    # Second distinct clip on the same track with overlapping arrangement
+    # range. arr_clip covers [0, 8]; this one covers [4, 12].
+    other_clip = M.create_clip(
+        conn, track_id=linked_track, slot=2, length_beats=8.0, name="other",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=linked_track, clip_id=other_clip,
+        start_bar=2.0, end_bar=4.0,  # bar 2 (beat 4) -> bar 4 (beat 12)
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    # Envelope range [4, 6] — covered by BOTH clips.
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 4.0, "value": 0.5, "curve_kind": "hold"},
+            {"time_beats": 6.0, "value": 0.0, "curve_kind": "hold"},
+        ],
+    )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1, "envelope should still emit on the chosen clip"
+    assert any(
+        "multiple distinct session clips" in n
+        and other_clip in n  # the alternative is named
+        for n in plan.notes
+    ), plan.notes
+
+
+def test_no_multiple_covering_warn_when_only_same_clip_duplicated(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The multi-distinct-clip warn must NOT fire when the SAME source
+    clip is placed multiple times. That case is handled by the existing
+    `_warn_extra_placements` and would be noise here."""
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=linked_track, clip_id=linked_clip,
+        start_bar=9.0, end_bar=11.0,
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert not any(
+        "multiple distinct session clips" in n for n in plan.notes
+    ), plan.notes
+
+
+def test_warns_when_placement_trimmed_shorter_than_envelope(
+    conn, song, session, linked_track,
+):
+    """W4-B defensive warn: the matched placement's end_bar trims the
+    clip shorter than its source length, AND the envelope's max time
+    exceeds the trimmed end. The envelope writes correctly to the
+    session clip but won't sound past the trim point in this
+    arrangement placement.
+    """
+    clip = M.create_clip(
+        conn, track_id=linked_track, slot=1, length_beats=16.0, name="long",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    # Source is 16 beats; placement trims to 8 beats (bar 1 to bar 3).
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=linked_track, clip_id=clip,
+        start_bar=1.0, end_bar=3.0,
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    # Envelope goes to beat 12 — past the placement's 8-beat trim.
+    # Coverage check uses source length (16), so the placement still
+    # matches; the warn flags the trimmed-extent mismatch.
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0,  "value": 0.5, "curve_kind": "hold"},
+            {"time_beats": 12.0, "value": 1.0, "curve_kind": "hold"},
+        ],
+    )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert any(
+        "trimmed shorter than the source clip" in n
+        and "time_beats=12" in n
+        for n in plan.notes
+    ), plan.notes
+
+
+def test_no_trimmed_warn_when_envelope_fits_within_trimmed_extent(
+    conn, song, session, linked_track,
+):
+    """Placement is trimmed but the envelope ends inside the trimmed
+    extent — playback is unaffected, no warn."""
+    clip = M.create_clip(
+        conn, track_id=linked_track, slot=1, length_beats=16.0, name="long",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=linked_track, clip_id=clip,
+        start_bar=1.0, end_bar=3.0,  # 8 beats
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    # Envelope fits within the trimmed [0, 8] extent.
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.5, "curve_kind": "hold"},
+            {"time_beats": 4.0, "value": 1.0, "curve_kind": "hold"},
+        ],
+    )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert not any(
+        "trimmed shorter than the source clip" in n for n in plan.notes
+    ), plan.notes
+
+
+def test_no_trimmed_warn_when_placement_not_trimmed(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The default arr_clip fixture covers exactly source length —
+    no trim, so the trimmed-placement warn must not fire."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert not any(
+        "trimmed shorter than the source clip" in n for n in plan.notes
+    ), plan.notes
+
+
 # ---------- send_level (W4-B session-clip routing) ----------
 
 
@@ -789,3 +941,150 @@ def test_lossy_warn_fires_on_note_expression_path(
     warns = _lossy_warns(plan)
     assert len(warns) == 1, plan.notes
     assert "note_expression" in warns[0]
+
+
+# ---------------------------------------------------------------------------
+# W10-F: D2/D3 planner safety-net + D1 teaching-message regression
+# ---------------------------------------------------------------------------
+
+
+def _force_track_kind(conn, track_id: str, kind: str) -> None:
+    """W10-F: bypass M.create_envelope's track-kind refusal by flipping the
+    track's kind AFTER envelope creation, to exercise the planner-side
+    safety net for legacy rows or pulled state.
+
+    Real callers can't hit this path through mutators today, but planner
+    defense-in-depth needs explicit coverage so a future schema change
+    doesn't silently regress it.
+    """
+    conn.execute("UPDATE tracks SET kind = ? WHERE id = ?", (kind, track_id))
+
+
+def test_planner_warns_when_mixer_envelope_targets_master_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """D2 planner safety-net: even if a mixer_volume envelope landed in
+    the DB pointing at a master track (legacy / pull / future-schema),
+    the planner warns and skips with the teaching message."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "master")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("master" in n and "sub-bus" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_mixer_envelope_targets_audio_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """D3 planner safety-net for audio-track host."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "audio")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("audio" in n and "sub-bus" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_mixer_envelope_targets_group_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Group tracks: same routing-unreachable failure mode as D3."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "group")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("group" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_send_envelope_targets_audio_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+    linked_return,
+):
+    """D3 safety net for send_level."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "audio")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("audio" in n and "send_level" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_device_parameter_targets_master_track(
+    conn, song, session, linked_track, linked_clip, arr_clip, linked_device,
+):
+    """D2 safety net for device_parameter: device's chain's parent_track is
+    the master."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "master")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("master" in n and "device_parameter" in n for n in plan.notes), \
+        plan.notes
+
+
+# --- D1 teaching-message regression: partition-by-hand suggestion ---
+
+
+def test_d1_teaching_message_includes_partition_suggestion_mixer(
+    conn, song, session, linked_track,
+):
+    """D1: no covering arrangement placement — the upgraded teaching
+    message lists the three options including (c) partition-by-hand."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]
+    assert "v1.1" in msgs[0]
+
+
+def test_d1_teaching_message_includes_partition_suggestion_send(
+    conn, song, session, linked_track, linked_return,
+):
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track, target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]
+
+
+def test_d1_teaching_message_includes_partition_suggestion_device(
+    conn, song, session, linked_track, linked_device,
+):
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "partition" in msgs[0]

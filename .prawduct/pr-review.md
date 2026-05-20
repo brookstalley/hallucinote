@@ -32,7 +32,7 @@ Commits tell a coherent story, changeset understandable by unfamiliar reviewer, 
 Unnecessary complexity, dead code, overly defensive patterns → **NOTE**. Flag simplifications, not alternatives.
 
 ### 6. Merge Hygiene
-No debug code, no unintended file changes, no TODOs/placeholders, no secrets → **WARNING**.
+No debug code, no unintended file changes, no TODOs/placeholders, no secrets → **WARNING**. **Derived views** (when `views_enabled: true` in `project-state.yaml`): build-plan `## Status` checkboxes, `.prawduct/release-notes.md`, and the `scope_rollups:` block in `project-state.yaml` are all derived from change-log.md tags via `product-hook regen-views`. Tag is canonical. Any view diff without a matching change-log tag-line edit (Status without `status=shipped`, release-notes section without `release=`, scope_rollups update without `scope=`) → **WARNING** (regen wasn't run or tag is missing). Don't review derived files as hand-curated content.
 
 ### 7. Proportionality
 Effort matches risk. Over-engineered? Under-engineered? → **NOTE**.

@@ -172,6 +172,44 @@ def test_plan_push_song_returns_skips_already_linked(conn, song, session):
     assert plan.calls[0].key == f"return:{rid_b}"
 
 
+def test_plan_push_song_returns_idempotent_after_probe_and_link(
+    conn, song, session,
+):
+    """W10-A / C2 regression: probe-and-link on a Live set whose returns
+    carry the slot-letter prefix ('A-Reverb', 'B-Delay') must link them
+    to the DB's suffix-only names ('Reverb', 'Delay'), and the returns
+    planner must then emit ZERO create calls.
+
+    Pre-fix C2 bug: even though probe-and-link strips the prefix, a
+    naming-only mismatch (the DB stored 'Foo Reverb' while Live's
+    default is 'A-Reverb') would leave returns unmatched, the planner
+    would emit `create`, and Live would end up with both default
+    returns AND a duplicate song-named return. This test pins the
+    happy-path matched case end-to-end so a regression in either the
+    probe matcher OR the planner skip surfaces here.
+    """
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.create_return(conn, song_id=song, name="Delay", position=2)
+    # Simulate Live's default new-set scaffolding.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[
+            {"return_index": 1, "name": "A-Reverb"},
+            {"return_index": 2, "name": "B-Delay"},
+        ],
+    )
+    assert len(result.matched_returns) == 2, result
+    # The returns planner now sees both linked → must emit nothing.
+    plan = push.plan_push_song_returns(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == [], (
+        f"returns plan should be empty post-probe-and-link but got: "
+        f"{[c.args for c in plan.calls]}"
+    )
+
+
 def test_plan_push_clip_emits_atomic_create_when_track_linked_clip_unlinked(
     conn, session, track, clip
 ):
@@ -278,33 +316,75 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
 # --- arrangement clips ---
 
 
-def test_plan_push_arrangement_raises_on_unlinked_track(
+def test_plan_push_arrangement_skips_on_unlinked_track(
     conn, song, session, track, clip
 ):
-    """W3-F follow-up (Critic warning): plan_push_arrangement is now
-    strict on unlinked tracks/clips — same discipline as plan_push_clip
-    post-W3-C. Silent skip would leave Live with a half-built
-    arrangement; the strict raise points at the missing pre-pass."""
+    """W10-G post-Wave-0 normalization: planners skip-and-warn instead of
+    raising on unlinked deps. Wave 0's full-band-rock canary surfaced the
+    prior strict-raise as a Python traceback through the CLI when an
+    earlier phase failed partway — agent had no way to continue. Now the
+    row is skipped, a teaching note appears, and the rest of the
+    arrangement still planned (the agent can choose to abort if any row
+    skips, but the choice is theirs)."""
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
-    with pytest.raises(ValueError, match="plan_push_song_tracks.*first"):
-        push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == []  # nothing emitted (track not linked)
+    assert any(
+        "not linked" in n and "plan_push_song_tracks" in n
+        for n in plan.notes
+    ), f"expected teaching note pointing at plan_push_song_tracks; got {plan.notes}"
 
 
-def test_plan_push_arrangement_raises_on_unlinked_clip(
+def test_plan_push_arrangement_skips_on_unlinked_clip(
     conn, song, session, track, clip
 ):
-    """When track IS linked but the session clip isn't, the error
-    points at the clip-create phase instead."""
+    """When track IS linked but the session clip isn't, the note points
+    at the clip-create phase. Same skip-and-warn shape as the unlinked-
+    track case (W10-G)."""
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
     )
-    with pytest.raises(ValueError, match="clip-create phase"):
-        push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any(
+        "not linked" in n and "clip-create phase" in n
+        for n in plan.notes
+    ), f"expected teaching note pointing at clip-create phase; got {plan.notes}"
+
+
+def test_plan_push_arrangement_partial_state_emits_linked_rows_only(
+    conn, song, session, track, clip,
+):
+    """W10-G: when some rows are linked and others aren't, the planner
+    emits calls for the linked ones and warns about the rest — partial
+    progress is the right shape (vs. all-or-nothing raising)."""
+    # Track is linked; only one of two clips is.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=1
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    # Add a second clip; do NOT link it.
+    other_clip = M.create_clip(
+        conn, track_id=track, slot=2, length_beats=16.0, name="other"
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1, end_bar=5,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=other_clip,
+        start_bar=5, end_bar=9,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1  # only the linked clip's placement
+    assert any("not linked" in n for n in plan.notes)
 
 
 def test_plan_push_arrangement_emits_one_duplicate_per_arrangement_clip(
@@ -392,6 +472,164 @@ def test_plan_push_arrangement_multiple_clips_emit_separate_calls(
     keys = {c.key for c in plan.calls}
     assert len(keys) == 3
     assert all(k.startswith("arrangement_clip:") for k in keys)
+
+
+# --- arrangement idempotency (W10-A) ---
+
+
+def test_plan_push_arrangement_skips_already_linked_placements(
+    conn, song, session, track, clip
+):
+    """W10-A: arrangement_clip placements that are already linked in
+    `ableton_links` must NOT re-emit on subsequent plans.
+
+    Pre-W10-A behavior: the planner read track + clip links but ignored
+    the arrangement_clip link the apply layer wrote back. Re-running
+    push.plan_push_arrangement after a successful first push therefore
+    re-emitted the same `duplicate_to_arrangement` calls, doubling
+    every arrangement placement on each re-run.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    # First push lands and apply_push_results records the binding.
+    push.apply_push_results(
+        conn,
+        [{
+            "key": f"arrangement_clip:{aid}",
+            "ok": True,
+            "tool": "ableton_clip",
+            "result": {"arrangement_clip_index": 0},
+        }],
+        session_id=session,
+    )
+    # Re-run the planner — it must skip the now-linked placement.
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == [], (
+        f"re-push should be idempotent but emitted: "
+        f"{[c.args for c in plan.calls]}"
+    )
+    # Tracking note so the agent/UI can show "nothing to do".
+    assert any(
+        "already in the arrangement" in n or "already linked" in n
+        for n in plan.notes
+    ), f"expected an idempotency note, got: {plan.notes}"
+
+
+def test_plan_push_arrangement_partial_state_emits_unlinked_only(
+    conn, song, session, track, clip
+):
+    """W10-A: when SOME placements are linked and others aren't, only
+    the unlinked ones emit. Mixed-state re-runs (e.g., a partial
+    apply_push_results between two pushes) must not re-duplicate
+    already-pushed placements.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    aids = [
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=bar, end_bar=bar + 16.0,
+        )
+        for bar in (1.0, 17.0, 33.0)
+    ]
+    # First push lands for the first two placements only — the third
+    # never made it to apply (network blip, batched run cut short, etc).
+    push.apply_push_results(
+        conn,
+        [
+            {"key": f"arrangement_clip:{aids[0]}", "ok": True,
+             "tool": "ableton_clip", "result": {"arrangement_clip_index": 0}},
+            {"key": f"arrangement_clip:{aids[1]}", "ok": True,
+             "tool": "ableton_clip", "result": {"arrangement_clip_index": 1}},
+        ],
+        session_id=session,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert plan.calls[0].key == f"arrangement_clip:{aids[2]}"
+
+
+def test_plan_push_arrangement_clear_warn_only_for_unlinked_placements(
+    conn, song, session, track, clip
+):
+    """W10-A: the 'agent must clear existing arrangement clips' warn
+    targets the C3 paper-cut (user re-pushes onto a Live set whose
+    arrangement isn't empty). It should NOT fire when every placement
+    is already linked — that's the idempotent re-run case and there's
+    nothing to clear or duplicate.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    push.apply_push_results(
+        conn,
+        [{"key": f"arrangement_clip:{aid}", "ok": True,
+          "tool": "ableton_clip", "result": {"arrangement_clip_index": 0}}],
+        session_id=session,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert all(
+        "clear existing arrangement clips" not in n for n in plan.notes
+    ), (
+        "the 'must clear' warn must NOT fire when re-push has nothing to "
+        f"emit, but got: {plan.notes}"
+    )
+
+
+def test_plan_push_arrangement_clear_warn_still_fires_on_truly_new_push(
+    conn, song, session, track, clip
+):
+    """Counterpart to the above: the 'must clear' warn still surfaces
+    for the actual case it targets — a first-time push with unlinked
+    placements. We don't want to lose the C3 teaching just to suppress
+    the idempotent-case false fire.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert any(
+        "clear existing arrangement clips" in n for n in plan.notes
+    )
 
 
 # --- apply_push_results ---

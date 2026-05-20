@@ -14,6 +14,7 @@ SONG_UPDATED = "song_updated"
 SONG_TIMING_MODE_SET = "song_timing_mode_set"
 TRACK_CREATED = "track_created"
 TRACK_UPDATED = "track_updated"
+TRACK_DELETED = "track_deleted"
 CLIP_CREATED = "clip_created"
 CLIP_UPDATED = "clip_updated"
 CLIP_DELETED = "clip_deleted"
@@ -67,10 +68,23 @@ ARRANGEMENT_CLIP_REMOVED = "arrangement_clip_removed"
 
 # Provenance
 REQUEST_CREATED = "request_created"
+REQUEST_CLOSED = "request_closed"
+
+# Song metadata layer: markdown ref records (the audit-side companion to
+# the markdown_refs projection table). Emitted when an LLM-driven write
+# produces or updates a decision/annotation file under songs/<name>/.
+# Reindex of pre-existing files DOES NOT emit this event — that's a
+# projection rebuild, not a domain change.
+MARKDOWN_REF_RECORDED = "markdown_ref_recorded"
 
 # Ableton projection (sessions + links replace the per-row link kinds)
 ABLETON_SESSION_CREATED = "ableton_session_created"
 ABLETON_LINK_SET = "ableton_link_set"
 
 # Valid actor values for events.actor / requests.actor.
-ACTORS = frozenset({"user", "llm", "sync", "generator", "system"})
+# 'build' marks rows created/updated by a song's build.py running under
+# M.build_session (W12-A). The build-session uses this actor to discriminate
+# build-owned rows (tombstone-eligible when not touched in the latest build)
+# from pulled rows (actor='sync', authoritative for Live's state) and from
+# user/LLM edits (preserved across build re-runs).
+ACTORS = frozenset({"user", "llm", "sync", "generator", "system", "build"})

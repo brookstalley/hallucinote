@@ -3,7 +3,7 @@ description: Push the Hallucinote DB into Ableton Live. Drives ten ordered phase
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
-argument-hint: <song-slug> <session_id>
+argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
 You are the Ableton push orchestrator. Your job: take the DB state for a song, materialize it in Live by driving ten ordered phases through MCP, and report what was created.
@@ -20,10 +20,13 @@ The ten phases run in a strict order set by Live's API constraints (e.g., envelo
 
 You need TWO pieces of information from `$ARGUMENTS`:
 
-1. **The song slug** (required) — filesystem-safe identifier matching the song's directory + DB filename. The DB lives at `songs/<slug>/<slug>.db` per the project's prescriptive convention (`.prawduct/artifacts/project-preferences.md`).
-2. **The session_id** (required — never default it) — the `ableton_sessions.id` row that binds the DB to the currently-open Live set. If the user hasn't created one, they should do so via `M.create_ableton_session(conn, song_id=..., name="...")` first; refuse to invent one.
+1. **The song slug** (required) — filesystem-safe identifier matching the song's directory + DB filename. The DB lives at `songs/<slug>/<slug>-<branch>.db` per W12-A (per-branch convention; outside a repo / detached HEAD falls back to `songs/<slug>/<slug>.db`).
+2. **The session_id** — the `ableton_sessions.id` row that binds the DB to the currently-open Live set. Three paths to provide it:
+   - **User passed an explicit id**: use it directly.
+   - **User said "new session" / first push for this song**: pass `--auto-session` to `probe-and-link` (W9-B) — the CLI creates the row and returns its id in the response (`session_id` field, `auto_session_created: true`). Tell the user the new id so they can reuse it for subsequent pushes (the user typically wants ONE session per Live set, not a new one per push).
+   - **User said "create a session named X"**: run `push_cli create-session --song <slug> --name X` first; capture the printed id; use it.
 
-If either is missing, ask the user — never guess.
+If the slug is missing, ask the user. For session, default to `--auto-session` only if the user explicitly signaled "this is the first push for this song / new session" — otherwise ask.
 
 ## Workflow overview
 
@@ -68,7 +71,9 @@ The CLI matches by name (track names directly; return names after stripping Live
 Display to the user:
 - The matched lists (concise — `"linked 3 of 5 DB tracks; 2 will be created"`).
 - The `notes` list verbatim if non-empty. Notes cover duplicate names, kind mismatches, and **case-only near-matches** (W5-B). If a DB track 'Drums' and a Live track 'drums' both appear unmatched, the note flags them as a case-variant pair so the user can decide whether to rename one before push (otherwise phase 3 silently creates a duplicate `Drums` next to the existing `drums`).
-- The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch. The user often wants to know "the song will live alongside `1-MIDI`, `2-MIDI`, ..." so they can clean those up manually if desired.
+- The `unmatched_live_tracks` / `unmatched_live_returns` lists if non-empty — these are existing Live entities push will NOT touch.
+
+**Confirmation gate when `unmatched_live_tracks` or `unmatched_live_returns` is non-empty (W12-C).** Live's default new-set scaffolding (`1-MIDI` / `2-MIDI` / `A-Reverb` / `B-Delay`) lands on the unmatched-Live side because the song's DB doesn't name those entities. That's almost always fine — the song will sit alongside them. But the same code path fires when the Live set already contains *another song*: those tracks/returns surface as "unmatched Live" too, and pushing additively on top of them silently jumbles two songs in one set. The signature you can't distinguish from probe-and-link's output alone is "default scaffolding" vs "someone else's song." So when either list is non-empty, **show the lists, then explicitly ask the user**: "These exist in Live and the push will not touch them — do you want to continue, or open a fresh Live set first? (yes/no)" Proceed only on explicit `yes`. If the lists are empty, no confirmation needed.
 
 Unmatched DB entities will be created in phases 3/4. Unmatched Live entities are **not** touched — push is additive.
 
@@ -90,29 +95,39 @@ For **each** phase in the list (top to bottom):
 python3 -m hallucinote.sync.push_cli plan <phase-name> <session_id> --song <slug>
 ```
 
-Save stdout to `/tmp/ableton-push-plan.json` using Write. Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
+Save stdout to `/tmp/ableton-push-plan-<phase>.json` using Write — `<phase>` substituted with the actual phase name (e.g., `tempo_map`, `tracks`). The apply step (3c) re-reads this file via `--plan`, so use the same path consistently in 3a and 3c.
+
+Display any non-empty `notes` to the user before executing — they often surface unlinked dependencies (e.g., the `clips` phase warns when a track isn't linked yet because Step 1 didn't match it AND the `tracks` phase hasn't applied yet).
 
 If `plan.calls` is empty, skip to the next phase. Common reasons: nothing in the DB for this phase (e.g., no devices), or every entity already linked (idempotent re-push).
 
-**3b. Execute each call.**
+**3b. Execute each call (minimal format).**
 
-For each `call` in `plan.calls`:
+For each `call` in `plan.calls`, in plan-list order:
 
 - `call.tool` always starts with `ableton_` — every emitter routes to a real `hallucinote-mcp` tool. (As of W5-A there are no emulator placeholders — `mcp_names.ALIASES_TODAY` is empty.)
 - Route to the matching MCP namespace: `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "create", ...}`).
-- On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
-- On failure (MCP raises), build `{"key": call.key, "ok": false, "tool": call.tool, "error": "<message>"}` and continue to the next call. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
+- **W10-E minimal format (recommended)**: build a compact `{"ok": true, "result": <response>}` per call — ~half the JSON of the legacy format. The CLI re-derives `key` + `tool` from the plan via `--plan`.
+- On failure (MCP raises), build `{"ok": false, "error": "<message>"}` and continue. Do NOT retry — Ableton transient failures are rare and silent retries mask real bugs.
+
+Order in the results list MUST match the order of calls in `plan.calls`. The CLI zips them by position.
 
 **Tempo / signature: bar-1 only.** Live's MCP exposes `ableton_session(set_tempo)` and `set_signature` which set the global (bar-1) value. Per-bar tempo / meter automation is a real MCP gap (`ableton_automation` has no `song_tempo` / `song_signature` `target_kind` — see `hallucinote_mcp/.../guides/gaps.md`). The planner emits `ableton_session(set_tempo/set_signature)` for the bar-1 row of each map and warns + skips the rest. Songs with mid-song tempo / meter changes will round-trip the bar-1 value only until the MCP gap closes.
 
-**3c. Assemble + apply.**
+**3c. Apply with --plan (minimal format).**
 
-Write the results array to `/tmp/ableton-push-results.json` and run:
+Write the minimal results array to `/tmp/ableton-push-results.json` and run:
 ```
-python3 -m hallucinote.sync.push_cli apply <session_id> --song <slug> --results /tmp/ableton-push-results.json
+python3 -m hallucinote.sync.push_cli apply <session_id> --song <slug> \
+    --results /tmp/ableton-push-results.json \
+    --plan /tmp/ableton-push-plan-<phase>.json
 ```
+
+The `--plan` arg points the CLI at the plan that produced the results, so it can re-derive `key` + `tool` and dispatch to the right apply path per call.
 
 The CLI prints `{"applied": N, "failed": M, "details": [...]}`. The apply call writes `ableton_links` rows from successful results so the next phase's planner sees the new state.
+
+**Legacy fallback**: if you already have `{"key", "ok", "tool", "result"}` entries (e.g., from a pre-W10-E playbook), pass them WITHOUT `--plan`. The CLI sniffs the format and accepts either.
 
 **3d. Report per-phase.**
 
@@ -120,9 +135,16 @@ Tell the user concisely: `"<phase>: <N> calls, <K> applied, <F> failed"`. If any
 
 ### Step 4 — Final report
 
-After all ten phases:
-- Total applied / failed across phases.
-- A short summary by domain (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written; 2 emulator-gap calls skipped"`).
+After all ten phases, surface the following to the user **in this order**:
+
+1. **Totals.** Total applied / failed across phases.
+2. **Per-domain summary.** A short line (`"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written; 2 emulator-gap calls skipped"`).
+3. **Live 12.4 UI heads-up — conditional, only emit the rows that apply to this push.** These two behaviors are not bugs; they look broken until the user knows the gesture that reveals state. Mention each only when the push's actual output makes the user likely to hit it:
+   - **Mixer column hides on tracks with empty device chains.** Emit if any track in the push has zero devices (typically when the song's DB lists no devices for a track, or when the `devices` phase was skipped). One-liner: "Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders." Name each affected track.
+   - **Mixer / pan / send envelopes hidden in the MIDI clip envelope dropdown.** Emit if the `envelopes` phase wrote any `mixer_volume` / `mixer_pan` / `send_level` envelope on a MIDI clip. One-liner: "Mixer envelope(s) pushed onto MIDI clip 'Y' are playing (the fader will visibly move) but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider in Live and choose 'Show Modulation' to draw/edit them. Live remembers the choice per-set."
+
+   If neither applies, skip this section entirely — don't add ceremony to a clean push.
+4. **Cue-zoom hint, conditional (W15-D).** When the `cues` phase wrote at least one cue point — operationally: Step 3d reported `applied >= 1` for the `cues` phase (which emits a single batched `cue_create_batch` call) — append a one-line hint: "Cues sit on Live's locator strip above the arrangement timeline. If they aren't visible: zoom out (Cmd + minus on macOS, Ctrl + minus on Windows) or scroll left; click any locator to jump the playhead there." Skip when no cues were pushed.
 
 If the user opens the Live set now, the song should be there.
 
@@ -183,10 +205,8 @@ Do not retry MCP calls automatically.
 
 ## Post-push Live UX quirks the user should know about
 
-Two Live 12.4 UI behaviors are worth flagging once the push completes — they're not bugs in the push, just things that look broken until you know:
+Two Live 12.4 UI behaviors are inherent to Live's LOM + UI defaults, not Hallucinote bugs. Step 4 of the workflow surfaces them to the user **conditionally** — only when the push's actual content makes the user likely to hit them. Reference detail kept here so the skill body can stay concise:
 
-1. **Mixer column hides on tracks with empty device chains.** Tracks that didn't have any devices loaded yet (e.g. before phase 7 runs, or after phase 7 if the song's DB lists no devices for a track) show no volume/pan/sends/master faders in Live's UI. The mixer state is still settable + functional via MCP; the UI just collapses. Loading any device into the chain restores the full column. If the user asks "why don't I see faders," the answer is "load any instrument on that track."
+1. **Mixer column hides on tracks with empty device chains.** Tracks that didn't have any devices loaded yet (e.g. before phase 7 runs, or after phase 7 if the song's DB lists no devices for a track) show no volume/pan/sends/master faders in Live's UI. The mixer state is still settable + functional via MCP; the UI just collapses. Loading any device into the chain restores the full column.
 
-2. **Mixer / Pan / Send envelopes on MIDI clips are hidden in the per-clip envelope dropdown by default.** Empirical Live 12.4 + W4-A `.als` XML inspection confirm: envelopes written through `ableton_automation(write_envelope, target_kind='mixer_volume'|'mixer_pan'|'send_level')` on MIDI session/arrangement clips are **fully attached and functional during playback** (the fader visibly moves), but Live's per-MIDI-clip envelope-selector UI hides `Mixer → Track Volume` (et al.) from the dropdown by default. To make the envelope drawable + editable in the UI, the user must **right-click the affected mixer slider in Live and choose "Show Modulation"**. Live remembers the choice per-set. The envelope plays correctly without this step — the gesture is only for visibility/editability. Mention this when the user asks "where are the envelopes I just pushed?" or "I want to tweak the swell after push."
-
-These limitations are inherent to Live 12.4's LOM + UI defaults, not Hallucinote. See backlog for the two findings.
+2. **Mixer / Pan / Send envelopes on MIDI clips are hidden in the per-clip envelope dropdown by default.** Empirical Live 12.4 + W4-A `.als` XML inspection confirm: envelopes written through `ableton_automation(write_envelope, target_kind='mixer_volume'|'mixer_pan'|'send_level')` on MIDI session/arrangement clips are **fully attached and functional during playback** (the fader visibly moves), but Live's per-MIDI-clip envelope-selector UI hides `Mixer → Track Volume` (et al.) from the dropdown by default. To make the envelope drawable + editable in the UI, the user must **right-click the affected mixer slider in Live and choose "Show Modulation"**. Live remembers the choice per-set. The envelope plays correctly without this step — the gesture is only for visibility/editability.

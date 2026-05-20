@@ -29,10 +29,23 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import strip_return_slot_prefix
+from hallucinote.capture import RACK_CLASS_NAMES, strip_return_slot_prefix
 
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
+
+# Cross-module address-resolution reuse: pull's per-envelope read addressing
+# mirrors push's per-envelope write addressing (covering session-clip lookup,
+# clip-local time translation). These helpers are intentionally shared rather
+# than duplicated; the W4-B backlog item to consolidate the three `_emit_*_envelope`
+# helpers will likely surface a shared `sync.envelope_routing` module that
+# absorbs them — but until then, pulling from push.py is the minimum-impact path
+# that keeps pull and push exactly symmetric on routing semantics. Any push-side
+# routing fix automatically applies to pull.
+from hallucinote.sync.push import (
+    _envelope_beat_range,
+    _resolve_envelope_session_clip,
+)
 
 # Float tolerance for diff detection. 1e-3 means anything within ~0.1% of full
 # scale is a no-op — covers Live's display-rounding (e.g. 0.6249 vs 0.6250)
@@ -318,6 +331,105 @@ def plan_pull_devices(
             "no linked tracks or returns for this session — device-chain "
             "pull will be empty"
         )
+    return plan
+
+
+def plan_pull_nested_rack_chains(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull one level of nested rack chains (W7-B).
+
+    Iterates DB-side top-level device rows on linked tracks/returns and emits
+    one ``ableton_device(action='get_device_chains', ...)`` per device whose
+    `kind` is in `RACK_CLASS_NAMES`. The result is consumed by
+    ``_apply_nested_rack_chains_for_device``, which diffs the response
+    against `device_chains` + `devices` rows hung off the rack device.
+
+    Assumes `plan_pull_devices` has already populated the top-level device
+    rows for the session. If no top-level devices exist (no `plan_pull_devices`
+    pull run yet), the planner emits nothing and warns.
+
+    Out of scope: recursively nested racks (rack-in-rack); tracked in backlog.
+
+    `detail='summary'` is the default — identity-only nested device entries
+    are sufficient for the diff. The full detail (per-nested mixer state)
+    would land schema columns that don't exist yet.
+    """
+    plan = PullPlan()
+    any_emitted = False
+    any_top_level_device = False
+
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if track_at is None:
+            continue
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_top_level_device = True
+                if d["kind"] not in RACK_CLASS_NAMES:
+                    continue
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_device_chains",
+                        "track_index": track_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"nested_rack_chains:{d['id']}",
+                    purpose=(
+                        f"pull nested chains for rack {d['kind']!r} "
+                        f"(pos {d['position']}) on track {t['name']!r}"
+                    ),
+                ))
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if return_at is None:
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_top_level_device = True
+                if d["kind"] not in RACK_CLASS_NAMES:
+                    continue
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_device_chains",
+                        "return_index": return_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"nested_rack_chains:{d['id']}",
+                    purpose=(
+                        f"pull nested chains for rack {d['kind']!r} "
+                        f"(pos {d['position']}) on return {r['name']!r}"
+                    ),
+                ))
+
+    if not any_top_level_device:
+        plan.warn(
+            "no top-level devices on linked tracks or returns — nested-rack "
+            "pull will be empty (run plan_pull_devices first if you "
+            "expected devices)"
+        )
+    elif not any_emitted:
+        # Top-level devices exist but no racks among them — that's a valid
+        # song shape, not a warning condition.
+        pass
     return plan
 
 
@@ -615,6 +727,419 @@ def plan_pull_notes_for_clips(
             "no clips linked in this session — note pull will be empty"
         )
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Envelope pull (W7-A)
+# ---------------------------------------------------------------------------
+#
+# The pull-side mirror of `plan_push_envelopes`. The push side iterates DB
+# `envelopes` rows and emits one `write_envelope` ToolCall per envelope; pull
+# does the same, emitting one `read_envelope` PullCall per DB envelope. Per-
+# kind addressing matches push exactly (note_expression by note pitch+start,
+# device_parameter via covering session-clip + device, mixer/send via covering
+# session-clip on the target track).
+#
+# **Skip symmetry with push is load-bearing**: when push would skip an
+# envelope with a warn (no covering placement, unlinked target, nested-rack
+# device, return-side device_parameter, clip_cc/clip_pitch_bend LOM gap), the
+# pull-side MUST also skip — otherwise reading a never-pushed envelope would
+# return `exists=False`, and the apply path would delete the DB row that
+# represents the user's authored intent. The same skip-with-warn shape is the
+# right behavior for both halves: "we have no Live-side wire for this DB row."
+#
+# Existence detection follows W6-G/H's contract: `exists=False` means Live
+# has ≤1 distinct sample across the clip's range — no real envelope. When
+# `exists=True` but breakpoints match the DB within tolerance (modulo curve),
+# it's a no-op; when breakpoints differ, the merged result is committed via
+# `M.replace_breakpoints` (atomic). When `exists=False`, the envelope is
+# deleted from the DB via `M.delete_envelope` (cascades breakpoints).
+#
+# Curve preservation: Live 12.4 returns every breakpoint as `curve='hold'`
+# because `Envelope.insert_step` is the only API exposed (W6-C). On read, we
+# match each Live breakpoint to a DB breakpoint by (time within tolerance,
+# value within tolerance). If matched, the DB's `curve_kind` is preserved
+# (linear/fast/slow intent recorded in the DB survives the round-trip). If
+# only time matches (value differs), Live overwrote the value — the new
+# breakpoint inherits `curve='hold'` because Live can't tell us otherwise.
+# This rule prevents pull churn on songs whose DB-authored envelopes carry
+# non-hold curves that push has already warned about being lossy (W5-E).
+
+
+# Time-match tolerance for envelope diff. read_envelope samples at
+# `resolution_beats` (default 1/96 beat); a step transition can land anywhere
+# within that window. Tolerance is the sampling resolution + a small float
+# slack so we don't churn on Live's quantum. The apply path reads the actual
+# resolution from the response and scales tolerance accordingly.
+_ENVELOPE_TIME_EPS_SLACK = _FLOAT_EPS
+
+# Value-match tolerance for envelope diff. Same scale as device-parameter
+# diffing — Live's display rounding is ~0.1% of full range.
+_ENVELOPE_VALUE_EPS = _FLOAT_EPS
+
+# clip_cc / clip_pitch_bend are LOM-gap-blocked on both the write and read
+# sides (W6-G handler raises NotImplementedError). Pull skips them with the
+# same shape as push.
+_ENVELOPE_KINDS_READ_BLOCKED = frozenset({"clip_cc", "clip_pitch_bend"})
+
+
+def plan_pull_envelopes(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan the pull of every envelope in a song. One read_envelope per
+    DB envelope (W7-A — closes the round-trip gap left by W5-E's warn-only
+    push behavior).
+
+    Iterates DB envelopes rather than enumerating Live-side surfaces, so
+    this is a *round-trip* pull: it catches user-edits to envelopes that
+    already exist in the DB. Discovering envelopes authored only in Live
+    is a backlog item — would require enumerating every linked clip ×
+    target_kind, every linked device parameter, etc., which explodes
+    the call surface.
+
+    Skip-with-warn (symmetric with `plan_push_envelopes`):
+      - `clip_cc` / `clip_pitch_bend`: read_envelope_handler raises
+        NotImplementedError for these kinds (Live 12.4 LOM gap).
+      - Unlinked target / clip / device / track / return.
+      - No covering arrangement_clip placement for the envelope's beat
+        range (mixer / send / device_parameter need session-clip routing).
+      - Nested-rack device_parameter (W6-I/J shipped probe but pull
+        routing still flat — W7-B unblocks).
+      - Return-side device_parameter (no return-clip schema in DB).
+    """
+    plan = PullPlan()
+    envelopes = Q.get_envelopes_for_song(conn, song_id)
+    if not envelopes:
+        plan.warn("no envelopes for this song; nothing to pull")
+        return plan
+
+    for env in envelopes:
+        kind = env["target_kind"]
+        if kind in _ENVELOPE_KINDS_READ_BLOCKED:
+            plan.warn(
+                f"envelope {env['id']} ({kind}): Live 12.4 LOM doesn't "
+                "expose envelope read for MIDI CC / pitch-bend targets; "
+                "skipping pull (symmetric with push)"
+            )
+            continue
+
+        if kind == "note_expression":
+            _emit_pull_note_expression(plan, conn, session_id=session_id, envelope=env)
+        elif kind == "device_parameter":
+            _emit_pull_device_parameter(
+                plan, conn, song_id=song_id, session_id=session_id, envelope=env,
+            )
+        elif kind in ("mixer_volume", "mixer_pan"):
+            _emit_pull_mixer(
+                plan, conn, song_id=song_id, session_id=session_id, envelope=env,
+            )
+        elif kind == "send_level":
+            _emit_pull_send(
+                plan, conn, song_id=song_id, session_id=session_id, envelope=env,
+            )
+        else:
+            # Belt-and-suspenders — schema CHECK already constrains target_kind.
+            raise ValueError(
+                f"plan_pull_envelopes: target_kind {kind!r} has no emitter "
+                "branch — add one alongside the schema entry"
+            )
+    return plan
+
+
+def _emit_pull_note_expression(
+    plan: PullPlan,
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    envelope: sqlite3.Row,
+) -> None:
+    """note_expression read addressing — mirrors push."""
+    note_row = conn.execute(
+        """SELECT n.pitch, n.start_beats, n.clip_id
+           FROM notes n WHERE n.id = ?""",
+        (envelope["target_note_id"],),
+    ).fetchone()
+    if note_row is None:
+        plan.warn(
+            f"envelope {envelope['id']} (note_expression): note "
+            f"{envelope['target_note_id']} not found; skipping"
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=note_row["clip_id"],
+    )
+    clip_row = Q.get_clip(conn, note_row["clip_id"])
+    track_at = (
+        Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=clip_row["track_id"],
+        )
+        if clip_row is not None else None
+    )
+    if track_at is None or clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (note_expression): clip not linked "
+            f"(track={track_at}, clip={clip_at}); skipping"
+        )
+        return
+    plan.add(PullCall(
+        tool="ableton_automation",
+        args={
+            "action": "read_envelope",
+            "target_kind": "note_expression",
+            "track_index": track_at,
+            "location": "session",
+            "clip_index": clip_at,
+            "note_pitch": int(note_row["pitch"]),
+            "note_start_beats": float(note_row["start_beats"]),
+            "axis": envelope["parameter_path"],
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"pull note_expression {envelope['parameter_path']} on note "
+            f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}"
+        ),
+    ))
+
+
+def _emit_pull_device_parameter(
+    plan: PullPlan,
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    envelope: sqlite3.Row,
+) -> None:
+    """device_parameter read addressing — mirrors push (session-clip routed
+    on Live 12.4; return-side and nested-rack still gap-blocked)."""
+    device_id = envelope["target_device_id"]
+    device_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="device", db_id=device_id,
+    )
+    chain_row = conn.execute(
+        """SELECT dc.parent_track_id, dc.parent_return_id, dc.parent_rack_device_id
+           FROM devices d
+           JOIN device_chains dc ON dc.id = d.chain_id
+           WHERE d.id = ?""",
+        (device_id,),
+    ).fetchone()
+    if chain_row is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): device "
+            f"{device_id} not found; skipping"
+        )
+        return
+    if chain_row["parent_rack_device_id"] is not None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): nested-rack "
+            f"device {device_id} — pull not yet routed (W7-B closes capture; "
+            "pull-side ingest in same chunk)"
+        )
+        return
+    if chain_row["parent_return_id"] is not None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): return-side "
+            f"device {device_id} — Live 12.4 requires session-clip routing "
+            "for device_parameter envelopes, but DB has no return-side "
+            "session-clip model; skipping (symmetric with push)"
+        )
+        return
+    parent_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track",
+        db_id=chain_row["parent_track_id"],
+    )
+    if parent_at is None or device_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): track or "
+            f"device not linked (track={parent_at}, device={device_at}); "
+            "skipping"
+        )
+        return
+    breakpoints = Q.get_breakpoints(conn, envelope["id"])
+    if not breakpoints:
+        # No DB breakpoints means push would have skipped this row, so Live
+        # has nothing to read back. Don't emit — and don't warn (an envelope
+        # row with zero breakpoints is a no-op on push by design).
+        return
+    bps_mcp = [
+        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"])}
+        for bp in breakpoints
+    ]
+    env_min, env_max = _envelope_beat_range(bps_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=chain_row["parent_track_id"],
+        env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): no arrangement "
+            f"clip on track {parent_at} covers beat range [{env_min:g}, "
+            f"{env_max:g}]; symmetric skip with push (no session-clip route)"
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (device_parameter): session clip "
+            f"{placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return
+    plan.add(PullCall(
+        tool="ableton_automation",
+        args={
+            "action": "read_envelope",
+            "target_kind": "device_parameter",
+            "track_index": parent_at,
+            "location": "session",
+            "clip_index": clip_at,
+            "device_index": device_at,
+            "parameter_name": envelope["parameter_path"],
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"pull device_parameter {envelope['parameter_path']} on track "
+            f"{parent_at} session clip {clip_at} (offset {placement.start_beats:g})"
+        ),
+    ))
+
+
+def _emit_pull_mixer(
+    plan: PullPlan,
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    envelope: sqlite3.Row,
+) -> None:
+    """mixer_volume / mixer_pan read addressing — session-clip routed."""
+    track_id = envelope["target_track_id"]
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+    )
+    if track_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): track "
+            f"{track_id} not linked; skipping"
+        )
+        return
+    breakpoints = Q.get_breakpoints(conn, envelope["id"])
+    if not breakpoints:
+        return
+    bps_mcp = [
+        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"])}
+        for bp in breakpoints
+    ]
+    env_min, env_max = _envelope_beat_range(bps_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=track_id, env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): no "
+            f"arrangement clip on track {track_at} covers beat range "
+            f"[{env_min:g}, {env_max:g}]; symmetric skip with push"
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({envelope['target_kind']}): session "
+            f"clip {placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return
+    plan.add(PullCall(
+        tool="ableton_automation",
+        args={
+            "action": "read_envelope",
+            "target_kind": envelope["target_kind"],
+            "track_index": track_at,
+            "location": "session",
+            "clip_index": clip_at,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"pull {envelope['target_kind']} on track {track_at} "
+            f"session clip {clip_at} (offset {placement.start_beats:g})"
+        ),
+    ))
+
+
+def _emit_pull_send(
+    plan: PullPlan,
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    envelope: sqlite3.Row,
+) -> None:
+    """send_level read addressing — session-clip routed, return_index
+    identifies destination."""
+    track_id = envelope["target_track_id"]
+    return_id = envelope["target_send_return_id"]
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+    )
+    return_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="return", db_id=return_id,
+    )
+    if track_at is None or return_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): track or return not "
+            f"linked (track={track_at}, return={return_at}); skipping"
+        )
+        return
+    breakpoints = Q.get_breakpoints(conn, envelope["id"])
+    if not breakpoints:
+        return
+    bps_mcp = [
+        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"])}
+        for bp in breakpoints
+    ]
+    env_min, env_max = _envelope_beat_range(bps_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=track_id, env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): no arrangement clip "
+            f"on track {track_at} covers beat range [{env_min:g}, "
+            f"{env_max:g}]; symmetric skip with push"
+        )
+        return
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} (send_level): session clip "
+            f"{placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return
+    plan.add(PullCall(
+        tool="ableton_automation",
+        args={
+            "action": "read_envelope",
+            "target_kind": "send_level",
+            "track_index": track_at,
+            "return_index": return_at,
+            "location": "session",
+            "clip_index": clip_at,
+        },
+        key=f"envelope:{envelope['id']}",
+        purpose=(
+            f"pull send_level on track {track_at} → return {return_at} "
+            f"session clip {clip_at} (offset {placement.start_beats:g})"
+        ),
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -1498,23 +2023,65 @@ def _apply_devices_for_parent(
     else:
         chain_id = top_chain["id"]
 
+    _diff_chain_devices(
+        conn,
+        chain_id=chain_id,
+        entries=devices_in,
+        label=f"{parent_kind} device",
+        context_label=f"{parent_kind}_devices for {parent_id!r}",
+        out=out,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
+def _diff_chain_devices(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    entries: list[dict[str, Any]],
+    label: str,
+    context_label: str,
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff a Live device chain's contents against DB rows in `chain_id`.
+
+    Positional identity: a (chain, position) slot whose ``(class_name, name)``
+    matches is a no-op; any mismatch is delete + create at the same slot.
+    Removals: any DB row at a position absent from `entries`.
+
+    Shared by `_apply_devices_for_parent` (top-level chain, entries from
+    `ableton_device(action='list')`) and
+    `_apply_nested_rack_chains_for_device` (nested chain, entries from
+    `ableton_device(action='get_device_chains')`). Both pre-normalize to
+    use ``device_index`` for the slot — the wire-shape `position` field
+    on nested entries is renamed at the caller.
+
+    `label` is the per-row prefix in details lines (e.g. ``"track device"``,
+    ``"rack chain 2 device"``). `context_label` is the prefix for warnings
+    that name the surface being diffed.
+    """
     db_devices = list(Q.get_devices_for_chain(conn, chain_id))
     db_by_position = {d["position"]: d for d in db_devices}
 
     seen_positions: set[int] = set()
-    for entry in devices_in:
+    for entry in entries:
         idx = entry.get("device_index")
         if not isinstance(idx, int) or idx < 1:
             out.warnings.append(
-                f"{parent_kind}_devices for {parent_id!r}: entry missing or "
-                f"invalid device_index: {entry!r}"
+                f"{context_label}: entry missing or invalid "
+                f"device_index: {entry!r}"
             )
             continue
         kind_in = entry.get("class_name") or ""
         if not kind_in:
             out.warnings.append(
-                f"{parent_kind}_devices for {parent_id!r}: device at index "
-                f"{idx} missing class_name; skipping"
+                f"{context_label}: device at position {idx} missing "
+                "class_name; skipping"
             )
             continue
         name_in = entry.get("name") or ""
@@ -1543,13 +2110,13 @@ def _apply_devices_for_parent(
         out.mutations += 1
         if existing is not None:
             out.details.append(
-                f"{parent_kind} device pos {idx}: "
+                f"{label} pos {idx}: "
                 f"{existing['kind']}/{existing['display_name']!r} -> "
                 f"{kind_in}/{name_in!r}"
             )
         else:
             out.details.append(
-                f"{parent_kind} device pos {idx}: added {kind_in}/{name_in!r}"
+                f"{label} pos {idx}: added {kind_in}/{name_in!r}"
             )
 
     # Removals: any DB row at a position Ableton didn't report. Iterating the
@@ -1564,8 +2131,153 @@ def _apply_devices_for_parent(
         )
         out.mutations += 1
         out.details.append(
-            f"{parent_kind} device pos {d['position']}: "
+            f"{label} pos {d['position']}: "
             f"removed {d['kind']}/{d['display_name']!r}"
+        )
+
+
+def _apply_nested_rack_chains_for_device(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    rack_device_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff one rack device's nested chains against the probe payload (W7-B).
+
+    Mirrors `_apply_devices_for_parent` but operates on chains hung off a
+    rack device (`parent_rack_device_id`). Chain identity is positional —
+    the `chain_index` field on each entry maps to `device_chains.position`.
+    Nested device diff reuses `_diff_chain_devices` after normalizing the
+    wire shape (`position` -> the same `device_index` field name).
+
+    Missing rack device on the DB side -> warn + skip (the planner shouldn't
+    have emitted, but defense-in-depth).
+    """
+    rack = Q.get_device(conn, rack_device_id)
+    if rack is None:
+        out.warnings.append(
+            f"nested_rack_chains for {rack_device_id!r}: rack device row "
+            "not found — DB drifted since planner ran; skipping"
+        )
+        return
+    if rack["kind"] not in RACK_CLASS_NAMES:
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: kind "
+            f"{rack['kind']!r} is not a rack class "
+            f"({sorted(RACK_CLASS_NAMES)}); skipping"
+        )
+        return
+
+    # Defense-in-depth link check, parallel to `_apply_devices_for_parent`:
+    # the planner won't emit for unlinked parents, but a hand-crafted
+    # results.json could route around that guard.
+    parent_chain = conn.execute(
+        "SELECT parent_track_id, parent_return_id FROM device_chains WHERE id = ?",
+        (rack["chain_id"],),
+    ).fetchone()
+    parent_kind, parent_id = (
+        ("track", parent_chain["parent_track_id"]) if parent_chain["parent_track_id"]
+        else ("return", parent_chain["parent_return_id"])
+        if parent_chain["parent_return_id"]
+        else (None, None)
+    )
+    if parent_kind is None:
+        # Rack on a rack chain — outside W7-B scope (one level only). Defense:
+        # the planner restricts emission to top-level rack rows, but if a
+        # hand-rolled results.json bypassed that, surface it.
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: rack lives on "
+            "a nested chain — W7-B walks one level only; skipping"
+        )
+        return
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: parent "
+            f"{parent_kind} {parent_id!r} not linked in session; skipping "
+            "(the planner would not have emitted this)"
+        )
+        return
+
+    chains_in = result.get("chains")
+    if chains_in is None:
+        out.warnings.append(
+            f"nested_rack_chains for rack {rack_device_id!r}: result missing "
+            "'chains' field"
+        )
+        return
+
+    db_chains = Q.get_device_chains_for_rack_device(conn, rack_device_id)
+    db_chain_by_position = {c["position"]: c for c in db_chains}
+
+    seen_positions: set[int] = set()
+    for chain_entry in chains_in:
+        ci = chain_entry.get("chain_index")
+        if not isinstance(ci, int) or ci < 1:
+            out.warnings.append(
+                f"nested_rack_chains for rack {rack_device_id!r}: chain "
+                f"entry missing or invalid chain_index: {chain_entry!r}"
+            )
+            continue
+        seen_positions.add(ci)
+
+        existing_chain = db_chain_by_position.get(ci)
+        if existing_chain is None:
+            chain_id = M.create_device_chain(
+                conn,
+                parent_rack_device_id=rack_device_id,
+                position=ci,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            out.mutations += 1
+            out.details.append(
+                f"nested chain {ci} on rack {rack['kind']}: added"
+            )
+        else:
+            chain_id = existing_chain["id"]
+
+        # Normalize wire-shape `position` to `device_index` so `_diff_chain_devices`
+        # can be shared with the top-level apply path. The MCP `get_device_chains`
+        # handler uses `position` for the nested device's slot, while
+        # `ableton_device(action='list')` uses `device_index` — same semantic,
+        # different field name.
+        nested_devices_raw = chain_entry.get("devices") or []
+        normalized = [
+            {**e, "device_index": e.get("position")}
+            for e in nested_devices_raw
+        ]
+        _diff_chain_devices(
+            conn,
+            chain_id=chain_id,
+            entries=normalized,
+            label=f"nested chain {ci} on rack {rack['kind']} device",
+            context_label=f"nested_rack_chains for rack {rack_device_id!r}, "
+                          f"chain {ci}",
+            out=out,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+
+    # Removals: chains in DB that Ableton didn't report. Cascade clears nested
+    # devices + their parameters.
+    for c in db_chains:
+        if c["position"] in seen_positions:
+            continue
+        M.delete_device_chain(
+            conn, chain_id=c["id"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        out.mutations += 1
+        out.details.append(
+            f"nested chain {c['position']} on rack {rack['kind']}: removed"
         )
 
 
@@ -2150,6 +2862,54 @@ def _apply_notes_for_clip(
         else:
             out.no_ops += 1
 
+    # DB-only notes (queued for delete) — captured before deletion so we can
+    # cross-reference against inserts to detect likely UUID rotation.
+    db_only = [db_note for k, db_note in db_by_key.items() if k not in seen]
+
+    # Likely UUID-rotation pairs: a DB note and an Ableton-only note that
+    # share pitch + velocity + mute but differ in start/duration. Most often
+    # this is the user nudging a note (or changing its length) in Ableton —
+    # the diff is correctly modeled as delete + insert (the new note gets
+    # a fresh UUID), and we warn so the user can edit DB-side by UUID
+    # instead if note identity matters to them.
+    #
+    # `mute` is part of the bucket key by design: a move-AND-mute-toggle in
+    # the same pull won't pair up (and won't warn). Better to miss that
+    # rare combined case than to fire when "different pitch + same velocity"
+    # is a coincidence — the warning earns its keep only when it points at
+    # a genuinely-moved note.
+    if db_only and to_insert:
+        ins_pool: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
+        for ins in to_insert:
+            ins_pool.setdefault(
+                (ins["pitch"], ins["velocity"], ins["mute"]), []
+            ).append(ins)
+        pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for db_note in db_only:
+            mute_db = 1 if bool(db_note["mute"]) else 0
+            bucket = ins_pool.get(
+                (int(db_note["pitch"]), int(db_note["velocity"]), mute_db)
+            )
+            if bucket:
+                pairs.append((db_note, bucket.pop(0)))
+        if pairs:
+            # Name the moved notes so the user can act on the warning —
+            # `pitch start_beats -> start_beats (note_id <prefix>)` mirrors
+            # the neighboring `update_note` detail-line shape.
+            moves = ", ".join(
+                f"pitch {db['pitch']} {db['start_beats']:g}"
+                f"->{ins['start_beats']:g} (note_id {db['id'][:8]})"
+                for db, ins in pairs
+            )
+            out.warnings.append(
+                f"clip {clip_row['name']!r}: {len(pairs)} note(s) "
+                f"look moved (same pitch + velocity + mute, different "
+                f"start/duration) — the diff applies as delete + insert "
+                f"so the UUID rotates; if you want UUID preserved, "
+                f"undo in Ableton and edit DB-side by UUID instead. "
+                f"Moves: {moves}."
+            )
+
     # Batch insert: one event with all new notes.
     if to_insert:
         new_ids = M.insert_notes(
@@ -2163,21 +2923,273 @@ def _apply_notes_for_clip(
         )
 
     # Batch delete: DB notes whose key Ableton didn't report.
-    to_delete = [
-        db_note["id"]
-        for k, db_note in db_by_key.items()
-        if k not in seen
-    ]
-    if to_delete:
+    if db_only:
         M.delete_notes(
-            conn, note_ids=to_delete,
+            conn, note_ids=[d["id"] for d in db_only],
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1
         out.details.append(
             f"clip {clip_row['name']!r}: deleted "
-            f"{len(to_delete)} DB note(s) absent from Ableton"
+            f"{len(db_only)} DB note(s) absent from Ableton"
         )
+
+
+# Envelope-specific time-translation: pull responses come back in clip-local
+# beats for envelopes that push routed through a session clip (mixer / send /
+# device_parameter). The DB stores those breakpoints in arrangement-time, so
+# the apply layer translates clip-local → arrangement-time by adding the
+# placement's offset before diffing. note_expression breakpoints are clip-
+# local on both sides; no translation needed.
+def _envelope_needs_arrangement_translation(target_kind: str) -> bool:
+    return target_kind in (
+        "device_parameter", "mixer_volume", "mixer_pan", "send_level",
+    )
+
+
+def _arrangement_time_breakpoints(
+    live_bps: list[dict[str, Any]],
+    *,
+    offset_beats: float,
+) -> list[dict[str, Any]]:
+    """Translate Live's clip-local breakpoint times to DB arrangement-time
+    by adding the covering placement's offset. Inverse of push.py's
+    `_clip_local_breakpoints`."""
+    return [
+        {**bp, "time_beats": float(bp["time_beats"]) + offset_beats}
+        for bp in live_bps
+    ]
+
+
+def _resolve_envelope_offset(
+    conn: sqlite3.Connection,
+    *,
+    envelope: sqlite3.Row,
+    song_id: str,
+) -> float | None:
+    """Recompute the placement offset for an envelope's covering session clip.
+    Mirrors the lookup the planner did when emitting the read; if the
+    placement disappeared between plan and apply, return None so the apply
+    layer can warn-skip rather than mutate against stale routing."""
+    if envelope["target_kind"] == "device_parameter":
+        chain_row = conn.execute(
+            """SELECT dc.parent_track_id
+               FROM devices d
+               JOIN device_chains dc ON dc.id = d.chain_id
+               WHERE d.id = ?""",
+            (envelope["target_device_id"],),
+        ).fetchone()
+        if chain_row is None or chain_row["parent_track_id"] is None:
+            return None
+        target_track_id = chain_row["parent_track_id"]
+    else:  # mixer_volume / mixer_pan / send_level
+        target_track_id = envelope["target_track_id"]
+    breakpoints = Q.get_breakpoints(conn, envelope["id"])
+    if not breakpoints:
+        return None
+    bps_mcp = [
+        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"])}
+        for bp in breakpoints
+    ]
+    env_min, env_max = _envelope_beat_range(bps_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=target_track_id, env_min=env_min, env_max=env_max,
+    )
+    return placement.start_beats if placement is not None else None
+
+
+def _merge_envelope_breakpoints(
+    db_bps: list[sqlite3.Row],
+    live_bps: list[dict[str, Any]],
+    *,
+    time_eps: float,
+    value_eps: float,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Compute the merged breakpoint set under V1 conflict policy
+    (Ableton-authoritative) with curve preservation.
+
+    For each Live breakpoint, find the closest DB breakpoint by time
+    within `time_eps`:
+      - matched + value within `value_eps`  -> inherit DB's curve_kind
+      - matched + value differs              -> Live overwrote; curve='hold'
+      - unmatched                            -> new in Live; curve='hold'
+
+    DB breakpoints that no Live breakpoint matched are dropped (Live
+    removed them).
+
+    Returns `(merged_bps, changed)` where `changed` is True iff the merged
+    set differs from `db_bps` (length, ordering, or any per-bp field).
+
+    `merged_bps` is in {time_beats, value, curve_kind} dict shape ready
+    to pass to `M.replace_breakpoints`.
+
+    Each DB breakpoint can match at most one Live breakpoint (smallest
+    time delta wins on ties), so a stretched-Live timeline doesn't
+    inflate apparent matches.
+    """
+    db_used: set[int] = set()
+    merged: list[dict[str, Any]] = []
+    for lbp in live_bps:
+        t_live = float(lbp["time_beats"])
+        v_live = float(lbp["value"])
+        best_idx: int | None = None
+        best_dt = float("inf")
+        for i, dbp in enumerate(db_bps):
+            if i in db_used:
+                continue
+            dt = abs(float(dbp["time_beats"]) - t_live)
+            if dt <= time_eps and dt < best_dt:
+                best_dt = dt
+                best_idx = i
+        if best_idx is not None:
+            db_used.add(best_idx)
+            dbp = db_bps[best_idx]
+            value_match = abs(float(dbp["value"]) - v_live) <= value_eps
+            curve = dbp["curve_kind"] if value_match else "hold"
+            merged.append({
+                "time_beats": t_live,
+                "value": v_live,
+                "curve_kind": curve,
+            })
+        else:
+            merged.append({
+                "time_beats": t_live,
+                "value": v_live,
+                "curve_kind": "hold",
+            })
+
+    # Detect change: count mismatch or any field difference. Use the
+    # same epsilon scales as the per-breakpoint matching above — time
+    # comparisons use `time_eps` (sampling resolution + slack), not the
+    # tighter `value_eps`, so Live's quantum doesn't churn a no-op into
+    # a write on every pull.
+    changed = len(merged) != len(db_bps)
+    if not changed:
+        for m, dbp in zip(merged, db_bps):
+            if (
+                abs(m["time_beats"] - float(dbp["time_beats"])) > time_eps
+                or abs(m["value"] - float(dbp["value"])) > value_eps
+                or m["curve_kind"] != dbp["curve_kind"]
+            ):
+                changed = True
+                break
+    return merged, changed
+
+
+def _apply_envelope(
+    conn: sqlite3.Connection,
+    *,
+    envelope_id: str,
+    song_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff a single envelope's Live state against the DB; mutate to converge
+    (Ableton-authoritative under V1 conflict policy).
+
+    Three diff outcomes:
+      - `exists=False` -> Live has no envelope here; delete the DB row.
+      - `exists=True`, breakpoints match within tolerance -> no-op (curve
+        preservation lets DB-side `linear`/`fast`/`slow` curves stay even
+        though Live reports them as `hold`).
+      - `exists=True`, breakpoints differ -> atomic `replace_breakpoints`
+        with the merged set (curve preservation for matched, `hold` for
+        new/changed-value).
+    """
+    envelope = Q.get_envelope(conn, envelope_id)
+    if envelope is None:
+        out.warnings.append(
+            f"envelope {envelope_id!r}: DB row not found; skipping "
+            "(envelope deleted between plan and apply?)"
+        )
+        return
+
+    live_bps = result.get("breakpoints")
+    if not isinstance(live_bps, list):
+        out.warnings.append(
+            f"envelope {envelope_id!r} ({envelope['target_kind']}): result "
+            "missing 'breakpoints' field; skipping"
+        )
+        return
+    # Delete-gate: an envelope is "absent in Live" iff the read returned ZERO
+    # breakpoints. The handler's `exists` field is informational and uses a
+    # `len > 1` heuristic that can't distinguish (a) "no envelope ever bound"
+    # (Live default sample at t=0) from (b) "single-breakpoint envelope held
+    # at a constant value" — both yield exactly one sampled breakpoint. Trusting
+    # `exists` for the delete decision would round-trip-delete case (b)
+    # (W7-0 cumulative-Critic warning 2026-05-19).
+    resolution = float(result.get("resolution_beats", 1.0 / 96.0))
+    # Tolerance derived from the actual sampling resolution Live used —
+    # transitions can localize anywhere within that window. Slack added on
+    # top to absorb display rounding.
+    time_eps = resolution + _ENVELOPE_TIME_EPS_SLACK
+
+    db_bps = Q.get_breakpoints(conn, envelope_id)
+
+    if not live_bps:
+        # Live reports no envelope here. If the DB row has breakpoints
+        # (representing the user's authored intent), it means the user
+        # removed the envelope in Live. Cascade-delete the DB row.
+        if db_bps:
+            M.delete_envelope(
+                conn, envelope_id=envelope_id,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            out.mutations += 1
+            out.details.append(
+                f"envelope {envelope_id[:8]} ({envelope['target_kind']}): "
+                f"removed (Live reports no envelope; {len(db_bps)} DB "
+                "breakpoint(s) cascaded)"
+            )
+        else:
+            # DB row exists but already empty; Live agrees. No-op.
+            out.no_ops += 1
+        return
+
+    # Translate clip-local Live times back to arrangement-time for kinds
+    # that push routes through a session clip.
+    if _envelope_needs_arrangement_translation(envelope["target_kind"]):
+        offset = _resolve_envelope_offset(
+            conn, envelope=envelope, song_id=song_id,
+        )
+        if offset is None:
+            out.warnings.append(
+                f"envelope {envelope_id!r} ({envelope['target_kind']}): "
+                "covering session-clip placement no longer resolves; "
+                "skipping (re-run pull after re-pushing arrangement)"
+            )
+            return
+        live_bps_arrangement = _arrangement_time_breakpoints(
+            live_bps, offset_beats=offset,
+        )
+    else:
+        # note_expression — clip-local on both sides.
+        live_bps_arrangement = [
+            {"time_beats": float(bp["time_beats"]), "value": float(bp["value"])}
+            for bp in live_bps
+        ]
+
+    merged, changed = _merge_envelope_breakpoints(
+        db_bps, live_bps_arrangement,
+        time_eps=time_eps, value_eps=_ENVELOPE_VALUE_EPS,
+    )
+    if not changed:
+        out.no_ops += 1
+        return
+
+    M.replace_breakpoints(
+        conn, envelope_id=envelope_id, breakpoints=merged,
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    out.mutations += 1
+    out.details.append(
+        f"envelope {envelope_id[:8]} ({envelope['target_kind']}): "
+        f"breakpoints replaced ({len(db_bps)} -> {len(merged)})"
+    )
 
 
 # Dispatch table: key kind -> (handler, expects-db-id)
@@ -2190,10 +3202,12 @@ _HANDLERS = {
     "cue_points_list":           ("cue_points_list",           False),
     "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
+    "nested_rack_chains":        ("nested_rack_chains",        True),   # W7-B: one level deep
     "device_parameters":         ("device_parameters",         True),   # W5-D: per-device param values
     "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
     "track_session_clips":       ("track_session_clips",       True),   # V1 close-out C
     "clip_notes":                ("clip_notes",                True),   # V1 close-out D — gap #4 partial
+    "envelope":                  ("envelope",                  True),   # W7-A — envelope pull
 }
 
 
@@ -2302,6 +3316,13 @@ def apply_pull_results(
                     result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
+            elif handler_name == "nested_rack_chains":
+                _apply_nested_rack_chains_for_device(
+                    conn, session_id=session_id,
+                    rack_device_id=db_id,
+                    result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
             elif handler_name == "device_parameters":
                 _apply_device_parameters_for_device(
                     conn, device_id=db_id,
@@ -2324,6 +3345,12 @@ def apply_pull_results(
                 _apply_notes_for_clip(
                     conn, song_id=song_id, session_id=session_id,
                     clip_id=db_id, result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "envelope":
+                _apply_envelope(
+                    conn, envelope_id=db_id, song_id=song_id,
+                    result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
 

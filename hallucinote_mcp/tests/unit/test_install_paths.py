@@ -21,6 +21,7 @@ from hallucinote_mcp.install_paths import (
     existing_mcp_config_files,
     hallucinote_mcp_command,
     installed_live_versions,
+    installed_remote_script_version,
     live_is_running,
     live_log_path,
     malformed_mcp_config_files,
@@ -792,3 +793,96 @@ def test_existing_finds_per_project_entry_via_resolved_cwd(fake_home, tmp_path):
     assert found[0].json_pointer == (
         "projects", resolved_key, "mcpServers", "hallucinote-mcp",
     )
+
+
+# --- W12-D: Remote Script version detection -------------------------------
+
+def _write_fake_vendored_install(user_library: pathlib.Path, base_version: str) -> pathlib.Path:
+    """Stand up a minimal vendored Remote Script tree for version tests.
+
+    Mirrors the layout `/ableton-install-mcp` creates: a `__init__.py`
+    declaring `BASE_VERSION` plus the fingerprint-relevant source files
+    (`wire.py`, `schema.py`, `dispatcher.py`, `actions/`, `handlers/`,
+    `remote_script/`). `compute_version_for` parses BASE_VERSION and
+    fingerprints the same paths the canonical `__init__.py` does, so
+    the test setup must cover both surfaces.
+    """
+    vendored = user_library / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp"
+    vendored.mkdir(parents=True)
+    init = vendored / "__init__.py"
+    init.write_text(
+        f'BASE_VERSION = "{base_version}"\n', encoding="utf-8",
+    )
+    # Fingerprint-relevant paths (mirrors _FINGERPRINT_PATHS in __init__.py).
+    (vendored / "wire.py").write_text("# fake wire\n", encoding="utf-8")
+    (vendored / "schema.py").write_text("# fake schema\n", encoding="utf-8")
+    (vendored / "dispatcher.py").write_text("# fake dispatcher\n", encoding="utf-8")
+    (vendored / "actions").mkdir()
+    (vendored / "actions" / "__init__.py").write_text("# fake actions\n", encoding="utf-8")
+    (vendored / "handlers").mkdir()
+    (vendored / "handlers" / "__init__.py").write_text("# fake handlers\n", encoding="utf-8")
+    (vendored / "remote_script").mkdir()
+    (vendored / "remote_script" / "__init__.py").write_text(
+        "# fake remote_script\n", encoding="utf-8"
+    )
+    return vendored
+
+
+def test_installed_remote_script_version_returns_none_when_not_installed(tmp_path):
+    """A User Library with no `Remote Scripts/Hallucinote/hallucinote_mcp/`
+    returns None — preflight should report installed=False without a
+    spurious version string."""
+    assert installed_remote_script_version(tmp_path) is None
+
+
+def test_installed_remote_script_version_reads_base_version_and_fingerprints(tmp_path):
+    """Vendored install present → version string is `BASE+fingerprint`.
+
+    The fingerprint is content-derived (12 hex chars of sha256), so we
+    don't assert its exact value — just that the shape is BASE+suffix
+    and that two identical trees produce the same suffix.
+    """
+    lib_a = tmp_path / "libA"
+    lib_b = tmp_path / "libB"
+    _write_fake_vendored_install(lib_a, "1.2.3")
+    _write_fake_vendored_install(lib_b, "1.2.3")
+    ver_a = installed_remote_script_version(lib_a)
+    ver_b = installed_remote_script_version(lib_b)
+    assert ver_a is not None
+    assert ver_a.startswith("1.2.3+")
+    assert ver_a == ver_b  # identical trees → identical fingerprints
+
+
+def test_installed_remote_script_version_changes_when_content_changes(tmp_path):
+    """Content drift in any fingerprinted file → different version string.
+
+    This is the load-bearing property: the install skill uses
+    `matches_mcp_server` to decide whether to suggest re-running install,
+    and that flag is only useful if content drift actually changes the
+    version.
+    """
+    lib = tmp_path / "lib"
+    _write_fake_vendored_install(lib, "1.2.3")
+    before = installed_remote_script_version(lib)
+
+    # Mutate one fingerprint-relevant file.
+    wire = lib / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp" / "wire.py"
+    wire.write_text("# fake wire — drifted\n", encoding="utf-8")
+    after = installed_remote_script_version(lib)
+
+    assert before != after
+    assert before.startswith("1.2.3+")
+    assert after.startswith("1.2.3+")
+
+
+def test_installed_remote_script_version_returns_none_when_base_version_missing(tmp_path):
+    """A vendored `__init__.py` without a `BASE_VERSION` literal is
+    treated as unparseable — return None so preflight reports
+    `version: null` instead of fabricating a string. This protects
+    against bad partial copies that left empty / corrupted init files."""
+    vendored = tmp_path / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp"
+    vendored.mkdir(parents=True)
+    (vendored / "__init__.py").write_text(
+        "# no BASE_VERSION here\n", encoding="utf-8",
+    )
+    assert installed_remote_script_version(tmp_path) is None

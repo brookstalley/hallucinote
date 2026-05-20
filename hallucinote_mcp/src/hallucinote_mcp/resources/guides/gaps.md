@@ -17,13 +17,20 @@ Until the gap lifts, all-or-nothing replace is the only option for
 agents pushing notes.
 
 ### Envelope reads: `ableton_automation(action='list')`
-**Status:** `list` (enumerate-all-envelopes) remains blocked — Live's
-`Clip.automation_envelopes` yields envelope objects but their bound
-targets aren't readable from the envelope side, so target-less
-enumeration isn't possible.
+**Status:** `list` (enumerate-all-envelopes) is not currently
+supported. `envelope.parameter` IS accessible on Live 12.4 (the
+W7-0 smoke 2026-05-19 confirmed this empirically — and the targeted
+read path's existence-check now depends on it). Bulk enumeration
+would still require inverting every target-resolution branch to map
+each parameter back to a `(target_kind, addressing-args)` tuple —
+deferred until a consumer needs it.
 **Working alternative:** `ableton_automation(action='read_envelope',
 target_kind=..., ...)` — Wave 6 W6-G/W6-H (2026-05-19) closed the
-per-target read path via sampling-based reconstruction. Live exposes
+per-target read path via sampling-based reconstruction; W7-0
+(2026-05-19) corrected the existence check to iterate
+`Clip.automation_envelopes` and match by parameter identity (real
+Live's `create_automation_envelope` is not idempotent on already-
+bound targets, contrary to the W6-G assumption). Live exposes
 only `envelope.value_at_time(t)`, so the handler samples across the
 clip's range at `resolution_beats` (default 1/96 beat) and emits a
 breakpoint at each step transition. Works for all 7 target_kinds
@@ -55,6 +62,22 @@ clip or parameter belongs to another track." for arrangement clips.
 clip inherits the envelope. (clip_cc / clip_pitch_bend / note_expression
 on arrangement clips do work; only the track-level targets are
 restricted.)
+
+### Mixer / pan / send / device-parameter envelopes on the MASTER or audio tracks
+**Status:** Live 12.4's `Clip.create_automation_envelope` is the only
+envelope-creation surface, and the **master track cannot host clips of
+any kind** — there's no Clip object to address. Audio tracks accept
+audio clips, but Hallucinote v1 models clips as MIDI-only (audio-clip
+support is v1.1 scope), so the v1 routing path through
+`location='session' + clip_index` doesn't reach audio tracks either.
+Wave 0 investigation (Group D, 2026-05-19) confirmed there's no LOM
+path: `Utility` on master is dead-end (envelope creation still wants
+`Clip`); Max-for-Live mirror is a sub-bus pattern, not an MCP path.
+**Working alternative:** author a **sub-bus group track** (kind=`midi`)
+that receives the source(s), and put the volume / pan / send / device
+envelope on the group's mixer instead. The DB-mutator `create_envelope`
+refuses these target kinds on master / audio / group hosts with a
+teaching error (W10-F dual-layer refusal — DB + planner).
 
 ### MIDI CC and pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
 **Status:** Live 12.4's LOM exposes neither
@@ -133,6 +156,23 @@ start — Compressor + Compressor2 expose `input_routing_*` on the
 Device class; third-party plugins with declared sidechain inputs
 in their VST3/AU manifest do too. Older Live natives without the
 API surface their constraint honestly.
+
+### Interactive notes-read: no `ableton_clip(action='read_notes')`
+**Status:** Not in the V1 surface. The `ableton_clip` action set exposes
+`create / delete / duplicate_to_arrangement / fire / list / rename /
+replace_notes / set_property / stop` but no read-direction analog of
+`replace_notes`. The capability EXISTS — Live's
+`Clip.get_notes_extended()` works on Live 12.4 and is used by the pull
+pipeline (see project_state.yaml V1 close-out 2026-05-17: "Note pull via
+stable-ID read + whole-clip write"). It's just not exposed as a one-off
+read action today.
+**Working alternative:** run an `ableton-pull` cycle scoped to the song.
+Note state lands in the DB; `Q.get_notes_for_clip(conn, clip_id)` then
+returns the array. The agent inspects DB-side. For interactive "did my
+replace_notes round-trip correctly?" checks, this is the V1 path —
+fast for a single song's clips, but heavier than a direct read action
+would be. Long-term this is the read-direction analog of gap #4
+(see Wave 0 canary `odd-meter-experimental` runbook step 7e, 2026-05-19).
 
 ### Session-view audio clip creation
 `ableton_clip(action='create', location='session', kind='audio')`

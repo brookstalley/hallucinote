@@ -10,17 +10,22 @@ to walk the right Live API path:
   - **device_parameter** — `clip.create_automation_envelope(parameter)` where
     parameter is resolved by name on the device's chain
   - **mixer_volume** / **mixer_pan** / **send_level** — likewise routed
-    through a containing arrangement (or session) clip's
-    ``create_automation_envelope``.
+    through a containing **session** clip's ``create_automation_envelope``;
+    then ``ableton_clip(action='duplicate_to_arrangement')`` snapshot-copies
+    the envelope into the arrangement.
 
-All seven target kinds require a containing ``Clip`` (session or
-arrangement). Live 12.4's LOM does NOT expose track-level / parameter-level
-envelope creation: ``Track.create_automation_envelope`` and
-``Parameter.automation_*`` are not in the public surface (verified against
-Live 12 Suite's bundled ``LomTypes`` plus the first-party Push code in
-``pushbase/automation_component.py``). The handler surfaces a
-``NotImplementedError`` with a teaching message when callers omit
-``clip_index + location`` for the mixer/send/device-parameter kinds.
+All seven target kinds require a containing ``Clip``. Live 12.4's LOM does
+NOT expose track-level / parameter-level envelope creation:
+``Track.create_automation_envelope`` and ``Parameter.automation_*`` are not
+in the public surface (verified against Live 12 Suite's bundled ``LomTypes``
+plus the first-party Push code in ``pushbase/automation_component.py``).
+For mixer/pan/send/device_parameter targets the clip MUST be a session
+clip — Live raises ``RuntimeError("Not a session clip or parameter belongs
+to another track.")`` when called on an arrangement clip (W2-10 finding).
+The handler surfaces a ``NotImplementedError`` with a teaching message when
+callers omit ``clip_index + location`` for the mixer/send/device-parameter
+kinds, and a second ``NotImplementedError`` when ``location='arrangement'``
+is passed for those kinds.
 
 Each path takes a breakpoints list of ``{time_beats, value, curve?}`` dicts
 and writes via ``Envelope.insert_step(time, duration, value)``. Live 12.4's
@@ -37,9 +42,11 @@ keystone; ``clear`` / ``clear_all`` destroy envelopes; ``read_envelope``
 not breakpoint enumeration, so the handler samples and reconstructs
 step transitions. Covers 5 of 7 target_kinds; clip_cc / clip_pitch_bend
 remain LOM-blocked on the read side same as the write side. ``list``
-(target-less enumeration) stays blocked — Live's
-``Clip.automation_envelopes`` yields envelope objects but their
-bound targets aren't readable.
+(target-less enumeration) stays blocked: enumerating
+``Clip.automation_envelopes`` yields envelope objects but the
+canonical-id mapping back to a *target_kind + addressing args*
+shape would need to invert every target-resolution branch. The
+targeted read path is the supported route.
 
 Time is in **beats** on the wire. The Hallucinote planner converts from
 bar-based song positions via its time-signature map before emit. MCP
@@ -74,9 +81,11 @@ _TRACK_LEVEL_GAP_HINT = (
     "target_kind={target_kind!r} requires clip_index + location on Live "
     "12.4: the LOM does not expose track-level (clip-less) envelope "
     "creation for mixer / send / device-parameter automation. Provide "
-    "location='arrangement' (or 'session') and clip_index pointing at "
-    "the containing clip. Live's UI shows free track lanes, but the "
-    "Python API only addresses envelopes through Clip."
+    "location='session' and clip_index pointing at a session clip on the "
+    "target track; then ableton_clip(action='duplicate_to_arrangement') "
+    "carries the envelope into the arrangement. Live 12.4 rejects these "
+    "target kinds on arrangement clips outright. Live's UI shows free "
+    "track lanes, but the Python API only addresses envelopes through Clip."
 )
 
 
@@ -98,17 +107,22 @@ _TRACK_LEVEL_GAP_HINT = (
 # `list_handler` and `get_envelope_handler` are retained as the
 # original action names; `read_envelope_handler` is the new keystone
 # that reads a specific target_kind. list_handler remains gap-blocked
-# (Clip.automation_envelopes is exposed but enumerating envelopes
-# without knowing their targets requires LOM features Live doesn't
-# expose; W6-G focuses on the targeted read path).
+# for a different reason than originally documented: `envelope.parameter`
+# IS accessible (W7-0 smoke 2026-05-19 confirmed it empirically and the
+# fix relies on it), so iteration is possible — but mapping a Live
+# parameter back to a *target_kind + addressing args* response shape
+# requires inverting every target-resolution branch, which the
+# targeted read path already handles. Until a consumer needs
+# bulk-enumeration, the targeted path is the supported route.
 
 
 _ENVELOPE_LIST_GAP_HINT = (
-    "ableton_automation(action='list') — enumerating a clip's existing "
-    "envelopes without target identifiers isn't exposed by Live 10–12's "
-    "LOM. Clip.automation_envelopes yields envelope objects but the "
-    "target each one is bound to isn't readable from the envelope side. "
-    "Use ableton_automation(action='read_envelope', target_kind=..., ...) "
+    "ableton_automation(action='list') — bulk enumeration without a "
+    "target_kind isn't currently supported. The list would need to "
+    "invert every target-resolution branch to map each "
+    "Clip.automation_envelopes entry back to a (target_kind, "
+    "addressing-args) tuple. Use "
+    "ableton_automation(action='read_envelope', target_kind=..., ...) "
     "with a specific target instead — the same addressing args as "
     "write_envelope / clear."
 )
@@ -168,30 +182,75 @@ def _sample_envelope_to_breakpoints(
     return breakpoints
 
 
-def _find_existing_envelope(clip: Any, target: Any) -> Any | None:
-    """Try to find an existing envelope on `clip` for the given target.
+def _params_equal(p1: Any, p2: Any) -> bool:
+    """Compare two Live ``DeviceParameter`` objects for identity.
 
-    Live exposes envelope-creation via ``clip.create_automation_envelope(target)``
-    which is idempotent — it returns an existing envelope if one is
-    bound. So the cheap probe is: ask Live to create-or-return for the
-    target, then check whether the envelope has any breakpoints (sample
-    once; if the value matches the parameter's default at all sample
-    points, treat as empty). This is the only path that works without
-    a dedicated ``get_automation_envelope`` API.
-
-    Returns the envelope object (which is always reachable via
-    create_automation_envelope) — callers decide whether it's
-    populated via the sampling pass.
+    Live re-wraps API objects across calls so ``is`` is unreliable
+    (learnings.md: ``Never use `is` for Live API object identity``).
+    ``==`` typically delegates to the underlying C++ object identity and
+    works correctly, but we guard against odd plugin objects raising on
+    equality by falling back to a name + canonical_parent comparison.
     """
+    try:
+        if p1 == p2:
+            return True
+    except Exception:  # prawduct:ok-broad-except — Live wrappers can raise arbitrary types on __eq__
+        pass
+    n1 = getattr(p1, "name", None)
+    n2 = getattr(p2, "name", None)
+    if n1 is None or n1 != n2:
+        return False
+    cp1 = getattr(p1, "canonical_parent", None)
+    cp2 = getattr(p2, "canonical_parent", None)
+    if cp1 is None or cp2 is None:
+        return False
+    try:
+        return cp1 == cp2
+    except Exception:  # prawduct:ok-broad-except — same wrapper-equality risk
+        return False
+
+
+def _find_existing_envelope(clip: Any, target: Any) -> Any | None:
+    """Find or create an envelope on ``clip`` for the given ``target``.
+
+    Real Live 12.4's ``Clip.create_automation_envelope(target)`` is **not**
+    idempotent when an envelope already exists for the target — it returns
+    ``None`` (or raises) rather than returning the bound envelope. W7-0
+    smoke (2026-05-19) caught this against real Live: the old assumed-
+    idempotent path returned ``exists=False`` on freshly-written envelopes.
+
+    Strategy: iterate ``clip.automation_envelopes`` and match by
+    parameter identity (the smoke spec's anticipated remediation). The
+    ``Envelope.parameter`` attribute IS accessible on Live 12.4 even
+    though the codebase comment around ``list_handler`` previously
+    suggested otherwise — the prior gap was about *enumeration without
+    a known target*, not about reading ``.parameter`` once you have an
+    envelope reference.
+
+    Falls back to ``create_automation_envelope`` for the fresh-target
+    case (no existing envelope) — there the call IS reliable.
+
+    Returns the envelope object, or ``None`` when neither existing nor
+    creatable (invalid target, arrangement-vs-session mismatch, etc.).
+    """
+    envelopes = getattr(clip, "automation_envelopes", None)
+    if envelopes is not None:
+        for env in envelopes:
+            env_param = getattr(env, "parameter", None)
+            if env_param is None:
+                continue
+            if _params_equal(env_param, target):
+                return env
     creator = getattr(clip, "create_automation_envelope", None)
     if creator is None:
         return None
     try:
-        return creator(target)
+        env = creator(target)
     except (TypeError, RuntimeError):
         # Live raises these for invalid targets / arrangement-vs-session
         # mismatches. Mirror write_envelope's handling.
         return None
+    return env
 
 
 def _resolve_read_envelope_target_and_clip(
@@ -634,15 +693,31 @@ def _validate_breakpoints(breakpoints: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _write_breakpoints_as_steps(
-    envelope: Any, breakpoints: list[dict[str, Any]]
+    envelope: Any,
+    breakpoints: list[dict[str, Any]],
+    *,
+    tail_end: float | None = None,
 ) -> bool:
     """Walk breakpoints emitting ``insert_step`` calls.
 
     Live 12.4's ``Envelope`` only exposes ``insert_step(time, duration,
     value)`` — there is no ``add_segment`` for linear/curved transitions.
-    Each segment between consecutive breakpoints becomes one stepped region;
-    a final zero-duration step anchors the last value so it holds without
-    extrapolation past the envelope's range.
+    Each ``insert_step`` is a *punch box*: inside ``[t, t+duration]`` the
+    value holds at ``value``; outside, the envelope reverts to the
+    parameter's default. Consecutive breakpoints chain cleanly because
+    each next step covers the previous step's tail-reversion. The last
+    breakpoint has no successor, so without ``tail_end`` the held value
+    is followed by a revert-to-default artifact (visible in Live's UI as
+    an unintended 0dB / 0-pan point between ``last_t`` and clip end —
+    W7-0 smoke, 2026-05-19).
+
+    ``tail_end`` (in beats) extends the last step to cover [last_t,
+    tail_end] so the held value survives to the envelope's intended end.
+    Pass ``clip.length`` for clip-scoped envelopes (mixer / pan / send /
+    device_parameter). Pass the note's end time for note_expression.
+    Pass ``None`` to fall back to a zero-duration anchor (legacy behavior
+    — leaves a revert artifact; only useful where the caller genuinely
+    wants a point marker without a hold tail).
 
     Returns True if any non-'hold' curve hint was present — the caller can
     surface a note explaining the curve was recorded but not applied.
@@ -657,7 +732,12 @@ def _write_breakpoints_as_steps(
         if bp.get("curve") not in (None, "hold"):
             non_step_seen = True
     last = breakpoints[-1]
-    envelope.insert_step(last["time_beats"], 0.0, last["value"])
+    last_t = last["time_beats"]
+    if tail_end is not None and tail_end > last_t:
+        tail_dur = tail_end - last_t
+    else:
+        tail_dur = 0.0
+    envelope.insert_step(last_t, tail_dur, last["value"])
     return non_step_seen
 
 
@@ -723,7 +803,9 @@ def write_envelope_handler(
             # Boost.Python's ArgumentError subclasses TypeError; the
             # tuple sentinel triggers it.
             raise _translate_envelope_target_error("clip_cc", exc) from exc
-        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
+        non_step_seen = _write_breakpoints_as_steps(
+            envelope, cleaned, tail_end=float(getattr(clip, "length", 0.0)),
+        )
     elif target_kind == "clip_pitch_bend":
         clip = _require_clip(
             context, track_index=track_index, location=location,
@@ -735,7 +817,9 @@ def write_envelope_handler(
             envelope = clip.create_automation_envelope(target)
         except TypeError as exc:
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
-        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
+        non_step_seen = _write_breakpoints_as_steps(
+            envelope, cleaned, tail_end=float(getattr(clip, "length", 0.0)),
+        )
     elif target_kind == "note_expression":
         _require_note_expression_args(
             note_pitch=note_pitch,
@@ -820,7 +904,9 @@ def write_envelope_handler(
             clip = _resolve_clip(track, location, clip_index)
         clip.clear_envelope(target)
         envelope = clip.create_automation_envelope(target)
-        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
+        non_step_seen = _write_breakpoints_as_steps(
+            envelope, cleaned, tail_end=float(getattr(clip, "length", 0.0)),
+        )
     else:
         # Defensive — enum validation above should have caught this.
         raise ValueError(f"unhandled target_kind {target_kind!r}")

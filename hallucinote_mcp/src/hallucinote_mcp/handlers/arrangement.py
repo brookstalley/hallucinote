@@ -821,6 +821,18 @@ def cue_jump_handler(
     deadlocking against worker-thread cue ops. Pure-Python validation
     runs on the worker; each Live touch is marshaled through
     ``run_on_main``.
+
+    **Settle (real-Live finding 2026-05-18):** Live's ``jump_to_next_cue``
+    / ``jump_to_prev_cue`` / ``CuePoint.jump()`` are async: they queue
+    the playhead move for the audio thread, then return. Reading
+    ``current_song_time`` synchronously in the same main-thread bout
+    sees the PRE-jump value (mirror not yet refreshed). The original
+    W3-F follow-up returned that stale value as ``position_beats``,
+    misleading any caller relying on the response shape. Fix mirrors
+    ``cue_create``'s settle pattern: pre-resolve the target on the
+    main thread, fire the jump, then poll ``current_song_time`` on the
+    worker thread via :func:`_wait_for_song_time_on_worker` until the
+    audio thread → main mirror has propagated.
     """
     if (direction is None) == (name is None):
         raise ValueError(
@@ -832,7 +844,7 @@ def cue_jump_handler(
                 f"direction {direction!r} not in {list(_JUMP_DIRECTIONS)}"
             )
 
-        def _jump_by_direction_on_main() -> float:
+        def _resolve_and_jump_by_direction_on_main() -> float | None:
             song = context.song
             fn = getattr(
                 song,
@@ -843,43 +855,88 @@ def cue_jump_handler(
                 raise NotImplementedError(
                     f"Live does not expose jump_to_{direction}_cue in this version"
                 )
+            # Pre-resolve target by reading cues relative to current
+            # position. Done in the same main-thread bout as the jump
+            # so the cues + current position are read atomically with
+            # the jump fire.
+            #
+            # Boundary semantics (empirically observed in Live 12.4):
+            # ``jump_to_prev_cue`` past the earliest cue wraps to 0.0
+            # (arrangement start); ``jump_to_next_cue`` past the last
+            # cue wraps to ``last_event_time`` (arrangement end). Live
+            # treats both as implicit boundary cues. Include them in
+            # the candidate set so the pre-resolution predicts the
+            # actual destination instead of mis-classifying boundary
+            # moves as no-ops (which would skip the settle and risk a
+            # stale readback in the fallback).
+            cur = round(
+                float(getattr(song, "current_song_time", 0.0)), 6,
+            )
+            last_event_time = round(
+                float(getattr(song, "last_event_time", 0.0)), 6,
+            )
+            cue_times = (
+                round(float(getattr(c, "time", 0.0)), 6)
+                for c in getattr(song, "cue_points", ())
+            )
+            candidates = sorted({0.0, last_event_time, *cue_times})
+            if direction == "next":
+                target = next((t for t in candidates if t > cur), None)
+            else:
+                target = next(
+                    (t for t in reversed(candidates) if t < cur), None,
+                )
             fn()
-            return float(getattr(song, "current_song_time", 0.0))
+            return target
 
         with context.live_state_lock:
-            position_after = context.run_on_main(_jump_by_direction_on_main)
+            target = context.run_on_main(_resolve_and_jump_by_direction_on_main)
+            if target is None:
+                # No cue in that direction — Live's jump is a no-op.
+                # Report the current (unchanged) position.
+                position_after = context.run_on_main(
+                    lambda: round(
+                        float(getattr(context.song, "current_song_time", 0.0)),
+                        6,
+                    )
+                )
+            else:
+                _wait_for_song_time_on_worker(context, target)
+                position_after = target
         return {
             "direction": direction,
             "position_beats": position_after,
         }
 
-    # name path
-    def _jump_by_name_on_main() -> float:
+    # name path — target is deterministic (the cue's ``time`` attribute).
+    def _resolve_and_jump_by_name_on_main() -> float:
         song = context.song
-        target = None
+        target_cue = None
         for cue in getattr(song, "cue_points", ()):
             if getattr(cue, "name", "") == name:
-                target = cue
+                target_cue = cue
                 break
-        if target is None:
+        if target_cue is None:
             available = [
                 getattr(c, "name", "") for c in getattr(song, "cue_points", ())
             ]
             raise ValueError(
                 f"cue_jump: no cue named {name!r}; available: {available}"
             )
-        jumper = getattr(target, "jump", None)
+        target_time = float(getattr(target_cue, "time", 0.0))
+        jumper = getattr(target_cue, "jump", None)
         if jumper is not None:
             jumper()
         else:
-            song.current_song_time = float(getattr(target, "time", 0.0))
-        return float(getattr(song, "current_song_time", 0.0))
+            song.current_song_time = target_time
+        return target_time
 
     with context.live_state_lock:
-        position_after = context.run_on_main(_jump_by_name_on_main)
+        target = context.run_on_main(_resolve_and_jump_by_name_on_main)
+        _wait_for_song_time_on_worker(context, target)
     return {
         "name": name,
-        "position_beats": position_after,
+        "position_beats": target,
     }
 
 

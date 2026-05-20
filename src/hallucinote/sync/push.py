@@ -384,31 +384,42 @@ def plan_push_arrangement(
     (each call addresses an independent (track, slot, position) triple)
     and Live's underlying API handles them serially.
 
-    Pre-conditions (strict — raises with actionable error if violated,
-    matching :func:`plan_push_clip`'s strict-contract discipline post-W3-C):
-      - Every involved track has a ``track`` link in this session.
-      - Every involved session clip has a ``clip`` link in this session.
+    Pre-conditions (W10-G post-Wave-0): unlinked deps skip-and-warn
+    instead of raising. The prior strict-raise contract (W3-C/F) was
+    correct in intent but unfriendly in practice — Wave 0's full-band-rock
+    canary surfaced this as a Python traceback through the CLI when an
+    earlier phase failed partway. W10-G normalizes phase-planner partial-
+    state behavior: every planner skips-with-note, matching the existing
+    ``plan_push_envelopes`` and ``plan_push_devices`` patterns. The agent
+    sees actionable notes per skipped row and continues; nothing in Live
+    gets half-built because the row simply isn't emitted as a call.
 
-    Strict raise rather than warn+skip: a song-wide arrangement push
-    with unlinked elements means the caller skipped a phase
-    (plan_push_song_tracks / clip-create) — silently building a partial
-    arrangement would leave Live in a wrong state that's hard to
-    detect downstream. The error message points at the missing phase.
+    Idempotency (W10-A): each row whose ``arrangement_clip`` link is
+    already recorded in ``ableton_links`` is silently skipped. Without
+    this, re-running a successful push would silently duplicate every
+    arrangement placement (the canary triage Group C / C-original). The
+    skip count surfaces as a tracking warn so the agent / UI can show
+    "nothing to do" instead of going dark.
 
     Position conversion: each row's 1-based fractional ``start_bar`` is
     converted to cumulative beats from song start via
     :func:`_position_bar_to_beats`. The agent doesn't see bars; the MCP
     surface is meter-agnostic (beats throughout).
 
-    Clear pass: not emitted here. The agent / push-skill should wipe
-    existing arrangement clips on the involved tracks before running the
-    plan. Adding explicit delete ops requires probing Live first (no DB
-    knowledge of what's currently in the arrangement) — out of scope for
-    pure-DB planners; see W3-I.
+    Clear pass: not emitted here. When unlinked rows exist (first push,
+    or partial-apply recovery), the agent / push-skill should wipe
+    existing arrangement clips on the involved tracks before running
+    the plan. The planner can't emit a pre-clear: no MCP
+    ``arrangement_clip_delete`` action exists and the planner has no DB
+    knowledge of Live's current arrangement state. The idempotent-skip
+    above means this only matters for genuinely-new placements; see
+    W3-I for the long-term direction.
 
-    Returns N decomposed calls. Each call's result must carry
-    ``arrangement_clip_index`` so :func:`apply_push_results` can record
-    the binding under the ``arrangement_clip:{db_id}`` key.
+    Returns N decomposed calls (one per row whose track + clip are both
+    linked AND whose arrangement_clip link is NOT yet recorded). Each
+    call's result must carry ``arrangement_clip_index`` so
+    :func:`apply_push_results` can record the binding under the
+    ``arrangement_clip:{db_id}`` key.
     """
     plan = PushPlan()
     arr_rows = Q.get_arrangement_for_song(conn, song_id)
@@ -422,30 +433,41 @@ def plan_push_arrangement(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
         )
 
+    already_linked = 0
     for row in arr_rows:
+        # W10-A: re-pushes must be idempotent. apply_push_results writes
+        # an `arrangement_clip` link after a successful duplicate; if it
+        # exists, the placement is already in Live and re-emitting would
+        # silently double the clip on every re-run.
+        arr_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="arrangement_clip",
+            db_id=row["id"],
+        )
+        if arr_at is not None:
+            already_linked += 1
+            continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
         )
         if track_at is None:
-            raise ValueError(
-                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
-                f"references track {row['track_id']!r}, which is not linked "
-                f"in session {session_id!r}. Run plan_push_song_tracks(conn, "
-                f"song_id=..., session_id=...) first, apply_push_results, "
-                f"then re-run plan_push_arrangement."
+            plan.warn(
+                f"arrangement_clip {row['id']!r}: track {row['track_id']!r} "
+                f"not linked in session {session_id!r}. Run plan_push_song_tracks "
+                f"+ apply_push_results before this phase to surface the link. "
+                f"Skipping this placement."
             )
+            continue
         clip_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
-            raise ValueError(
-                f"plan_push_arrangement: arrangement_clip {row['id']!r} "
-                f"references session clip {row['clip_id']!r}, which is not "
-                f"linked in session {session_id!r}. Run the clip-create "
-                f"phase (plan_push_clip per clip OR the master orchestrator's "
-                f"clip phase), apply_push_results, then re-run "
-                f"plan_push_arrangement."
+            plan.warn(
+                f"arrangement_clip {row['id']!r}: session clip {row['clip_id']!r} "
+                f"not linked in session {session_id!r}. Run the clip-create "
+                f"phase + apply_push_results to surface the link. "
+                f"Skipping this placement."
             )
+            continue
         plan.add(ToolCall(
             tool="ableton_clip",
             args={
@@ -461,11 +483,28 @@ def plan_push_arrangement(
             ),
         ))
 
+    if already_linked:
+        # Surface the idempotent skip so the agent/UI can show
+        # "nothing to do" instead of going silent.
+        plan.warn(
+            f"{already_linked} arrangement placement(s) already linked "
+            f"in session {session_id!r} — already in the arrangement, "
+            "skipping (idempotent re-push)"
+        )
     if plan.calls:
+        # Post-W10-A this warn fires for the unlinked-placements path
+        # only — first push, or a partial-apply recovery where some
+        # placements landed in Live but apply_push_results hadn't yet
+        # written their bindings. The agent should ensure those slots
+        # are empty in Live before running the duplicates (the planner
+        # can't emit a pre-clear: no MCP `arrangement_clip_delete`
+        # action exists, and the planner has no DB knowledge of Live's
+        # current arrangement state regardless).
         plan.warn(
             "agent must clear existing arrangement clips on the involved tracks "
             "before running these duplicates (planner emits no pre-clear ops "
-            "because it has no DB knowledge of Live's current arrangement state)"
+            "because no MCP arrangement-clip-delete action exists and the "
+            "planner has no DB knowledge of Live's current arrangement state)"
         )
     return plan
 
@@ -589,9 +628,16 @@ def plan_push_cue_points(
     Sequencing precondition (W3-I): cue creation must run AFTER
     arrangement-clip placement, because Live's ``set_or_delete_cue`` is
     clamped to ``[0, song.last_event_time]``. The agent / push-skill is
-    responsible for phase order; this planner emits no internal warn —
-    a cue past the arrangement's extent surfaces as a teaching error
-    from the handler at execution time.
+    responsible for phase order; a cue past the arrangement's extent
+    will surface as a teaching error from the handler at execution time.
+
+    Plan-time visibility (Wave 0 paper-cut, full-band-rock runbook step
+    7e): when any cue's ``position_bar`` exceeds ``max(arrangement_clips
+    .end_bar)`` — the DB's planned arrangement extent — emit a warn so
+    the agent / user sees the prerequisite issue before round-tripping
+    to Live. An empty arrangement gets a distinct, more descriptive warn
+    naming the missing prereq instead of a generic extent-exceeded
+    message.
 
     Result key: ``cue_batch:{song_id}``. The batch handler returns a list
     of per-cue results; ``apply_push_results`` consumes it via the
@@ -607,6 +653,34 @@ def plan_push_cue_points(
         plan.warn(
             "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
+
+    # Plan-time arrangement-extent check. The DB-side max end_bar is the
+    # PLANNED extent — if arrangement is pushed in the same plan_push_song
+    # cycle, Live's last_event_time will match this by the time cues run.
+    arrangement_rows = Q.get_arrangement_for_song(conn, song_id)
+    if not arrangement_rows:
+        plan.warn(
+            f"{len(rows)} cue point(s) but the DB has no arrangement_clips — "
+            "Live's set_or_delete_cue is clamped to [0, last_event_time], so "
+            "every cue past bar 1 will fail. Push arrangement first, OR add "
+            "arrangement_clips rows covering each cue's position_bar."
+        )
+    else:
+        max_end_bar = max(float(r["end_bar"]) for r in arrangement_rows)
+        late_cues = [r for r in rows if float(r["position_bar"]) > max_end_bar]
+        if late_cues:
+            preview = ", ".join(
+                f"{r['name'] or '(unnamed)'}@bar{float(r['position_bar']):.2f}"
+                for r in late_cues[:5]
+            )
+            ellipsis = " ..." if len(late_cues) > 5 else ""
+            plan.warn(
+                f"{len(late_cues)} of {len(rows)} cue(s) sit past the DB's "
+                f"arrangement extent (max end_bar={max_end_bar:.2f}): "
+                f"[{preview}{ellipsis}]. Live's set_or_delete_cue is clamped "
+                "to [0, last_event_time]; these cues will fail unless "
+                "arrangement is extended to cover them first."
+            )
 
     cues = [
         {
@@ -1146,6 +1220,79 @@ def plan_push_envelopes(
     return plan
 
 
+def _track_kind_for_envelope(
+    conn: sqlite3.Connection, track_id: str | None,
+) -> str | None:
+    """Look up a track's `kind` column, or None when track_id is None / unknown.
+
+    W10-F planner-side safety net for D2/D3. The DB mutator now refuses to
+    create envelopes for session-clip-routed kinds (mixer / pan / send /
+    device_parameter) on non-MIDI tracks (master / audio / group). This
+    helper backs the parallel planner refusal, which catches legacy rows
+    that pre-date the mutator check or pulled state that bypassed it.
+    """
+    if track_id is None:
+        return None
+    row = conn.execute(
+        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
+    ).fetchone()
+    return None if row is None else row["kind"]
+
+
+def _warn_unreachable_track_kind(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    host_track_id: str,
+    host_kind: str,
+) -> bool:
+    """Emit a teaching warn + return True when the envelope's host track
+    can't host the v1 routing surface.
+
+    Mirrors the DB-mutator refusal phrasing (mutations.py
+    `_envelope_track_kind_refusal`) but in plan-warn shape — the planner
+    is the second layer of the W10-F dual-layer defense.
+    """
+    if host_kind == "midi":
+        return False
+    target_kind = envelope["target_kind"]
+    if host_kind == "master":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is the master, which Live 12.4's LOM can't "
+            "host envelopes on (Clip.create_automation_envelope lives only "
+            "on Clip; master can't host clips). Route source(s) to a "
+            "sub-bus group track and author on the group's mixer instead "
+            "(see ableton://guides/gaps). Skipping."
+        )
+    elif host_kind == "audio":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is an audio track, which v1 can't host "
+            "mixer/send/device_parameter envelopes on — Hallucinote routes "
+            "these through MIDI session clips, and audio tracks can't host "
+            "them. Route the source to a sub-bus group track and automate "
+            "the group's mixer instead. Audio-clip envelopes are v1.1 "
+            "scope. Skipping."
+        )
+    elif host_kind == "group":
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} is a group track, which can't host MIDI "
+            "session clips in Live. Author the envelope on a member track "
+            "or on the group's parent sub-bus. Skipping."
+        )
+    else:
+        msg = (
+            f"envelope {envelope['id']} ({target_kind}): host track "
+            f"{host_track_id} has kind={host_kind!r}, which v1 doesn't "
+            "route envelopes through (only kind='midi' tracks host them). "
+            "Skipping."
+        )
+    plan.warn(msg)
+    return True
+
+
 def _clip_and_track_indices(
     conn: sqlite3.Connection,
     *,
@@ -1177,10 +1324,25 @@ class _CoveringPlacement:
     placements of the same source session clip — those will also receive
     the envelope as snapshot copies after ``duplicate_to_arrangement``
     fires (W4-A finding: duplicate is a snapshot copy, not a live link).
+
+    W4-B defensive-warn fields:
+      - ``other_covering_clip_ids``: other DISTINCT session clips on the
+        same track whose arrangement-time range also covered the envelope.
+        Non-empty means the planner had to disambiguate; the warn names
+        all overlapping clips so the author can resolve the ambiguity
+        DB-side.
+      - ``trimmed_end_beats``: when the placement's ``end_bar`` is
+        SHORTER than the source clip's natural length, this is the
+        arrangement-time end of the trimmed placement. None when the
+        placement isn't trimmed. Used to warn when ``env_max`` exceeds
+        the trimmed extent (the envelope WOULD fit the un-trimmed clip
+        but won't play past the trim point in this placement).
     """
     clip_id: str
     start_beats: float
     other_placement_starts: list[float]
+    other_covering_clip_ids: list[str] = field(default_factory=list)
+    trimmed_end_beats: float | None = None
 
 
 def _resolve_envelope_session_clip(
@@ -1205,7 +1367,7 @@ def _resolve_envelope_session_clip(
     addressing.
     """
     rows = conn.execute(
-        """SELECT a.id, a.clip_id, a.start_bar, c.length_beats
+        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
            FROM arrangement_clips a
            JOIN clips c ON c.id = a.clip_id
            WHERE a.track_id = ?
@@ -1217,13 +1379,26 @@ def _resolve_envelope_session_clip(
     ts_points = Q.get_time_signature_map(conn, song_id)
     matched = None
     matched_start = None
+    matched_trimmed_end: float | None = None
+    other_covering_clip_ids: list[str] = []
     for r in rows:
         start_b = _position_bar_to_beats(r["start_bar"], ts_points)
-        end_b = start_b + float(r["length_beats"])
-        if env_min >= start_b and env_max <= end_b:
+        source_end_b = start_b + float(r["length_beats"])
+        if not (env_min >= start_b and env_max <= source_end_b):
+            continue
+        if matched is None:
             matched = r
             matched_start = start_b
-            break
+            placement_end_b = _position_bar_to_beats(r["end_bar"], ts_points)
+            if placement_end_b < source_end_b:
+                matched_trimmed_end = placement_end_b
+        elif r["clip_id"] != matched["clip_id"]:
+            # A DIFFERENT distinct session clip on the same track also
+            # covers the envelope's range. W4-B defensive warn — the
+            # planner picks the earliest by start_bar, but ambiguity is
+            # worth surfacing.
+            if r["clip_id"] not in other_covering_clip_ids:
+                other_covering_clip_ids.append(r["clip_id"])
     if matched is None:
         return None
     others = [
@@ -1235,6 +1410,8 @@ def _resolve_envelope_session_clip(
         clip_id=matched["clip_id"],
         start_beats=matched_start,
         other_placement_starts=others,
+        other_covering_clip_ids=other_covering_clip_ids,
+        trimmed_end_beats=matched_trimmed_end,
     )
 
 
@@ -1348,6 +1525,63 @@ def _warn_lossy_curve_hints(
     )
 
 
+def _warn_multiple_covering_clips(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+) -> None:
+    """W4-B defensive warn: when more than one distinct session clip on
+    the same track covers the envelope's beat range, the planner picks
+    the earliest by ``start_bar``. The choice may not match the
+    author's intent — surface the alternatives so they can resolve the
+    ambiguity DB-side (trim a clip, move one, or split the envelope)."""
+    if not placement.other_covering_clip_ids:
+        return
+    others = ", ".join(placement.other_covering_clip_ids)
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): multiple "
+        f"distinct session clips cover the envelope's beat range on this "
+        f"track. Planner routed through {placement.clip_id!r}; other "
+        f"covering clips: [{others}]. Resolve the ambiguity DB-side "
+        "(adjust placements or split the envelope) if the routing "
+        "choice is wrong."
+    )
+
+
+def _warn_trimmed_placement(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    placement: _CoveringPlacement,
+    env_max: float,
+) -> None:
+    """W4-B defensive warn: the matched placement is trimmed shorter
+    than its source session clip's natural length, AND the envelope
+    extends past the trimmed end. The envelope will play correctly
+    in the session view (the session clip is intact) but won't sound
+    past the trim point in this arrangement placement — Live truncates
+    playback at ``end_bar``.
+
+    No-op when the placement isn't trimmed OR the envelope fits within
+    the trimmed extent.
+    """
+    trimmed_end = placement.trimmed_end_beats
+    if trimmed_end is None:
+        return
+    if env_max <= trimmed_end:
+        return
+    plan.warn(
+        f"envelope {envelope['id']} ({envelope['target_kind']}): the "
+        f"matched arrangement placement of clip {placement.clip_id!r} "
+        f"is trimmed shorter than the source clip; the envelope extends "
+        f"to time_beats={env_max:g} but the placement ends at "
+        f"time_beats={trimmed_end:g}. Breakpoints past the trim point "
+        "won't sound in this arrangement placement (session-view "
+        "playback is unaffected)."
+    )
+
+
 def _warn_extra_placements(
     plan: PushPlan,
     *,
@@ -1422,9 +1656,16 @@ def _emit_device_parameter_envelope(
             "domain)"
         )
         return
+    parent_track_id = chain_row["parent_track_id"]
+    host_kind = _track_kind_for_envelope(conn, parent_track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=parent_track_id,
+        host_kind=host_kind,
+    ):
+        return
     parent_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track",
-        db_id=chain_row["parent_track_id"],
+        db_id=parent_track_id,
     )
     if parent_at is None or device_at is None:
         plan.warn(
@@ -1436,7 +1677,7 @@ def _emit_device_parameter_envelope(
     env_min, env_max = _envelope_beat_range(breakpoints_mcp)
     placement = _resolve_envelope_session_clip(
         conn, song_id=song_id,
-        target_track_id=chain_row["parent_track_id"],
+        target_track_id=parent_track_id,
         env_min=env_min, env_max=env_max,
     )
     if placement is None:
@@ -1444,9 +1685,13 @@ def _emit_device_parameter_envelope(
             f"envelope {envelope['id']} (device_parameter): no arrangement "
             f"clip on track {parent_at} covers beat range [{env_min:g}, "
             f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "device_parameter envelopes (W4-B). Add an arrangement_clip "
-            "placement spanning the envelope's range or trim breakpoints "
-            "to fit an existing placement; skipping."
+            "device_parameter envelopes (W4-B). Options: (a) extend or "
+            "split an existing session clip on this track to cover the "
+            "range, (b) add an arrangement_clip placement that fully spans "
+            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope by "
+            "hand into per-section sub-envelopes whose ranges each fit a "
+            "session clip. Auto-partition is v1.1 scope (W10-F follow-up). "
+            "Skipping."
         )
         return
     clip_at = Q.get_ableton_link(
@@ -1480,6 +1725,10 @@ def _emit_device_parameter_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_mixer_envelope(
@@ -1496,6 +1745,11 @@ def _emit_mixer_envelope(
     envelopes on session clips, then ``duplicate_to_arrangement``
     snapshot-copies them to the arrangement."""
     track_id = envelope["target_track_id"]
+    host_kind = _track_kind_for_envelope(conn, track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=track_id, host_kind=host_kind,
+    ):
+        return
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=track_id,
     )
@@ -1516,9 +1770,13 @@ def _emit_mixer_envelope(
             f"envelope {envelope['id']} ({envelope['target_kind']}): no "
             f"arrangement clip on track {track_at} covers beat range "
             f"[{env_min:g}, {env_max:g}]; Live 12.4 requires session-clip "
-            f"routing for {envelope['target_kind']} envelopes (W4-B). Add "
-            "an arrangement_clip placement spanning the envelope's range "
-            "or trim breakpoints to fit an existing placement; skipping."
+            f"routing for {envelope['target_kind']} envelopes (W4-B). "
+            "Options: (a) extend or split an existing session clip on "
+            "this track to cover the range, (b) add an arrangement_clip "
+            f"placement that fully spans [{env_min:g}, {env_max:g}], or "
+            "(c) partition the envelope by hand into per-section "
+            "sub-envelopes whose ranges each fit a session clip. "
+            "Auto-partition is v1.1 scope (W10-F follow-up). Skipping."
         )
         return
     clip_at = Q.get_ableton_link(
@@ -1551,6 +1809,10 @@ def _emit_mixer_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 def _emit_send_envelope(
@@ -1565,6 +1827,11 @@ def _emit_send_envelope(
     """send_level emission — addressed by (track, return) pair. Routes
     through a session clip on the source track (W4-A / W4-B)."""
     track_id = envelope["target_track_id"]
+    host_kind = _track_kind_for_envelope(conn, track_id)
+    if host_kind is not None and _warn_unreachable_track_kind(
+        plan, envelope=envelope, host_track_id=track_id, host_kind=host_kind,
+    ):
+        return
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=track_id,
     )
@@ -1589,9 +1856,13 @@ def _emit_send_envelope(
             f"envelope {envelope['id']} (send_level): no arrangement clip "
             f"on track {track_at} covers beat range [{env_min:g}, "
             f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "send_level envelopes (W4-B). Add an arrangement_clip "
-            "placement spanning the envelope's range or trim breakpoints "
-            "to fit an existing placement; skipping."
+            "send_level envelopes (W4-B). Options: (a) extend or split an "
+            "existing session clip on this track to cover the range, "
+            "(b) add an arrangement_clip placement that fully spans "
+            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope "
+            "by hand into per-section sub-envelopes whose ranges each fit "
+            "a session clip. Auto-partition is v1.1 scope (W10-F "
+            "follow-up). Skipping."
         )
         return
     clip_at = Q.get_ableton_link(
@@ -1624,6 +1895,10 @@ def _emit_send_envelope(
     ))
     _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1672,11 +1947,13 @@ class PushPhase:
     ``plan_fn()``. The thunk pattern (rather than an eager list of
     pre-built ``PushPlan`` objects) is load-bearing: later phases
     inspect ``ableton_links`` written by earlier phases via
-    :func:`apply_push_results`. ``plan_push_clip`` /
-    ``plan_push_arrangement`` raise on unlinked deps by design (W3-C),
-    so pre-building all phases at ``plan_push_song`` time would either
-    fail loudly or require re-planning anyway. Thunks make the
-    re-plan-each-phase contract explicit.
+    :func:`apply_push_results`. ``plan_push_clip`` raises on unlinked
+    deps by design (W3-C); ``plan_push_arrangement`` was W10-G converted
+    to skip-with-note for the same reason (phase-planner partial-state
+    normalization — Wave 0 E1). Either way, pre-building all phases at
+    ``plan_push_song`` time would either fail loudly, skip too much, or
+    require re-planning anyway. Thunks make the re-plan-each-phase
+    contract explicit.
 
     ``name`` is the stable identifier the push skill uses for logging
     and for keying status to phases. Don't rename — tests and the

@@ -9,6 +9,7 @@ from hallucinote_mcp.prompts import (
     _compose_section_pattern,
     _create_midi_track_with_instrument,
     _humanize_clip_velocity,
+    _pick_instruments_for_song,
     _setup_sidechain_compression,
 )
 from hallucinote_mcp.server import create_server, registered_prompt_names
@@ -23,11 +24,15 @@ _EXPECTED_PROMPTS = {
     "build_return_bus",
     "humanize_clip_velocity",
     "compose_section_pattern",
+    # W9-C: scaffold-then-compose orchestration for new songs.
+    "start_new_song",
+    # W14-A: browser-driven instrument picker with portability modes.
+    "pick_instruments_for_song",
 }
 
 
 def test_prompt_name_list_matches_design():
-    """Lock the M-7 surface: exactly these 5 prompts, no more, no less.
+    """Lock the prompt surface: exactly these names, no more, no less.
 
     Carry-forward principle #3 (lock-the-surface negative test). A future
     PR that adds an unlisted prompt OR drops one gets caught here.
@@ -35,7 +40,7 @@ def test_prompt_name_list_matches_design():
     assert set(PROMPT_NAMES) == _EXPECTED_PROMPTS
 
 
-def test_create_server_registers_all_five_prompts():
+def test_create_server_registers_all_prompts():
     """End-to-end: create_server wires every prompt into FastMCP."""
     mcp = create_server()
     assert set(registered_prompt_names(mcp)) == _EXPECTED_PROMPTS
@@ -184,11 +189,16 @@ def test_compose_section_pattern_unknown_kind_returns_friendly_error():
 def test_primer_advertises_prompts():
     """The server PRIMER (sent on initialize) must mention prompts so
     clients see them at connect time alongside tools + resources.
+
+    Strict check: every PROMPT_NAMES entry appears in PRIMER. A new prompt
+    added without a PRIMER update gets caught here (W9 PR-review note).
     """
     from hallucinote_mcp.server import PRIMER
     assert "Prompts" in PRIMER or "prompts" in PRIMER.lower()
-    # At least one prompt name appears
-    assert "create_midi_track_with_instrument" in PRIMER
+    for name in PROMPT_NAMES:
+        assert name in PRIMER, (
+            f"PROMPT_NAMES includes {name!r} but PRIMER doesn't mention it"
+        )
 
 
 def test_primer_under_500_token_budget():
@@ -203,3 +213,205 @@ def test_primer_under_500_token_budget():
         "the M-7 budget is 500 tokens. Trim, or revisit the budget if "
         "the new content is load-bearing."
     )
+
+
+# ---------- start_new_song (W9-C) ----------
+
+
+def test_start_new_song_renders_required_steps():
+    """Verifies the orchestration prompt mentions the load-bearing steps."""
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="punk-fate", title="Punk Fate", tempo=160.0,
+        signature="4/4", sections="intro,verse,chorus,outro",
+    )
+    _check_message_list(msgs, [
+        "punk-fate",
+        "Punk Fate",
+        "tempo 160",
+        "4/4",
+        "intro,verse,chorus,outro",
+        "/new-song",        # step 1: invoke scaffold skill
+        "build.py --reset", # step 2: confirm scaffold
+        "pytest",
+        # W14-A integration: step 2b cites the picker prompt.
+        "pick_instruments_for_song",
+        "Compose-half",     # step 3: where to author
+        "no-ops if nothing changed",  # step 4: iterate via converger
+        "/ableton-push",    # step 5: push
+        "--new-session",
+    ])
+
+
+def test_start_new_song_includes_optional_key_and_intent():
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="x", title="X", tempo=120.0,
+        sections="intro,outro",
+        key="Dm", intent_hint="moody, brooding",
+    )
+    text = msgs[0]["content"]
+    assert "Dm" in text
+    assert "moody, brooding" in text
+
+
+def test_start_new_song_omits_optional_clauses_when_unset():
+    from hallucinote_mcp.prompts import _start_new_song
+    msgs = _start_new_song(
+        slug="x", title="X", tempo=120.0, sections="intro,outro",
+    )
+    text = msgs[0]["content"]
+    assert "in key " not in text
+    assert "Composer intent:" not in text
+
+
+# ---------- pick_instruments_for_song (W14-A) ----------
+
+
+def test_pick_instruments_for_song_strict_uses_browser_only():
+    """Strict mode tells the agent to use browser/instruments and NOT
+    pull from plugins/installed — that's the portability guarantee.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass,Lead,Pads")
+    blob = out[0]["content"]
+    # Tracks echoed for context.
+    assert "Drums" in blob and "Bass" in blob and "Lead" in blob and "Pads" in blob
+    # Default mode is strict.
+    assert "strict" in blob.lower()
+    # Browser resource cited.
+    assert "ableton://browser/instruments" in blob
+    # Stock-only language present.
+    assert "stock" in blob.lower()
+    # Agent told to load via the device tool.
+    assert "ableton_device(action='load'" in blob
+    # `kind` required call-out (same convention as create_midi_track_with_instrument).
+    assert "kind" in blob
+
+
+def test_pick_instruments_for_song_describes_resource_shape_accurately():
+    """The prompt's Step 1 must describe the fields each browser/plugin
+    node actually carries — `{name, uri, is_loadable}` per
+    `handlers/browser.py::_walk` and `plugins_list_handler`. A prior
+    version of this prompt invented a `class_name` field that doesn't
+    exist on those nodes (PR #49 review note 1). The fields the prompt
+    teaches must match the actual handler payload to avoid sending the
+    agent on a doomed lookup.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass")
+    blob = out[0]["content"]
+    # Describes the actual node shape.
+    assert "name" in blob
+    assert "uri" in blob
+    assert "is_loadable" in blob
+    # Does NOT claim `class_name` is a node field (it isn't).
+    # The translation table can be MENTIONED as the resolution path
+    # (display → class), but the prompt must not tell the agent to
+    # READ a `class_name` field off the resource node.
+    # Use a tight assertion: the substring "node carries a `class_name`"
+    # (or any "each node ... class_name") must not appear in the Step 1
+    # context. Allow `class_name` to appear elsewhere (e.g. in a
+    # translation example) by anchoring the negative check to the
+    # specific stale phrasing.
+    assert "carries a `class_name`" not in blob
+    assert "node carries a `class_name`" not in blob
+
+
+def test_pick_instruments_for_song_explains_kind_resolution():
+    """Step 4 tells the agent to pass the browser node's `name` as
+    `kind` and cites the project's display→class translation table.
+    This is the actual load contract per `actions/device.py::load` +
+    `device_names.class_name_to_display`.
+    """
+    out = _pick_instruments_for_song(tracks="Drums")
+    blob = out[0]["content"]
+    # Cites the translation source so a curious agent can verify.
+    assert "device_names" in blob
+    # Shows at least one concrete display→class example.
+    assert "Drum Rack" in blob and "DrumGroupDevice" in blob
+    # Third-party plugin behavior called out (same string both spaces).
+    assert "Third-party plugins use the same string" in blob
+
+
+def test_pick_instruments_for_song_strict_skips_plugins_installed():
+    """Strict mode must NOT direct the agent to plugins/installed —
+    that's the whole point of the mode.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Drums,Bass", portability="strict",
+    )
+    blob = out[0]["content"]
+    # The unrestricted/relaxed flag should appear nowhere in the load-time
+    # instruction (the mode clause itself may name the resource only to say
+    # "do NOT pull from"). Assert the negative instruction is present.
+    assert "Do NOT pull from" in blob or "do NOT pull from" in blob
+    assert "ableton://plugins/installed" in blob  # cited as the thing to skip
+
+
+def test_pick_instruments_for_song_relaxed_lists_both_resources():
+    """Relaxed mode tells the agent to read both stock and third-party."""
+    out = _pick_instruments_for_song(
+        tracks="Drums,Bass", portability="relaxed",
+    )
+    blob = out[0]["content"]
+    assert "relaxed" in blob.lower()
+    assert "ableton://browser/instruments" in blob
+    assert "ableton://plugins/installed" in blob
+    # Names a few well-known third-party plugins as guidance.
+    assert "Serum" in blob or "Massive" in blob or "Diva" in blob
+
+
+def test_pick_instruments_for_song_unrestricted_flags_requirements():
+    """Unrestricted mode must surface the consumer-side REQUIREMENTS
+    handoff (W13-B integration) so the user understands the trade-off.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Lead,Pads", portability="unrestricted",
+    )
+    blob = out[0]["content"]
+    assert "unrestricted" in blob.lower()
+    # Cross-refs W13-B's compat check + REQUIREMENTS.md.
+    assert "REQUIREMENTS" in blob
+    assert "compat check" in blob
+    # Extra step 6 calls out the not-strict-portable trade-off explicitly.
+    assert "not strict-portable" in blob
+
+
+def test_pick_instruments_for_song_rejects_unknown_mode():
+    """Unknown portability mode returns a teaching message listing the
+    valid choices — NOT a raised exception (FastMCP wraps prompt
+    exceptions opaquely).
+    """
+    out = _pick_instruments_for_song(
+        tracks="Drums", portability="paranoid",
+    )
+    blob = out[0]["content"]
+    assert "paranoid" in blob
+    assert "strict" in blob and "relaxed" in blob and "unrestricted" in blob
+
+
+def test_pick_instruments_for_song_includes_style_hint_when_provided():
+    """Optional style_hint flows into the prompt text so the agent
+    can steer tonal choice.
+    """
+    out = _pick_instruments_for_song(
+        tracks="Lead", style_hint="warm vintage analog",
+    )
+    blob = out[0]["content"]
+    assert "warm vintage analog" in blob
+
+
+def test_pick_instruments_for_song_omits_style_hint_clause_when_unset():
+    out = _pick_instruments_for_song(tracks="Drums")
+    blob = out[0]["content"]
+    assert "Style hint" not in blob
+
+
+def test_pick_instruments_for_song_calls_out_drum_kit_special_case():
+    """Drum tracks must pick Drum Rack / Impulse — not single-pitch
+    synths. The prompt teaches this directly so the agent doesn't
+    propose an Operator patch for a drum bus.
+    """
+    out = _pick_instruments_for_song(tracks="Drums,Bass,Lead")
+    blob = out[0]["content"]
+    assert "DrumGroupDevice" in blob or "Drum Rack" in blob
+    assert "Impulse" in blob

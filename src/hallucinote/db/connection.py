@@ -1,12 +1,22 @@
 """SQLite connection + schema bootstrap."""
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+# sqlite3.Connection doesn't allow attribute assignment, so we track nested
+# transaction depth in a side table keyed by `id(conn)`. Depth entries are
+# explicitly popped when the outermost block closes (success or exception),
+# so connections that fully unwind leave no residue. Connections GC'd
+# mid-transaction (rare, abnormal) can leak one int entry, which is fine
+# at this scale — the connection's `id` doesn't recycle while it's live.
+_TRANSACTION_DEPTH: dict[int, int] = {}
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -28,10 +38,100 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
-    """Open + apply schema. Idempotent: schema uses IF NOT EXISTS throughout."""
+    """Open + apply schema. Idempotent: schema uses IF NOT EXISTS throughout,
+    plus an explicit column-add pass for ALTER cases that CREATE doesn't cover.
+    """
     conn = connect(db_path)
     conn.executescript(_SCHEMA_PATH.read_text())
+    _ensure_added_columns(conn)
     return conn
+
+
+# Column additions that post-date the original schema CREATE statements.
+# SQLite has no `ADD COLUMN IF NOT EXISTS` so we sniff `PRAGMA table_info`
+# first. Each entry is (table, column_name, full_column_definition).
+# Append new rows here when a future chunk needs an additive schema bump
+# on existing DBs; never remove rows (removal is a destructive migration
+# that needs its own one-shot tool).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # W8-B: requests gains cycle metadata. Existing rows get NULL kind /
+    # duration_ms / outcome; mutators set them at request open + close.
+    ("requests", "kind", "TEXT"),
+    ("requests", "duration_ms", "INTEGER"),
+    ("requests", "outcome", "TEXT"),
+)
+
+
+def _ensure_added_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent column-add migration. Safe to call on fresh + existing DBs."""
+    by_table: dict[str, set[str]] = {}
+    for table, _col, _defn in _ADDED_COLUMNS:
+        by_table.setdefault(table, set())
+    for table in by_table:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        by_table[table] = {r["name"] for r in rows}
+    for table, col, defn in _ADDED_COLUMNS:
+        if col in by_table[table]:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+
+
+def _git_current_branch(cwd: Path | None = None) -> str | None:
+    """Current git branch name, or None if outside a repo or on detached HEAD.
+
+    Used by `resolve_db_path` to produce per-branch DB filenames (W12-A) so
+    branch switches don't silently leave the agent looking at a stale DB.
+    Returns None in three cases:
+      - `git` binary not on PATH
+      - cwd isn't inside a git working tree
+      - HEAD is detached (no symbolic ref)
+
+    All three fall back to the legacy `<slug>.db` path at the callsite.
+    """
+    if shutil.which("git") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=cwd, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+_BRANCH_PROBE_GIT = object()  # sentinel: "probe git" (vs explicit None/str)
+
+
+def resolve_db_path(
+    slug: str,
+    *,
+    root: Path | str = "songs",
+    branch: str | None = _BRANCH_PROBE_GIT,  # type: ignore[assignment]
+) -> Path:
+    """Per-branch DB filename. `songs/<slug>/<slug>-<branch>.db` inside a repo,
+    falling back to `songs/<slug>/<slug>.db` outside a repo or on detached HEAD.
+
+    The branch name is sanitized by replacing `/` with `--` so `feature/foo`
+    becomes `feature--foo` — mirrors `.prawduct/.pr-reviews/` naming so
+    behavior is predictable for the canonical "feature/X" gitflow shape.
+
+    `branch` is an escape hatch primarily for testing — pass `None` to force
+    the no-branch fallback, or a literal string to skip the git probe. Default
+    triggers the real git probe.
+    """
+    if branch is _BRANCH_PROBE_GIT:
+        resolved_branch = _git_current_branch()
+    else:
+        resolved_branch = branch
+    root_path = Path(root)
+    if resolved_branch is None:
+        return root_path / slug / f"{slug}.db"
+    sanitized = resolved_branch.replace("/", "--")
+    return root_path / slug / f"{slug}-{sanitized}.db"
 
 
 @contextmanager
@@ -42,18 +142,50 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     (`isolation_level=None`), so callers that need atomicity must drive
     BEGIN/COMMIT/ROLLBACK themselves. This helper is the canonical way.
 
+    **Nesting**: nested `transaction()` blocks use SQLite SAVEPOINTs so a
+    mutator that wraps its own atomicity (e.g. `M.replace_breakpoints`,
+    `M.replace_clip_notes`) composes correctly when called from inside an
+    outer transaction (e.g. `apply_pull_results`, `apply_push_results`).
+    The outermost block drives BEGIN/COMMIT/ROLLBACK; inner blocks drive
+    SAVEPOINT/RELEASE/ROLLBACK TO so an inner failure rolls back only the
+    inner block, not the whole outer transaction. Reentrancy depth is
+    tracked in the module-level `_TRANSACTION_DEPTH` dict keyed by
+    `id(conn)` (sqlite3.Connection doesn't permit attribute assignment).
+
     Usage:
         with transaction(conn):
             conn.execute(...)
             conn.execute(...)
     """
-    conn.execute("BEGIN")
-    try:
-        yield
-    except BaseException:  # prawduct:ok-broad-except
-        # Roll back on ANY exception — including KeyboardInterrupt / SystemExit /
-        # asyncio.CancelledError — then re-raise. The DB must not be left in a
-        # half-written state because the user hit Ctrl-C mid-batch.
-        conn.execute("ROLLBACK")
-        raise
-    conn.execute("COMMIT")
+    key = id(conn)
+    depth = _TRANSACTION_DEPTH.get(key, 0)
+    if depth == 0:
+        conn.execute("BEGIN")
+        _TRANSACTION_DEPTH[key] = 1
+        try:
+            yield
+        except BaseException:  # prawduct:ok-broad-except
+            # Roll back on ANY exception — including KeyboardInterrupt / SystemExit /
+            # asyncio.CancelledError — then re-raise. The DB must not be left in a
+            # half-written state because the user hit Ctrl-C mid-batch.
+            conn.execute("ROLLBACK")
+            _TRANSACTION_DEPTH.pop(key, None)
+            raise
+        conn.execute("COMMIT")
+        _TRANSACTION_DEPTH.pop(key, None)
+    else:
+        # Nested call — use a SAVEPOINT so inner failures don't poison the
+        # outer transaction. SAVEPOINT names must be unique within a
+        # connection; depth makes them so.
+        sp = f"sp_{depth}"
+        conn.execute(f"SAVEPOINT {sp}")
+        _TRANSACTION_DEPTH[key] = depth + 1
+        try:
+            yield
+        except BaseException:  # prawduct:ok-broad-except
+            conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            conn.execute(f"RELEASE SAVEPOINT {sp}")
+            _TRANSACTION_DEPTH[key] = depth
+            raise
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+        _TRANSACTION_DEPTH[key] = depth

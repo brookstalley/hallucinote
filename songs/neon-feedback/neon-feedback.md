@@ -24,17 +24,17 @@ Disco + prog-metal fusion. Subdivision-halving intro simulates 'too fast to hear
 
 | Section | Bars | Feel |
 |---------|------|------|
-| `intro` | 1–8 | _TODO: fill in_ |
-| `verse-1` | 9–16 | _TODO: fill in_ |
-| `pre-chorus-1` | 17–24 | _TODO: fill in_ |
-| `chorus-1` | 25–32 | _TODO: fill in_ |
-| `verse-2` | 33–40 | _TODO: fill in_ |
-| `pre-chorus-2` | 41–48 | _TODO: fill in_ |
-| `bridge` | 49–56 | _TODO: fill in_ |
-| `bridge-twist` | 57–64 | _TODO: fill in_ |
-| `bridge-return` | 65–72 | _TODO: fill in_ |
-| `chorus-2` | 73–80 | _TODO: fill in_ |
-| `outro` | 81–88 | _TODO: fill in_ |
+| `intro` | 1–8 (8 bars) | Subdivision-halving "too fast to hear" simulation, settling to verse tempo |
+| `verse-1` | 9–24 (16 bars) | Jazzy disco, Am9 / D9 / Gmaj7 / Cmaj7 voicings |
+| `pre-chorus-1` | 25–28 (4 bars) | Phrygian power chords (F5 / G5 / Am), chromatic walk fill |
+| `chorus-1` | 29–44 (16 bars) | Disco backbone + double-time hat tag |
+| `verse-2` | 45–56 (12 bars) | Verse return, dropped to 12 bars |
+| `pre-chorus-2` | 57–60 (4 bars) | Mirror of pre-chorus-1 |
+| `bridge` | 61–68 (8 bars) | Modal interchange (Am → A → F#m → D), polymetric hat layer |
+| `bridge-twist` | 69 (1 bar, **5/8**) | Section-boundary meter probe — exercises the v1 meter-ratchet refusal path |
+| `bridge-return` | 70–73 (4 bars) | Snap back to 4/4 |
+| `chorus-2` | 74–89 (16 bars) | Final chorus, dim7 push |
+| `outro` | 90–93 (4 bars) | Disco wind-down |
 
 ---
 

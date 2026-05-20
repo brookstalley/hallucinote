@@ -30,12 +30,23 @@ Subcommands:
            name, write ableton_links rows for matches, emit a
            ProbeAndLinkResult JSON. Re-runnable.
 
-The skill orchestrates: probe Live for tracks+returns → probe-and-link
-→ enumerate phases → for each phase: plan → execute MCP calls → apply →
-move on. All MCP work lives in the skill; Python stays pure.
+    push_cli execute <session_id> (--song SLUG | --db PATH) [--state-dir D]
+        -> W10-E2: dispatches the full ten-phase push directly against
+           Live's Remote Script via :mod:`hallucinote_mcp.client`,
+           bypassing the agent's tool-use channel. Writes
+           ``.last-push-state.json`` (always) + ``.last-push-errors.json``
+           (on failure) into ``--state-dir`` (default: DB directory).
+           Canonical path for full-song pushes; the per-phase
+           ``phases`` / ``plan`` / ``apply`` triplet stays available
+           for development, debugging, and interactive iteration.
 
-DB resolution mirrors :mod:`pull_cli`: ``--song <slug>`` resolves to
-``songs/<slug>/<slug>.db``; ``--db PATH`` is the escape hatch.
+The default agent flow (full-song push) is probe-and-link → execute → read
+state file. ``execute`` is in-process Python that talks to Live's Remote
+Script directly; the historical per-phase agent loop is preserved as a
+debugging path. DB resolution mirrors :mod:`pull_cli`: ``--song <slug>``
+resolves via :func:`hallucinote.db.resolve_db_path` (per-branch path under
+W12-A; legacy ``songs/<slug>/<slug>.db`` fallback outside a repo / on
+detached HEAD); ``--db PATH`` is the escape hatch.
 """
 from __future__ import annotations
 

@@ -14,7 +14,7 @@ $ARGUMENTS
 
 Push is the **DB → Ableton** direction. The DB is the source of truth; Live is built from it. Push is **additive**: it does not delete Live state that isn't in the DB. If the user wants to start clean, they should open a fresh Live set first.
 
-The ten phases run in a strict order set by Live's API constraints (e.g., envelopes must be written on session clips BEFORE `duplicate_to_arrangement`, per W4-A; cues must be written AFTER the arrangement is laid down, per Live's `[0, last_event_time]` clamp). The orchestrator owns this order — your job is to drive each phase through MCP and feed the results back.
+The ten phases run in a strict order set by Live's API constraints (e.g., envelopes must be written on session clips BEFORE `duplicate_to_arrangement`, per W4-A; cues must be written AFTER the arrangement is laid down, per Live's `[0, last_event_time]` clamp). The orchestrator (`push_cli execute`) owns this order — your job is to set up the session (probe-and-link + confirmation gates), invoke `execute` once, then read the on-disk state file and report. The per-call MCP path is preserved for interactive single-element iteration (see end of this file), not for full-song pushes.
 
 ## Required arguments
 

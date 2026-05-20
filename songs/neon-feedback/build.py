@@ -2,18 +2,18 @@
 
 Disco + prog-metal fusion. Subdivision-halving intro simulates 'too fast to hear' settling to verse tempo. Jazzy disco voicings (Am9, D9, Gmaj7, Cmaj7) in verses, Phrygian power chords (F5, G5, Am) in pre-chorus, modal interchange (Am to A to F#m to D) in the bridge, with a 5/8 bridge-twist section testing section-boundary meter changes. Danceable rhythm with chromatic walk fills, polymetric hat layer in bridge, double-time hat in chorus-2 tag. Designed to exercise chord voicing ergonomics, per-note micro-timing offsets, and refusal paths (tempo automation, meter ratchet).
 
-Section bar layout (1-based, 4/4 throughout — adjust if non-4/4):
-    intro        bars  1-8    (8 bars)
-    verse-1      bars  9-16   (8 bars)
-    pre-chorus-1 bars 17-24   (8 bars)
-    chorus-1     bars 25-32   (8 bars)
-    verse-2      bars 33-40   (8 bars)
-    pre-chorus-2 bars 41-48   (8 bars)
-    bridge       bars 49-56   (8 bars)
-    bridge-twist bars 57-64   (8 bars)
-    bridge-return bars 65-72   (8 bars)
-    chorus-2     bars 73-80   (8 bars)
-    outro        bars 81-88   (8 bars)
+Section bar layout (1-based, 4/4 except bridge-twist; 93 bars total):
+    intro         bars  1-8   ( 8 bars)
+    verse-1       bars  9-24  (16 bars)
+    pre-chorus-1  bars 25-28  ( 4 bars)
+    chorus-1      bars 29-44  (16 bars)
+    verse-2       bars 45-56  (12 bars)
+    pre-chorus-2  bars 57-60  ( 4 bars)
+    bridge        bars 61-68  ( 8 bars)
+    bridge-twist  bar  69     ( 1 bar, 5/8 — meter-ratchet refusal probe)
+    bridge-return bars 70-73  ( 4 bars)
+    chorus-2      bars 74-89  (16 bars)
+    outro         bars 90-93  ( 4 bars)
 
 Run:
     python songs/neon-feedback/build.py            # state-converger: re-run is no-op if nothing changed

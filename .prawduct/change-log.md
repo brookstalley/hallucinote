@@ -60,7 +60,7 @@ RESOLVED tags pointing at the chunk that closed them.
 
 Suite: main 1758 (+31) + MCP 661 (+8) = 2419 passing, 0 failed.
 
-<!-- chunks=R-1|R-2 status=shipped release=unreleased scope=push-reliability+compose-time-validation -->
+<!-- chunks=R-1|R-2 status=shipped release=v1.0.1 scope=push-reliability+compose-time-validation -->
 
 
 ## 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release

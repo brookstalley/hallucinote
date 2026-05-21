@@ -748,3 +748,251 @@ def test_check_song_preset_query_takes_precedence_over_plugin_class(
     assert len(report.preset_query_invalid) == 1
     assert len(report.missing) == 0
     assert len(report.unverified) == 0
+
+
+# ---------------------------------------------------------------------------
+# C1: --probe path (in-process MCP browser-search → browser_dry_runs map)
+# ---------------------------------------------------------------------------
+
+
+def _fake_send_factory(routes):
+    """Build a fake send_fn that maps (root, pattern, path_prefix tuple) →
+    response payload.
+
+    ``routes`` is a dict keyed exactly like ``_dry_run_key`` output, with
+    values either an int (treated as the ``count`` field) or a dict
+    (used verbatim as the response result). Any unrouted call raises
+    AssertionError so tests fail loud on accidental misses.
+    """
+    from hallucinote_mcp.wire import Response
+
+    def _send(req):
+        assert req.tool == "ableton_browser", req.tool
+        assert req.action == "search", req.action
+        params = req.params or {}
+        key = (
+            str(params.get("root", "")),
+            str(params.get("pattern", "")),
+            tuple(params.get("path_prefix") or []),
+        )
+        if key not in routes:
+            raise AssertionError(
+                f"_fake_send_factory: unrouted browser.search params {params!r}; "
+                f"routes={list(routes)!r}"
+            )
+        v = routes[key]
+        if isinstance(v, int):
+            result = {"matches": [], "count": v}
+        elif isinstance(v, dict) and "ok" in v and not v["ok"]:
+            return Response(ok=False, error=v.get("error", "fake failure"))
+        else:
+            result = v
+        return Response(ok=True, result=result)
+
+    return _send
+
+
+def test_probe_browser_dry_runs_builds_map_from_devices(
+    conn, song, track_chain, db_path,
+):
+    """Two distinct preset_queries → two search calls → two entries in
+    the resulting dry-runs map. Counts come straight from each
+    ``search`` response."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "audio_effects", "pattern": "Hall",
+                       "path_prefix": ["Hybrid Reverb"]},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("instruments", "Bass-Pluck", ()): 1,
+        ("audio_effects", "Hall", ("Hybrid Reverb",)): 3,
+    })
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+    assert runs == {
+        ("instruments", "Bass-Pluck", ()): 1,
+        ("audio_effects", "Hall", ("Hybrid Reverb",)): 3,
+    }
+
+
+def test_probe_browser_dry_runs_deduplicates_identical_queries(
+    conn, song, track_chain, db_path,
+):
+    """Two devices with the same preset_query → exactly one browser
+    search call. Same pattern as caching one search per unique key."""
+    pq = {"root": "instruments", "pattern": "Pad"}
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query=pq,
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Operator (copy)",
+        preset_query=pq,
+    )
+    conn.commit()
+    call_count = 0
+    base_send = _fake_send_factory({("instruments", "Pad", ()): 7})
+
+    def _counting_send(req):
+        nonlocal call_count
+        call_count += 1
+        return base_send(req)
+
+    runs = C._probe_browser_dry_runs(conn, send_fn=_counting_send)
+    assert call_count == 1
+    assert runs == {("instruments", "Pad", ()): 7}
+
+
+def test_probe_browser_dry_runs_skips_structurally_invalid_queries(
+    conn, song, track_chain, db_path,
+):
+    """Invalid root ('effects' isn't a browser root) is filtered at the
+    structural step — the probe doesn't waste a call on a query the
+    loader would refuse anyway. The invalid device still surfaces
+    later via check_song's ``preset_query_invalid`` bucket."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "effects", "pattern": "Hall"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass"},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("instruments", "Bass", ()): 1,
+    })
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+    assert runs == {("instruments", "Bass", ()): 1}
+
+
+def test_probe_browser_dry_runs_handles_no_preset_queries(
+    conn, song, track_chain, db_path,
+):
+    """A song with only kind-resolvable devices (no preset_query) →
+    empty map, no MCP calls. The probe should be a no-op rather than
+    fail trying to construct a Request with no params."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+    )
+    conn.commit()
+
+    def _explode(req):  # pragma: no cover — must not be called
+        raise AssertionError(f"unexpected MCP call: {req!r}")
+
+    runs = C._probe_browser_dry_runs(conn, send_fn=_explode)
+    assert runs == {}
+
+
+def test_probe_browser_dry_runs_raises_on_search_failure(
+    conn, song, track_chain, db_path,
+):
+    """Any ``ok=False`` response from the browser search fails the
+    whole probe loud — a partial map would silently surface as a clean
+    report (missing entries → no kind_unresolvable signal). Naming the
+    failing preset_query in the error helps the operator diagnose."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Mystery"},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("instruments", "Mystery", ()): {"ok": False, "error": "live not running"},
+    })
+    with pytest.raises(SystemExit, match="ableton_browser.*live not running"):
+        C._probe_browser_dry_runs(conn, send_fn=send)
+
+
+def test_cli_check_with_probe_flags_ambiguous_preset_query(
+    monkeypatch, capsys, conn, song, track_chain,
+):
+    """End-to-end: --probe populates browser_dry_runs and the report
+    reflects the count. count=2 on a preset_query → kind_ambiguous,
+    has_issues=True, exit 1."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "audio_effects", "pattern": "Hall"},
+    )
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_send_factory({("audio_effects", "Hall", ()): 2})
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main(["check", "test-song", "--probe"])
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["browser_dry_runs_provided"] is True
+    assert data["summary"]["kind_ambiguous"] == 1
+
+
+def test_cli_check_with_probe_resolves_single_match(
+    monkeypatch, capsys, conn, song, track_chain,
+):
+    """count=1 on a structurally-valid native preset_query → no issues,
+    exit 0. Confirms --probe doesn't *introduce* false-positive issues
+    when the song's queries all resolve cleanly."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_send_factory({("instruments", "Bass-Pluck", ()): 1})
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main(["check", "test-song", "--probe"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["browser_dry_runs_provided"] is True
+    assert data["summary"]["native"] == 1
+    assert data["summary"]["kind_unresolvable"] == 0
+    assert data["summary"]["kind_ambiguous"] == 0
+
+
+def test_cli_check_probe_combines_with_installed_plugins(
+    monkeypatch, capsys, conn, song, track_chain, tmp_path,
+):
+    """--probe and --installed-plugins are orthogonal data sources;
+    using both populates both branches of the classifier. A plugin
+    device with a valid preset_query that resolves cleanly AND whose
+    plugin is installed → third_party_ok, exit 0."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="PluginDevice", display_name="Serum",
+        preset_query={"root": "plugins", "pattern": "Serum"},
+    )
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    plugins_file = tmp_path / "plugins.json"
+    plugins_file.write_text(json.dumps(
+        {"plugins": [{"name": "Serum", "uri": "query:1"}], "count": 1}
+    ))
+    send = _fake_send_factory({("plugins", "Serum", ()): 1})
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main([
+        "check", "test-song", "--probe",
+        "--installed-plugins", str(plugins_file),
+    ])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["installed_provided"] is True
+    assert data["browser_dry_runs_provided"] is True
+    assert data["summary"]["third_party_ok"] == 1

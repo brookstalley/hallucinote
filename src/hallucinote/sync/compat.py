@@ -15,8 +15,10 @@ by ``write_requirements``) is the shopping list the song's author leaves
 for collaborators.
 
 Two CLI subcommands:
-- ``compat check <slug> [--installed-plugins FILE]`` — print JSON report
-  + exit 1 if items need user attention (missing or unverified third-party).
+- ``compat check <slug> [--installed-plugins FILE] [--probe]`` — print JSON
+  report + exit 1 if items need user attention (missing or unverified
+  third-party, structurally invalid preset_query, or — with ``--probe`` —
+  preset_query that resolves to 0 or 2+ matches in Live's browser).
   Called by the ``/ableton-push`` skill as a preflight gate.
 - ``compat write-requirements <slug>`` — (re)generate
   ``songs/<slug>/REQUIREMENTS.md`` so the file travels with the song. The
@@ -25,10 +27,15 @@ Two CLI subcommands:
   any installed-plugins list (REQUIREMENTS.md is what the song NEEDS, not
   what THIS MACHINE has).
 
-Pure-Python module — no MCP calls. The push skill orchestrates the MCP
-probe (``ableton_browser(action='plugins_list')``) and hands the result
-to this module via ``--installed-plugins``, matching the rest of
-``sync/`` discipline (plans, not side effects).
+Core functions (``classify_device``, ``classify_preset_query``,
+``check_song``) remain pure — no MCP imports — so they're usable from
+tests and other in-process callers without a running Live. The CLI
+``--probe`` flag is the one orchestration seam where MCP enters: it
+issues ``ableton_browser(action='search')`` for every structurally-valid
+preset_query in the song and feeds the resulting count map to
+``check_song`` as ``browser_dry_runs=``. Same lazy-import seam as
+``push_cli._resolve_send_fn`` so this module imports cleanly without
+``hallucinote_mcp`` installed.
 """
 from __future__ import annotations
 
@@ -528,8 +535,8 @@ def _classify_device_full(
             return (
                 "preset_query_unverified",
                 device_row["display_name"],
-                "no browser dry-runs provided (pass --browser-dry-runs <file> "
-                "or run from a session with Live available)",
+                "no browser dry-runs provided (run `compat check <slug> --probe` "
+                "with Live + the MCP bridge available)",
             )
         key = _dry_run_key(pq)
         match_count = browser_dry_runs.get(key)
@@ -741,12 +748,121 @@ def _load_installed_plugins(path: Path) -> list[dict]:
     )
 
 
+def _resolve_send_fn():
+    """Lazy resolver for ``hallucinote_mcp.client.send``.
+
+    Mirrors :func:`hallucinote.sync.push_cli._resolve_send_fn` — the seam
+    exists so tests can inject a fake send_fn without monkeypatching
+    ``sys.modules``. Keeps compat importable when ``hallucinote_mcp``
+    isn't installed (the core ``check_song`` walk doesn't need it; only
+    ``--probe`` does).
+    """
+    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+    return _client.send
+
+
+def _collect_preset_query_specs(
+    conn: sqlite3.Connection,
+) -> list[tuple[tuple[str, str, tuple[str, ...]], dict]]:
+    """Walk every device in the (single-song) DB and return unique
+    structurally-valid preset_queries as ``(dry_run_key, query_dict)``
+    pairs.
+
+    Deduplicates by ``_dry_run_key`` so two devices sharing the same
+    ``preset_query`` only get probed once. Structurally invalid queries
+    (per :func:`classify_preset_query`) are skipped — they'll surface as
+    ``preset_query_invalid`` in the report whether the probe ran or not.
+    The flat ``SELECT`` is safe because compat operates per-song DBs
+    (``check_song`` enforces a single-song invariant on the surrounding
+    walk).
+    """
+    rows = conn.execute(
+        "SELECT preset_query FROM devices WHERE preset_query IS NOT NULL"
+    ).fetchall()
+    seen: dict[tuple[str, str, tuple[str, ...]], dict] = {}
+    for row in rows:
+        raw = row["preset_query"]
+        if classify_preset_query(raw) is not None:
+            continue
+        try:
+            pq = json.loads(raw)
+        except json.JSONDecodeError:
+            # classify_preset_query already filtered un-parseable JSON;
+            # belt-and-suspenders so a future schema drift can't slip
+            # garbage past the structural check into the probe call.
+            continue
+        key = _dry_run_key(pq)
+        if key not in seen:
+            seen[key] = pq
+    return list(seen.items())
+
+
+def _probe_browser_dry_runs(
+    conn: sqlite3.Connection,
+    *,
+    send_fn=None,
+) -> dict[tuple[str, str, tuple[str, ...]], int]:
+    """Issue ``ableton_browser(action='search')`` for every unique
+    structurally-valid preset_query in the song's DB and return a map
+    suitable for :func:`check_song`'s ``browser_dry_runs=`` parameter.
+
+    ``limit=2`` because the report only distinguishes 0 / 1 / 2+ matches;
+    walking further is wasted work. Empty DB → empty map (no probe
+    calls).
+
+    Any non-``ok`` response raises ``SystemExit`` with the upstream
+    error. A partial map would silently produce false-clean reports
+    (a device with no entry in the map looks unverified instead of
+    surfacing the probe failure) — fail loud instead.
+    """
+    specs = _collect_preset_query_specs(conn)
+    if not specs:
+        return {}
+    if send_fn is None:
+        send_fn = _resolve_send_fn()
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    out: dict[tuple[str, str, tuple[str, ...]], int] = {}
+    for key, pq in specs:
+        params: dict = {
+            "pattern": pq.get("pattern", ""),
+            "root": pq.get("root", "instruments"),
+            "limit": 2,
+        }
+        path_prefix = pq.get("path_prefix") or []
+        if path_prefix:
+            params["path_prefix"] = list(path_prefix)
+        resp = send_fn(Request(
+            tool="ableton_browser", action="search", params=params,
+        ))
+        if not getattr(resp, "ok", False):
+            raise SystemExit(
+                "compat check --probe: ableton_browser(action='search') failed "
+                f"for preset_query={pq!r} — "
+                f"{getattr(resp, 'error', 'unknown error')}"
+            )
+        payload = getattr(resp, "result", None) or {}
+        out[key] = int(payload.get("count", len(payload.get("matches") or [])))
+    return out
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     db_path = _resolve_db(args.song)
     installed: list[dict] | None = None
     if args.installed_plugins:
         installed = _load_installed_plugins(Path(args.installed_plugins))
-    report = check_song(db_path, installed_plugins=installed)
+    browser_dry_runs = None
+    if args.probe:
+        conn = connect(db_path)
+        try:
+            browser_dry_runs = _probe_browser_dry_runs(conn)
+        finally:
+            conn.close()
+    report = check_song(
+        db_path,
+        installed_plugins=installed,
+        browser_dry_runs=browser_dry_runs,
+    )
     json.dump(report.to_json(), sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 1 if report.has_issues else 0
@@ -796,6 +912,17 @@ def main(argv: list[str] | None = None) -> int:
             "Path to JSON from ableton_browser(action='plugins_list'). "
             "Omit to run without cross-checking; every third-party "
             "plugin then surfaces as 'third_party_unverified'."
+        ),
+    )
+    p_check.add_argument(
+        "--probe", action="store_true",
+        help=(
+            "Resolve every preset_query against Live's browser via the MCP "
+            "bridge — issues ableton_browser(action='search') per unique "
+            "(root, pattern, path_prefix). Without this flag, structurally "
+            "valid preset_queries surface as 'preset_query_unverified'. "
+            "Requires hallucinote_mcp installed and a running Live with the "
+            "Hallucinote Remote Script enabled."
         ),
     )
     p_check.set_defaults(func=_cmd_check)

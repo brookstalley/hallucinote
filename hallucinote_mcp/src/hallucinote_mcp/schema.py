@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Literal
 
 
-# The ten unified tools. Stable surface — never rename, only alias.
+# The unified tools. Stable surface — never rename, only alias.
 TOOLS: tuple[str, ...] = (
     "ableton_session",
     "ableton_track",
@@ -24,6 +24,7 @@ TOOLS: tuple[str, ...] = (
     "ableton_arrangement",
     "ableton_scene",
     "ableton_browser",
+    "ableton_annotation",
 )
 
 

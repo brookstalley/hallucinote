@@ -15,7 +15,7 @@ from hallucinote_mcp.server import (
 )
 
 
-def test_create_server_registers_ten_tools():
+def test_create_server_registers_all_tools():
     server = create_server()
     names = registered_tool_names(server)
     assert sorted(names) == sorted(schema.TOOLS)

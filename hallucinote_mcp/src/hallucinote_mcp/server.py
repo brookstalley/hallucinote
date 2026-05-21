@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools + 11 resources for Ableton Live,
+hallucinote-mcp — 11 unified tools + 11 resources for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -57,6 +57,7 @@ Tools (call action='help' on any tool for its action menu):
   ableton_arrangement   arrangement layout + cue points (beats not bars)
   ableton_scene         session-view scenes + per-scene tempo/signature
   ableton_browser       instruments, effects, plugins
+  ableton_annotation    composer-intent annotations on a song's DB (W8-C surface)
 
 Resources (read via resources/read, no turn cost):
   ableton://session/snapshot          session+tracks+returns in one read
@@ -114,6 +115,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
+    _register_tool(mcp, "ableton_annotation", "Composer-intent annotations (W8-C): song/time/track-scoped composing notes attached to a song's DB. Distinct from the markdown decisions/annotations corpus surfaced via /song-context.")
 
     return mcp
 

@@ -96,6 +96,9 @@ def _modules_in_remote_script_load_chain() -> list[Path]:
     silent Log.txt traceback.
     """
     return [
+        # Package root — imported FIRST by Live (`import hallucinote_mcp`
+        # via the Remote Scripts loader). Reachable before any subpackage.
+        _PACKAGE_ROOT / "__init__.py",
         *sorted((_PACKAGE_ROOT / "remote_script").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "actions").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "handlers").glob("*.py")),
@@ -130,6 +133,43 @@ def test_remote_script_load_chain_does_not_top_level_import_forbidden_stdlib():
         "`from __future__ import annotations` are lazy strings and "
         "don't need the import at runtime)."
     )
+
+
+def test_top_level_imports_skips_type_checking_block():
+    """Lock-in: `if TYPE_CHECKING: import sqlite3` is a common pattern
+    for type-only imports and must NOT trip the regression check —
+    those imports are never executed at runtime (PEP 563 / 484).
+
+    The current walker iterates ``tree.body`` and dispatches on
+    ``ast.Import`` / ``ast.ImportFrom``; an ``ast.If`` (which is what
+    ``if TYPE_CHECKING:`` parses to) silently falls through, so the
+    inner imports aren't visited. Documenting + asserting that
+    behavior here so a future refactor toward ``ast.walk`` doesn't
+    accidentally start flagging type-only imports.
+    """
+    src = (
+        "from __future__ import annotations\n"
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import sqlite3\n"
+        "    from xml.etree import ElementTree\n"
+    )
+    imports = _top_level_imports(src)
+    assert "sqlite3" not in imports, (
+        "Walker should not surface `if TYPE_CHECKING:` imports — they "
+        "are type-only and never executed at runtime"
+    )
+    assert "xml" not in imports
+
+
+def test_top_level_imports_does_catch_unguarded_top_level():
+    """Sanity counter-test: an unguarded top-level `import sqlite3` IS
+    caught — confirms the walker isn't broken in the other direction.
+    """
+    src = "import sqlite3\nfrom pathlib import Path\n"
+    imports = _top_level_imports(src)
+    assert "sqlite3" in imports
+    assert "pathlib" in imports
 
 
 def test_forbidden_set_is_not_empty():

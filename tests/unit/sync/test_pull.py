@@ -3828,3 +3828,255 @@ def test_pull_cli_requires_song_or_db(tmp_path):
     assert p.returncode != 0
     # argparse mutually-exclusive-required failure goes to stderr.
     assert "--song" in p.stderr or "--db" in p.stderr
+
+
+# ---------------------------------------------------------------------------
+# Arc 3 / C3 — pull_cli execute (in-process probe + apply)
+# ---------------------------------------------------------------------------
+
+
+def _fake_pull_send_factory(routes):
+    """Build a fake MCP send_fn keyed by
+    ``(tool, action, track_index, return_index, device_index)``.
+
+    Use ``None`` for any of the three index slots when the call doesn't
+    carry that param. ``routes`` values are either a dict (used as
+    ``result``) or a string (treated as ok=False error). Unrouted calls
+    raise AssertionError so tests fail loud on misses.
+    """
+    from hallucinote_mcp.wire import Response
+
+    def _send(req):
+        params = req.params or {}
+        key = (
+            req.tool, req.action,
+            params.get("track_index"),
+            params.get("return_index"),
+            params.get("device_index"),
+        )
+        if key not in routes:
+            raise AssertionError(
+                f"_fake_pull_send_factory: unrouted ({req.tool}, "
+                f"{req.action}, params={params!r}); routes={list(routes)!r}"
+            )
+        v = routes[key]
+        if isinstance(v, str):
+            return Response(ok=False, error=v)
+        return Response(ok=True, result=v)
+
+    return _send
+
+
+def test_execute_plan_via_mcp_splits_action_and_params(conn, song, session):
+    """The pull wire shape is ``Request(tool, action, params)``; PullCall
+    bundles action into args. Verify the splitter does the right thing
+    on a simple two-call plan."""
+    from hallucinote.sync import pull_cli
+
+    plan = pull.PullPlan()
+    plan.add(pull.PullCall(
+        tool="ableton_track", args={"action": "info", "track_index": 2},
+        key="track_info:abc",
+    ))
+    plan.add(pull.PullCall(
+        tool="ableton_return", args={"action": "list"},
+        key="returns_list",
+    ))
+
+    seen = []
+
+    def _send(req):
+        seen.append((req.tool, req.action, dict(req.params)))
+        from hallucinote_mcp.wire import Response
+        return Response(ok=True, result={"echo": req.action})
+
+    results = pull_cli._execute_plan_via_mcp(plan, send_fn=_send)
+
+    assert seen == [
+        ("ableton_track", "info", {"track_index": 2}),
+        ("ableton_return", "list", {}),
+    ]
+    assert results == [
+        {"key": "track_info:abc", "ok": True, "tool": "ableton_track",
+         "result": {"echo": "info"}},
+        {"key": "returns_list", "ok": True, "tool": "ableton_return",
+         "result": {"echo": "list"}},
+    ]
+
+
+def test_execute_plan_via_mcp_propagates_tool_errors_as_warnings(conn, song, session):
+    """Tool-side ok=False responses pass through as result records with
+    error fields — never raise. apply_pull_results downstream surfaces
+    them as warnings; the agent layer is the source of truth."""
+    from hallucinote.sync import pull_cli
+
+    plan = pull.PullPlan()
+    plan.add(pull.PullCall(
+        tool="ableton_track", args={"action": "info", "track_index": 1},
+        key="track_info:abc",
+    ))
+
+    def _send(req):
+        from hallucinote_mcp.wire import Response
+        return Response(ok=False, error="track 1 doesn't exist")
+
+    results = pull_cli._execute_plan_via_mcp(plan, send_fn=_send)
+    assert len(results) == 1
+    assert results[0]["ok"] is False
+    assert results[0]["error"] == "track 1 doesn't exist"
+    assert results[0]["result"] is None
+
+
+def test_pull_cli_execute_bakes_device_parameter_change(tmp_path, monkeypatch):
+    """End-to-end the C3 use case: a device has a stale DB parameter
+    row; Live now reports a different value; `pull_cli execute
+    device-parameters ...` probes Live, applies the diff, surfaces
+    `mutations >= 1`."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "c3.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="c3", title="C3", key="Dm")
+    track_id = M.create_track(conn, song_id=song_id, track_index=1,
+                              name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=(session_id := M.create_ableton_session(
+            conn, song_id=song_id, name="draft")),
+        db_kind="track", db_id=track_id, ableton_index=1,
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=track_id)
+    device_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor2", display_name="Compressor",
+    )
+    M.set_device_parameter(
+        conn, device_id=device_id, name="Threshold",
+        value_display="-12.0 dB", value_normalized=0.30,
+    )
+    conn.commit()
+    conn.close()
+
+    # Live now reports Threshold at -6.0 dB (a different value).
+    fake_send = _fake_pull_send_factory({
+        ("ableton_device", "get_parameters", 1, None, 1): {
+            "parameters": [
+                {"name": "Threshold", "value_display": "-6.0 dB",
+                 "value": 0.55, "min": 0.0, "max": 1.0, "is_enum": False},
+            ],
+        },
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "device-parameters", session_id,
+        "--db", str(db_path),
+    ])
+    assert rc == 0
+
+    # Confirm the DB row actually changed — bare rc==0 would pass even
+    # if the apply layer silently no-op'd. The C3 contract is that
+    # mid-session tweaks survive the next push, which requires the new
+    # value to be persisted.
+    conn = init_db(db_path)
+    row = conn.execute(
+        "SELECT value_display, value_normalized FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (str(device_id), "Threshold"),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["value_display"] == "-6.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.55)
+
+
+def test_pull_cli_execute_works_for_mix_state_domain(tmp_path, monkeypatch, capsys):
+    """Generality: execute works for non-device-parameters domains too
+    (the C3 motivating use case is device-parameters but the surface
+    is domain-agnostic by design)."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "mix.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="mx", key="Dm")
+    mid = M.create_track(conn, song_id=song_id, track_index=0,
+                         name="Master", kind="master")
+    M.set_track_mixer(conn, track_id=mid, volume=0.85, pan=0.0)
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.commit()
+    conn.close()
+
+    fake_send = _fake_pull_send_factory({
+        ("ableton_session", "info", None, None, None): {
+            "master": {"volume": 0.70, "panning": 0.0},
+        },
+        ("ableton_return", "list", None, None, None): [],
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "mix-state", session_id, "--db", str(db_path),
+    ])
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["domain"] == "mix-state"
+    assert summary["applied"]["mutations"] >= 1
+
+
+def test_pull_cli_execute_records_pull_request(tmp_path, monkeypatch):
+    """Provenance: every `execute` run opens a `kind='pull'` request and
+    closes it on success — same envelope `pull_cli apply` uses, so
+    Arc 2 B4's driver wiring still captures the audit trail when the
+    in-process path is taken."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "prov.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="pv", key="Dm")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.commit()
+    conn.close()
+
+    # mix-state on an empty song emits two calls (session info +
+    # returns list); we just need a domain that doesn't error.
+    fake_send = _fake_pull_send_factory({
+        ("ableton_session", "info", None, None, None): {
+            "master": {"volume": 0.85, "panning": 0.0},
+        },
+        ("ableton_return", "list", None, None, None): [],
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "mix-state", session_id, "--db", str(db_path),
+        "--reason", "test bake-tweaks",
+    ])
+    assert rc == 0
+
+    # Reopen and inspect requests.
+    conn = init_db(db_path)
+    rows = conn.execute(
+        "SELECT kind, outcome, intent FROM requests WHERE actor = 'sync'"
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pull"
+    assert rows[0]["outcome"] == "ok"
+    assert "pull_cli execute domain=mix-state" in rows[0]["intent"]
+
+
+def test_pull_cli_execute_unknown_domain_errors(tmp_path, monkeypatch):
+    """Unknown domain names the valid set so the user sees what's
+    available without a docs lookup."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "x.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="x", key="Dm")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SystemExit, match="unknown domain.*bogus"):
+        pull_cli.main([
+            "execute", "bogus", session_id, "--db", str(db_path),
+        ])

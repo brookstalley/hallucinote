@@ -76,6 +76,11 @@ When changing this surface:
   - `pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan`
     emits the PullPlan, `apply` consumes plan + results and returns an
     `ApplyResult` summary.
+  - `pull_cli execute <domain> <session_id>` (Arc 3 / C3) is the
+    in-process one-shot that collapses plan + probe + apply into one
+    pass — does NOT touch the JSON bridge. Uses the same MCP TCP seam
+    as `push_cli` (`_resolve_send_fn` → `hallucinote_mcp.client.send`);
+    `plan`/`apply` remain MCP-free for the skill-driven flow.
 
 When changing this surface:
 - New `PullCall` key kinds need a `_HANDLERS` entry AND an apply branch.

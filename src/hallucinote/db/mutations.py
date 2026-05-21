@@ -31,6 +31,7 @@ from typing import Any, Iterator, Sequence
 
 from hallucinote.db import events as E
 from hallucinote.db.connection import transaction
+from hallucinote.preset_query import normalize as _normalize_preset_query
 
 
 # ---------------------------------------------------------------------------
@@ -2397,7 +2398,7 @@ def create_device(
     kind: str,
     display_name: str,
     preset_uri: str | None = None,
-    preset_query: dict[str, Any] | None = None,
+    preset_query: dict[str, Any] | str | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -2413,6 +2414,13 @@ def create_device(
     JSON; the push planner threads it through to
     ``ableton_device(action='load', preset_query=...)`` which resolves on the
     consumer's machine. ``preset_uri`` is the per-machine canonical URI.
+
+    Arc 3 / C2: ``preset_query`` also accepts a path-shape string like
+    ``"Drums/Kit-Core 909"`` — normalized to the canonical dict via
+    :func:`hallucinote.preset_query.parse_path_shape` before persistence.
+    The DB always stores the structured form so downstream consumers see
+    a single shape. Authors who need ``mode`` or ``case_sensitive`` keep
+    using the dict form.
     """
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
@@ -2422,6 +2430,7 @@ def create_device(
             "(preset_query for cross-machine portability, preset_uri for "
             "an unambiguous per-machine URI)"
         )
+    preset_query = _normalize_preset_query(preset_query)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     preset_query_json = (
         json.dumps(preset_query, sort_keys=True) if preset_query is not None

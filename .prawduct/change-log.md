@@ -4,6 +4,74 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
+
+<!-- chunks=C1|C2|C3 status=shipped release=unreleased scope=compose-validation-r2-followons -->
+
+R-2 (v1.0.1) shipped the pure module `compat.classify_preset_query`
+and the `browser_dry_runs` map plumbing through `check_song`, but left
+the CLI orchestration on the backlog. Arc 3 closes the loop the R-2
+PR opened: in-process browser-search probing for compat check,
+ergonomic path-shape sugar at the authoring boundary, and a one-shot
+`pull_cli execute` that bakes mix-time tweaks back into the DB.
+
+**C1 — `compat check --probe`.** New flag on the existing CLI. When
+set, walks the song's DB for unique structurally-valid `preset_query`
+specs, dedupes by `(root, pattern, path_prefix)`, issues
+`ableton_browser(action='search', limit=2)` per unique key
+in-process via the MCP TCP client, populates `browser_dry_runs` and
+feeds it to `check_song`. Orthogonal to `--installed-plugins <path>` —
+the two flags can be combined or used independently. Without
+`--probe`, existing behavior preserved (preset_query devices land in
+`preset_query_unverified`). `limit=2` because the report only buckets
+0 / 1 / 2+ matches — walking past 2 is wasted work. Failed searches
+raise `SystemExit` (a partial map would silently surface as a
+false-clean report). The stale `--browser-dry-runs <file>` reference
+in the `preset_query_unverified` detail message replaced with the
+now-real `--probe` flag. 8 new tests.
+
+**C2 — `preset_query` path-shape sugar.** New top-level module
+`src/hallucinote/preset_query.py` ships `BROWSER_ROOTS` (single source
+of truth replacing the duplicate constant in `compat.py`) +
+`parse_path_shape("Drums/Kit-Core 909") → {root, pattern}` +
+`normalize(dict | str | None)`. `M.create_device(preset_query=...)`
+accepts either form; the DB always stores the canonical dict so
+downstream consumers (push planner, compat.check_song, MCP loader)
+see a single shape. Root segments are case-insensitive with
+``" "`` ≡ ``"_"`` (`"Audio Effects/Hall"` ≡ `"audio_effects/Hall"`).
+≥2 segments required; empty/whitespace pattern rejected; unknown root
+rejected naming the valid set. ``mode``/``case_sensitive`` not
+surfacable through path-shape — authors who need those keep using
+the dict form. 20 new tests (parser + integration through
+`create_device` for persistence/idempotency/error propagation).
+Closes the v11 Arc 3 C2 open question on syntax — resolved in favor
+of sugar-at-the-authoring-boundary with DB stored only as canonical
+dict.
+
+**C3 — `pull_cli execute` (in-process probe + apply).** The spec
+framed this as "snapshot-bake-recent-changes" but the real round-trip
+durability lives in the DB, not in `captured_session.json` —
+`captured_session.json` only feeds `replay_capture(snap)` in
+`build.py`, while push reads directly from the DB. So writing to the
+DB is the right target. New `pull_cli execute <domain> <session_id>
+--song <slug>` subcommand collapses the historical `plan → file →
+execute probes → file → apply` dance into one in-process pass.
+Generic across all 10 existing `_DOMAINS` (device-parameters is the
+motivating use case; the surface is domain-agnostic). The "clear
+diff" comes free via `ApplyResult.details`. Provenance envelope
+identical to `_cmd_apply` — every `execute` opens a `kind='pull'`
+request closed on success. 6 new tests.
+
+Deferred for v1: dedicated `--dry-run` (a proper rollback wrapper
+or in-memory DB clone is bigger than C3's spec calls for; backlog if
+the workflow shows it's needed). Live verification deferred for both
+`--probe` (C1) and `execute` (C3) — Live's Control Surface slot wasn't
+enabled in this session; unit tests cover wire shapes against the
+production schema. Skill markdown
+(`/snapshot-bake-recent-changes`) deliberately not in this arc.
+
+Suite: 1876/1876 passing (was 1842 — 34 net new tests).
+
 ## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
 
 <!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=unreleased scope=provenance+annotations-mcp+dev-ergonomics -->

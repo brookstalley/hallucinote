@@ -215,5 +215,5 @@ The remaining arcs are mostly mop-up that can interleave with creative work as t
 
 1. **Arc 1 A1 — coherence layer surface.** Per-symptom validators (refuse with teaching error) vs unified "refresh and reconcile" entrypoint that papers over staleness silently? Backlog recommends refuse-and-teach for v1.1; revisit at chunk time.
 2. **Arc 2 — extend Wave 8 vs add adjacent shape.** Wave 8's markdown-corpus + FTS5 annotations layer is the existing shape. Decide per-chunk: extend that surface, or add a structured-in-DB annotations table alongside it.
-3. **Arc 3 C2 — `preset_query` path-shape syntax.** `"Drums/Kit-Core 909"` vs `{root: "drums", pattern: "Kit-Core 909"}` vs both. Compat in R-2.1 already validates the structured form; C2 may want the path-shaped form as syntactic sugar.
+3. ~~**Arc 3 C2 — `preset_query` path-shape syntax.**~~ Resolved 2026-05-21 (chunk C2): sugar at the authoring boundary; DB stores only canonical dict. `M.create_device(preset_query=...)` accepts either form via `hallucinote.preset_query.normalize`; downstream consumers see one shape. See change-log entry for the full rationale.
 4. **Arc 5 E1 — enum-param automation.** Two viable shapes; pick before designing the helper API.

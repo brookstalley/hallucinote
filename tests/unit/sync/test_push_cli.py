@@ -1591,3 +1591,224 @@ def test_cli_apply_minimal_format_handles_ack_only_batch(
     apply_summary = json.loads(capsys.readouterr().out)
     assert apply_summary["applied"] == len(plan_json["calls"])
     assert apply_summary["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# R-1.2: cleanup-default-scaffold
+# ---------------------------------------------------------------------------
+
+
+def test_plan_cleanup_default_scaffold_descending_track_indexes():
+    """Deletable tracks come out in descending index order so naive
+    forward iteration over them produces safe descending deletes (each
+    delete shifts later indexes down)."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[
+            {"track_index": 1, "name": "1-MIDI"},
+            {"track_index": 2, "name": "2-MIDI"},
+            {"track_index": 3, "name": "3-Audio"},
+            {"track_index": 4, "name": "4-Audio"},
+        ],
+        unmatched_live_returns=[],
+        total_live_track_count=8,  # 4 defaults + 4 song tracks
+        matched_track_count=4,
+    )
+    assert plan.can_proceed is True
+    assert [t["track_index"] for t in plan.deletable_tracks] == [4, 3, 2, 1]
+
+
+def test_plan_cleanup_default_scaffold_refuses_non_canonical():
+    """Non-canonical unmatched tracks → refuse with names listed.
+    Cleanup never deletes anything the user might want to keep."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[
+            {"track_index": 1, "name": "1-MIDI"},
+            {"track_index": 5, "name": "SomeoneElsesTrack"},
+        ],
+        unmatched_live_returns=[],
+        total_live_track_count=5,
+        matched_track_count=0,
+    )
+    assert plan.can_proceed is False
+    kinds = [r["kind"] for r in plan.refusals]
+    assert "non_canonical_tracks" in kinds
+    detail = next(r["detail"] for r in plan.refusals
+                  if r["kind"] == "non_canonical_tracks")
+    assert "SomeoneElsesTrack" in detail
+
+
+def test_plan_cleanup_default_scaffold_refuses_would_empty_live():
+    """Deleting all 4 defaults when there are no song tracks would
+    leave Live with zero tracks — Live's last-track delete refuses,
+    so the cleanup planner refuses upstream with a teaching error."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[
+            {"track_index": 1, "name": "1-MIDI"},
+            {"track_index": 2, "name": "2-MIDI"},
+            {"track_index": 3, "name": "3-Audio"},
+            {"track_index": 4, "name": "4-Audio"},
+        ],
+        unmatched_live_returns=[],
+        total_live_track_count=4,  # only the 4 defaults
+        matched_track_count=0,
+    )
+    assert plan.can_proceed is False
+    assert any(r["kind"] == "would_empty_live_tracks" for r in plan.refusals)
+
+
+def test_plan_cleanup_default_scaffold_descending_return_indexes():
+    """Returns also descend; canonical default returns are
+    A-Reverb (1) and B-Delay (2). No min-count constraint on returns."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[{"track_index": 1, "name": "1-MIDI"}],
+        unmatched_live_returns=[
+            {"return_index": 1, "name": "A-Reverb"},
+            {"return_index": 2, "name": "B-Delay"},
+        ],
+        total_live_track_count=5,
+        matched_track_count=4,
+    )
+    assert plan.can_proceed is True
+    assert [r["return_index"] for r in plan.deletable_returns] == [2, 1]
+
+
+def test_plan_cleanup_default_scaffold_refuses_non_canonical_returns():
+    """Same conservatism for returns: a renamed default or someone else's
+    return refuses cleanup."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[],
+        unmatched_live_returns=[
+            {"return_index": 1, "name": "A-Reverb"},
+            {"return_index": 2, "name": "CustomBus"},
+        ],
+        total_live_track_count=4,
+        matched_track_count=4,
+    )
+    assert plan.can_proceed is False
+    assert any(r["kind"] == "non_canonical_returns" for r in plan.refusals)
+
+
+def test_plan_cleanup_default_scaffold_nothing_to_do():
+    """When all unmatched parents are non-canonical → refuse non-canonical.
+    When NOTHING is unmatched → 'nothing_to_do' refusal so a CLI caller
+    doesn't silently exit 0 against a fully-matched Live set."""
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=[],
+        unmatched_live_returns=[],
+        total_live_track_count=4,
+        matched_track_count=4,
+    )
+    assert plan.can_proceed is False
+    assert any(r["kind"] == "nothing_to_do" for r in plan.refusals)
+
+
+def test_cli_cleanup_default_scaffold_dispatches_descending_deletes(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """End-to-end CLI: probe Live, identify 4 defaults alongside one
+    song track, dispatch four ``ableton_track(delete)`` calls in
+    descending order, re-probe, output a summary."""
+    # Set up: one song track ("Drums") already in Live at index 5,
+    # alongside 4 defaults at 1-4. Mirrors the partial-push-recovery
+    # scenario the sun-zone-done canary hit.
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+
+    pre_tracks = [
+        {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+        {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+        {"track_index": 3, "name": "3-Audio", "kind": "audio"},
+        {"track_index": 4, "name": "4-Audio", "kind": "audio"},
+        {"track_index": 5, "name": "Drums", "kind": "midi"},
+    ]
+    post_tracks = [
+        # After cleanup the song's Drums shifts down to index 1.
+        {"track_index": 1, "name": "Drums", "kind": "midi"},
+    ]
+    probe_calls = {"track_list": 0, "return_list": 0}
+
+    def fake_probe_live(send_fn=None):
+        probe_calls["track_list"] += 1
+        # First call → pre-cleanup state; second call → post-cleanup state.
+        if probe_calls["track_list"] == 1:
+            return list(pre_tracks), []
+        return list(post_tracks), []
+
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", fake_probe_live)
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
+
+    deletes: list[tuple[str, int]] = []
+
+    def _fake_send(req):
+        if req.tool == "ableton_track" and req.action == "delete":
+            deletes.append(("track", req.params["track_index"]))
+            return _FakeResp(ok=True, result={"deleted": True})
+        if req.tool == "ableton_return" and req.action == "delete":
+            deletes.append(("return", req.params["return_index"]))
+            return _FakeResp(ok=True, result={"deleted": True})
+        return _FakeResp(ok=False, error=f"unexpected: {req.tool}/{req.action}")
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _fake_send)
+
+    rc = push_cli.main([
+        "cleanup-default-scaffold", session, "--db", str(db_path),
+    ])
+    assert rc == 0, capsys.readouterr().err
+    out = json.loads(capsys.readouterr().out)
+
+    # Deletes in descending track-index order, no return deletes (no
+    # canonical default returns in this scenario).
+    assert deletes == [
+        ("track", 4), ("track", 3), ("track", 2), ("track", 1),
+    ]
+    assert len(out["deleted_tracks"]) == 4
+    assert out["deleted_returns"] == []
+    # The post-probe link re-pointed Drums from track_index=5 to 1.
+    ableton_index = Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    )
+    assert ableton_index == 1
+
+
+def test_cli_cleanup_default_scaffold_refuses_on_non_canonical(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """If Live carries a non-canonical unmatched track, cleanup refuses
+    (exit 1) without dispatching any deletes — conservative."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    monkeypatch.setattr(
+        push_cli, "_probe_live_via_mcp",
+        lambda send_fn=None: (
+            [
+                {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+                {"track_index": 2, "name": "MyOtherSong", "kind": "midi"},
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
+
+    deletes: list = []
+
+    def _fake_send(req):
+        deletes.append((req.tool, req.action))
+        return _FakeResp(ok=False, error="should not have been called")
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _fake_send)
+
+    rc = push_cli.main([
+        "cleanup-default-scaffold", session, "--db", str(db_path),
+    ])
+    assert rc == 1
+    captured = capsys.readouterr()
+    # Refusal JSON lands on stderr.
+    err_lines = captured.err
+    assert "refused" in err_lines
+    assert "MyOtherSong" in err_lines
+    # Nothing was dispatched.
+    assert deletes == []

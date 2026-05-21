@@ -355,9 +355,16 @@ def cue_list_handler(context: LiveContext) -> dict[str, Any]:
     return {"cue_points": out}
 
 
+_IF_EXISTS_VALUES: frozenset[str] = frozenset({"refuse", "skip"})
+
+
 def _create_one_cue_locked(
-    context: LiveContext, *, position_beats: float, name: str | None
-) -> dict[str, Any]:
+    context: LiveContext,
+    *,
+    position_beats: float,
+    name: str | None,
+    if_exists: str = "refuse",
+) -> dict[str, Any] | None:
     """Inner cue-creation routine — runs on the WORKER thread.
 
     **Caller invariants:**
@@ -373,6 +380,17 @@ def _create_one_cue_locked(
     once while still keeping every per-cue window serialized against
     parallel single-cue callers.
 
+    ``if_exists`` controls how the routine reacts when a cue already
+    occupies ``position_beats``:
+
+      * ``"refuse"`` (default) — raise ``ValueError`` so the caller
+        sees the collision. Matches legacy ``cue_create`` semantics.
+      * ``"skip"`` — when the existing cue's name matches the requested
+        name, return its info (idempotent re-push); when it doesn't,
+        raise ``ValueError`` because the name conflict signals a real
+        authoring drift the caller should resolve. A ``None`` requested
+        name matches any existing name (no rename intent expressed).
+
     The handler is split into four phases, each phase a separate
     main-thread bout (plus the worker-thread settle wait between
     bouts 1 and 2):
@@ -384,17 +402,46 @@ def _create_one_cue_locked(
       4. Verify the new cue is in ``song.cue_points``, restore the
          prior playhead position, and optionally rename.
     """
+    if if_exists not in _IF_EXISTS_VALUES:
+        raise ValueError(
+            f"if_exists={if_exists!r} not in {sorted(_IF_EXISTS_VALUES)}"
+        )
+
     # ---- Bout 1: validate, capture, seek (main thread) ----
-    def _validate_capture_seek() -> tuple[float, frozenset[float]]:
+    # Returns either (prior, positions_before) for the slow path, OR the
+    # idempotent-skip result dict (when if_exists='skip' matched a same-name
+    # existing cue) to short-circuit the rest of the routine.
+    def _validate_capture_seek() -> tuple[float, frozenset[float]] | dict[str, Any]:
         song = context.song
         if position_beats < 0:
             raise ValueError(f"position_beats {position_beats} must be >= 0")
-        # Refuse if a cue already exists at this position.
-        for existing in getattr(song, "cue_points", ()):
+        # Existing-cue handling — branches on if_exists.
+        for i, existing in enumerate(getattr(song, "cue_points", ()), start=1):
             if abs(float(getattr(existing, "time", -1.0)) - float(position_beats)) < 1e-6:
+                existing_name = str(getattr(existing, "name", ""))
+                if if_exists == "skip":
+                    # Idempotent re-push: the planner emits the same cues
+                    # against a set that already has them. Same name (or
+                    # name=None) → no-op; different name → refuse, because
+                    # rename intent must go through cue_rename explicitly.
+                    if name is None or name == existing_name:
+                        return {
+                            "cue_index": i,
+                            "position_beats": float(position_beats),
+                            "name": existing_name,
+                            "skipped": True,
+                        }
+                    raise ValueError(
+                        f"cue_create: a cue already exists at position_beats="
+                        f"{position_beats} with name {existing_name!r}, but "
+                        f"the request asked for name {name!r}. if_exists="
+                        f"'skip' only no-ops when names match; use "
+                        f"cue_rename to change the existing cue, or "
+                        f"cue_delete to replace it."
+                    )
                 raise ValueError(
                     f"cue_create: a cue already exists at position_beats="
-                    f"{position_beats} (name={getattr(existing, 'name', '')!r}); "
+                    f"{position_beats} (name={existing_name!r}); "
                     "use cue_delete first if you want to replace it"
                 )
         # Probe that Live exposes a cue-toggle API in this version.
@@ -431,7 +478,12 @@ def _create_one_cue_locked(
         song.current_song_time = float(position_beats)
         return prior, positions_before
 
-    prior, positions_before = context.run_on_main(_validate_capture_seek)
+    bout1 = context.run_on_main(_validate_capture_seek)
+    # if_exists='skip' short-circuit: an existing same-name cue makes the
+    # call a no-op. No seek/toggle/restore needed.
+    if isinstance(bout1, dict):
+        return bout1
+    prior, positions_before = bout1
 
     # ---- Bout 2: worker-thread settle wait ----
     #
@@ -517,6 +569,7 @@ def cue_create_handler(
     *,
     position_beats: float,
     name: str | None = None,
+    if_exists: str = "refuse",
 ) -> dict[str, Any]:
     """Create a cue point at position_beats.
 
@@ -536,6 +589,13 @@ def cue_create_handler(
     we pre-check for an existing cue at the position and raise a teaching
     error instead of silently destroying it.
 
+    **Idempotency (R-1.1).** ``if_exists`` controls collision behavior:
+    ``"refuse"`` (default — one-shot caller's expected behavior) raises
+    on any collision; ``"skip"`` no-ops when the existing cue's name
+    matches the request and raises only on name mismatch. The planner
+    sets ``"skip"`` on batched re-pushes so the same plan landed twice
+    is a no-op the second time.
+
     **Parallel-call safety (B-21).** The seek + audio-thread-settle +
     toggle + verify window is held under ``context.live_state_lock``
     (acquired on the worker thread) so concurrent callers can't observe
@@ -544,18 +604,32 @@ def cue_create_handler(
     """
     with context.live_state_lock:
         return _create_one_cue_locked(
-            context, position_beats=position_beats, name=name
+            context,
+            position_beats=position_beats,
+            name=name,
+            if_exists=if_exists,
         )
 
 
 def cue_create_batch_handler(
-    context: LiveContext, *, cues: list[Any],
+    context: LiveContext,
+    *,
+    cues: list[Any],
+    if_exists: str = "skip",
 ) -> dict[str, Any]:
     """Create multiple cues in one call, holding ``live_state_lock`` once.
 
     Each entry in ``cues`` is ``{"position_beats": float, "name": str?}``.
     Returns ``{"cue_count": N, "cues": [...]}`` where each result is the
     same shape as ``cue_create``'s return value, in submission order.
+
+    **Idempotency (R-1.1).** ``if_exists`` defaults to ``"skip"`` here
+    (vs. ``"refuse"`` on single-cue ``cue_create``). The batch is the
+    planner's path; re-pushing the same plan must be a no-op when the
+    cues already match. Per-entry, ``"skip"`` returns the existing
+    cue's info with ``"skipped": True`` when the name matches (or is
+    None) and raises on name mismatch. ``"refuse"`` matches legacy
+    behavior and raises on any collision.
 
     **Index caveat**: the reported ``cue_index`` is the position in
     ``song.cue_points`` AT THE TIME each cue was created. Because Live
@@ -569,6 +643,11 @@ def cue_create_batch_handler(
         )
     if not cues:
         raise ValueError("cue_create_batch: cues list is empty")
+    if if_exists not in _IF_EXISTS_VALUES:
+        raise ValueError(
+            f"cue_create_batch: if_exists={if_exists!r} not in "
+            f"{sorted(_IF_EXISTS_VALUES)}"
+        )
 
     # Pre-validate the whole list so we fail loudly before any partial
     # mutation rather than half-completing the batch.
@@ -640,7 +719,10 @@ def cue_create_batch_handler(
         for position_beats, name in parsed:
             results.append(
                 _create_one_cue_locked(
-                    context, position_beats=position_beats, name=name
+                    context,
+                    position_beats=position_beats,
+                    name=name,
+                    if_exists=if_exists,
                 )
             )
     return {"cue_count": len(results), "cues": results}

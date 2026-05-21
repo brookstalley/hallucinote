@@ -158,11 +158,24 @@ register(
         name="cue_create",
         description=(
             "Create a cue point at position_beats with an optional name. "
-            "Returns the new cue_index (1-based)."
+            "Returns the new cue_index (1-based). When ``if_exists='skip'`` "
+            "(default ``'refuse'``), a same-position same-name cue is a "
+            "no-op (the result carries ``skipped=True``) and a same-"
+            "position different-name request still raises so name drift "
+            "stays visible."
         ),
         params=(
             ParamSpec(name="position_beats", type="float", minimum=0.0),
             ParamSpec(name="name", type="str", required=False),
+            ParamSpec(
+                name="if_exists", type="str", required=False,
+                enum=("refuse", "skip"),
+                description=(
+                    "Behavior when a cue already exists at position_beats. "
+                    "'refuse' (default): raise. 'skip': no-op when names "
+                    "match (or name is omitted); raise on name mismatch."
+                ),
+            ),
         ),
         handler=arrangement_handlers.cue_create_handler,
         # W3-F: see handler docstring. The seek-then-settle window
@@ -211,6 +224,16 @@ register(
                     "List of {position_beats: float, name?: str} dicts. "
                     "Positions must be unique within the batch and within "
                     "[0, last_event_time]."
+                ),
+            ),
+            ParamSpec(
+                name="if_exists", type="str", required=False,
+                enum=("refuse", "skip"),
+                description=(
+                    "Per-entry behavior when a cue already exists at "
+                    "position_beats. 'skip' (default — the planner path): "
+                    "no-op when names match; the result carries "
+                    "``skipped=True``. 'refuse': raise on any collision."
                 ),
             ),
         ),

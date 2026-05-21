@@ -4,6 +4,65 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation
+
+**R-1.1 — Cue push idempotency.** `ableton_arrangement(cue_create /
+cue_create_batch)` gains `if_exists={"refuse", "skip"}`. Single-cue
+default `"refuse"` preserves one-shot caller semantics; batch default
+`"skip"` makes the planner's re-push idempotent (same-name same-position
+no-ops with `skipped=true`; name mismatch refuses so rename intent goes
+through `cue_rename` explicitly). `plan_push_cue_points` emits
+`if_exists="skip"` so re-pushing the same DB into a Live set that
+already has the cues no-ops the second time, instead of the prior
+"halt with `a cue already exists at position_beats=0.0` on every cue."
+
+**R-1.2 — Default-scaffold cleanup CLI.** `push_cli
+cleanup-default-scaffold <session_id>` replaces the 6+ hand-issued
+`ableton_track/return(action='delete')` calls W18-D's detect-only path
+required. Pure planner `push.plan_cleanup_default_scaffold` refuses on
+non-canonical unmatched parents (user must hand-resolve "another song's
+tracks") and on "would empty Live tracks" (Live's ≥1-track constraint).
+CLI dispatches deletes in descending index order in-process, then
+re-runs `probe_and_link` to reconcile shifted indexes.
+`.claude/skills/ableton-push/SKILL.md` Step 2a now points at the
+subcommand.
+
+**R-2.1 — Compose-time preset_query validation.**
+`compat.classify_preset_query()` catches the two structural traps that
+hit sun-zone-done at push time: `root` not in the loader-accepted enum
+(typo `'effects'` vs `'audio_effects'` — 8 push failures) and non-list
+`path_prefix` (3 failures). `check_song` accepts an optional
+`browser_dry_runs` map; structurally-valid preset_queries classify as
+`kind_unresolvable` (0 matches), `kind_ambiguous` (2+ matches),
+`preset_query_unverified` (no dry-runs provided), or fall through to
+the existing classifier on 1 match. `has_issues` flips True for every
+new failure mode. Lock-test against `hallucinote_mcp.actions.browser._ROOTS`
+prevents enum drift between the two sides. `format_requirements_md`
+surfaces preset_query authoring issues in a dedicated section.
+
+**R-2.2 — `docs/snapshot-schema.md` consolidated edit.** Documents:
+loader's class-or-display-name dual accept (with the `Glue`/`Glue
+Compressor` failing case named explicitly); `kind` field is
+informational only (the loader ignores it); `preset_query.root` enum
+enumerated inline with the `effects` vs `audio_effects` typo callout;
+`path_prefix` must-be-list rule with wrong/right examples; "default
+device vs named preset" subsection with both worked examples.
+
+**Housekeeping.** `tests/unit/sync/test_pull.py::test_apply_device_parameters_property_round_trip`
+gained `@settings(deadline=None)` — pre-existing hypothesis
+`FlakyFailure` surfaced under parallel xdist contention; the test
+checks correctness, not timing. Eight backlog items closed (cue
+idempotency, default-scaffold cleanup, snapshot-schema gaps, `kind`
+field documentation, default-vs-named preset doc, class-vs-display-name
+doc, compat preset_query validation, first-push scaffold cleanup
+offer) — `.prawduct/backlog.md` marked with RESOLVED / PARTIALLY
+RESOLVED tags pointing at the chunk that closed them.
+
+Suite: main 1758 (+31) + MCP 661 (+8) = 2419 passing, 0 failed.
+
+<!-- chunks=R-1|R-2 status=shipped release=v1.0.1 scope=push-reliability+compose-time-validation -->
+
+
 ## 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release
 
 First user-facing tagged release. Bundles W13-B (missing-plugin detection

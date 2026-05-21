@@ -6,7 +6,77 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased work — v1.0 is the active development line._
+_No unreleased work — v1.1 planning lives in `docs/v11-requirements.md`._
+
+## [1.0.1] — 2026-05-21
+
+**Push reliability polish.** Closes eight backlog items surfaced during
+the sun-zone-done iteration session — all small, additive, and
+backwards-compatible. The compose → push loop no longer halts on cues
+the second time around, and two compose-time author traps that cost
+11 of 13 push failures in sun-zone-done now classify cleanly in the
+compat report.
+
+### Added
+
+- **`ableton_arrangement(cue_create | cue_create_batch)`** —
+  `if_exists` parameter (`"refuse"` for single calls, `"skip"` for the
+  batch default). `plan_push_cue_points` emits `if_exists="skip"` so
+  re-pushing the same DB no-ops the cues phase instead of failing
+  on every cue with "a cue already exists at position_beats=0.0".
+- **`push_cli cleanup-default-scaffold <session_id>`** — single-command
+  cleanup of Live's brand-new-set defaults (`1-MIDI` / `2-MIDI` /
+  `3-Audio` / `4-Audio`, `A-Reverb` / `B-Delay`) after a first push.
+  Pure planner `push.plan_cleanup_default_scaffold` refuses on
+  non-canonical unmatched parents (user hand-resolves) and on "would
+  empty Live tracks" (Live's ≥1-track constraint). CLI dispatches in
+  descending index order, then re-runs `probe_and_link` to reconcile
+  shifted indexes. Replaces the prior 6+ hand-issued MCP-call workflow.
+- **`compat.classify_preset_query()`** — structural validation for
+  `preset_query.root` (must be in the loader-accepted enum) and
+  `path_prefix` (must be a list). `check_song` accepts an optional
+  `browser_dry_runs` map; structurally-valid queries classify as
+  `kind_unresolvable` (0 browser matches), `kind_ambiguous` (2+
+  matches), `preset_query_unverified` (no dry-runs provided), or
+  fall through on 1 match. Four new `DeviceStatus` values, all flagged
+  by `has_issues`. Lock-test against `hallucinote_mcp.actions.browser._ROOTS`
+  prevents enum drift between the two sides.
+
+### Changed
+
+- **`docs/snapshot-schema.md`** — consolidated authoring-trap pass:
+  documents loader's class-or-display-name dual accept (with the
+  `Glue` / `Glue Compressor` failing case named); `kind` field as
+  informational only (the loader ignores it); `preset_query.root`
+  enum enumerated inline with the `effects` vs `audio_effects` typo
+  callout; `path_prefix` must-be-list rule with wrong/right examples;
+  "default device vs named preset" subsection with worked examples
+  of each shape.
+- **`format_requirements_md`** surfaces preset_query authoring issues
+  in a dedicated section so authors see them alongside missing-plugin
+  classifications.
+
+### Fixed
+
+- **Re-push idempotency on the cues phase** — same-name same-position
+  cues now no-op with `skipped=true`; name mismatch still refuses so
+  rename intent goes through `cue_rename` explicitly.
+- **`test_apply_device_parameters_property_round_trip`** —
+  `@settings(deadline=None)` to suppress a pre-existing hypothesis
+  `FlakyFailure` surfaced under parallel xdist contention. The test
+  checks correctness, not timing.
+
+### Backlog items closed
+
+Cue idempotency · default-scaffold cleanup · default-scaffold first-push
+offer · snapshot-schema preset_query gaps · `kind` field documented ·
+default-vs-named preset doc · class-vs-display-name doc · compat
+preset_query validation.
+
+### Tests
+
+Main suite 1758 (+31 from v1.0) + MCP suite 661 (+8 from v1.0) =
+2419 passing, 0 failed.
 
 ## [1.0.0] — 2026-05-21
 

@@ -4,6 +4,48 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
+
+<!-- chunks=hotfix status=shipped release=unreleased scope=arc-2-live-verification-fallout -->
+
+Arc 2's `ableton_annotation` handler imported `sqlite3` at module
+load. Live 12.x's embedded Python ships without the `_sqlite3` C
+extension, so the import raised `ModuleNotFoundError` and cascaded
+up through `actions/__init__.py` to abort the entire Hallucinote
+Control Surface load. Symptom: Live shows "Hallucinote" in the
+Control Surface dropdown but the MCP bridge on `127.0.0.1:9878`
+never starts and `ableton_session(action='info')` returns
+"Connection refused." Diagnose via Live's `Log.txt` — the
+`RemoteScriptError` traceback names the chain.
+
+This is exactly the gap the Arc 2 cumulative-Critic backlog item
+"`ableton_annotation` live verification end-to-end" predicted: unit
+tests pass against the host Python (which has `sqlite3`), but the
+embedded Python is the runtime that matters. The `sqlite3.Connection`
+/ `sqlite3.Row` references in the handler were function-signature
+annotations only, lazy strings under `from __future__ import
+annotations` — so the import was dead at runtime and could be
+removed without touching any logic. A load-bearing NB comment now
+names the trap.
+
+**Regression test (AST-based, host-Python-independent).** New
+`hallucinote_mcp/tests/unit/test_remote_script_import_safety.py`
+walks every action/handler/transitive top-level module in the
+Remote Script load chain, collects module-load-time imports, and
+refuses any in `_FORBIDDEN_TOP_LEVEL_STDLIB` (`sqlite3`, `_sqlite3`
+today). Imports nested in function bodies / try/except guards /
+conditionals don't count — those are deferred to invocation time,
+which is the safe pattern. AST inspection rather than runtime import
+because several Remote Script modules depend on `_Framework`
+(Live-only) and would fail with the wrong error if imported
+directly.
+
+Suite: main 1878 passing (+2 for the new tests), MCP 697 passing.
+
+After merge users must: quit Live (caches Control Surface modules
+at startup), `/ableton-mcp-install` to refresh the vendored copy,
+reopen Live, then `/mcp` to respawn the MCP subprocess.
+
 ## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
 
 <!-- chunks=C1|C2|C3 status=shipped release=unreleased scope=compose-validation-r2-followons -->

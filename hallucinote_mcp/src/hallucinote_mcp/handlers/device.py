@@ -366,37 +366,16 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
     return found_items[0]
 
 
-def _kind_candidates(kind: str) -> list[str]:
-    """Return browser-name candidates to try for a ``kind``, in priority order.
+def _roots_for_kind(kind: str) -> tuple[str, ...]:
+    """Pick the browser roots to walk for a ``kind``.
 
-    1. The kind as-given (handles third-party plugins + built-ins whose
-       class name already matches the browser display).
-    2. The explicit ``device_names`` translation (handles renames like
-       ``Compressor2 → Compressor``, ``DrumGroupDevice → Drum Rack``).
-    3. The algorithmic ``*Device`` suffix strip (handles ``AnalogDevice
-       → Analog`` and similar without enumerating every entry).
-
-    Duplicates are removed while preserving order.
+    Rack display names ("Drum Rack", "Instrument Rack", "Audio Effect
+    Rack", "MIDI Effect Rack") restrict the walk to their canonical
+    category root — a user-saved preset named "Drum Rack" in the
+    instruments root must not shadow the canonical empty Drum Rack
+    node in the drums root (W7-0 finding, preserved post-D4).
     """
-    candidates: list[str] = [kind]
-    translated = device_names.class_name_to_display(kind)
-    if translated is not None and translated not in candidates:
-        candidates.append(translated)
-    stripped = device_names.strip_device_suffix(kind)
-    if stripped is not None and stripped not in candidates:
-        candidates.append(stripped)
-    return candidates
-
-
-def _roots_for_candidate(candidate: str) -> tuple[str, ...]:
-    """Pick the browser roots to walk for a name candidate.
-
-    Rack display names ("Drum Rack", "Instrument Rack", etc.) restrict
-    the walk to their canonical category root — a user-saved preset
-    named "Drum Rack" in the instruments root must not shadow the
-    canonical empty Drum Rack node in the drums root (W7-0 finding).
-    """
-    rack_root = device_names.browser_root_for_rack_kind(candidate)
+    rack_root = device_names.browser_root_for_rack_kind(kind)
     if rack_root is not None:
         return (rack_root,)
     return _BROWSER_LOAD_ROOTS
@@ -405,25 +384,14 @@ def _roots_for_candidate(candidate: str) -> tuple[str, ...]:
 def _format_kind_failure_criteria(kind: str) -> str:
     """Build the failure-criteria string for an unresolvable ``kind``.
 
-    Surfaces every candidate the loader tried — table translation +
-    suffix strip + canonical-root restriction — so the agent can see
-    where the resolution path stopped.
+    Arc 4 / D4: the loader is now kind-as-given against the browser
+    (no static translation table — that data lives on Live's own
+    ``device.class_display_name`` attribute, captured by pull). So a
+    failure means the kind doesn't match any browser node directly.
+    The rack-root callout still applies (W7-0 protection).
     """
-    candidates = _kind_candidates(kind)
-    if len(candidates) == 1:
-        base = f"kind={kind!r}"
-    else:
-        extras = ", ".join(repr(c) for c in candidates[1:])
-        base = (
-            f"kind={kind!r} (also tried browser name(s) {extras} via "
-            "device_names translation / *Device suffix strip)"
-        )
+    base = f"kind={kind!r}"
     rack_root = device_names.browser_root_for_rack_kind(kind)
-    if rack_root is None:
-        for cand in candidates[1:]:
-            rack_root = device_names.browser_root_for_rack_kind(cand)
-            if rack_root is not None:
-                break
     if rack_root is not None:
         base += (
             f"; rack kinds are searched only in the '{rack_root}' browser "
@@ -441,18 +409,20 @@ def _find_browser_item(
 
     With ``preset_uri``: walk every root (including plugins / packs / user
     library) looking for an exact ``uri`` match. With ``kind`` only:
-    walk for each candidate in :func:`_kind_candidates` (original kind,
-    explicit-table translation, algorithmic suffix-strip) against the
-    roots returned by :func:`_roots_for_candidate` — typically the four
-    built-in roots, but restricted to the canonical category root for
-    rack display names.
+    walk the built-in roots for a loadable node whose display name
+    equals ``kind`` (kind-as-given match against Live's browser tree).
+    Rack display names restrict the walk to the canonical category
+    root via :func:`_roots_for_kind`.
 
-    Agents loading non-built-in devices (plugins, presets) should always
-    pass ``preset_uri`` — captured via
-    ``ableton_browser(action='at_path', ...)`` — which is the
-    unambiguous load contract. For compose-time portable selection
-    (cross-machine, no per-machine FileId) use ``preset_query`` — see
-    :func:`_resolve_preset_query`.
+    Arc 4 / D4: ``kind`` is the post-D4 browser display name (from
+    ``devices.kind`` populated by pull from ``class_display_name``).
+    No static class-name → display translation step — the data flows
+    through Live's own attribute now.
+
+    Agents loading third-party plugins or specific presets should pass
+    ``preset_uri`` — captured via ``ableton_browser(action='at_path',
+    ...)``. For compose-time cross-machine portable selection use
+    ``preset_query`` — see :func:`_resolve_preset_query`.
     """
     if preset_uri is not None:
         for root_name in _BROWSER_URI_ROOTS:
@@ -464,14 +434,13 @@ def _find_browser_item(
                 return match
         return None
 
-    for candidate in _kind_candidates(kind):
-        for root_name in _roots_for_candidate(candidate):
-            root_node = getattr(browser, root_name, None)
-            if root_node is None:
-                continue
-            match = _walk_for_name(root_node, candidate, _BROWSER_WALK_DEPTH)
-            if match is not None:
-                return match
+    for root_name in _roots_for_kind(kind):
+        root_node = getattr(browser, root_name, None)
+        if root_node is None:
+            continue
+        match = _walk_for_name(root_node, kind, _BROWSER_WALK_DEPTH)
+        if match is not None:
+            return match
     return None
 
 

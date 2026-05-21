@@ -118,7 +118,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
 ):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Late Nite Kit", preset_uri="query:Drums#FileId_5418",
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
@@ -130,7 +130,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert load.args["track_index"] == 5
     # Live 12.4 has no public reorder API — planner does NOT emit position.
     assert "position" not in load.args
-    assert load.args["kind"] == "DrumGroupDevice"
+    assert load.args["kind"] == "Drum Rack"
     assert load.args["preset_uri"] == "query:Drums#FileId_5418"
     assert load.key == f"device:{did}"
     assert any("not linked" in n for n in plan.notes)
@@ -144,7 +144,7 @@ def test_plan_push_devices_threads_preset_query_to_load(
     handler resolves on the consumer's machine."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Some 909 Kit",
         preset_query={"root": "drums", "pattern": "909", "mode": "substring"},
     )
@@ -167,7 +167,7 @@ def test_plan_push_devices_preset_query_precedence_when_only_query_set(
     straightforward — preset_query lands in load_args."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Kit", preset_query={"root": "drums", "pattern": "x"},
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)

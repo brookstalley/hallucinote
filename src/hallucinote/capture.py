@@ -85,10 +85,16 @@ _RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
 # can validate "this device carries `chains`, but its class isn't a rack"
 # at the boundary. W6-I/J shipped the MCP-side walk; W7-B threads it through
 # capture + pull.
+# Arc 4 / D4: rack identity is checked against browser display names
+# (the post-D4 ``devices.kind`` convention) — ``"Drum Rack"`` /
+# ``"Instrument Rack"`` / ``"Audio Effect Rack"``. The pre-D4 set
+# used internal Live class names (``DrumGroupDevice`` etc.) to match
+# the old ``snapshot.class`` semantics; with the convention shift
+# they're the same identity expressed in the loader-facing namespace.
 RACK_CLASS_NAMES = frozenset({
-    "DrumGroupDevice",
-    "InstrumentGroupDevice",
-    "AudioEffectGroupDevice",
+    "Drum Rack",
+    "Instrument Rack",
+    "Audio Effect Rack",
 })
 
 
@@ -227,17 +233,19 @@ def _replay_devices(
                 request_id=request_id,
                 reason=reason,
             )
-        # M1-C: Drum Rack pad mapping. Each DrumGroupDevice may carry a
+        # M1-C: Drum Rack pad mapping. Each Drum Rack may carry a
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
         # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
         # `drum_pad_mappings` so the song's generators can resolve
         # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        # Arc 4 / D4: identity check uses the browser display name
+        # ``"Drum Rack"`` (post-D4 ``snapshot.class`` semantics).
         pads = d.get("drum_pads")
         if pads:
-            if d["class"] != "DrumGroupDevice":
+            if d["class"] != "Drum Rack":
                 raise ValueError(
                     f"snapshot device {d.get('name')!r} carries `drum_pads` "
-                    f"but class {d['class']!r} is not DrumGroupDevice — "
+                    f"but class {d['class']!r} is not 'Drum Rack' — "
                     "pad_info only applies to Drum Racks"
                 )
             M.replace_drum_pad_mappings(

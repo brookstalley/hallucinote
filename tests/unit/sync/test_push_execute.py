@@ -553,7 +553,7 @@ def song_with_device(conn, song):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Late Nite Kit",
+        kind="Drum Rack", display_name="Late Nite Kit",
         preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
     )
     return {"track_id": tid, "device_id": did, "song_id": song}
@@ -776,9 +776,13 @@ def test_execute_fallback_routes_plugin_kind_to_plugins_root(
         conn, song_id=song, track_index=1, name="Synth", kind="midi",
     )
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    # Arc 4 / D4: kind is the browser display name ("Spitfire LABS"),
+    # class_name carries Live's internal wrapper class (drives the
+    # plugins-root routing in the fallback).
     M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="AuPluginDevice", display_name="Spitfire LABS",
+        kind="Spitfire LABS", display_name="Spitfire LABS",
+        class_name="AuPluginDevice",
         preset_uri="query:plugins#FileId_AUTHOR_AU",
     )
     send_fn = _make_fallback_send_fn(
@@ -901,7 +905,7 @@ def drum_song(conn, song):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Hot Rod Kit",
+        kind="Drum Rack", display_name="Hot Rod Kit",
     )
     return {"track_id": tid, "chain_id": chain_id, "device_id": did, "song_id": song}
 

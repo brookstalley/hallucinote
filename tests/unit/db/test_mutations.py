@@ -1361,7 +1361,7 @@ def drum_device(conn, song):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     return M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Late Nite Kit",
+        kind="Drum Rack", display_name="Late Nite Kit",
     )
 
 

@@ -143,7 +143,7 @@ def test_create_device_with_preset_query_stores_json(conn, song, track):
     """Sweep B: preset_query is stored as JSON-serialized string in the DB."""
     cid = M.create_device_chain(conn, parent_track_id=track)
     did = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Some Kit",
         preset_query={"root": "drums", "pattern": "909", "mode": "substring"},
     )
@@ -160,7 +160,7 @@ def test_create_device_refuses_both_preset_uri_and_preset_query(conn, song, trac
     cid = M.create_device_chain(conn, parent_track_id=track)
     with pytest.raises(ValueError, match="mutually exclusive"):
         M.create_device(
-            conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+            conn, chain_id=cid, position=1, kind="Drum Rack",
             display_name="X",
             preset_uri="query:Drums#FileId_1",
             preset_query={"root": "drums", "pattern": "x"},
@@ -172,11 +172,11 @@ def test_create_device_preset_query_idempotent_unchanged(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     q = {"root": "drums", "pattern": "909"}
     d1 = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="K", preset_query=q,
     )
     d2 = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="K", preset_query=q,
     )
     assert d2.kind == "unchanged"
@@ -272,7 +272,7 @@ def test_rack_device_can_carry_nested_chain(conn, song, track):
     top_chain = M.create_device_chain(conn, parent_track_id=track)
     rack_id = M.create_device(
         conn, chain_id=top_chain, position=1,
-        kind="DrumGroupDevice", display_name="Late Nite Kit",
+        kind="Drum Rack", display_name="Late Nite Kit",
     )
     inner_chain = M.create_device_chain(
         conn, parent_rack_device_id=rack_id, position=1,
@@ -294,7 +294,7 @@ def test_nested_chain_event_carries_song_id(conn, song, track):
     top_chain = M.create_device_chain(conn, parent_track_id=track)
     rack_id = M.create_device(
         conn, chain_id=top_chain, position=1,
-        kind="InstrumentGroupDevice", display_name="Rack",
+        kind="Instrument Rack", display_name="Rack",
     )
     M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
     chain_events = [e for e in _events(conn) if e["kind"] == E.DEVICE_CHAIN_CREATED]
@@ -323,7 +323,7 @@ def test_query_devices_for_track_orders_by_chain_then_position(conn, song, track
 def test_query_chains_for_rack_device(conn, song, track):
     top = M.create_device_chain(conn, parent_track_id=track)
     rack = M.create_device(conn, chain_id=top, position=1,
-                           kind="DrumGroupDevice", display_name="Kit")
+                           kind="Drum Rack", display_name="Kit")
     inner = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
     rows = Q.get_device_chains_for_rack_device(conn, rack)
     assert [r["id"] for r in rows] == [inner]

@@ -42,7 +42,7 @@ def _drum_rack_on_track(conn, song_id: str, *, track_index: int, name: str = "Dr
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name=f"{name} Rack",
+        kind="Drum Rack", display_name=f"{name} Rack",
     )
     return tid, did, chain_id
 
@@ -54,7 +54,7 @@ def _drum_rack_on_return(conn, song_id: str, *, position: int, name: str = "FX")
     chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name=f"{name} Rack",
+        kind="Drum Rack", display_name=f"{name} Rack",
     )
     return rid, did, chain_id
 
@@ -130,11 +130,11 @@ def test_query_returns_multiple_drum_racks_ordered_by_position(conn, song, sessi
     # Two racks on the same chain at positions 1 and 2.
     did1 = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Primary",
+        kind="Drum Rack", display_name="Primary",
     )
     did2 = M.create_device(
         conn, chain_id=chain_id, position=2,
-        kind="DrumGroupDevice", display_name="Layered",
+        kind="Drum Rack", display_name="Layered",
     )
     M.link_db_to_ableton(conn, session_id=session, db_kind="track",
                          db_id=tid, ableton_index=1)

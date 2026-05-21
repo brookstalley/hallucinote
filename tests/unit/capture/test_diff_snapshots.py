@@ -45,12 +45,12 @@ def _base_snapshot() -> dict:
                 "sends": {"Reverb": 0.0, "Delay": 0.0},
                 "devices": [
                     {
-                        "index": 1, "name": "Kit", "class": "DrumGroupDevice",
+                        "index": 1, "name": "Kit", "class": "Drum Rack",
                         "params_dialed": {
                             "Volume": {"value": "0 dB", "normalized": 0.85},
                         },
                     },
-                    {"index": 2, "name": "EQ Eight", "class": "Eq8"},
+                    {"index": 2, "name": "EQ Eight", "class": "EQ Eight"},
                 ],
             },
             {
@@ -212,7 +212,7 @@ def test_device_added_at_same_chain_position() -> None:
     old = _base_snapshot()
     new = copy.deepcopy(old)
     new["tracks"][0]["devices"].append(
-        {"index": 3, "name": "Glue", "class": "GlueCompressor"}
+        {"index": 3, "name": "Glue", "class": "Glue Compressor"}
     )
     diff = diff_snapshots(old, new)
     drums = next(t for t in diff["tracks"]["changed"] if t["index"] == 1)
@@ -293,7 +293,7 @@ def test_nested_rack_chain_device_added() -> None:
     ]
     new = copy.deepcopy(old)
     new["tracks"][0]["devices"][0]["chains"][0]["devices"].append(
-        {"index": 2, "name": "EQ", "class": "Eq8"}
+        {"index": 2, "name": "EQ", "class": "EQ Eight"}
     )
     diff = diff_snapshots(old, new)
     drums = next(t for t in diff["tracks"]["changed"] if t["index"] == 1)

@@ -98,7 +98,7 @@ def test_classify_device_substring_branch_routes_to_third_party():
 
 
 def test_is_plugin_class_rejects_native():
-    for native in ("Operator", "Eq8", "DrumGroupDevice", "Compressor2",
+    for native in ("Operator", "Eq8", "Drum Rack", "Compressor2",
                    "InstrumentMeld", "LoungeLizard", "Reverb"):
         assert not C._is_plugin_class(native), native
 
@@ -308,7 +308,7 @@ def test_check_song_recurses_into_nested_rack_chains(
     """
     rack_id = M.create_device(
         conn, chain_id=track_chain, position=1,
-        kind="AudioEffectGroupDevice", display_name="My FX Rack",
+        kind="Audio Effect Rack", display_name="My FX Rack",
     )
     inner_chain = M.create_device_chain(conn, parent_rack_device_id=rack_id)
     M.create_device(
@@ -319,7 +319,7 @@ def test_check_song_recurses_into_nested_rack_chains(
     report = C.check_song(db_path)
     statuses = [e.status for e in report.entries]
     kinds = [e.kind for e in report.entries]
-    assert "AudioEffectGroupDevice" in kinds
+    assert "Audio Effect Rack" in kinds
     assert "PluginDevice" in kinds
     assert "third_party_unverified" in statuses
     # The inner device's chain_path captures the rack so the user can

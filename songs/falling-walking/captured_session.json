@@ -34,7 +34,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Late Nite Kit", "class": "DrumGroupDevice", "kind": "instrument",
+          "index": 1, "name": "Late Nite Kit", "class": "Drum Rack", "kind": "instrument",
           "guess_uri": "query:Drums#FileId_5418",
           "params_dialed": {
             "Filter": {"value": "1", "normalized": 0.01},
@@ -44,9 +44,9 @@
           },
           "params_total": 17
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
-        {"index": 3, "name": "Drum Buss", "class": "DrumBuss", "_note": "Params not captured"},
-        {"index": 4, "name": "Precise", "class": "Compressor2", "_note": "Likely a Compressor preset; params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
+        {"index": 3, "name": "Drum Buss", "class": "Drum Buss", "_note": "Params not captured"},
+        {"index": 4, "name": "Precise", "class": "Compressor", "_note": "Likely a Compressor preset; params not captured"}
       ],
       "clips": [
         {"slot": 1, "name": "Verse Drums", "length": 60.0},
@@ -82,8 +82,8 @@
           },
           "params_total": 195
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
-        {"index": 3, "name": "Utility", "class": "StereoGain", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
+        {"index": 3, "name": "Utility", "class": "Utility", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 1, "name": "Verse Sub", "length": 60.0},
@@ -101,7 +101,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Fat Square Bass", "class": "InstrumentGroupDevice", "kind": "instrument_rack",
+          "index": 1, "name": "Fat Square Bass", "class": "Instrument Rack", "kind": "instrument_rack",
           "patch_summary": "Instrument Rack 'Fat Square Bass'. 9 macros active. Filter cutoff 6.51kHz/17% reso, overdrive +7.23dB, LFO at 1/8, snappy attack 1ms, release 131ms, slight space (19).",
           "params_dialed": {
             "Filter Cutoff": {"value": "6.51 kHz", "normalized": 0.83},
@@ -116,7 +116,7 @@
           "params_total": 18,
           "_note": "Rack — internal chain instruments not captured. Reload by name 'Fat Square Bass' from browser."
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
         {"index": 3, "name": "Saturator", "class": "Saturator", "_note": "Params not captured"}
       ],
       "clips": [
@@ -133,7 +133,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Levitate Lead", "class": "InstrumentVector", "kind": "instrument",
+          "index": 1, "name": "Levitate Lead", "class": "Wavetable", "kind": "instrument",
           "patch_summary": "Drift/Vector preset 'Levitate Lead'. 2 wavetable oscs + sub. Highpass at 53.8Hz + lowpass open at 20.5kHz. Slow attack (39.6ms), long decay/release. Env 2 very long (2.9s attack / 7.75s decay) for evolving pad timbre. LFO 1 triangle 1/4 sync, LFO 2 sawtooth 1/2 sync. Volume -10dB.",
           "params_dialed": {
             "Osc 1 Pos": {"value": "66 %", "normalized": 0.66},
@@ -169,8 +169,8 @@
           },
           "params_total": 93
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
-        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus2", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
+        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus-Ensemble", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 1, "name": "Verse Pad", "length": 60.0},
@@ -188,7 +188,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Kyoto Pluck", "class": "InstrumentGroupDevice", "kind": "instrument_rack",
+          "index": 1, "name": "Kyoto Pluck", "class": "Instrument Rack", "kind": "instrument_rack",
           "patch_summary": "Instrument Rack 'Kyoto Pluck'. Filter wide open (2.2kHz cutoff at max), wave position 70%, detune 36%, internal reverb 88, motion 100%, decay/release medium (61). Octaves muted.",
           "params_dialed": {
             "Filter Cutoff": {"value": "2.20 kHz", "normalized": 1.0},
@@ -202,7 +202,7 @@
           },
           "params_total": 18
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 2, "name": "Chorus Pluck", "length": 32.0},
@@ -217,7 +217,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Gametal", "class": "InstrumentMeld", "kind": "instrument",
+          "index": 1, "name": "Gametal", "class": "Meld", "kind": "instrument",
           "patch_summary": "Meld preset 'Gametal'. Engine A: Basic Shapes osc + Plate Resonator filter @ 1.17kHz Q=46, decay 305ms. Engine B: Simple FM osc + Membrane Resonator @ 331Hz Q=40 damp 28.9, octave +1, B vol +13dB, B amp decay 43.8ms (snappy bell). Voice spread 28%, mono legato on.",
           "params_dialed": {
             "A Filter Type": {"value": "Plate Resonator"},
@@ -245,7 +245,7 @@
           },
           "params_total": 129
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 2, "name": "Chorus Bell", "length": 32.0},
@@ -260,7 +260,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Electric", "class": "LoungeLizard", "kind": "instrument",
+          "index": 1, "name": "Electric", "class": "Electric", "kind": "instrument",
           "patch_summary": "Live's Electric (LoungeLizard). All physical-modeling params at default 50% — no real shaping; this is the stock preset. PB Range 12.00, Voices 32. Could load 'Default' preset and matches this exactly.",
           "params_dialed": {
             "Voices": {"value": "32", "normalized": 1.0},
@@ -272,8 +272,8 @@
           },
           "params_total": 34
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
-        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus2", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
+        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus-Ensemble", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 4, "name": "Bridge EP", "length": 32.0}
@@ -286,7 +286,7 @@
       "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
       "devices": [
         {
-          "index": 1, "name": "Old School Raver", "class": "InstrumentMeld", "kind": "instrument",
+          "index": 1, "name": "Old School Raver", "class": "Meld", "kind": "instrument",
           "patch_summary": "Meld preset 'Old School Raver'. Engine A: Square 5th osc 42.9% + 71.4% PW + LP 12dB MS2 @ 79Hz / Q 32.8 / drive 63 — bassy raver synth. Engine B: Sub osc one octave down. Drive 86%, voice spread 36%, no limiter. Long amp decay (1.54s/1.27s) and even longer mod env (3.79s decay).",
           "params_dialed": {
             "A Osc Type": {"value": "Square 5th"},
@@ -316,8 +316,8 @@
           },
           "params_total": 129
         },
-        {"index": 2, "name": "EQ Eight", "class": "Eq8", "_note": "Params not captured"},
-        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus2", "_note": "Params not captured"}
+        {"index": 2, "name": "EQ Eight", "class": "EQ Eight", "_note": "Params not captured"},
+        {"index": 3, "name": "Chorus-Ensemble", "class": "Chorus-Ensemble", "_note": "Params not captured"}
       ],
       "clips": [
         {"slot": 5, "name": "Intro Lead", "length": 64.0},

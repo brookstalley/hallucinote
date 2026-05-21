@@ -1037,7 +1037,7 @@ def test_apply_track_devices_creates_chain_and_devices_when_db_empty(
         [_result(
             f"track_devices:{tid}",
             _devices_payload(
-                (1, "DrumGroupDevice", "808 Kit"),
+                (1, "Drum Rack", "808 Kit"),
                 (2, "Compressor2", "Glue"),
             ),
         )],
@@ -1048,7 +1048,7 @@ def test_apply_track_devices_creates_chain_and_devices_when_db_empty(
     assert len(chains) == 1 and chains[0]["position"] == 0
     devs = Q.get_devices_for_chain(conn, chains[0]["id"])
     assert [(d["position"], d["kind"], d["display_name"]) for d in devs] == [
-        (1, "DrumGroupDevice", "808 Kit"),
+        (1, "Drum Rack", "808 Kit"),
         (2, "Compressor2", "Glue"),
     ]
 
@@ -1283,7 +1283,7 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
 def _nested_chains_payload(
     *entries,
     parent_kind="track", parent_index=2, rack_position=1,
-    rack_class="DrumGroupDevice",
+    rack_class="Drum Rack",
 ) -> dict:
     """Build a `get_device_chains` payload from
     ``(chain_index, chain_name, [(position, class_name, display_name)
@@ -1334,7 +1334,7 @@ def _build_track_with_rack(conn, song, session, *, ableton_index=5):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     rack_id = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Drum Rack",
+        kind="Drum Rack", display_name="Drum Rack",
     )
     return tid, chain_id, rack_id
 
@@ -1396,7 +1396,7 @@ def test_plan_pull_nested_rack_chains_skips_unlinked_track(
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="DrumGroupDevice", display_name="Drum Rack")
+                    kind="Drum Rack", display_name="Drum Rack")
     # NOT linked.
     plan = pull.plan_pull_nested_rack_chains(
         conn, song_id=song, session_id=session,
@@ -1415,7 +1415,7 @@ def test_plan_pull_nested_rack_chains_emits_for_return_rack(
     _link_return(conn, session=session, db_id=rid, ableton_index=1)
     chain_id = M.create_device_chain(conn, parent_return_id=rid, position=0)
     rack_id = M.create_device(conn, chain_id=chain_id, position=2,
-                              kind="AudioEffectGroupDevice", display_name="FX")
+                              kind="Audio Effect Rack", display_name="FX")
     plan = pull.plan_pull_nested_rack_chains(
         conn, song_id=song, session_id=session,
     )
@@ -1586,7 +1586,7 @@ def test_apply_nested_rack_chains_skips_when_parent_unlinked(
     # NOT linked.
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     rack_id = M.create_device(conn, chain_id=chain_id, position=1,
-                              kind="DrumGroupDevice", display_name="Drum Rack")
+                              kind="Drum Rack", display_name="Drum Rack")
     out = pull.apply_pull_results(
         conn,
         [_result(
@@ -1637,7 +1637,7 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
         "tracks": [{
             "index": 1, "name": "Drums", "type": "midi",
             "devices": [{
-                "index": 1, "name": "Drum Rack", "class": "DrumGroupDevice",
+                "index": 1, "name": "Drum Rack", "class": "Drum Rack",
                 "class_name": "DrumGroupDevice",
                 "chains": [
                     {"chain_index": 1, "name": "Kick", "devices": [
@@ -1647,7 +1647,7 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
                     {"chain_index": 2, "name": "Snare", "devices": [
                         {"index": 1, "name": "Drum Synth", "class": "DrumSynths",
                          "class_name": "DrumSynths"},
-                        {"index": 2, "name": "EQ", "class": "Eq8",
+                        {"index": 2, "name": "EQ", "class": "EQ Eight",
                          "class_name": "Eq8"},
                     ]},
                 ],
@@ -1670,7 +1670,10 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
                 (1, "Kick", [(1, "Operator", "Operator")]),
                 (2, "Snare", [
                     (1, "DrumSynths", "Drum Synth"),
-                    (2, "Eq8", "EQ"),
+                    # Post-D4: 4-tuple with class_display_name='EQ Eight'
+                    # so the apply path stores kind='EQ Eight' (matches
+                    # the snapshot replay above), not the internal 'Eq8'.
+                    (2, "Eq8", "EQ", "EQ Eight"),
                 ]),
                 rack_position=1,
             ),

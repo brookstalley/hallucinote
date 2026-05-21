@@ -29,11 +29,22 @@ which is microseconds for these operations.
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+
+# NB: do NOT add `import sqlite3` (or any module that depends on
+# `_sqlite3`) at module load. Live 12.x's embedded Python ships without
+# the `_sqlite3` C extension, so an unguarded import here breaks the
+# entire Remote Script load (cascades from `actions/__init__.py` →
+# this module → `import sqlite3` → ModuleNotFoundError → Hallucinote
+# Control Surface fails to initialize). The `sqlite3.Connection` /
+# `sqlite3.Row` symbols below appear only in annotations, which are
+# lazy strings under `from __future__ import annotations`; runtime
+# sqlite3 usage is delegated to the guarded `hallucinote.db` import
+# below (only active on the MCP-server side, where the host Python
+# has sqlite3 normally).
 
 # The `hallucinote` package is NOT vendored into Live's User Library
 # (only `hallucinote_mcp` is). A module-level import would ImportError

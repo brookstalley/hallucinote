@@ -64,7 +64,7 @@ section rewritten with audit-accurate scope.
 
 Suite: main 1788 (+30) + MCP 664 (+3) = 2452 passing, 0 failed.
 
-<!-- chunks=A3|A1-resid|A2-resid|A5 status=shipped release=unreleased scope=push-reliability+drum-mapping -->
+<!-- chunks=A3|A1-resid|A2-resid|A5 status=shipped release=v1.1.0 scope=push-reliability+drum-mapping -->
 
 
 ## 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation

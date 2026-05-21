@@ -568,10 +568,32 @@ def load_handler(
     )
     chain_after = list(fresh_parent.devices)
     if len(chain_after) <= chain_before:
+        # A2-resid: surface what's actually on the parent so the caller can
+        # diagnose without a separate ableton_device(action='list') probe.
+        # The two empirical no-append causes are (a) browser silently no-ops
+        # because a matching device is already at this position (the
+        # punk-fate `--reset`-then-repush repro) and (b) the item isn't
+        # actually loadable on this parent kind (instrument on a return).
+        # The pre-A2-resid error only named (b), which misleads on (a) —
+        # by far the more common case in iteration loops. Listing the
+        # existing chain disambiguates: if a same-class device already sits
+        # at the expected position, that's (a).
+        existing = [
+            f"{i + 1}:{getattr(d, 'class_name', '?')}"
+            for i, d in enumerate(chain_after)
+        ]
+        existing_str = ", ".join(existing) if existing else "(empty)"
+        suffix = (
+            "; the item may not be loadable on this parent (instrument on a return)"
+            if parent_kind == "return"
+            else ""
+        )
         raise RuntimeError(
             f"load: Live did not append a device on {parent_kind} "
-            f"{parent_idx} after browser.load_item; the item may not be "
-            f"loadable on this parent (e.g. instrument on a return)"
+            f"{parent_idx} after browser.load_item. Existing chain: "
+            f"[{existing_str}]. Most common cause: a device with matching "
+            f"class is already present at the expected position (Live "
+            f"silently no-ops the load){suffix}."
         )
     new_device = chain_after[-1]
     new_index = len(chain_after)

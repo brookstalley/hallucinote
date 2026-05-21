@@ -1812,3 +1812,146 @@ def test_cli_cleanup_default_scaffold_refuses_on_non_canonical(
     assert "MyOtherSong" in err_lines
     # Nothing was dispatched.
     assert deletes == []
+
+
+# ---------- A1-resid — _cmd_execute default coherence-check hardening ----------
+
+
+def test_cli_execute_refuses_when_no_coherence_flag_passed(
+    conn, song, session, db_path, capsys,
+):
+    """A1-resid: pre-hardening, omitting all three coherence flags silently
+    skipped the check (the punk-fate state-drift safety net). Now argparse
+    refuses at the parser, surfacing the three valid options so a missed
+    flag can't slip past the gate."""
+    with pytest.raises(SystemExit) as exc:
+        push_cli.main([
+            "execute", session, "--db", str(db_path),
+        ])
+    # argparse exits 2 on bad usage.
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    # All three valid flags should appear in argparse's enumeration.
+    assert "--probe" in err
+    assert "--snapshot" in err
+    assert "--no-coherence-check" in err
+
+
+def test_cli_execute_no_coherence_check_skips_validation(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """A1-resid: the explicit opt-out flag proceeds to dispatch without
+    invoking the coherence check. We verify by monkeypatching
+    ``push.check_coherence`` to fail the test if called — that asserts
+    the opt-out path is structural, not a comment in the code."""
+    def _check_should_not_run(*args, **kwargs):
+        raise AssertionError(
+            "push.check_coherence called despite --no-coherence-check"
+        )
+    monkeypatch.setattr(push, "check_coherence", _check_should_not_run)
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+
+
+def test_cli_execute_partial_summary_includes_verbatim_recovery_command(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """A5: the FAIL summary appends the verbatim re-run command so the
+    agent doesn't have to assemble it. Pre-A5 the user/agent had to
+    reach into the CLI help to reconstruct flags."""
+    monkeypatch.setattr(push, "check_coherence", lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="partial", exit_code=1,
+            phase_halted="devices",
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 1
+    out = capsys.readouterr().out
+    # The next-command line names execute + the session id + --probe.
+    assert "Recovery:" in out
+    assert "push_cli execute" in out
+    assert session in out
+    assert "--probe" in out
+
+
+def test_cli_execute_ok_summary_omits_recovery_hint(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """Mirror pin: clean ok exits don't emit the recovery line.
+    Adding ceremony to a successful push would dilute the recovery
+    signal when it actually matters."""
+    monkeypatch.setattr(push, "check_coherence", lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Recovery:" not in out
+
+
+def test_cli_execute_probe_runs_coherence_check(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """Sibling pin: --probe still invokes the coherence check. Asymmetric
+    coverage with the opt-out test catches a regression that would
+    silently disable the gate."""
+    coherence_called = {"count": 0}
+    original_check = push.check_coherence
+
+    def _spy_check(*args, **kwargs):
+        coherence_called["count"] += 1
+        return original_check(*args, **kwargs)
+    monkeypatch.setattr(push, "check_coherence", _spy_check)
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert coherence_called["count"] == 1

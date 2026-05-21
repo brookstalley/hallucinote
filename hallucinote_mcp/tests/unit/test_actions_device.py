@@ -682,6 +682,80 @@ def test_load_no_chain_growth_is_runtime_error(loaded_actions):
     assert "did not append" in (resp.error or "")
 
 
+def test_load_no_chain_growth_surfaces_existing_chain_class_names(loaded_actions):
+    """A2-resid: when the load no-ops because a matching device is already
+    present (punk-fate --reset-then-repush repro), the error must list
+    the existing chain so the caller can diagnose without a separate
+    ableton_device(action='list') probe. The pre-A2-resid error only
+    named the misleading 'instrument on a return' hint."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Existing Compressor", class_name="Compressor2"),
+        FakeDevice("Existing Reverb", class_name="Reverb"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    # Browser silently no-ops — same shape Live exhibits when a matching
+    # device is already at the expected chain position.
+    ctx.application.browser.load_item = lambda item: \
+        ctx.application.browser.load_calls.append(item)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "did not append" in err
+    # The two existing class names appear in the surfaced chain list.
+    assert "Compressor2" in err
+    assert "Reverb" in err
+    # The misleading "instrument on a return" hint is suppressed for
+    # track parents — it only applies to return parents.
+    assert "instrument on a return" not in err
+
+
+def test_load_no_chain_growth_on_return_keeps_instrument_hint(loaded_actions):
+    """A2-resid: 'instrument on a return' hint is real for return parents
+    (Live actually rejects instrument loads on returns) — keep it for
+    that case so the loader still names the structural mismatch."""
+    ret = FakeReturn("Rev")  # empty chain
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")], returns=[ret]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    ctx.application.browser.load_item = lambda item: \
+        ctx.application.browser.load_calls.append(item)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"return_index": 1, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "did not append" in err
+    assert "instrument on a return" in err
+
+
+def test_load_no_chain_growth_on_empty_track_shows_empty_chain(loaded_actions):
+    """A2-resid: empty chain renders as `(empty)` so the message is
+    unambiguous about the parent's actual state."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))  # empty chain
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    ctx.application.browser.load_item = lambda item: \
+        ctx.application.browser.load_calls.append(item)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "(empty)" in (resp.error or "")
+
+
 # ---------- M1-A: device-load forgiveness (suffix strip + rack disambiguation) ----------
 
 

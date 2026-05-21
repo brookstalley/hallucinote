@@ -6,7 +6,45 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased work — v1.1 planning lives in `docs/v11-requirements.md`._
+_No unreleased work — v1.1 plan continues in `docs/v11-requirements.md` (Arcs 2-7)._
+
+## [1.1.0] — 2026-05-21
+
+**Arc 1: Drum Rack pad-mapping discovery + push-loop residuals.** Closes the **Hot Rod Kit cautionary tale** structurally — sun-zone-done's metal sections clanged on cowbell because GM-default ride at note 51 lands on Hot Rod's "Cowbell Fenk Chick" pad. Composition now fails loudly at compose time when a kit can't deliver a canonical pad, instead of silently playing the wrong sound.
+
+Initial Arc 1 plan covered seven chunks (A1-A7); code audit on 2026-05-21 identified five chunks as already shipped in v1.0 (A1 via W18-A/B, A2 via W20-A, A4 in `create_song`'s by-name lookup, A6 via W18-E, A7 in `ableton-push/SKILL.md`). The four remaining chunks ship here: A3 (the substantive one) + A1-resid + A2-resid + A5.
+
+### Added
+
+- **`Kit.try_pitch_of(canonical_name) -> int | None`** — optional drum-pad resolver. Returns `None` when the kit has captured chains but no chain matches the canonical name. Use when composition can react to pad absence (e.g., "drop the ride pattern if this kit has no ride").
+- **`Kit.assert_has(*canonical_names)`** — bulk fail-fast validator. Refuses at composition start when the kit can't deliver every required pad.
+- **Auto-population of `drum_pad_mappings`** — `push_cli execute` walks every linked Drum Rack after the devices phase and dispatches `pad_info` to capture the kit's actual chain layout. Runs on both phase-OK and phase-SKIPPED (so re-pushes with W20-A device idempotency still trigger pad capture). Best-effort: per-Drum-Rack failures count via new `PhaseOutcome.pad_probes_ok` / `pad_probes_failed` fields but don't halt the phase.
+- **`push_cli execute --no-coherence-check`** — visible opt-out flag for the coherence check (previously the silent default when neither `--probe` nor `--snapshot` was passed). The argparse mutex group is now required so the safety net can't be skipped by accident.
+- **`Q.get_linked_drum_racks_for_session`** — direct DB-layer query returning every Drum Rack with its MCP-addressing for the post-phase walker.
+
+### Changed
+
+- **`Kit.pitch_of` now raises** on the **wrong-sound case** — kit has captured mappings but no canonical-name match, AND the GM-default note is taken by a differently-named chain. The exception message names the colliding chain and points at `try_pitch_of` as the safe alternative. The empty-pad-slot fall-through case (GM-default points at a Live empty pad on this kit, playing silence) stays warn-and-fall-through. This is a behavior change — songs that previously got a wrong-sound substitution with only a warning will now refuse to build. Update those `build.py` files to use `try_pitch_of` or pick a different kit.
+- **`browser.load_item` no-append error** — `ableton_device(action='load')` failure due to a silent no-op now enumerates the parent's existing chain (`[index:class_name, ...]`) so diagnose-and-fix doesn't need a separate `ableton_device(list)` probe. The misleading "instrument on a return" hint is preserved only for return-parent calls (where it's actually structural).
+- **`push_cli execute` FAIL summary** — appends the verbatim recovery command on partial / connection_lost exit, so the agent doesn't have to reassemble flags from the help text.
+
+### Fixed
+
+- **Hot Rod Kit cowbell-on-metal failure** — closed structurally per the Changed section above. The Kit class's three resolution paths (`pitch_of` raises / `try_pitch_of` returns None / `assert_has` bulk validates) let composers express the right intent for each part.
+
+### Documentation
+
+- **`.claude/skills/ableton-push/SKILL.md`** — new "Recovering from partial push" subsection naming the structural diagnose → fix → rebuild → re-run loop. No `--resume` flag — W20-A's device-binding idempotency makes re-run the right structural recovery.
+- **`docs/song-authoring-conventions.md`** — new "Drum kits: probe, don't assume" subsection documenting the three resolution paths and the cowbell-on-metal cautionary tale.
+- **`docs/v11-requirements.md`** — v1.1 planning document with audit-corrected Arc 1 scope (Already shipped table + remaining residuals).
+
+### Backlog items closed
+
+Hot Rod Kit cautionary tale · Drum Rack pad-mapping discovery · Push planner duplicates devices on re-push (retroactively reconciled — W20-A confirmed) · `browser.load_item` misleading "instrument on a return" hint · Partial push has no documented resume path.
+
+### Tests
+
+Main suite 1788 (+30 from v1.0.1) + MCP suite 664 (+3 from v1.0.1) = 2452 passing, 0 failed.
 
 ## [1.0.1] — 2026-05-21
 

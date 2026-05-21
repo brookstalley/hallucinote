@@ -4,6 +4,69 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
+
+**A3 (substantive) — Drum Rack pad-mapping discovery.** Closes the
+sun-zone-done Hot Rod Kit cautionary tale (metal sections clanging on
+cowbell because GM-default ride at note 51 lands on Hot Rod's "Cowbell
+Fenk Chick" pad) structurally:
+
+- `Kit.pitch_of(canonical)` now **raises** with a teaching message
+  when the kit has captured mappings, no canonical-name chain matches,
+  AND the GM-default note is taken by a differently-named chain (the
+  wrong-sound case). The empty-pad-slot fall-through stays warn+GM
+  (harmless silence — GM-default points at a Live empty pad on this
+  kit; nothing plays).
+- `Kit.try_pitch_of(canonical) -> int | None` — additive safe
+  resolver for callers that want to react to absence.
+- `Kit.assert_has(*canonicals)` — bulk fail-fast at composition start.
+- `push_cli execute` auto-populates `drum_pad_mappings` via a new
+  `Q.get_linked_drum_racks_for_session` walker invoked after the
+  devices-phase position (runs on both phase-OK and phase-SKIPPED so
+  W20-A's idempotent re-pushes still trigger pad capture).
+- `PhaseOutcome.pad_probes_ok` / `pad_probes_failed` surface in the
+  state file only when probes actually fire (zero-ceremony for songs
+  without Drum Racks).
+
+**A1-resid — `_cmd_execute` coherence-check default hardening.** The
+argparse mutex group is now `required` and includes a visible
+`--no-coherence-check` opt-out. Pre-hardening the default behavior was
+"silently skip the check when neither --probe nor --snapshot is set"
+(the punk-fate state-drift safety net was opt-in by accident). Now the
+default is "refuse with the three flag options enumerated."
+
+**A2-resid — `browser.load_item` no-append error.** The handler's
+`device.py::load_handler` no-append path now enumerates the parent's
+existing chain (`[index:class_name, ...]`) so diagnose-and-fix doesn't
+need a separate `ableton_device(list)` probe. The misleading
+"instrument on a return" hint is preserved only for return-parent
+calls (where it's actually structural).
+
+**A5 — Partial-push recovery docs.** `push_cli execute` FAIL summary
+now appends the verbatim recovery command (idempotent re-run after
+fix). `.claude/skills/ableton-push/SKILL.md` gains a "Recovering from
+partial push" subsection naming the structural pattern. No `--resume`
+flag — W20-A's device-binding idempotency makes re-run the right
+recovery path.
+
+**Scope audit.** Initial Arc 1 plan covered seven chunks (A1-A7).
+Code-level audit on 2026-05-21 confirmed five chunks already shipped
+during v1.0.0: A1 via W18-A/B, A2 via W20-A, A4 in `create_song`'s
+existing by-name lookup, A6 via W18-E, A7 in `ableton-push/SKILL.md:159`.
+`docs/v11-requirements.md` Arc 1 + the build-plan carry the
+audit-corrected scope; the backlog reconciliation marks Hot Rod Kit +
+Drum Rack pad-mapping discovery + Push planner duplicates devices +
+browser.load_item misleading hint (i) as RESOLVED with cross-references.
+
+**Documentation.** `docs/song-authoring-conventions.md` gains a "Drum
+kits: probe, don't assume" subsection. `docs/v11-requirements.md` Arc 1
+section rewritten with audit-accurate scope.
+
+Suite: main 1788 (+30) + MCP 664 (+3) = 2452 passing, 0 failed.
+
+<!-- chunks=A3|A1-resid|A2-resid|A5 status=shipped release=v1.1.0 scope=push-reliability+drum-mapping -->
+
+
 ## 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation
 
 **R-1.1 — Cue push idempotency.** `ableton_arrangement(cue_create /

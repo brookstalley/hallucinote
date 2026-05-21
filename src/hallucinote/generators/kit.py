@@ -24,9 +24,22 @@ Canonical names are lower-snake-case strings: ``"kick"``, ``"snare"``,
 ``"hat_closed"``, etc. The fuzzy matcher in :func:`_canonical_to_chain`
 recognizes a chain whose name *contains* the canonical token (case-
 insensitive) — so a kit with a chain named ``"Kick Drum"`` resolves
-``Kit.pitch_of("kick")`` correctly without per-kit configuration. Names
-without a canonical match warn-and-fall-through to the GM default,
-keeping composition flowing for kits that don't expose every pad.
+``Kit.pitch_of("kick")`` correctly without per-kit configuration.
+
+Three resolution paths exist for callers, intentionally distinct:
+
+* :meth:`Kit.pitch_of` — strict resolver. Returns the matched note;
+  warn-and-fall-through to GM ONLY when the GM-default note is empty on
+  this kit (harmless silence); **raises** when the GM-default note is
+  taken by a differently-named chain (the wrong-sound case that the
+  sun-zone-done cautionary tale named — Hot Rod Kit's pad 51 is cowbell,
+  not ride). Use when the pattern fundamentally needs that pad.
+* :meth:`Kit.try_pitch_of` — optional resolver. Returns ``None`` when
+  the kit has captured chains but no match. Use when composition can
+  react to absence (e.g., "drop the ride pattern if this kit has no
+  ride").
+* :meth:`Kit.assert_has` — bulk fail-fast validation. Refuses at
+  composition start when the kit can't deliver a required pad set.
 """
 from __future__ import annotations
 
@@ -203,29 +216,109 @@ class Kit:
     def pitch_of(self, canonical_name: str) -> int:
         """Resolve ``canonical_name`` to the kit's MIDI note for that pad.
 
-        Falls through to :data:`_GM_DEFAULTS` with a warning when the kit
-        has no chain matching ``canonical_name``. Raises :class:`KeyError`
-        only when the name isn't even a known canonical pad.
+        Three cases:
+
+        1. **Match.** The kit has a chain whose name fuzzy-matches the
+           canonical (e.g. ``"Kick Drum"`` matches ``"kick"``) — return
+           that chain's note.
+        2. **GM-default points at empty slot.** The kit has captured
+           mappings but no matching chain, AND the GM-default note for
+           ``canonical_name`` isn't taken by another chain on this kit.
+           Falling through to GM plays silence (the pad is empty) — that's
+           harmless, so warn-and-fall-through is fine.
+        3. **GM-default points at a different chain (wrong-sound case).**
+           The kit has captured mappings but no matching chain, AND the
+           GM-default note IS taken by a *different-named* chain. Falling
+           through here would play the wrong sound (Hot Rod Kit pad 51 is
+           "Cowbell Fenk Chick", so ``kit.pitch_of("ride")`` falling
+           through to GM 51 would play cowbell instead of ride — the
+           sun-zone-done cautionary tale). **Raise** with a teaching
+           message naming the colliding chain so the caller can decide
+           explicitly: use a different pattern, switch to
+           :meth:`try_pitch_of`, or pick a chain by name.
+
+        Empty ``mappings_by_note`` (pre-capture state) short-circuits to
+        the GM default silently — the kit just isn't characterized yet.
+
+        Raises :class:`KeyError` when ``canonical_name`` isn't a known
+        canonical pad at all (typo). Also raises :class:`KeyError` on the
+        wrong-sound case (case 3 above) — the message distinguishes the
+        two.
         """
-        if self.mappings_by_note:
-            note = _canonical_to_chain(canonical_name, self.mappings_by_note)
-            if note is not None:
-                return note
         if canonical_name not in _GM_DEFAULTS:
             raise KeyError(
                 f"pitch_of: unknown canonical pad name {canonical_name!r}; "
                 f"known: {sorted(_GM_DEFAULTS)}"
             )
         if self.mappings_by_note:
+            note = _canonical_to_chain(canonical_name, self.mappings_by_note)
+            if note is not None:
+                return note
+            gm_note = _GM_DEFAULTS[canonical_name]
+            colliding_chain = self.mappings_by_note.get(gm_note)
+            if colliding_chain is not None:
+                raise KeyError(
+                    f"pitch_of({canonical_name!r}): kit {self.name!r} has no "
+                    f"chain matching {canonical_name!r}, and the GM-default "
+                    f"pad at note {gm_note} holds chain {colliding_chain!r} — "
+                    "falling through to GM would play that sound instead "
+                    "of silence. Use `kit.try_pitch_of(...)` if you want "
+                    "None on absence and intend to skip the pattern, or "
+                    f"pick a chain by name from {sorted(self.mappings_by_note.values())}."
+                )
             warnings.warn(
                 f"Kit {self.name!r} has no chain matching canonical pad "
                 f"{canonical_name!r}; falling through to GM default "
-                f"(note {_GM_DEFAULTS[canonical_name]}). Captured chain "
+                f"(note {gm_note}, empty pad on this kit). Captured chain "
                 f"names: {sorted(self.mappings_by_note.values())}",
                 UserWarning,
                 stacklevel=2,
             )
         return _GM_DEFAULTS[canonical_name]
+
+    def try_pitch_of(self, canonical_name: str) -> int | None:
+        """Optional resolver. Returns ``None`` when the kit has captured
+        mappings AND no chain matches ``canonical_name`` — including the
+        wrong-sound case that :meth:`pitch_of` raises on. Empty kit
+        (pre-capture) returns the GM default for symmetry with
+        :meth:`pitch_of`.
+
+        Use this when composition can react to absence (e.g., "if this
+        kit has no ride, drop the ride pattern" rather than "play GM 51
+        and hope for the best"). Raises :class:`KeyError` only on unknown
+        canonical names — pad-name typos remain a programming error.
+        """
+        if canonical_name not in _GM_DEFAULTS:
+            raise KeyError(
+                f"try_pitch_of: unknown canonical pad name {canonical_name!r}; "
+                f"known: {sorted(_GM_DEFAULTS)}"
+            )
+        if not self.mappings_by_note:
+            return _GM_DEFAULTS[canonical_name]
+        return _canonical_to_chain(canonical_name, self.mappings_by_note)
+
+    def assert_has(self, *canonical_names: str) -> None:
+        """Refuse early if this kit can't deliver every named canonical pad.
+
+        Bulk fail-fast validation — call at the top of ``build.py`` before
+        composing a section that fundamentally needs a specific pad set
+        (e.g., a metal section that needs kick / snare / ride / crash).
+        If any canonical doesn't resolve via :meth:`try_pitch_of`, raises
+        :class:`KeyError` naming the missing pads and the kit's captured
+        chains.
+
+        Empty kit (pre-capture) treats every canonical as present via the
+        GM-default fall-through in :meth:`try_pitch_of` — this method only
+        catches genuine kit-incompleteness, not pre-capture state.
+        """
+        missing = [c for c in canonical_names if self.try_pitch_of(c) is None]
+        if missing:
+            raise KeyError(
+                f"Kit {self.name!r} is missing canonical pad(s) {missing}; "
+                f"captured chains: {sorted(self.mappings_by_note.values())}. "
+                "Either pick a different kit or rewrite the part(s) that "
+                "need the missing pad(s)."
+            )
 
     # Convenience attribute access for common pads — `kit.kick` reads better
     # than `kit.pitch_of("kick")` in generator code.

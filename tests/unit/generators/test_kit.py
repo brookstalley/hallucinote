@@ -162,3 +162,148 @@ def test_pitch_of_picks_lowest_note_on_multiple_matches():
         mappings_by_note={36: "Kick A", 40: "Kick B"},
     )
     assert kit.kick == 36
+
+
+# ---------- pitch_of: wrong-sound case (Hot Rod Kit cautionary tale) ----------
+
+
+def test_pitch_of_raises_when_gm_default_collides_with_different_chain():
+    """The Hot Rod Kit case: kit has captured pads, none match the requested
+    canonical, AND the GM-default note for that canonical is already taken
+    by a differently-named chain. Falling through would play the wrong
+    sound (cowbell instead of ride). Refuse.
+    """
+    # Hot Rod Kit shape (simplified) — pad 51 is cowbell, not ride.
+    kit = Kit(
+        name="Hot Rod Kit",
+        device_id=None,
+        mappings_by_note={
+            36: "Kick Drum",
+            38: "Snare Top",
+            42: "Closed Hat",
+            46: "Buttery",  # second closed hat — kit has no open hat
+            49: "Crash",
+            51: "Cowbell Fenk Chick",  # GM-default "ride" slot
+        },
+    )
+    with pytest.raises(KeyError, match=r"Cowbell.*Fenk.*Chick"):
+        kit.pitch_of("ride")
+
+
+def test_pitch_of_raises_message_names_try_pitch_of_alternative():
+    """The wrong-sound exception message points the caller at `try_pitch_of`
+    so the recovery path is discoverable from the error itself."""
+    kit = Kit(
+        name="Hot Rod Kit",
+        device_id=None,
+        mappings_by_note={51: "Cowbell Fenk Chick"},
+    )
+    with pytest.raises(KeyError, match="try_pitch_of"):
+        kit.pitch_of("ride")
+
+
+def test_pitch_of_still_warns_and_falls_through_when_gm_slot_empty():
+    """The 'empty slot' fall-through case stays exactly as before — GM-default
+    note is NOT taken on this kit, so the substitution plays silence (the
+    pad is empty), not a different sound. Warn-and-return-GM keeps the
+    composer aware while letting the build flow."""
+    # Minimal kit: only kick captured. GM[shaker]=70 is NOT in mappings.
+    kit = Kit(
+        name="Minimal Kit",
+        device_id=None,
+        mappings_by_note={36: "Kick Drum"},
+    )
+    with pytest.warns(UserWarning, match="empty pad on this kit"):
+        assert kit.pitch_of("shaker") == 70
+
+
+# ---------- try_pitch_of ----------
+
+
+def test_try_pitch_of_returns_note_on_match():
+    """When a chain matches the canonical, try_pitch_of returns the note
+    just like pitch_of."""
+    kit = Kit(
+        name="t", device_id=None,
+        mappings_by_note={37: "Kick Drum", 39: "Snare Top"},
+    )
+    assert kit.try_pitch_of("kick") == 37
+    assert kit.try_pitch_of("snare") == 39
+
+
+def test_try_pitch_of_returns_none_for_missing_canonical_on_populated_kit():
+    """When the kit has captured chains but none match, try_pitch_of returns
+    None — including the wrong-sound case that pitch_of raises on. Callers
+    that want to react to absence get a clean signal without exception
+    handling."""
+    # Wrong-sound case (Hot Rod Kit ride).
+    hot_rod = Kit(
+        name="Hot Rod Kit", device_id=None,
+        mappings_by_note={51: "Cowbell Fenk Chick"},
+    )
+    assert hot_rod.try_pitch_of("ride") is None
+    # Empty-slot case (Minimal Kit shaker).
+    minimal = Kit(
+        name="Minimal Kit", device_id=None,
+        mappings_by_note={36: "Kick Drum"},
+    )
+    assert minimal.try_pitch_of("shaker") is None
+
+
+def test_try_pitch_of_returns_gm_default_on_empty_kit():
+    """Empty mappings (pre-capture state) → GM default. Symmetric with
+    pitch_of: an uncharacterized kit gets the GM best-guess."""
+    kit = Kit(name="Pre-Capture", device_id=None, mappings_by_note={})
+    assert kit.try_pitch_of("kick") == 36  # GM kick
+    assert kit.try_pitch_of("ride") == 51  # GM ride
+
+
+def test_try_pitch_of_raises_for_unknown_canonical():
+    """Pad-name typos remain programming errors, not absence cases."""
+    kit = Kit.gm_default()
+    with pytest.raises(KeyError, match="unknown canonical"):
+        kit.try_pitch_of("not_a_pad")
+
+
+# ---------- assert_has ----------
+
+
+def test_assert_has_passes_when_all_pads_resolve():
+    kit = Kit(
+        name="Full Kit", device_id=None,
+        mappings_by_note={
+            36: "Kick Drum", 38: "Snare", 42: "Closed Hat",
+            46: "Open Hat", 49: "Crash", 51: "Ride Cymbal",
+        },
+    )
+    kit.assert_has("kick", "snare", "hat_closed", "hat_open", "crash", "ride")
+    # No exception = pass.
+
+
+def test_assert_has_raises_listing_missing_pads():
+    """A metal section that needs ride + crash but the loaded kit has
+    neither — fail at composition start, not in audio playback."""
+    kit = Kit(
+        name="Hot Rod Kit",
+        device_id=None,
+        mappings_by_note={36: "Kick", 38: "Snare", 51: "Cowbell Fenk Chick"},
+    )
+    with pytest.raises(KeyError, match=r"\['ride', 'crash'\]"):
+        kit.assert_has("kick", "snare", "ride", "crash")
+
+
+def test_assert_has_passes_on_empty_kit_via_gm_fallback():
+    """Pre-capture state: every canonical is 'present' via GM fall-through.
+    assert_has catches kit-incompleteness, not pre-capture state — for
+    pre-capture, the snapshot+capture flow is the right safety net."""
+    kit = Kit(name="Pre-Capture", device_id=None, mappings_by_note={})
+    kit.assert_has("kick", "snare", "ride", "crash")
+    # No exception = pass.
+
+
+def test_assert_has_raises_for_unknown_canonical_in_args():
+    """Typo in the args list (e.g., 'rde' instead of 'ride') surfaces as
+    a KeyError from try_pitch_of, propagated by assert_has."""
+    kit = Kit.gm_default()
+    with pytest.raises(KeyError, match="unknown canonical"):
+        kit.assert_has("kick", "rde")  # rde is a typo

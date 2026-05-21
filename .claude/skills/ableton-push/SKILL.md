@@ -225,11 +225,26 @@ All other key kinds (`track_volume`, `send`, `cue_batch`, `master_*`, `tempo_poi
 ## Failure modes
 
 - **`probe-and-link` exits non-zero** — snapshot file malformed, DB path wrong, or session_id unknown. Show stderr.
-- **`execute` exits 1 (partial)** — one or more calls failed; `execute` halted at the phase boundary. Read `.last-push-errors.json` for full forensics. Phases that ran cleanly are committed in Live + DB; the halted phase has partial state (`calls_ok` calls applied, `calls_failed` calls rejected); downstream phases didn't run. Fix the underlying issue (usually in `build.py` or the snapshot), rebuild, re-run `execute`. Push is idempotent — already-applied rows skip on re-run.
+- **`execute` exits 1 (partial)** — one or more calls failed; `execute` halted at the phase boundary. Read `.last-push-errors.json` for full forensics. Phases that ran cleanly are committed in Live + DB; the halted phase has partial state (`calls_ok` calls applied, `calls_failed` calls rejected); downstream phases didn't run. Fix the underlying issue (usually in `build.py` or the snapshot), rebuild, re-run `execute`. Push is idempotent — already-applied rows skip on re-run. See "Recovering from partial push" below.
 - **`execute` exits 2 (connection lost)** — Live wasn't reachable mid-push. Confirm Live is open + Hallucinote is selected as a Control Surface. Re-run `execute`.
 - **`execute` raises a `ValueError` from inside a planner** — usually a strict-precondition issue (`plan_push_clip: track 'X' is not linked …`). Investigate: did Step 1's probe-and-link skip a track that should have matched? Show the user the error and stop the run.
 
 Do not retry inside the loop. `execute` doesn't retry; re-running it is the retry.
+
+### Recovering from partial push (A5)
+
+A partial push leaves Live and the DB in a known, recoverable state — by design. The recovery loop is short and structural:
+
+1. **Read** `songs/<slug>/.last-push-errors.json` for the per-call forensics. The CLI summary already shows the top 3 error patterns; the file has the full list with `args_summary` (large payloads like `notes=[…]` are redacted to counts so the file stays agent-readable).
+2. **Diagnose**. The error message usually points at the underlying cause — a typo'd `preset_query.root` (caught at compose time post-R-2.1 → `compat check` flags it; if it slipped through to push, fix the snapshot), a wrong device kind, a Live constraint (the planner refuses on per-bar tempo because Live's LOM has no envelope API for `song_tempo`), etc.
+3. **Fix** in `build.py` or the snapshot. The push is idempotent at the row level — re-running with a fixed snapshot re-applies cleanly without duplicating already-landed rows.
+4. **Rebuild** the DB: `python songs/<slug>/build.py`. W12-A's state-converger makes this safe to re-run; build-owned rows that aren't touched are tombstoned, mutator-only rows (Live mutations from interactive iteration) survive.
+5. **Re-run `execute`**. The CLI's FAIL summary prints the verbatim next command (A5; pre-A5 the agent had to assemble the flags from the help text). Copy-paste, or follow the command structure:
+   ```
+   python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
+   ```
+
+**No `--resume` flag exists by design.** W20-A's device idempotency means re-run is the right structural recovery: probe-and-link rebinds existing devices, the devices phase skips them, the failed-then-fixed calls succeed on the second pass. A separate resume mode would duplicate the idempotency that's already there.
 
 ## What NOT to do
 

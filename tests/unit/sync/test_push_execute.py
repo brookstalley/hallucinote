@@ -834,3 +834,222 @@ def test_execute_fallback_routes_default_kind_to_instruments_root(
         if c["tool"] == "ableton_browser" and c["action"] == "search"
     ]
     assert search_calls and search_calls[0]["params"]["root"] == "instruments"
+
+
+# ---------------------------------------------------------------------------
+# A3 — Drum Rack pad-mapping auto-population
+# ---------------------------------------------------------------------------
+
+
+def _make_drum_send_fn(
+    *,
+    pad_info_response: dict | None = None,
+    pad_info_ok: bool = True,
+    raise_on_pad_info: bool = False,
+):
+    """Wraps ``_make_send_fn`` with a deterministic ``pad_info`` response so
+    A3 tests can drive the post-phase walker through happy and failure paths
+    without re-implementing the whole dispatch fake.
+
+    ``pad_info_response`` is the result payload returned for the
+    ``ableton_device(action='pad_info', ...)`` call. Defaults to a
+    Hot-Rod-Kit-shaped layout so the round-trip exercises both ride-side
+    canonical resolution (Crash → midi 49) and the wrong-sound case
+    (Cowbell at midi 51 — the GM ride slot).
+    """
+    base = _make_send_fn()
+    response = pad_info_response or {
+        "device_index": 1,
+        "pads": [
+            {"note": 36, "name": "Pad 36", "chain_name": "Kick Drum"},
+            {"note": 38, "name": "Pad 38", "chain_name": "Snare Top"},
+            {"note": 42, "name": "Pad 42", "chain_name": "Closed Hat"},
+            {"note": 49, "name": "Pad 49", "chain_name": "Crash"},
+            {"note": 51, "name": "Pad 51", "chain_name": "Cowbell Fenk Chick"},
+        ],
+        "parent_kind": "track",
+        "track_index": 1,
+    }
+
+    def send(req):
+        if req.tool == "ableton_device" and req.action == "pad_info":
+            # Log the call so tests can assert it fired with the right addressing.
+            base.call_log.append({  # type: ignore[attr-defined]
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            if raise_on_pad_info:
+                raise ConnectionRefusedError("simulated Live unreachable")
+            if not pad_info_ok:
+                return FakeResponse(ok=False, error="simulated pad_info failure")
+            return FakeResponse(ok=True, result=response)
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    return send
+
+
+@pytest.fixture
+def drum_song(conn, song):
+    """One track + one Drum Rack device. Devices phase will emit a load
+    call; the post-phase walker picks up the linked Drum Rack and probes
+    its pad layout. Distinct from `tiny_song` (which has no devices)."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Drums", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="DrumGroupDevice", display_name="Hot Rod Kit",
+    )
+    return {"track_id": tid, "chain_id": chain_id, "device_id": did, "song_id": song}
+
+
+def test_pad_probe_auto_populates_drum_pad_mappings_after_devices_phase(
+    conn, song, session, drum_song, state_dir,
+):
+    """Happy path: a Drum Rack load succeeds, the post-phase walker fires
+    pad_info, and the response gets persisted as ``drum_pad_mappings`` rows.
+    This is the Hot Rod Kit cautionary tale's structural fix — pad data
+    flows automatically as a side effect of the push, no extra step."""
+    send_fn = _make_drum_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok"
+    # pad_info fired with the loaded device's address.
+    pad_info_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "pad_info"
+    ]
+    assert len(pad_info_calls) == 1
+    assert pad_info_calls[0]["params"]["track_index"] == 1
+    assert pad_info_calls[0]["params"]["device_index"] == 1
+    # Rows persisted.
+    rows = Q.get_drum_pad_mappings(conn, drum_song["device_id"])
+    by_note = {int(r["midi_note"]): r["chain_name"] for r in rows}
+    assert by_note == {
+        36: "Kick Drum", 38: "Snare Top", 42: "Closed Hat",
+        49: "Crash", 51: "Cowbell Fenk Chick",
+    }
+
+
+def test_pad_probe_counts_surface_in_state_file(
+    conn, song, session, drum_song, state_dir,
+):
+    """When the probe fires, pad_probes_ok/failed appear on the devices
+    phase entry in the state file. Songs without Drum Racks don't get the
+    fields (zero ceremony)."""
+    send_fn = _make_drum_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    devices_phase = next(p for p in state["phases"] if p["name"] == "devices")
+    assert devices_phase["pad_probes_ok"] == 1
+    assert devices_phase["pad_probes_failed"] == 0
+    # Non-devices phases stay clean.
+    tracks_phase = next(p for p in state["phases"] if p["name"] == "tracks")
+    assert "pad_probes_ok" not in tracks_phase
+    assert "pad_probes_failed" not in tracks_phase
+
+
+def test_pad_probe_failure_does_not_halt_push(
+    conn, song, session, drum_song, state_dir,
+):
+    """Pad-probing is best-effort: a handler error (or connection error)
+    on pad_info counts as a failed probe but does NOT change the phase
+    outcome or the overall push result. The song's structural state in
+    Live is already correct; pad metadata is auxiliary."""
+    send_fn = _make_drum_send_fn(pad_info_ok=False)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok"
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    devices_phase = next(p for p in state["phases"] if p["name"] == "devices")
+    assert devices_phase["status"] == "ok"
+    assert devices_phase["pad_probes_ok"] == 0
+    assert devices_phase["pad_probes_failed"] == 1
+    # No rows persisted on failure.
+    assert Q.get_drum_pad_mappings(conn, drum_song["device_id"]) == []
+
+
+def test_pad_probe_swallows_connection_errors(
+    conn, song, session, drum_song, state_dir,
+):
+    """A connection-class exception raised by send_fn during pad_info
+    must not propagate: the push has structurally succeeded, and a
+    network blip on the auxiliary probe shouldn't crash the executor."""
+    send_fn = _make_drum_send_fn(raise_on_pad_info=True)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok"
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    devices_phase = next(p for p in state["phases"] if p["name"] == "devices")
+    assert devices_phase["pad_probes_failed"] == 1
+    assert Q.get_drum_pad_mappings(conn, drum_song["device_id"]) == []
+
+
+def test_pad_probe_skipped_when_no_drum_racks(
+    conn, song, session, tiny_song, state_dir,
+):
+    """A song with no Drum Rack devices runs the devices phase (skipped —
+    no devices to load) and the pad-probe walker finds nothing to probe.
+    State file stays clean (no pad_probes_* fields)."""
+    send_fn = _make_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    devices_phase = next(p for p in state["phases"] if p["name"] == "devices")
+    assert "pad_probes_ok" not in devices_phase
+    assert "pad_probes_failed" not in devices_phase
+    pad_info_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "pad_info"
+    ]
+    assert pad_info_calls == []
+
+
+def test_pad_probe_runs_on_idempotent_re_push(
+    conn, song, session, drum_song, state_dir,
+):
+    """The interesting re-push case: first push loads the Drum Rack and
+    captures pads. Second push's devices phase has nothing to load
+    (everything linked via W20-A), so the phase is `skipped`. The pad
+    probe must STILL fire — otherwise a song whose first push didn't
+    capture pads (older code path, or transient probe failure) would
+    never recover automatically."""
+    # First push: loads + probes.
+    send_fn = _make_drum_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    # Clear the captured rows to simulate "first push didn't probe."
+    conn.execute(
+        "DELETE FROM drum_pad_mappings WHERE device_id = ?",
+        (drum_song["device_id"],),
+    )
+    conn.commit()
+    # Second push: devices phase has no calls (everything linked), but
+    # the post-phase walker still fires.
+    send_fn2 = _make_drum_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn2,
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    devices_phase = next(p for p in state["phases"] if p["name"] == "devices")
+    assert devices_phase["status"] == "skipped"
+    assert devices_phase["pad_probes_ok"] == 1
+    # And the rows came back via the idempotent re-probe.
+    assert len(Q.get_drum_pad_mappings(conn, drum_song["device_id"])) == 5

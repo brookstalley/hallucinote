@@ -2077,19 +2077,38 @@ def _diff_chain_devices(
                 f"device_index: {entry!r}"
             )
             continue
-        kind_in = entry.get("class_name") or ""
-        if not kind_in:
+        class_name_in = entry.get("class_name") or ""
+        if not class_name_in:
             out.warnings.append(
                 f"{context_label}: device at position {idx} missing "
                 "class_name; skipping"
             )
             continue
         name_in = entry.get("name") or ""
+        # Arc 4 / D4: prefer class_display_name as the loader-facing
+        # `kind`. Fall back to `name` (display name on the instance) for
+        # backwards compat with probe payloads emitted before D4 added
+        # the field. Both are reliable for default-loaded devices; for
+        # renamed/preset-loaded devices the loader uses preset_uri /
+        # preset_query regardless, so a divergence here is harmless.
+        kind_in = (
+            entry.get("class_display_name")
+            or name_in
+            or class_name_in
+        )
         seen_positions.add(idx)
 
         existing = db_by_position.get(idx)
         if existing is not None:
-            if existing["kind"] == kind_in and existing["display_name"] == name_in:
+            existing_class_name = (
+                existing["class_name"]
+                if "class_name" in existing.keys() else None
+            )
+            if (
+                existing["kind"] == kind_in
+                and existing["display_name"] == name_in
+                and existing_class_name == class_name_in
+            ):
                 out.no_ops += 1
                 continue
             # Different device at the same slot — replace. Cascade clears
@@ -2105,6 +2124,7 @@ def _diff_chain_devices(
             position=idx,
             kind=kind_in,
             display_name=name_in,
+            class_name=class_name_in,
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1

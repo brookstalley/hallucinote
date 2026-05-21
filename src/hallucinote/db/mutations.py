@@ -2397,19 +2397,33 @@ def create_device(
     position: int,
     kind: str,
     display_name: str,
+    class_name: str | None = None,
     preset_uri: str | None = None,
     preset_query: dict[str, Any] | str | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
-    """Create a device in `chain_id` at 1-based `position`. `kind` is Live's
-    class name (Compressor2, Eq8, DrumGroupDevice, ...); `display_name` is
-    the user-visible name (often == kind, may be a preset name).
+    """Create a device in `chain_id` at 1-based `position`.
+
+    Arc 4 / D4 convention:
+    - ``kind`` is the BROWSER DISPLAY NAME (= Live's
+      ``device.class_display_name``): ``"Compressor"`` / ``"Phaser-Flanger"``
+      / ``"EQ Eight"`` / ``"Operator"``. The loader's kind-as-given walk
+      matches against this directly in Live's browser tree.
+    - ``class_name`` (optional) is Live's INTERNAL class identifier:
+      ``"Compressor2"`` / ``"PhaserNew"`` / ``"PluginDevice"``.
+      Informational + drives plugin classification (compat-check reads
+      this to detect third-party plugins). Captured-from-Live writes
+      populate it; hand-authored snapshots may omit it.
+    - ``display_name`` is the user-visible instance label. Often equals
+      ``kind`` for default loads; diverges on preset loads (``"Hall"``
+      on a Hybrid Reverb) and user renames (``"Bass Squish"`` on a
+      Compressor).
 
     ``preset_uri`` and ``preset_query`` are mutually exclusive selectors —
-    pass one or the other (or neither, for kind-only loading). ``preset_query``
-    is the compose-time portable form (Sweep B): a dict
+    pass one or the other (or neither, for kind-only loading).
+    ``preset_query`` is the compose-time portable form (Sweep B): a dict
     ``{root, pattern, mode?, path_prefix?, case_sensitive?}`` stored as
     JSON; the push planner threads it through to
     ``ableton_device(action='load', preset_query=...)`` which resolves on the
@@ -2418,9 +2432,6 @@ def create_device(
     Arc 3 / C2: ``preset_query`` also accepts a path-shape string like
     ``"Drums/Kit-Core 909"`` — normalized to the canonical dict via
     :func:`hallucinote.preset_query.parse_path_shape` before persistence.
-    The DB always stores the structured form so downstream consumers see
-    a single shape. Authors who need ``mode`` or ``case_sensitive`` keep
-    using the dict form.
     """
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
@@ -2437,31 +2448,33 @@ def create_device(
         else None
     )
     existing = conn.execute(
-        """SELECT id, kind, display_name, preset_uri, preset_query FROM devices
-           WHERE chain_id = ? AND position = ?""",
+        """SELECT id, kind, display_name, class_name, preset_uri, preset_query
+           FROM devices WHERE chain_id = ? AND position = ?""",
         (chain_id, position),
     ).fetchone()
     if existing is not None:
         device_id = existing["id"]
         if (
-            existing["kind"], existing["display_name"], existing["preset_uri"],
-            existing["preset_query"],
+            existing["kind"], existing["display_name"], existing["class_name"],
+            existing["preset_uri"], existing["preset_query"],
         ) == (
-            kind, display_name, preset_uri, preset_query_json,
+            kind, display_name, class_name, preset_uri, preset_query_json,
         ):
             _record_touch_if_session("device", device_id)
             return MutatorResult(device_id, "unchanged")
         conn.execute(
-            """UPDATE devices SET kind = ?, display_name = ?, preset_uri = ?,
-                                  preset_query = ?
+            """UPDATE devices SET kind = ?, display_name = ?, class_name = ?,
+                                  preset_uri = ?, preset_query = ?
                WHERE id = ?""",
-            (kind, display_name, preset_uri, preset_query_json, device_id),
+            (kind, display_name, class_name, preset_uri, preset_query_json,
+             device_id),
         )
         song_id = _resolve_device_song(conn, device_id=device_id)
         _emit(
             conn, E.DEVICE_CREATED,
             {"device_id": device_id, "chain_id": chain_id, "position": position,
              "kind": kind, "display_name": display_name,
+             "class_name": class_name,
              "preset_uri": preset_uri, "preset_query": preset_query,
              "result_kind": "updated"},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
@@ -2473,10 +2486,10 @@ def create_device(
     device_id = _uuid()
     conn.execute(
         """INSERT INTO devices (id, chain_id, position, kind, display_name,
-                                preset_uri, preset_query)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                class_name, preset_uri, preset_query)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (device_id, chain_id, position, kind, display_name,
-         preset_uri, preset_query_json),
+         class_name, preset_uri, preset_query_json),
     )
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
@@ -2488,6 +2501,7 @@ def create_device(
             "position": position,
             "kind": kind,
             "display_name": display_name,
+            "class_name": class_name,
             "preset_uri": preset_uri,
             "preset_query": preset_query,
         },

@@ -916,23 +916,41 @@ def test_apply_cue_points_name_diff_warns_no_mutate(conn, song, session):
 # ---------------------------------------------------------------------------
 
 
-def _devices_payload(*entries: tuple[int, str, str], parent_kind="track",
-                     parent_index=2) -> dict:
+def _devices_payload(*entries, parent_kind="track", parent_index=2) -> dict:
     """Build an `ableton_device(action='list')` payload from
-    ``(device_index, class_name, name)`` tuples. Mirrors the
-    `list_handler` shape so the apply tests exercise the real wire shape.
+    ``(device_index, class_name, name)`` or
+    ``(device_index, class_name, name, class_display_name)`` tuples.
+
+    Mirrors the post-D4 ``list_handler`` shape: ``class_display_name``
+    is the browser display name (drives ``devices.kind`` in pull).
+
+    When the 4th tuple element is omitted, defaults to ``class_name``
+    — most of these tests describe devices where class_name and
+    display name are interchangeable for the assertion (Operator,
+    Limiter, Saturator, etc.) or where the test is about chain
+    operations (delete, swap, extend) rather than the name-translation
+    semantics. Tests that need the realistic Compressor2→"Compressor"
+    or DrumGroupDevice→"Drum Rack" divergence pass explicit
+    class_display_name as the 4th element.
     """
     addr = {f"{parent_kind}_index": parent_index}
+    devices: list[dict] = []
+    for entry in entries:
+        if len(entry) == 4:
+            i, k, n, cdn = entry
+        else:
+            i, k, n = entry
+            cdn = k  # default: class_display_name == class_name (test-fixture
+                     # convenience; real Live would diverge for renamed classes)
+        devices.append({
+            "device_index": i, "name": n, "class_name": k,
+            "class_display_name": cdn,
+            "is_active": True,
+        })
     return {
         "parent_kind": parent_kind,
         **addr,
-        "devices": [
-            {
-                "device_index": i, "name": n, "class_name": k,
-                "is_active": True,
-            }
-            for i, k, n in entries
-        ],
+        "devices": devices,
     }
 
 
@@ -1040,7 +1058,8 @@ def test_apply_track_devices_no_op_when_identical(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue")
+                    kind="Compressor2", display_name="Glue",
+                    class_name="Compressor2")
 
     out = pull.apply_pull_results(
         conn,
@@ -1109,11 +1128,14 @@ def test_apply_track_devices_deletes_db_devices_absent_from_ableton(
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue")
+                    kind="Compressor2", display_name="Glue",
+                    class_name="Compressor2")
     M.create_device(conn, chain_id=chain_id, position=2,
-                    kind="Eq8", display_name="EQ8")
+                    kind="Eq8", display_name="EQ8",
+                    class_name="Eq8")
     M.create_device(conn, chain_id=chain_id, position=3,
-                    kind="Limiter", display_name="Limiter")
+                    kind="Limiter", display_name="Limiter",
+                    class_name="Limiter")
 
     out = pull.apply_pull_results(
         conn,
@@ -1134,7 +1156,8 @@ def test_apply_track_devices_extends_chain_when_ableton_has_more(
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue")
+                    kind="Compressor2", display_name="Glue",
+                    class_name="Compressor2")
 
     out = pull.apply_pull_results(
         conn,
@@ -1180,7 +1203,8 @@ def test_apply_track_devices_swap_within_chain(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Eq8", display_name="EQ8")
+                    kind="Eq8", display_name="EQ8",
+                    class_name="Eq8")
     M.create_device(conn, chain_id=chain_id, position=2,
                     kind="Compressor2", display_name="Glue")
 
@@ -1257,27 +1281,37 @@ def test_apply_track_devices_missing_class_name_warns(conn, song, session):
 
 
 def _nested_chains_payload(
-    *entries: tuple[int, str, list[tuple[int, str, str]]],
+    *entries,
     parent_kind="track", parent_index=2, rack_position=1,
     rack_class="DrumGroupDevice",
 ) -> dict:
     """Build a `get_device_chains` payload from
-    ``(chain_index, chain_name, [(position, class_name, display_name), ...])``
-    tuples per nested chain. Mirrors `get_device_chains_handler`'s
-    response shape exactly so apply tests exercise the real wire shape.
+    ``(chain_index, chain_name, [(position, class_name, display_name)
+    or (position, class_name, display_name, class_display_name), ...])``
+    tuples per nested chain. Mirrors the post-D4 `get_device_chains_handler`
+    shape — `class_display_name` defaults to `class_name` for test fixtures
+    that don't care about display-name divergence (matches `_devices_payload`).
     """
     addr = {f"{parent_kind}_index": parent_index}
     chains_out = []
     for ci, name, devs in entries:
+        devices = []
+        for entry in devs:
+            if len(entry) == 4:
+                p, k, n, cdn = entry
+            else:
+                p, k, n = entry
+                cdn = k
+            devices.append({
+                "position": p, "name": n, "class_name": k,
+                "class_display_name": cdn,
+                "parameter_count": 0, "is_active": True,
+            })
         chains_out.append({
             "chain_index": ci,
             "name": name,
             "device_count": len(devs),
-            "devices": [
-                {"position": p, "name": n, "class_name": k,
-                 "parameter_count": 0, "is_active": True}
-                for p, k, n in devs
-            ],
+            "devices": devices,
             "is_muted": False,
             "is_soloed": False,
         })
@@ -1330,7 +1364,8 @@ def test_plan_pull_nested_rack_chains_skips_non_racks(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue")
+                    kind="Compressor2", display_name="Glue",
+                    class_name="Compressor2")
     plan = pull.plan_pull_nested_rack_chains(
         conn, song_id=song, session_id=session,
     )
@@ -1451,7 +1486,8 @@ def test_apply_nested_rack_chains_no_op_when_identical(conn, song, session):
         conn, parent_rack_device_id=rack_id, position=1,
     )
     M.create_device(conn, chain_id=nested_chain, position=1,
-                    kind="Operator", display_name="Operator")
+                    kind="Operator", display_name="Operator",
+                    class_name="Operator")
     out = pull.apply_pull_results(
         conn,
         [_result(
@@ -1474,7 +1510,8 @@ def test_apply_nested_rack_chains_replaces_nested_device_when_kind_changes(
         conn, parent_rack_device_id=rack_id, position=1,
     )
     M.create_device(conn, chain_id=nested_chain, position=1,
-                    kind="Operator", display_name="Operator")
+                    kind="Operator", display_name="Operator",
+                    class_name="Operator")
     out = pull.apply_pull_results(
         conn,
         [_result(
@@ -1601,13 +1638,17 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
             "index": 1, "name": "Drums", "type": "midi",
             "devices": [{
                 "index": 1, "name": "Drum Rack", "class": "DrumGroupDevice",
+                "class_name": "DrumGroupDevice",
                 "chains": [
                     {"chain_index": 1, "name": "Kick", "devices": [
-                        {"index": 1, "name": "Operator", "class": "Operator"},
+                        {"index": 1, "name": "Operator", "class": "Operator",
+                         "class_name": "Operator"},
                     ]},
                     {"chain_index": 2, "name": "Snare", "devices": [
-                        {"index": 1, "name": "Drum Synth", "class": "DrumSynths"},
-                        {"index": 2, "name": "EQ", "class": "Eq8"},
+                        {"index": 1, "name": "Drum Synth", "class": "DrumSynths",
+                         "class_name": "DrumSynths"},
+                        {"index": 2, "name": "EQ", "class": "Eq8",
+                         "class_name": "Eq8"},
                     ]},
                 ],
             }],

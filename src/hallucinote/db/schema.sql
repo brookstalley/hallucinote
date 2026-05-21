@@ -254,11 +254,20 @@ CREATE INDEX IF NOT EXISTS idx_device_chains_track  ON device_chains(parent_trac
 CREATE INDEX IF NOT EXISTS idx_device_chains_return ON device_chains(parent_return_id);
 CREATE INDEX IF NOT EXISTS idx_device_chains_rack   ON device_chains(parent_rack_device_id);
 
--- Devices live in chains. `kind` is Live's class name (Compressor2, Eq8,
--- DrumGroupDevice, InstrumentGroupDevice, etc.) — the source of truth for
--- "what kind of device is this." `display_name` is the user-set name shown
--- in Live (often equal to kind, but a renamed preset like "Late Nite Kit"
--- keeps that string). `preset_uri` optional, for browser-reload paths.
+-- Devices live in chains. Arc 4 / D4 convention: `kind` is the BROWSER
+-- DISPLAY NAME (= Live's `device.class_display_name`), what the loader's
+-- kind-as-given walk matches against in Live's browser tree
+-- ("Compressor", "Phaser-Flanger", "EQ Eight", "Operator"). `class_name`
+-- (added column) is Live's INTERNAL class identifier ("Compressor2",
+-- "PhaserNew", "Eq8", "PluginDevice") — informational + drives plugin
+-- discrimination. `display_name` is the user-visible instance label
+-- which often equals `kind` for default-loaded built-ins but diverges
+-- on preset loads ("Hall" on a Hybrid Reverb) and user renames
+-- ("Bass Squish" on a Compressor). `preset_uri` optional.
+--
+-- Pre-D4 (capture against old conventions): `kind` held the internal
+-- class. Re-pull / re-capture rewrites both fields cleanly.
+--
 -- `position` is 1-based to match the snapshot's `"index"` field everywhere.
 
 CREATE TABLE IF NOT EXISTS devices (

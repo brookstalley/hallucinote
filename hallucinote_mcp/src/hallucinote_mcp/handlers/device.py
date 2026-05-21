@@ -92,8 +92,18 @@ def list_handler(
 ) -> dict[str, Any]:
     """Return the top-level device chain on a track or return.
 
-    Identity only (name, class_name, position). Per-device detail (parameters,
-    routing, etc.) is each device's ``info`` action's job.
+    Identity only (name, class_name, class_display_name, position).
+    Per-device detail (parameters, routing, etc.) is each device's
+    ``info`` action's job.
+
+    Arc 4 / D4: ``class_display_name`` is Live's
+    ``device.class_display_name`` — the browser display name the
+    loader's kind-as-given walk matches against. For default-loaded
+    devices it equals ``name``; for preset-loaded or user-renamed
+    devices it diverges (preserves the underlying device class). The
+    pull-side ingest stores this as ``devices.kind`` and ``class_name``
+    as ``devices.class_name``; the loader's resolution no longer needs
+    a static translation table.
     """
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
@@ -104,6 +114,7 @@ def list_handler(
             "device_index": i,
             "name": getattr(dev, "name", ""),
             "class_name": getattr(dev, "class_name", ""),
+            "class_display_name": getattr(dev, "class_display_name", None),
             "is_active": bool(getattr(dev, "is_active", True)),
         })
     result: dict[str, Any] = {"parent_kind": kind, "devices": devices_out}
@@ -128,6 +139,9 @@ def info_handler(
         "device_index": device_index,
         "name": getattr(dev, "name", ""),
         "class_name": getattr(dev, "class_name", ""),
+        # Arc 4 / D4: browser display name (drives kind-as-given resolution
+        # on the loader side; pull writes this into devices.kind).
+        "class_display_name": getattr(dev, "class_display_name", None),
         "is_active": bool(getattr(dev, "is_active", True)),
         "parameter_count": len(params),
         "can_have_chains": bool(getattr(dev, "can_have_chains", False)),
@@ -1425,6 +1439,9 @@ def get_device_chains_handler(
                 "position": di,
                 "name": getattr(cd, "name", ""),
                 "class_name": getattr(cd, "class_name", ""),
+                # Arc 4 / D4: browser display name on nested devices — drives
+                # `devices.kind` when pull ingests nested rack-chain probes.
+                "class_display_name": getattr(cd, "class_display_name", None),
                 "parameter_count": len(getattr(cd, "parameters", ())),
                 "is_active": bool(getattr(cd, "is_active", True)),
             }

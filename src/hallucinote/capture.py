@@ -167,12 +167,19 @@ def _replay_devices(
         # without baking in this machine's FileId.
         preset_query = d.get("preset_query")
         preset_uri = d.get("guess_uri") if preset_query is None else None
+        # Arc 4 / D4: snapshots may carry `class_name` (Live's internal
+        # class identifier) alongside `class` (the browser display name
+        # the loader matches). Capture-from-Live populates both; hand-
+        # authored snapshots may omit `class_name`. The mutator accepts
+        # None for that field — informational column, drives plugin
+        # classification when present.
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
             position=int(d["index"]),
             kind=d["class"],
             display_name=d.get("name", d["class"]),
+            class_name=d.get("class_name"),
             preset_uri=preset_uri,
             preset_query=preset_query,
             actor=actor,

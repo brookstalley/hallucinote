@@ -30,7 +30,7 @@
         {
           "index": 1,
           "name": "Hot Rod Kit",
-          "class": "DrumGroupDevice",
+          "class": "Drum Rack",
           "kind": "instrument",
           "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"},
           "_note": "Punk-leaning acoustic Drum Rack kit; Suite-pack content."
@@ -44,7 +44,7 @@
         {
           "index": 1,
           "name": "Electric Bass Raw",
-          "class": "InstrumentGroupDevice",
+          "class": "Instrument Rack",
           "kind": "instrument_rack",
           "preset_query": {"root": "instruments", "pattern": "Electric Bass Raw", "path_prefix": ["Simpler"]},
           "_note": "Sampled electric bass rack. Standard-tier; cross-edition portable."

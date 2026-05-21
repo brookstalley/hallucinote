@@ -17,9 +17,17 @@ import socket
 import threading
 from typing import Any, Callable
 
+import dataclasses
+
 from .. import __version__, wire
 from ..dispatcher import LiveContext, dispatch
-from ..wire import DEFAULT_HOST, DEFAULT_PORT, FrameError, Request, check_version_compat
+from ..wire import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    FrameError,
+    Request,
+    check_version_compat_with_override,
+)
 
 
 LogFn = Callable[[str], None]
@@ -111,13 +119,23 @@ class RemoteScriptServer:
                 except ValueError as exc:
                     response = wire.error(str(exc))
                 else:
-                    version_error = check_version_compat(
-                        request.server_version, __version__
+                    refusal, drift_warning = check_version_compat_with_override(
+                        request.server_version,
+                        __version__,
+                        request.allow_version_mismatch,
                     )
-                    if version_error is not None:
-                        response = version_error
+                    if refusal is not None:
+                        response = refusal
                     else:
                         response = dispatch(request, context=self._live_context)
+                        if drift_warning is not None:
+                            # Caller asked for `allow_version_mismatch=True`
+                            # AND drift exists — attach the advisory so the
+                            # bypass is visible end-to-end.
+                            existing = response.warnings or ()
+                            response = dataclasses.replace(
+                                response, warnings=existing + (drift_warning,)
+                            )
                 try:
                     wire.send_message(client, response)
                 except OSError as exc:

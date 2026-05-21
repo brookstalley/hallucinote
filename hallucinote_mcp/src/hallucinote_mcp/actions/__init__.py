@@ -22,9 +22,11 @@ from . import automation as automation  # noqa: F401
 from . import arrangement as arrangement  # noqa: F401
 from . import scene as scene  # noqa: F401
 from . import browser as browser  # noqa: F401
+from . import ableton_annotation as ableton_annotation  # noqa: F401
 
 
 __all__ = [
     "session", "track", "return_", "clip", "note",
     "device", "automation", "arrangement", "scene", "browser",
+    "ableton_annotation",
 ]

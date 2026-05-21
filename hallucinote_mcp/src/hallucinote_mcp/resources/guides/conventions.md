@@ -54,9 +54,15 @@ for atomic create-and-populate (single round-trip).
 ## Devices live above their parent
 
 When you load a device with `ableton_device(action='load', track_index=X,
-kind='Compressor2')`, it appends to the END of track X's device chain.
+kind='Compressor')`, it appends to the END of track X's device chain.
 Live 12.4 exposes no public reorder API, so the position is fixed —
 plan the load order if you care about chain order.
+
+`kind` is the device's BROWSER DISPLAY NAME (what shows up in Live's
+browser tree). Examples: `'Compressor'`, `'Operator'`, `'Drum Rack'`,
+`'Phaser-Flanger'`, `'EQ Eight'`. Live's internal class names
+(`'Compressor2'`, `'DrumGroupDevice'`, `'PhaserNew'`, etc.) do NOT
+resolve — pass what the browser shows.
 
 For a specific preset / instrument / plugin (anything beyond built-in
 Live device classes), capture the canonical URI via

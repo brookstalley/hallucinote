@@ -4,6 +4,258 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
+
+<!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=unreleased scope=loader-display-name-convention -->
+
+D4 verification surfaced a deeper problem than the spec called for.
+Live merged Phaser+Flanger in 12.x and minted a new internal class
+`PhaserNew` — the existing translation table (`_CLASS_TO_DISPLAY`)
+had no entry, so the captured class name didn't round-trip. Empirical
+investigation showed Live ALREADY exposes the right value natively
+via `device.class_display_name` (already read by the `capabilities`
+MCP action); the translation table has been reinventing a Live API
+attribute the whole time.
+
+Per user direction (no back-compat — no snapshots in the wild yet),
+the table is eliminated entirely rather than patched with a
+`PhaserNew` entry. Convention shift:
+
+- **`devices.kind`** semantics flip from "Live's internal class
+  name" to **"browser display name"** (= `device.class_display_name`).
+  This is what the loader's kind-as-given walk matches against.
+- New nullable **`devices.class_name`** column carries Live's
+  internal class identifier (`Compressor2`, `PhaserNew`,
+  `PluginDevice`, etc.). Informational + drives plugin
+  classification (compat's third-party-plugin discriminator now
+  reads class_name).
+- MCP capture probes (`ableton_device(action='list')` / `info` /
+  `get_device_chains`) gain a `class_display_name` field. Pull
+  writes `class_display_name → kind`, `class_name → class_name`.
+- Loader simplified to single kind-as-given match. `_kind_candidates`
+  removed. `_CLASS_TO_DISPLAY`, `class_name_to_display`, and
+  `strip_device_suffix` deleted from `device_names.py`. The W7-0
+  cross-category rack-root protection (`browser_root_for_rack_kind`)
+  stays — that's a separate concern, still load-bearing.
+
+**Maintenance footprint dropped dramatically.** Pre-D4 the table
+required an entry per Live built-in whose internal class differed
+from its display name (~30 entries today; growing with each Live
+release). Post-D4 there's nothing to maintain — Live's own API
+provides the data.
+
+Test fixtures + 5 captured_session.json files migrated to the new
+convention. Action descriptions + agent-facing skill markdown updated
+(loader contract docs that drive every `ableton_device(action='load')`
+call were the cumulative Critic's BLOCKING finding — the test
+explicitly pins kind='Compressor2' as a FAILURE post-D4, but the
+description was still recommending that exact value to agents).
+`docs/snapshot-schema.md` updated: `class` field convention shifted
+to browser display name + `class_name` field added.
+
+After merge: re-run `/ableton-mcp-install` to refresh the vendored
+Remote Script (the `class_display_name` probe field needs to be in
+Live's Python before pull benefits from it). The MCP server side
+ships in the next pip release.
+
+Suite: 1847 passing (was 1880 — 33 tests removed via deletion, no
+behavior regressions; the functions they covered no longer exist).
+
+## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
+
+<!-- chunks=hotfix status=shipped release=unreleased scope=arc-2-live-verification-fallout -->
+
+Arc 2's `ableton_annotation` handler imported `sqlite3` at module
+load. Live 12.x's embedded Python ships without the `_sqlite3` C
+extension, so the import raised `ModuleNotFoundError` and cascaded
+up through `actions/__init__.py` to abort the entire Hallucinote
+Control Surface load. Symptom: Live shows "Hallucinote" in the
+Control Surface dropdown but the MCP bridge on `127.0.0.1:9878`
+never starts and `ableton_session(action='info')` returns
+"Connection refused." Diagnose via Live's `Log.txt` — the
+`RemoteScriptError` traceback names the chain.
+
+This is exactly the gap the Arc 2 cumulative-Critic backlog item
+"`ableton_annotation` live verification end-to-end" predicted: unit
+tests pass against the host Python (which has `sqlite3`), but the
+embedded Python is the runtime that matters. The `sqlite3.Connection`
+/ `sqlite3.Row` references in the handler were function-signature
+annotations only, lazy strings under `from __future__ import
+annotations` — so the import was dead at runtime and could be
+removed without touching any logic. A load-bearing NB comment now
+names the trap.
+
+**Regression test (AST-based, host-Python-independent).** New
+`hallucinote_mcp/tests/unit/test_remote_script_import_safety.py`
+walks every action/handler/transitive top-level module in the
+Remote Script load chain, collects module-load-time imports, and
+refuses any in `_FORBIDDEN_TOP_LEVEL_STDLIB` (`sqlite3`, `_sqlite3`
+today). Imports nested in function bodies / try/except guards /
+conditionals don't count — those are deferred to invocation time,
+which is the safe pattern. AST inspection rather than runtime import
+because several Remote Script modules depend on `_Framework`
+(Live-only) and would fail with the wrong error if imported
+directly.
+
+Suite: main 1878 passing (+2 for the new tests), MCP 697 passing.
+
+After merge users must: quit Live (caches Control Surface modules
+at startup), `/ableton-mcp-install` to refresh the vendored copy,
+reopen Live, then `/mcp` to respawn the MCP subprocess.
+
+## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
+
+<!-- chunks=C1|C2|C3 status=shipped release=unreleased scope=compose-validation-r2-followons -->
+
+R-2 (v1.0.1) shipped the pure module `compat.classify_preset_query`
+and the `browser_dry_runs` map plumbing through `check_song`, but left
+the CLI orchestration on the backlog. Arc 3 closes the loop the R-2
+PR opened: in-process browser-search probing for compat check,
+ergonomic path-shape sugar at the authoring boundary, and a one-shot
+`pull_cli execute` that bakes mix-time tweaks back into the DB.
+
+**C1 — `compat check --probe`.** New flag on the existing CLI. When
+set, walks the song's DB for unique structurally-valid `preset_query`
+specs, dedupes by `(root, pattern, path_prefix)`, issues
+`ableton_browser(action='search', limit=2)` per unique key
+in-process via the MCP TCP client, populates `browser_dry_runs` and
+feeds it to `check_song`. Orthogonal to `--installed-plugins <path>` —
+the two flags can be combined or used independently. Without
+`--probe`, existing behavior preserved (preset_query devices land in
+`preset_query_unverified`). `limit=2` because the report only buckets
+0 / 1 / 2+ matches — walking past 2 is wasted work. Failed searches
+raise `SystemExit` (a partial map would silently surface as a
+false-clean report). The stale `--browser-dry-runs <file>` reference
+in the `preset_query_unverified` detail message replaced with the
+now-real `--probe` flag. 8 new tests.
+
+**C2 — `preset_query` path-shape sugar.** New top-level module
+`src/hallucinote/preset_query.py` ships `BROWSER_ROOTS` (single source
+of truth replacing the duplicate constant in `compat.py`) +
+`parse_path_shape("Drums/Kit-Core 909") → {root, pattern}` +
+`normalize(dict | str | None)`. `M.create_device(preset_query=...)`
+accepts either form; the DB always stores the canonical dict so
+downstream consumers (push planner, compat.check_song, MCP loader)
+see a single shape. Root segments are case-insensitive with
+``" "`` ≡ ``"_"`` (`"Audio Effects/Hall"` ≡ `"audio_effects/Hall"`).
+≥2 segments required; empty/whitespace pattern rejected; unknown root
+rejected naming the valid set. ``mode``/``case_sensitive`` not
+surfacable through path-shape — authors who need those keep using
+the dict form. 20 new tests (parser + integration through
+`create_device` for persistence/idempotency/error propagation).
+Closes the v11 Arc 3 C2 open question on syntax — resolved in favor
+of sugar-at-the-authoring-boundary with DB stored only as canonical
+dict.
+
+**C3 — `pull_cli execute` (in-process probe + apply).** The spec
+framed this as "snapshot-bake-recent-changes" but the real round-trip
+durability lives in the DB, not in `captured_session.json` —
+`captured_session.json` only feeds `replay_capture(snap)` in
+`build.py`, while push reads directly from the DB. So writing to the
+DB is the right target. New `pull_cli execute <domain> <session_id>
+--song <slug>` subcommand collapses the historical `plan → file →
+execute probes → file → apply` dance into one in-process pass.
+Generic across all 10 existing `_DOMAINS` (device-parameters is the
+motivating use case; the surface is domain-agnostic). The "clear
+diff" comes free via `ApplyResult.details`. Provenance envelope
+identical to `_cmd_apply` — every `execute` opens a `kind='pull'`
+request closed on success. 6 new tests.
+
+Deferred for v1: dedicated `--dry-run` (a proper rollback wrapper
+or in-memory DB clone is bigger than C3's spec calls for; backlog if
+the workflow shows it's needed). Live verification deferred for both
+`--probe` (C1) and `execute` (C3) — Live's Control Surface slot wasn't
+enabled in this session; unit tests cover wire shapes against the
+production schema. Skill markdown
+(`/snapshot-bake-recent-changes`) deliberately not in this arc.
+
+Suite: 1876/1876 passing (was 1842 — 34 net new tests).
+
+## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
+
+<!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=unreleased scope=provenance+annotations-mcp+dev-ergonomics -->
+
+After a Wave 8 audit found that B1 had already shipped wholesale and
+B3/B5 were partial, Arc 2 reduced to: Q1 (dev-loop dispatcher param)
++ B3-residual (three missing `requests` columns) + B2 (the agent-facing
+annotations MCP surface W8-C didn't ship) + B4 (provenance wiring into
+drivers) + B5 (defensive/generative `/song-context` modes).
+
+**Q1 — `allow_version_mismatch` MCP envelope bypass.** The strict
+server/Remote-Script version handshake is correct for production but
+poisonous for the dev loop where every Python edit invalidates the
+source fingerprint. New envelope-level `allow_version_mismatch: bool`
+on `wire.Request` (default `False`) lets a caller opt into dispatching
+across drift. On bypass+drift, the response carries a `warnings: [...]`
+advisory naming the data-corruption risk and "development only" intent;
+on bypass+no-drift it's a no-op. The existing version-mismatch error's
+`hint` now mentions the escape hatch so agents discover it through the
+error path itself (no docs lookup). Wired through `wire.Request`,
+`wire.Response.warnings`, new `check_version_compat_with_override`
+helper, FastMCP `_register_tool` synthetic-param injection, and
+Remote Script `_handle_client`. Covered by unit + 3 end-to-end TCP
+integration tests.
+
+**B3 residual — provenance rationale columns on `requests`.** Adds
+`prompt_text` (verbatim seed prompt), `parent_id` (self-FK so child
+cycles chain to enclosing parents), and `metadata_json` (`{model,
+git_sha, branch, hostname, ...}`) via the same idempotent
+`_ensure_added_columns` path W8-B used. Existing rows get NULL on all
+three; `create_request` + `M.request(...)` context manager accept the
+new fields. Invalid `parent_id` raises (vs silent dangling FK).
+
+**B2 — `ableton_annotation` MCP tool.** W8-C shipped the annotations
+table + mutators + queries but no agent-facing surface — storage
+without affordance. New unified tool wraps `M.add_annotation` /
+`update_annotation` / `delete_annotation` / `Q.get_annotations_for_song`
+/ `get_annotations_at_bar` via `add` / `list` / `get_at_bar` / `update`
+/ `delete` actions. Handler resolves `song_slug` → per-song DB →
+song row + 1-based `track_index` → `track_id`. Teaching errors on
+unknown slug / unknown track / unknown annotation_id. Three-line
+Python-via-Bash workaround replaced with a single MCP call so the
+"annotate as you compose" habit becomes cheap. Resource
+`hallucinote://annotations/<song_slug>` deferred (templated-resource
+test plumbing; the `list` action covers the read use case).
+Session-briefing wiring dropped per user direction (prawduct-framework
+upstream territory).
+
+**B4 — provenance wiring into drivers.** New `M.provenance_metadata()`
+helper (best-effort git_sha/branch/hostname + caller extras).
+`build_session` auto-captures via this helper AND accepts explicit
+`prompt_text`/`parent_id`/`metadata` kwargs (caller-provided keys
+override auto-captured). `push_execute` and `pull_cli` pass
+`metadata={"driver": ..., "session_id": ..., +/- "domain": ...}` on
+their `M.create_request` calls. Every compose / push / pull cycle
+now carries platform context for free. Dispatcher-level auto-`mutate`
+parent descoped — the MCP dispatcher has no DB awareness today and
+threading one in is its own chunk.
+
+**B5 — `/song-context --defensive` + `--generative`.** Adds two
+retrieval orientations to the existing read-only markdown_refs surface.
+`--defensive` reframes results as "items below MAY CONTRADICT your
+plan" and flags rows whose snippet carries negation/constraint
+language. `--generative` runs a second `Q.find_markdown_refs(tags=...)`
+pass surfacing related-by-tag rows under a "Related context" heading.
+Single additional SQL pass; semantic search is v1.2+. Skill name kept
+as `/song-context` rather than renamed to `/decisions` — the corpus
+spans decisions + annotations + structural-facts; "context" is broader
+and matches object-action naming.
+
+**Tests:** suite 1788 → 1841 (+53 new). Coverage spans wire shape +
+4-state handshake bypass, FastMCP wrapper propagation, integration
+TCP loop, request column round-trips + parent FK enforcement + ALTER
+idempotency, annotation handlers (15 tests, end-to-end DB ops),
+provenance metadata + build_session auto-capture, and defensive +
+generative mode rendering + related-by-tags exclusion of seeds.
+
+**Out of scope (carried to backlog):** dispatcher-level auto-`mutate`
+parent (architectural), `hallucinote://annotations/<song_slug>`
+templated resource (test plumbing), live verification of
+`ableton_annotation` end-to-end against a real Live session (requires
+`/ableton-mcp-install` + Live restart to materialize the new tool;
+will fire on first compose-time use).
+
+
 ## 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
 
 **A3 (substantive) — Drum Rack pad-mapping discovery.** Closes the

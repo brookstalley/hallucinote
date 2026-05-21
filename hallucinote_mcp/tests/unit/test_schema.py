@@ -7,10 +7,15 @@ from hallucinote_mcp import schema
 from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
 
 
-def test_ten_tools_exposed():
-    assert len(schema.TOOLS) == 10
+def test_tools_exposed():
+    # The set grows over time (Arc 2 added ableton_annotation); the
+    # invariant the dispatcher relies on is "these names are present
+    # and stable," not the exact count.
     assert "ableton_session" in schema.TOOLS
-    assert "ableton_scene" in schema.TOOLS  # the 10th-slot tool
+    assert "ableton_scene" in schema.TOOLS
+    assert "ableton_annotation" in schema.TOOLS
+    # Sanity: all tools are unique.
+    assert len(set(schema.TOOLS)) == len(schema.TOOLS)
 
 
 def test_action_rejects_unknown_tool(isolated_registry):

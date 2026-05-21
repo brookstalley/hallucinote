@@ -1,6 +1,6 @@
 """CLI bridge between the `/ableton-pull` skill and the pure Python pull layer.
 
-Two subcommands:
+Three subcommands:
 
     pull_cli plan <domain> <session_id> (--song SLUG | --db PATH)
         -> emit a PullPlan as JSON to stdout
@@ -9,9 +9,16 @@ Two subcommands:
         -> diff results against the DB, write mutations, print an
            ApplyResult summary as JSON
 
-The skill orchestrates: runs `plan`, executes each MCP probe in the returned
-plan, assembles a `results` JSON file, runs `apply`. All MCP work lives in
-the skill; Python stays pure (no MCP imports in this module).
+    pull_cli execute <domain> <session_id> (--song SLUG | --db PATH)
+        -> plan + probe in-process via MCP + apply, all in one shot. Arc 3 / C3:
+           the "bake mix-time tweaks" workflow asks for one command, not the
+           two-step plan→file→apply dance the skill historically drove.
+
+The `plan` / `apply` pair stays pure-Python — the skill orchestrates MCP probes
+between the two and writes intermediate files. `execute` is the one place MCP
+imports enter this module (lazy, via :func:`_resolve_send_fn`, mirroring the
+same seam ``compat.py`` and ``push_cli.py`` use); ``plan``/``apply`` are
+unaffected and remain MCP-free.
 
 DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
 `songs/<slug>/<slug>.db`. The `--db PATH` escape hatch exists for tests and
@@ -153,6 +160,13 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         payload={"domain": domain, "session_id": args.session_id, "song_id": song_id},
         song_id=song_id,
         reason=args.reason,
+        metadata=M.provenance_metadata(
+            extra={
+                "driver": "pull_cli",
+                "session_id": args.session_id,
+                "domain": domain,
+            },
+        ),
     )
     try:
         out = pull.apply_pull_results(
@@ -169,6 +183,125 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         raise
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _resolve_send_fn():
+    """Lazy resolver for ``hallucinote_mcp.client.send``.
+
+    Mirrors :func:`hallucinote.sync.push_cli._resolve_send_fn` and
+    :func:`hallucinote.sync.compat._resolve_send_fn`. Tests inject a
+    fake via ``monkeypatch.setattr(pull_cli, "_resolve_send_fn",
+    lambda: fake_send)``. Keeps the module importable when
+    ``hallucinote_mcp`` isn't installed — only the new ``execute``
+    subcommand exercises this path; ``plan``/``apply`` are MCP-free.
+    """
+    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+    return _client.send
+
+
+def _execute_plan_via_mcp(
+    plan: pull.PullPlan,
+    *,
+    send_fn=None,
+) -> list[dict]:
+    """Issue every :class:`pull.PullCall` in ``plan`` against the running
+    Hallucinote MCP and collect results in the shape
+    :func:`pull.apply_pull_results` expects:
+    ``[{key, ok, tool, result, error?}, ...]``.
+
+    The ``args`` dict on each PullCall carries ``action`` + the
+    action-specific params; the wire shape is
+    ``Request(tool, action, params)``, so we split here. Failed probes
+    (``ok=False``) are passed through with their error string — the
+    apply layer is the source of truth for per-key warnings, matching
+    the contract :func:`pull.apply_pull_results` documents. This
+    function never raises on tool-side errors.
+    """
+    if send_fn is None:
+        send_fn = _resolve_send_fn()
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    out: list[dict] = []
+    for call in plan.calls:
+        args = dict(call.args)
+        action = args.pop("action", None)
+        resp = send_fn(Request(
+            tool=call.tool, action=str(action), params=args,
+        ))
+        ok = bool(getattr(resp, "ok", False))
+        record: dict = {"key": call.key, "ok": ok, "tool": call.tool}
+        if ok:
+            record["result"] = getattr(resp, "result", None) or {}
+        else:
+            record["result"] = None
+            record["error"] = getattr(resp, "error", "unknown error")
+        out.append(record)
+    return out
+
+
+def _cmd_execute(args: argparse.Namespace) -> int:
+    """plan + probe + apply in one in-process pass — the C3 entry point.
+
+    The historical two-step `plan → write file → execute probes via skill
+    → write file → apply` dance is fine for offline scripting but heavy
+    for the common case ("I tweaked a few knobs in Live; bake them so the
+    next push doesn't overwrite my work"). This subcommand collapses it.
+    """
+    if args.domain not in _DOMAINS:
+        raise SystemExit(
+            f"pull_cli execute: unknown domain {args.domain!r}; "
+            f"known: {sorted(_DOMAINS)}"
+        )
+    conn = connect(_resolve_db_path(args))
+    song_id = _resolve_song_id(conn, args.session_id)
+    planner = _DOMAINS[args.domain]
+    plan = planner(conn, song_id=song_id, session_id=args.session_id)
+    results = _execute_plan_via_mcp(plan)
+
+    request_id = M.create_request(
+        conn,
+        actor="sync",
+        intent=(
+            f"pull_cli execute domain={args.domain} session={args.session_id}"
+        ),
+        kind="pull",
+        payload={
+            "domain": args.domain,
+            "session_id": args.session_id,
+            "song_id": song_id,
+        },
+        song_id=song_id,
+        reason=args.reason,
+        metadata=M.provenance_metadata(
+            extra={
+                "driver": "pull_cli.execute",
+                "session_id": args.session_id,
+                "domain": args.domain,
+            },
+        ),
+    )
+    try:
+        applied = pull.apply_pull_results(
+            conn, results,
+            song_id=song_id, session_id=args.session_id,
+            actor="sync", request_id=request_id,
+            reason=args.reason or f"pull from session {args.session_id}",
+        )
+    except Exception:
+        M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
+        raise
+    M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
+
+    out = {
+        "domain": args.domain,
+        "song_id": song_id,
+        "session_id": args.session_id,
+        "plan": plan.to_dict(),
+        "applied": applied.to_dict(),
+    }
+    json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
@@ -199,6 +332,22 @@ def main(argv: list[str] | None = None) -> int:
     p_apply.add_argument("--reason", default=None,
                          help="optional reason annotation for emitted events")
     p_apply.set_defaults(func=_cmd_apply)
+
+    p_exec = sub.add_parser(
+        "execute",
+        help=(
+            "plan + probe + apply in one in-process pass (Arc 3 / C3). "
+            "Same outcome as `plan` → run probes → `apply` but without the "
+            "intermediate plan/results files. Requires hallucinote_mcp and "
+            "a running Hallucinote bridge."
+        ),
+    )
+    p_exec.add_argument("domain", help="e.g. device-parameters")
+    p_exec.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_exec)
+    p_exec.add_argument("--reason", default=None,
+                        help="optional reason annotation for emitted events")
+    p_exec.set_defaults(func=_cmd_execute)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -1,4 +1,4 @@
-"""FastMCP server — the 10 unified tools as MCP entry points.
+"""FastMCP server — the 11 unified tools as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 10 unified tools + 11 resources for Ableton Live,
+hallucinote-mcp — 11 unified tools + 11 resources for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -57,6 +57,7 @@ Tools (call action='help' on any tool for its action menu):
   ableton_arrangement   arrangement layout + cue points (beats not bars)
   ableton_scene         session-view scenes + per-scene tempo/signature
   ableton_browser       instruments, effects, plugins
+  ableton_annotation    composer-intent annotations on a song's DB (W8-C surface)
 
 Resources (read via resources/read, no turn cost):
   ableton://session/snapshot          session+tracks+returns in one read
@@ -80,7 +81,7 @@ Hard constraints:
 
 
 def create_server(name: str = "hallucinote-mcp") -> FastMCP:
-    """Construct the FastMCP server with all 10 tools registered.
+    """Construct the FastMCP server with all 11 tools registered.
 
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
@@ -101,7 +102,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     from .resources import register_resources
     register_resources(mcp)
 
-    # Define the ten tool entry points. Each is a thin wrapper around the
+    # Define the unified tool entry points. Each is a thin wrapper around the
     # shared dispatcher; the wrapper exists only so FastMCP can register a
     # name + docstring for the MCP client to see.
     _register_tool(mcp, "ableton_session", "Global state, master, transport, view, tempo, signature, snapshot.")
@@ -114,11 +115,18 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
+    _register_tool(mcp, "ableton_annotation", "Composer-intent annotations (W8-C): song/time/track-scoped composing notes attached to a song's DB. Distinct from the markdown decisions/annotations corpus surfaced via /song-context.")
 
     return mcp
 
 
-def handle_tool_call(tool: str, action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def handle_tool_call(
+    tool: str,
+    action: str,
+    params: dict[str, Any] | None = None,
+    *,
+    allow_version_mismatch: bool = False,
+) -> dict[str, Any]:
     """Process one tool invocation. Returns the wire response as a dict.
 
     Decomposed from the FastMCP decorator wrappers so tests can drive it
@@ -133,8 +141,18 @@ def handle_tool_call(tool: str, action: str, params: dict[str, Any] | None = Non
          original request to the Remote Script over TCP.
       3. Otherwise (validation error or help result) return directly
          without touching the wire.
+
+    ``allow_version_mismatch`` propagates to ``Request.allow_version_mismatch``
+    and rides along to the Remote Script side as a per-call bypass of the
+    strict version handshake. Default ``False`` preserves the strict
+    behavior verbatim — the bypass is opt-in.
     """
-    request = Request(tool=tool, action=action, params=params or {})
+    request = Request(
+        tool=tool,
+        action=action,
+        params=params or {},
+        allow_version_mismatch=allow_version_mismatch,
+    )
 
     server_response = dispatch(request, context=None)
 
@@ -194,7 +212,7 @@ def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:
 
 
 def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
-    """Register one of the ten unified tools on the FastMCP instance.
+    """Register one of the unified tools on the FastMCP instance.
 
     The wrapper exposes a *flat* signature: ``(action, **params)`` where each
     param across every action on this tool becomes a keyword-only argument
@@ -229,13 +247,32 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
         )
         annotations[spec.name] = Optional[py_type]
 
+    # Envelope-level escape hatch: per-call bypass of the strict
+    # server/Remote-Script version handshake. Injected as a synthetic
+    # kwarg on every tool's signature so agents can reach it without
+    # each action's schema needing to know about it. The wrapper pops
+    # it before the dispatcher sees `params`, so action-level validation
+    # never rejects it as "unknown param."
+    sig_params.append(
+        inspect.Parameter(
+            "allow_version_mismatch",
+            inspect.Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=Optional[bool],
+        )
+    )
+    annotations["allow_version_mismatch"] = Optional[bool]
+
     def wrapper(**kwargs: Any) -> dict[str, Any]:
         action = kwargs.pop("action")
+        allow_version_mismatch = bool(kwargs.pop("allow_version_mismatch", None) or False)
         # Drop None-valued kwargs — they represent "not supplied" by the
         # MCP client. Real None payloads aren't a thing in our action
         # surface (the dispatcher validates required fields below).
         passed = {k: v for k, v in kwargs.items() if v is not None}
-        return handle_tool_call(tool_name, action, passed)
+        return handle_tool_call(
+            tool_name, action, passed, allow_version_mismatch=allow_version_mismatch
+        )
 
     wrapper.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         sig_params, return_annotation=dict

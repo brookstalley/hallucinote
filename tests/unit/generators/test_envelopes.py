@@ -48,7 +48,7 @@ def note(conn, clip):
 def device(conn, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     return M.create_device(
-        conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp",
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="Comp",
     )
 
 

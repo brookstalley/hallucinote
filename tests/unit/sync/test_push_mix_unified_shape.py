@@ -367,7 +367,7 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
         conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=1
     )
     cid = M.create_device_chain(conn, parent_track_id=tid)
-    M.create_device(conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp")
+    M.create_device(conn, chain_id=cid, position=1, kind="Compressor", display_name="Comp")
     plan = push.plan_push_devices(conn, song_id=sid, session_id=sess)
     load_calls = [
         c for c in plan.calls
@@ -410,9 +410,11 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
             self.samples = _Root("Samples")
             self.user_library = _Root("User Library")
             self.packs = _Root("Packs")
-            # Pre-populate with the Compressor2 the planner is about to load.
+            # Pre-populate with the Compressor browser node the planner is
+            # about to load. Post-D4: kind sent by push is the browser display
+            # name ('Compressor'), not the internal class ('Compressor2').
             self.audio_effects.children.append(
-                _Item("Compressor2", "query:Compressor2")
+                _Item("Compressor", "query:Compressor")
             )
 
         def load_item(self, item):

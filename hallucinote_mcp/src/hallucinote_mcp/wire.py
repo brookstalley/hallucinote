@@ -39,12 +39,21 @@ class Request:
     clear recovery action instead of the agent decoding "unknown action"
     errors caused by version drift. Empty means the sender didn't populate
     it; the Live side treats that as "MCP server too old to handshake".
+
+    ``allow_version_mismatch`` is a per-call escape hatch from the strict
+    handshake — when ``True`` and version drift exists, the Remote Script
+    dispatches the action anyway and attaches a warning to the response.
+    Intended for the development loop where every server-side Python edit
+    invalidates the source fingerprint and otherwise blocks introspection
+    until reinstall + Live restart. **Bypass can result in data corruption**
+    on mutating calls — see the warning text the helper attaches.
     """
 
     tool: str
     action: str
     params: dict[str, Any] = field(default_factory=dict)
     server_version: str = ""
+    allow_version_mismatch: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -54,6 +63,8 @@ class Request:
         }
         if self.server_version:
             out["server_version"] = self.server_version
+        if self.allow_version_mismatch:
+            out["allow_version_mismatch"] = True
         return out
 
     @classmethod
@@ -64,6 +75,7 @@ class Request:
         action = obj.get("action")
         params = obj.get("params", {})
         server_version = obj.get("server_version", "")
+        allow_version_mismatch = obj.get("allow_version_mismatch", False)
         if not isinstance(tool, str):
             raise ValueError("request.tool must be a string")
         if not isinstance(action, str):
@@ -72,7 +84,15 @@ class Request:
             raise ValueError("request.params must be an object")
         if not isinstance(server_version, str):
             raise ValueError("request.server_version must be a string")
-        return cls(tool=tool, action=action, params=params, server_version=server_version)
+        if not isinstance(allow_version_mismatch, bool):
+            raise ValueError("request.allow_version_mismatch must be a boolean")
+        return cls(
+            tool=tool,
+            action=action,
+            params=params,
+            server_version=server_version,
+            allow_version_mismatch=allow_version_mismatch,
+        )
 
 
 @dataclass(frozen=True)
@@ -88,6 +108,14 @@ class Response:
     and forwards the original request over TCP. The flag is intentionally
     not serialized to the wire — it would leak server-internal detail to
     the MCP client.
+
+    ``warnings`` carries advisory messages that ride alongside the response
+    without changing ``ok``. The only producer today is the
+    ``allow_version_mismatch`` bypass — when a caller opts into dispatching
+    across version drift, the Remote Script attaches a "can result in data
+    corruption" advisory so the bypass remains visible end-to-end. Use the
+    same shape for any future advisory that shouldn't fail the call but
+    must reach the caller.
     """
 
     ok: bool
@@ -99,6 +127,7 @@ class Response:
     example: str | None = None
     hint: str | None = None
     needs_remote: bool = False
+    warnings: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"ok": self.ok}
@@ -116,6 +145,8 @@ class Response:
                 out["example"] = self.example
             if self.hint is not None:
                 out["hint"] = self.hint
+        if self.warnings:
+            out["warnings"] = list(self.warnings)
         return out
 
 
@@ -189,7 +220,10 @@ def check_version_compat(
                 "disk before reinstalling, run "
                 "`python -m hallucinote_mcp.cli preflight` and check the "
                 "`package.version` and `remote_script.candidates[*].version` "
-                "fields."
+                "fields. If this is an introspection call during development "
+                "and you accept the risk, pass `allow_version_mismatch=true` "
+                "on the tool call to bypass this check — see the warning "
+                "text the bypass attaches for the data-corruption caveat."
             ),
         )
     if request_version != local_version:
@@ -210,10 +244,59 @@ def check_version_compat(
                 "which side is which BEFORE reinstalling, run "
                 "`python -m hallucinote_mcp.cli preflight` and compare "
                 "`package.version` (server) against "
-                "`remote_script.candidates[*].version` (vendored copy)."
+                "`remote_script.candidates[*].version` (vendored copy). "
+                "If this is an introspection call during development and "
+                "you accept the risk, pass `allow_version_mismatch=true` "
+                "on the tool call to bypass — see the warning the bypass "
+                "attaches for the data-corruption caveat."
             ),
         )
     return None
+
+
+def check_version_compat_with_override(
+    request_version: str,
+    local_version: str,
+    allow_mismatch: bool,
+) -> tuple[Response | None, str | None]:
+    """Version handshake with a per-call bypass.
+
+    Returns a 2-tuple ``(refusal, warning)`` where exactly one of the
+    following holds:
+
+    * **match** → ``(None, None)``: versions agree; proceed clean.
+    * **drift + ``allow_mismatch=True``** → ``(None, warning_text)``:
+      caller has opted into the bypass; dispatch proceeds and the caller
+      should attach ``warning_text`` to the response so the bypass is
+      visible end-to-end.
+    * **drift + ``allow_mismatch=False``** → ``(refusal_response, None)``:
+      strict default; the caller short-circuits with ``refusal_response``
+      and does not dispatch.
+
+    The "drift" branch covers both empty-version (no handshake) and
+    actual-mismatch outcomes from :func:`check_version_compat`. The
+    bypass is uniform — agents asking for it know they want
+    "dispatch anyway." We don't pretend introspection-vs-mutation can be
+    safely distinguished at the dispatcher layer; the warning text is
+    explicit about the data-corruption risk and the dev-only intent.
+    """
+    refusal = check_version_compat(request_version, local_version)
+    if refusal is None:
+        return (None, None)
+    if not allow_mismatch:
+        return (refusal, None)
+    warning = (
+        "WARNING: dispatched despite version mismatch "
+        "(allow_version_mismatch=true). MCP server reports "
+        f"{request_version or '<unset>'!r}; Remote Script is "
+        f"{local_version!r}. This bypass CAN RESULT IN DATA CORRUPTION on "
+        "mutating calls — the action surface or wire shape may differ "
+        "between the two halves. Use only during development. To clear "
+        "the drift, run `/ableton-mcp-install` and restart Live, or "
+        "`pip install -U hallucinote-mcp` + `/mcp` depending on which "
+        "side is stale."
+    )
+    return (None, warning)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +411,7 @@ __all__ = [
     "ok",
     "error",
     "check_version_compat",
+    "check_version_compat_with_override",
     "FrameError",
     "encode_message",
     "decode_messages",

@@ -24,7 +24,7 @@ def device_with_mappings(conn):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Hot Rod Kit",
+        kind="Drum Rack", display_name="Hot Rod Kit",
     )
     # Hot-Rod-Kit-like layout: crash on 51 instead of GM's 49.
     M.replace_drum_pad_mappings(conn, device_id=did, mappings=[
@@ -62,7 +62,7 @@ def test_from_device_empty_mappings_falls_through_to_gm_silently(conn):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Pre-Capture Kit",
+        kind="Drum Rack", display_name="Pre-Capture Kit",
     )
     kit = Kit.from_device(conn, did)
     # No warnings expected: empty kit short-circuits to GM without the
@@ -137,7 +137,7 @@ def test_pitch_of_warns_and_falls_through_when_kit_lacks_canonical(conn):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Minimal Kit",
+        kind="Drum Rack", display_name="Minimal Kit",
     )
     M.replace_drum_pad_mappings(conn, device_id=did, mappings=[
         {"chain_name": "Kick", "midi_note": 36},  # only kick captured

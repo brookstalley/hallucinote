@@ -108,7 +108,7 @@ def linked_return(conn, session, ret):
 def device(conn, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     return M.create_device(
-        conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp",
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="Comp",
     )
 
 
@@ -367,7 +367,7 @@ def test_device_parameter_nested_rack_skipped_with_warn(
     rack_chain = M.create_device_chain(conn, parent_track_id=linked_track)
     rack_device = M.create_device(
         conn, chain_id=rack_chain, position=1,
-        kind="InstrumentGroupDevice", display_name="Rack",
+        kind="Instrument Rack", display_name="Rack",
     )
     nested_chain = M.create_device_chain(
         conn, parent_rack_device_id=rack_device, position=0,

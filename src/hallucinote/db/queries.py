@@ -391,9 +391,13 @@ def get_linked_drum_racks_for_session(
     conn: sqlite3.Connection,
     session_id: str,
 ) -> list[sqlite3.Row]:
-    """Return every DrumGroupDevice device in this session's song that has
+    """Return every Drum Rack device in this session's song that has
     a live binding (track + device link rows), with the addressing the
     MCP needs to probe it.
+
+    Arc 4 / D4: filters on ``d.kind = 'Drum Rack'`` (browser display
+    name), which is what pull writes from ``device.class_display_name``.
+    Pre-D4 the column held the internal class ``'DrumGroupDevice'``.
 
     Each row: ``{device_id, display_name, parent_kind, parent_ableton_index,
     device_ableton_index, device_position}``.
@@ -437,7 +441,7 @@ def get_linked_drum_racks_for_session(
                 AND al.db_id  = d.id) AS device_ableton_index
         FROM devices d
         JOIN device_chains dc ON dc.id = d.chain_id
-        WHERE d.kind = 'DrumGroupDevice'
+        WHERE d.kind = 'Drum Rack'
           AND (dc.parent_track_id IS NOT NULL OR dc.parent_return_id IS NOT NULL)
         ORDER BY d.position
         """,

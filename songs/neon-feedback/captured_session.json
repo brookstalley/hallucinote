@@ -27,7 +27,7 @@
      "sends": {"Reverb": 0.1, "Delay": 0.0},
      "devices": [
        {
-         "index": 1, "name": "Drum Rack", "class": "DrumGroupDevice", "kind": "instrument",
+         "index": 1, "name": "Drum Rack", "class": "Drum Rack", "kind": "instrument",
          "_note": "Empty rack — drag a kit (e.g. Live Core Library 'Kit-Core 909' or 'Late Nite Kit') after push. Without a guess_uri, push creates an empty Drum Rack; you'll hear nothing until you fill it."
        }
      ]},

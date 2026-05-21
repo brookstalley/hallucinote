@@ -66,15 +66,16 @@ def test_replay_falling_walking_snapshot(conn):
     devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
     assert devices == 25
 
-    # `01 Drums` carries 4 devices: Late Nite Kit (DrumGroupDevice), EQ Eight,
-    # Drum Buss, Precise (Compressor2).
+    # `01 Drums` carries 4 devices: Late Nite Kit (Drum Rack), EQ Eight,
+    # Drum Buss, Precise (Compressor). Post-D4: `kind` is the browser
+    # display name.
     drums = next(t for t in tracks if t["name"] == "01 Drums")
     drum_devices = Q.get_devices_for_track(conn, drums["id"])
     assert [d["display_name"] for d in drum_devices] == [
         "Late Nite Kit", "EQ Eight", "Drum Buss", "Precise",
     ]
     assert [d["kind"] for d in drum_devices] == [
-        "DrumGroupDevice", "Eq8", "DrumBuss", "Compressor2",
+        "Drum Rack", "EQ Eight", "Drum Buss", "Compressor",
     ]
 
     # `01 Drums` Late Nite Kit has 4 dialed parameters.

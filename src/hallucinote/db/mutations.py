@@ -31,6 +31,7 @@ from typing import Any, Iterator, Sequence
 
 from hallucinote.db import events as E
 from hallucinote.db.connection import transaction
+from hallucinote.preset_query import normalize as _normalize_preset_query
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,72 @@ NoteDict = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Provenance metadata capture (Arc 2 / B4)
+# ---------------------------------------------------------------------------
+
+
+def provenance_metadata(
+    *,
+    model: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Capture the standard provenance signals that ride on `requests.metadata_json`:
+    git sha (short), branch, hostname, optional model name, plus any caller-
+    provided extras. Best-effort: a failed git/socket probe drops the
+    affected key rather than raising — provenance is observational, not
+    operational.
+
+    Used by push / pull / capture drivers (Arc 2 / B4) so every audited
+    cycle carries the platform context that lets a later session
+    reconstruct "where did this come from."
+    """
+    import socket
+    import subprocess
+
+    sha: str | None = None
+    branch: str | None = None
+    # 2-second cap: every build_session runs this on entry, so a hung git
+    # invocation (locked .git, remote-helper stall) would freeze every
+    # compose cycle. subprocess.TimeoutExpired falls into the except below.
+    _GIT_TIMEOUT_SECONDS = 2.0
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        branch = subprocess.check_output(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        hostname: str | None = socket.gethostname()
+    except OSError:
+        hostname = None
+
+    out: dict[str, Any] = {}
+    if sha:
+        out["git_sha"] = sha
+    if branch:
+        out["branch"] = branch
+    if hostname:
+        out["hostname"] = hostname
+    if model:
+        out["model"] = model
+    if extra:
+        out.update(extra)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Internal: id generation + event emission
 # ---------------------------------------------------------------------------
 
@@ -203,6 +270,9 @@ def create_request(
     song_id: str | None = None,
     reason: str | None = None,
     kind: str = "mutate",
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Create a request row. Returns the request id.
 
@@ -210,6 +280,13 @@ def create_request(
     events thread back to the originating intent. `kind` classifies the
     cycle type — see `REQUEST_KINDS`; defaults to 'mutate' for back-compat
     with pre-W8 callers.
+
+    `prompt_text` is the verbatim seed prompt for compose / push / pull
+    cycles (typically the user's natural-language request). `parent_id`
+    self-FKs so an MCP auto-`mutate` request can chain to its enclosing
+    `compose` parent — degraded but always-present provenance. `metadata`
+    is a free-form dict for contextual signals (model, git_sha, branch,
+    session_id, hostname, etc.); stored as JSON.
     """
     if actor not in E.ACTORS:
         raise ValueError(f"invalid actor {actor!r}; expected one of {sorted(E.ACTORS)}")
@@ -217,17 +294,39 @@ def create_request(
         raise ValueError(
             f"invalid kind {kind!r}; expected one of {sorted(REQUEST_KINDS)}"
         )
+    if parent_id is not None:
+        parent_row = conn.execute(
+            "SELECT id FROM requests WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent_row is None:
+            raise ValueError(
+                f"invalid parent_id {parent_id!r}; no such request"
+            )
     rid = _uuid()
     payload_json = json.dumps(payload, separators=(",", ":")) if payload is not None else None
+    metadata_json = (
+        json.dumps(metadata, separators=(",", ":")) if metadata is not None else None
+    )
     conn.execute(
-        """INSERT INTO requests (id, actor, intent, payload_json, song_id, kind)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (rid, actor, intent, payload_json, song_id, kind),
+        """INSERT INTO requests (
+               id, actor, intent, payload_json, song_id, kind,
+               prompt_text, parent_id, metadata_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rid, actor, intent, payload_json, song_id, kind,
+            prompt_text, parent_id, metadata_json,
+        ),
     )
     _emit(
         conn,
         E.REQUEST_CREATED,
-        {"request_id": rid, "intent": intent, "payload": payload, "kind": kind},
+        {
+            "request_id": rid,
+            "intent": intent,
+            "payload": payload,
+            "kind": kind,
+            "parent_id": parent_id,
+        },
         song_id=song_id,
         actor=actor,
         request_id=rid,
@@ -286,6 +385,9 @@ def request(
     payload: dict[str, Any] | None = None,
     song_id: str | None = None,
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[str]:
     """Ergonomic open + close lifecycle for kind-tagged request cycles.
 
@@ -293,9 +395,13 @@ def request(
     On normal exit, closes with outcome='ok' + measured duration_ms. On
     exception, closes with outcome='failed' and re-raises.
 
+    `prompt_text`, `parent_id`, and `metadata` thread directly to
+    `create_request` — see its docstring.
+
     Usage:
         with M.request(conn, actor='llm', intent='build verse',
-                       kind='compose') as rid:
+                       kind='compose',
+                       prompt_text="make me a moody verse in Dm") as rid:
             M.replace_clip_notes(conn, clip_id=..., request_id=rid, ...)
     """
     rid = create_request(
@@ -306,6 +412,9 @@ def request(
         song_id=song_id,
         reason=reason,
         kind=kind,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=metadata,
     )
     start_ns = time.monotonic_ns()
     outcome = "ok"
@@ -2288,23 +2397,41 @@ def create_device(
     position: int,
     kind: str,
     display_name: str,
+    class_name: str | None = None,
     preset_uri: str | None = None,
-    preset_query: dict[str, Any] | None = None,
+    preset_query: dict[str, Any] | str | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
-    """Create a device in `chain_id` at 1-based `position`. `kind` is Live's
-    class name (Compressor2, Eq8, DrumGroupDevice, ...); `display_name` is
-    the user-visible name (often == kind, may be a preset name).
+    """Create a device in `chain_id` at 1-based `position`.
+
+    Arc 4 / D4 convention:
+    - ``kind`` is the BROWSER DISPLAY NAME (= Live's
+      ``device.class_display_name``): ``"Compressor"`` / ``"Phaser-Flanger"``
+      / ``"EQ Eight"`` / ``"Operator"``. The loader's kind-as-given walk
+      matches against this directly in Live's browser tree.
+    - ``class_name`` (optional) is Live's INTERNAL class identifier:
+      ``"Compressor2"`` / ``"PhaserNew"`` / ``"PluginDevice"``.
+      Informational + drives plugin classification (compat-check reads
+      this to detect third-party plugins). Captured-from-Live writes
+      populate it; hand-authored snapshots may omit it.
+    - ``display_name`` is the user-visible instance label. Often equals
+      ``kind`` for default loads; diverges on preset loads (``"Hall"``
+      on a Hybrid Reverb) and user renames (``"Bass Squish"`` on a
+      Compressor).
 
     ``preset_uri`` and ``preset_query`` are mutually exclusive selectors —
-    pass one or the other (or neither, for kind-only loading). ``preset_query``
-    is the compose-time portable form (Sweep B): a dict
+    pass one or the other (or neither, for kind-only loading).
+    ``preset_query`` is the compose-time portable form (Sweep B): a dict
     ``{root, pattern, mode?, path_prefix?, case_sensitive?}`` stored as
     JSON; the push planner threads it through to
     ``ableton_device(action='load', preset_query=...)`` which resolves on the
     consumer's machine. ``preset_uri`` is the per-machine canonical URI.
+
+    Arc 3 / C2: ``preset_query`` also accepts a path-shape string like
+    ``"Drums/Kit-Core 909"`` — normalized to the canonical dict via
+    :func:`hallucinote.preset_query.parse_path_shape` before persistence.
     """
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
@@ -2314,37 +2441,40 @@ def create_device(
             "(preset_query for cross-machine portability, preset_uri for "
             "an unambiguous per-machine URI)"
         )
+    preset_query = _normalize_preset_query(preset_query)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     preset_query_json = (
         json.dumps(preset_query, sort_keys=True) if preset_query is not None
         else None
     )
     existing = conn.execute(
-        """SELECT id, kind, display_name, preset_uri, preset_query FROM devices
-           WHERE chain_id = ? AND position = ?""",
+        """SELECT id, kind, display_name, class_name, preset_uri, preset_query
+           FROM devices WHERE chain_id = ? AND position = ?""",
         (chain_id, position),
     ).fetchone()
     if existing is not None:
         device_id = existing["id"]
         if (
-            existing["kind"], existing["display_name"], existing["preset_uri"],
-            existing["preset_query"],
+            existing["kind"], existing["display_name"], existing["class_name"],
+            existing["preset_uri"], existing["preset_query"],
         ) == (
-            kind, display_name, preset_uri, preset_query_json,
+            kind, display_name, class_name, preset_uri, preset_query_json,
         ):
             _record_touch_if_session("device", device_id)
             return MutatorResult(device_id, "unchanged")
         conn.execute(
-            """UPDATE devices SET kind = ?, display_name = ?, preset_uri = ?,
-                                  preset_query = ?
+            """UPDATE devices SET kind = ?, display_name = ?, class_name = ?,
+                                  preset_uri = ?, preset_query = ?
                WHERE id = ?""",
-            (kind, display_name, preset_uri, preset_query_json, device_id),
+            (kind, display_name, class_name, preset_uri, preset_query_json,
+             device_id),
         )
         song_id = _resolve_device_song(conn, device_id=device_id)
         _emit(
             conn, E.DEVICE_CREATED,
             {"device_id": device_id, "chain_id": chain_id, "position": position,
              "kind": kind, "display_name": display_name,
+             "class_name": class_name,
              "preset_uri": preset_uri, "preset_query": preset_query,
              "result_kind": "updated"},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
@@ -2356,10 +2486,10 @@ def create_device(
     device_id = _uuid()
     conn.execute(
         """INSERT INTO devices (id, chain_id, position, kind, display_name,
-                                preset_uri, preset_query)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                class_name, preset_uri, preset_query)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (device_id, chain_id, position, kind, display_name,
-         preset_uri, preset_query_json),
+         class_name, preset_uri, preset_query_json),
     )
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
@@ -2371,6 +2501,7 @@ def create_device(
             "position": position,
             "kind": kind,
             "display_name": display_name,
+            "class_name": class_name,
             "preset_uri": preset_uri,
             "preset_query": preset_query,
         },
@@ -3620,6 +3751,9 @@ def build_session(
     song_name: str,
     owner: str = "build.py",
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[BuildSession]:
     """State-converger context manager for a song's build.py (W12-A).
 
@@ -3640,8 +3774,23 @@ def build_session(
     typically `M.create_song(name=song_name)`, which the tombstone path
     needs to find rows by song. If a song with `song_name` doesn't exist
     at exit time (e.g., create_song was never called), tombstone is a no-op.
+
+    Arc 2 / B4 provenance: `prompt_text` (user's compose prompt) and
+    `parent_id` (parent request, if this build runs inside an outer
+    cycle) thread directly to `create_request`. `metadata` augments the
+    auto-captured `provenance_metadata()` signals (git_sha, branch,
+    hostname) — caller-provided keys override auto-captured ones. If
+    nothing is provided, auto-capture still fires so every compose
+    cycle gets the standard platform context.
     """
     bs = BuildSession(conn, song_name=song_name, owner=owner)
+    # Auto-capture platform metadata so EVERY build session gets the
+    # standard signals — callers don't need to remember to opt in. They
+    # can still augment via the explicit `metadata=` kwarg; explicit
+    # keys override auto-captured ones (the caller knows better).
+    auto_meta = provenance_metadata()
+    if metadata:
+        auto_meta.update(metadata)
     # Open a request to carry the build's actor + provenance for child events.
     bs.request_id = create_request(
         conn,
@@ -3649,6 +3798,9 @@ def build_session(
         intent=f"build {song_name} (owner={owner})",
         kind="compose",
         reason=reason,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=auto_meta if auto_meta else None,
     )
     bs._token = _current_build_session.set(bs)
     try:

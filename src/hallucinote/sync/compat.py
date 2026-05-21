@@ -49,6 +49,7 @@ from typing import Literal
 
 from hallucinote.db import queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
+from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
 
 
 # ---------------------------------------------------------------------------
@@ -73,17 +74,11 @@ _PLUGIN_CLASSES: frozenset[str] = frozenset({
 _PLACEHOLDER_KIND = "placeholder"
 
 
-# Browser roots accepted by `ableton_device(action='load', preset_query=...)`.
-# Mirror of ``_ROOTS`` in
-# ``hallucinote_mcp/.../actions/browser.py`` — the two MUST agree (lock-test
-# below). Authors typo this surprisingly often (the resource URI uses
-# ``effects`` while the loader accepts ``audio_effects``); compat-check
-# catches the typo at compose time instead of after a partial-push
-# debug loop.
-_VALID_BROWSER_ROOTS: frozenset[str] = frozenset({
-    "instruments", "audio_effects", "midi_effects", "drums", "plugins",
-    "samples", "user_library", "packs",
-})
+# Browser roots accepted by `ableton_device(action='load', preset_query=...)`
+# imported as the canonical name `_VALID_BROWSER_ROOTS` from
+# ``hallucinote.preset_query`` so this module and the path-shape parser
+# stay in lock-step. The MCP-side lock-test still pins both against
+# ``hallucinote_mcp.actions.browser._ROOTS``.
 
 
 def _is_plugin_class(class_name: str) -> bool:

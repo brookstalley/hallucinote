@@ -50,14 +50,14 @@ Reject unknown modes with a teaching error listing the valid choices.
    - **`sends`** — initial send levels `{return_name: level_0_to_1}` for sends-on-returns this track needs (skip 0.0-level sends).
    - **`rationale`** — one sentence per chain explaining the sonic intent (why this combination, not just why this instrument).
 
-   Drum tracks anchor on Drum Rack (display `Drum Rack`, class `DrumGroupDevice`) or Impulse (display + class both `Impulse`) — single-pitch synths don't make sense for a kit. See "Default chain shapes" above for the per-role starting points. Adjust depth and character per song style.
+   Drum tracks anchor on Drum Rack (kind `Drum Rack`) or Impulse (kind `Impulse`) — single-pitch synths don't make sense for a kit. See "Default chain shapes" above for the per-role starting points. Adjust depth and character per song style.
 
 3. **Confirm with the user.** Present chains as a compact-but-readable table — track / chain (instrument → FX1 → FX2) / sends / rationale. Wait for OK or substitutions before loading. The user may steer individual picks ("use Wavetable instead of Analog for Lead") OR the whole chain shape ("don't compress the bass, I want it loose"); honour the steer and re-confirm.
 
 4. **Load the chain.** For each track's confirmed chain, load every device in order:
    - **First device** — use `/track-new-with-instrument` (creates the track + loads the first device, typically the instrument), OR if the track exists, call `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)` directly.
    - **Subsequent devices in the chain** — call `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)` once per device, in order. Each lands at the end of the track's device chain, after the instrument.
-   - **`kind` is REQUIRED**. Pass the browser node's `name`; the handler resolves display names (`Drum Rack` → `DrumGroupDevice`, `EQ Eight` → `Eq8`, `Wavetable` → `InstrumentVector`, etc.) via `device_names.class_name_to_display`. Third-party plugins use the same string in both spaces.
+   - **`kind` is REQUIRED**. Pass the browser node's `name` directly — that's the BROWSER DISPLAY NAME the loader matches against. Examples that work: `Drum Rack`, `EQ Eight`, `Wavetable`, `Compressor`, `Phaser-Flanger`. Arc 4 / D4: Live's internal class names (`DrumGroupDevice`, `Eq8`, `InstrumentVector`, etc.) no longer resolve — there's no translation table anymore, the loader uses what Live's `device.class_display_name` reports natively. Third-party plugins use the same string in both spaces.
    - **Sends** — set initial send levels with `ableton_track(action='set_send', track_index=<i>, return_index=<j>, value=<0..1>)`. Skip 0.0-level sends.
 
 5. **Write a signal-chain decision (W17-G).** After the user confirms the chains, write `songs/<slug>/decisions/NN-signal-chains.md` (next free `NN`, typically right after `08-instrument-picks.md` or replacing it for fresh songs). Shape:

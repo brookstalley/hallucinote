@@ -16,7 +16,7 @@ $ARGUMENTS
 
 1. **Create the return.** Call `ableton_return(action='create', name=<name>)`. Capture the returned `return_index`.
 
-2. **Load the effect.** Call `ableton_device(action='load', return_index=<from step 1>, kind=<Live device class name>, preset_uri=<effect-uri>)`. `kind` is REQUIRED — look up the Live class name via `ableton://reference/device-params` (common: `Reverb`, `Delay`, `EchoDelay`, `Compressor2`).
+2. **Load the effect.** Call `ableton_device(action='load', return_index=<from step 1>, kind=<browser display name>, preset_uri=<effect-uri>)`. `kind` is REQUIRED — pass the BROWSER DISPLAY NAME as shown in Live's tree (common: `Reverb`, `Delay`, `Echo`, `Compressor`, `Hybrid Reverb`). Arc 4 / D4: Live's internal class names (`Compressor2`, `HybridReverb`, etc.) no longer resolve — use the display name only.
 
 3. **Initialize sends** (only if the user supplied `sends-from`). For each source `track_index` in the list, call `ableton_track(action='set_send', track_index=<src>, return_index=<from step 1>, value=0.4)`. 0.4 is a moderate default — the user can tune individual sends afterward.
 

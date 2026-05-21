@@ -75,7 +75,7 @@ def test_plan_push_devices_empty_song_warns(conn, song, session):
 
 def test_plan_push_devices_skips_unlinked_track_with_warn(conn, song, session, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
-    M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     assert plan.calls == []
     assert any("not linked" in n for n in plan.notes)
@@ -118,7 +118,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
 ):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Late Nite Kit", preset_uri="query:Drums#FileId_5418",
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
@@ -130,7 +130,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert load.args["track_index"] == 5
     # Live 12.4 has no public reorder API — planner does NOT emit position.
     assert "position" not in load.args
-    assert load.args["kind"] == "DrumGroupDevice"
+    assert load.args["kind"] == "Drum Rack"
     assert load.args["preset_uri"] == "query:Drums#FileId_5418"
     assert load.key == f"device:{did}"
     assert any("not linked" in n for n in plan.notes)
@@ -144,7 +144,7 @@ def test_plan_push_devices_threads_preset_query_to_load(
     handler resolves on the consumer's machine."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Some 909 Kit",
         preset_query={"root": "drums", "pattern": "909", "mode": "substring"},
     )
@@ -167,7 +167,7 @@ def test_plan_push_devices_preset_query_precedence_when_only_query_set(
     straightforward — preset_query lands in load_args."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     M.create_device(
-        conn, chain_id=cid, position=1, kind="DrumGroupDevice",
+        conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="Kit", preset_query={"root": "drums", "pattern": "x"},
     )
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
@@ -183,7 +183,7 @@ def test_plan_push_devices_skips_params_when_device_unlinked(
     conn, song, session, linked_track,
 ):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     M.set_device_parameter(
         conn, device_id=did, name="Freq",
         value_display="1.17 kHz", value_normalized=0.59,
@@ -202,7 +202,7 @@ def test_plan_push_devices_emits_params_for_linked_device(
     conn, song, session, linked_track,
 ):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     M.set_device_parameter(
         conn, device_id=did, name="Freq",
         value_display="1.17 kHz", value_normalized=0.59,
@@ -301,7 +301,7 @@ def test_plan_push_devices_emits_return_specific_tools(
 
 def test_apply_push_results_links_devices(conn, song, session, linked_track):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
 
     push.apply_push_results(
         conn,
@@ -320,7 +320,7 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
     conn, song, session, linked_track,
 ):
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
     )
@@ -351,8 +351,8 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
         conn, session_id=session, db_kind="return", db_id=ret, ableton_index=1,
     )
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
-    eq = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
-    comp = M.create_device(conn, chain_id=cid, position=2, kind="Compressor2", display_name="Comp")
+    eq = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
+    comp = M.create_device(conn, chain_id=cid, position=2, kind="Compressor", display_name="Comp")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id=eq, ableton_index=1,
     )
@@ -373,5 +373,5 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     by_target = {
         ("track" if "track_index" in c.args else "return"): c for c in loads
     }
-    assert by_target["track"].args["kind"] == "Compressor2"
+    assert by_target["track"].args["kind"] == "Compressor"
     assert by_target["return"].args["kind"] == "Reverb"

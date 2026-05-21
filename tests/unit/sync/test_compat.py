@@ -98,7 +98,7 @@ def test_classify_device_substring_branch_routes_to_third_party():
 
 
 def test_is_plugin_class_rejects_native():
-    for native in ("Operator", "Eq8", "DrumGroupDevice", "Compressor2",
+    for native in ("Operator", "Eq8", "Drum Rack", "Compressor2",
                    "InstrumentMeld", "LoungeLizard", "Reverb"):
         assert not C._is_plugin_class(native), native
 
@@ -218,7 +218,7 @@ def test_check_song_all_native(conn, song, track_chain, db_path):
     M.create_device(conn, chain_id=track_chain, position=1,
                     kind="Operator", display_name="Operator")
     M.create_device(conn, chain_id=track_chain, position=2,
-                    kind="Eq8", display_name="EQ Eight")
+                    kind="EQ Eight", display_name="EQ Eight")
     conn.commit()
     report = C.check_song(db_path)
     assert len(report.entries) == 2
@@ -278,6 +278,38 @@ def test_check_song_third_party_missing(conn, song, track_chain, db_path):
     assert report.has_issues
 
 
+def test_check_song_third_party_post_d4_shape_classifies_via_class_name(
+    conn, song, track_chain, db_path,
+):
+    """Arc 4 / D4: under the post-D4 convention, third-party plugins
+    have `kind` = plugin display name (e.g. ``'Serum'``) and
+    `class_name` = wrapper class (e.g. ``'PluginDevice'``). Plugin
+    discrimination must key off `class_name`, NOT `kind` — otherwise
+    `_is_plugin_class('Serum')` returns False and the plugin would
+    silently classify as a Live built-in.
+
+    Pins the classifier's read of `class_name`. Without this, a
+    refactor that accidentally restored kind-based discrimination
+    would let plugins ship as native in the report — the documented
+    snapshot-schema warning would then be the only safety net.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Serum", display_name="Serum",
+        class_name="PluginDevice",
+    )
+    conn.commit()
+    report = C.check_song(
+        db_path,
+        installed_plugins=[{"name": "Serum", "uri": "query:plugins#1"}],
+    )
+    assert len(report.third_party_ok) == 1
+    assert report.third_party_ok[0].kind == "Serum"
+    assert not report.native, (
+        f"plugin classified as native: {report.native!r}"
+    )
+
+
 def test_check_song_skips_master_track(conn, song, db_path):
     """Master tracks don't carry devices via tracks.devices — skip cleanly."""
     M.create_track(conn, song_id=song, track_index=99, name="Master", kind="master")
@@ -308,7 +340,7 @@ def test_check_song_recurses_into_nested_rack_chains(
     """
     rack_id = M.create_device(
         conn, chain_id=track_chain, position=1,
-        kind="AudioEffectGroupDevice", display_name="My FX Rack",
+        kind="Audio Effect Rack", display_name="My FX Rack",
     )
     inner_chain = M.create_device_chain(conn, parent_rack_device_id=rack_id)
     M.create_device(
@@ -319,7 +351,7 @@ def test_check_song_recurses_into_nested_rack_chains(
     report = C.check_song(db_path)
     statuses = [e.status for e in report.entries]
     kinds = [e.kind for e in report.entries]
-    assert "AudioEffectGroupDevice" in kinds
+    assert "Audio Effect Rack" in kinds
     assert "PluginDevice" in kinds
     assert "third_party_unverified" in statuses
     # The inner device's chain_path captures the rack so the user can

@@ -76,6 +76,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("requests", "prompt_text", "TEXT"),
     ("requests", "parent_id", "TEXT REFERENCES requests(id) ON DELETE SET NULL"),
     ("requests", "metadata_json", "TEXT"),
+    # Arc 4 / D4: devices gain a class_name field holding Live's internal
+    # class (e.g. 'Compressor2', 'PhaserNew', 'PluginDevice'). The
+    # `kind` column shifts from "internal class" to "browser display
+    # name" (= Live's device.class_display_name); `class_name` carries
+    # the internal identifier for plugin discrimination + informational
+    # reads. Existing rows get NULL — pre-D4 callers stored the
+    # internal class in `kind`; a clean re-pull rewrites both fields.
+    ("devices", "class_name", "TEXT"),
 )
 
 

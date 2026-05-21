@@ -1143,7 +1143,7 @@ def test_create_envelope_device_parameter_refuses_master_device(conn, song):
                             kind="master")
     chain = M.create_device_chain(conn, parent_track_id=master, position=0)
     device = M.create_device(
-        conn, chain_id=chain, position=1, kind="Compressor2",
+        conn, chain_id=chain, position=1, kind="Compressor",
         display_name="Compressor",
     )
     with pytest.raises(ValueError) as excinfo:
@@ -1361,7 +1361,7 @@ def drum_device(conn, song):
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     return M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="DrumGroupDevice", display_name="Late Nite Kit",
+        kind="Drum Rack", display_name="Late Nite Kit",
     )
 
 

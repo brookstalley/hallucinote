@@ -29,7 +29,7 @@
       "sends": {"A-Reverb": 0.40, "B-Delay": 0.20},
       "devices": [
         {
-          "index": 1, "name": "Grand Piano", "class": "InstrumentGroupDevice", "kind": "instrument_rack",
+          "index": 1, "name": "Grand Piano", "class": "Instrument Rack", "kind": "instrument_rack",
           "guess_uri": "query:Piano#GrandPiano",
           "_note": "Live stock Grand Piano Instrument Rack (Core Library). Params not dialed."
         }

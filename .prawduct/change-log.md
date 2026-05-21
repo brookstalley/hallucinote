@@ -4,6 +4,63 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
+
+<!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=unreleased scope=loader-display-name-convention -->
+
+D4 verification surfaced a deeper problem than the spec called for.
+Live merged Phaser+Flanger in 12.x and minted a new internal class
+`PhaserNew` — the existing translation table (`_CLASS_TO_DISPLAY`)
+had no entry, so the captured class name didn't round-trip. Empirical
+investigation showed Live ALREADY exposes the right value natively
+via `device.class_display_name` (already read by the `capabilities`
+MCP action); the translation table has been reinventing a Live API
+attribute the whole time.
+
+Per user direction (no back-compat — no snapshots in the wild yet),
+the table is eliminated entirely rather than patched with a
+`PhaserNew` entry. Convention shift:
+
+- **`devices.kind`** semantics flip from "Live's internal class
+  name" to **"browser display name"** (= `device.class_display_name`).
+  This is what the loader's kind-as-given walk matches against.
+- New nullable **`devices.class_name`** column carries Live's
+  internal class identifier (`Compressor2`, `PhaserNew`,
+  `PluginDevice`, etc.). Informational + drives plugin
+  classification (compat's third-party-plugin discriminator now
+  reads class_name).
+- MCP capture probes (`ableton_device(action='list')` / `info` /
+  `get_device_chains`) gain a `class_display_name` field. Pull
+  writes `class_display_name → kind`, `class_name → class_name`.
+- Loader simplified to single kind-as-given match. `_kind_candidates`
+  removed. `_CLASS_TO_DISPLAY`, `class_name_to_display`, and
+  `strip_device_suffix` deleted from `device_names.py`. The W7-0
+  cross-category rack-root protection (`browser_root_for_rack_kind`)
+  stays — that's a separate concern, still load-bearing.
+
+**Maintenance footprint dropped dramatically.** Pre-D4 the table
+required an entry per Live built-in whose internal class differed
+from its display name (~30 entries today; growing with each Live
+release). Post-D4 there's nothing to maintain — Live's own API
+provides the data.
+
+Test fixtures + 5 captured_session.json files migrated to the new
+convention. Action descriptions + agent-facing skill markdown updated
+(loader contract docs that drive every `ableton_device(action='load')`
+call were the cumulative Critic's BLOCKING finding — the test
+explicitly pins kind='Compressor2' as a FAILURE post-D4, but the
+description was still recommending that exact value to agents).
+`docs/snapshot-schema.md` updated: `class` field convention shifted
+to browser display name + `class_name` field added.
+
+After merge: re-run `/ableton-mcp-install` to refresh the vendored
+Remote Script (the `class_display_name` probe field needs to be in
+Live's Python before pull benefits from it). The MCP server side
+ships in the next pip release.
+
+Suite: 1847 passing (was 1880 — 33 tests removed via deletion, no
+behavior regressions; the functions they covered no longer exist).
+
 ## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
 
 <!-- chunks=hotfix status=shipped release=unreleased scope=arc-2-live-verification-fallout -->

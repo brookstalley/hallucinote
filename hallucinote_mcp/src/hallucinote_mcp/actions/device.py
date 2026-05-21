@@ -157,15 +157,18 @@ register(
         name="load",
         description=(
             "Load a device onto a track or return chain via Live's browser. "
-            "'kind' is the Live device class / display name (e.g. "
-            "'Compressor2', 'Operator', 'Reverb'). 'preset_uri' is the "
-            "preferred selector — pass the canonical browser URI captured "
-            "via ableton_browser(action='at_path', ...) to load a specific "
-            "preset, instrument, or plugin. With 'kind' only, the handler "
-            "walks the instrument / audio_effect / midi_effect / drum roots "
-            "for the first loadable node whose display name matches. The "
-            "device appears at the END of the destination's device chain; "
-            "Live 12.4 has no public reorder API."
+            "'kind' is the device's BROWSER DISPLAY NAME (e.g. 'Compressor', "
+            "'Operator', 'Reverb', 'Drum Rack', 'Phaser-Flanger'). With "
+            "'kind' only, the handler walks the instrument / audio_effect / "
+            "midi_effect / drum roots for a loadable node whose display "
+            "name equals 'kind' exactly. NOTE: Live's internal class names "
+            "(e.g. 'Compressor2', 'PhaserNew', 'DrumGroupDevice') no longer "
+            "resolve — pass the display name as seen in Live's browser. "
+            "'preset_uri' is the preferred selector for specific presets / "
+            "plugins — pass the canonical browser URI captured via "
+            "ableton_browser(action='at_path', ...). The device appears at "
+            "the END of the destination's device chain; Live 12.4 has no "
+            "public reorder API."
         ),
         params=(
             *_parent_addressing_specs(),
@@ -173,8 +176,9 @@ register(
                 name="kind",
                 type="str",
                 description=(
-                    "Live device class / display name. Required even when "
-                    "preset_uri is given (used for the response payload)."
+                    "Browser display name of the device (e.g. 'Compressor', "
+                    "'Operator', 'Drum Rack'). Required even when preset_uri "
+                    "is given (used for the response payload)."
                 ),
             ),
             ParamSpec(
@@ -205,7 +209,7 @@ register(
         ),
         handler=device_handlers.load_handler,
         example=(
-            "ableton_device(action='load', track_index=2, kind='Compressor2')"
+            "ableton_device(action='load', track_index=2, kind='Compressor')"
         ),
         tips=(
             "Returns {device_index, name, kind} — capture device_index for "
@@ -597,7 +601,7 @@ register(
             ParamSpec(name="chain_index", type="int", minimum=1,
                       description="Position of the destination chain inside the rack (1-based)."),
             ParamSpec(name="kind", type="str",
-                      description="Live device class / display name (e.g. 'Compressor2', 'Operator')."),
+                      description="Browser display name of the device (e.g. 'Compressor', 'Operator'). Live's internal class names ('Compressor2', etc.) no longer resolve."),
             ParamSpec(
                 name="preset_uri",
                 type="str",
@@ -608,7 +612,7 @@ register(
         handler=device_handlers.load_in_rack_handler,
         example=(
             "ableton_device(action='load_in_rack', track_index=2, "
-            "device_index=1, chain_index=2, kind='Compressor2')"
+            "device_index=1, chain_index=2, kind='Compressor')"
         ),
     )
 )

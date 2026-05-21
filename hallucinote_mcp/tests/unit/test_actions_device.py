@@ -463,15 +463,37 @@ def test_load_preset_uri_searches_plugins_root(loaded_actions):
         "query:VST3#serum.vst3"
 
 
-def test_load_translates_class_name_to_display_name(loaded_actions):
-    """Wave-2 W2-7: real Live exposes ``device.class_name='Compressor2'`` but
-    the browser indexes it as ``'Compressor'``. Capture → push reaches the
-    handler with the class name; the handler falls back to the
-    device_names translation table when the direct name match misses.
+def test_load_kind_matches_browser_display_directly(loaded_actions):
+    """Arc 4 / D4: the loader is now kind-as-given against the browser.
+    Push sends ``kind="Compressor"`` (the browser display name, written
+    into ``devices.kind`` by pull from ``device.class_display_name``);
+    no static translation table interposes.
     """
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
-    # Browser exposes ONLY the display name "Compressor" — no node named
-    # "Compressor2" exists. Without translation, this load would fail.
+    _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Compressor")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["kind"] == "Compressor"
+    assert len(ctx.song.tracks[0].devices) == 1
+
+
+def test_load_internal_class_name_fails_under_new_convention(loaded_actions):
+    """Arc 4 / D4: passing the internal Live class name (e.g.
+    ``Compressor2`` or ``DrumGroupDevice``) no longer resolves. The
+    DB-level convention shift means push sends the browser display name
+    (``Compressor`` / ``Drum Rack``); a caller that sends the internal
+    class hits a loud "no loadable browser item" failure. Pinned here
+    so the deletion of the _CLASS_TO_DISPLAY table stays semantic, not
+    accidental.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Browser exposes only the display-name node.
     _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Compressor")
     resp = dispatch(
         Request(
@@ -480,31 +502,28 @@ def test_load_translates_class_name_to_display_name(loaded_actions):
         ),
         context=ctx,
     )
-    assert resp.ok is True, (
-        f"Expected translation 'Compressor2' → 'Compressor' to succeed. "
-        f"Response: {resp.to_dict()}"
-    )
-    # The result preserves the requested kind (caller's identity).
-    assert resp.result["kind"] == "Compressor2"
-    # And the device IS loaded.
-    assert len(ctx.song.tracks[0].devices) == 1
+    assert resp.ok is False
+    assert "no loadable browser item" in (resp.error or "")
 
 
-def test_load_translates_drum_group_device_to_drum_rack(loaded_actions):
-    """Sample table coverage: DrumGroupDevice → Drum Rack — exercised by
-    every drum kit push (falling-walking has one).
+def test_load_rack_display_name_resolves_in_canonical_root(loaded_actions):
+    """Rack kinds (``Drum Rack``, ``Instrument Rack``, ...) get the
+    canonical-root restriction even under the simplified loader (W7-0
+    cross-category disambiguation, preserved post-D4). Browser exposes
+    ``Drum Rack`` under the drums root only — the loader walks just
+    there for rack kinds.
     """
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "DrumGroupDevice"},
+            params={"track_index": 1, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
     assert resp.ok is True
-    assert resp.result["kind"] == "DrumGroupDevice"
+    assert resp.result["kind"] == "Drum Rack"
 
 
 def test_load_passes_through_unmapped_class_name(loaded_actions):
@@ -525,24 +544,23 @@ def test_load_passes_through_unmapped_class_name(loaded_actions):
     assert resp.result["kind"] == "Reverb"
 
 
-def test_load_unknown_kind_error_mentions_translation(loaded_actions):
-    """When the translation table has a mapping but the browser still lacks
-    the translated node, the error reports BOTH the original kind and the
-    translated display name so the user knows we tried both paths.
+def test_load_unknown_kind_error_names_the_kind(loaded_actions):
+    """Arc 4 / D4: with the translation table gone, the error simply
+    names the unresolvable kind and points at the browser-probe
+    recovery path. No more "(also tried X via device_names translation
+    / *Device suffix strip)" trailer — that mechanism doesn't exist.
     """
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
-    # No "Compressor" or "Compressor2" node in the browser.
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor2"},
+            params={"track_index": 1, "kind": "WhateverNew"},
         ),
         context=ctx,
     )
     assert resp.ok is False
-    assert "Compressor2" in (resp.error or "")
-    assert "Compressor" in (resp.error or "")  # translated form mentioned
-    assert "device_names" in (resp.error or "")  # hint at the table
+    assert "WhateverNew" in (resp.error or "")
+    assert "ableton_browser" in (resp.error or "")  # recovery hint
 
 
 def test_load_unknown_kind_errors_with_browser_hint(loaded_actions):
@@ -759,22 +777,25 @@ def test_load_no_chain_growth_on_empty_track_shows_empty_chain(loaded_actions):
 # ---------- M1-A: device-load forgiveness (suffix strip + rack disambiguation) ----------
 
 
-def test_load_resolves_analog_device_via_suffix_strip(loaded_actions):
-    """``kind='AnalogDevice'`` has no explicit table entry; the loader
-    falls through to ``strip_device_suffix`` and resolves it as ``Analog``
-    in the instruments root. Backlog #27 + W21-A.
+def test_load_analog_kind_matches_browser_directly_post_d4(loaded_actions):
+    """Arc 4 / D4: previously ``kind='AnalogDevice'`` resolved via the
+    deleted ``strip_device_suffix`` fallback (``AnalogDevice → Analog``).
+    Under the post-D4 convention, push sends ``kind='Analog'`` (the
+    browser display name, written by pull from
+    ``device.class_display_name``); the kind-as-given walk matches
+    directly. No suffix-strip needed.
     """
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     _add_browser_item(ctx, "instruments", "Analog", uri="query:Analog")
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "AnalogDevice"},
+            params={"track_index": 1, "kind": "Analog"},
         ),
         context=ctx,
     )
     assert resp.ok is True, resp.error
-    assert resp.result["kind"] == "AnalogDevice"  # caller's identity preserved
+    assert resp.result["kind"] == "Analog"
     assert len(ctx.song.tracks[0].devices) == 1
     assert ctx.application.browser.load_calls[0].name == "Analog"
 
@@ -805,11 +826,15 @@ def test_load_drum_rack_ignores_cross_category_namesake(loaded_actions):
     assert ctx.application.browser.load_calls[0].uri == "query:Drums#Empty"
 
 
-def test_load_drum_group_device_translation_restricted_to_drums(loaded_actions):
-    """``kind='DrumGroupDevice'`` translates to ``Drum Rack`` (via table),
-    and the rack-root restriction applies to the translated candidate —
-    not just to the original kind. An instruments-root imposter named
-    ``Drum Rack`` must NOT match.
+def test_load_drum_rack_kind_restricted_to_drums_post_d4(loaded_actions):
+    """Arc 4 / D4: pre-D4 this test called the loader with
+    ``kind='DrumGroupDevice'`` (internal class) and relied on the
+    translation table + rack-root restriction applying to the
+    translated candidate. Under the new convention push sends
+    ``kind='Drum Rack'`` directly (browser display name, populated by
+    pull from ``device.class_display_name``); the rack-root
+    restriction applies to the display name itself. An instruments-
+    root imposter named ``Drum Rack`` still must NOT match.
     """
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     ctx.application.browser.instruments.children.append(
@@ -821,7 +846,7 @@ def test_load_drum_group_device_translation_restricted_to_drums(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "DrumGroupDevice"},
+            params={"track_index": 1, "kind": "Drum Rack"},
         ),
         context=ctx,
     )

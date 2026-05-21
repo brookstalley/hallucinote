@@ -107,7 +107,8 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
   {
     "index": 1,
     "name": "Late Nite Kit",
-    "class": "DrumGroupDevice",
+    "class": "Drum Rack",
+    "class_name": "DrumGroupDevice",
     "kind": "instrument",
     "guess_uri": "query:Drums#FileId_5418",
     "params_dialed": {
@@ -123,8 +124,9 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 ```
 
 - `index` is 1-based, position in the chain.
-- `class` is Live's device class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`, ...). Source of truth for "what kind of device is this." **The loader accepts either the class name OR the display name** as its `kind` parameter; for stock devices whose internal class differs from the user-visible name (`Glue` → "Glue Compressor", `ChorusEnsemble` → "Chorus-Ensemble"), the **display name** is what works at load time. The canonical mapping table lives in `hallucinote_mcp/.../device_names.py::class_name_to_display`; when in doubt, use the display name in `class` and verify with `ableton_device(action='load')` against an empty track before authoring the rest.
-- `name` is the user-set display name (often equal to class; preset names like "Late Nite Kit" persist).
+- `class` is the **browser display name** for the device — what shows up in Live's browser tree and what the loader's kind-as-given walk matches against. Examples: `"Compressor"`, `"EQ Eight"`, `"Phaser-Flanger"`, `"Drum Rack"`, `"Operator"`. The pull-side capture writes Live's `device.class_display_name` here. Hand-authored snapshots MUST use the browser display name — internal class names like `"Compressor2"` or `"DrumGroupDevice"` no longer resolve (Arc 4 / D4 removed the translation table; the loader uses what Live's own API reports). When in doubt, probe via `ableton_browser(action='tree', root='audio_effects', depth=2)` and copy the node's `name`.
+- `class_name` (optional for Live built-ins; **REQUIRED for third-party plugins**) is Live's **internal class identifier** — `"Compressor2"`, `"PhaserNew"`, `"DrumGroupDevice"`, `"PluginDevice"`, etc. Informational for built-ins; load-bearing for plugin discrimination. compat-check classifies a device as third-party iff `class_name` is in `{PluginDevice, AuPluginDevice, Vst3PluginDevice}`. **For third-party plugins (Serum, Diva, Spitfire LABS, anything VST/AU), you MUST set `class_name` to the wrapper class** — otherwise compat falls back to `kind` (the plugin's display name like `"Serum"`), which isn't in the plugin family, and the plugin gets silently classified as a Live built-in. Capture-from-Live populates it correctly; hand-authored snapshots have to be explicit.
+- `name` is the user-set display name on the device instance (often equal to `class` for default loads; preset names like "Late Nite Kit" persist; user renames also land here).
 - `kind` (optional, **informational only**) — a free-form classification hint (`"instrument"` / `"audio_effect"` / `"midi_effect"`). The push loader does NOT read this field; it routes by `class` and `preset_query.root` only. Safe to omit; if included, treat it as author commentary, not a routing signal.
 - `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture_cli.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
 - `preset_query` (optional, mutually exclusive with `guess_uri`) — **Sweep B: cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match).
@@ -135,7 +137,7 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
   - **Path-shape sugar (Arc 3 / C2).** `M.create_device(preset_query=...)` also accepts a path string like `"Drums/Kit-Core 909"` or `"Instruments/Operator/Bass/Pluck-Sub"` — first segment is the root (case-insensitive, `" "` ≡ `"_"`, so `"Audio Effects/Hall"` ≡ `"audio_effects/Hall"`), last segment is the pattern, anything in between is `path_prefix`. The mutator normalizes to the canonical dict before persisting (the DB always stores the structured form so downstream consumers see one shape). `mode` / `case_sensitive` aren't surfacable through the path-shape — authors who need those pass a dict. Snapshot JSON only carries the dict form (path-shape is a Python-API ergonomic).
 - `params_dialed` (optional) — only **dialed** params (defaults are implied by absence). Discrete-enum params (Filter Type = "Lowpass") have `"normalized": null` because there's no continuous form.
 - `params_total` (optional) — informational; count of all params on the device.
-- `chains` (optional) — nested chains for rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`). One level only — nested-nested racks raise on encounter (filed in backlog).
+- `chains` (optional) — nested chains for rack devices (Arc 4 / D4: `Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names; pre-D4 the check was against class names `DrumGroupDevice`/etc.). One level only — nested-nested racks raise on encounter (filed in backlog).
 
 ### Multi-device chains (sound is composition)
 
@@ -146,7 +148,8 @@ Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-
   {
     "index": 1,
     "name": "Hot Rod Kit",
-    "class": "DrumGroupDevice",
+    "class": "Drum Rack",
+    "class_name": "DrumGroupDevice",
     "kind": "instrument",
     "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"}
   },
@@ -167,7 +170,7 @@ Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-
 ]
 ```
 
-(Note `"class": "Glue Compressor"` — the display name, not the internal Live class name `Glue`. Per the `class` field rules above, the loader's `kind` parameter accepts either form, but stock devices whose internal class differs from the user-visible name only load via the display name in practice.)
+(Note `"class": "Glue Compressor"` — the browser display name. Arc 4 / D4: the loader matches `kind` against display names ONLY; the internal Live class name `GlueCompressor` no longer resolves. The optional `class_name` field is where you record the internal class for informational use — pull populates it from Live's `device.class_name`.)
 
 Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order, so the chain ends up on the track in the same shape on the consumer's machine. The push planner (W12-A + Sweep B) drives `ableton_device(action='load')` once per device; `params_dialed` is applied after load.
 
@@ -209,7 +212,7 @@ Live's browser tree exposes some devices BOTH as loadable nodes (load the device
 For "load the device with default settings" use **NO `preset_query`** and rely on `class`:
 
 ```json
-{"index": 1, "name": "Hybrid Reverb", "class": "HybridReverb"}
+{"index": 1, "name": "Hybrid Reverb", "class": "Hybrid Reverb", "class_name": "HybridReverb"}
 ```
 
 For "load a named preset" use **`preset_query` pointing at a leaf** (typically a `.adv` file). The path_prefix narrows to the preset folder; the pattern is the leaf name:
@@ -218,7 +221,8 @@ For "load a named preset" use **`preset_query` pointing at a leaf** (typically a
 {
   "index": 1,
   "name": "Cathedral Bloom",
-  "class": "HybridReverb",
+  "class": "Hybrid Reverb",
+  "class_name": "HybridReverb",
   "preset_query": {
     "root": "audio_effects",
     "pattern": "Cathedral Bloom",

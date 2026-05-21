@@ -8,9 +8,11 @@ DB through mutators.
 
 Scope (chunks 3 + 4a + W7-B): tracks + returns + sends + master + mixer state +
 top-level device chains + dialed device parameters + one level of nested rack
-chains. Each rack-kind device (`DrumGroupDevice`, `InstrumentGroupDevice`,
-`AudioEffectGroupDevice`) may optionally carry a ``chains: [{chain_index, name,
-devices: [...]}]`` array; replay walks one level. Recursively nested racks
+chains. Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
+``Instrument Rack``, ``Audio Effect Rack``; pre-D4 these were the internal
+class names ``DrumGroupDevice``/``InstrumentGroupDevice``/``AudioEffectGroupDevice``)
+may optionally carry a ``chains: [{chain_index, name, devices: [...]}]``
+array; replay walks one level. Recursively nested racks
 (rack-inside-a-rack) are deferred (raises on encounter) — tracked in backlog
 under "nested-nested rack support". Automation envelopes (chunk 4b) are
 schema-modeled and push-plannable but the capture/replay path doesn't ingest
@@ -85,10 +87,16 @@ _RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
 # can validate "this device carries `chains`, but its class isn't a rack"
 # at the boundary. W6-I/J shipped the MCP-side walk; W7-B threads it through
 # capture + pull.
+# Arc 4 / D4: rack identity is checked against browser display names
+# (the post-D4 ``devices.kind`` convention) — ``"Drum Rack"`` /
+# ``"Instrument Rack"`` / ``"Audio Effect Rack"``. The pre-D4 set
+# used internal Live class names (``DrumGroupDevice`` etc.) to match
+# the old ``snapshot.class`` semantics; with the convention shift
+# they're the same identity expressed in the loader-facing namespace.
 RACK_CLASS_NAMES = frozenset({
-    "DrumGroupDevice",
-    "InstrumentGroupDevice",
-    "AudioEffectGroupDevice",
+    "Drum Rack",
+    "Instrument Rack",
+    "Audio Effect Rack",
 })
 
 
@@ -167,12 +175,19 @@ def _replay_devices(
         # without baking in this machine's FileId.
         preset_query = d.get("preset_query")
         preset_uri = d.get("guess_uri") if preset_query is None else None
+        # Arc 4 / D4: snapshots may carry `class_name` (Live's internal
+        # class identifier) alongside `class` (the browser display name
+        # the loader matches). Capture-from-Live populates both; hand-
+        # authored snapshots may omit `class_name`. The mutator accepts
+        # None for that field — informational column, drives plugin
+        # classification when present.
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
             position=int(d["index"]),
             kind=d["class"],
             display_name=d.get("name", d["class"]),
+            class_name=d.get("class_name"),
             preset_uri=preset_uri,
             preset_query=preset_query,
             actor=actor,
@@ -220,17 +235,19 @@ def _replay_devices(
                 request_id=request_id,
                 reason=reason,
             )
-        # M1-C: Drum Rack pad mapping. Each DrumGroupDevice may carry a
+        # M1-C: Drum Rack pad mapping. Each Drum Rack may carry a
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
         # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
         # `drum_pad_mappings` so the song's generators can resolve
         # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        # Arc 4 / D4: identity check uses the browser display name
+        # ``"Drum Rack"`` (post-D4 ``snapshot.class`` semantics).
         pads = d.get("drum_pads")
         if pads:
-            if d["class"] != "DrumGroupDevice":
+            if d["class"] != "Drum Rack":
                 raise ValueError(
                     f"snapshot device {d.get('name')!r} carries `drum_pads` "
-                    f"but class {d['class']!r} is not DrumGroupDevice — "
+                    f"but class {d['class']!r} is not 'Drum Rack' — "
                     "pad_info only applies to Drum Racks"
                 )
             M.replace_drum_pad_mappings(
@@ -552,8 +569,12 @@ def capture_plan() -> list[dict[str, str]]:
                     "(name -> {value, normalized}) — loop over each device"},
         {"tool": "ableton_device(action='get_device_chains')",
          "purpose": "per-rack-device: one level of nested chains + their "
-                    "devices (W7-B). Emit for every device whose class_name "
-                    f"is in {sorted(RACK_CLASS_NAMES)}. The agent attaches "
+                    "devices (W7-B). Emit for every device whose probed "
+                    f"`class_display_name` is in {sorted(RACK_CLASS_NAMES)} "
+                    "(Arc 4 / D4 — was `class_name` in {DrumGroupDevice, "
+                    "InstrumentGroupDevice, AudioEffectGroupDevice} pre-D4; "
+                    "now keyed off Live's class_display_name to match the "
+                    "post-D4 snapshot.class convention). The agent attaches "
                     "the result as the device's `chains` field on the "
                     "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
                     "internal chain instruments not captured', etc.) on "
@@ -563,10 +584,12 @@ def capture_plan() -> list[dict[str, str]]:
         {"tool": "ableton_device(action='pad_info')",
          "purpose": "per-Drum-Rack: pad layout (midi_note + chain_name per "
                     "non-empty pad). M1-C. Emit ONLY for devices whose "
-                    "class_name is 'DrumGroupDevice'. The agent attaches "
-                    "the result as the device's `drum_pads` field on the "
-                    "snapshot: ``[{midi_note: int, chain_name: str}, ...]``. "
-                    "Replay persists into `drum_pad_mappings` so songs can "
+                    "probed `class_display_name` is 'Drum Rack' (Arc 4 / "
+                    "D4 — was class_name 'DrumGroupDevice' pre-D4). The "
+                    "agent attaches the result as the device's `drum_pads` "
+                    "field on the snapshot: ``[{midi_note: int, chain_name: "
+                    "str}, ...]``. Replay persists into `drum_pad_mappings` "
+                    "so songs can "
                     "use `Kit.from_device(conn, device_id)` to author kit-"
                     "portable drum patterns instead of GM-assumed MIDI notes."},
     ]

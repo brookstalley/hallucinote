@@ -101,7 +101,7 @@ def linked_return(conn, session, ret):
 def device(conn, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     return M.create_device(
-        conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp",
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="Comp",
     )
 
 
@@ -317,7 +317,7 @@ def test_device_parameter_skipped_for_nested_rack(
     """Nested-rack device envelopes are a gap; planner warns instead of emitting."""
     top_chain = M.create_device_chain(conn, parent_track_id=linked_track)
     rack = M.create_device(conn, chain_id=top_chain, position=1,
-                           kind="DrumGroupDevice", display_name="Kit")
+                           kind="Drum Rack", display_name="Kit")
     inner_chain = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
     inner = M.create_device(conn, chain_id=inner_chain, position=1,
                             kind="Simpler", display_name="Kick")

@@ -142,18 +142,23 @@ _PRESET_URI_MISS_HINTS = (
 )
 
 
-def _search_root_for_kind(kind: str) -> str:
+def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     """Pick the canonical browser root for a fallback search by device kind.
 
-    Plugin classes go to the ``plugins`` root (PluginDevice / AuPluginDevice /
-    Vst3PluginDevice etc. — substring 'Plugin' matches the lot per
-    ``sync/compat.py`` discriminator). Drum racks go to ``drums``. All
-    others (instruments + unknown built-ins) default to ``instruments``,
-    which is the broadest signal for missing-built-in cases.
+    Arc 4 / D4: ``kind`` is the browser display name (= Live's
+    ``device.class_display_name``). The internal Live class lives in
+    ``class_name`` (separate DB column). Plugin discrimination keys off
+    ``class_name`` — Live wraps every plugin in one of three classes
+    (``PluginDevice`` / ``AuPluginDevice`` / ``Vst3PluginDevice``);
+    these never appear as ``kind`` under the post-D4 convention because
+    ``kind`` is the plugin's browser display name (e.g. ``"Serum"``).
+    The substring-'Plugin' check moves to ``class_name``. Drum racks
+    still recognize via the rack display name; everything else
+    defaults to ``instruments``.
     """
-    if "Plugin" in kind:
+    if class_name and "Plugin" in class_name:
         return "plugins"
-    if kind == "DrumGroupDevice":
+    if kind == "Drum Rack":
         return "drums"
     return "instruments"
 
@@ -193,17 +198,18 @@ def _attempt_load_fallback(
         return None
     device_id = key.split(":", 1)[1]
     row = conn.execute(
-        "SELECT kind, display_name FROM devices WHERE id = ?",
+        "SELECT kind, display_name, class_name FROM devices WHERE id = ?",
         (device_id,),
     ).fetchone()
     if row is None:
         return None
     kind = row["kind"]
+    class_name = row["class_name"] if "class_name" in row.keys() else None
     display_name = (row["display_name"] or "").strip()
     if not display_name:
         return None
 
-    root = _search_root_for_kind(kind)
+    root = _search_root_for_kind(kind, class_name)
     search_req = request_cls(
         tool="ableton_browser",
         action="search",

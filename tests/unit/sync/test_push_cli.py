@@ -553,7 +553,7 @@ def test_probe_and_link_binds_track_device(conn, song, session):
     """Track-side mirror of the return case."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     device_id = _make_chain_with_device(
-        conn, parent_track_id=tid, position=1, kind="DrumGroupDevice",
+        conn, parent_track_id=tid, position=1, kind="Drum Rack",
     )
     result = push.probe_and_link(
         conn, song_id=song, session_id=session,
@@ -561,13 +561,13 @@ def test_probe_and_link_binds_track_device(conn, song, session):
         live_returns=[],
         live_devices_by_parent={
             ("track", 4): [
-                {"device_index": 1, "name": "Kit", "class_name": "DrumGroupDevice"},
+                {"device_index": 1, "name": "Kit", "class_name": "Drum Rack"},
             ],
         },
     )
     assert len(result.matched_devices) == 1
     assert result.matched_devices[0]["parent_index"] == 4
-    assert result.matched_devices[0]["class_name"] == "DrumGroupDevice"
+    assert result.matched_devices[0]["class_name"] == "Drum Rack"
 
 
 def test_probe_and_link_skips_class_mismatch_at_same_position(conn, song, session):

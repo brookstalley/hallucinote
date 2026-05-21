@@ -560,8 +560,22 @@ def _classify_device_full(
         # since the SAME device could still be a third-party plugin needing
         # the installed-plugin classifier.
 
+    # Arc 4 / D4: plugin classification keys off Live's INTERNAL class
+    # name (PluginDevice / AuPluginDevice / Vst3PluginDevice — these are
+    # Live's wrapper classes, not browser display names). Under the
+    # post-D4 convention `kind` is the browser display name (e.g.
+    # "Serum" for a Serum patch); the internal class lives in
+    # `class_name`. When the DB row was written pre-D4 or via a
+    # hand-authored snapshot without `class_name`, fall back to `kind`
+    # so existing tests + legacy data continue to discriminate plugins
+    # the same way.
+    discriminator_class = (
+        device_row["class_name"]
+        if "class_name" in device_row.keys() and device_row["class_name"]
+        else device_row["kind"]
+    )
     status, lookup = classify_device(
-        device_row["kind"],
+        discriminator_class,
         display_name=device_row["display_name"],
         installed_plugin_names=installed_names,
     )

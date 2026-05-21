@@ -1,130 +1,32 @@
-"""Live device class_name ↔ browser display name translation.
+"""Rack-kind → canonical browser-root lookup.
 
-Live exposes built-in devices via TWO name spaces:
+Arc 4 / D4 trimmed this module to one concern. The previous role —
+translating Live's internal ``device.class_name`` to the browser
+display name (``Compressor2 → Compressor``,
+``DrumGroupDevice → Drum Rack``, etc.) — is now obsolete: Live
+exposes the right value natively via ``device.class_display_name``,
+which the MCP capture probes read and pull writes into
+``devices.kind``. The loader then matches on ``kind`` directly.
 
-- **Internal class name** — ``device.class_name`` (returned by ``device.list``
-  and captured into the DB). Examples: ``Compressor2``, ``Eq8``,
-  ``StereoGain``, ``DrumGroupDevice``, ``InstrumentMeld``.
-- **Browser display name** — what shows up in Live's browser and what
-  ``browser.load_item`` looks up by name. Examples: ``Compressor``, ``EQ
-  Eight``, ``Utility``, ``Drum Rack``, ``Meld``.
+What remains: a small mapping for the four RACK display names. Racks
+are the only device kinds where a name match in the wrong browser
+root would silently pick the wrong device — a user-saved Instrument
+Rack preset named "Drum Rack" in the instruments root would
+otherwise shadow the canonical empty Drum Rack node in the drums
+root (W7-0 finding). Restricting rack walks to the canonical root
+prevents this.
 
-A round-trip (capture → push → load) breaks for every built-in whose
-class name differs from its display name: the planner emits
-``device.load(kind='Compressor2')`` and the handler's browser walk finds
-no node named ``Compressor2``. This table bridges the gap.
-
-**Maintenance**: this list covers built-in Live devices observed in
-real songs. Third-party plugins use their plugin name as both class and
-display (no translation needed). When Live adds new built-ins with
-renamed display names, add them here. Empirical source: read each
-device's ``class_name`` after loading via the browser and compare to
-the browser node's ``name``.
-
-For unmapped names (third-party plugins, future built-ins), callers
-should fall through to the direct display-name match — that's still the
-primary lookup path. This table is the fallback when class_name doesn't
-match a browser node directly.
+If Live adds new rack kinds in future versions, extend
+``_RACK_KIND_TO_BROWSER_ROOT``. The set is bounded by Live's rack
+device family, not by every device class — much smaller maintenance
+footprint than the deleted ``_CLASS_TO_DISPLAY`` table.
 """
 from __future__ import annotations
 
 
-# Class name → Browser display name. Verified against Ableton Live 12.4
-# browser dumps. Entries where class_name == display_name are omitted
-# (the direct lookup already works for those).
-_CLASS_TO_DISPLAY: dict[str, str] = {
-    # Audio effects
-    "Compressor2": "Compressor",
-    "Chorus2": "Chorus-Ensemble",
-    "Eq8": "EQ Eight",
-    "Eq3": "EQ Three",
-    "FilterEQ3": "EQ Three",
-    "MultibandDynamics": "Multiband Dynamics",
-    "StereoGain": "Utility",
-    "GlueCompressor": "Glue Compressor",
-    "GrainDelay": "Grain Delay",
-    "FilterDelay": "Filter Delay",
-    "HybridReverb": "Hybrid Reverb",
-    "DrumBuss": "Drum Buss",
-    "BeatRepeat": "Beat Repeat",
-    "AutoFilter": "Auto Filter",
-    "AutoPan": "Auto Pan-Tremolo",
-    "Phaser": "Phaser-Flanger",
-    "Flanger": "Phaser-Flanger",
-    "DynamicTube": "Dynamic Tube",
-    "VinylDistortion": "Vinyl Distortion",
-    "SpectralResonator": "Spectral Resonator",
-    "SpectralTime": "Spectral Time",
-    "EnvelopeFollower": "Envelope Follower",
-    "AlignDelay": "Align Delay",
-    "AutoShift": "Auto Shift",
-    "ChannelEQ": "Channel EQ",
-    # Instruments
-    "InstrumentMeld": "Meld",
-    "InstrumentVector": "Wavetable",
-    "LoungeLizard": "Electric",
-    "AnalogSimplerDevice": "Simpler",
-    "ExternalInstrument": "External Instrument",
-    # Racks (group devices)
-    "DrumGroupDevice": "Drum Rack",
-    "InstrumentGroupDevice": "Instrument Rack",
-    "AudioEffectGroupDevice": "Audio Effect Rack",
-    "MidiEffectGroupDevice": "MIDI Effect Rack",
-    # Note: the following classes are the same in both namespaces and
-    # don't need entries (kept here as a checked-against list for the
-    # maintainer to confirm new Live versions haven't renamed them):
-    #
-    #   Operator, Saturator, Reverb, Delay, Echo, Limiter, Gate,
-    #   Overdrive, Pedal, Cabinet, Looper, Roar, Tuner, Spectrum,
-    #   Shaper, Shifter, Vocoder, Erosion, Resonators, Redux, Amp,
-    #   Corpus, LFO, Shaper.
-}
-
-
-def class_name_to_display(class_name: str) -> str | None:
-    """Return the browser display name for a Live device class name.
-
-    Returns ``None`` if the class name has no known translation. Callers
-    should fall back to the direct display-name lookup with the original
-    string in that case — third-party plugins typically use the same
-    name in both spaces.
-    """
-    return _CLASS_TO_DISPLAY.get(class_name)
-
-
-_DEVICE_SUFFIX = "Device"
-
-
-def strip_device_suffix(class_name: str) -> str | None:
-    """Algorithmic fallback for Live's ``*Device`` class-name pattern.
-
-    Some Live built-ins surface as ``<Name>Device`` on ``class_name``
-    (``AnalogDevice``, ``OperatorDevice`` in certain probe contexts)
-    while the browser indexes them under the suffix-stripped name
-    (``Analog``, ``Operator``). Returns the stripped form when
-    ``class_name`` ends with ``Device`` and the result is non-empty;
-    otherwise ``None``.
-
-    Used as a *fallback* after the explicit ``_CLASS_TO_DISPLAY``
-    translation table — table entries like ``AnalogSimplerDevice →
-    Simpler`` or ``DrumGroupDevice → Drum Rack`` need exact-match
-    translation and would resolve to the wrong browser node under
-    naive suffix stripping.
-    """
-    if (
-        class_name
-        and class_name.endswith(_DEVICE_SUFFIX)
-        and len(class_name) > len(_DEVICE_SUFFIX)
-    ):
-        return class_name[: -len(_DEVICE_SUFFIX)]
-    return None
-
-
 # Live's rack display names → canonical browser root. Each rack lives in
 # exactly one category; restricting the load-by-name walk to that root
-# prevents cross-category collisions (W7-0: a user-saved Instrument Rack
-# preset named "Drum Rack" in the instruments root would otherwise match
-# before the canonical empty Drum Rack node in the drums root).
+# prevents cross-category collisions (W7-0).
 _RACK_KIND_TO_BROWSER_ROOT: dict[str, str] = {
     "Drum Rack": "drums",
     "Instrument Rack": "instruments",
@@ -145,7 +47,5 @@ def browser_root_for_rack_kind(kind: str) -> str | None:
 
 
 __all__ = [
-    "class_name_to_display",
-    "strip_device_suffix",
     "browser_root_for_rack_kind",
 ]

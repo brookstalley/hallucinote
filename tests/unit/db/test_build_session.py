@@ -209,10 +209,10 @@ def test_create_device_idempotent(conn):
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
     cid = M.create_device_chain(conn, parent_track_id=tid)
-    d1 = M.create_device(conn, chain_id=cid, position=1, kind="Eq8",
+    d1 = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
                           display_name="EQ")
     n1 = _event_count(conn)
-    d2 = M.create_device(conn, chain_id=cid, position=1, kind="Eq8",
+    d2 = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
                           display_name="EQ")
     assert d2.kind == "unchanged"
     assert _event_count(conn) == n1
@@ -222,7 +222,7 @@ def test_set_device_parameter_idempotent(conn):
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
     cid = M.create_device_chain(conn, parent_track_id=tid)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8",
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
                            display_name="EQ")
     p1 = M.set_device_parameter(
         conn, device_id=did, name="Freq", value_display="1.0kHz",

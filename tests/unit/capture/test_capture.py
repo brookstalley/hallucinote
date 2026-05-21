@@ -235,14 +235,14 @@ def _snapshot_with_devices() -> dict:
                 "devices": [
                     {
                         "index": 1, "name": "Late Nite Kit",
-                        "class": "DrumGroupDevice",
+                        "class": "Drum Rack",
                         "guess_uri": "query:Drums#FileId_5418",
                         "params_dialed": {
                             "Filter": {"value": "1", "normalized": 0.01},
                             "Filter Type": {"value": "Lowpass"},
                         },
                     },
-                    {"index": 2, "name": "EQ Eight", "class": "Eq8"},
+                    {"index": 2, "name": "EQ Eight", "class": "EQ Eight"},
                 ],
             },
         ],
@@ -265,7 +265,7 @@ def test_replay_creates_devices_with_kind_and_display_name(conn):
     )
     devices = Q.get_devices_for_track(conn, drums["id"])
     assert [d["display_name"] for d in devices] == ["Late Nite Kit", "EQ Eight"]
-    assert [d["kind"] for d in devices] == ["DrumGroupDevice", "Eq8"]
+    assert [d["kind"] for d in devices] == ["Drum Rack", "EQ Eight"]
     assert devices[0]["preset_uri"] == "query:Drums#FileId_5418"
     assert devices[1]["preset_uri"] is None
 
@@ -294,7 +294,7 @@ def test_replay_reads_preset_query_from_snapshot(conn):
         "tracks": [{
             "index": 1, "name": "Drums", "type": "midi",
             "devices": [{
-                "index": 1, "name": "Some 909 Kit", "class": "DrumGroupDevice",
+                "index": 1, "name": "Some 909 Kit", "class": "Drum Rack",
                 "preset_query": {
                     "root": "drums",
                     "pattern": "909",
@@ -365,7 +365,7 @@ def test_replay_rejects_param_bad_shape(conn):
         "tracks": [{
             "index": 1, "name": "t", "type": "midi",
             "devices": [{
-                "index": 1, "name": "X", "class": "Eq8",
+                "index": 1, "name": "X", "class": "EQ Eight",
                 "params_dialed": {"Freq": "not-a-dict"},  # should be {value, normalized?}
             }],
         }],
@@ -388,7 +388,7 @@ def _snapshot_with_nested_rack(*, chains: list[dict]) -> dict:
             "index": 1, "name": "Drums", "type": "midi",
             "devices": [{
                 "index": 1, "name": "Drum Rack",
-                "class": "DrumGroupDevice",
+                "class": "Drum Rack",
                 "chains": chains,
             }],
         }],
@@ -422,7 +422,7 @@ def test_replay_creates_multiple_nested_chains_ordered_by_chain_index(conn):
         ]},
         {"chain_index": 2, "name": "Snare", "devices": [
             {"index": 1, "name": "Drum Synth", "class": "DrumSynths"},
-            {"index": 2, "name": "Compressor", "class": "Compressor2"},
+            {"index": 2, "name": "Compressor", "class": "Compressor"},
         ]},
     ])
     sid = replay_capture(conn, snap, song_name="t")
@@ -433,7 +433,7 @@ def test_replay_creates_multiple_nested_chains_ordered_by_chain_index(conn):
     # Chain 2 holds two devices in 1-based position order.
     chain_2_devs = Q.get_devices_for_chain(conn, chains[1]["id"])
     assert [(d["position"], d["kind"]) for d in chain_2_devs] == [
-        (1, "DrumSynths"), (2, "Compressor2"),
+        (1, "DrumSynths"), (2, "Compressor"),
     ]
 
 
@@ -464,7 +464,7 @@ def test_replay_rejects_nested_nested_rack(conn):
     """
     snap = _snapshot_with_nested_rack(chains=[
         {"chain_index": 1, "devices": [{
-            "index": 1, "name": "Inner Rack", "class": "InstrumentGroupDevice",
+            "index": 1, "name": "Inner Rack", "class": "Instrument Rack",
             "chains": [{"chain_index": 1, "devices": []}],
         }]},
     ])
@@ -480,7 +480,7 @@ def test_replay_rejects_chains_on_non_rack(conn):
         "tracks": [{
             "index": 1, "name": "x", "type": "midi",
             "devices": [{
-                "index": 1, "name": "Comp", "class": "Compressor2",
+                "index": 1, "name": "Comp", "class": "Compressor",
                 "chains": [{"chain_index": 1, "devices": []}],
             }],
         }],
@@ -511,7 +511,7 @@ def test_replay_rack_with_no_chains_field_still_works(conn):
         "song": {}, "returns": [],
         "tracks": [{
             "index": 1, "name": "x", "type": "midi",
-            "devices": [{"index": 1, "name": "R", "class": "DrumGroupDevice"}],
+            "devices": [{"index": 1, "name": "R", "class": "Drum Rack"}],
         }],
     }
     sid = replay_capture(conn, snap, song_name="t")
@@ -585,7 +585,7 @@ def test_compile_snapshot_preserves_nested_rack_chains():
         "index": 1, "name": "Drums", "type": "midi",
         "volume": 0.7, "panning": 0.0,
         "devices": [{
-            "position": 1, "class": "DrumGroupDevice", "name": "Drum Kit",
+            "position": 1, "class": "Drum Rack", "name": "Drum Kit",
             "chains": nested_chains,
         }],
     }
@@ -605,7 +605,7 @@ def _snapshot_with_drum_rack(*, drum_pads: list[dict] | None) -> dict:
     """Build a single-track snapshot with one Drum Rack carrying drum_pads."""
     device = {
         "index": 1, "name": "Late Nite Kit",
-        "class": "DrumGroupDevice",
+        "class": "Drum Rack",
     }
     if drum_pads is not None:
         device["drum_pads"] = drum_pads
@@ -657,12 +657,12 @@ def test_replay_rejects_drum_pads_on_non_drum_rack(conn):
         "tracks": [{
             "index": 1, "name": "Synth", "type": "midi",
             "devices": [{
-                "index": 1, "name": "Wavetable", "class": "InstrumentVector",
+                "index": 1, "name": "Wavetable", "class": "Wavetable",
                 "drum_pads": [{"chain_name": "Pad", "midi_note": 36}],
             }],
         }],
     }
-    with pytest.raises(ValueError, match="not DrumGroupDevice"):
+    with pytest.raises(ValueError, match="not 'Drum Rack'"):
         replay_capture(conn, snap, song_name="t")
 
 

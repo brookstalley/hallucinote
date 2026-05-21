@@ -125,34 +125,39 @@ def test_add_track_scoped_resolves_index_to_id(song_db):
     assert track_row["name"] == "Bass"
 
 
-def test_add_unknown_track_index_returns_teaching_error(song_db):
+def test_add_unknown_track_index_raises_teaching_error(song_db):
+    """Handlers raise ValueError so the dispatcher's broad-except translates
+    to a structured wire error response (ok=False). Returning an
+    {error: ...} dict would surface as ok=True with the error buried in
+    the result — the same shape every other hallucinote_mcp handler avoids."""
     _db, _song_id, slug = song_db
-    result = annotation_handlers.add_handler(
-        None,
-        song_slug=slug,
-        kind="todo",
-        body="nope",
-        track_index=99,
-    )
-    assert "error" in result
-    assert "no track at index 99" in result["error"]
-    assert "ableton_track(action='list')" in result["error"]
+    with pytest.raises(ValueError) as excinfo:
+        annotation_handlers.add_handler(
+            None,
+            song_slug=slug,
+            kind="todo",
+            body="nope",
+            track_index=99,
+        )
+    msg = str(excinfo.value)
+    assert "no track at index 99" in msg
+    assert "ableton_track(action='list')" in msg
 
 
-def test_add_unknown_slug_returns_teaching_error(tmp_path: Path, monkeypatch):
+def test_add_unknown_slug_raises_teaching_error(tmp_path: Path, monkeypatch):
     """Override the resolver to point at a path that doesn't exist."""
     bogus = tmp_path / "does-not-exist.db"
     monkeypatch.setattr(
         annotation_handlers, "_resolve_song_db", lambda _slug: bogus
     )
-    result = annotation_handlers.add_handler(
-        None,
-        song_slug="ghost-song",
-        kind="intent",
-        body="x",
-    )
-    assert "error" in result
-    assert "ghost-song" in result["error"]
+    with pytest.raises(ValueError) as excinfo:
+        annotation_handlers.add_handler(
+            None,
+            song_slug="ghost-song",
+            kind="intent",
+            body="x",
+        )
+    assert "ghost-song" in str(excinfo.value)
 
 
 def test_add_rejects_invalid_kind_via_w8c_mutator(song_db):
@@ -245,28 +250,26 @@ def test_update_patches_body_only(song_db):
     assert result["kind"] == "intent"  # unchanged
 
 
-def test_update_with_no_fields_returns_teaching_error(song_db):
+def test_update_with_no_fields_raises_teaching_error(song_db):
     _db, _song_id, slug = song_db
     created = annotation_handlers.add_handler(
         None, song_slug=slug, kind="intent", body="x"
     )
-    result = annotation_handlers.update_handler(
-        None, song_slug=slug, annotation_id=created["id"]
-    )
-    assert "error" in result
-    assert "at least one of" in result["error"]
+    with pytest.raises(ValueError, match="at least one of"):
+        annotation_handlers.update_handler(
+            None, song_slug=slug, annotation_id=created["id"]
+        )
 
 
-def test_update_unknown_id_returns_teaching_error(song_db):
+def test_update_unknown_id_raises_teaching_error(song_db):
     _db, _song_id, slug = song_db
-    result = annotation_handlers.update_handler(
-        None,
-        song_slug=slug,
-        annotation_id="0" * 32,
-        body="x",
-    )
-    assert "error" in result
-    assert "no annotation with id" in result["error"]
+    with pytest.raises(ValueError, match="no annotation with id"):
+        annotation_handlers.update_handler(
+            None,
+            song_slug=slug,
+            annotation_id="0" * 32,
+            body="x",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -289,10 +292,20 @@ def test_delete_removes_annotation(song_db):
 
 def test_delete_unknown_id_is_idempotent(song_db):
     """M.delete_annotation is documented as no-op on missing id; the
-    handler must surface that as a clean success, not an error."""
+    handler must surface that as a clean success (no exception)."""
     _db, _song_id, slug = song_db
     result = annotation_handlers.delete_handler(
         None, song_slug=slug, annotation_id="0" * 32
     )
     assert result["deleted"] is True
+
+
+def test_add_handler_returns_clean_dict_in_success_path(song_db):
+    """Sanity: the success path does NOT carry an `error` key. Pairs with
+    the raise-on-failure tests to lock the contract."""
+    _db, _song_id, slug = song_db
+    result = annotation_handlers.add_handler(
+        None, song_slug=slug, kind="intent", body="success"
+    )
     assert "error" not in result
+    assert result["body"] == "success"

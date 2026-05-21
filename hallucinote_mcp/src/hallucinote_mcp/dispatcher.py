@@ -390,6 +390,37 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             ),
         )
 
+    # Server-side-only actions execute directly on the MCP server side
+    # (no Live needed). The handler is responsible for any I/O it needs
+    # (filesystem, local DB, etc.) and receives context=None.
+    if action.runs_server_side:
+        try:
+            result = action.handler(None, **validated)  # type: ignore[misc]
+        except KeyError as exc:
+            logger.warning(
+                "schema bug: %s(%r) server-side handler referenced unknown "
+                "param %r",
+                action.tool, action.name, exc.args[0],
+            )
+            return error(
+                f"{action.tool}({action.name!r}) handler referenced "
+                f"unknown param {exc.args[0]!r}; this is a schema bug",
+                hint="Report this — the action schema and handler are out of sync.",
+            )
+        except Exception as exc:  # prawduct:ok-broad-except — dispatcher boundary; structured response > raw traceback
+            logger.exception(
+                "server-side handler failed: %s(%r) with params=%r",
+                action.tool, action.name, validated,
+            )
+            return error(
+                f"{action.tool}({action.name!r}) failed: {exc.__class__.__name__}: {exc}",
+                hint=(
+                    f"Check {action.tool}(action='help') for the action's "
+                    f"preconditions and value ranges."
+                ),
+            )
+        return ok(result)
+
     # Execution requires a Live context. Signal "forward me" with a
     # structured flag, not by parsing error text downstream.
     if context is None:

@@ -65,7 +65,7 @@ def _format_row(row: Any, *, defensive: bool = False) -> str:
     snippet = row["snippet"] if "snippet" in row.keys() else None
     if defensive and _has_negation(snippet):
         parts.append(
-            "**⚠️ contradiction signal: row contains negation/constraint "
+            "**CONTRADICTION SIGNAL: row contains negation/constraint "
             "language — read in full before composing against it.**"
         )
     if snippet:
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "# Defensive mode: items below MAY CONTRADICT your plan. "
             "Read in full before composing against them — particularly "
-            "any flagged with ⚠️."
+            "any flagged with CONTRADICTION SIGNAL."
         )
         print()
 

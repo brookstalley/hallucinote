@@ -33,11 +33,31 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from hallucinote.db import mutations as M
-from hallucinote.db import queries as Q
-from hallucinote.db.connection import init_db, resolve_db_path
-
-from ..dispatcher import LiveContext
+# The `hallucinote` package is NOT vendored into Live's User Library
+# (only `hallucinote_mcp` is). A module-level import would ImportError
+# at Control Surface load time on the Live side. These actions are
+# flagged `runs_server_side=True` so the dispatcher never invokes them
+# from the Remote Script side anyway — but the module must still be
+# importable for action *registration* on both sides, so we guard the
+# top-level import.
+#
+# When `_HAS_HALLUCINOTE_DB` is False, handler invocation would crash
+# late — but the dispatcher's `runs_server_side` branch only fires on
+# the MCP server side where the agent's full Python environment
+# (including `hallucinote.db`) is on path. The Remote Script side
+# loads this module to populate the schema registry, then never calls
+# the handlers; the conditional keeps both halves happy.
+try:
+    from hallucinote.db import mutations as M
+    from hallucinote.db import queries as Q
+    from hallucinote.db.connection import init_db, resolve_db_path
+    _HAS_HALLUCINOTE_DB = True
+except ImportError:  # pragma: no cover - exercised in Live's vendored env
+    M = None  # type: ignore[assignment]
+    Q = None  # type: ignore[assignment]
+    init_db = None  # type: ignore[assignment]
+    resolve_db_path = None  # type: ignore[assignment]
+    _HAS_HALLUCINOTE_DB = False
 
 
 # Public for tests: lets the unit suite inject a temp DB path without
@@ -92,16 +112,23 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _teach_song_not_found(song_slug: str) -> dict[str, Any]:
-    return {
-        "error": (
-            f"no song named {song_slug!r} found — looked for "
-            f"songs/{song_slug}/{song_slug}-<branch>.db and within that DB "
-            f"for a row in `songs` where name={song_slug!r}. Has the song "
-            f"been built yet? `python3 songs/{song_slug}/build.py --reset` "
-            f"creates the DB and song row."
-        ),
-    }
+class _AnnotationNotFound(ValueError):
+    """Raised when a slug / track / annotation_id can't be resolved.
+
+    Inherits from ValueError so the dispatcher's broad-except translates
+    it to a structured `ok=False` error response — same shape as every
+    other hallucinote_mcp handler's failure path.
+    """
+
+
+def _teach_song_not_found(song_slug: str) -> _AnnotationNotFound:
+    return _AnnotationNotFound(
+        f"no song named {song_slug!r} found — looked for "
+        f"songs/{song_slug}/{song_slug}-<branch>.db and within that DB "
+        f"for a row in `songs` where name={song_slug!r}. Has the song "
+        f"been built yet? `python3 songs/{song_slug}/build.py --reset` "
+        f"creates the DB and song row."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,22 +156,20 @@ def add_handler(
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
-        return _teach_song_not_found(song_slug)
+        raise _teach_song_not_found(song_slug)
     try:
         song_id = _resolve_song_id(conn, song_slug)
         if song_id is None:
-            return _teach_song_not_found(song_slug)
+            raise _teach_song_not_found(song_slug)
         track_id: str | None = None
         if track_index is not None:
             track_id = _resolve_track_id(conn, song_id, track_index)
             if track_id is None:
-                return {
-                    "error": (
-                        f"no track at index {track_index} in song "
-                        f"{song_slug!r}; use ableton_track(action='list') to "
-                        f"see current tracks."
-                    )
-                }
+                raise _AnnotationNotFound(
+                    f"no track at index {track_index} in song "
+                    f"{song_slug!r}; use ableton_track(action='list') to "
+                    f"see current tracks."
+                )
         annotation_id = M.add_annotation(
             conn,
             song_id=song_id,
@@ -177,11 +202,11 @@ def list_handler(
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
-        return _teach_song_not_found(song_slug)
+        raise _teach_song_not_found(song_slug)
     try:
         song_id = _resolve_song_id(conn, song_slug)
         if song_id is None:
-            return _teach_song_not_found(song_slug)
+            raise _teach_song_not_found(song_slug)
         rows = Q.get_annotations_for_song(conn, song_id, kind=kind)
         return {"annotations": [_row_to_dict(r) for r in rows]}
     finally:
@@ -200,11 +225,11 @@ def get_at_bar_handler(
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
-        return _teach_song_not_found(song_slug)
+        raise _teach_song_not_found(song_slug)
     try:
         song_id = _resolve_song_id(conn, song_slug)
         if song_id is None:
-            return _teach_song_not_found(song_slug)
+            raise _teach_song_not_found(song_slug)
         rows = Q.get_annotations_at_bar(conn, song_id, bar)
         return {"annotations": [_row_to_dict(r) for r in rows]}
     finally:
@@ -225,18 +250,16 @@ def update_handler(
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
-        return _teach_song_not_found(song_slug)
+        raise _teach_song_not_found(song_slug)
     try:
         row = conn.execute(
             "SELECT * FROM annotations WHERE id = ?", (annotation_id,)
         ).fetchone()
         if row is None:
-            return {
-                "error": (
-                    f"no annotation with id {annotation_id!r} in song "
-                    f"{song_slug!r}; use action='list' to see ids."
-                )
-            }
+            raise _AnnotationNotFound(
+                f"no annotation with id {annotation_id!r} in song "
+                f"{song_slug!r}; use action='list' to see ids."
+            )
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["body"] = body
@@ -247,12 +270,10 @@ def update_handler(
         if end_bar is not None:
             kwargs["end_bar"] = end_bar
         if not kwargs:
-            return {
-                "error": (
-                    "update requires at least one of body / kind / start_bar / "
-                    "end_bar to be set."
-                )
-            }
+            raise ValueError(
+                "update requires at least one of body / kind / start_bar / "
+                "end_bar to be set."
+            )
         M.update_annotation(conn, annotation_id=annotation_id, **kwargs)
         conn.commit()
         updated = conn.execute(
@@ -273,7 +294,7 @@ def delete_handler(
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
-        return _teach_song_not_found(song_slug)
+        raise _teach_song_not_found(song_slug)
     try:
         M.delete_annotation(conn, annotation_id=annotation_id)
         conn.commit()

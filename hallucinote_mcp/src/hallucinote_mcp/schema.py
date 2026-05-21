@@ -130,6 +130,25 @@ class Action:
     # owned on the worker thread, and main-thread bouts inside
     # ``run_on_main`` don't try to re-acquire it.
     runs_on_worker: bool = False
+    # Arc 2 / B2: server-side-only execution opt-in.
+    #
+    # Most actions require a Live context to execute, so the server-side
+    # dispatcher returns `needs_remote=True` and the caller forwards over
+    # TCP to the Remote Script side. ``runs_server_side=True`` reverses
+    # this: the action's handler executes DIRECTLY on the MCP server side
+    # (where the agent's Python environment lives) and never forwards.
+    #
+    # This exists for the annotation action surface, whose handlers touch
+    # the local Hallucinote SQLite DB at songs/<slug>/<slug>-<branch>.db
+    # — local-filesystem state that the agent's process can reach but the
+    # Live-vendored Remote Script copy cannot (the vendored copy excludes
+    # the main `hallucinote` package; only `hallucinote_mcp` lives in
+    # Live's User Library). Forwarding to Live would ImportError at
+    # dispatch time.
+    #
+    # Server-side handlers receive ``context=None`` and must NOT rely on
+    # Live API access. They're free to do filesystem / DB / network I/O.
+    runs_server_side: bool = False
 
     def __post_init__(self) -> None:
         if self.tool not in TOOLS:
@@ -165,6 +184,19 @@ class Action:
                 f"requires a handler (declarative_op actions run entirely "
                 f"on the main thread by construction)"
             )
+        if self.runs_server_side:
+            if not has_handler:
+                raise ValueError(
+                    f"Action {self.tool}({self.name!r}): runs_server_side=True "
+                    f"requires a handler (declarative_op needs a Live context "
+                    f"by construction)"
+                )
+            if self.runs_on_worker:
+                raise ValueError(
+                    f"Action {self.tool}({self.name!r}): runs_server_side and "
+                    f"runs_on_worker are mutually exclusive — server-side "
+                    f"actions never reach the Remote Script's worker thread"
+                )
 
     def required_params(self) -> tuple[str, ...]:
         return tuple(p.name for p in self.params if p.required)

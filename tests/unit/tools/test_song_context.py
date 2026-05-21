@@ -101,7 +101,9 @@ def test_defensive_mode_prints_framing_header(repo_with_corpus):
     assert "MAY CONTRADICT your plan" in out
     # The negation flag should fire on the seeded row (snippet will contain
     # the matched "bass" with surrounding context including "Don't").
-    assert "contradiction signal" in out
+    # Match the bold-wrapped per-row marker (distinguishes from the header
+    # itself which mentions the marker name in plain text).
+    assert "**CONTRADICTION SIGNAL:" in out
 
 
 def test_defensive_mode_does_not_flag_non_negated_rows(repo_with_corpus):
@@ -126,8 +128,10 @@ def test_defensive_mode_does_not_flag_non_negated_rows(repo_with_corpus):
     assert rc == 0
     out = buf.getvalue()
     assert "Defensive mode" in out
-    # No negation in the row body, so the warning marker stays absent.
-    assert "contradiction signal" not in out
+    # No negation in the row body, so the per-row bold marker stays absent.
+    # (The header itself mentions the marker name in plain text; the per-
+    # row flag uses `**CONTRADICTION SIGNAL:**` bold-wrapped.)
+    assert "**CONTRADICTION SIGNAL:" not in out
 
 
 # ---------------------------------------------------------------------------

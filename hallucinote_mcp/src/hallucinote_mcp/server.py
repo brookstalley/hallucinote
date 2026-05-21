@@ -1,4 +1,4 @@
-"""FastMCP server — the 10 unified tools as MCP entry points.
+"""FastMCP server — the 11 unified tools as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -81,7 +81,7 @@ Hard constraints:
 
 
 def create_server(name: str = "hallucinote-mcp") -> FastMCP:
-    """Construct the FastMCP server with all 10 tools registered.
+    """Construct the FastMCP server with all 11 tools registered.
 
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
@@ -102,7 +102,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     from .resources import register_resources
     register_resources(mcp)
 
-    # Define the ten tool entry points. Each is a thin wrapper around the
+    # Define the unified tool entry points. Each is a thin wrapper around the
     # shared dispatcher; the wrapper exists only so FastMCP can register a
     # name + docstring for the MCP client to see.
     _register_tool(mcp, "ableton_session", "Global state, master, transport, view, tempo, signature, snapshot.")
@@ -212,7 +212,7 @@ def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:
 
 
 def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
-    """Register one of the ten unified tools on the FastMCP instance.
+    """Register one of the unified tools on the FastMCP instance.
 
     The wrapper exposes a *flat* signature: ``(action, **params)`` where each
     param across every action on this tool becomes a keyword-only argument

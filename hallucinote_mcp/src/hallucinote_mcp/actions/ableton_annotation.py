@@ -104,6 +104,7 @@ register(
             ),
         ),
         handler=annotation_handlers.add_handler,
+        runs_server_side=True,
         example=(
             "ableton_annotation(action='add', song_slug='falling-walking', "
             "kind='intent', body='verse is sad; weight getting worse')"
@@ -142,6 +143,7 @@ register(
             ),
         ),
         handler=annotation_handlers.list_handler,
+        runs_server_side=True,
         example="ableton_annotation(action='list', song_slug='falling-walking')",
     )
 )
@@ -165,6 +167,7 @@ register(
             ParamSpec(name="bar", type="float", minimum=0),
         ),
         handler=annotation_handlers.get_at_bar_handler,
+        runs_server_side=True,
         example=(
             "ableton_annotation(action='get_at_bar', "
             "song_slug='falling-walking', bar=17.0)"
@@ -201,6 +204,7 @@ register(
             ParamSpec(name="end_bar", type="float", required=False),
         ),
         handler=annotation_handlers.update_handler,
+        runs_server_side=True,
         example=(
             "ableton_annotation(action='update', song_slug='falling-walking', "
             "annotation_id='<id from list>', body='updated text')"
@@ -226,6 +230,7 @@ register(
             ParamSpec(name="annotation_id", type="str"),
         ),
         handler=annotation_handlers.delete_handler,
+        runs_server_side=True,
         example=(
             "ableton_annotation(action='delete', song_slug='falling-walking', "
             "annotation_id='<id from list>')"

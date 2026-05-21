@@ -22,7 +22,7 @@ v1 shipped three pieces of per-machine state (`/tmp/ableton-push-snapshot.json`,
 
 ### Composer intent is product data, not session memory
 
-`requests` + `events` already audit *what* changed. The user-named gap is *why* — and the gap is wide enough that every new session starts cold against structural DB state, even though the structural data is rich. v1.1's Arc 2 extends `requests` for provenance (prompts, cycles, rationale) and adds an `annotations` table for the curated subset worth keeping forever. Both ship with retrieval surfaces (`/decisions`, session-briefing wiring) so the next session arrives with the song's working memory loaded.
+`requests` + `events` already audit *what* changed. The user-named gap is *why* — and the gap is wide enough that every new session starts cold against structural DB state, even though the structural data is rich. v1.1's Arc 2 extends `requests` for provenance (prompts, cycles, rationale) and surfaces the `annotations` table (which Wave 8 shipped) through MCP so agents can write/read it during composition. Retrieval rides on the existing `/song-context` skill, extended with defensive + generative modes; session-briefing wiring stays out of scope per the chunk-time decision below (prawduct-framework upstream territory).
 
 ---
 

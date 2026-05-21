@@ -72,9 +72,10 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
     The Remote Script side serializes ``Response.to_dict()``; we round-trip
     back into the dataclass for type-safe access on the server side.
     """
+    warnings = _maybe_tuple(obj.get("warnings"))
     is_ok = bool(obj.get("ok"))
     if is_ok:
-        return Response(ok=True, result=obj.get("result"))
+        return Response(ok=True, result=obj.get("result"), warnings=warnings)
     return Response(
         ok=False,
         error=obj.get("error", ""),
@@ -83,6 +84,7 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
         optional=_maybe_tuple(obj.get("optional")),
         example=obj.get("example"),
         hint=obj.get("hint"),
+        warnings=warnings,
     )
 
 

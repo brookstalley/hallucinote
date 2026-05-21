@@ -13,6 +13,7 @@ from hallucinote_mcp.wire import (
     Request,
     Response,
     check_version_compat,
+    check_version_compat_with_override,
     decode_messages,
     encode_message,
     error,
@@ -61,11 +62,44 @@ def test_request_from_dict_defaults_missing_server_version():
             {"tool": "x", "action": "y", "params": {}, "server_version": 42},
             "server_version must be a string",
         ),
+        (
+            {
+                "tool": "x",
+                "action": "y",
+                "params": {},
+                "allow_version_mismatch": "yes",
+            },
+            "allow_version_mismatch must be a boolean",
+        ),
     ],
 )
 def test_request_from_dict_validates(obj, message):
     with pytest.raises(ValueError, match=message):
         Request.from_dict(obj)
+
+
+def test_request_round_trips_allow_version_mismatch():
+    req = Request(
+        tool="ableton_session",
+        action="info",
+        params={},
+        allow_version_mismatch=True,
+    )
+    serialized = req.to_dict()
+    assert serialized["allow_version_mismatch"] is True
+    assert Request.from_dict(serialized) == req
+
+
+def test_request_to_dict_omits_default_allow_version_mismatch():
+    # Default is False; don't ship it on the wire — keeps the request
+    # small and signals "no opt-in needed" to the Live side.
+    req = Request(tool="ableton_session", action="help")
+    assert "allow_version_mismatch" not in req.to_dict()
+
+
+def test_request_from_dict_defaults_missing_allow_version_mismatch():
+    obj = {"tool": "ableton_session", "action": "help", "params": {}}
+    assert Request.from_dict(obj).allow_version_mismatch is False
 
 
 # ---------- Version handshake ----------
@@ -100,6 +134,74 @@ def test_check_version_compat_mismatch_names_both_versions():
     assert "/mcp" in (resp.hint or "")
 
 
+def test_version_mismatch_hint_mentions_allow_version_mismatch_escape_hatch():
+    # The error path is the natural discovery surface for the bypass —
+    # agents hit it once, see the hint, use the flag next call. If this
+    # affordance disappears from the hint, the bypass becomes invisible.
+    resp = check_version_compat("0.1.0", "0.2.0")
+    assert resp is not None
+    assert "allow_version_mismatch" in (resp.hint or "")
+
+    empty_resp = check_version_compat("", "0.2.0")
+    assert empty_resp is not None
+    assert "allow_version_mismatch" in (empty_resp.hint or "")
+
+
+# ---------- Version handshake bypass (allow_version_mismatch) ----------
+
+
+def test_check_version_compat_with_override_match_returns_clean():
+    refusal, warning = check_version_compat_with_override(
+        "0.2.0", "0.2.0", allow_mismatch=False
+    )
+    assert refusal is None
+    assert warning is None
+    # allow_mismatch has no effect when versions agree.
+    refusal2, warning2 = check_version_compat_with_override(
+        "0.2.0", "0.2.0", allow_mismatch=True
+    )
+    assert refusal2 is None
+    assert warning2 is None
+
+
+def test_check_version_compat_with_override_drift_no_allow_refuses():
+    refusal, warning = check_version_compat_with_override(
+        "0.1.0", "0.2.0", allow_mismatch=False
+    )
+    assert refusal is not None
+    assert refusal.ok is False
+    assert warning is None
+
+
+def test_check_version_compat_with_override_drift_with_allow_proceeds_with_warning():
+    refusal, warning = check_version_compat_with_override(
+        "0.1.0", "0.2.0", allow_mismatch=True
+    )
+    assert refusal is None
+    assert warning is not None
+    # Warning must surface the actual versions, the development-only intent,
+    # and the data-corruption risk — these are load-bearing for caller
+    # awareness; the only governance on the bypass is that the caller
+    # sees what they opted into.
+    lower = warning.lower()
+    assert "0.1.0" in warning
+    assert "0.2.0" in warning
+    assert "data corruption" in lower
+    assert "development" in lower
+
+
+def test_check_version_compat_with_override_empty_with_allow_proceeds_with_warning():
+    # The empty-version branch (no handshake field at all) is also bypassable.
+    # The warning should report "<unset>" so the caller can see WHICH branch.
+    refusal, warning = check_version_compat_with_override(
+        "", "0.2.0", allow_mismatch=True
+    )
+    assert refusal is None
+    assert warning is not None
+    assert "<unset>" in warning
+    assert "0.2.0" in warning
+
+
 def test_ok_response_serializes_result():
     resp = ok({"tempo": 132})
     assert resp.to_dict() == {"ok": True, "result": {"tempo": 132}}
@@ -116,6 +218,28 @@ def test_error_response_emits_only_set_fields():
     assert "required" not in d
     assert "optional" not in d
     assert "hint" not in d
+    assert "warnings" not in d
+
+
+def test_response_with_warnings_serializes_them():
+    # warnings ride alongside ok=True or ok=False — they don't change ok.
+    resp_ok = Response(ok=True, result={"x": 1}, warnings=("be careful",))
+    assert resp_ok.to_dict() == {
+        "ok": True,
+        "result": {"x": 1},
+        "warnings": ["be careful"],
+    }
+    resp_err = Response(ok=False, error="bad", warnings=("also be careful",))
+    d = resp_err.to_dict()
+    assert d["ok"] is False
+    assert d["error"] == "bad"
+    assert d["warnings"] == ["also be careful"]
+
+
+def test_response_empty_warnings_omitted_from_dict():
+    # None or empty tuple → no `warnings` key on the wire.
+    assert "warnings" not in Response(ok=True, result=1, warnings=None).to_dict()
+    assert "warnings" not in Response(ok=True, result=1, warnings=()).to_dict()
 
 
 # ---------- Framing ----------

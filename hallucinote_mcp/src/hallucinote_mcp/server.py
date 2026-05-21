@@ -118,7 +118,13 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     return mcp
 
 
-def handle_tool_call(tool: str, action: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def handle_tool_call(
+    tool: str,
+    action: str,
+    params: dict[str, Any] | None = None,
+    *,
+    allow_version_mismatch: bool = False,
+) -> dict[str, Any]:
     """Process one tool invocation. Returns the wire response as a dict.
 
     Decomposed from the FastMCP decorator wrappers so tests can drive it
@@ -133,8 +139,18 @@ def handle_tool_call(tool: str, action: str, params: dict[str, Any] | None = Non
          original request to the Remote Script over TCP.
       3. Otherwise (validation error or help result) return directly
          without touching the wire.
+
+    ``allow_version_mismatch`` propagates to ``Request.allow_version_mismatch``
+    and rides along to the Remote Script side as a per-call bypass of the
+    strict version handshake. Default ``False`` preserves the strict
+    behavior verbatim — the bypass is opt-in.
     """
-    request = Request(tool=tool, action=action, params=params or {})
+    request = Request(
+        tool=tool,
+        action=action,
+        params=params or {},
+        allow_version_mismatch=allow_version_mismatch,
+    )
 
     server_response = dispatch(request, context=None)
 
@@ -229,13 +245,32 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
         )
         annotations[spec.name] = Optional[py_type]
 
+    # Envelope-level escape hatch: per-call bypass of the strict
+    # server/Remote-Script version handshake. Injected as a synthetic
+    # kwarg on every tool's signature so agents can reach it without
+    # each action's schema needing to know about it. The wrapper pops
+    # it before the dispatcher sees `params`, so action-level validation
+    # never rejects it as "unknown param."
+    sig_params.append(
+        inspect.Parameter(
+            "allow_version_mismatch",
+            inspect.Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=Optional[bool],
+        )
+    )
+    annotations["allow_version_mismatch"] = Optional[bool]
+
     def wrapper(**kwargs: Any) -> dict[str, Any]:
         action = kwargs.pop("action")
+        allow_version_mismatch = bool(kwargs.pop("allow_version_mismatch", None) or False)
         # Drop None-valued kwargs — they represent "not supplied" by the
         # MCP client. Real None payloads aren't a thing in our action
         # surface (the dispatcher validates required fields below).
         passed = {k: v for k, v in kwargs.items() if v is not None}
-        return handle_tool_call(tool_name, action, passed)
+        return handle_tool_call(
+            tool_name, action, passed, allow_version_mismatch=allow_version_mismatch
+        )
 
     wrapper.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         sig_params, return_annotation=dict

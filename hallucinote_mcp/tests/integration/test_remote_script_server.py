@@ -164,6 +164,66 @@ def test_end_to_end_version_mismatch_returns_structured_error(running_server):
     assert "9.9.9-WRONG" in (response.error or "")
 
 
+def test_end_to_end_allow_version_mismatch_bypasses_drift(running_server):
+    """When the caller opts into the bypass AND drift exists, the dispatch
+    proceeds and the response carries a `warnings` advisory naming the
+    data-corruption risk. This is the load-bearing end-to-end test for Q1
+    — without it, a Remote Script regression that ignored the field would
+    pass unit tests but fail at runtime.
+    """
+    _server, root, port = running_server
+    bypassed = Request(
+        tool="ableton_session",
+        action="get_tempo",
+        server_version="9.9.9-WRONG",
+        allow_version_mismatch=True,
+    )
+    response = client_send(bypassed, port=port)
+    # Dispatch proceeded — version error was bypassed.
+    assert response.ok is True
+    assert response.result == root.tempo
+    # Warning rode along in the response so the bypass is visible.
+    assert response.warnings is not None
+    assert len(response.warnings) == 1
+    warning = response.warnings[0]
+    assert "9.9.9-WRONG" in warning
+    assert "data corruption" in warning.lower()
+    assert "development" in warning.lower()
+
+
+def test_end_to_end_allow_version_mismatch_false_still_refuses(running_server):
+    """Default behavior (no opt-in) MUST refuse on drift — strict-by-default
+    is the chunk's load-bearing safety property."""
+    _server, _root, port = running_server
+    request = Request(
+        tool="ableton_session",
+        action="get_tempo",
+        server_version="9.9.9-WRONG",
+        allow_version_mismatch=False,
+    )
+    response = client_send(request, port=port)
+    assert response.ok is False
+    assert "version mismatch" in (response.error or "").lower()
+
+
+def test_end_to_end_allow_version_mismatch_no_drift_no_warning(running_server):
+    """allow_version_mismatch is a no-op when versions agree — no warning
+    attached, behavior identical to default."""
+    from hallucinote_mcp import __version__ as local_version
+
+    _server, root, port = running_server
+    request = Request(
+        tool="ableton_session",
+        action="get_tempo",
+        server_version=local_version,
+        allow_version_mismatch=True,
+    )
+    response = client_send(request, port=port)
+    assert response.ok is True
+    assert response.result == root.tempo
+    assert response.warnings is None
+
+
 def test_end_to_end_missing_server_version_returns_handshake_error(running_server):
     """A request that omits ``server_version`` should be rejected with the
     handshake-missing error. We can't drive this through ``client.send``

@@ -15,7 +15,7 @@ from hallucinote_mcp.server import (
 )
 
 
-def test_create_server_registers_ten_tools():
+def test_create_server_registers_all_tools():
     server = create_server()
     names = registered_tool_names(server)
     assert sorted(names) == sorted(schema.TOOLS)
@@ -84,7 +84,44 @@ def test_handle_tool_call_forwards_to_client_when_executor_needs_live(
     assert forwarded_request.tool == "ableton_session"
     assert forwarded_request.action == "set_tempo"
     assert forwarded_request.params == {"value": 132.0}
+    # Default (no opt-in) — the bypass field stays False on the forwarded
+    # request, preserving the strict-by-default contract.
+    assert forwarded_request.allow_version_mismatch is False
     assert response == {"ok": True, "result": {"new_tempo": 132.0}}
+
+
+def test_handle_tool_call_propagates_allow_version_mismatch_to_remote(
+    isolated_registry,
+):
+    """When the caller opts into the bypass, the flag MUST ride through to
+    the forwarded request — otherwise the Remote Script side never sees it
+    and refuses on drift as before."""
+    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
+    from hallucinote_mcp.wire import Response
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session",
+            name="set_tempo",
+            description="",
+            params=(ParamSpec(name="value", type="float"),),
+            declarative_op=LiveOp(
+                kind="property_write", target="song", property="tempo"
+            ),
+        )
+    )
+    isolated_registry.register_help_actions()
+
+    forwarded = Response(ok=True, result={"new_tempo": 132.0})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_session",
+            "set_tempo",
+            {"value": 132.0},
+            allow_version_mismatch=True,
+        )
+    forwarded_request = send.call_args.args[0]
+    assert forwarded_request.allow_version_mismatch is True
 
 
 def test_handle_tool_call_translates_connection_error(isolated_registry):

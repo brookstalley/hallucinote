@@ -409,6 +409,9 @@ def execute_push(
         payload={"session_id": session_id, "song_id": song_id},
         song_id=song_id,
         reason=reason,
+        metadata=M.provenance_metadata(
+            extra={"driver": "push_cli", "session_id": session_id},
+        ),
     )
 
     phases = push.plan_push_song(conn, song_id=song_id, session_id=session_id)

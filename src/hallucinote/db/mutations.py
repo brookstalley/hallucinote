@@ -126,6 +126,72 @@ NoteDict = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Provenance metadata capture (Arc 2 / B4)
+# ---------------------------------------------------------------------------
+
+
+def provenance_metadata(
+    *,
+    model: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Capture the standard provenance signals that ride on `requests.metadata_json`:
+    git sha (short), branch, hostname, optional model name, plus any caller-
+    provided extras. Best-effort: a failed git/socket probe drops the
+    affected key rather than raising — provenance is observational, not
+    operational.
+
+    Used by push / pull / capture drivers (Arc 2 / B4) so every audited
+    cycle carries the platform context that lets a later session
+    reconstruct "where did this come from."
+    """
+    import socket
+    import subprocess
+
+    sha: str | None = None
+    branch: str | None = None
+    # 2-second cap: every build_session runs this on entry, so a hung git
+    # invocation (locked .git, remote-helper stall) would freeze every
+    # compose cycle. subprocess.TimeoutExpired falls into the except below.
+    _GIT_TIMEOUT_SECONDS = 2.0
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        branch = subprocess.check_output(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        hostname: str | None = socket.gethostname()
+    except OSError:
+        hostname = None
+
+    out: dict[str, Any] = {}
+    if sha:
+        out["git_sha"] = sha
+    if branch:
+        out["branch"] = branch
+    if hostname:
+        out["hostname"] = hostname
+    if model:
+        out["model"] = model
+    if extra:
+        out.update(extra)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Internal: id generation + event emission
 # ---------------------------------------------------------------------------
 
@@ -203,6 +269,9 @@ def create_request(
     song_id: str | None = None,
     reason: str | None = None,
     kind: str = "mutate",
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Create a request row. Returns the request id.
 
@@ -210,6 +279,13 @@ def create_request(
     events thread back to the originating intent. `kind` classifies the
     cycle type — see `REQUEST_KINDS`; defaults to 'mutate' for back-compat
     with pre-W8 callers.
+
+    `prompt_text` is the verbatim seed prompt for compose / push / pull
+    cycles (typically the user's natural-language request). `parent_id`
+    self-FKs so an MCP auto-`mutate` request can chain to its enclosing
+    `compose` parent — degraded but always-present provenance. `metadata`
+    is a free-form dict for contextual signals (model, git_sha, branch,
+    session_id, hostname, etc.); stored as JSON.
     """
     if actor not in E.ACTORS:
         raise ValueError(f"invalid actor {actor!r}; expected one of {sorted(E.ACTORS)}")
@@ -217,17 +293,39 @@ def create_request(
         raise ValueError(
             f"invalid kind {kind!r}; expected one of {sorted(REQUEST_KINDS)}"
         )
+    if parent_id is not None:
+        parent_row = conn.execute(
+            "SELECT id FROM requests WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent_row is None:
+            raise ValueError(
+                f"invalid parent_id {parent_id!r}; no such request"
+            )
     rid = _uuid()
     payload_json = json.dumps(payload, separators=(",", ":")) if payload is not None else None
+    metadata_json = (
+        json.dumps(metadata, separators=(",", ":")) if metadata is not None else None
+    )
     conn.execute(
-        """INSERT INTO requests (id, actor, intent, payload_json, song_id, kind)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (rid, actor, intent, payload_json, song_id, kind),
+        """INSERT INTO requests (
+               id, actor, intent, payload_json, song_id, kind,
+               prompt_text, parent_id, metadata_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rid, actor, intent, payload_json, song_id, kind,
+            prompt_text, parent_id, metadata_json,
+        ),
     )
     _emit(
         conn,
         E.REQUEST_CREATED,
-        {"request_id": rid, "intent": intent, "payload": payload, "kind": kind},
+        {
+            "request_id": rid,
+            "intent": intent,
+            "payload": payload,
+            "kind": kind,
+            "parent_id": parent_id,
+        },
         song_id=song_id,
         actor=actor,
         request_id=rid,
@@ -286,6 +384,9 @@ def request(
     payload: dict[str, Any] | None = None,
     song_id: str | None = None,
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[str]:
     """Ergonomic open + close lifecycle for kind-tagged request cycles.
 
@@ -293,9 +394,13 @@ def request(
     On normal exit, closes with outcome='ok' + measured duration_ms. On
     exception, closes with outcome='failed' and re-raises.
 
+    `prompt_text`, `parent_id`, and `metadata` thread directly to
+    `create_request` — see its docstring.
+
     Usage:
         with M.request(conn, actor='llm', intent='build verse',
-                       kind='compose') as rid:
+                       kind='compose',
+                       prompt_text="make me a moody verse in Dm") as rid:
             M.replace_clip_notes(conn, clip_id=..., request_id=rid, ...)
     """
     rid = create_request(
@@ -306,6 +411,9 @@ def request(
         song_id=song_id,
         reason=reason,
         kind=kind,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=metadata,
     )
     start_ns = time.monotonic_ns()
     outcome = "ok"
@@ -3620,6 +3728,9 @@ def build_session(
     song_name: str,
     owner: str = "build.py",
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[BuildSession]:
     """State-converger context manager for a song's build.py (W12-A).
 
@@ -3640,8 +3751,23 @@ def build_session(
     typically `M.create_song(name=song_name)`, which the tombstone path
     needs to find rows by song. If a song with `song_name` doesn't exist
     at exit time (e.g., create_song was never called), tombstone is a no-op.
+
+    Arc 2 / B4 provenance: `prompt_text` (user's compose prompt) and
+    `parent_id` (parent request, if this build runs inside an outer
+    cycle) thread directly to `create_request`. `metadata` augments the
+    auto-captured `provenance_metadata()` signals (git_sha, branch,
+    hostname) — caller-provided keys override auto-captured ones. If
+    nothing is provided, auto-capture still fires so every compose
+    cycle gets the standard platform context.
     """
     bs = BuildSession(conn, song_name=song_name, owner=owner)
+    # Auto-capture platform metadata so EVERY build session gets the
+    # standard signals — callers don't need to remember to opt in. They
+    # can still augment via the explicit `metadata=` kwarg; explicit
+    # keys override auto-captured ones (the caller knows better).
+    auto_meta = provenance_metadata()
+    if metadata:
+        auto_meta.update(metadata)
     # Open a request to carry the build's actor + provenance for child events.
     bs.request_id = create_request(
         conn,
@@ -3649,6 +3775,9 @@ def build_session(
         intent=f"build {song_name} (owner={owner})",
         kind="compose",
         reason=reason,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=auto_meta if auto_meta else None,
     )
     bs._token = _current_build_session.set(bs)
     try:

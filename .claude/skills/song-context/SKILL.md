@@ -51,12 +51,25 @@ python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --ta
 
 # Combined
 python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --kind decision --tags pad
+
+# Defensive mode — surface contradiction signals before composing
+python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --defensive "sidechain"
+
+# Generative mode — also surface related-by-tag rows the caller hasn't asked for
+python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --generative "chorus"
 ```
 
 Translate the caller's topic + any natural-language filters into the appropriate flag combination:
 - Bar ranges ("bars 33-40", "the bridge section") → `--bars START:END`. Use the overview doc for section→bar mapping if needed.
 - Track names → `--track "NAME"` (resolves to track_id via `tracks.name` lookup). Use `--scope track` only when you want to filter further.
 - Conceptual queries → use `topic` for fulltext + optional `--kind` / `--scope` filters.
+
+**Two retrieval orientations** (Arc 2 / B5):
+
+- **`--defensive`** — adds a framing header ("these items MAY CONTRADICT your plan") and flags any row whose snippet carries negation/constraint language (`don't / never / avoid / shouldn't / ...`). Use when the caller is about to compose against an element and you want them to read constraints BEFORE writing. Same query surface; the change is in how results are framed.
+- **`--generative`** — after the topic matches, runs a second pass surfacing rows that share at least one tag with the matches (under a "Related context" heading). Use when the caller is exploring connections and could benefit from related prior thinking they haven't queried for. Single additional SQL pass; semantic search (embeddings) is v1.2+.
+
+These flags are orthogonal — combine them when both apply.
 
 **Step 3 — Display the result.** The script outputs markdown — show it to the caller as-is. Then, if a result looks load-bearing for the caller's work, **Read the file** so the full prose lands in the caller's context.
 

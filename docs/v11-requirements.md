@@ -22,7 +22,7 @@ v1 shipped three pieces of per-machine state (`/tmp/ableton-push-snapshot.json`,
 
 ### Composer intent is product data, not session memory
 
-`requests` + `events` already audit *what* changed. The user-named gap is *why* — and the gap is wide enough that every new session starts cold against structural DB state, even though the structural data is rich. v1.1's Arc 2 extends `requests` for provenance (prompts, cycles, rationale) and adds an `annotations` table for the curated subset worth keeping forever. Both ship with retrieval surfaces (`/decisions`, session-briefing wiring) so the next session arrives with the song's working memory loaded.
+`requests` + `events` already audit *what* changed. The user-named gap is *why* — and the gap is wide enough that every new session starts cold against structural DB state, even though the structural data is rich. v1.1's Arc 2 extends `requests` for provenance (prompts, cycles, rationale) and surfaces the `annotations` table (which Wave 8 shipped) through MCP so agents can write/read it during composition. Retrieval rides on the existing `/song-context` skill, extended with defensive + generative modes; session-briefing wiring stays out of scope per the chunk-time decision below (prawduct-framework upstream territory).
 
 ---
 
@@ -69,21 +69,33 @@ Follow-ons live in Arc 3 (CLI orchestration of `browser_dry_runs`) and Arc 1 (`c
 
 ## Arc 2 — Provenance + annotations (user-flagged HIGH PRIORITY)
 
-**Why parallel with Arc 1.** Independent code surface — DB schema + mutators + MCP, not push planner. Two senior backlog entries (annotations + provenance log) explicitly user-tagged HIGH PRIORITY.
+**Originally framed as.** Five chunks (B1-B5) — annotations schema + MCP, requests provenance extension, driver wiring, decisions retrieval skill.
 
-**Note on Wave 8 (v1).** v1's Wave 8 shipped a markdown-corpus + FTS5 + events-backed annotation/decision layer (`feat/wave-8-song-metadata`, closed 2026-05-19). Arc 2 *extends* that surface, it does not duplicate it — the Provenance items below tighten the `requests` table's rationale-capture, and the Annotations items here add structured-in-DB annotations alongside the existing markdown-ref shape. Before chunking, read W8-A/B/C's shipped artifacts and decide for each item: "extend existing W8 surface" vs "add adjacent column/table." The split below is a starting frame, not a load-bearing commitment.
+**Scope audit (2026-05-21).** Wave 8 (`feat/wave-8-song-metadata`, closed 2026-05-19) shipped more than this document originally credited. Code-level audit:
 
-**Items:**
+| Chunk | Status | Evidence |
+|---|---|---|
+| **B1** — annotations table | **Shipped** (W8-C) | `annotations` table (`schema.sql:509-527`) with the exact polymorphic shape v11 specified (`song_id` + nullable `track_id` + nullable `start_bar`/`end_bar` + `kind` enum {intent, stylistic, structure, reference, todo}); `add_annotation`/`update_annotation`/`delete_annotation` mutators (`mutations.py:341-493`); `get_annotations_for_song`/`_for_track`/`_at_bar` queries (`queries.py:670-740`); `ANNOTATION_ADDED`/`UPDATED`/`REMOVED` events. |
+| **B3** — provenance on `requests` | **Partial** (W8-B) | `kind` + `duration_ms` + `outcome` columns, `REQUEST_CLOSED` event, `M.request(...)` context manager shipped. Missing per v11: `prompt_text`, `parent_id`, `metadata_json`. |
+| **B5** — decisions retrieval | **Partial** (W8-A) | `/song-context` skill ships read-only FTS5 lookup over `markdown_refs`. v11's defensive+generative shape is an *extension* of this, not a new sibling skill. |
 
-- **B1 — Annotations table.** Schema + mutators + queries + events. Polymorphic shape (`song_id` + nullable `track_id` + nullable `start_bar`/`end_bar` + `kind` enum {intent, stylistic, structure, reference, todo} + `body`). Three scoping levels (song / time / track) fall out of column nullability. Events: `ANNOTATION_ADDED` / `ANNOTATION_UPDATED` / `ANNOTATION_REMOVED`.
-- **B2 — Annotations MCP surface + session-briefing wiring.** `ableton_annotation` tool (or action on `ableton_session`): `list`, `add`, `update`, `delete`, `get_at_bar`. Resource `hallucinote://annotations/<song_id>` for cheap full-song reads. Session-briefing hook surfaces "song annotations exist; read them before composing" when a file in `songs/<name>/` is touched.
-- **B3 — Provenance extension on `requests`.** Add columns: `kind` (`compose` | `push` | `pull` | `capture` | `analyze` | `mutate`), `prompt_text`, `duration_ms`, `outcome` (`ok` | `partial` | `failed`), `parent_id` (self-FK), `metadata_json` (`{model, git_sha, branch, session_id, hostname}`). `M.open_request` / `M.close_request` / `M.request(...)` context-manager helper.
-- **B4 — Wire provenance into push/pull/capture/compose drivers.** Push/pull skills open `kind='push'`/`kind='pull'` request before fan-out, close after `apply_*_results`. Capture opens `kind='capture'` with Live-set path + timestamp. Compose sessions open `kind='compose'` at session start with the user's initial prompt as `prompt_text`. MCP per-tool dispatcher auto-opens `kind='mutate'` if no parent exists (degraded but always-present provenance).
-- **B5 — `/decisions [topic]` skill + `find_related_decisions` retrieval.** Analogous to `/learnings`. Surfaces decisions about the same element (defensive — challenge contradictions) AND related concepts (generative — propose connections the user hasn't drawn yet). Single SQL `LIKE` pass for v1.1; semantic search is a v1.2+ follow-on.
+**Naming decision (2026-05-21).** Keep `/song-context` rather than renaming to `/decisions` — the underlying corpus spans decisions, annotations, AND structural-facts. "Context" is semantically broader and matches the project's object-action skill naming.
 
-**Sequencing within Arc 2.** B1 + B3 in parallel (schema chunks, independent). B2 + B4 next (wiring; each depends on its own schema). B5 last (skill atop both).
+**Out of Arc 2 (per user direction 2026-05-21).** Session-briefing wiring (`tools/product-hook` hook from original B2) is dropped — that surface is prawduct-framework upstream territory and doesn't ship in this product's repo.
 
-**Out of Arc 2.** Transcript persistence (just the seed prompt — full conversation transcripts live in Claude Code's storage). Multi-user attribution. Cross-DB request merge. `M.promote_decision_to_annotation` (deferred — natural after both layers settle).
+**Folded in.** **Q1 — `allow_version_mismatch` parameter on MCP envelope.** Independent of all arcs but small enough to ride along; closes the dev-loop friction where every server-side Python edit currently requires reinstall + Live restart before any introspection call.
+
+### Remaining Arc 2 work
+
+- **Q1 — `allow_version_mismatch` MCP envelope parameter.** Per-call boolean (default `false`) on the dispatch envelope. When `true` AND server/Remote-Script version drift exists, the action dispatches anyway and the response carries `warnings: [<advisory>]` with explicit "can result in data corruption; development only" language. Strict-by-default preserved; the existing version-mismatch error's `hint` mentions the escape hatch so the affordance is discoverable through the error path. Closes the dev-loop friction where pre-mutation introspection currently blocks on a full reinstall + Live restart cycle.
+- **B2 — annotations MCP surface.** `ableton_annotation` tool with actions `list`, `add`, `update`, `delete`, `get_at_bar` wrapping the W8-C mutators/queries. **Session-briefing wiring excluded** per the out-of-scope note above. The original v11 framing also listed `hallucinote://annotations/<song_id>` as a templated resource for cheap full-song reads — **deferred during build** (the `list` action covers the same use case; templated resources require separate FastMCP resource-template plumbing). Without the tool surface, W8-C's annotations table is storage without affordance — agents can't read or write annotations during composition.
+- **B3 residual — missing provenance columns.** Add `prompt_text` (TEXT, nullable), `parent_id` (TEXT self-FK, nullable), `metadata_json` (TEXT JSON, nullable — `{model, git_sha, branch, session_id, hostname}`) to `requests`. Extend `M.create_request` + `M.request(...)` context manager to accept these on open. Existing W8-B columns (`kind`, `duration_ms`, `outcome`) untouched.
+- **B4 — wire provenance into push/pull/compose drivers.** Push/pull skills open `kind='push'`/`kind='pull'` request before fan-out; close after `apply_*_results`. Compose sessions open `kind='compose'` via `M.build_session` at session start, auto-capturing platform metadata. Capture flows are subsumed under compose (replay_capture is called from inside build_session). The original v11 framing also listed an MCP dispatcher auto-`kind='mutate'` parent — **deferred during build** (the MCP dispatcher has no DB awareness today; threading one in is a structural change for a future chunk).
+- **B5 — extend `/song-context` with defensive + generative modes.** Add `--defensive` (surface decisions about the same element — challenge contradictions) and `--generative` (surface related concepts — propose connections the user hasn't drawn) flags. Single SQL `LIKE` pass for v1.1; semantic search is a v1.2+ follow-on.
+
+**Sequencing.** Q1 first (smallest, unblocks dev loop). B3-residual + B2 next (independent surfaces; either order). B4 after B3-residual (depends on the new columns). B5 last (skill extension; bundles cleanly here even though it has no hard dependency on the other Arc 2 chunks). Single cumulative Critic + PR at arc close (per `feedback_critic_cadence_for_small_chunks`).
+
+**Out of Arc 2.** Transcript persistence (just the seed prompt — full conversation transcripts live in Claude Code's storage). Multi-user attribution. Cross-DB request merge. `M.promote_decision_to_annotation` (deferred — natural after both layers settle). Session-briefing wiring (prawduct-framework upstream).
 
 ---
 
@@ -165,11 +177,11 @@ Arc 6 (defensive) ────────────── opportunistic janit
 Arc 7 (tooling) ─────────────── opportunistic
 ```
 
-**Suggested next sessions (Arc 1 is in flight on `feat/arc-1-push-coherence` / PR #71):**
+**Suggested next sessions (Arc 1 closed at v1.1.0 on 2026-05-21; Arc 2 in flight on `feat/arc-2-provenance-annotations`):**
 
-1. **Arc 1 head** — A1 (coherence layer) + A2 (devices idempotency). Closes the recurring state-drift bugs.
-2. **Arc 2 head** — B1 + B3 (annotations + provenance schemas). User-flagged HIGH; independent of Arc 1.
-3. **Arc 1 tail + Arc 3 head** — A3 (drum mapping) + C1 (browser_dry_runs CLI). Fixes drum songs + closes R-2 follow-on.
+1. **Arc 2 (in flight)** — Q1 + B2 + B3 residual + B4 + B5. User-authorized end-to-end run after the Wave 8 audit trimmed B1 to nothing and B3/B5 to residuals.
+2. **Arc 3 head** — C1 (browser_dry_runs CLI orchestration). Closes the R-2 follow-on cleanly; ~1 chunk.
+3. **Arc 4 (opportunistic)** — D1-D5 loader robustness leaves; bundle when convenient.
 
 The remaining arcs are mostly mop-up that can interleave with creative work as that work surfaces specific pain.
 

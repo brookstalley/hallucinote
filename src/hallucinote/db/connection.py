@@ -64,6 +64,18 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Existing devices get NULL; mutators set it when build.py / the
     # snapshot uses preset_query instead of preset_uri.
     ("devices", "preset_query", "TEXT"),
+    # Arc 2 / B3: requests gains the provenance rationale columns the
+    # original W8-B chunk didn't ship. `prompt_text` carries the verbatim
+    # seed prompt for compose / push / pull cycles. `parent_id` self-FKs
+    # so an MCP auto-`mutate` request can chain to its enclosing
+    # `compose` parent (degraded but always-present provenance). `metadata_json`
+    # holds `{model, git_sha, branch, session_id, hostname, ...}` — a
+    # bag of contextual signals that vary per call but aren't worth
+    # individual columns. Existing rows get NULL across all three;
+    # mutators populate them at create_request time.
+    ("requests", "prompt_text", "TEXT"),
+    ("requests", "parent_id", "TEXT REFERENCES requests(id) ON DELETE SET NULL"),
+    ("requests", "metadata_json", "TEXT"),
 )
 
 

@@ -4,6 +4,91 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
+
+<!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=unreleased scope=provenance+annotations-mcp+dev-ergonomics -->
+
+After a Wave 8 audit found that B1 had already shipped wholesale and
+B3/B5 were partial, Arc 2 reduced to: Q1 (dev-loop dispatcher param)
++ B3-residual (three missing `requests` columns) + B2 (the agent-facing
+annotations MCP surface W8-C didn't ship) + B4 (provenance wiring into
+drivers) + B5 (defensive/generative `/song-context` modes).
+
+**Q1 — `allow_version_mismatch` MCP envelope bypass.** The strict
+server/Remote-Script version handshake is correct for production but
+poisonous for the dev loop where every Python edit invalidates the
+source fingerprint. New envelope-level `allow_version_mismatch: bool`
+on `wire.Request` (default `False`) lets a caller opt into dispatching
+across drift. On bypass+drift, the response carries a `warnings: [...]`
+advisory naming the data-corruption risk and "development only" intent;
+on bypass+no-drift it's a no-op. The existing version-mismatch error's
+`hint` now mentions the escape hatch so agents discover it through the
+error path itself (no docs lookup). Wired through `wire.Request`,
+`wire.Response.warnings`, new `check_version_compat_with_override`
+helper, FastMCP `_register_tool` synthetic-param injection, and
+Remote Script `_handle_client`. Covered by unit + 3 end-to-end TCP
+integration tests.
+
+**B3 residual — provenance rationale columns on `requests`.** Adds
+`prompt_text` (verbatim seed prompt), `parent_id` (self-FK so child
+cycles chain to enclosing parents), and `metadata_json` (`{model,
+git_sha, branch, hostname, ...}`) via the same idempotent
+`_ensure_added_columns` path W8-B used. Existing rows get NULL on all
+three; `create_request` + `M.request(...)` context manager accept the
+new fields. Invalid `parent_id` raises (vs silent dangling FK).
+
+**B2 — `ableton_annotation` MCP tool.** W8-C shipped the annotations
+table + mutators + queries but no agent-facing surface — storage
+without affordance. New unified tool wraps `M.add_annotation` /
+`update_annotation` / `delete_annotation` / `Q.get_annotations_for_song`
+/ `get_annotations_at_bar` via `add` / `list` / `get_at_bar` / `update`
+/ `delete` actions. Handler resolves `song_slug` → per-song DB →
+song row + 1-based `track_index` → `track_id`. Teaching errors on
+unknown slug / unknown track / unknown annotation_id. Three-line
+Python-via-Bash workaround replaced with a single MCP call so the
+"annotate as you compose" habit becomes cheap. Resource
+`hallucinote://annotations/<song_slug>` deferred (templated-resource
+test plumbing; the `list` action covers the read use case).
+Session-briefing wiring dropped per user direction (prawduct-framework
+upstream territory).
+
+**B4 — provenance wiring into drivers.** New `M.provenance_metadata()`
+helper (best-effort git_sha/branch/hostname + caller extras).
+`build_session` auto-captures via this helper AND accepts explicit
+`prompt_text`/`parent_id`/`metadata` kwargs (caller-provided keys
+override auto-captured). `push_execute` and `pull_cli` pass
+`metadata={"driver": ..., "session_id": ..., +/- "domain": ...}` on
+their `M.create_request` calls. Every compose / push / pull cycle
+now carries platform context for free. Dispatcher-level auto-`mutate`
+parent descoped — the MCP dispatcher has no DB awareness today and
+threading one in is its own chunk.
+
+**B5 — `/song-context --defensive` + `--generative`.** Adds two
+retrieval orientations to the existing read-only markdown_refs surface.
+`--defensive` reframes results as "items below MAY CONTRADICT your
+plan" and flags rows whose snippet carries negation/constraint
+language. `--generative` runs a second `Q.find_markdown_refs(tags=...)`
+pass surfacing related-by-tag rows under a "Related context" heading.
+Single additional SQL pass; semantic search is v1.2+. Skill name kept
+as `/song-context` rather than renamed to `/decisions` — the corpus
+spans decisions + annotations + structural-facts; "context" is broader
+and matches object-action naming.
+
+**Tests:** suite 1788 → 1841 (+53 new). Coverage spans wire shape +
+4-state handshake bypass, FastMCP wrapper propagation, integration
+TCP loop, request column round-trips + parent FK enforcement + ALTER
+idempotency, annotation handlers (15 tests, end-to-end DB ops),
+provenance metadata + build_session auto-capture, and defensive +
+generative mode rendering + related-by-tags exclusion of seeds.
+
+**Out of scope (carried to backlog):** dispatcher-level auto-`mutate`
+parent (architectural), `hallucinote://annotations/<song_slug>`
+templated resource (test plumbing), live verification of
+`ableton_annotation` end-to-end against a real Live session (requires
+`/ableton-mcp-install` + Live restart to materialize the new tool;
+will fire on first compose-time use).
+
+
 ## 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
 
 **A3 (substantive) — Drum Rack pad-mapping discovery.** Closes the

@@ -1,14 +1,17 @@
 # hallucinote-mcp
 
-Ableton Live MCP server with **10 unified tools** and action dispatch — designed for
+Ableton Live MCP server with **11 unified tools** and action dispatch — designed for
 agents that need broad Ableton control without paying the context cost of a 50-tool
 surface.
 
 This package ships as part of the [Hallucinote](https://github.com/brookstalley/hallucinote)
 composition environment but can also be used standalone by any MCP-capable agent
-that wants structured access to a running Ableton Live set.
+that wants structured access to a running Ableton Live set. Note: the
+`ableton_annotation` tool requires the parent `hallucinote` package on the
+server-side Python path (it reads/writes a per-song SQLite DB). The other ten
+tools work standalone.
 
-## Why ten tools?
+## Why so few tools?
 
 Empirical research (Anthropic, Speakeasy, Copilot) shows model effectiveness degrades
 sharply past ~25 MCP tools and collapses past ~50. Most narrow setters can be
@@ -39,7 +42,7 @@ Uninstall is symmetric: `/ableton-mcp-uninstall`.
 See the [main README](../README.md) for full setup including wiring Hallucinote into
 Live's Control Surface slot.
 
-## The ten tools
+## The unified tools
 
 | Tool | Scope |
 |---|---|
@@ -53,12 +56,13 @@ Live's Control Surface slot.
 | `ableton_arrangement` | Arrangement layout + cue points |
 | `ableton_scene` | Session-view scenes |
 | `ableton_browser` | Instruments, effects, plugins |
+| `ableton_annotation` | Composer-intent annotations (per-song DB; requires `hallucinote`) |
 
 Every tool answers `action='help'` with a structured menu — required / optional
 params, examples, tips — generated from the shared schema. Errors carry recovery
 hints: valid action list, missing-param list, an example, a `hint` string.
 
-In addition to the 10 tools, the server exposes **11 resources** for low-context-cost
+In addition to the tools, the server exposes **11 resources** for low-context-cost
 reads (`ableton://session/snapshot`, `ableton://browser/*`, `ableton://plugins/installed`,
 `ableton://reference/*`, `ableton://guides/*`). Multi-step workflows live as Claude
 Code skills (`.claude/skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,

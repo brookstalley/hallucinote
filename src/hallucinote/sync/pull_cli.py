@@ -153,6 +153,13 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         payload={"domain": domain, "session_id": args.session_id, "song_id": song_id},
         song_id=song_id,
         reason=args.reason,
+        metadata=M.provenance_metadata(
+            extra={
+                "driver": "pull_cli",
+                "session_id": args.session_id,
+                "domain": domain,
+            },
+        ),
     )
     try:
         out = pull.apply_pull_results(

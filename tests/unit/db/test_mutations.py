@@ -579,6 +579,87 @@ def test_request_context_manager_propagates_new_fields(conn, song):
     assert row["outcome"] == "ok"
 
 
+def test_provenance_metadata_captures_standard_signals():
+    """The auto-captured metadata helper must produce a dict with the
+    expected keys when the environment supports them. git_sha + branch
+    + hostname all hit best-effort probes; a non-git environment drops
+    git_sha/branch silently."""
+    meta = M.provenance_metadata()
+    # Hostname should always succeed.
+    assert "hostname" in meta
+    # In this repo (we're running tests from a git checkout), git_sha
+    # and branch should be present.
+    assert "git_sha" in meta
+    assert "branch" in meta
+    assert isinstance(meta["git_sha"], str) and len(meta["git_sha"]) > 0
+    assert isinstance(meta["branch"], str) and len(meta["branch"]) > 0
+
+
+def test_provenance_metadata_merges_extras():
+    meta = M.provenance_metadata(
+        model="claude-opus-4-7",
+        extra={"driver": "push_cli", "session_id": "abc"},
+    )
+    assert meta["model"] == "claude-opus-4-7"
+    assert meta["driver"] == "push_cli"
+    assert meta["session_id"] == "abc"
+
+
+def test_build_session_auto_captures_metadata(conn):
+    """Every compose cycle should get the standard platform context for
+    free — without this, build.py callers would have to remember to opt
+    in to provenance and most wouldn't."""
+    import json
+
+    with M.build_session(conn, song_name="provenance-test") as bs:
+        # Drive at least one mutator so the song row exists for tombstone.
+        M.create_song(conn, name="provenance-test")
+    row = conn.execute(
+        "SELECT metadata_json, kind, prompt_text FROM requests WHERE id=?",
+        (bs.request_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["kind"] == "compose"
+    assert row["metadata_json"] is not None
+    meta = json.loads(row["metadata_json"])
+    assert "hostname" in meta
+    # In CI / git checkout, git fields are present.
+    assert "git_sha" in meta or "branch" in meta
+
+
+def test_build_session_propagates_prompt_text_and_parent(conn):
+    """A build session running inside an outer compose cycle should chain
+    via parent_id and carry the user's seed prompt."""
+    import json
+
+    outer_rid = M.create_request(
+        conn,
+        actor="user",
+        intent="outer compose",
+        kind="compose",
+    )
+    with M.build_session(
+        conn,
+        song_name="inner-build",
+        prompt_text="make me an experimental jazz piece",
+        parent_id=outer_rid,
+        metadata={"model": "claude-opus-4-7"},
+    ) as bs:
+        M.create_song(conn, name="inner-build")
+    row = conn.execute(
+        """SELECT prompt_text, parent_id, metadata_json
+           FROM requests WHERE id=?""",
+        (bs.request_id,),
+    ).fetchone()
+    assert row["prompt_text"] == "make me an experimental jazz piece"
+    assert row["parent_id"] == outer_rid
+    meta = json.loads(row["metadata_json"])
+    # Caller-provided model rides through.
+    assert meta["model"] == "claude-opus-4-7"
+    # And auto-captured fields still present.
+    assert "hostname" in meta
+
+
 def test_added_columns_migration_idempotent_with_existing_db(tmp_path):
     """Run init_db twice — the second call must NOT raise (the ALTER
     is guarded by PRAGMA table_info). This guards against a future

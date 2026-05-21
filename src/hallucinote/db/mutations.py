@@ -126,6 +126,66 @@ NoteDict = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Provenance metadata capture (Arc 2 / B4)
+# ---------------------------------------------------------------------------
+
+
+def provenance_metadata(
+    *,
+    model: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Capture the standard provenance signals that ride on `requests.metadata_json`:
+    git sha (short), branch, hostname, optional model name, plus any caller-
+    provided extras. Best-effort: a failed git/socket probe drops the
+    affected key rather than raising — provenance is observational, not
+    operational.
+
+    Used by push / pull / capture drivers (Arc 2 / B4) so every audited
+    cycle carries the platform context that lets a later session
+    reconstruct "where did this come from."
+    """
+    import socket
+    import subprocess
+
+    sha: str | None = None
+    branch: str | None = None
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        branch = subprocess.check_output(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        pass
+    try:
+        hostname: str | None = socket.gethostname()
+    except OSError:
+        hostname = None
+
+    out: dict[str, Any] = {}
+    if sha:
+        out["git_sha"] = sha
+    if branch:
+        out["branch"] = branch
+    if hostname:
+        out["hostname"] = hostname
+    if model:
+        out["model"] = model
+    if extra:
+        out.update(extra)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Internal: id generation + event emission
 # ---------------------------------------------------------------------------
 
@@ -3662,6 +3722,9 @@ def build_session(
     song_name: str,
     owner: str = "build.py",
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[BuildSession]:
     """State-converger context manager for a song's build.py (W12-A).
 
@@ -3682,8 +3745,23 @@ def build_session(
     typically `M.create_song(name=song_name)`, which the tombstone path
     needs to find rows by song. If a song with `song_name` doesn't exist
     at exit time (e.g., create_song was never called), tombstone is a no-op.
+
+    Arc 2 / B4 provenance: `prompt_text` (user's compose prompt) and
+    `parent_id` (parent request, if this build runs inside an outer
+    cycle) thread directly to `create_request`. `metadata` augments the
+    auto-captured `provenance_metadata()` signals (git_sha, branch,
+    hostname) — caller-provided keys override auto-captured ones. If
+    nothing is provided, auto-capture still fires so every compose
+    cycle gets the standard platform context.
     """
     bs = BuildSession(conn, song_name=song_name, owner=owner)
+    # Auto-capture platform metadata so EVERY build session gets the
+    # standard signals — callers don't need to remember to opt in. They
+    # can still augment via the explicit `metadata=` kwarg; explicit
+    # keys override auto-captured ones (the caller knows better).
+    auto_meta = provenance_metadata()
+    if metadata:
+        auto_meta.update(metadata)
     # Open a request to carry the build's actor + provenance for child events.
     bs.request_id = create_request(
         conn,
@@ -3691,6 +3769,9 @@ def build_session(
         intent=f"build {song_name} (owner={owner})",
         kind="compose",
         reason=reason,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=auto_meta if auto_meta else None,
     )
     bs._token = _current_build_session.set(bs)
     try:

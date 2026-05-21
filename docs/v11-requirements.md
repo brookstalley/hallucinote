@@ -28,7 +28,7 @@ v1 shipped three pieces of per-machine state (`/tmp/ableton-push-snapshot.json`,
 
 ## Resolved on the feat/r1-r2-push-cue-and-compat branch
 
-PR #68 (not yet merged at planning time) closes:
+PR #68 (shipped to develop on 2026-05-21, then to main as v1.0.1 via PR #69) closed:
 
 - Cue phase idempotency (`if_exists={refuse,skip}` on `cue_create` / `cue_create_batch`)
 - Default-scaffold cleanup CLI (`push_cli cleanup-default-scaffold`)
@@ -157,7 +157,7 @@ Arc 1 (push coherence) ─┬─ A1 ──┬── A2 ─── A3 ─── A4
                         │
 Arc 2 (provenance)    ──┤       (parallel with Arc 1 — different code surface)
                         │
-Arc 3 (compose validation r2) ── needs R-2 merged (PR #68) ── C1 ── C2 ── C3
+Arc 3 (compose validation r2) ── R-2 already merged (PR #68 / v1.0.1) ── C1 ── C2 ── C3
                         │
 Arc 4 (loader robustness) ────── independent leaves; opportunistic ── runs throughout
 Arc 5 (authoring API) ────────── depends on Arc 1 A3 for E1 drum-mapping recipe
@@ -165,7 +165,7 @@ Arc 6 (defensive) ────────────── opportunistic janit
 Arc 7 (tooling) ─────────────── opportunistic
 ```
 
-**Suggested first three sessions after PR #68 merges:**
+**Suggested next sessions (Arc 1 is in flight on `feat/arc-1-push-coherence` / PR #71):**
 
 1. **Arc 1 head** — A1 (coherence layer) + A2 (devices idempotency). Closes the recurring state-drift bugs.
 2. **Arc 2 head** — B1 + B3 (annotations + provenance schemas). User-flagged HIGH; independent of Arc 1.

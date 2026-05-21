@@ -76,19 +76,30 @@ def _top_level_imports(source: str) -> set[str]:
 def _modules_in_remote_script_load_chain() -> list[Path]:
     """Every .py file reachable from a Live-side Control Surface load.
 
-    The Remote Script's ``_control_surface.py`` does
+    The Remote Script entry point is ``remote_script/__init__.py``;
+    its ``create_instance`` imports ``_control_surface.py`` which does
     ``from .. import actions as _actions`` at module load — that walks
-    ``actions/__init__.py``, which `from . import each_action`,
-    which each `from ..handlers import counterpart_handler`. So
-    everything under ``actions/`` and ``handlers/`` is in the chain,
-    plus the small top-level modules these depend on (``schema``,
-    ``wire``, ``dispatcher``, ``device_names``).
+    ``actions/__init__.py``, which `from . import each_action`, which
+    each `from ..handlers import counterpart_handler`. So the load
+    chain is:
+
+      remote_script/  →  actions/  →  handlers/  →  top-level modules
+                                                    (schema, wire,
+                                                    dispatcher,
+                                                    device_names)
+
+    All four layers are scanned. ``remote_script/`` is the only layer
+    that LIVE itself imports first (the others are pulled in
+    transitively), but a top-level forbidden import anywhere in the
+    chain aborts the whole load with the same symptom — Control
+    Surface fails to initialize and the operator sees only Live's
+    silent Log.txt traceback.
     """
     return [
+        *sorted((_PACKAGE_ROOT / "remote_script").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "actions").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "handlers").glob("*.py")),
-        # Top-level modules transitively imported by the actions chain
-        # — bundle them in the same check.
+        # Top-level modules transitively imported by the actions chain.
         _PACKAGE_ROOT / "schema.py",
         _PACKAGE_ROOT / "wire.py",
         _PACKAGE_ROOT / "dispatcher.py",

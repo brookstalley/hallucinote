@@ -50,7 +50,7 @@ Reject unknown modes with a teaching error listing the valid choices.
    - **`sends`** — initial send levels `{return_name: level_0_to_1}` for sends-on-returns this track needs (skip 0.0-level sends).
    - **`rationale`** — one sentence per chain explaining the sonic intent (why this combination, not just why this instrument).
 
-   Drum tracks anchor on Drum Rack (display `Drum Rack`, class `DrumGroupDevice`) or Impulse (display + class both `Impulse`) — single-pitch synths don't make sense for a kit. See "Default chain shapes" above for the per-role starting points. Adjust depth and character per song style.
+   Drum tracks anchor on Drum Rack (kind `Drum Rack`) or Impulse (kind `Impulse`) — single-pitch synths don't make sense for a kit. See "Default chain shapes" above for the per-role starting points. Adjust depth and character per song style.
 
 3. **Confirm with the user.** Present chains as a compact-but-readable table — track / chain (instrument → FX1 → FX2) / sends / rationale. Wait for OK or substitutions before loading. The user may steer individual picks ("use Wavetable instead of Analog for Lead") OR the whole chain shape ("don't compress the bass, I want it loose"); honour the steer and re-confirm.
 

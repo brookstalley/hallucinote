@@ -52,7 +52,7 @@ Assemble the results into the three buckets `compile_snapshot` wants:
 - `returns` — list of return-track dicts (each with `index`, `name`, `volume`, `panning`, optionally `devices`)
 - `tracks` — list of track dicts (each with `index`, `name`, `type`, `volume`, `panning`, optional `mute`/`solo`/`arm`/`color`, optional `sends` map, optional `devices`)
 
-For rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`), attach the nested `chains` array as the device's `chains` field. Walk one level only.
+For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — Arc 4 / D4 display-name convention; pre-D4 these were class names `DrumGroupDevice` / `InstrumentGroupDevice` / `AudioEffectGroupDevice`), attach the nested `chains` array as the device's `chains` field. Walk one level only.
 
 ## Step 2 — Write the fresh capture to a side-by-side file
 

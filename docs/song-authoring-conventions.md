@@ -51,9 +51,9 @@ A finished song has the sound it's supposed to have *as part of being finished*,
     {
       "name": "Drums",
       "devices": [
-        { "class": "DrumGroupDevice", "preset_uri": "query:..." },
+        { "class": "Drum Rack", "class_name": "DrumGroupDevice", "preset_uri": "query:..." },
         { "class": "Saturator", "params_dialed": {"Drive": 6.0, "Color": 0.4} },
-        { "class": "Compressor2", "params_dialed": {"Threshold": -12.0, "Ratio": 4.0} }
+        { "class": "Compressor", "class_name": "Compressor2", "params_dialed": {"Threshold": -12.0, "Ratio": 4.0} }
       ],
       "sends": { "Reverb": 0.0, "Drum Bus": 0.7 }
     }

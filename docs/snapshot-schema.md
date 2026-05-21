@@ -107,7 +107,8 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
   {
     "index": 1,
     "name": "Late Nite Kit",
-    "class": "DrumGroupDevice",
+    "class": "Drum Rack",
+    "class_name": "DrumGroupDevice",
     "kind": "instrument",
     "guess_uri": "query:Drums#FileId_5418",
     "params_dialed": {
@@ -136,7 +137,7 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
   - **Path-shape sugar (Arc 3 / C2).** `M.create_device(preset_query=...)` also accepts a path string like `"Drums/Kit-Core 909"` or `"Instruments/Operator/Bass/Pluck-Sub"` — first segment is the root (case-insensitive, `" "` ≡ `"_"`, so `"Audio Effects/Hall"` ≡ `"audio_effects/Hall"`), last segment is the pattern, anything in between is `path_prefix`. The mutator normalizes to the canonical dict before persisting (the DB always stores the structured form so downstream consumers see one shape). `mode` / `case_sensitive` aren't surfacable through the path-shape — authors who need those pass a dict. Snapshot JSON only carries the dict form (path-shape is a Python-API ergonomic).
 - `params_dialed` (optional) — only **dialed** params (defaults are implied by absence). Discrete-enum params (Filter Type = "Lowpass") have `"normalized": null` because there's no continuous form.
 - `params_total` (optional) — informational; count of all params on the device.
-- `chains` (optional) — nested chains for rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`). One level only — nested-nested racks raise on encounter (filed in backlog).
+- `chains` (optional) — nested chains for rack devices (Arc 4 / D4: `Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names; pre-D4 the check was against class names `DrumGroupDevice`/etc.). One level only — nested-nested racks raise on encounter (filed in backlog).
 
 ### Multi-device chains (sound is composition)
 
@@ -147,7 +148,8 @@ Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-
   {
     "index": 1,
     "name": "Hot Rod Kit",
-    "class": "DrumGroupDevice",
+    "class": "Drum Rack",
+    "class_name": "DrumGroupDevice",
     "kind": "instrument",
     "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"}
   },
@@ -168,7 +170,7 @@ Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-
 ]
 ```
 
-(Note `"class": "Glue Compressor"` — the display name, not the internal Live class name `Glue`. Per the `class` field rules above, the loader's `kind` parameter accepts either form, but stock devices whose internal class differs from the user-visible name only load via the display name in practice.)
+(Note `"class": "Glue Compressor"` — the browser display name. Arc 4 / D4: the loader matches `kind` against display names ONLY; the internal Live class name `GlueCompressor` no longer resolves. The optional `class_name` field is where you record the internal class for informational use — pull populates it from Live's `device.class_name`.)
 
 Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order, so the chain ends up on the track in the same shape on the consumer's machine. The push planner (W12-A + Sweep B) drives `ableton_device(action='load')` once per device; `params_dialed` is applied after load.
 
@@ -210,7 +212,7 @@ Live's browser tree exposes some devices BOTH as loadable nodes (load the device
 For "load the device with default settings" use **NO `preset_query`** and rely on `class`:
 
 ```json
-{"index": 1, "name": "Hybrid Reverb", "class": "HybridReverb"}
+{"index": 1, "name": "Hybrid Reverb", "class": "Hybrid Reverb", "class_name": "HybridReverb"}
 ```
 
 For "load a named preset" use **`preset_query` pointing at a leaf** (typically a `.adv` file). The path_prefix narrows to the preset folder; the pattern is the leaf name:
@@ -219,7 +221,8 @@ For "load a named preset" use **`preset_query` pointing at a leaf** (typically a
 {
   "index": 1,
   "name": "Cathedral Bloom",
-  "class": "HybridReverb",
+  "class": "Hybrid Reverb",
+  "class_name": "HybridReverb",
   "preset_query": {
     "root": "audio_effects",
     "pattern": "Cathedral Bloom",

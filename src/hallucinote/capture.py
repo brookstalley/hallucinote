@@ -8,9 +8,11 @@ DB through mutators.
 
 Scope (chunks 3 + 4a + W7-B): tracks + returns + sends + master + mixer state +
 top-level device chains + dialed device parameters + one level of nested rack
-chains. Each rack-kind device (`DrumGroupDevice`, `InstrumentGroupDevice`,
-`AudioEffectGroupDevice`) may optionally carry a ``chains: [{chain_index, name,
-devices: [...]}]`` array; replay walks one level. Recursively nested racks
+chains. Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
+``Instrument Rack``, ``Audio Effect Rack``; pre-D4 these were the internal
+class names ``DrumGroupDevice``/``InstrumentGroupDevice``/``AudioEffectGroupDevice``)
+may optionally carry a ``chains: [{chain_index, name, devices: [...]}]``
+array; replay walks one level. Recursively nested racks
 (rack-inside-a-rack) are deferred (raises on encounter) — tracked in backlog
 under "nested-nested rack support". Automation envelopes (chunk 4b) are
 schema-modeled and push-plannable but the capture/replay path doesn't ingest

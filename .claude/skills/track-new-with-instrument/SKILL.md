@@ -23,4 +23,4 @@ $ARGUMENTS
 ## Notes
 
 - This is a single workflow, not a clip-population workflow. After the track + instrument exist, compose with `ableton_clip(action='create', ..., notes=[...])` separately.
-- The instrument's display name (browser node `name`) usually matches the class except for renamed family members — pass the browser node's `name` if you're unsure, the handler resolves it via `device_names.class_name_to_display`.
+- The instrument's display name (browser node `name`) is the loader's match key. Arc 4 / D4: pass the browser node's `name` directly — Live's internal class names like `InstrumentVector` (Wavetable) or `LoungeLizard` (Electric) no longer resolve. Examples that work: `Operator`, `Wavetable`, `Drum Rack`, `Electric`.

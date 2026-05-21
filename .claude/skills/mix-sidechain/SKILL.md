@@ -14,9 +14,9 @@ $ARGUMENTS
 
 ## Steps
 
-1. **List devices on the target track** to see if a Compressor is already present: `ableton_device(action='list', track_index=<target_track>)`. Look for `class_name='Compressor2'`. If present at index N, skip step 2 and use that `device_index`.
+1. **List devices on the target track** to see if a Compressor is already present: `ableton_device(action='list', track_index=<target_track>)`. Look for `class_name='Compressor2'` (Live's internal class identifier — `class_name` in the probe response, distinct from the post-D4 browser-display `name` field). If present at index N, skip step 2 and use that `device_index`.
 
-2. **Load a Compressor** if none was found. Call `ableton_device(action='load', track_index=<target_track>, kind='Compressor2'`, optionally `preset_uri=<compressor-uri>` if supplied. Capture the returned `device_index`.
+2. **Load a Compressor** if none was found. Call `ableton_device(action='load', track_index=<target_track>, kind='Compressor')` (browser display name — Arc 4 / D4 post-convention; `'Compressor2'` no longer resolves), optionally `preset_uri=<compressor-uri>` if supplied. Capture the returned `device_index`.
 
 3. **Resolve the source's display name.** `set_sidechain` addresses routing by display name (`1-Drums`, `A-Reverb`, `Main`), not by index. Call `ableton_track(action='list')` and pick out the source track's `name`.
 

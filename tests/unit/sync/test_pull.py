@@ -1058,13 +1058,13 @@ def test_apply_track_devices_no_op_when_identical(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue",
+                    kind="Compressor", display_name="Glue",
                     class_name="Compressor2")
 
     out = pull.apply_pull_results(
         conn,
         [_result(f"track_devices:{tid}",
-                 _devices_payload((1, "Compressor2", "Glue")))],
+                 _devices_payload((1, "Compressor2", "Glue", "Compressor")))],
         song_id=song, session_id=session,
     )
     assert out.mutations == 0
@@ -1082,7 +1082,7 @@ def test_apply_track_devices_replaces_at_position_when_kind_changes(
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     old = M.create_device(conn, chain_id=chain_id, position=1,
-                          kind="Compressor2", display_name="Glue")
+                          kind="Compressor", display_name="Glue")
 
     out = pull.apply_pull_results(
         conn,
@@ -1128,10 +1128,10 @@ def test_apply_track_devices_deletes_db_devices_absent_from_ableton(
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue",
+                    kind="Compressor", display_name="Glue",
                     class_name="Compressor2")
     M.create_device(conn, chain_id=chain_id, position=2,
-                    kind="Eq8", display_name="EQ8",
+                    kind="EQ Eight", display_name="EQ8",
                     class_name="Eq8")
     M.create_device(conn, chain_id=chain_id, position=3,
                     kind="Limiter", display_name="Limiter",
@@ -1140,7 +1140,7 @@ def test_apply_track_devices_deletes_db_devices_absent_from_ableton(
     out = pull.apply_pull_results(
         conn,
         [_result(f"track_devices:{tid}",
-                 _devices_payload((1, "Compressor2", "Glue")))],
+                 _devices_payload((1, "Compressor2", "Glue", "Compressor")))],
         song_id=song, session_id=session,
     )
     # 2 deletes (positions 2 and 3), 1 no-op (position 1)
@@ -1156,14 +1156,14 @@ def test_apply_track_devices_extends_chain_when_ableton_has_more(
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue",
+                    kind="Compressor", display_name="Glue",
                     class_name="Compressor2")
 
     out = pull.apply_pull_results(
         conn,
         [_result(f"track_devices:{tid}", _devices_payload(
-            (1, "Compressor2", "Glue"),
-            (2, "Eq8", "EQ8"),
+            (1, "Compressor2", "Glue", "Compressor"),
+            (2, "Eq8", "EQ8", "EQ Eight"),
             (3, "Limiter", "Master Limiter"),
         ))],
         song_id=song, session_id=session,
@@ -1173,7 +1173,7 @@ def test_apply_track_devices_extends_chain_when_ableton_has_more(
     assert out.no_ops == 1
     devs = Q.get_devices_for_chain(conn, chain_id)
     assert [(d["position"], d["kind"]) for d in devs] == [
-        (1, "Compressor2"), (2, "Eq8"), (3, "Limiter"),
+        (1, "Compressor"), (2, "EQ Eight"), (3, "Limiter"),
     ]
 
 
@@ -1203,23 +1203,23 @@ def test_apply_track_devices_swap_within_chain(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Eq8", display_name="EQ8",
+                    kind="EQ Eight", display_name="EQ8",
                     class_name="Eq8")
     M.create_device(conn, chain_id=chain_id, position=2,
-                    kind="Compressor2", display_name="Glue")
+                    kind="Compressor", display_name="Glue")
 
     out = pull.apply_pull_results(
         conn,
         [_result(f"track_devices:{tid}", _devices_payload(
-            (1, "Compressor2", "Glue"),
-            (2, "Eq8", "EQ8"),
+            (1, "Compressor2", "Glue", "Compressor"),
+            (2, "Eq8", "EQ8", "EQ Eight"),
         ))],
         song_id=song, session_id=session,
     )
     assert out.mutations == 2  # two slot replacements
     devs = Q.get_devices_for_chain(conn, chain_id)
     assert [(d["position"], d["kind"]) for d in devs] == [
-        (1, "Compressor2"), (2, "Eq8"),
+        (1, "Compressor"), (2, "EQ Eight"),
     ]
 
 
@@ -1364,7 +1364,7 @@ def test_plan_pull_nested_rack_chains_skips_non_racks(conn, song, session):
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     M.create_device(conn, chain_id=chain_id, position=1,
-                    kind="Compressor2", display_name="Glue",
+                    kind="Compressor", display_name="Glue",
                     class_name="Compressor2")
     plan = pull.plan_pull_nested_rack_chains(
         conn, song_id=song, session_id=session,
@@ -1611,7 +1611,7 @@ def test_apply_nested_rack_chains_warns_when_kind_is_not_rack(
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     not_a_rack = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="Compressor2", display_name="Glue",
+        kind="Compressor", display_name="Glue",
     )
     out = pull.apply_pull_results(
         conn,
@@ -2019,7 +2019,7 @@ def test_apply_device_parameters_normalizes_against_min_max(conn, song, session)
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
-        conn, chain_id=chain_id, position=1, kind="Compressor2", display_name="Glue",
+        conn, chain_id=chain_id, position=1, kind="Compressor", display_name="Glue",
     )
 
     out = pull.apply_pull_results(
@@ -3991,7 +3991,7 @@ def test_pull_cli_execute_bakes_device_parameter_change(tmp_path, monkeypatch):
     chain_id = M.create_device_chain(conn, parent_track_id=track_id)
     device_id = M.create_device(
         conn, chain_id=chain_id, position=1,
-        kind="Compressor2", display_name="Compressor",
+        kind="Compressor", display_name="Compressor",
     )
     M.set_device_parameter(
         conn, device_id=device_id, name="Threshold",

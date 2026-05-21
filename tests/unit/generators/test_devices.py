@@ -87,14 +87,14 @@ def test_chain_emits_event_with_song_id(conn, song, track):
 
 def test_delete_chain_cascades_devices(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ Eight")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ Eight")
     M.delete_device_chain(conn, chain_id=cid)
     assert conn.execute("SELECT COUNT(*) FROM devices WHERE id=?", (did,)).fetchone()[0] == 0
 
 
 def test_delete_track_cascades_chains_devices_params(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Compressor2", display_name="Comp")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Compressor", display_name="Comp")
     M.set_device_parameter(conn, device_id=did, name="Threshold",
                            value_display="-20 dB", value_normalized=0.5)
     conn.execute("DELETE FROM tracks WHERE id=?", (track,))
@@ -122,14 +122,14 @@ def test_create_device_basic(conn, song, track):
 def test_device_position_must_be_positive(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
     with pytest.raises(ValueError, match="position 0 must be >= 1"):
-        M.create_device(conn, chain_id=cid, position=0, kind="Eq8", display_name="EQ")
+        M.create_device(conn, chain_id=cid, position=0, kind="EQ Eight", display_name="EQ")
 
 
 def test_device_upserts_per_chain_position(conn, song, track):
     """W12-A: re-creating at the same position upserts (not raises). Different
     kind/display_name → updated; identical args → unchanged."""
     cid = M.create_device_chain(conn, parent_track_id=track)
-    d1 = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    d1 = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     assert d1.kind == "created"
     d2 = M.create_device(conn, chain_id=cid, position=1, kind="Reverb", display_name="Rev")
     assert d2.kind == "updated"
@@ -184,7 +184,7 @@ def test_create_device_preset_query_idempotent_unchanged(conn, song, track):
 
 def test_delete_device_emits_event(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
-    did = M.create_device(conn, chain_id=cid, position=1, kind="Eq8", display_name="EQ")
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
     M.delete_device(conn, device_id=did)
     kinds = [e["kind"] for e in _events(conn)]
     assert E.DEVICE_DELETED in kinds
@@ -314,7 +314,7 @@ def test_query_chains_per_parent(conn, song, track, ret):
 
 def test_query_devices_for_track_orders_by_chain_then_position(conn, song, track):
     cid = M.create_device_chain(conn, parent_track_id=track)
-    d2 = M.create_device(conn, chain_id=cid, position=2, kind="Eq8", display_name="EQ")
+    d2 = M.create_device(conn, chain_id=cid, position=2, kind="EQ Eight", display_name="EQ")
     d1 = M.create_device(conn, chain_id=cid, position=1, kind="Operator", display_name="Op")
     rows = Q.get_devices_for_track(conn, track)
     assert [r["id"] for r in rows] == [d1, d2]

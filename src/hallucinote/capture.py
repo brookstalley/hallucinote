@@ -567,8 +567,12 @@ def capture_plan() -> list[dict[str, str]]:
                     "(name -> {value, normalized}) — loop over each device"},
         {"tool": "ableton_device(action='get_device_chains')",
          "purpose": "per-rack-device: one level of nested chains + their "
-                    "devices (W7-B). Emit for every device whose class_name "
-                    f"is in {sorted(RACK_CLASS_NAMES)}. The agent attaches "
+                    "devices (W7-B). Emit for every device whose probed "
+                    f"`class_display_name` is in {sorted(RACK_CLASS_NAMES)} "
+                    "(Arc 4 / D4 — was `class_name` in {DrumGroupDevice, "
+                    "InstrumentGroupDevice, AudioEffectGroupDevice} pre-D4; "
+                    "now keyed off Live's class_display_name to match the "
+                    "post-D4 snapshot.class convention). The agent attaches "
                     "the result as the device's `chains` field on the "
                     "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
                     "internal chain instruments not captured', etc.) on "
@@ -578,10 +582,12 @@ def capture_plan() -> list[dict[str, str]]:
         {"tool": "ableton_device(action='pad_info')",
          "purpose": "per-Drum-Rack: pad layout (midi_note + chain_name per "
                     "non-empty pad). M1-C. Emit ONLY for devices whose "
-                    "class_name is 'DrumGroupDevice'. The agent attaches "
-                    "the result as the device's `drum_pads` field on the "
-                    "snapshot: ``[{midi_note: int, chain_name: str}, ...]``. "
-                    "Replay persists into `drum_pad_mappings` so songs can "
+                    "probed `class_display_name` is 'Drum Rack' (Arc 4 / "
+                    "D4 — was class_name 'DrumGroupDevice' pre-D4). The "
+                    "agent attaches the result as the device's `drum_pads` "
+                    "field on the snapshot: ``[{midi_note: int, chain_name: "
+                    "str}, ...]``. Replay persists into `drum_pad_mappings` "
+                    "so songs can "
                     "use `Kit.from_device(conn, device_id)` to author kit-"
                     "portable drum patterns instead of GM-assumed MIDI notes."},
     ]

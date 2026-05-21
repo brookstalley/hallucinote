@@ -470,8 +470,15 @@ def load_handler(
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
 
-    ``kind`` is the Live device class / display name (e.g. ``'Compressor2'``,
-    ``'Operator'``). Three selector paths, in precedence order:
+    ``kind`` is the device's BROWSER DISPLAY NAME (e.g. ``'Compressor'``,
+    ``'Operator'``, ``'Drum Rack'``, ``'Phaser-Flanger'``) — what shows up
+    in Live's browser tree and what the loader matches against directly.
+    Arc 4 / D4: Live's internal class names (``'Compressor2'``,
+    ``'PhaserNew'``, ``'DrumGroupDevice'``) no longer resolve; pull
+    writes the display name into ``devices.kind`` from Live's
+    ``device.class_display_name`` attribute.
+
+    Three selector paths, in precedence order:
 
     1. ``preset_query`` (most portable): a dict ``{root, pattern, mode?,
        path_prefix?, case_sensitive?}`` resolved at load time via the

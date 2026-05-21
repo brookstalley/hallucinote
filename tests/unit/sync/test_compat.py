@@ -218,7 +218,7 @@ def test_check_song_all_native(conn, song, track_chain, db_path):
     M.create_device(conn, chain_id=track_chain, position=1,
                     kind="Operator", display_name="Operator")
     M.create_device(conn, chain_id=track_chain, position=2,
-                    kind="Eq8", display_name="EQ Eight")
+                    kind="EQ Eight", display_name="EQ Eight")
     conn.commit()
     report = C.check_song(db_path)
     assert len(report.entries) == 2

@@ -89,6 +89,46 @@ Anti-pattern: a `/clip-humanize` pass run after composition to "add feel." `/cli
 
 ---
 
+## Drum kits: probe, don't assume (M1-C + A3)
+
+Drum Rack pads are **kit-specific MIDI notes**. Late Nite Kit puts the kick at 36; Hot Rod Kit puts a *cowbell* at 51 (the General-MIDI ride slot). A `build.py` that hard-codes `KICK=36, RIDE=51` from GM convention works on Late Nite Kit and clangs on Hot Rod Kit's cowbell every time the song calls for a ride. The cure is to ask the kit what notes its pads sit on, not to assume.
+
+**Three resolution paths**, each suited to a different authoring intent:
+
+```python
+from hallucinote.generators.kit import Kit
+
+kit = Kit.from_device(conn, drum_device_id, name="Hot Rod Kit")
+
+# Strict — the part fundamentally needs this pad. Raises on wrong-sound
+# substitution (Hot Rod Kit ride → GM 51 → cowbell). Use when the part
+# is meaningless without the named pad.
+ride_note = kit.pitch_of("ride")  # raises if no ride chain and GM-default collides
+
+# Optional — composition can adapt to absence. Returns None when the
+# kit has no chain matching the canonical name.
+crash_note = kit.try_pitch_of("crash")
+if crash_note is None:
+    # Skip the crash hits or substitute a different pad
+    ...
+
+# Fail-fast — refuse early at composition start when the kit can't
+# deliver the section's required pads.
+kit.assert_has("kick", "snare", "ride", "crash")  # raises with the missing list
+```
+
+`kit.pitch_of("ride")` on Hot Rod Kit raises `KeyError` naming the colliding chain (`"Cowbell Fenk Chick"`) and pointing at `kit.try_pitch_of`. That's the structural guard against the sun-zone-done cautionary tale — the cowbell-on-metal disaster fails loudly at compose time instead of playing a wrong sound for the whole song.
+
+**Auto-population.** `push_cli execute` probes `pad_info` for every linked Drum Rack after the devices phase and persists the result via `M.replace_drum_pad_mappings`. Best-effort: per-Drum-Rack failures count but don't halt the push. So the typical flow is:
+
+1. First push of a song that loads a Drum Rack → devices phase succeeds → pad-probe writes the kit's actual pad-note layout to `drum_pad_mappings`.
+2. Next `build.py` run → `Kit.from_device(conn, drum_device_id)` returns kit-specific notes (kit's actual kick at whatever note Hot Rod Kit puts it on).
+3. Subsequent pushes — `replace_drum_pad_mappings` is idempotent, so re-probing on every push refreshes if the kit changes and no-ops otherwise.
+
+**Property shortcuts** (`kit.kick`, `kit.snare`, `kit.crash`, etc.) wrap `pitch_of`. Use them for kicks/snares/hats that every kit has; reach for `try_pitch_of` when a pad's presence is genre-dependent (rides, crashes, splashes, cowbells, tambourines).
+
+---
+
 ## Repeated sections (verse twice, chorus three times)
 
 Wave 0's `full-band-rock` canary surfaced a real ambiguity: a song with two verses or three choruses has two valid models, and neither was documented.

@@ -387,6 +387,64 @@ def get_drum_pad_mappings(
     ).fetchall()
 
 
+def get_linked_drum_racks_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> list[sqlite3.Row]:
+    """Return every DrumGroupDevice device in this session's song that has
+    a live binding (track + device link rows), with the addressing the
+    MCP needs to probe it.
+
+    Each row: ``{device_id, display_name, parent_kind, parent_ableton_index,
+    device_ableton_index, device_position}``.
+
+    Used by ``push_execute``'s post-devices-phase pad-probe walker — for
+    every linked Drum Rack the walker dispatches
+    ``ableton_device(action='pad_info', track_index=parent_ableton_index,
+    device_index=device_ableton_index)`` then persists the result via
+    ``M.replace_drum_pad_mappings``. The single SQL keeps the chain
+    traversal cohesive: a device is "fully linked" only when both its
+    parent (track or return) AND the device itself have ``ableton_links``
+    rows for this session.
+
+    Returns an empty list when nothing matches (no Drum Racks in the song,
+    or no device links written yet — first-time push state before phase 7
+    completes).
+    """
+    return conn.execute(
+        """
+        SELECT
+            d.id           AS device_id,
+            d.display_name AS display_name,
+            d.position     AS device_position,
+            CASE
+                WHEN dc.parent_track_id  IS NOT NULL THEN 'track'
+                WHEN dc.parent_return_id IS NOT NULL THEN 'return'
+            END AS parent_kind,
+            COALESCE(
+                (SELECT al.ableton_index FROM ableton_links al
+                  WHERE al.session_id = :session_id
+                    AND al.db_kind = 'track'
+                    AND al.db_id  = dc.parent_track_id),
+                (SELECT al.ableton_index FROM ableton_links al
+                  WHERE al.session_id = :session_id
+                    AND al.db_kind = 'return'
+                    AND al.db_id  = dc.parent_return_id)
+            ) AS parent_ableton_index,
+            (SELECT al.ableton_index FROM ableton_links al
+              WHERE al.session_id = :session_id
+                AND al.db_kind = 'device'
+                AND al.db_id  = d.id) AS device_ableton_index
+        FROM devices d
+        JOIN device_chains dc ON dc.id = d.chain_id
+        WHERE d.kind = 'DrumGroupDevice'
+          AND (dc.parent_track_id IS NOT NULL OR dc.parent_return_id IS NOT NULL)
+        ORDER BY d.position
+        """,
+        {"session_id": session_id},
+    ).fetchall()
+
+
 # ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------

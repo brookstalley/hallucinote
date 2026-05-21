@@ -480,17 +480,33 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     (on failure) into the song's directory. Prints a one-page summary to
     stdout.
 
-    W18-A/B: when ``--snapshot <path>`` is provided OR ``--probe`` is set,
-    runs the coherence check before dispatching phases. Refuses with a
-    teaching error and exits non-zero if any link is stale or the session
-    row is missing. Omit both to skip the check (legacy behavior; not
-    recommended).
+    Coherence-check policy (A1-resid hardening of W18-A/B). Exactly one of
+    three flags must be passed; the mutex group enforces this at
+    argparse time:
+
+    * ``--probe`` — canonical path. Probes Live in-process via the MCP TCP
+      client and runs ``check_coherence`` against a fresh snapshot. Refuses
+      with a teaching error and exits non-zero on session-missing or
+      stale-link drift.
+    * ``--snapshot <path>`` — same shape against a pre-probed JSON file.
+      Useful for tests and offline debugging; not for normal authoring
+      (the whole point of W18-B was to eliminate stale snapshot files
+      between runs).
+    * ``--no-coherence-check`` — explicit opt-out. The push runs without
+      the coherence safety net. Use only when the caller has externally
+      verified that DB links match the live set (e.g. a CI scenario where
+      both ends are scripted, or a debugging session where the user wants
+      to observe what the dispatch does without the gate firing). The
+      flag is named visibly so accidental omission of ``--probe`` doesn't
+      silently skip the check (the pre-A1-resid default).
     """
     db_path = _resolve_db_path(args)
     conn = connect(db_path)
     song_id = _resolve_song_id(conn, args.session_id)
 
-    if args.probe or args.snapshot:
+    if not args.no_coherence_check:
+        # The mutex group makes --probe or --snapshot the only other paths,
+        # so exactly one is set here.
         live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
             args, subcmd="execute",
         )
@@ -522,6 +538,19 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         reason=args.reason or f"push_cli execute (session={args.session_id})",
     )
     sys.stdout.write(push_execute.format_summary(result))
+    # A5: surface the verbatim recovery command on a non-clean exit so the
+    # agent doesn't have to reassemble flags from the failure context.
+    # Push is idempotent (W10-A + W20-A device binding by class/position) —
+    # re-running is the structural retry, not a separate `--resume` path.
+    if result.exit_code != 0:
+        slug_flag = f"--song {args.song}" if getattr(args, "song", None) else f"--db {db_path}"
+        sys.stdout.write(
+            "\nRecovery: fix the underlying issue (build.py or snapshot), "
+            "rebuild, then re-run:\n"
+            f"  python3 -m hallucinote.sync.push_cli execute "
+            f"{args.session_id} {slug_flag} --probe\n"
+            "Re-run is idempotent: already-applied rows skip on the second pass.\n"
+        )
     return result.exit_code
 
 
@@ -770,17 +799,28 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("--state-dir", default=None,
                         help="directory for .last-push-state.json + "
                              ".last-push-errors.json (default: DB directory)")
-    # W18-A: opt-in coherence check before dispatch. --probe is the W18-B
-    # canonical refresh (probe Live in-process); --snapshot is the test/debug
-    # fallback (pre-probed JSON file). Both optional; omit either to skip.
-    p_exec_probe = p_exec.add_mutually_exclusive_group(required=False)
+    # A1-resid (hardens W18-A/B): the coherence check is the safety net for
+    # the punk-fate state-drift class. Pre-A1-resid the default was "skip
+    # silently if neither --probe nor --snapshot is passed", which made the
+    # safety net opt-in. Now the group is required and includes an explicit
+    # opt-out flag so accidental omission can't slip past the gate.
+    p_exec_probe = p_exec.add_mutually_exclusive_group(required=True)
     p_exec_probe.add_argument("--probe", action="store_true",
-                              help="W18-B: probe Live in-process before "
-                                   "executing and run the coherence check")
+                              help="W18-B canonical: probe Live in-process "
+                                   "and run the coherence check before "
+                                   "dispatching phases")
     p_exec_probe.add_argument("--snapshot", default=None,
                               help="W18-A: pre-probed snapshot path; runs "
                                    "the coherence check before dispatching "
                                    "phases (alternative to --probe)")
+    p_exec_probe.add_argument("--no-coherence-check", action="store_true",
+                              dest="no_coherence_check",
+                              help="A1-resid: skip the coherence check. "
+                                   "Use only when the caller has externally "
+                                   "verified that DB links match the live "
+                                   "set (CI scripted scenarios, offline "
+                                   "debugging). Pre-A1-resid this was the "
+                                   "silent default — now it's explicit.")
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
     p_exec.set_defaults(func=_cmd_execute)

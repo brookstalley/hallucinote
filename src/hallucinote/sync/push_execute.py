@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from hallucinote.db import mutations as M
+from hallucinote.db import queries as Q
 from hallucinote.sync import push
 
 # Imported lazily inside execute_push() to keep the unit-test import graph
@@ -72,6 +73,12 @@ class PhaseOutcome:
     calls_ok: int = 0
     calls_failed: int = 0
     calls_planned: int = 0  # for pending phases — how many they would have run
+    # A3: post-phase pad probing for the devices phase. Per-device best-effort —
+    # failures do NOT halt the phase or affect the overall push outcome. Counts
+    # are zero on phases where the probe doesn't run (every phase except the
+    # devices phase, or a devices phase with no linked Drum Rack devices).
+    pad_probes_ok: int = 0
+    pad_probes_failed: int = 0
 
 
 @dataclass
@@ -238,6 +245,88 @@ def _attempt_load_fallback(
     return retry_resp, fallback_uri
 
 
+def _probe_pad_mappings_for_session(
+    *,
+    conn: sqlite3.Connection,
+    session_id: str,
+    send_fn: Callable[..., Any],
+    request_cls: Any,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> tuple[int, int]:
+    """A3: walk every Drum Rack device fully linked in this session, probe
+    its pad layout via ``ableton_device(action='pad_info', ...)``, and
+    persist the result via :func:`M.replace_drum_pad_mappings`.
+
+    Best-effort by design. The push's primary purpose — materializing the
+    song's structural state in Live — already succeeded for this phase
+    when this helper runs. Pad probing is auxiliary metadata for the
+    composer (so ``Kit.from_device`` returns kit-specific notes instead of
+    GM defaults next build cycle). A per-device failure (connection drop,
+    handler error, mutator validation rejection) increments the failed
+    counter and skips that device; the next push retries.
+
+    The mutator ``M.replace_drum_pad_mappings`` is already idempotent — if
+    the kit's pads haven't changed since the last probe, this is a no-op.
+    That makes repeated invocations across re-pushes cheap.
+
+    Returns ``(probes_ok, probes_failed)``. A row with missing addressing
+    (parent or device index not yet linked for this session) is skipped
+    silently — it counts as neither ok nor failed, just deferred to the
+    next probe pass after the link lands.
+    """
+    probes_ok = 0
+    probes_failed = 0
+    for row in Q.get_linked_drum_racks_for_session(conn, session_id):
+        device_id = row["device_id"]
+        parent_kind = row["parent_kind"]
+        parent_idx = row["parent_ableton_index"]
+        device_idx = row["device_ableton_index"]
+        if parent_idx is None or device_idx is None:
+            # Drum Rack in DB but not yet bound in Live for this session
+            # (devices phase didn't link it, or capture-only flow). The
+            # probe needs a live address — skip silently; the next push
+            # that links the device will probe it.
+            continue
+        params: dict[str, Any] = {"device_index": device_idx}
+        if parent_kind == "track":
+            params["track_index"] = parent_idx
+        else:
+            params["return_index"] = parent_idx
+        try:
+            resp = send_fn(request_cls(
+                tool="ableton_device", action="pad_info", params=params,
+            ))
+        except Exception:  # prawduct:ok-broad-except — best-effort post-phase probe; connection or wire errors must not derail an otherwise-successful push
+            probes_failed += 1
+            continue
+        if not bool(getattr(resp, "ok", False)):
+            probes_failed += 1
+            continue
+        payload = getattr(resp, "result", None) or {}
+        pads = payload.get("pads") or []
+        mappings = [
+            {"chain_name": p["chain_name"], "midi_note": int(p["note"])}
+            for p in pads
+            if p.get("chain_name") and p.get("note") is not None
+        ]
+        try:
+            M.replace_drum_pad_mappings(
+                conn,
+                device_id=device_id,
+                mappings=mappings,
+                actor=actor,
+                request_id=request_id,
+                reason=reason or f"push pad-probe (session={session_id})",
+            )
+        except Exception:  # prawduct:ok-broad-except — mutator validation (e.g. midi_note out of range from a malformed handler response) shouldn't halt the post-phase probe
+            probes_failed += 1
+            continue
+        probes_ok += 1
+    return probes_ok, probes_failed
+
+
 def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group error records by message substring for pattern-spotting.
 
@@ -331,10 +420,38 @@ def execute_push(
     error_records: list[dict[str, Any]] = []
     error_phase: str | None = None
 
+    def _maybe_pad_probe(phase_name: str) -> tuple[int, int]:
+        """A3: best-effort pad-mapping probe for the devices phase.
+
+        Fires after a structurally successful devices phase (whether the
+        phase had work to do OR was skipped because every device was
+        already linked via W20-A — both cases want pad_info captured for
+        the linked Drum Racks). Does not fire on halt/connection_lost:
+        the connection may be broken, and the push is going to be re-run
+        after the user fixes the underlying problem.
+
+        Returns ``(0, 0)`` for non-devices phases.
+        """
+        if phase_name != "devices":
+            return 0, 0
+        return _probe_pad_mappings_for_session(
+            conn=conn,
+            session_id=session_id,
+            send_fn=send_fn,
+            request_cls=Request,
+            actor=actor,
+            request_id=request_id,
+            reason=reason or f"push_cli execute pad-probe (session={session_id})",
+        )
+
     for idx, phase in enumerate(phases):
         plan = phase.plan_fn()
         if not plan.calls:
-            phase_outcomes.append(PhaseOutcome(name=phase.name, status=_STATUS_SKIPPED))
+            pad_ok, pad_failed = _maybe_pad_probe(phase.name)
+            phase_outcomes.append(PhaseOutcome(
+                name=phase.name, status=_STATUS_SKIPPED,
+                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
+            ))
             continue
 
         results: list[dict[str, Any]] = []
@@ -464,9 +581,11 @@ def execute_push(
                 ))
             break
 
+        pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(
             name=phase.name, status=_STATUS_OK,
             calls_ok=calls_ok, calls_failed=0,
+            pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
         ))
 
     # Persist state + errors.
@@ -485,6 +604,14 @@ def execute_push(
                    else {}),
                 **({"calls_planned": p.calls_planned}
                    if p.status == _STATUS_PENDING
+                   else {}),
+                # A3: only emit pad-probe counts when probes actually ran
+                # (devices phase with at least one linked Drum Rack).
+                # Keeps the state file uncluttered for songs without
+                # Drum Racks.
+                **({"pad_probes_ok": p.pad_probes_ok,
+                    "pad_probes_failed": p.pad_probes_failed}
+                   if (p.pad_probes_ok or p.pad_probes_failed)
                    else {}),
             }
             for p in phase_outcomes

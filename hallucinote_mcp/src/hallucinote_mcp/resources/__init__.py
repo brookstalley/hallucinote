@@ -232,7 +232,7 @@ def register_resources(mcp: Any) -> None:
     @mcp.resource(
         "ableton://guides/getting-started",
         name="guide_getting_started",
-        description="First-steps orientation: the 10-tool surface and discovery patterns.",
+        description="First-steps orientation: the 11-tool surface and discovery patterns.",
         mime_type="text/markdown",
     )
     def guide_getting_started() -> str:

@@ -150,11 +150,16 @@ def provenance_metadata(
 
     sha: str | None = None
     branch: str | None = None
+    # 2-second cap: every build_session runs this on entry, so a hung git
+    # invocation (locked .git, remote-helper stall) would freeze every
+    # compose cycle. subprocess.TimeoutExpired falls into the except below.
+    _GIT_TIMEOUT_SECONDS = 2.0
     try:
         sha = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
         ).strip()
     except (subprocess.SubprocessError, OSError, FileNotFoundError):
         pass
@@ -163,6 +168,7 @@ def provenance_metadata(
             ["git", "symbolic-ref", "--short", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
+            timeout=_GIT_TIMEOUT_SECONDS,
         ).strip()
     except (subprocess.SubprocessError, OSError, FileNotFoundError):
         pass

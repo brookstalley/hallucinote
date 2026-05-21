@@ -33,6 +33,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+
 # The `hallucinote` package is NOT vendored into Live's User Library
 # (only `hallucinote_mcp` is). A module-level import would ImportError
 # at Control Surface load time on the Live side. These actions are

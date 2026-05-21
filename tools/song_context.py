@@ -25,7 +25,33 @@ from hallucinote.db.connection import init_db
 from hallucinote.db import queries as Q
 
 
-def _format_row(row: Any) -> str:
+# Tokens that signal a constraint or avoidance — when a row mentions them,
+# the row's intent is "don't do X" rather than "do X." Surfaced in
+# --defensive mode so the agent reads the constraint BEFORE composing
+# something that violates it.
+_NEGATION_TOKENS: tuple[str, ...] = (
+    "don't",
+    "do not",
+    "never",
+    "avoid",
+    "stay away",
+    "stop ",
+    "not be",
+    "shouldn't",
+    "should not",
+    "won't",
+    "cannot",
+)
+
+
+def _has_negation(text: str | None) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return any(tok in lower for tok in _NEGATION_TOKENS)
+
+
+def _format_row(row: Any, *, defensive: bool = False) -> str:
     parts = [f"### `{row['path']}`"]
     meta_bits = [f"kind: {row['kind']}", f"scope: {row['scope']}"]
     if row["frontmatter_date"]:
@@ -37,10 +63,39 @@ def _format_row(row: Any) -> str:
         meta_bits.append(f"tags: {', '.join(tags)}")
     parts.append("  ".join(meta_bits))
     snippet = row["snippet"] if "snippet" in row.keys() else None
+    if defensive and _has_negation(snippet):
+        parts.append(
+            "**⚠️ contradiction signal: row contains negation/constraint "
+            "language — read in full before composing against it.**"
+        )
     if snippet:
         parts.append("")
         parts.append(snippet)
     return "\n".join(parts)
+
+
+def _collect_tags(rows: list[Any]) -> list[str]:
+    tags: set[str] = set()
+    for r in rows:
+        raw = r["tags_json"] if "tags_json" in r.keys() else None
+        if raw:
+            tags.update(json.loads(raw))
+    return sorted(tags)
+
+
+def _related_by_tags(conn: Any, seed_rows: list[Any], *, limit: int) -> list[Any]:
+    """Rows sharing at least one tag with any seed row, EXCLUDING seeds.
+
+    Single SQL pass under the hood — `Q.find_markdown_refs` does the
+    tag IN (?, ?, ...) match. Semantic search (embeddings) is v1.2+;
+    this v1.1 surface relies on the author's manual tag taxonomy.
+    """
+    seed_paths = {r["path"] for r in seed_rows}
+    seed_tags = _collect_tags(seed_rows)
+    if not seed_tags:
+        return []
+    rows = Q.find_markdown_refs(conn, tags=seed_tags, limit=limit * 3)
+    return [r for r in rows if r["path"] not in seed_paths][:limit]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,6 +125,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Bar range overlap, like '33:40' or '33' (point).",
     )
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument(
+        "--defensive",
+        action="store_true",
+        help=(
+            "Defensive mode: reframe the results as 'things that may "
+            "contradict your plan — read these before you compose.' "
+            "Highlights rows whose snippet/tags carry negation/constraint "
+            "language. Same query surface; rendering-layer change."
+        ),
+    )
+    parser.add_argument(
+        "--generative",
+        action="store_true",
+        help=(
+            "Generative mode: after the topic matches, also surface rows "
+            "sharing tags with the matches (under 'Related context'). "
+            "Surfaces connections the user hasn't drawn yet."
+        ),
+    )
     args = parser.parse_args(argv)
 
     db_path = Path(args.db).resolve()
@@ -112,8 +186,19 @@ def main(argv: list[str] | None = None) -> int:
             bars=bars,
             limit=args.limit,
         )
+        related: list[Any] = []
+        if args.generative and rows:
+            related = _related_by_tags(conn, rows, limit=args.limit)
     finally:
         conn.close()
+
+    if args.defensive:
+        print(
+            "# Defensive mode: items below MAY CONTRADICT your plan. "
+            "Read in full before composing against them — particularly "
+            "any flagged with ⚠️."
+        )
+        print()
 
     if not rows:
         print("(no matching refs)")
@@ -122,8 +207,22 @@ def main(argv: list[str] | None = None) -> int:
     print(f"# {len(rows)} match{'es' if len(rows) != 1 else ''}")
     print()
     for row in rows:
-        print(_format_row(row))
+        print(_format_row(row, defensive=args.defensive))
         print()
+
+    if args.generative:
+        if related:
+            print(
+                f"# Related context ({len(related)} item"
+                f"{'s' if len(related) != 1 else ''}, by shared tag)"
+            )
+            print()
+            for row in related:
+                print(_format_row(row))
+                print()
+        else:
+            print("# Related context: (none — top matches had no tags)")
+            print()
     return 0
 
 

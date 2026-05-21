@@ -66,6 +66,19 @@ _PLUGIN_CLASSES: frozenset[str] = frozenset({
 _PLACEHOLDER_KIND = "placeholder"
 
 
+# Browser roots accepted by `ableton_device(action='load', preset_query=...)`.
+# Mirror of ``_ROOTS`` in
+# ``hallucinote_mcp/.../actions/browser.py`` — the two MUST agree (lock-test
+# below). Authors typo this surprisingly often (the resource URI uses
+# ``effects`` while the loader accepts ``audio_effects``); compat-check
+# catches the typo at compose time instead of after a partial-push
+# debug loop.
+_VALID_BROWSER_ROOTS: frozenset[str] = frozenset({
+    "instruments", "audio_effects", "midi_effects", "drums", "plugins",
+    "samples", "user_library", "packs",
+})
+
+
 def _is_plugin_class(class_name: str) -> bool:
     """True iff ``class_name`` indicates a third-party plugin wrapper.
 
@@ -88,11 +101,17 @@ def _is_plugin_class(class_name: str) -> bool:
 # back to a "found"/"not found" binary.
 
 DeviceStatus = Literal[
-    "native",                  # Live built-in — no install needed.
-    "placeholder",             # Author intentionally left this slot empty.
-    "third_party_ok",          # Plugin needed AND found in the installed list.
-    "third_party_missing",     # Plugin needed AND not found in the installed list.
-    "third_party_unverified",  # Plugin needed AND no installed list was provided.
+    "native",                   # Live built-in — no install needed.
+    "placeholder",              # Author intentionally left this slot empty.
+    "third_party_ok",           # Plugin needed AND found in the installed list.
+    "third_party_missing",      # Plugin needed AND not found in the installed list.
+    "third_party_unverified",   # Plugin needed AND no installed list was provided.
+    # R-2.1: preset_query / load-shape validation. Catches authoring errors
+    # that compat used to let pass through to push time.
+    "preset_query_invalid",     # preset_query has a structural error (bad root, non-list path_prefix).
+    "kind_unresolvable",        # Dry-run reported 0 matches for kind/preset_query — load will fail.
+    "kind_ambiguous",           # Dry-run reported 2+ matches — strict loader will refuse.
+    "preset_query_unverified",  # preset_query needed AND no dry-runs map was provided.
 ]
 
 
@@ -118,13 +137,19 @@ class DeviceEntry:
     # best signal we have — the author typically names the device after
     # the plugin (or after a preset they bought from that vendor).
     lookup_name: str | None = None
+    # R-2.1: for preset_query_* statuses, a human-readable hint naming
+    # the specific defect (e.g. "root='effects' not in valid roots",
+    # "0 matches for pattern='Hall' under audio_effects/Hybrid Reverb"
+    # — the agent can use this to suggest a concrete fix without
+    # re-running the dry-run).
+    detail: str | None = None
 
 
 @dataclass
 class CompatReport:
     """Structured result of one ``check_song`` run.
 
-    The five status buckets cover every device in the song's DB. The
+    The status buckets cover every device in the song's DB. The
     ``has_issues`` flag is what the push-preflight gate keys off: True
     means "stop and ask the user before pushing."
     """
@@ -132,6 +157,10 @@ class CompatReport:
     song_title: str | None
     entries: list[DeviceEntry] = field(default_factory=list)
     installed_provided: bool = False  # Was --installed-plugins given?
+    # R-2.1: was --browser-dry-runs (or the in-process equivalent) given?
+    # Mirrors ``installed_provided``: when False, preset_query devices
+    # land in ``preset_query_unverified`` instead of resolved/refused.
+    browser_dry_runs_provided: bool = False
 
     @property
     def native(self) -> list[DeviceEntry]:
@@ -154,20 +183,51 @@ class CompatReport:
         return [e for e in self.entries if e.status == "third_party_unverified"]
 
     @property
+    def preset_query_invalid(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "preset_query_invalid"]
+
+    @property
+    def kind_unresolvable(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "kind_unresolvable"]
+
+    @property
+    def kind_ambiguous(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "kind_ambiguous"]
+
+    @property
+    def preset_query_unverified(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "preset_query_unverified"]
+
+    @property
     def has_issues(self) -> bool:
         """True iff the push-preflight gate should refuse-and-confirm.
 
         Missing plugins ARE issues. Unverified plugins ARE issues too
         (the operator should explicitly confirm rather than discover at
         load time). Placeholders are NOT issues — they're intentional.
+
+        R-2.1: the three new preset_query failure modes
+        (``preset_query_invalid``, ``kind_unresolvable``,
+        ``kind_ambiguous``) are ALL issues — every one of them is a
+        push-time refusal the loader will raise. ``preset_query_unverified``
+        is an issue for the same reason ``third_party_unverified`` is:
+        the operator should explicitly confirm rather than discover at
+        load time.
         """
-        return bool(self.missing or self.unverified)
+        return bool(
+            self.missing or self.unverified
+            or self.preset_query_invalid
+            or self.kind_unresolvable
+            or self.kind_ambiguous
+            or self.preset_query_unverified
+        )
 
     def to_json(self) -> dict:
         return {
             "song_slug": self.song_slug,
             "song_title": self.song_title,
             "installed_provided": self.installed_provided,
+            "browser_dry_runs_provided": self.browser_dry_runs_provided,
             "entries": [asdict(e) for e in self.entries],
             "summary": {
                 "total": len(self.entries),
@@ -176,6 +236,10 @@ class CompatReport:
                 "third_party_ok": len(self.third_party_ok),
                 "missing": len(self.missing),
                 "unverified": len(self.unverified),
+                "preset_query_invalid": len(self.preset_query_invalid),
+                "kind_unresolvable": len(self.kind_unresolvable),
+                "kind_ambiguous": len(self.kind_ambiguous),
+                "preset_query_unverified": len(self.preset_query_unverified),
                 "has_issues": self.has_issues,
             },
         }
@@ -184,6 +248,82 @@ class CompatReport:
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
+
+
+def classify_preset_query(
+    preset_query_raw: str | None,
+) -> tuple[DeviceStatus, str | None] | None:
+    """Validate the STRUCTURE of a stored preset_query (root + path_prefix
+    shape). Returns ``None`` when the device has no preset_query (the
+    classify-by-kind path takes over) or when the structure is fine and
+    a dry-run is the next step.
+
+    R-2.1 catches the two structural traps from sun-zone-done that never
+    reach a dry-run:
+
+    * ``root`` not in the loader's accepted enum (typo: ``"effects"`` vs
+      ``"audio_effects"`` — 8 push failures in one run).
+    * ``path_prefix`` is a JSON string instead of a list — the loader's
+      ``preset_query.path_prefix must be a list`` error gets surfaced at
+      compose time instead of push time.
+
+    Garbage JSON (un-parseable) also lands here as ``preset_query_invalid``
+    so a malformed snapshot can't slip through to push.
+    """
+    if preset_query_raw is None:
+        return None
+    try:
+        pq = json.loads(preset_query_raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return "preset_query_invalid", f"preset_query is not valid JSON: {exc}"
+    if not isinstance(pq, dict):
+        return (
+            "preset_query_invalid",
+            f"preset_query must be a JSON object, got {type(pq).__name__}",
+        )
+    root = pq.get("root")
+    if root is None:
+        return (
+            "preset_query_invalid",
+            "preset_query.root is required (see snapshot-schema.md for the "
+            "valid root enum)",
+        )
+    if root not in _VALID_BROWSER_ROOTS:
+        return (
+            "preset_query_invalid",
+            f"preset_query.root={root!r} not in valid roots "
+            f"{sorted(_VALID_BROWSER_ROOTS)} (note: the resource URI uses "
+            "'effects', but the loader uses 'audio_effects')",
+        )
+    path_prefix = pq.get("path_prefix")
+    if path_prefix is not None and not isinstance(path_prefix, list):
+        return (
+            "preset_query_invalid",
+            f"preset_query.path_prefix must be a list of name segments, got "
+            f"{type(path_prefix).__name__} ({path_prefix!r}). Wrap a single "
+            "segment in a list: ['Operator']",
+        )
+    pattern = pq.get("pattern")
+    if pattern is not None and not isinstance(pattern, str):
+        return (
+            "preset_query_invalid",
+            f"preset_query.pattern must be a string, got {type(pattern).__name__}",
+        )
+    # Structure is fine — caller will dispatch the dry-run.
+    return None
+
+
+def _dry_run_key(preset_query: dict) -> tuple[str, str, tuple[str, ...]]:
+    """Canonical key for a precomputed browser-search dry-run cache.
+
+    Includes ``root``, ``pattern``, and a tuple-encoded ``path_prefix``
+    so the cache hash is stable across re-runs of the same query.
+    """
+    return (
+        str(preset_query.get("root", "")),
+        str(preset_query.get("pattern", "")),
+        tuple(preset_query.get("path_prefix") or []),
+    )
 
 
 def classify_device(
@@ -237,6 +377,7 @@ def check_song(
     db_path: Path | str,
     *,
     installed_plugins: list[dict] | None = None,
+    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None = None,
 ) -> CompatReport:
     """Walk the song's DB and classify every device.
 
@@ -249,6 +390,15 @@ def check_song(
     ``{"name": str, "uri": str}`` dicts. Pass None to skip the
     cross-check entirely (every third-party plugin becomes
     ``third_party_unverified``).
+
+    R-2.1 ``browser_dry_runs`` (optional): precomputed map from
+    ``(root, pattern, path_prefix_tuple)`` → integer match count. Filled
+    in by the caller (CLI / skill) by running ``ableton_browser(action=
+    'search')`` for every device's ``preset_query``. When None,
+    structurally-valid preset_queries land in ``preset_query_unverified``
+    (mirrors the ``third_party_unverified`` design). When provided, the
+    match count drives ``kind_unresolvable`` (0) /
+    ``kind_ambiguous`` (2+) / native (1).
     """
     conn = connect(db_path)
     try:
@@ -274,6 +424,7 @@ def check_song(
             song_slug=song_row["name"],
             song_title=song_row["title"],
             installed_provided=installed_plugins is not None,
+            browser_dry_runs_provided=browser_dry_runs is not None,
         )
 
         tracks = conn.execute(
@@ -286,6 +437,7 @@ def check_song(
                 _walk_chain(
                     conn, chain, parent_label=t["name"], track_name=t["name"],
                     report=report, installed_names=installed_names,
+                    browser_dry_runs=browser_dry_runs,
                 )
 
         returns = conn.execute(
@@ -297,6 +449,7 @@ def check_song(
                 _walk_chain(
                     conn, chain, parent_label=r["name"], track_name=r["name"],
                     report=report, installed_names=installed_names,
+                    browser_dry_runs=browser_dry_runs,
                 )
 
         return report
@@ -312,6 +465,7 @@ def _walk_chain(
     track_name: str,
     report: CompatReport,
     installed_names: frozenset[str] | None,
+    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
 ) -> None:
     """Recursively walk a device chain, classifying each device.
 
@@ -322,10 +476,8 @@ def _walk_chain(
     """
     devices = Q.get_devices_for_chain(conn, chain["id"])
     for d in devices:
-        status, lookup = classify_device(
-            d["kind"],
-            display_name=d["display_name"],
-            installed_plugin_names=installed_names,
+        status, lookup, detail = _classify_device_full(
+            d, installed_names=installed_names, browser_dry_runs=browser_dry_runs,
         )
         report.entries.append(DeviceEntry(
             track_name=track_name,
@@ -336,6 +488,7 @@ def _walk_chain(
             preset_uri=d["preset_uri"],
             status=status,
             lookup_name=lookup,
+            detail=detail,
         ))
         for inner in Q.get_device_chains_for_rack_device(conn, d["id"]):
             _walk_chain(
@@ -343,7 +496,74 @@ def _walk_chain(
                 parent_label=f"{parent_label} / {d['display_name']}",
                 track_name=track_name,
                 report=report, installed_names=installed_names,
+                browser_dry_runs=browser_dry_runs,
             )
+
+
+def _classify_device_full(
+    device_row: sqlite3.Row,
+    *,
+    installed_names: frozenset[str] | None,
+    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+) -> tuple[DeviceStatus, str | None, str | None]:
+    """Combined classifier — preset_query validation takes precedence
+    over plugin-check, because a structurally-broken preset_query will
+    refuse at load time regardless of whether the underlying class is
+    native or third-party.
+
+    Returns ``(status, lookup_name, detail)``. ``detail`` is non-None
+    for the new preset_query failure modes; the legacy plugin path
+    leaves it None to keep its output stable.
+    """
+    # preset_query branch — structural check first, dry-run after.
+    preset_query_raw = device_row["preset_query"] if "preset_query" in device_row.keys() else None
+    if preset_query_raw is not None:
+        structural = classify_preset_query(preset_query_raw)
+        if structural is not None:
+            status, detail = structural
+            return status, device_row["display_name"], detail
+        # Structurally valid → consult the dry-run cache (if available).
+        pq = json.loads(preset_query_raw)
+        if browser_dry_runs is None:
+            return (
+                "preset_query_unverified",
+                device_row["display_name"],
+                "no browser dry-runs provided (pass --browser-dry-runs <file> "
+                "or run from a session with Live available)",
+            )
+        key = _dry_run_key(pq)
+        match_count = browser_dry_runs.get(key)
+        pattern = pq.get("pattern", "")
+        root = pq.get("root", "")
+        path = pq.get("path_prefix") or []
+        path_str = "/".join(str(p) for p in path) if path else "(no path_prefix)"
+        if match_count is None or match_count == 0:
+            return (
+                "kind_unresolvable",
+                device_row["display_name"],
+                f"0 matches for pattern={pattern!r} under root={root!r} "
+                f"path_prefix={path_str} — Live's browser has nothing at "
+                "that location. Tighten path_prefix or fix the pattern.",
+            )
+        if match_count >= 2:
+            return (
+                "kind_ambiguous",
+                device_row["display_name"],
+                f"{match_count} matches for pattern={pattern!r} under "
+                f"root={root!r} path_prefix={path_str} — the strict loader "
+                "refuses on multi-match. Use a more specific pattern, an "
+                "explicit '.adv' suffix, or a tighter path_prefix.",
+            )
+        # match_count == 1 → resolves cleanly; fall through to plugin check
+        # since the SAME device could still be a third-party plugin needing
+        # the installed-plugin classifier.
+
+    status, lookup = classify_device(
+        device_row["kind"],
+        display_name=device_row["display_name"],
+        installed_plugin_names=installed_names,
+    )
+    return status, lookup, None
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +648,33 @@ def format_requirements_md(report: CompatReport) -> str:
             lines.append(
                 f"- {e.chain_path} (position {e.position}) — {label}"
             )
+        lines.append("")
+
+    # R-2.1: preset_query failure modes belong in REQUIREMENTS.md because
+    # the consumer can't fix a structurally-broken snapshot by installing
+    # plugins — the AUTHOR needs to repair the snapshot. Surfacing here
+    # makes the fix list visible at the same time as the install list.
+    preset_query_issues = (
+        report.preset_query_invalid
+        + report.kind_unresolvable
+        + report.kind_ambiguous
+    )
+    if preset_query_issues:
+        lines.append("## preset_query authoring issues")
+        lines.append("")
+        lines.append(
+            "These devices have ``preset_query`` selectors the push planner "
+            "will refuse at load time. Fix in the snapshot (or the "
+            "build.py that authored them) before re-pushing:"
+        )
+        lines.append("")
+        for e in preset_query_issues:
+            lines.append(
+                f"- **{e.display_name}** at {e.chain_path} position "
+                f"{e.position} — _{e.status}_"
+            )
+            if e.detail:
+                lines.append(f"  - {e.detail}")
         lines.append("")
 
     if report.native:

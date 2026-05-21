@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import pull
@@ -2116,6 +2116,13 @@ def _param_tuple(draw):
     return (name, value, f"{value:.4f}", min_v, max_v, False)
 
 
+# Deadline disabled: SQLite + tempfile create/destroy per example is
+# steady ~50ms but spikes past Hypothesis's default 200ms deadline under
+# parallel xdist contention with the rest of the sync suite. The test
+# checks correctness, not timing; the round-trip discipline is the
+# value, and `max_examples=20` (dev profile) already bounds wall-clock
+# cost. Without this, the test surfaces as FlakyFailure on busy machines.
+@settings(deadline=None)
 @given(
     entries=st.lists(_param_tuple(), min_size=1, max_size=8, unique_by=lambda e: e[0]),
 )

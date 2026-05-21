@@ -323,6 +323,25 @@ def test_plan_push_cue_points_emits_single_batched_call(conn, song):
     assert call.key == f"cue_batch:{song}"
 
 
+def test_plan_push_cue_points_sets_if_exists_skip(conn, song):
+    """R-1.1: re-push idempotency. The planner explicitly sets
+    ``if_exists='skip'`` so a second push of the same DB against a Live
+    set that already has the same-named cues is a no-op the second time
+    (instead of failing on every cue with 'a cue already exists').
+
+    Pinned here so a future planner edit can't silently drop the param
+    and bring the partial-push debug loop back.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert plan.calls[0].args.get("if_exists") == "skip"
+
+
 def test_plan_push_cue_points_fractional_position_converts_correctly(conn, song):
     """A cue at bar 8.5 in 4/4 = (8-1)*4 + 0.5*4 = 30 beats."""
     M.add_time_signature_point(

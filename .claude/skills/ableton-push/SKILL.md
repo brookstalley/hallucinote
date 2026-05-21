@@ -158,23 +158,19 @@ Run this step **only** when Step 1 returned a non-empty `default_scaffold_unmatc
 
 **Why this step lives after `execute`, not before.** Live requires ≥1 track in a set (W18-E refuses-and-teaches at the MCP layer on the last-track delete). If we deleted the defaults before `execute`, the fourth delete would fail — Live would still have only the three remaining defaults, and removing the last default would leave Live with zero tracks. The song's own tracks have to land first; once they're alongside the defaults, deleting any of the defaults is safe because the song's tracks satisfy the ≥1 guarantee.
 
-**Order of operations.**
+**Run the single-command path (R-1.2):**
 
-1. Sort the `default_scaffold_unmatched_tracks` indexes in **descending** order. Lower indexes shift downward when a higher index is deleted, so descending-order deletion lets the remaining captured indexes stay valid through the loop. Ascending-order deletion would silently delete the wrong tracks after the first iteration.
+```
+python3 -m hallucinote.sync.push_cli cleanup-default-scaffold <session_id> --song <slug>
+```
 
-2. For each index in that order, call:
-   ```
-   ableton_track(action='delete', track_index=N)
-   ```
-   If one delete refuses (e.g., Live shifted differently than expected, or the user interactively edited the set between Step 2 and Step 2a), stop the loop. Tell the user what landed, what remains, and that the rest can be cleaned up manually.
+The subcommand probes Live in-process, validates that every unmatched parent is a canonical default (refuses-and-teaches on non-canonical names — "another song's tracks" — so the user resolves them by hand), checks that the deletes won't leave Live with zero tracks (Live's ≥1-track constraint), dispatches the `ableton_track(action='delete')` calls in **descending index order** in-process, then re-runs `probe-and-link` to reconcile the shifted indexes. Output is a JSON summary listing the deleted tracks/returns plus the reconciled probe result; non-zero exit on any refusal or per-delete failure.
 
-3. After the deletes complete, **re-run probe-and-link to reconcile the shifted indexes**:
-   ```
-   python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> --probe
-   ```
-   The song's tracks survived but their `track_index` shifted downward as defaults were removed. The strict reconciliation pass deletes the now-stale links pointing at the deleted defaults; the name-matching pass re-binds the song's DB tracks to their new Live indexes. The link rewrites go through `M.link_db_to_ableton`'s upsert path, so the per-`(session, db_kind, db_id)` rows update in place — no orphans, no duplicates.
+If the subcommand refuses, the stderr JSON names the refusal kind (`non_canonical_tracks` / `non_canonical_returns` / `would_empty_live_tracks` / `nothing_to_do`) and the offending names — read it and either hand-resolve the named tracks, or skip Step 2a if cleanup isn't applicable.
 
 You don't need a fresh `execute` after the cleanup — the song is already materialised; the re-link only repairs the index bookkeeping so the next iteration's push lands cleanly.
+
+(Historical: pre-R-1.2 this step was 6+ hand-issued `ableton_track(action='delete')` MCP calls plus a manual re-probe. The subcommand bundles that flow atomically.)
 
 ### Step 3 — Final report
 

@@ -6,16 +6,16 @@ You describe musical intent in plain language — *"write a stereotypical metal 
 
 See [`docs/VISION.md`](docs/VISION.md) for the big picture. See [`CHANGELOG.md`](CHANGELOG.md) for what shipped.
 
-## Status
-
-**v1.0.0 — beta-readiness release.** Compose end-to-end, push into Live, pull edits back, on any installed Drum Rack and across machines. The release gate is *"a beta tester can prompt 'make me song X', get a finished-sounding result, share it with another tester, and not bounce on common papercuts"*. Highlights: composer-experience overhaul (creative-vs-planning detection, sound-as-composition, per-part `feel`), push-state coherence (probe-driven `/ableton-push` + soft reset), cross-machine instrument fallback (search-and-retry on preset-URI miss), Drum Rack pad-mapping discovery (kit-portable drum parts via the new `Kit` class). Current known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
-
 ## What you can do
 
 - **Compose a song from a prompt.** `/song-new <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
 - **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chrous drums"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
 - **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
 - **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
+
+### Limitations
+
+Known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
 ## Requirements
 
@@ -44,7 +44,7 @@ py -3 -m venv .venv
 pip install -e . -e .\hallucinote_mcp
 ```
 
-To run the test suite, add the `[dev]` extras (pytest, pytest-xdist, hypothesis) on either package:
+To enable development (mostly to enable running the test suite), add the `[dev]` extras (pytest, pytest-xdist, hypothesis) on either package:
 
 ```bash
 pip install -e '.[dev]' -e './hallucinote_mcp[dev]'

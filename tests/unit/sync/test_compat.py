@@ -372,6 +372,8 @@ def test_compat_report_to_json_shape(conn, song, track_chain, db_path):
     assert data["summary"] == {
         "total": 3, "native": 1, "placeholders": 1,
         "third_party_ok": 0, "missing": 0, "unverified": 1,
+        "preset_query_invalid": 0, "kind_unresolvable": 0,
+        "kind_ambiguous": 0, "preset_query_unverified": 0,
         "has_issues": True,
     }
     assert len(data["entries"]) == 3
@@ -547,3 +549,202 @@ def test_load_installed_plugins_rejects_garbage(tmp_path):
     path.write_text(json.dumps({"not": "a plugins list"}))
     with pytest.raises(SystemExit, match="must be a list"):
         C._load_installed_plugins(path)
+
+
+# ---------------------------------------------------------------------------
+# R-2.1: preset_query structural validation + dry-run resolution
+# ---------------------------------------------------------------------------
+
+
+def test_valid_browser_roots_lock_matches_mcp_side():
+    """The set of valid browser roots in compat must agree with the MCP
+    server's ``_ROOTS`` enum. Authors typo this surprisingly often (the
+    resource URI uses 'effects', the loader uses 'audio_effects'), so a
+    structural drift between the two sides would let typos slip through
+    compat unnoticed.
+    """
+    from hallucinote_mcp.actions.browser import _ROOTS as MCP_ROOTS
+    assert C._VALID_BROWSER_ROOTS == frozenset(MCP_ROOTS), (
+        "compat._VALID_BROWSER_ROOTS drifted from "
+        "hallucinote_mcp.actions.browser._ROOTS — update the compat side "
+        "if the MCP side gained or dropped a root."
+    )
+
+
+def test_classify_preset_query_accepts_valid_structure():
+    """root in enum + pattern str + path_prefix list → return None (no
+    structural error; caller proceeds to dry-run)."""
+    out = C.classify_preset_query(json.dumps({
+        "root": "audio_effects",
+        "pattern": "Hall",
+        "path_prefix": ["Hybrid Reverb"],
+    }))
+    assert out is None
+
+
+def test_classify_preset_query_rejects_root_typo():
+    """The sun-zone-done typo: ``root='effects'`` (singular, browser-resource
+    form) instead of ``'audio_effects'`` (loader-accepted enum). 8 of the
+    13 push failures in that session came from this single typo."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "effects", "pattern": "Reverb",
+    }))
+    assert status == "preset_query_invalid"
+    assert "audio_effects" in detail and "effects" in detail
+
+
+def test_classify_preset_query_rejects_string_path_prefix():
+    """The sun-zone-done shape error: ``path_prefix='Tension'`` (string)
+    instead of ``['Tension']`` (list). Loader raises
+    ``preset_query.path_prefix must be a list``; compat must surface this
+    BEFORE the push attempt."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Boom in E",
+        "path_prefix": "Tension",
+    }))
+    assert status == "preset_query_invalid"
+    assert "path_prefix" in detail and "list" in detail
+
+
+def test_classify_preset_query_rejects_garbage_json():
+    """Malformed JSON in the preset_query column → still classified as
+    invalid (don't let a corrupted snapshot pass through silently)."""
+    status, detail = C.classify_preset_query("not json {")
+    assert status == "preset_query_invalid"
+    assert "JSON" in detail
+
+
+def test_classify_preset_query_rejects_missing_root():
+    status, detail = C.classify_preset_query(json.dumps({"pattern": "x"}))
+    assert status == "preset_query_invalid"
+    assert "root" in detail
+
+
+def test_classify_preset_query_passes_when_no_preset_query():
+    """No preset_query → ``None`` so the kind-only classify_device path
+    takes over."""
+    assert C.classify_preset_query(None) is None
+
+
+def test_check_song_classifies_invalid_root_at_compose_time(conn, song, track_chain, db_path):
+    """End-to-end: a device authored with the typo'd ``root='effects'``
+    lands in ``preset_query_invalid``, the report's ``has_issues`` is
+    True, and the entry carries the diagnostic detail."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "effects", "pattern": "Hall"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+    assert len(report.preset_query_invalid) == 1
+    e = report.preset_query_invalid[0]
+    assert e.kind == "Reverb"
+    assert "audio_effects" in (e.detail or "")
+    assert report.has_issues is True
+
+
+def test_check_song_classifies_kind_ambiguous_with_dry_runs(conn, song, track_chain, db_path):
+    """When ``browser_dry_runs`` reports 2+ matches for a preset_query,
+    the device is ``kind_ambiguous`` and the loader would refuse at
+    push time. Compat catches this at compose time and the detail names
+    the match count."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "audio_effects", "pattern": "Hall",
+                       "path_prefix": ["Hybrid Reverb"]},
+    )
+    conn.commit()
+    dry_runs = {
+        ("audio_effects", "Hall", ("Hybrid Reverb",)): 12,
+    }
+    report = C.check_song(db_path, browser_dry_runs=dry_runs)
+    assert len(report.kind_ambiguous) == 1
+    e = report.kind_ambiguous[0]
+    assert "12 matches" in (e.detail or "")
+    assert report.has_issues is True
+    assert report.browser_dry_runs_provided is True
+
+
+def test_check_song_classifies_kind_unresolvable_on_zero_matches(conn, song, track_chain, db_path):
+    """Dry-run reports 0 matches → ``kind_unresolvable``. The author's
+    pattern (or path_prefix) doesn't exist on the consumer's machine."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Nonexistent Preset"},
+    )
+    conn.commit()
+    dry_runs = {("instruments", "Nonexistent Preset", ()): 0}
+    report = C.check_song(db_path, browser_dry_runs=dry_runs)
+    assert len(report.kind_unresolvable) == 1
+    assert report.has_issues is True
+
+
+def test_check_song_classifies_single_match_as_native(conn, song, track_chain, db_path):
+    """Dry-run reports exactly 1 match → the preset_query is resolvable;
+    device falls through to the regular plugin-classifier (native here
+    since Operator isn't a plugin wrapper)."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    dry_runs = {("instruments", "Bass-Pluck", ()): 1}
+    report = C.check_song(db_path, browser_dry_runs=dry_runs)
+    assert len(report.native) == 1
+    assert report.has_issues is False
+
+
+def test_check_song_classifies_unverified_when_no_dry_runs(conn, song, track_chain, db_path):
+    """Structurally-valid preset_query without a dry-runs map →
+    ``preset_query_unverified`` (parallel to ``third_party_unverified``).
+    The operator must explicitly verify; treating it as resolved would
+    be false confidence."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+    assert len(report.preset_query_unverified) == 1
+    assert report.has_issues is True
+    assert report.browser_dry_runs_provided is False
+
+
+def test_check_song_preset_query_invalid_skips_dry_run(conn, song, track_chain, db_path):
+    """When ``root`` is invalid we don't bother consulting the dry-runs
+    cache (the loader will refuse on root anyway). The device lands in
+    ``preset_query_invalid``, not ``kind_unresolvable``."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Reverb", display_name="Reverb",
+        preset_query={"root": "effects", "pattern": "Hall"},
+    )
+    conn.commit()
+    report = C.check_song(db_path, browser_dry_runs={})
+    assert len(report.preset_query_invalid) == 1
+    assert len(report.kind_unresolvable) == 0
+
+
+def test_check_song_preset_query_takes_precedence_over_plugin_class(
+    conn, song, track_chain, db_path,
+):
+    """A third-party plugin device authored with a typo'd preset_query
+    surfaces as ``preset_query_invalid`` (loader refuses outright)
+    rather than ``third_party_missing`` (the consumer needs the plugin).
+    The structural error must be fixed FIRST or the plugin install
+    won't help."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="PluginDevice", display_name="Serum",
+        preset_query={"root": "effects", "pattern": "Wobble"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+    assert len(report.preset_query_invalid) == 1
+    assert len(report.missing) == 0
+    assert len(report.unverified) == 0

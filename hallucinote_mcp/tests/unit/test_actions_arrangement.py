@@ -1238,7 +1238,11 @@ def test_cue_create_batch_rejects_invalid_position_type(loaded_actions):
 def test_cue_create_batch_propagates_per_cue_error(loaded_actions):
     """Once pre-validation passes, an in-loop failure (e.g. clash with
     an existing cue) surfaces with the cue_create error and the batch
-    aborts — no half-completed state pretending to be success."""
+    aborts — no half-completed state pretending to be success.
+
+    Uses ``if_exists='refuse'`` (legacy semantics) explicitly because
+    the default flipped to ``'skip'`` in R-1.1.
+    """
     ctx = FakeCtx(FakeSong(cues=[FakeCue(32.0, "Existing")]))
     resp = dispatch(
         Request(
@@ -1246,7 +1250,7 @@ def test_cue_create_batch_propagates_per_cue_error(loaded_actions):
             params={"cues": [
                 {"position_beats": 16.0, "name": "Verse"},
                 {"position_beats": 32.0, "name": "Clash"},
-            ]},
+            ], "if_exists": "refuse"},
         ),
         context=ctx,
     )
@@ -1258,6 +1262,196 @@ def test_cue_create_batch_propagates_per_cue_error(loaded_actions):
     landed_names = sorted(c.name for c in ctx.song.cue_points)
     assert "Verse" in landed_names
     assert "Existing" in landed_names
+
+
+# ---------- R-1.1: cue if_exists semantics ----------
+
+
+def test_cue_create_if_exists_skip_no_ops_when_name_matches(loaded_actions):
+    """Idempotent re-push of the same cue is a no-op when names agree.
+
+    The result carries ``skipped=True`` so the caller can distinguish
+    "created" from "matched the existing cue." Live's cue_points list
+    is unchanged.
+    """
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(16.0, "Verse")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={
+                "position_beats": 16.0, "name": "Verse",
+                "if_exists": "skip",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["skipped"] is True
+    assert resp.result["name"] == "Verse"
+    assert resp.result["cue_index"] == 1
+    # Nothing actually toggled — the existing cue is preserved without
+    # any seek/toggle round-trip.
+    assert len(ctx.song.cue_points) == 1
+    assert ctx.song.set_or_delete_cue_calls == []
+
+
+def test_cue_create_if_exists_skip_treats_missing_name_as_match(loaded_actions):
+    """name=None means "I don't care about the name" — a same-position
+    existing cue (of any name) is a match for skip purposes."""
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(16.0, "Verse")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={"position_beats": 16.0, "if_exists": "skip"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["skipped"] is True
+    assert resp.result["name"] == "Verse"
+    assert ctx.song.set_or_delete_cue_calls == []
+
+
+def test_cue_create_if_exists_skip_raises_on_name_mismatch(loaded_actions):
+    """A same-position cue with a DIFFERENT name signals real authoring
+    drift (the user renamed in Live, or the DB now wants a different
+    name there). ``if_exists='skip'`` does NOT silently rename — it
+    raises so the caller resolves the discrepancy explicitly."""
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(16.0, "Verse")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={
+                "position_beats": 16.0, "name": "Chorus",
+                "if_exists": "skip",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "already exists" in err
+    assert "'Verse'" in err and "'Chorus'" in err
+    # Existing cue is preserved, no rename happened.
+    assert ctx.song.cue_points[0].name == "Verse"
+
+
+def test_cue_create_if_exists_refuse_is_default(loaded_actions):
+    """Single-cue ``cue_create`` defaults to ``if_exists='refuse'`` so
+    one-shot callers see collisions instead of silent no-ops. Matches
+    pre-R-1.1 behavior — the test_cue_create_refuses_to_clobber_*
+    test above already pins this; this is the explicit parameter form.
+    """
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(16.0, "Verse")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={"position_beats": 16.0, "name": "Verse"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "already exists" in (resp.error or "")
+
+
+def test_cue_create_batch_default_if_exists_skip_makes_repush_idempotent(loaded_actions):
+    """Replaying the same batch is a no-op — the planner can re-push
+    after a tweak to other phases without manually deleting every cue
+    in Live first.
+
+    The batch's default is ``'skip'`` (the planner path); this test
+    pins that default without passing the param explicitly.
+    """
+    ctx = FakeCtx(FakeSong(cues=[
+        FakeCue(0.0, "Intro"),
+        FakeCue(16.0, "Verse"),
+        FakeCue(48.0, "Chorus"),
+    ]))
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "Intro"},
+                {"position_beats": 16.0, "name": "Verse"},
+                {"position_beats": 48.0, "name": "Chorus"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["cue_count"] == 3
+    assert all(c["skipped"] is True for c in resp.result["cues"])
+    # No toggles fired — every cue was the existing one.
+    assert ctx.song.set_or_delete_cue_calls == []
+    # Live's cue list unchanged.
+    assert [(c.time, c.name) for c in ctx.song.cue_points] == [
+        (0.0, "Intro"), (16.0, "Verse"), (48.0, "Chorus"),
+    ]
+
+
+def test_cue_create_batch_skip_mixes_creates_and_skips(loaded_actions):
+    """A batch with some cues already present + some new produces a
+    mix of created and skipped per-cue results in submission order.
+    """
+    ctx = FakeCtx(FakeSong(cues=[FakeCue(16.0, "Verse")]))
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "Intro"},      # new
+                {"position_beats": 16.0, "name": "Verse"},     # skip
+                {"position_beats": 32.0, "name": "Chorus"},    # new
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    per_cue = resp.result["cues"]
+    assert per_cue[0].get("skipped") is not True
+    assert per_cue[1]["skipped"] is True
+    assert per_cue[2].get("skipped") is not True
+    landed = {(c.time, c.name) for c in ctx.song.cue_points}
+    assert landed == {(0.0, "Intro"), (16.0, "Verse"), (32.0, "Chorus")}
+
+
+def test_cue_create_rejects_unknown_if_exists_value(loaded_actions):
+    """The enum is pinned to {'refuse', 'skip'}. The dispatcher's
+    ParamSpec.enum check rejects anything else with a teaching error
+    before the handler runs."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create",
+            params={"position_beats": 16.0, "if_exists": "replace"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    # Either the dispatcher's enum guard or the handler's whitelist
+    # fires; both forms surface the rejected value.
+    assert "if_exists" in resp.error or "replace" in err
+
+
+def test_cue_create_batch_rejects_unknown_if_exists_value(loaded_actions):
+    """Same enum guard at the batch entry."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={
+                "cues": [{"position_beats": 0.0}],
+                "if_exists": "replace",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "if_exists" in resp.error or "replace" in err
 
 
 # ---------- live_state_lock acquisition ----------

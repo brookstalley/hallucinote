@@ -1,7 +1,6 @@
 """Wire protocol — framing + Request/Response shapes."""
 from __future__ import annotations
 
-import io
 import socket
 import threading
 

@@ -66,12 +66,13 @@ from hallucinote.sync import push, push_execute
 def _resolve_send_fn():
     """Lazy resolver for ``hallucinote_mcp.client.send``.
 
-    Pulled out into a top-level function so tests can ``monkeypatch.setattr(
-    push_cli, "_resolve_send_fn", ...)`` to inject a fake send — the
-    ``from hallucinote_mcp import client`` form used inside the CLI body
-    is brittle under parallel test execution (the real submodule may
-    already live in ``sys.modules`` from another test, defeating a
-    ``setitem`` replacement).
+    Pulled out into a module-level function so tests can
+    ``monkeypatch.setattr(push_cli, "_resolve_send_fn", ...)`` to inject
+    a fake. Patching the in-function ``from hallucinote_mcp import client``
+    form via ``sys.modules`` is brittle: once the real submodule has been
+    imported anywhere, ``hallucinote_mcp`` already holds a bound
+    ``client`` attribute that a ``sys.modules`` replacement doesn't reach.
+    A module-level seam sidesteps that entirely.
     """
     from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
     return _client.send

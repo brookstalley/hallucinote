@@ -159,12 +159,14 @@ Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-
   {
     "index": 3,
     "name": "Glue Compressor",
-    "class": "Glue",
+    "class": "Glue Compressor",
     "kind": "audio_effect",
     "params_dialed": {"Ratio": {"value": "4", "normalized": 0.50}, "Threshold": {"value": "-8.0 dB", "normalized": 0.60}}
   }
 ]
 ```
+
+(Note `"class": "Glue Compressor"` — the display name, not the internal Live class name `Glue`. Per the `class` field rules above, the loader's `kind` parameter accepts either form, but stock devices whose internal class differs from the user-visible name only load via the display name in practice.)
 
 Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order, so the chain ends up on the track in the same shape on the consumer's machine. The push planner (W12-A + Sweep B) drives `ableton_device(action='load')` once per device; `params_dialed` is applied after load.
 

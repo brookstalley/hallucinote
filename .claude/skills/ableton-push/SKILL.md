@@ -64,24 +64,31 @@ Skipping this step is supported: if the MCP call fails (transient connection iss
 Run:
 ```
 python3 -m hallucinote.sync.compat check <slug> \
-    --installed-plugins /tmp/ableton-push-plugins.json
+    --installed-plugins /tmp/ableton-push-plugins.json \
+    --probe
 ```
 
-The CLI walks the song's DB, classifies every device (including devices nested inside racks), and emits a JSON report with five status buckets:
+`--probe` (Arc 3 / C1) resolves every device's `preset_query` against Live's browser in-process — issues `ableton_browser(action='search')` per unique `(root, pattern, path_prefix)`, populates `browser_dry_runs`, feeds it to the classifier. Without `--probe`, structurally-valid preset_queries land in `preset_query_unverified` and exit 1 below; with `--probe`, they partition into resolved (`native`) / `kind_unresolvable` (0 matches) / `kind_ambiguous` (2+ matches). Omit `--probe` if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries.
+
+The CLI walks the song's DB, classifies every device (including devices nested inside racks), and emits a JSON report with nine status buckets:
 
 - `native` — Live built-in. No install needed.
 - `placeholder` — Author intentionally left empty; push will skip it cleanly (the consumer fills it in).
 - `third_party_ok` — Plugin needed AND found in `--installed-plugins`. Safe to push.
 - `third_party_missing` — Plugin needed but NOT in the installed list. The consumer hasn't installed it.
 - `third_party_unverified` — Plugin needed but `--installed-plugins` was omitted; status unknown.
+- `preset_query_invalid` — `preset_query` has a structural error (bad root, non-list `path_prefix`, unparseable JSON). Author fix required; loader would refuse anyway.
+- `kind_unresolvable` — Dry-run (`--probe`) reported 0 matches under `(root, pattern, path_prefix)`. Live's browser has nothing at that location — tighten the pattern or fix the path.
+- `kind_ambiguous` — Dry-run reported 2+ matches. The strict loader refuses on multi-match; use a more specific pattern, `.adv` suffix, or tighter `path_prefix`.
+- `preset_query_unverified` — Structurally valid preset_query but no dry-runs map was provided (omit `--probe` reliably). Status unknown; the gate treats this like `third_party_unverified` and requires confirmation.
 
-**Exit code contract.** `0` = clean (only `native` / `placeholder` / `third_party_ok` entries). `1` = at least one device is `third_party_missing` OR `third_party_unverified` — the user must confirm before pushing.
+**Exit code contract.** `0` = clean (only `native` / `placeholder` / `third_party_ok` entries, and zero of the preset_query problem buckets). `1` = at least one device is `third_party_missing` / `third_party_unverified` / `preset_query_invalid` / `kind_unresolvable` / `kind_ambiguous` / `preset_query_unverified` — the user must confirm before pushing.
 
-**On exit 1, refuse-and-confirm.** Display the `missing` + `unverified` lists from the report's `entries` array (filter by status). For each, show: track / chain path, position, display name, kind, lookup name. Then ask the user explicitly:
+**On exit 1, refuse-and-confirm.** Display the offending lists from the report's `entries` array (filter by status). For each, show: track / chain path, position, display name, kind, lookup name, and (for `preset_query_*` statuses) the `detail` string which names the failing pattern + count. Then ask the user explicitly:
 
-> "These third-party plugins this song needs are either missing on this machine or couldn't be verified. Pushing now will fail at device-load for the missing ones (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
+> "Some devices won't load cleanly on this machine. Pushing now will fail at device-load for the missing/unresolvable ones (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
 
-Proceed only on explicit `yes`. If `no`, point the user at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) so they know what to install, and stop.
+Proceed only on explicit `yes`. If `no`, point the user at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) so they know what to install, and stop. For `preset_query_invalid` / `kind_unresolvable` / `kind_ambiguous`, the fix is in the snapshot author's `preset_query` shape — not on the consumer's machine.
 
 **Re-running with no changes is idempotent** — the CLI is read-only against the DB. Run it again after the user installs the missing plugins; expect exit 0.
 

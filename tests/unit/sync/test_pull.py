@@ -3973,6 +3973,21 @@ def test_pull_cli_execute_bakes_device_parameter_change(tmp_path, monkeypatch):
     ])
     assert rc == 0
 
+    # Confirm the DB row actually changed — bare rc==0 would pass even
+    # if the apply layer silently no-op'd. The C3 contract is that
+    # mid-session tweaks survive the next push, which requires the new
+    # value to be persisted.
+    conn = init_db(db_path)
+    row = conn.execute(
+        "SELECT value_display, value_normalized FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (str(device_id), "Threshold"),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["value_display"] == "-6.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.55)
+
 
 def test_pull_cli_execute_works_for_mix_state_domain(tmp_path, monkeypatch, capsys):
     """Generality: execute works for non-device-parameters domains too

@@ -6,7 +6,50 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased work — v1.1 plan continues in `docs/v11-requirements.md` (Arcs 2-7)._
+_No unreleased work — v1.1 plan continues in `docs/v11-requirements.md` (Arcs 5-7)._
+
+## [1.2.0] — 2026-05-22
+
+**Arcs 2 + 3 + Arc 4 / D4: composer-intent layer, compose-time validation R-2 follow-ons, and the structural display-name shift.** Four landings bundled (Arc 2 + Arc 3 + sqlite hotfix + Arc 4 / D4) because each ships a small focused piece and the project has no consumers yet — releasing one minor-bump cuts the cadence overhead.
+
+### Added — Arc 2 (composer intent)
+
+- **`ableton_annotation` MCP tool** (add / list / get_at_bar / update / delete) wrapping the W8-C annotations table + mutators. Closes the storage-without-affordance gap from W8-C — compose-time agents can read AND write annotations during a session instead of shelling out to a 3-line Python invocation. Per-song DB resolution via `resolve_db_path`; teaching errors on unknown slug / track / annotation_id.
+- **Provenance rationale columns on `requests`** — `prompt_text` (verbatim seed prompt), `parent_id` (self-FK so child cycles chain to enclosing parents), `metadata_json` (`{model, git_sha, branch, hostname, ...}`). Idempotent column migration via the existing `_ensure_added_columns` pattern.
+- **`M.provenance_metadata()` helper** — best-effort git/socket probes with `subprocess.check_output` 2-second timeout caps. Failed probes drop the key rather than raising.
+- **`build_session` auto-captures provenance** + accepts `prompt_text` / `parent_id` / `metadata` kwargs that thread to `create_request`. Caller-provided metadata overrides auto-captured.
+- **`push_execute.py` and `pull_cli.py` thread `metadata=provenance_metadata(...)`** on their `create_request` calls — every push/pull cycle has full attribution for free.
+- **`/song-context` defensive + generative modes** — `--defensive` flags rows with negation/constraint language; `--generative` surfaces tag-related rows under a "Related context" header. Single SQL `LIKE` pass for v1.2; semantic search is v1.3+.
+- **`allow_version_mismatch` envelope param** on the MCP wire — per-call bypass for dev-loop introspection when server/Remote-Script version drift exists. Strict-by-default; bypass attaches a warnings advisory naming the data-corruption risk.
+
+### Added — Arc 3 (compose-time validation R-2 follow-ons)
+
+- **`compat check --probe`** — orchestrates `ableton_browser(action='search')` in-process via the MCP TCP client for every unique structurally-valid `preset_query`, populates `browser_dry_runs`, feeds it to `check_song`. Closes the R-2 follow-on that left the CLI orchestration on the backlog. Failed searches raise loud (a partial map = false-clean report).
+- **`preset_query` path-shape syntactic sugar** — `M.create_device(preset_query=...)` accepts either the canonical dict OR a path string like `"Drums/Kit-Core 909"` (case-insensitive root, `" "` ≡ `"_"`, last segment is pattern). New top-level `src/hallucinote/preset_query.py` with `BROWSER_ROOTS` constant + `parse_path_shape` + `normalize`. DB always stores canonical dict so downstream consumers see one shape.
+- **`pull_cli execute <domain> <session_id>`** — collapses the historical plan → file → probe → file → apply dance into one in-process pass. Generic across all 10 `_DOMAINS`; the "clear diff" comes free via `ApplyResult.details`. Same `kind='pull'` request provenance envelope as `_cmd_apply`.
+
+### Changed — Arc 4 / D4 (structural display-name shift)
+
+- **`devices.kind` semantics flip from internal class name to browser display name.** Pull writes Live's `device.class_display_name` here (e.g. `"Compressor"` / `"Drum Rack"` / `"Phaser-Flanger"`). The loader matches `kind` directly against Live's browser tree — kind-as-given walk, no translation. Live's internal class names (`Compressor2`, `DrumGroupDevice`, `PhaserNew`, etc.) no longer resolve.
+- **New `devices.class_name` column** (nullable; informational) carries Live's internal class identifier. Drives plugin discrimination (compat-check tests this for the third-party wrapper family `{PluginDevice, AuPluginDevice, Vst3PluginDevice}`). REQUIRED on hand-authored snapshots for third-party plugins — silent mis-classification risk if omitted.
+- **MCP capture probes** (`device.list` / `info` / `get_device_chains`) return `class_display_name` alongside `class_name`.
+- **Snapshot schema convention shift**: `class` field is now the browser display name; new optional `class_name` field carries the internal class. Five `captured_session.json` files migrated; `docs/snapshot-schema.md` + `docs/song-authoring-conventions.md` rewritten with the post-D4 examples.
+
+### Deleted — Arc 4 / D4
+
+- **`_CLASS_TO_DISPLAY` translation table** (and `class_name_to_display` + `strip_device_suffix`) — Live exposes the right value natively via `device.class_display_name`. The static table was reinventing a Live API attribute and required maintenance per built-in rename in every new Live version. `browser_root_for_rack_kind` survives (W7-0 cross-category protection is independent).
+
+### Fixed
+
+- **`ableton_annotation` handler crashed Live's Remote Script load** — the handler imported `sqlite3` at module top, but Live 12.x's embedded Python ships without the `_sqlite3` C extension. Cascade aborted the entire Hallucinote Control Surface load (Live shows the surface in the dropdown but the MCP bridge on `127.0.0.1:9878` never starts). The `sqlite3` reference was dead code under `from __future__ import annotations` (lazy type-string annotations); removed. New AST-based regression test in `hallucinote_mcp/tests/unit/test_remote_script_import_safety.py` walks the Remote Script load chain and refuses top-level imports of stdlib modules known absent from Live's embedded Python.
+
+### After upgrade
+
+Re-run `/ableton-mcp-install` to refresh Live's vendored Remote Script (the new `class_display_name` probe field and the sqlite hotfix both ship there).
+
+### Tests
+
+Main + MCP suite 1848 passing (was 1788 at v1.1.0).
 
 ## [1.1.0] — 2026-05-21
 

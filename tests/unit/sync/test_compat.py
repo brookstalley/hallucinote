@@ -278,6 +278,38 @@ def test_check_song_third_party_missing(conn, song, track_chain, db_path):
     assert report.has_issues
 
 
+def test_check_song_third_party_post_d4_shape_classifies_via_class_name(
+    conn, song, track_chain, db_path,
+):
+    """Arc 4 / D4: under the post-D4 convention, third-party plugins
+    have `kind` = plugin display name (e.g. ``'Serum'``) and
+    `class_name` = wrapper class (e.g. ``'PluginDevice'``). Plugin
+    discrimination must key off `class_name`, NOT `kind` — otherwise
+    `_is_plugin_class('Serum')` returns False and the plugin would
+    silently classify as a Live built-in.
+
+    Pins the classifier's read of `class_name`. Without this, a
+    refactor that accidentally restored kind-based discrimination
+    would let plugins ship as native in the report — the documented
+    snapshot-schema warning would then be the only safety net.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Serum", display_name="Serum",
+        class_name="PluginDevice",
+    )
+    conn.commit()
+    report = C.check_song(
+        db_path,
+        installed_plugins=[{"name": "Serum", "uri": "query:plugins#1"}],
+    )
+    assert len(report.third_party_ok) == 1
+    assert report.third_party_ok[0].kind == "Serum"
+    assert not report.native, (
+        f"plugin classified as native: {report.native!r}"
+    )
+
+
 def test_check_song_skips_master_track(conn, song, db_path):
     """Master tracks don't carry devices via tracks.devices — skip cleanly."""
     M.create_track(conn, song_id=song, track_index=99, name="Master", kind="master")

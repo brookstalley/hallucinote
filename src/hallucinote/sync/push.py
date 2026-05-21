@@ -714,9 +714,14 @@ def plan_push_cue_points(
         }
         for i, r in enumerate(rows)
     ]
+    # R-1.1: idempotent re-push. The batch handler's per-cue ``if_exists``
+    # defaults to ``"skip"`` so a re-push of the same DB against a Live set
+    # that already has the same-named cues is a no-op. We pass it explicitly
+    # so the plan's `args` documents the intent (and to defend against the
+    # handler default ever flipping).
     plan.add(ToolCall(
         tool="ableton_arrangement",
-        args={"action": "cue_create_batch", "cues": cues},
+        args={"action": "cue_create_batch", "cues": cues, "if_exists": "skip"},
         key=f"cue_batch:{song_id}",
         purpose=f"create {len(cues)} cue point(s) in one batched call",
     ))
@@ -2171,6 +2176,168 @@ def plan_push_song(
 CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES: frozenset[str] = frozenset({
     "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
 })
+
+# Returns in Live's brand-new-set ship under these prefixed names. The
+# probe-and-link returns matcher strips the ``[A-Z]-`` slot prefix and
+# matches against the DB's stripped form (W4-C); cleanup keys off the
+# raw Live names because cleanup is about deleting Live-side defaults
+# the song hasn't claimed, not matching by stripped name.
+CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES: frozenset[str] = frozenset({
+    "A-Reverb", "B-Delay",
+})
+
+
+# ---------------------------------------------------------------------------
+# Default-scaffold cleanup (R-1.2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CleanupScaffoldPlan:
+    """Outcome of :func:`plan_cleanup_default_scaffold`.
+
+    ``deletable_tracks`` / ``deletable_returns`` are sorted in DESCENDING
+    index order so a caller iterating the lists and dispatching deletes
+    naturally shifts later indices last (Live's track/return list is
+    1-based and shifts down on each delete). ``refusals`` is a list of
+    ``{"kind": "non_canonical"|"would_empty"|..., "detail": str}``
+    entries — a non-empty list means the cleanup MUST NOT proceed.
+    """
+
+    deletable_tracks: list[dict[str, Any]] = field(default_factory=list)
+    deletable_returns: list[dict[str, Any]] = field(default_factory=list)
+    refusals: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def can_proceed(self) -> bool:
+        return not self.refusals
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "deletable_tracks": self.deletable_tracks,
+            "deletable_returns": self.deletable_returns,
+            "refusals": self.refusals,
+            "can_proceed": self.can_proceed,
+        }
+
+
+def plan_cleanup_default_scaffold(
+    *,
+    unmatched_live_tracks: list[dict[str, Any]],
+    unmatched_live_returns: list[dict[str, Any]],
+    total_live_track_count: int,
+    matched_track_count: int,
+) -> CleanupScaffoldPlan:
+    """Identify canonical-default tracks/returns safe to delete.
+
+    Refuse-and-teach when:
+
+    * Any unmatched-Live track is NOT a canonical default. The user
+      must hand-resolve "another song's tracks" before cleanup runs.
+    * Deleting every deletable track would leave Live with zero tracks
+      (Live rejects deletion of the last surviving track). Push the
+      song's tracks first, then cleanup, OR keep one default for the
+      song's eventual content to replace.
+
+    Symmetric logic for returns. Returns can drop to zero (Live permits
+    zero returns).
+
+    Outputs deletable lists in DESCENDING index order so the caller's
+    naive forward iteration produces safe descending deletes.
+
+    Pure: no MCP calls, no DB writes. The CLI orchestrates the side
+    effects.
+    """
+    plan = CleanupScaffoldPlan()
+
+    # Track classification.
+    non_canonical_tracks = [
+        t for t in unmatched_live_tracks
+        if t["name"] not in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+    ]
+    if non_canonical_tracks:
+        names = sorted({t["name"] for t in non_canonical_tracks})
+        plan.refusals.append({
+            "kind": "non_canonical_tracks",
+            "detail": (
+                f"{len(non_canonical_tracks)} unmatched Live track(s) are not "
+                f"canonical defaults: {names}. Cleanup only deletes Live's "
+                f"brand-new-set scaffold ({sorted(CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES)}). "
+                "Rename or hand-delete the non-canonical tracks first."
+            ),
+        })
+
+    canonical_track_candidates = [
+        t for t in unmatched_live_tracks
+        if t["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+    ]
+    # "Would empty Live" guard: if we'd delete every track in Live (no
+    # song tracks linked yet either), Live refuses the last delete.
+    # Total tracks after cleanup = total_live - len(canonical_track_candidates)
+    # — and if that's 0, refuse.
+    if (
+        canonical_track_candidates
+        and total_live_track_count - len(canonical_track_candidates) <= 0
+    ):
+        plan.refusals.append({
+            "kind": "would_empty_live_tracks",
+            "detail": (
+                f"Cleanup would delete all {len(canonical_track_candidates)} "
+                f"Live track(s), but Live requires at least one. Push the "
+                f"song's tracks first (so they're alongside the defaults), "
+                f"then re-run cleanup; OR keep one default and let push "
+                f"absorb it as a song track."
+            ),
+        })
+
+    # Return classification — no minimum-count constraint (returns can
+    # drop to zero in Live), so the refusal here is only non_canonical.
+    non_canonical_returns = [
+        r for r in unmatched_live_returns
+        if r["name"] not in CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES
+    ]
+    if non_canonical_returns:
+        names = sorted({r["name"] for r in non_canonical_returns})
+        plan.refusals.append({
+            "kind": "non_canonical_returns",
+            "detail": (
+                f"{len(non_canonical_returns)} unmatched Live return(s) are "
+                f"not canonical defaults: {names}. Cleanup only deletes "
+                f"{sorted(CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES)}. Rename or "
+                "hand-delete the non-canonical returns first."
+            ),
+        })
+
+    canonical_return_candidates = [
+        r for r in unmatched_live_returns
+        if r["name"] in CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES
+    ]
+
+    # Build the deletable lists in descending index order so naive
+    # forward iteration over them produces the right delete sequence.
+    plan.deletable_tracks = sorted(
+        canonical_track_candidates,
+        key=lambda t: -int(t["track_index"]),
+    )
+    plan.deletable_returns = sorted(
+        canonical_return_candidates,
+        key=lambda r: -int(r["return_index"]),
+    )
+
+    # If there's nothing to do AND no refusals, surface that as a refusal
+    # so the CLI doesn't silently "succeed" against a non-default Live set.
+    if not plan.deletable_tracks and not plan.deletable_returns and not plan.refusals:
+        plan.refusals.append({
+            "kind": "nothing_to_do",
+            "detail": (
+                "No canonical-default tracks or returns to clean up. Live "
+                "either has no unmatched defaults, or this isn't a "
+                "brand-new-set scaffold scenario. (matched_track_count="
+                f"{matched_track_count})"
+            ),
+        })
+
+    return plan
 
 
 @dataclass

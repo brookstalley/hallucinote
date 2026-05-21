@@ -62,6 +62,20 @@ from hallucinote.db.connection import connect
 from hallucinote.sync import push, push_execute
 
 
+def _resolve_send_fn():
+    """Lazy resolver for ``hallucinote_mcp.client.send``.
+
+    Pulled out into a top-level function so tests can ``monkeypatch.setattr(
+    push_cli, "_resolve_send_fn", ...)`` to inject a fake send — the
+    ``from hallucinote_mcp import client`` form used inside the CLI body
+    is brittle under parallel test execution (the real submodule may
+    already live in ``sys.modules`` from another test, defeating a
+    ``setitem`` replacement).
+    """
+    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+    return _client.send
+
+
 def _probe_live_via_mcp(
     send_fn=None,
 ) -> tuple[list[dict], list[dict]]:
@@ -509,6 +523,129 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
+    """R-1.2: single-command cleanup of Live's brand-new-set defaults.
+
+    Probes Live's current tracks + returns, classifies unmatched parents
+    against the canonical-default name sets, dispatches descending
+    ``ableton_track/return(action='delete')`` calls in-process, and
+    re-runs ``probe_and_link`` so the resulting ``ableton_links`` reflect
+    the cleaned state.
+
+    Refuses (exit 1, JSON refusal on stderr) when:
+
+    * any unmatched Live track/return is NOT a canonical default —
+      cleanup is conservative; the user must hand-resolve non-defaults.
+    * deleting every deletable track would leave Live with zero tracks.
+
+    Without ``--auto-session``, requires an existing ``session_id``
+    positionally. The session row is used to scope the link reconciliation
+    so the cleaned-state probe-and-link writes to the right session.
+    """
+    if not args.song and not args.db:
+        raise SystemExit(
+            "push_cli cleanup-default-scaffold: need --song <slug> or --db <path>"
+        )
+    conn = connect(_resolve_db_path(args))
+    song_id = _resolve_song_id(conn, args.session_id)
+
+    live_tracks, live_returns = _probe_live_via_mcp()
+
+    # First probe-and-link pass: identify which Live tracks/returns are
+    # already matched to song entities (their indexes survive cleanup
+    # unconditionally) and which are unmatched (candidates for cleanup
+    # if canonical).
+    pre = push.probe_and_link(
+        conn,
+        song_id=song_id,
+        session_id=args.session_id,
+        live_tracks=live_tracks,
+        live_returns=live_returns,
+        actor="sync",
+        reason=args.reason or f"cleanup-default-scaffold pre-probe",
+    )
+
+    cleanup_plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=pre.unmatched_live_tracks,
+        unmatched_live_returns=pre.unmatched_live_returns,
+        total_live_track_count=len(live_tracks),
+        matched_track_count=len(pre.matched_tracks),
+    )
+
+    if not cleanup_plan.can_proceed:
+        sys.stderr.write(
+            "push_cli cleanup-default-scaffold: refused — see refusals.\n"
+        )
+        json.dump(cleanup_plan.to_dict(), sys.stderr, indent=2)
+        sys.stderr.write("\n")
+        return 1
+
+    # Dispatch deletes in-process. Track deletes first (descending), then
+    # return deletes (descending). Order within track vs return doesn't
+    # matter — Live's track + return lists are separate.
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+    send_fn = _resolve_send_fn()
+
+    deleted_tracks: list[dict[str, Any]] = []
+    deleted_returns: list[dict[str, Any]] = []
+
+    for t in cleanup_plan.deletable_tracks:
+        resp = send_fn(Request(
+            tool="ableton_track", action="delete",
+            params={"track_index": t["track_index"]},
+        ))
+        if not getattr(resp, "ok", False):
+            sys.stderr.write(
+                f"push_cli cleanup-default-scaffold: delete failed at "
+                f"track_index={t['track_index']} ({t['name']!r}) — "
+                f"{getattr(resp, 'error', 'unknown error')}\n"
+            )
+            return 2
+        deleted_tracks.append(t)
+    for r in cleanup_plan.deletable_returns:
+        resp = send_fn(Request(
+            tool="ableton_return", action="delete",
+            params={"return_index": r["return_index"]},
+        ))
+        if not getattr(resp, "ok", False):
+            sys.stderr.write(
+                f"push_cli cleanup-default-scaffold: delete failed at "
+                f"return_index={r['return_index']} ({r['name']!r}) — "
+                f"{getattr(resp, 'error', 'unknown error')}\n"
+            )
+            return 2
+        deleted_returns.append(r)
+
+    # Re-probe Live + reconcile. The post-cleanup probe-and-link rewrites
+    # link rows that may now point at shifted indexes; W18-B's strict
+    # reconciliation drops any link pointing at a now-vacant slot.
+    post_live_tracks, post_live_returns = _probe_live_via_mcp()
+    post_devices = _probe_live_devices_via_mcp(
+        live_tracks=post_live_tracks, live_returns=post_live_returns,
+    )
+    post = push.probe_and_link(
+        conn,
+        song_id=song_id,
+        session_id=args.session_id,
+        live_tracks=post_live_tracks,
+        live_returns=post_live_returns,
+        live_devices_by_parent=post_devices,
+        actor="sync",
+        reason=args.reason or "cleanup-default-scaffold post-reconcile",
+    )
+
+    out = {
+        "deleted_tracks": deleted_tracks,
+        "deleted_returns": deleted_returns,
+        "post_probe_and_link": post.to_dict(),
+        "session_id": args.session_id,
+        "song_id": song_id,
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def _cmd_create_session(args: argparse.Namespace) -> int:
     """W9-B: low-level helper. Creates an ableton_sessions row for the song,
     prints its id on stdout. Used by ableton-push skill when the user hasn't
@@ -663,6 +800,17 @@ def main(argv: list[str] | None = None) -> int:
                             help="test/debug fallback: path to a pre-probed "
                                  "{tracks: [...], returns: [...]} JSON file")
     p_cc.set_defaults(func=_cmd_check_coherence)
+
+    p_cleanup = sub.add_parser(
+        "cleanup-default-scaffold",
+        help="R-1.2: delete Live's brand-new-set default tracks/returns and "
+             "re-reconcile links (refuses if non-canonical unmatched parents present)",
+    )
+    p_cleanup.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_cleanup)
+    p_cleanup.add_argument("--reason", default=None,
+                           help="optional reason annotation for emitted events")
+    p_cleanup.set_defaults(func=_cmd_cleanup_default_scaffold)
 
     p_cs = sub.add_parser(
         "create-session",

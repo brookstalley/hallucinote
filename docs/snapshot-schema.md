@@ -123,10 +123,15 @@ W12-A guarantees `replay_capture` is **idempotent**: re-replaying the same snaps
 ```
 
 - `index` is 1-based, position in the chain.
-- `class` is Live's device class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`, ...). Source of truth for "what kind of device is this." Note: Wave 0 surfaced that `class` doesn't always map 1:1 to the loader's accepted `kind` value (`AnalogDevice` rejection — backlog item filed).
+- `class` is Live's device class name (`Compressor2`, `Eq8`, `DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`, ...). Source of truth for "what kind of device is this." **The loader accepts either the class name OR the display name** as its `kind` parameter; for stock devices whose internal class differs from the user-visible name (`Glue` → "Glue Compressor", `ChorusEnsemble` → "Chorus-Ensemble"), the **display name** is what works at load time. The canonical mapping table lives in `hallucinote_mcp/.../device_names.py::class_name_to_display`; when in doubt, use the display name in `class` and verify with `ableton_device(action='load')` against an empty track before authoring the rest.
 - `name` is the user-set display name (often equal to class; preset names like "Late Nite Kit" persist).
+- `kind` (optional, **informational only**) — a free-form classification hint (`"instrument"` / `"audio_effect"` / `"midi_effect"`). The push loader does NOT read this field; it routes by `class` and `preset_query.root` only. Safe to omit; if included, treat it as author commentary, not a routing signal.
 - `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture_cli.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
-- `preset_query` (optional, mutually exclusive with `guess_uri`) — **Sweep B: cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. Example: `"preset_query": {"root": "drums", "pattern": "Late Nite Kit"}`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match). Use this for built-in Live content that has a stable name across machines (drum kits, instrument presets) so the snapshot doesn't bake in this machine's FileId.
+- `preset_query` (optional, mutually exclusive with `guess_uri`) — **Sweep B: cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match).
+  - **`root` must be one of** (loader-accepted enum, NOT the resource-URI form): `instruments`, `audio_effects`, `midi_effects`, `drums`, `plugins`, `samples`, `user_library`, `packs`. Common typo: writing `effects` (the resource-URI form) instead of `audio_effects` — the loader refuses. Compat-check (`python -m hallucinote.sync.compat check <slug>`) catches this at compose time.
+  - **`path_prefix` MUST be a JSON list** of name segments, NOT a string. Wrong: `"path_prefix": "Tension"`. Right: `"path_prefix": ["Tension"]`. The loader raises `preset_query.path_prefix must be a list` on the string form.
+  - **`pattern` is a substring match by default** (or a glob / regex via `mode`). Use a more-specific pattern, an explicit `.adv` suffix, or a tighter `path_prefix` when a broad pattern matches multiple presets — the strict loader refuses on 2+ matches.
+  - Example: `"preset_query": {"root": "drums", "pattern": "Late Nite Kit"}`.
 - `params_dialed` (optional) — only **dialed** params (defaults are implied by absence). Discrete-enum params (Filter Type = "Lowpass") have `"normalized": null` because there's no continuous form.
 - `params_total` (optional) — informational; count of all params on the device.
 - `chains` (optional) — nested chains for rack devices (`DrumGroupDevice`, `InstrumentGroupDevice`, `AudioEffectGroupDevice`). One level only — nested-nested racks raise on encounter (filed in backlog).
@@ -193,6 +198,33 @@ For built-in Live content (Operator presets, Impulse drum kits, Drum Rack conten
 1. **`preset_query`** (most portable, recommended for hand-authored snapshots). Express the kit by name + scope: `{"root": "drums", "pattern": "Late Nite Kit"}`. The push planner resolves it on the consumer's machine via `ableton_browser(action='search')`. Strict — refuses if 0 or 2+ matches. No FileId baked in; transfers cross-machine cleanly. Best for built-ins whose names are stable across Live installations.
 2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python tools/capture_cli.py` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
 3. **Hand-authored `guess_uri`** — discouraged. Hand-written URIs are unreliable per Wave 0 (spa-7c). If you do this, verify the URI exists via `ableton_browser(action='at_path', ...)` first.
+
+### Default-device vs named-preset
+
+Live's browser tree exposes some devices BOTH as loadable nodes (load the device with default settings) AND as folders containing preset leaves. `Hybrid Reverb` is both: a Hybrid Reverb node (loads the device with default settings) and a `Hybrid Reverb/Hall/...` folder of presets.
+
+For "load the device with default settings" use **NO `preset_query`** and rely on `class`:
+
+```json
+{"index": 1, "name": "Hybrid Reverb", "class": "HybridReverb"}
+```
+
+For "load a named preset" use **`preset_query` pointing at a leaf** (typically a `.adv` file). The path_prefix narrows to the preset folder; the pattern is the leaf name:
+
+```json
+{
+  "index": 1,
+  "name": "Cathedral Bloom",
+  "class": "HybridReverb",
+  "preset_query": {
+    "root": "audio_effects",
+    "pattern": "Cathedral Bloom",
+    "path_prefix": ["Hybrid Reverb", "Hall"]
+  }
+}
+```
+
+Do **not** target a folder name in `pattern` (e.g. `pattern: "Vintage Delay"` when "Vintage Delay" is a folder, not a leaf). The strict loader will report 0 matches (no leaf at that path) or N matches (several siblings inside the folder), and refuse either way. When in doubt, run `ableton_browser(action='search', root=..., pattern=...)` once and confirm the result is exactly one leaf.
 
 ---
 

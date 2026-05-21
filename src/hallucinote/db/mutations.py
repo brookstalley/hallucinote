@@ -203,6 +203,9 @@ def create_request(
     song_id: str | None = None,
     reason: str | None = None,
     kind: str = "mutate",
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Create a request row. Returns the request id.
 
@@ -210,6 +213,13 @@ def create_request(
     events thread back to the originating intent. `kind` classifies the
     cycle type — see `REQUEST_KINDS`; defaults to 'mutate' for back-compat
     with pre-W8 callers.
+
+    `prompt_text` is the verbatim seed prompt for compose / push / pull
+    cycles (typically the user's natural-language request). `parent_id`
+    self-FKs so an MCP auto-`mutate` request can chain to its enclosing
+    `compose` parent — degraded but always-present provenance. `metadata`
+    is a free-form dict for contextual signals (model, git_sha, branch,
+    session_id, hostname, etc.); stored as JSON.
     """
     if actor not in E.ACTORS:
         raise ValueError(f"invalid actor {actor!r}; expected one of {sorted(E.ACTORS)}")
@@ -217,17 +227,39 @@ def create_request(
         raise ValueError(
             f"invalid kind {kind!r}; expected one of {sorted(REQUEST_KINDS)}"
         )
+    if parent_id is not None:
+        parent_row = conn.execute(
+            "SELECT id FROM requests WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent_row is None:
+            raise ValueError(
+                f"invalid parent_id {parent_id!r}; no such request"
+            )
     rid = _uuid()
     payload_json = json.dumps(payload, separators=(",", ":")) if payload is not None else None
+    metadata_json = (
+        json.dumps(metadata, separators=(",", ":")) if metadata is not None else None
+    )
     conn.execute(
-        """INSERT INTO requests (id, actor, intent, payload_json, song_id, kind)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (rid, actor, intent, payload_json, song_id, kind),
+        """INSERT INTO requests (
+               id, actor, intent, payload_json, song_id, kind,
+               prompt_text, parent_id, metadata_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rid, actor, intent, payload_json, song_id, kind,
+            prompt_text, parent_id, metadata_json,
+        ),
     )
     _emit(
         conn,
         E.REQUEST_CREATED,
-        {"request_id": rid, "intent": intent, "payload": payload, "kind": kind},
+        {
+            "request_id": rid,
+            "intent": intent,
+            "payload": payload,
+            "kind": kind,
+            "parent_id": parent_id,
+        },
         song_id=song_id,
         actor=actor,
         request_id=rid,
@@ -286,6 +318,9 @@ def request(
     payload: dict[str, Any] | None = None,
     song_id: str | None = None,
     reason: str | None = None,
+    prompt_text: str | None = None,
+    parent_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Iterator[str]:
     """Ergonomic open + close lifecycle for kind-tagged request cycles.
 
@@ -293,9 +328,13 @@ def request(
     On normal exit, closes with outcome='ok' + measured duration_ms. On
     exception, closes with outcome='failed' and re-raises.
 
+    `prompt_text`, `parent_id`, and `metadata` thread directly to
+    `create_request` — see its docstring.
+
     Usage:
         with M.request(conn, actor='llm', intent='build verse',
-                       kind='compose') as rid:
+                       kind='compose',
+                       prompt_text="make me a moody verse in Dm") as rid:
             M.replace_clip_notes(conn, clip_id=..., request_id=rid, ...)
     """
     rid = create_request(
@@ -306,6 +345,9 @@ def request(
         song_id=song_id,
         reason=reason,
         kind=kind,
+        prompt_text=prompt_text,
+        parent_id=parent_id,
+        metadata=metadata,
     )
     start_ns = time.monotonic_ns()
     outcome = "ok"

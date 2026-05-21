@@ -454,6 +454,149 @@ def test_create_request_rejects_invalid_actor(conn):
         M.create_request(conn, actor="alien", intent="x")
 
 
+# ---------- Arc 2 / B3: prompt_text + parent_id + metadata_json ----------
+
+
+def test_create_request_persists_prompt_text(conn, song):
+    rid = M.create_request(
+        conn,
+        actor="user",
+        intent="compose verse",
+        kind="compose",
+        song_id=song,
+        prompt_text="make me a moody verse in Dm",
+    )
+    row = conn.execute("SELECT prompt_text FROM requests WHERE id=?", (rid,)).fetchone()
+    assert row["prompt_text"] == "make me a moody verse in Dm"
+
+
+def test_create_request_persists_metadata_as_json(conn, song):
+    rid = M.create_request(
+        conn,
+        actor="user",
+        intent="push v1",
+        kind="push",
+        song_id=song,
+        metadata={
+            "model": "claude-opus-4-7",
+            "git_sha": "abcd1234",
+            "branch": "feat/arc-2",
+        },
+    )
+    row = conn.execute(
+        "SELECT metadata_json FROM requests WHERE id=?", (rid,)
+    ).fetchone()
+    import json
+    parsed = json.loads(row["metadata_json"])
+    assert parsed == {
+        "model": "claude-opus-4-7",
+        "git_sha": "abcd1234",
+        "branch": "feat/arc-2",
+    }
+
+
+def test_create_request_threads_parent_id(conn, song):
+    """A compose-parent threading a push-child: the agent compose-cycle
+    contains a push-cycle, and reading the push back must reveal its parent."""
+    compose_rid = M.create_request(
+        conn,
+        actor="user",
+        intent="compose first pass",
+        kind="compose",
+        song_id=song,
+    )
+    push_rid = M.create_request(
+        conn,
+        actor="user",
+        intent="push to live",
+        kind="push",
+        song_id=song,
+        parent_id=compose_rid,
+    )
+    row = conn.execute(
+        "SELECT parent_id FROM requests WHERE id=?", (push_rid,)
+    ).fetchone()
+    assert row["parent_id"] == compose_rid
+
+
+def test_create_request_rejects_unknown_parent_id(conn, song):
+    """Unknown parent_id is a contract violation — fail loudly instead of
+    silently writing a dangling FK that breaks audit-trail walks later."""
+    with pytest.raises(ValueError, match="invalid parent_id"):
+        M.create_request(
+            conn,
+            actor="user",
+            intent="orphan",
+            kind="mutate",
+            song_id=song,
+            parent_id="0" * 32,
+        )
+
+
+def test_create_request_omits_new_columns_when_unset(conn, song):
+    """Backwards-compat: callers that don't pass the new fields get NULL
+    on all three. Required for pre-Arc-2 callers + the default mutator
+    metadata path (M.create_request without explicit provenance args)."""
+    rid = M.create_request(conn, actor="user", intent="bare", song_id=song)
+    row = conn.execute(
+        "SELECT prompt_text, parent_id, metadata_json FROM requests WHERE id=?",
+        (rid,),
+    ).fetchone()
+    assert row["prompt_text"] is None
+    assert row["parent_id"] is None
+    assert row["metadata_json"] is None
+
+
+def test_request_context_manager_propagates_new_fields(conn, song):
+    """The ergonomic `M.request(...)` context manager must thread the new
+    fields through to `create_request` — otherwise compose drivers can't
+    use the context-manager surface (which they will in Chunk 3)."""
+    compose_rid = M.create_request(
+        conn, actor="user", intent="parent", kind="compose", song_id=song
+    )
+    captured_rid: list[str] = []
+    with M.request(
+        conn,
+        actor="user",
+        intent="child cycle",
+        kind="mutate",
+        song_id=song,
+        prompt_text="user typed this",
+        parent_id=compose_rid,
+        metadata={"model": "test"},
+    ) as rid:
+        captured_rid.append(rid)
+    assert len(captured_rid) == 1
+    row = conn.execute(
+        """SELECT prompt_text, parent_id, metadata_json, outcome
+           FROM requests WHERE id=?""",
+        (captured_rid[0],),
+    ).fetchone()
+    assert row["prompt_text"] == "user typed this"
+    assert row["parent_id"] == compose_rid
+    import json
+    assert json.loads(row["metadata_json"]) == {"model": "test"}
+    assert row["outcome"] == "ok"
+
+
+def test_added_columns_migration_idempotent_with_existing_db(tmp_path):
+    """Run init_db twice — the second call must NOT raise (the ALTER
+    is guarded by PRAGMA table_info). This guards against a future
+    edit that drops the guard and breaks existing-DB upgrades."""
+    from hallucinote.db.connection import init_db
+
+    db_path = tmp_path / "test.db"
+    conn1 = init_db(db_path)
+    conn1.close()
+    # Re-open and re-init — the second init must be a no-op on the schema.
+    conn2 = init_db(db_path)
+    # Sanity: the new columns are present and queryable.
+    rows = conn2.execute("PRAGMA table_info(requests)").fetchall()
+    cols = {r["name"] for r in rows}
+    assert {"prompt_text", "parent_id", "metadata_json"} <= cols
+    conn2.close()
+
+
 def test_mutator_kwarg_defaults_actor_system_no_request(conn, song):
     """Mutators without explicit metadata default to actor='system' / no request."""
     M.create_track(conn, song_id=song, track_index=2, name="Bass")

@@ -38,6 +38,7 @@ from ..schema import Action, ParamSpec, register
 
 _LOCATION_ENUM = ("session", "arrangement")
 _AXIS_ENUM = ("pitch", "pressure", "timbre")
+_VALUE_TYPE_ENUM = ("continuous", "enum")
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +163,30 @@ register(
                 name="breakpoints",
                 type="list",
                 description=(
-                    "[{time_beats: float, value: float, "
+                    "[{time_beats: float, value: float|str, "
                     "curve?: linear|hold|fast|slow}, ...]. Sorted by "
                     "time_beats. Time is in beats (Hallucinote planner "
-                    "converts from bar-based song positions)."
+                    "converts from bar-based song positions). `value` "
+                    "is a float for value_type='continuous' (default) "
+                    "or a string from the target param's value_items "
+                    "for value_type='enum'."
+                ),
+            ),
+            ParamSpec(
+                name="value_type",
+                type="str",
+                required=False,
+                enum=_VALUE_TYPE_ENUM,
+                description=(
+                    "'continuous' (default) — breakpoint values are "
+                    "floats written directly. 'enum' — breakpoint values "
+                    "are display strings from the target parameter's "
+                    "value_items (e.g. 'Clean' / 'Heavy' on Amp Type); "
+                    "the handler resolves via value_items.index(name). "
+                    "Only valid for target_kind='device_parameter'; "
+                    "capability-probed via is_quantized — non-enum "
+                    "params raise a teaching error pointing at "
+                    "value_type='continuous'."
                 ),
             ),
             *_envelope_target_params(),
@@ -201,6 +222,10 @@ register(
             "Time is in beats. The Hallucinote planner converts from "
             "bar-based song positions via the time-signature map. MCP "
             "stays meter-agnostic.",
+            "value_type='enum' on Amp Type → "
+            "breakpoints=[{time_beats:0, value:'Clean'}, "
+            "{time_beats:64, value:'Heavy'}] — strings resolved via "
+            "value_items.index, mirrors set_parameter's enum path.",
         ),
     )
 )

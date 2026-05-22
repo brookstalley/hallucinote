@@ -754,11 +754,106 @@ def _stepped_envelope_note() -> str:
 # ---------------------------------------------------------------------------
 
 
+_VALUE_TYPES: tuple[str, ...] = ("continuous", "enum")
+
+
+def _resolve_enum_breakpoint_values(
+    context: LiveContext,
+    *,
+    target_kind: str,
+    track_index: int | None,
+    return_index: int | None,
+    device_index: int | None,
+    parameter_name: str | None,
+    breakpoints: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Resolve enum-name breakpoint values to numeric via the target
+    parameter's ``value_items``. Returns (numeric_breakpoints, value_items).
+
+    Mirrors ``set_parameter_handler``'s enum path (handlers/device.py:
+    ``_VALUE_TYPES`` / ``set_parameter_handler``) so the capability surface
+    is identical: ``is_quantized`` gates value_items access (Wave-2 W2-9:
+    Live raises on continuous-parameter value_items reads), the items
+    tuple defines cardinality, and ``items.index(name)`` is the
+    enum-name → numeric resolution. Teaching error on non-enum targets.
+
+    Only ``device_parameter`` envelopes have enum semantics — mixer /
+    pan / send / clip_cc / clip_pitch_bend / note_expression target
+    continuous Live parameters by definition.
+    """
+    if target_kind != "device_parameter":
+        raise ValueError(
+            f"value_type='enum' is only valid for target_kind="
+            f"'device_parameter', got {target_kind!r} (mixer / send / "
+            f"pan / clip_cc / clip_pitch_bend / note_expression all "
+            f"target continuous Live parameters)"
+        )
+    if device_index is None or parameter_name is None:
+        raise ValueError(
+            "value_type='enum' with target_kind='device_parameter' "
+            "requires device_index and parameter_name"
+        )
+    # Pre-validate breakpoint shape (time_beats + value present) BEFORE
+    # walking into the Live API — cheaper failure path, and the existing
+    # _validate_breakpoints will run again on the resolved list to catch
+    # ordering / range issues.
+    for i, bp in enumerate(breakpoints):
+        if not isinstance(bp, dict):
+            raise ValueError(
+                f"breakpoint {i}: expected dict, got {type(bp).__name__}"
+            )
+        if "time_beats" not in bp:
+            raise ValueError(
+                f"breakpoint {i} missing required 'time_beats': {bp!r}"
+            )
+        if "value" not in bp:
+            raise ValueError(
+                f"breakpoint {i} missing required 'value': {bp!r}"
+            )
+    parent = _require_parent(
+        context, track_index=track_index, return_index=return_index,
+    )
+    device = _resolve_device_on(parent, device_index)
+    target_param = _find_parameter(device, parameter_name)
+    if not bool(getattr(target_param, "is_quantized", False)):
+        raise ValueError(
+            f"parameter {parameter_name!r} is not an enum parameter "
+            f"(is_quantized=False); use value_type='continuous'"
+        )
+    items = tuple(getattr(target_param, "value_items", ()) or ())
+    if not items:
+        raise ValueError(
+            f"parameter {parameter_name!r} is not an enum parameter "
+            f"(no value_items); use value_type='continuous'"
+        )
+    items_list = [str(item) for item in items]
+    resolved: list[dict[str, Any]] = []
+    for i, bp in enumerate(breakpoints):
+        # Shape pre-validated above; only the enum-specific value check
+        # remains here.
+        raw = bp["value"]
+        if not isinstance(raw, str):
+            raise ValueError(
+                f"breakpoint {i}: value_type='enum' requires value as a "
+                f"string, got {type(raw).__name__} ({raw!r})"
+            )
+        if raw not in items_list:
+            raise ValueError(
+                f"breakpoint {i}: enum value {raw!r} not in value_items "
+                f"for parameter {parameter_name!r}: {items_list}"
+            )
+        translated = dict(bp)
+        translated["value"] = float(items_list.index(raw))
+        resolved.append(translated)
+    return resolved, items_list
+
+
 def write_envelope_handler(
     context: LiveContext,
     *,
     target_kind: str,
     breakpoints: list[dict[str, Any]],
+    value_type: str = "continuous",
     track_index: int | None = None,
     return_index: int | None = None,
     clip_index: int | None = None,
@@ -779,10 +874,36 @@ def write_envelope_handler(
     callers that omit ``clip_index + location`` for the mixer / send /
     device-parameter kinds get a ``NotImplementedError`` citing the LOM
     gap.
+
+    ``value_type='continuous'`` (default): each breakpoint's ``value`` is
+    a float. ``value_type='enum'``: each breakpoint's ``value`` is a
+    string from the target parameter's ``value_items``; the handler
+    resolves via ``value_items.index(name)`` and submits the numeric
+    value to Live. Capability-probed via ``is_quantized``: handler refuses
+    with a teaching error if the target param has ``is_quantized=False``
+    (mirrors ``set_parameter``'s enum path). Enum mode is only valid for
+    ``target_kind='device_parameter'`` — mixer / pan / send / clip_cc /
+    clip_pitch_bend / note_expression target continuous parameters by
+    definition.
     """
     if target_kind not in TARGET_KINDS:
         raise ValueError(
             f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
+        )
+    if value_type not in _VALUE_TYPES:
+        raise ValueError(
+            f"value_type must be one of {list(_VALUE_TYPES)}, "
+            f"got {value_type!r}"
+        )
+    if value_type == "enum":
+        breakpoints, _items = _resolve_enum_breakpoint_values(
+            context,
+            target_kind=target_kind,
+            track_index=track_index,
+            return_index=return_index,
+            device_index=device_index,
+            parameter_name=parameter_name,
+            breakpoints=breakpoints,
         )
     cleaned = _validate_breakpoints(breakpoints)
 
@@ -929,6 +1050,7 @@ def write_envelope_handler(
     result: dict[str, Any] = {
         "target_kind": target_kind,
         "breakpoints_written": len(cleaned),
+        "value_type": value_type,
     }
     if track_index is not None:
         result["track_index"] = track_index

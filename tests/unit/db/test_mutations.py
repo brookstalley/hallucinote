@@ -1528,3 +1528,348 @@ def test_replace_drum_pad_mappings_cascade_on_device_delete(conn, drum_device):
     conn.commit()
     rows = Q.get_drum_pad_mappings(conn, drum_device)
     assert rows == []
+
+
+# ---------- E3: devices.browser_path_json + W13-A v1.0 fallback identity ----------
+
+
+def test_create_device_persists_browser_path_json(conn, song, track):
+    """E3 (W13-A v1.0): browser_path is JSON-encoded into the new column.
+    The path captures vendor / pack scope at original-load time so the push
+    planner can fall back to a path-scoped search when the per-machine
+    preset_uri doesn't resolve on a different machine."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    dev_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Massive X", display_name="FatBass",
+        preset_uri="query:Plugin#FileId_9999",
+        browser_path=["plug-ins", "Native Instruments", "Massive X", "FatBass"],
+    )
+    row = Q.get_device(conn, dev_id)
+    stored = row["browser_path_json"]
+    assert stored is not None
+    assert json.loads(stored) == [
+        "plug-ins", "Native Instruments", "Massive X", "FatBass",
+    ]
+
+
+def test_create_device_browser_path_round_trips_in_event(conn, song, track):
+    """The DEVICE_CREATED event surfaces browser_path so request-replay
+    consumers can reconstruct the snapshot's fallback identity."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Operator", display_name="Operator",
+        browser_path=["instruments", "Operator", "Bass", "Sub Bass"],
+    )
+    rows = [e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED]
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["browser_path"] == [
+        "instruments", "Operator", "Bass", "Sub Bass",
+    ]
+
+
+def test_create_device_browser_path_idempotent_no_event(conn, song, track):
+    """Re-create with identical browser_path is a no-op — the idempotency
+    tuple includes browser_path_json so no spurious second event."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator", "Bass", "Sub Bass"],
+    )
+    n_before = len([e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED])
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator", "Bass", "Sub Bass"],
+    )
+    n_after = len([e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED])
+    assert n_after == n_before
+
+
+def test_create_device_browser_path_change_emits_update_event(conn, song, track):
+    """Replaying with a different browser_path triggers a DEVICE_CREATED
+    update event — the column participates in change detection."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator", "Bass", "Sub Bass"],
+    )
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator", "Lead", "Bell Lead"],
+    )
+    rows = [e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED]
+    assert len(rows) == 2
+    p2 = json.loads(rows[1]["payload_json"])
+    assert p2["browser_path"] == [
+        "instruments", "Operator", "Lead", "Bell Lead",
+    ]
+    assert p2["result_kind"] == "updated"
+
+
+def test_create_device_rejects_bad_browser_path_shapes(conn, song, track):
+    """Bad shapes raise ValueError — empty list, non-list, non-string elements."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    with pytest.raises(ValueError, match="browser_path"):
+        M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Op",
+            display_name="Op", browser_path=[],
+        )
+    with pytest.raises(ValueError, match="browser_path"):
+        M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Op",
+            display_name="Op", browser_path=["a", ""],
+        )
+    with pytest.raises(ValueError, match="browser_path"):
+        M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Op",
+            display_name="Op", browser_path=[1, 2, 3],  # type: ignore[list-item]
+        )
+
+
+# ---------- E1: value_items capture + create_enum_envelope ----------
+
+
+_AMP_TYPE_ITEMS = (
+    "Clean", "Boost", "Blues", "Heavy", "Smith", "Lead", "Bass",
+)
+
+
+@pytest.fixture
+def amp_device(conn, song):
+    """Amp-shaped device on a midi track, ready for enum-envelope authoring."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Guitar", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    return M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Amp", display_name="Amp",
+    )
+
+
+def test_set_device_parameter_persists_value_items_json(conn, amp_device):
+    """E1 schema lift: value_items round-trips through the mutator."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_normalized=None,
+        value_items=_AMP_TYPE_ITEMS,
+    )
+    row = conn.execute(
+        "SELECT value_items_json FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (amp_device, "Amp Type"),
+    ).fetchone()
+    assert row is not None
+    items = json.loads(row["value_items_json"])
+    assert items == list(_AMP_TYPE_ITEMS)
+
+
+def test_set_device_parameter_value_items_unchanged_is_no_op(conn, amp_device):
+    """Idempotency: re-setting the same (display, normalized, items)
+    triple yields kind='unchanged' and emits no second event."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    before = len([
+        e for e in _events(conn) if e["kind"] == E.DEVICE_PARAMETER_SET
+    ])
+    result = M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    after = len([
+        e for e in _events(conn) if e["kind"] == E.DEVICE_PARAMETER_SET
+    ])
+    assert after == before
+    assert result.kind == "unchanged"
+
+
+def test_set_device_parameter_value_items_change_updates(conn, amp_device):
+    """Updating just the value_items (display + normalized unchanged)
+    still triggers an update — the cardinality is part of the row's
+    state, not metadata."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=("Clean", "Heavy"),
+    )
+    result = M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    assert result.kind == "updated"
+
+
+def test_set_device_parameter_omits_value_items_for_continuous(conn, amp_device):
+    """Continuous params get value_items=None — column stays NULL."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Bass",
+        value_display="0.7", value_normalized=0.7,
+    )
+    row = conn.execute(
+        "SELECT value_items_json FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (amp_device, "Bass"),
+    ).fetchone()
+    assert row["value_items_json"] is None
+
+
+def test_create_enum_envelope_resolves_via_snapshot(conn, amp_device):
+    """Primary path: helper looks up value_items from the captured
+    device-parameter snapshot. Author writes enum names; helper stores
+    numeric indices."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    env_id = M.create_enum_envelope(
+        conn,
+        device_id=amp_device,
+        parameter_name="Amp Type",
+        breakpoints=[
+            {"time_beats": 0.0, "value": "Clean"},
+            {"time_beats": 32.0, "value": "Heavy"},
+        ],
+    )
+    rows = conn.execute(
+        """SELECT time_beats, value, curve_kind FROM automation_breakpoints
+           WHERE envelope_id = ? ORDER BY time_beats""",
+        (env_id,),
+    ).fetchall()
+    assert [(r["time_beats"], r["value"], r["curve_kind"]) for r in rows] == [
+        (0.0, 0.0, "hold"),     # Clean = index 0
+        (32.0, 3.0, "hold"),    # Heavy = index 3
+    ]
+
+
+def test_create_enum_envelope_escape_hatch_via_kwarg(conn, amp_device):
+    """Escape hatch: when the snapshot lacks value_items (param not
+    captured yet), the helper accepts an explicit kwarg."""
+    env_id = M.create_enum_envelope(
+        conn,
+        device_id=amp_device,
+        parameter_name="Amp Type",
+        breakpoints=[{"time_beats": 0.0, "value": "Heavy"}],
+        value_items=_AMP_TYPE_ITEMS,
+    )
+    rows = conn.execute(
+        "SELECT value FROM automation_breakpoints WHERE envelope_id = ?",
+        (env_id,),
+    ).fetchall()
+    assert [r["value"] for r in rows] == [3.0]
+
+
+def test_create_enum_envelope_refuses_uncaptured_param(conn, amp_device):
+    """No snapshot row + no kwarg → teaching error pointing at pull /
+    escape hatch."""
+    with pytest.raises(ValueError, match="not captured"):
+        M.create_enum_envelope(
+            conn,
+            device_id=amp_device,
+            parameter_name="Amp Type",
+            breakpoints=[{"time_beats": 0.0, "value": "Clean"}],
+        )
+
+
+def test_create_enum_envelope_refuses_non_enum_snapshot(conn, amp_device):
+    """Snapshot row exists but value_items_json is NULL — distinguished
+    from "not captured" (per the 'enumerate every state' learning).
+    Surfaces a teaching error mentioning both possibilities (not enum,
+    or pre-E1 capture) so the agent can pick the right remedy."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Bass",
+        value_display="0.5", value_normalized=0.5,
+    )
+    with pytest.raises(ValueError, match="value_items"):
+        M.create_enum_envelope(
+            conn,
+            device_id=amp_device,
+            parameter_name="Bass",
+            breakpoints=[{"time_beats": 0.0, "value": "Loud"}],
+        )
+
+
+def test_create_enum_envelope_refuses_unknown_enum_name(conn, amp_device):
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    with pytest.raises(ValueError, match="Distortion"):
+        M.create_enum_envelope(
+            conn,
+            device_id=amp_device,
+            parameter_name="Amp Type",
+            breakpoints=[{"time_beats": 0.0, "value": "Distortion"}],
+        )
+
+
+def test_create_enum_envelope_refuses_numeric_value(conn, amp_device):
+    """The helper is a compose-time string→numeric resolver; numeric
+    values must go through create_envelope + replace_breakpoints
+    directly."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    with pytest.raises(ValueError, match="enum names"):
+        M.create_enum_envelope(
+            conn,
+            device_id=amp_device,
+            parameter_name="Amp Type",
+            breakpoints=[{"time_beats": 0.0, "value": 3.0}],
+        )
+
+
+def test_create_enum_envelope_emits_envelope_and_breakpoint_events(
+    conn, amp_device,
+):
+    """Mutator discipline: every state change emits a paired event. The
+    helper composes create_envelope + replace_breakpoints, so both
+    events should appear in the audit trail."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    M.create_enum_envelope(
+        conn,
+        device_id=amp_device,
+        parameter_name="Amp Type",
+        breakpoints=[
+            {"time_beats": 0.0, "value": "Clean"},
+            {"time_beats": 16.0, "value": "Heavy"},
+        ],
+    )
+    kinds = [e["kind"] for e in _events(conn)]
+    assert E.ENVELOPE_CREATED in kinds
+    assert E.BREAKPOINTS_REPLACED in kinds
+
+
+def test_create_enum_envelope_idempotent_on_replay(conn, amp_device):
+    """Re-running with the same breakpoints is a no-op on the breakpoint
+    side (replace_breakpoints' idempotency), and the envelope create
+    returns the existing id (create_envelope's identity check)."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="Amp Type",
+        value_display="Clean", value_items=_AMP_TYPE_ITEMS,
+    )
+    first = M.create_enum_envelope(
+        conn, device_id=amp_device, parameter_name="Amp Type",
+        breakpoints=[
+            {"time_beats": 0.0, "value": "Clean"},
+            {"time_beats": 16.0, "value": "Heavy"},
+        ],
+    )
+    second = M.create_enum_envelope(
+        conn, device_id=amp_device, parameter_name="Amp Type",
+        breakpoints=[
+            {"time_beats": 0.0, "value": "Clean"},
+            {"time_beats": 16.0, "value": "Heavy"},
+        ],
+    )
+    assert first == second

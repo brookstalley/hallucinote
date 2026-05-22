@@ -2436,6 +2436,7 @@ def create_device(
     class_name: str | None = None,
     preset_uri: str | None = None,
     preset_query: dict[str, Any] | str | None = None,
+    browser_path: list[str] | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -2477,33 +2478,55 @@ def create_device(
             "(preset_query for cross-machine portability, preset_uri for "
             "an unambiguous per-machine URI)"
         )
+    if browser_path is not None:
+        if (
+            not isinstance(browser_path, list)
+            or len(browser_path) < 1
+            or not all(isinstance(s, str) and s for s in browser_path)
+        ):
+            raise ValueError(
+                "browser_path must be a non-empty list of non-empty strings "
+                "from the browser root to the loaded item — got "
+                f"{browser_path!r}"
+            )
     preset_query = _normalize_preset_query(preset_query)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     preset_query_json = (
         json.dumps(preset_query, sort_keys=True) if preset_query is not None
         else None
     )
+    browser_path_json = (
+        json.dumps(browser_path) if browser_path is not None else None
+    )
     existing = conn.execute(
-        """SELECT id, kind, display_name, class_name, preset_uri, preset_query
+        """SELECT id, kind, display_name, class_name, preset_uri, preset_query,
+                  browser_path_json
            FROM devices WHERE chain_id = ? AND position = ?""",
         (chain_id, position),
     ).fetchone()
     if existing is not None:
         device_id = existing["id"]
+        existing_browser_path_json = (
+            existing["browser_path_json"]
+            if "browser_path_json" in existing.keys() else None
+        )
         if (
             existing["kind"], existing["display_name"], existing["class_name"],
             existing["preset_uri"], existing["preset_query"],
+            existing_browser_path_json,
         ) == (
             kind, display_name, class_name, preset_uri, preset_query_json,
+            browser_path_json,
         ):
             _record_touch_if_session("device", device_id)
             return MutatorResult(device_id, "unchanged")
         conn.execute(
             """UPDATE devices SET kind = ?, display_name = ?, class_name = ?,
-                                  preset_uri = ?, preset_query = ?
+                                  preset_uri = ?, preset_query = ?,
+                                  browser_path_json = ?
                WHERE id = ?""",
             (kind, display_name, class_name, preset_uri, preset_query_json,
-             device_id),
+             browser_path_json, device_id),
         )
         song_id = _resolve_device_song(conn, device_id=device_id)
         _emit(
@@ -2512,6 +2535,7 @@ def create_device(
              "kind": kind, "display_name": display_name,
              "class_name": class_name,
              "preset_uri": preset_uri, "preset_query": preset_query,
+             "browser_path": browser_path,
              "result_kind": "updated"},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
@@ -2522,10 +2546,11 @@ def create_device(
     device_id = _uuid()
     conn.execute(
         """INSERT INTO devices (id, chain_id, position, kind, display_name,
-                                class_name, preset_uri, preset_query)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                class_name, preset_uri, preset_query,
+                                browser_path_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (device_id, chain_id, position, kind, display_name,
-         class_name, preset_uri, preset_query_json),
+         class_name, preset_uri, preset_query_json, browser_path_json),
     )
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
@@ -2540,6 +2565,7 @@ def create_device(
             "class_name": class_name,
             "preset_uri": preset_uri,
             "preset_query": preset_query,
+            "browser_path": browser_path,
         },
         song_id=song_id,
         actor=actor,
@@ -2606,6 +2632,7 @@ def set_device_parameter(
     name: str,
     value_display: str,
     value_normalized: float | None = None,
+    value_items: Sequence[str] | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -2615,38 +2642,56 @@ def set_device_parameter(
     `value_display` is always set (the human-readable form). `value_normalized`
     is optional — discrete-enum parameters (e.g., Filter Type = "Lowpass")
     have no continuous form.
+
+    `value_items` is the enum cardinality — Live's `value_items` tuple for
+    discrete-enum params, in order (index in the tuple = numeric value
+    Live stores). Persisted as JSON; NULL for continuous params. Captured
+    at pull time when present; the enum-aware envelope helper reads it
+    back to resolve enum-name breakpoints at compose time.
     """
     if value_normalized is not None and not (0.0 <= value_normalized <= 1.0):
         raise ValueError(
             f"value_normalized {value_normalized} out of range [0.0, 1.0]"
         )
+    value_items_json: str | None = None
+    if value_items is not None:
+        items_list = [str(item) for item in value_items]
+        if items_list:
+            value_items_json = json.dumps(items_list)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        """SELECT id, value_display, value_normalized FROM device_parameters
+        """SELECT id, value_display, value_normalized, value_items_json
+             FROM device_parameters
            WHERE device_id = ? AND name = ?""",
         (device_id, name),
     ).fetchone()
     if existing is not None:
         param_id = existing["id"]
-        if (existing["value_display"], existing["value_normalized"]) == (
-            value_display, value_normalized,
-        ):
+        if (
+            existing["value_display"],
+            existing["value_normalized"],
+            existing["value_items_json"],
+        ) == (value_display, value_normalized, value_items_json):
             _record_touch_if_session("device_parameter", param_id)
             return MutatorResult(param_id, "unchanged")
         conn.execute(
             """UPDATE device_parameters
-                  SET value_display = ?, value_normalized = ?
+                  SET value_display = ?,
+                      value_normalized = ?,
+                      value_items_json = ?
                 WHERE id = ?""",
-            (value_display, value_normalized, param_id),
+            (value_display, value_normalized, value_items_json, param_id),
         )
         result_kind = "updated"
     else:
         param_id = _uuid()
         conn.execute(
             """INSERT INTO device_parameters
-                   (id, device_id, name, value_display, value_normalized)
-               VALUES (?, ?, ?, ?, ?)""",
-            (param_id, device_id, name, value_display, value_normalized),
+                   (id, device_id, name, value_display,
+                    value_normalized, value_items_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (param_id, device_id, name, value_display,
+             value_normalized, value_items_json),
         )
         result_kind = "created"
     song_id = _resolve_device_song(conn, device_id=device_id)
@@ -2659,6 +2704,7 @@ def set_device_parameter(
             "name": name,
             "value_display": value_display,
             "value_normalized": value_normalized,
+            "value_items_json": value_items_json,
         },
         song_id=song_id,
         actor=actor,
@@ -3309,6 +3355,190 @@ def replace_breakpoints(
         if song_id:
             _touch_song(conn, song_id)
     return new_ids
+
+
+def create_enum_envelope(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    parameter_name: str,
+    breakpoints: Sequence[dict[str, Any]],
+    value_items: Sequence[str] | None = None,
+    curve_default: str = "hold",
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Author a device_parameter envelope from enum-name breakpoint values.
+
+    The DB layer stays meter-agnostic and value-numeric — this is a
+    compose-time sugar that resolves enum names to the numeric indices
+    Live actually stores. Mirrors the MCP handler's ``value_type='enum'``
+    surface so build.py authors don't have to look up ``value_items``
+    indices by hand to write "Amp Type: Clean→Heavy" automation.
+
+    Resolution order for the enum cardinality:
+      1. ``value_items`` kwarg (escape hatch — wins when supplied)
+      2. ``device_parameters.value_items_json`` for (device_id, parameter_name)
+         — captured at pull time via detail='full'.
+      3. Otherwise raises ValueError with a teaching message pointing at
+         re-pull (snapshot was captured pre-E1) or value_type='continuous'
+         (param isn't enum-shaped).
+
+    Stores numeric breakpoints by calling ``create_envelope`` +
+    ``replace_breakpoints`` — no envelope-side schema change. Each
+    breakpoint's ``curve`` (or ``curve_kind``) is preserved; ``curve_default``
+    fills in when absent (defaults to 'hold' since enum envelopes are
+    step-shaped — see Live 12.4's ``Envelope.insert_step`` semantics).
+
+    Returns the envelope id.
+    """
+    if curve_default not in BREAKPOINT_CURVE_KINDS:
+        raise ValueError(
+            f"invalid curve_default {curve_default!r}; "
+            f"expected one of {sorted(BREAKPOINT_CURVE_KINDS)}"
+        )
+    if not breakpoints:
+        raise ValueError(
+            "breakpoints must be a non-empty sequence of "
+            "{time_beats, value, curve?} dicts"
+        )
+
+    resolved_items = _resolve_enum_value_items(
+        conn,
+        device_id=device_id,
+        parameter_name=parameter_name,
+        value_items=value_items,
+    )
+
+    numeric_breakpoints: list[dict[str, Any]] = []
+    for i, bp in enumerate(breakpoints):
+        if not isinstance(bp, dict):
+            raise ValueError(
+                f"breakpoint {i}: expected dict, got {type(bp).__name__}"
+            )
+        if "time_beats" not in bp:
+            raise ValueError(
+                f"breakpoint {i} missing 'time_beats': {bp!r}"
+            )
+        if "value" not in bp:
+            raise ValueError(
+                f"breakpoint {i} missing 'value': {bp!r}"
+            )
+        raw = bp["value"]
+        if not isinstance(raw, str):
+            raise ValueError(
+                f"breakpoint {i}: create_enum_envelope expects string "
+                f"values (enum names), got {type(raw).__name__} "
+                f"({raw!r}) — use create_envelope + replace_breakpoints "
+                f"for numeric authoring"
+            )
+        if raw not in resolved_items:
+            raise ValueError(
+                f"breakpoint {i}: enum value {raw!r} not in value_items "
+                f"for parameter {parameter_name!r}: {resolved_items}"
+            )
+        curve_kind = bp.get("curve") or bp.get("curve_kind") or curve_default
+        if curve_kind not in BREAKPOINT_CURVE_KINDS:
+            raise ValueError(
+                f"breakpoint {i}: invalid curve {curve_kind!r}; "
+                f"expected one of {sorted(BREAKPOINT_CURVE_KINDS)}"
+            )
+        numeric_breakpoints.append({
+            "time_beats": float(bp["time_beats"]),
+            "value": float(resolved_items.index(raw)),
+            "curve_kind": curve_kind,
+        })
+
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    if song_id is None:
+        raise ValueError(
+            f"device {device_id} not found or has no resolvable song; "
+            f"verify the device row exists before authoring envelopes"
+        )
+
+    envelope_id = create_envelope(
+        conn,
+        song_id=song_id,
+        target_kind="device_parameter",
+        target_device_id=device_id,
+        parameter_path=parameter_name,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    replace_breakpoints(
+        conn,
+        envelope_id=envelope_id,
+        breakpoints=numeric_breakpoints,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    return envelope_id
+
+
+def _resolve_enum_value_items(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    parameter_name: str,
+    value_items: Sequence[str] | None,
+) -> list[str]:
+    """Resolve the enum cardinality for (device_id, parameter_name).
+
+    Distinguishes the three "no enum items" states (per the
+    `Detection that replaces a user question` learning):
+      - no param row for (device, name) → ValueError "not captured"
+      - row exists but value_items_json is NULL → ValueError "not enum
+        OR pre-E1 capture"
+      - row exists with malformed JSON → ValueError "malformed"
+
+    Each surfaces a teaching error pointing at the right remedy.
+    """
+    if value_items is not None:
+        items_list = [str(v) for v in value_items]
+        if not items_list:
+            raise ValueError(
+                "value_items kwarg must be a non-empty sequence"
+            )
+        return items_list
+    param_row = conn.execute(
+        """SELECT value_items_json FROM device_parameters
+           WHERE device_id = ? AND name = ?""",
+        (device_id, parameter_name),
+    ).fetchone()
+    if param_row is None:
+        raise ValueError(
+            f"parameter {parameter_name!r} not captured on device "
+            f"{device_id} — pull device parameters first (detail='full') "
+            f"so value_items is available, or pass value_items=[...] "
+            f"explicitly"
+        )
+    items_json = param_row["value_items_json"]
+    if items_json is None:
+        raise ValueError(
+            f"parameter {parameter_name!r} on device {device_id} has no "
+            f"value_items captured — either the param isn't enum-shaped "
+            f"(use create_envelope + replace_breakpoints with numeric "
+            f"values), or it was captured before value_items_json was "
+            f"added (re-pull the song's device parameters). Escape "
+            f"hatch: pass value_items=[...] explicitly."
+        )
+    try:
+        loaded = json.loads(items_json)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"value_items_json on device {device_id} parameter "
+            f"{parameter_name!r} is malformed: {items_json!r}"
+        ) from exc
+    if not isinstance(loaded, list) or not loaded:
+        raise ValueError(
+            f"value_items_json on device {device_id} parameter "
+            f"{parameter_name!r} must decode to a non-empty list, "
+            f"got {loaded!r}"
+        )
+    return [str(v) for v in loaded]
 
 
 # ---------------------------------------------------------------------------

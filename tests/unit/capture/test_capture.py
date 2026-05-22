@@ -313,6 +313,53 @@ def test_replay_reads_preset_query_from_snapshot(conn):
     assert parsed == {"root": "drums", "pattern": "909", "mode": "substring"}
 
 
+def test_replay_reads_browser_path_from_snapshot(conn):
+    """E3 (W13-A v1.0): a snapshot device with `browser_path` lands in
+    `devices.browser_path_json` so the push planner can thread it back
+    into `ableton_device(action='load', browser_path=[...])` as the
+    fallback identity for cross-machine FileId mismatches. Pre-E3
+    snapshots without the key still load — column stays NULL."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Bass", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "FatBass", "class": "Massive X",
+                "guess_uri": "query:Plugin#FileId_AUTHOR",
+                "browser_path": [
+                    "plug-ins", "Native Instruments", "Massive X", "FatBass",
+                ],
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Bass")
+    devices = Q.get_devices_for_track(conn, track["id"])
+    assert devices[0]["preset_uri"] == "query:Plugin#FileId_AUTHOR"
+    stored = devices[0]["browser_path_json"]
+    assert stored is not None
+    assert json.loads(stored) == [
+        "plug-ins", "Native Instruments", "Massive X", "FatBass",
+    ]
+
+
+def test_replay_omits_browser_path_when_snapshot_lacks_key(conn):
+    """Pre-E3 snapshots load cleanly with browser_path_json NULL — the
+    column is opt-in and absence is the dominant case until snapshots
+    recapture against the post-E3 load handler."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Synth", "type": "midi",
+            "devices": [{"index": 1, "name": "Op", "class": "Operator"}],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Synth")
+    devices = Q.get_devices_for_track(conn, track["id"])
+    assert devices[0]["browser_path_json"] is None
+
+
 def test_replay_handles_track_with_no_devices(conn):
     """The 4 placeholder tracks in falling-walking carry no `devices` field."""
     snap = {

@@ -1076,6 +1076,25 @@ def _emit_device_calls(
                     load_args["preset_uri"] = device["preset_uri"]
         elif device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
+            # Arc 7-tail / E3 (W13-A v1.0): also pass the captured
+            # browser path so the load handler can fall back to a
+            # path-scoped browser search if the per-machine FileId in
+            # preset_uri doesn't resolve on the target machine (the
+            # "same plugin, different catalog id" cross-machine case).
+            browser_path_raw = (
+                device["browser_path_json"]
+                if "browser_path_json" in device.keys() else None
+            )
+            if browser_path_raw is not None:
+                try:
+                    load_args["browser_path"] = json.loads(browser_path_raw)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    plan.warn(
+                        f"device {device['display_name']!r} on {parent_kind} "
+                        f"{parent_name!r}: stored browser_path is not valid "
+                        f"JSON ({exc}); loading without the fallback identity "
+                        "path — cross-machine FileId mismatch will fail"
+                    )
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,

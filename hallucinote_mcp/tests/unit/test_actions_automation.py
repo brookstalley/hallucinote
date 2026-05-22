@@ -72,12 +72,20 @@ class FakeEnvelope:
 
 
 class FakeParam:
-    def __init__(self, name: str, value: float = 0.0):
+    def __init__(
+        self,
+        name: str,
+        value: float = 0.0,
+        *,
+        is_quantized: bool = False,
+        value_items: tuple[str, ...] | None = None,
+    ):
         self.name = name
         self.value = value
         self.min = 0.0
         self.max = 1.0
-        self.value_items = None
+        self.is_quantized = is_quantized
+        self.value_items = value_items
 
 
 class FakeMixer:
@@ -769,6 +777,219 @@ def test_write_envelope_device_parameter_unknown_name(loaded_actions):
     assert resp.ok is False
     assert "Bogus" in (resp.error or "")
     assert "Threshold" in (resp.error or "")
+
+
+# ---------- E1: value_type='enum' for device_parameter envelopes ----------
+
+
+_AMP_TYPE_VALUE_ITEMS = (
+    "Clean", "Boost", "Blues", "Heavy", "Smith", "Lead", "Bass",
+)
+
+
+def _amp_track_with_clip() -> tuple[FakeCtx, FakeClip, Any]:
+    """Track holding an Amp-shaped device with an enum Amp Type param +
+    a continuous Bass param. Mirrors the sun-zone-done driver."""
+    class _Dev:
+        def __init__(self):
+            self.parameters = (
+                FakeParam(
+                    "Amp Type", 0.0,
+                    is_quantized=True,
+                    value_items=_AMP_TYPE_VALUE_ITEMS,
+                ),
+                FakeParam("Bass", 0.5),
+            )
+    clip = FakeClip()
+    track = FakeTrack()
+    dev = _Dev()
+    track.devices = [dev]
+    track.clip_slots[0].clip = clip
+    return FakeCtx(FakeSong(tracks=[track])), clip, dev
+
+
+def test_write_envelope_value_type_enum_resolves_string_values(loaded_actions):
+    """Empirical driver: sun-zone-done Amp Type Clean→Heavy across two
+    breakpoints. The handler resolves enum-name strings to numeric
+    indices via value_items.index, then writes the same step pattern
+    the continuous path would write — Clean (index 0) → Heavy (index 3).
+    """
+    ctx, clip, dev = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Amp Type",
+                "location": "session", "clip_index": 1,
+                "value_type": "enum",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": "Clean", "curve": "hold"},
+                    {"time_beats": 32.0, "value": "Heavy", "curve": "hold"},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["value_type"] == "enum"
+    assert resp.result["breakpoints_written"] == 2
+    amp_type_param = dev.parameters[0]
+    env = clip.envelopes_by_target[id(amp_type_param)]
+    # Two recorded steps: segment from 0→32 with value Clean (0.0),
+    # then anchor at 32 (extended to clip.length tail) with value Heavy (3.0).
+    assert len(env.steps) == 2
+    assert env.steps[0][2] == 0.0  # Clean's index
+    assert env.steps[1][2] == 3.0  # Heavy's index
+
+
+def test_write_envelope_value_type_default_is_continuous(loaded_actions):
+    """Back-compat: callers that omit value_type get the continuous path
+    unchanged — numeric breakpoint values pass straight through."""
+    ctx, clip, dev = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Bass",  # continuous param
+                "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.4},
+                    {"time_beats": 16.0, "value": 0.8},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["value_type"] == "continuous"
+
+
+def test_write_envelope_value_type_enum_refuses_non_enum_param(loaded_actions):
+    """Capability-probed via is_quantized — non-enum params raise a
+    teaching error pointing at value_type='continuous'. Mirrors the
+    set_parameter precedent at handlers/device.py."""
+    ctx, _, _ = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Bass",  # continuous, is_quantized=False
+                "location": "session", "clip_index": 1,
+                "value_type": "enum",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": "Clean"},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "not an enum parameter" in err
+    assert "continuous" in err
+
+
+def test_write_envelope_value_type_enum_rejects_unknown_enum_name(loaded_actions):
+    """A breakpoint value that's a string but not in value_items raises
+    a teaching error listing the available items."""
+    ctx, _, _ = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Amp Type",
+                "location": "session", "clip_index": 1,
+                "value_type": "enum",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": "Distortion"},  # not in items
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Distortion" in err
+    # Surfaces the available cardinality.
+    assert "Clean" in err and "Heavy" in err
+
+
+def test_write_envelope_value_type_enum_rejects_non_string_value(loaded_actions):
+    """value_type='enum' requires string values; numerics should refuse."""
+    ctx, _, _ = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Amp Type",
+                "location": "session", "clip_index": 1,
+                "value_type": "enum",
+                "breakpoints": [{"time_beats": 0.0, "value": 3.0}],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "string" in (resp.error or "").lower()
+
+
+def test_write_envelope_value_type_enum_rejects_non_device_parameter(loaded_actions):
+    """value_type='enum' only makes sense for device_parameter envelopes —
+    mixer / pan / send / clip_cc / clip_pitch_bend / note_expression
+    target continuous Live parameters by definition."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "mixer_volume",
+                "track_index": 1,
+                "location": "session", "clip_index": 1,
+                "value_type": "enum",
+                "breakpoints": [{"time_beats": 0.0, "value": "Loud"}],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "device_parameter" in err
+    assert "mixer_volume" in err
+
+
+def test_write_envelope_invalid_value_type_raises(loaded_actions):
+    """Unknown value_type values must surface a typed-error pointing at
+    the supported alternatives."""
+    ctx, _, _ = _amp_track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Amp Type",
+                "location": "session", "clip_index": 1,
+                "value_type": "magic",
+                "breakpoints": [{"time_beats": 0.0, "value": "Clean"}],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    # ParamSpec enum validation OR handler validation — either surfaces
+    # "value_type" in the error.
+    assert "value_type" in err or "magic" in err
 
 
 # ---------- W7-C: return_index clip-scoped parity tests ----------

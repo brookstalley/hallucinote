@@ -744,28 +744,18 @@ def _author_envelopes(conn, song_id: str, tracks: dict[str, str]) -> None:
     # Chorus kicks land on beat 1 of each bar (8 hits over 32 beats).
     #
     # W4-B routing: the duck envelope rides the chorus's Synth Bass session
-    # clip (placed at beats [124, 156]). The generator emits a small pre-attack
-    # window (``attack_beats``) before each hit; shifting EVERY kick by
-    # ``attack_beats`` keeps the first attack_start aligned with chorus_start
-    # so the envelope's beat range fits inside the chorus placement and the
-    # planner can route it through the session clip.
-    #
-    # Trade-off: each kick shifts ~5ms late at 132bpm (attack_beats=0.02 * 60/132).
-    # Build-site fix chosen over a generator-level clamp for minimal-diff
-    # reasons; the principled fix (an ``envelope_start_beats`` parameter on
-    # ``sidechain_trigger`` that floors attack_start at the section boundary)
-    # is filed as a backlog item.
+    # clip (placed at beats [124, 156]). ``envelope_start_beats`` floors the
+    # first attack window at the chorus boundary so the envelope's beat range
+    # stays inside the session-clip placement (Live 12.4's envelope routing
+    # rejects breakpoints outside the host clip's span).
     chorus_start = 124.0  # bar 32 = beat 124 (32 - 1) * 4
-    attack_beats = 0.02
-    kick_beats = [
-        chorus_start + attack_beats + b * 4.0
-        for b in range(8)
-    ]
+    kick_beats = [chorus_start + b * 4.0 for b in range(8)]
     duck = sidechain_trigger(
         target_track_id=tracks["03 Synth Bass"],
         at_beats=kick_beats,
         rest_value=0.85, duck_value=0.55,
-        attack_beats=attack_beats, recovery_beats=0.6,
+        attack_beats=0.02, recovery_beats=0.6,
+        envelope_start_beats=chorus_start,
     )
     _apply_envelopes(conn, song_id, duck,
                      reason="kick-synced ducking on the synth bass")

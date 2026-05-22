@@ -82,6 +82,7 @@ def sidechain_trigger(
     duck_value: float = 0.3,
     attack_beats: float = 0.02,
     recovery_beats: float = 0.5,
+    envelope_start_beats: float | None = None,
 ) -> GeneratorOutput:
     """Volume envelope that ducks at each hit and recovers.
 
@@ -92,6 +93,15 @@ def sidechain_trigger(
     Hits closer together than `attack_beats + recovery_beats` are coalesced —
     the next attack inherits whatever value the previous recovery had reached.
     Hits arriving in any order are sorted before emission.
+
+    `envelope_start_beats` clamps the first attack window's rest anchor to the
+    given beat (e.g. the section's session-clip start), so the envelope's beat
+    range stays inside the section. Without it, a hit at the section's first
+    downbeat would emit a pre-attack rest anchor at `hit - attack_beats`,
+    landing outside the session clip and getting refused by Live's
+    session-clip-only envelope routing. When the clamped attack_start equals
+    or exceeds the hit's time, the rest anchor is dropped entirely (no room
+    for a leading ramp — the duck is the first breakpoint).
     """
     if not at_beats:
         raise ValueError("at_beats must not be empty")
@@ -111,6 +121,12 @@ def sidechain_trigger(
         raise ValueError(
             "at_beats contains duplicate values; each hit must have a unique time"
         )
+    floor = 0.0 if envelope_start_beats is None else float(envelope_start_beats)
+    if envelope_start_beats is not None and any(b < floor for b in at_beats):
+        raise ValueError(
+            f"at_beats values must be >= envelope_start_beats ({floor}) when "
+            "envelope_start_beats is set"
+        )
 
     sorted_hits = sorted(float(b) for b in at_beats)
     breakpoints: list[dict] = []
@@ -122,11 +138,16 @@ def sidechain_trigger(
         # recovery already landed at `rest_value`, so we only need a fresh
         # anchor when this hit's attack starts after the last recovery ended).
         if attack_start > prev_recovery_end:
-            breakpoints.append({
-                "time_beats": max(0.0, attack_start),
-                "value": float(rest_value),
-                "curve_kind": "linear",
-            })
+            clamped_start = max(floor, attack_start)
+            # Drop the rest anchor when clamping would push it to (or past)
+            # the hit itself — no leading-ramp room means the duck is the
+            # envelope's first breakpoint.
+            if clamped_start < hit:
+                breakpoints.append({
+                    "time_beats": clamped_start,
+                    "value": float(rest_value),
+                    "curve_kind": "linear",
+                })
         # Attack landing — the duck floor.
         breakpoints.append({
             "time_beats": hit,

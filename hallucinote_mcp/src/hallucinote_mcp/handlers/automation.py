@@ -768,6 +768,7 @@ def write_envelope_handler(
     cc_number: int | None = None,
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
+    note_duration: float | None = None,
     axis: str | None = None,
 ) -> dict[str, Any]:
     """Write a single automation envelope.
@@ -837,7 +838,21 @@ def write_envelope_handler(
         envelope = clip.envelope_for_note(
             int(note_pitch), float(note_start_beats), axis
         )
-        non_step_seen = _write_breakpoints_as_steps(envelope, cleaned)
+        # W7-0 anchor (note_expression branch): when the caller supplies
+        # the note's duration, extend the last step to cover the note's
+        # full duration so the held value survives to note end instead
+        # of reverting to default after the last breakpoint. Per-note
+        # envelopes use note-LOCAL coordinates (Live's envelope_for_note
+        # returns an envelope addressed [0, note_duration_beats]), so the
+        # tail anchor is note_duration — not note_start_beats + duration.
+        # Mirrors the clip-scoped tail_end=clip.length paths above, but
+        # in the note's own coordinate system.
+        ne_tail_end: float | None = (
+            float(note_duration) if note_duration is not None else None
+        )
+        non_step_seen = _write_breakpoints_as_steps(
+            envelope, cleaned, tail_end=ne_tail_end,
+        )
     elif target_kind in _CLIP_REQUIRED_KINDS:
         if clip_index is None or location is None:
             raise NotImplementedError(

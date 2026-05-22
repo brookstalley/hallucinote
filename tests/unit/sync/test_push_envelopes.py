@@ -237,6 +237,9 @@ def test_note_expression_microtonal_pitch_envelope(
     assert call.args["clip_index"] == 1
     assert call.args["note_pitch"] == 60
     assert call.args["note_start_beats"] == 1.5
+    # W7-0 anchor (P1): planner threads the note's duration so the MCP
+    # handler can extend the last step to note end (note spans 1.5..2.5).
+    assert call.args["note_duration"] == 1.0
     assert call.args["axis"] == "pitch"
     assert len(call.args["breakpoints"]) == 3
 
@@ -1088,3 +1091,115 @@ def test_d1_teaching_message_includes_partition_suggestion_device(
     msgs = [n for n in plan.notes if "no arrangement clip" in n]
     assert msgs
     assert "partition" in msgs[0]
+
+
+# ---------------------------------------------------------------------------
+# P1 / N3: shared _resolve_and_translate_to_session_clip helper
+# ---------------------------------------------------------------------------
+
+
+def test_session_clip_routing_helper_returns_full_tuple_on_success(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The shared helper returns (clip_at, local_bps, placement, env_max)
+    on success — the four pieces every clip-scoped emitter (mixer / send /
+    device_parameter) needs to assemble its ToolCall and fire post-warnings.
+    Same call shape regardless of target_kind."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 1.0, "value": 0.5, "curve_kind": "linear"},
+            {"time_beats": 3.0, "value": 0.8, "curve_kind": "linear"},
+        ],
+    )
+    env = next(
+        e for e in push.Q.get_envelopes_for_song(conn, song) if e["id"] == eid
+    )
+    bps_mcp = push._breakpoints_for_mcp(push.Q.get_breakpoints(conn, eid))
+    plan = push.PushPlan()
+    routing = push._resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song, session_id=session,
+        envelope=env, breakpoints_mcp=bps_mcp,
+        host_track_id=linked_track, host_track_at=5,
+    )
+    assert routing is not None
+    clip_at, local_bps, placement, env_max = routing
+    assert clip_at == 1
+    # Placement starts at beat 0 (bar 1), so local == arrangement here.
+    assert local_bps == bps_mcp
+    assert placement.start_beats == 0.0
+    assert env_max == 3.0
+    assert plan.notes == []  # success path emits no skip warns
+
+
+def test_session_clip_routing_helper_skips_with_warn_when_no_placement(
+    conn, song, session, linked_track,
+):
+    """No arrangement clip on the host track → helper emits a target_kind-
+    aware skip-with-warn pointing at the W10-F partition workaround and
+    returns None. Same warning shape regardless of which emitter calls it
+    — the kind name comes from envelope['target_kind']."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=M.create_return(
+            conn, song_id=song, name="Reverb", position=1,
+        ),
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 1.0, "value": 0.0, "curve_kind": "linear"},
+        ],
+    )
+    env = next(
+        e for e in push.Q.get_envelopes_for_song(conn, song) if e["id"] == eid
+    )
+    bps_mcp = push._breakpoints_for_mcp(push.Q.get_breakpoints(conn, eid))
+    plan = push.PushPlan()
+    routing = push._resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song, session_id=session,
+        envelope=env, breakpoints_mcp=bps_mcp,
+        host_track_id=linked_track, host_track_at=5,
+    )
+    assert routing is None
+    msgs = [n for n in plan.notes if "no arrangement clip" in n]
+    assert msgs
+    assert "send_level" in msgs[0]
+    assert "partition" in msgs[0]
+
+
+def test_session_clip_routing_helper_skips_when_clip_unlinked(
+    conn, song, session, linked_track, clip, arr_clip,
+):
+    """When a covering arrangement_clip exists but the underlying session
+    clip has no Ableton link, the helper emits the second skip-with-warn
+    ("session clip … not linked") and returns None."""
+    # arr_clip is created over `clip` (unlinked), so the helper finds a
+    # covering placement but Q.get_ableton_link returns None for it.
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan",
+        target_track_id=linked_track,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[{"time_beats": 1.0, "value": 0.5, "curve_kind": "linear"}],
+    )
+    env = next(
+        e for e in push.Q.get_envelopes_for_song(conn, song) if e["id"] == eid
+    )
+    bps_mcp = push._breakpoints_for_mcp(push.Q.get_breakpoints(conn, eid))
+    plan = push.PushPlan()
+    routing = push._resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song, session_id=session,
+        envelope=env, breakpoints_mcp=bps_mcp,
+        host_track_id=linked_track, host_track_at=5,
+    )
+    assert routing is None
+    msgs = [n for n in plan.notes if "not linked" in n]
+    assert msgs
+    assert "mixer_pan" in msgs[0]

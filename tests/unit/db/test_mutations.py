@@ -249,6 +249,24 @@ def test_insert_notes_accepts_zero_start_beats(conn, clip):
     assert len(ids) == 1
 
 
+def test_replace_clip_notes_refuses_negative_start_beats(conn, clip):
+    """The negative-beat refusal is enforced at `_normalize_note` —
+    the chokepoint every note-write path passes through. This test
+    pins the contract at the `replace_clip_notes` entry point so a
+    future refactor that bypasses the chokepoint surfaces here, not
+    in a song that suddenly ships invalid clips."""
+    M.insert_notes(conn, clip_id=clip, notes=[_make_note(pitch=40)])
+    with pytest.raises(ValueError, match="negative"):
+        M.replace_clip_notes(
+            conn, clip_id=clip,
+            notes=[_make_note(pitch=50, start=-0.05)],
+        )
+    # Original note survives — replace was atomic.
+    out = Q.get_notes_for_clip(conn, clip)
+    assert len(out) == 1
+    assert out[0]["pitch"] == 40
+
+
 def test_replace_clip_notes_rolls_back_on_failure(conn, clip):
     """Mid-batch validation error must leave the prior notes intact and emit no event.
 

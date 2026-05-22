@@ -130,6 +130,6 @@ Tests fall into three categories that must stay disjoint: platform (the `halluci
 | MCP — unit | yes | every change to `hallucinote_mcp/src/` | `hallucinote_mcp/tests/unit/test_*.py` |
 | MCP — integration (dispatcher round-trip) | yes | every change to dispatcher / wire / remote_script | `hallucinote_mcp/tests/integration/test_remote_script_server.py`, `test_skills_well_formed.py` |
 | MCP — integration (live Ableton push) | manual; gated on MCP capability | when a chunk delivers push of a new domain | invoked by hand |
-| Song — build smoke | yes (per song) | every schema or mutator change OR every change to that song | `songs/<slug>/tests/test_build.py` |
+| Song — build smoke | yes (per song) | every schema or mutator change OR every change to that song | `songs/<slug>/tests/test_<slug>_build.py` (per-song convention so files stay unique under `pytest -n auto`) |
 | Song — snapshot shape (capture/replay/push planner against the song's `captured_session.json`) | yes (per song) | every schema / mutator / planner change OR every change to that song's snapshot | `songs/<slug>/tests/test_capture_replay.py`, `test_push_mix_snapshot.py` |
 | Song — consistency / mix hygiene | not yet (per-song; on-demand) | once a song requires it | `songs/<slug>/tests/test_*.py` |

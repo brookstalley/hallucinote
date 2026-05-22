@@ -1,5 +1,13 @@
 # Pre-v1 User Walkthrough — Creating and Working on a New Song
 
+> **Historical document.** This walkthrough captures the team's pre-v1
+> reasoning. Specific file paths, test-file names, and "this doesn't
+> exist" findings reflect the state at write-time — some have shipped
+> since (e.g. the song-scaffolding skill exists now, and the per-song
+> bootstrap test file is `test_<slug>_build.py` per the post-Arc-6
+> convention). Read for the v1-release-prep reasoning; do not treat
+> path references as current ground truth — check the code instead.
+
 **Goal of this doc.** Mentally walk a realistic user — let's call her Maya — through the full arc of arriving at the repo, installing Hallucinote, composing a new song, iterating on it, pushing/pulling against Live, branching it, and coming back the next day. Identify gaps, friction points, and places we can't actually do what we promise.
 
 **Method.** Live is not running for this exercise. Everything below is reasoned from the code, the skills, the prompts/resources, the README, VISION, and the project preferences. Where a step would succeed today, that's stated. Where it would stumble, snag, or quietly fail, that's flagged with **FINDING**.

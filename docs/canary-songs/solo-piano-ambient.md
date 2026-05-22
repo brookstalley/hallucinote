@@ -47,7 +47,7 @@ The agent attempts, in order:
 1. Scaffold `songs/solo-piano-ambient/` (no `/new-song` skill exists yet — surface that as friction).
 2. Author a `build.py` that produces the structure above against the `hallucinote` library + generators.
 3. Author a `captured_session.json` representing the piano + 2 returns + master shape (since they cannot capture from a real Live without manual setup — surface the chicken-and-egg).
-4. Write `tests/test_build.py` mirroring falling-walking's shape assertions.
+4. Write `tests/test_<slug>_build.py` (per-song convention so files stay unique under `pytest -n auto`) mirroring falling-walking's shape assertions.
 5. Run the build + tests; record what passed and what failed.
 6. **Do NOT** attempt to push to Live (no Live session is available in this harness; the push-side smoke is W0-B's manual follow-up, not the agent's job).
 

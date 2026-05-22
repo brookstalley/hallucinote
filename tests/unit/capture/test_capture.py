@@ -6,8 +6,8 @@ import json
 import pytest
 
 from hallucinote.capture import (
-    capture_plan, compile_snapshot, replay_capture,
-    strip_return_slot_prefix,
+    capture_plan, compile_snapshot, inject_browser_paths,
+    preserve_browser_paths, replay_capture, strip_return_slot_prefix,
 )
 from hallucinote.db import init_db, mutations as M, queries as Q
 
@@ -732,3 +732,296 @@ def test_replay_drum_rack_without_drum_pads_field_still_works(conn):
     track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
     rack = Q.get_devices_for_track(conn, track["id"])[0]
     assert Q.get_drum_pad_mappings(conn, rack["id"]) == []
+
+
+# ---------- E3: inject_browser_paths / preserve_browser_paths ----------
+# Arc 7-tail / E3, snapshot-write side of W13-A v1.0. The READ side
+# (`replay_capture` consumes `browser_path`, push planner threads it back)
+# shipped in E3; these helpers cover the producer side so the cross-machine
+# fallback identity round-trips through capture.
+
+
+def _snapshot_with_one_track_one_device(class_name: str = "Operator") -> dict:
+    """Minimal fixture: one track, one device, no browser_path yet."""
+    return {
+        "song": {"tempo": 120.0, "signature": "4/4"},
+        "returns": [],
+        "tracks": [{
+            "index": 1, "name": "T1", "type": "midi",
+            "devices": [{
+                "index": 1, "name": class_name, "class": class_name,
+            }],
+        }],
+    }
+
+
+def _snapshot_with_one_return_one_device(class_name: str = "Reverb") -> dict:
+    return {
+        "song": {}, "returns": [{
+            "index": 1, "name": "Reverb",
+            "devices": [{
+                "index": 1, "name": class_name, "class": class_name,
+            }],
+        }],
+        "tracks": [],
+    }
+
+
+def test_inject_browser_paths_attaches_to_track_device():
+    """The agent collects `resolved_path` per load, then passes it here so
+    the snapshot captures cross-machine fallback identity."""
+    snap = _snapshot_with_one_track_one_device()
+    inject_browser_paths(snap, [
+        {"track_index": 1, "device_index": 1,
+         "browser_path": ["instruments", "Operator"]},
+    ])
+    assert snap["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "Operator",
+    ]
+
+
+def test_inject_browser_paths_attaches_to_return_device():
+    snap = _snapshot_with_one_return_one_device()
+    inject_browser_paths(snap, [
+        {"return_index": 1, "device_index": 1,
+         "browser_path": ["audio-effects", "Reverb"]},
+    ])
+    assert snap["returns"][0]["devices"][0]["browser_path"] == [
+        "audio-effects", "Reverb",
+    ]
+
+
+def test_inject_browser_paths_empty_loads_is_noop():
+    snap = _snapshot_with_one_track_one_device()
+    before = json.dumps(snap, sort_keys=True)
+    inject_browser_paths(snap, [])
+    assert json.dumps(snap, sort_keys=True) == before
+
+
+def test_inject_browser_paths_multiple_records():
+    """One snapshot, two loads on different tracks — both land."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [
+            {"index": 1, "name": "T1", "type": "midi",
+             "devices": [{"index": 1, "name": "Operator", "class": "Operator"}]},
+            {"index": 2, "name": "T2", "type": "midi",
+             "devices": [{"index": 1, "name": "Wavetable", "class": "Wavetable"}]},
+        ],
+    }
+    inject_browser_paths(snap, [
+        {"track_index": 1, "device_index": 1,
+         "browser_path": ["instruments", "Operator"]},
+        {"track_index": 2, "device_index": 1,
+         "browser_path": ["instruments", "Wavetable"]},
+    ])
+    assert snap["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "Operator",
+    ]
+    assert snap["tracks"][1]["devices"][0]["browser_path"] == [
+        "instruments", "Wavetable",
+    ]
+
+
+def test_inject_browser_paths_overwrites_existing():
+    """A second injection of the same slot replaces (most-recent-load wins)."""
+    snap = _snapshot_with_one_track_one_device()
+    inject_browser_paths(snap, [
+        {"track_index": 1, "device_index": 1,
+         "browser_path": ["instruments", "Old"]},
+    ])
+    inject_browser_paths(snap, [
+        {"track_index": 1, "device_index": 1,
+         "browser_path": ["instruments", "New"]},
+    ])
+    assert snap["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "New",
+    ]
+
+
+@pytest.mark.parametrize("record,match", [
+    # missing browser_path
+    ({"track_index": 1, "device_index": 1}, "non-empty browser_path"),
+    # empty browser_path
+    ({"track_index": 1, "device_index": 1, "browser_path": []},
+     "non-empty browser_path"),
+    # non-string element in browser_path
+    ({"track_index": 1, "device_index": 1, "browser_path": ["a", 5]},
+     "non-empty browser_path"),
+    # missing device_index
+    ({"track_index": 1, "browser_path": ["a", "b"]}, "device_index"),
+    # device_index < 1
+    ({"track_index": 1, "device_index": 0, "browser_path": ["a"]},
+     "device_index must be >= 1"),
+    # neither track_index nor return_index
+    ({"device_index": 1, "browser_path": ["a"]}, "track_index or return_index"),
+    # both track_index and return_index
+    ({"track_index": 1, "return_index": 1, "device_index": 1,
+      "browser_path": ["a"]}, "track_index or return_index"),
+])
+def test_inject_browser_paths_rejects_malformed_records(record, match):
+    snap = _snapshot_with_one_track_one_device()
+    with pytest.raises(ValueError, match=match):
+        inject_browser_paths(snap, [record])
+
+
+def test_inject_browser_paths_raises_on_missing_track():
+    """Stale agent state: load record points at a track that's not in the
+    snapshot. Better to fail loud than silently drop the path."""
+    snap = _snapshot_with_one_track_one_device()
+    with pytest.raises(ValueError, match="no track with index=99"):
+        inject_browser_paths(snap, [
+            {"track_index": 99, "device_index": 1,
+             "browser_path": ["instruments", "Operator"]},
+        ])
+
+
+def test_inject_browser_paths_raises_on_missing_return():
+    snap = _snapshot_with_one_return_one_device()
+    with pytest.raises(ValueError, match="no return with index=99"):
+        inject_browser_paths(snap, [
+            {"return_index": 99, "device_index": 1,
+             "browser_path": ["audio-effects", "Reverb"]},
+        ])
+
+
+def test_inject_browser_paths_raises_on_missing_device():
+    snap = _snapshot_with_one_track_one_device()
+    with pytest.raises(ValueError, match="no device at index=5"):
+        inject_browser_paths(snap, [
+            {"track_index": 1, "device_index": 5,
+             "browser_path": ["instruments", "Operator"]},
+        ])
+
+
+def test_compile_snapshot_accepts_browser_paths():
+    """The composed entry point: agent passes loads alongside the probed
+    state so the snapshot leaves compile_snapshot already enriched."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4"},
+        returns=[],
+        tracks=[{
+            "index": 1, "name": "T1", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        browser_paths=[{
+            "track_index": 1, "device_index": 1,
+            "browser_path": ["instruments", "Operator"],
+        }],
+    )
+    assert snap["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "Operator",
+    ]
+
+
+def test_compile_snapshot_browser_paths_none_is_noop():
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4"},
+        returns=[],
+        tracks=[{
+            "index": 1, "name": "T1", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        browser_paths=None,
+    )
+    assert "browser_path" not in snap["tracks"][0]["devices"][0]
+
+
+def test_inject_then_replay_round_trips(conn):
+    """End-to-end: inject browser_path on a snapshot device, replay into
+    DB, confirm `devices.browser_path_json` is populated. Closes the
+    snapshot-write-to-DB-read loop."""
+    snap = _snapshot_with_one_track_one_device(class_name="Operator")
+    inject_browser_paths(snap, [
+        {"track_index": 1, "device_index": 1,
+         "browser_path": ["instruments", "Operator"]},
+    ])
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "T1")
+    device = Q.get_devices_for_track(conn, track["id"])[0]
+    assert device["browser_path_json"] == json.dumps(
+        ["instruments", "Operator"]
+    )
+
+
+def test_preserve_browser_paths_copies_matching_track_device():
+    old = _snapshot_with_one_track_one_device()
+    old["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "Operator"]
+    new = _snapshot_with_one_track_one_device()
+    preserve_browser_paths(old, new)
+    assert new["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "Operator",
+    ]
+
+
+def test_preserve_browser_paths_copies_matching_return_device():
+    old = _snapshot_with_one_return_one_device()
+    old["returns"][0]["devices"][0]["browser_path"] = ["audio-effects", "Reverb"]
+    new = _snapshot_with_one_return_one_device()
+    preserve_browser_paths(old, new)
+    assert new["returns"][0]["devices"][0]["browser_path"] == [
+        "audio-effects", "Reverb",
+    ]
+
+
+def test_preserve_browser_paths_does_not_overwrite_new_value():
+    """If `new` already has a browser_path (e.g. just-loaded), the fresh
+    value wins over the old one."""
+    old = _snapshot_with_one_track_one_device()
+    old["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "Old"]
+    new = _snapshot_with_one_track_one_device()
+    new["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "New"]
+    preserve_browser_paths(old, new)
+    assert new["tracks"][0]["devices"][0]["browser_path"] == [
+        "instruments", "New",
+    ]
+
+
+def test_preserve_browser_paths_drops_on_class_mismatch():
+    """If the device at the same position has a different class, the user
+    swapped instruments — the old browser_path is stale and shouldn't
+    carry forward."""
+    old = _snapshot_with_one_track_one_device(class_name="Operator")
+    old["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "Operator"]
+    new = _snapshot_with_one_track_one_device(class_name="Wavetable")
+    preserve_browser_paths(old, new)
+    assert "browser_path" not in new["tracks"][0]["devices"][0]
+
+
+def test_preserve_browser_paths_drops_on_position_change():
+    """Device at index 1 in old, now at index 2 in new — old path is stale."""
+    old = _snapshot_with_one_track_one_device(class_name="Operator")
+    old["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "Operator"]
+    new = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "T1", "type": "midi",
+            "devices": [
+                {"index": 1, "name": "EQ Eight", "class": "EQ Eight"},
+                {"index": 2, "name": "Operator", "class": "Operator"},
+            ],
+        }],
+    }
+    preserve_browser_paths(old, new)
+    # The EQ Eight at new position 1 has a different class — no carry forward.
+    assert "browser_path" not in new["tracks"][0]["devices"][0]
+    # The Operator at new position 2 was at position 1 in old, position
+    # identity doesn't match, so no carry forward either. Stale-position
+    # paths are dropped intentionally.
+    assert "browser_path" not in new["tracks"][0]["devices"][1]
+
+
+def test_preserve_browser_paths_handles_missing_old_entry():
+    """New device at a slot that didn't exist in old — no error, no path."""
+    old = {"song": {}, "returns": [], "tracks": []}
+    new = _snapshot_with_one_track_one_device()
+    preserve_browser_paths(old, new)
+    assert "browser_path" not in new["tracks"][0]["devices"][0]
+
+
+def test_preserve_browser_paths_empty_old_is_noop():
+    new = _snapshot_with_one_track_one_device()
+    new["tracks"][0]["devices"][0]["browser_path"] = ["instruments", "Operator"]
+    before = json.dumps(new, sort_keys=True)
+    preserve_browser_paths({"song": {}, "returns": [], "tracks": []}, new)
+    assert json.dumps(new, sort_keys=True) == before

@@ -12,7 +12,7 @@ None. This song uses only Live's built-in devices — no additional installs nee
 
 Listed here for completeness — these ship with Live and don't need separate installation:
 
-`Chorus2`, `Compressor2`, `Delay`, `DrumBuss`, `DrumGroupDevice`, `Eq8`, `InstrumentGroupDevice`, `InstrumentMeld`, `InstrumentVector`, `LoungeLizard`, `Operator`, `Reverb`, `Saturator`, `StereoGain`.
+`Chorus-Ensemble`, `Compressor`, `Delay`, `Drum Buss`, `Drum Rack`, `EQ Eight`, `Electric`, `Instrument Rack`, `Meld`, `Operator`, `Reverb`, `Saturator`, `Utility`, `Wavetable`.
 
 ---
 

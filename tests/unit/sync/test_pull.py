@@ -4124,3 +4124,159 @@ def test_pull_cli_execute_unknown_domain_errors(tmp_path, monkeypatch):
         pull_cli.main([
             "execute", "bogus", session_id, "--db", str(db_path),
         ])
+
+
+def test_pull_cli_execute_dry_run_does_not_mutate_db(tmp_path, monkeypatch, capsys):
+    """Arc 5 / P1: ``--dry-run`` computes the same diff as a real apply but
+    rolls back inside a SAVEPOINT. The DB row stays at its pre-call
+    value; the output JSON still shows ``applied.mutations >= 1`` so the
+    caller can preview the change."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "dry.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="dry", title="Dry", key="Dm")
+    track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=(session_id := M.create_ableton_session(
+            conn, song_id=song_id, name="draft")),
+        db_kind="track", db_id=track_id, ableton_index=1,
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=track_id)
+    device_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor", display_name="Compressor",
+    )
+    M.set_device_parameter(
+        conn, device_id=device_id, name="Threshold",
+        value_display="-12.0 dB", value_normalized=0.30,
+    )
+    conn.commit()
+    conn.close()
+
+    fake_send = _fake_pull_send_factory({
+        ("ableton_device", "get_parameters", 1, None, 1): {
+            "parameters": [
+                {"name": "Threshold", "value_display": "-6.0 dB",
+                 "value": 0.55, "min": 0.0, "max": 1.0, "is_enum": False},
+            ],
+        },
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "device-parameters", session_id,
+        "--db", str(db_path), "--dry-run",
+    ])
+    assert rc == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["dry_run"] is True
+    # The diff WAS computed and surfaced — the caller can show what
+    # would change before promoting to a real apply.
+    assert out["applied"]["mutations"] >= 1
+
+    # But the DB is unchanged: the original Threshold survives intact.
+    conn = init_db(db_path)
+    row = conn.execute(
+        "SELECT value_display, value_normalized FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (str(device_id), "Threshold"),
+    ).fetchone()
+    assert row is not None
+    assert row["value_display"] == "-12.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.30)
+    conn.close()
+
+
+def test_pull_cli_execute_dry_run_rolls_back_request_row(tmp_path, monkeypatch):
+    """The SAVEPOINT must cover the requests row too — a dry-run should
+    leave no audit-log droppings. Without this, the events table would
+    accumulate orphan `kind='pull'` rows on every preview."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "req.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="req", key="Dm")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.commit()
+    conn.close()
+
+    fake_send = _fake_pull_send_factory({
+        ("ableton_session", "info", None, None, None): {
+            "master": {"volume": 0.70, "panning": 0.0},
+        },
+        ("ableton_return", "list", None, None, None): [],
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "mix-state", session_id, "--db", str(db_path),
+        "--dry-run",
+    ])
+    assert rc == 0
+
+    conn = init_db(db_path)
+    pull_requests = conn.execute(
+        "SELECT id FROM requests WHERE kind = 'pull'"
+    ).fetchall()
+    conn.close()
+    # Zero — the SAVEPOINT rolled the create_request write back along
+    # with the apply writes.
+    assert len(pull_requests) == 0
+
+
+def test_pull_cli_execute_dry_run_default_off_preserves_existing_behavior(
+    tmp_path, monkeypatch
+):
+    """Regression guard for the existing C3 contract: omitting
+    ``--dry-run`` keeps the old apply-and-commit semantics. Without
+    this test the new flag could quietly default-to-dry-run and break
+    every existing caller."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "live.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="live", key="Dm")
+    track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=(session_id := M.create_ableton_session(
+            conn, song_id=song_id, name="draft")),
+        db_kind="track", db_id=track_id, ableton_index=1,
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=track_id)
+    device_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor", display_name="Compressor",
+    )
+    M.set_device_parameter(
+        conn, device_id=device_id, name="Threshold",
+        value_display="-12.0 dB", value_normalized=0.30,
+    )
+    conn.commit()
+    conn.close()
+
+    fake_send = _fake_pull_send_factory({
+        ("ableton_device", "get_parameters", 1, None, 1): {
+            "parameters": [
+                {"name": "Threshold", "value_display": "-6.0 dB",
+                 "value": 0.55, "min": 0.0, "max": 1.0, "is_enum": False},
+            ],
+        },
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "device-parameters", session_id, "--db", str(db_path),
+    ])
+    assert rc == 0
+
+    conn = init_db(db_path)
+    row = conn.execute(
+        "SELECT value_display, value_normalized FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (str(device_id), "Threshold"),
+    ).fetchone()
+    conn.close()
+    assert row["value_display"] == "-6.0 dB"
+    assert row["value_normalized"] == pytest.approx(0.55)

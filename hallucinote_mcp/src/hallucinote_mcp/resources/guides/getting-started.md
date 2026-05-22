@@ -43,6 +43,11 @@ for slow-changing reads:
 - `ableton://reference/{scales,device-params}` — static lookups
 - `ableton://guides/{getting-started,conventions,error-recovery,gaps}` —
   this file and three others
+- `hallucinote://song/<slug>/annotations` — composer-intent annotations
+  for the song identified by `<slug>` (zero-turn-cost mirror of
+  `ableton_annotation(action='list', song_slug=<slug>)`). Read this
+  before non-trivial composition so prior decisions + structural facts
+  are in the working set.
 
 Prefer resources over tool calls when the data is slow-changing — they
 load implicitly without consuming a turn.

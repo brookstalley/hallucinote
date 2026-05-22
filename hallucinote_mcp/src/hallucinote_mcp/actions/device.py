@@ -206,6 +206,26 @@ register(
                     "Mutually exclusive with preset_uri."
                 ),
             ),
+            ParamSpec(
+                name="browser_path",
+                type="list",
+                required=False,
+                description=(
+                    "W13-A v1.0 fallback identity. List of strings from "
+                    "the browser root to the loaded item's name (e.g. "
+                    "['plug-ins', 'Native Instruments', 'Massive X', "
+                    "'FatBass']). Captured at the original load on the "
+                    "authoring machine. When passed alongside preset_uri, "
+                    "the handler tries the URI first; if the URI doesn't "
+                    "resolve (the FileId differs across machines or the "
+                    "plugin moved between catalog versions), falls back "
+                    "to a path-scoped browser search by display_name. "
+                    "Refuses on 0-match (plugin not installed at the "
+                    "captured path) and on multi-match. The path's "
+                    "vendor / pack segments discriminate same-display-"
+                    "name plugins from different manufacturers."
+                ),
+            ),
         ),
         handler=device_handlers.load_handler,
         example=(

@@ -1,6 +1,7 @@
 {
   "_doc": "Parameter catalog by Live device class. Names match Live's exact parameter names — pass these to ableton_device(action='set_parameter', parameter_name=...). Helps agents avoid the common mistake of inventing parameter names (e.g. 'Threshold dB' when Live's name is just 'Threshold'). Not exhaustive — only commonly-automated devices and parameters. Use ableton_device(action='get_parameters', detail='full') to inspect any device's full parameter list, including enum value_items.",
   "_note_on_enums": "Enum parameters (Filter Type, Compressor Model, etc.) appear with is_enum=True + value_items=[...] when fetched via get_parameters detail='full'. Pass value_type='enum' and value=<exact string from value_items> to set them.",
+  "_post_d4_note": "Each entry's `class_name` is Live's internal device class (used for plugin discrimination + capture-side `devices.class_name`). Post-Arc-4 / D4 (commit 305742c, 2026-05-21), the loader selector — `ableton_device(action='load', kind=...)` — uses `display` (the browser display name), NOT `class_name`. The catalog keys keep the class names because parameter discovery cross-references to `devices.class_name` rows, but DO NOT pass `class_name` values to `kind=` on load — use the `display` value.",
   "devices": [
     {
       "class_name": "Compressor2",

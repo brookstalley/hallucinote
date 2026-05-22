@@ -283,6 +283,17 @@ CREATE TABLE IF NOT EXISTS devices (
     -- consumer's machine — bypasses per-machine FileId in preset_uri so
     -- snapshots transfer cross-machine.
     preset_query    TEXT,
+    -- Arc 7-tail / E3 (W13-A v1.0): resolved browser path from the root
+    -- to the loaded item, as a JSON array of strings (e.g.
+    -- ["instruments", "Operator", "Bass", "Sub Bass"]). Captured at load
+    -- time when the loader walks the browser to find the BrowserItem.
+    -- NULL when the device pre-dates E3 capture or was created without
+    -- a browser walk. The push planner's fallback resolver scopes
+    -- ableton_browser(action='search') by path[0] (root) + path[1:-1]
+    -- (path_prefix) so vendor / pack identity discriminates cross-
+    -- machine plugin loads when the per-machine FileId in preset_uri
+    -- doesn't resolve.
+    browser_path_json TEXT,
     UNIQUE(chain_id, position)
 );
 
@@ -294,6 +305,14 @@ CREATE INDEX IF NOT EXISTS idx_devices_chain ON devices(chain_id);
 -- form ("1.17 kHz" / "Lowpass" / "-7.0 dB"); `value_normalized` is the
 -- 0.0–1.0 wire form. Discrete-enum params (Filter Type = "Lowpass") have
 -- NULL `value_normalized` — there's no continuous form to write.
+--
+-- `value_items_json` carries the enum cardinality for discrete-enum params —
+-- a JSON array of display names in Live's `value_items` order (the index
+-- in that array IS the numeric value Live stores). NULL for continuous
+-- params. Captured at pull time from `ableton_device(action='get_parameters',
+-- detail='full')`. Used by the enum-aware envelope helper to resolve
+-- compose-time enum-name breakpoints into numeric values without forcing
+-- the build.py author to hand-list the cardinality on every call.
 
 CREATE TABLE IF NOT EXISTS device_parameters (
     id                  TEXT PRIMARY KEY,
@@ -302,6 +321,7 @@ CREATE TABLE IF NOT EXISTS device_parameters (
     value_display       TEXT NOT NULL,
     value_normalized    REAL CHECK (value_normalized IS NULL
                                   OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
+    value_items_json    TEXT,
     UNIQUE(device_id, name)
 );
 

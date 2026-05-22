@@ -1,4 +1,4 @@
-"""FastMCP server — the 11 unified tools as MCP entry points.
+"""FastMCP server — 11 unified tools + 12 resources (11 static + 1 templated) as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -43,7 +43,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 11 unified tools + 11 resources for Ableton Live,
+hallucinote-mcp — 11 unified tools + 12 resources (11 static + 1 per-song template) for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -96,9 +96,11 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
 
     mcp = FastMCP(name=name, instructions=PRIMER)
 
-    # Wave M-6: register 11 resources (5 Live-backed + 2 reference + 4 guides).
-    # Done before tool registration so the resource URIs are visible to
-    # the client immediately on initialize.
+    # Wave M-6 + Arc 5 / P3: register 11 static resources (5 Live-backed +
+    # 2 reference + 4 guides) and 1 per-song templated resource
+    # (hallucinote://song/{slug}/annotations). Done before tool registration
+    # so the resource URIs are visible to the client immediately on
+    # initialize.
     from .resources import register_resources
     register_resources(mcp)
 
@@ -315,6 +317,39 @@ def registered_resource_uris(mcp: FastMCP) -> list[str]:
     )
 
 
+def registered_resource_template_uris(mcp: FastMCP) -> list[str]:
+    """Return the URI templates of all templated resources on FastMCP.
+
+    Templated resources can't be enumerated by concrete URI alone — the
+    ``{slug}``-style placeholders stay unresolved until a client reads
+    them with a binding. This helper returns the registered templates
+    themselves so tests can assert "the W11-A surface is wired."
+
+    Arc 5 / P3: first user. Future per-song hallucinote:// resources
+    will surface here too.
+    """
+    for attr in ("_resource_manager", "resource_manager"):
+        manager = getattr(mcp, attr, None)
+        if manager is None:
+            continue
+        for store_attr in ("_templates", "templates"):
+            store = getattr(manager, store_attr, None)
+            if isinstance(store, dict):
+                templates: list[str] = []
+                for k, v in store.items():
+                    template = (
+                        getattr(v, "uri_template", None) if v is not None else None
+                    )
+                    templates.append(
+                        str(template) if template is not None else str(k)
+                    )
+                return sorted(templates)
+    raise RuntimeError(
+        "Could not introspect FastMCP resource-template registry — "
+        "FastMCP API may have changed"
+    )
+
+
 def registered_tool_names(mcp: FastMCP) -> list[str]:
     """Return the names of all tools registered on the FastMCP instance.
 
@@ -343,4 +378,5 @@ __all__ = [
     "handle_tool_call",
     "registered_tool_names",
     "registered_resource_uris",
+    "registered_resource_template_uris",
 ]

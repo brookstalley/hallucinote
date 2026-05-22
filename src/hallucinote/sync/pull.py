@@ -25,11 +25,13 @@ made in Ableton outside of a session.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import RACK_CLASS_NAMES, strip_return_slot_prefix
+from hallucinote.capture import RACK_CLASS_NAMES
+from hallucinote.return_naming import strip_return_slot_prefix
 
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
@@ -1694,8 +1696,14 @@ def _apply_track_sends(
         seen_names.add(return_name)
         ret_row = Q.get_return_by_name(conn, song_id=song_id, name=return_name)
         if ret_row is None:
+            # Arc 7 / P7: identify the return by its DB form (`return_name`),
+            # not Live's `<letter>-` prefixed UI form (`raw_name`). The user
+            # reasons in DB-shaped terms — `Q.get_return_by_name` expects the
+            # stripped name — so the message matches the lookup that just
+            # failed. Live's prefixed form only appears in the UI; the
+            # snapshot author writes the stripped name too (W4-C).
             out.warnings.append(
-                f"track {track_row['name']!r} send -> {raw_name!r}: "
+                f"track {track_row['name']!r} send -> {return_name!r}: "
                 "no matching return in DB; skipping (V1 does not auto-create)"
             )
             continue
@@ -2380,6 +2388,16 @@ def _apply_device_parameters_for_device(
         value_normalized = _normalize_param_value(
             float(raw_value), min_val, max_val, is_enum,
         )
+        # E1: capture value_items for enum params so the compose-time
+        # envelope helper can resolve enum-name breakpoints without the
+        # build.py author hand-listing the cardinality. detail='full'
+        # always supplies value_items for enum params (handlers/device.py
+        # set is_enum from value_items presence).
+        value_items: list[str] | None = None
+        if is_enum:
+            raw_items = entry.get("value_items")
+            if isinstance(raw_items, (list, tuple)):
+                value_items = [str(item) for item in raw_items]
 
         existing = db_by_name.get(name)
         if existing is not None:
@@ -2387,7 +2405,12 @@ def _apply_device_parameters_for_device(
             norm_same = _normalized_values_match(
                 value_normalized, existing["value_normalized"],
             )
-            if display_same and norm_same:
+            existing_items_json = existing["value_items_json"]
+            new_items_json = (
+                json.dumps(value_items) if value_items else None
+            )
+            items_same = existing_items_json == new_items_json
+            if display_same and norm_same and items_same:
                 out.no_ops += 1
                 continue
         M.set_device_parameter(
@@ -2396,6 +2419,7 @@ def _apply_device_parameters_for_device(
             name=name,
             value_display=value_display,
             value_normalized=value_normalized,
+            value_items=value_items,
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1

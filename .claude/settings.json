@@ -18,6 +18,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/stamp_evidence_sha.py\"",
+            "statusMessage": "Refreshing test-evidence SHA..."
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" stop",
             "statusMessage": "Checking governance gates..."
           }

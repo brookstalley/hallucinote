@@ -61,25 +61,18 @@ the dict via `compile_snapshot`. See `tools/capture_cli.py` for the probe sequen
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 import warnings
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
+from hallucinote.return_naming import strip_return_slot_prefix
 
 SNAPSHOT_FORMAT_VERSION = 1
 
 # Track types accepted in snapshot["tracks"][n]["type"]; mapped 1:1 to
 # `tracks.kind` in the DB. Unknown values raise; the snapshot is authoritative.
 _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
-
-
-# Live 12.4 unconditionally prefixes every `ReturnTrack.name` with a
-# `<slot-letter>-` segment (A-, B-, ..., Z-). Storing the prefixed form in
-# the DB causes double-prefixing on push (DB "A-Reverb" → Live "A-A-Reverb").
-# W3-H real-Live finding (2026-05-18); W4-C cross-layer fix.
-_RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
 
 
 # Live device classes that own nested chains. Mirrors `_resolve_rack_chains`
@@ -98,27 +91,6 @@ RACK_CLASS_NAMES = frozenset({
     "Instrument Rack",
     "Audio Effect Rack",
 })
-
-
-def strip_return_slot_prefix(name: str | None) -> str | None:
-    """Strip Live's `<slot-letter>-` prefix from a return-track name.
-
-    Idempotent: names without the prefix (already-stripped, or never had it)
-    pass through unchanged. The DB stores SUFFIX-only return names; push
-    re-emits the suffix and Live re-adds its slot prefix.
-
-    **Author trap (Wave 0 canary, solo-piano-ambient runbook step 3).** The
-    regex strips ANY single uppercase-letter prefix, not just `A-` / `B-`.
-    Hand-authored snapshots that put `"name": "A-Reverb"` lose the prefix on
-    replay — `Q.get_return_by_name(..., "A-Reverb")` then returns None
-    because the row was stored as `"Reverb"`. `replay_capture` emits a
-    `UserWarning` summarizing strips so this isn't silent. See
-    `docs/snapshot-schema.md` ("Return names: stored stripped") for the
-    canonical form.
-    """
-    if name is None:
-        return None
-    return _RETURN_SLOT_PREFIX.sub("", name, count=1)
 
 
 def _norm_pan(value: Any) -> float | None:
@@ -175,6 +147,20 @@ def _replay_devices(
         # without baking in this machine's FileId.
         preset_query = d.get("preset_query")
         preset_uri = d.get("guess_uri") if preset_query is None else None
+        # Arc 7-tail / E3 (W13-A v1.0): snapshots may carry the browser
+        # path the device was originally loaded from (captured by the
+        # MCP load handler's `resolved_path` response field). The push
+        # planner threads this through to the load handler as a
+        # fallback identity when the per-machine preset_uri doesn't
+        # resolve. Pre-E3 snapshots omit it — devices stay loadable
+        # via preset_uri / kind-only, just without cross-machine
+        # FileId fallback.
+        browser_path_raw = d.get("browser_path")
+        browser_path: list[str] | None
+        if isinstance(browser_path_raw, list) and browser_path_raw:
+            browser_path = [str(s) for s in browser_path_raw]
+        else:
+            browser_path = None
         # Arc 4 / D4: snapshots may carry `class_name` (Live's internal
         # class identifier) alongside `class` (the browser display name
         # the loader matches). Capture-from-Live populates both; hand-
@@ -190,6 +176,7 @@ def _replay_devices(
             class_name=d.get("class_name"),
             preset_uri=preset_uri,
             preset_query=preset_query,
+            browser_path=browser_path,
             actor=actor,
             request_id=request_id,
             reason=reason,
@@ -201,6 +188,12 @@ def _replay_devices(
                     f"expected dict with 'value' key, got {p!r}"
                 )
             normalized = p.get("normalized")
+            raw_items = p.get("value_items")
+            value_items = (
+                [str(item) for item in raw_items]
+                if isinstance(raw_items, (list, tuple))
+                else None
+            )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,
@@ -209,6 +202,7 @@ def _replay_devices(
                 value_normalized=(
                     float(normalized) if normalized is not None else None
                 ),
+                value_items=value_items,
                 actor=actor,
                 request_id=request_id,
                 reason=reason,

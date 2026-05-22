@@ -132,7 +132,10 @@ def test_plan_push_mix_emits_create_return_track_when_unlinked(conn, song, sessi
         if c.tool == "ableton_return" and c.args.get("action") == "create"
     ]
     assert len(create_calls) == 1
-    assert create_calls[0].args == {"action": "create", "name": "A-Reverb"}
+    # Arc 7 / P7: M.create_return strips the slot prefix, so DB stores
+    # "Reverb"; push re-emits the stripped form and Live re-adds "A-"
+    # (W4-C cross-layer contract).
+    assert create_calls[0].args == {"action": "create", "name": "Reverb"}
 
 
 def test_plan_push_mix_emits_return_set_property_for_linked_returns(conn, song, session):

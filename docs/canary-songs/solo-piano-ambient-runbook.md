@@ -1,5 +1,11 @@
 # Runbook — solo-piano-ambient
 
+> **Historical session log.** Filenames and paths reflect the state at
+> session time (2026-05-19). Per-song bootstrap test files are now
+> named `test_<slug>_build.py` (post-Arc-6 convention); references
+> below to `tests/test_build.py` reflect the older bare-name pattern
+> the run used.
+
 **Agent run start**: 2026-05-19 11:53 PT (session begin)
 **Agent run end**: 2026-05-19 12:05 PT (~12 min wall clock)
 **Live state at start**: 4 tracks / 2 returns / 8 scenes / 120 BPM (default new set, Live 12.4 via MCP bridge)

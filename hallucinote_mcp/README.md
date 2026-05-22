@@ -62,9 +62,10 @@ Every tool answers `action='help'` with a structured menu — required / optiona
 params, examples, tips — generated from the shared schema. Errors carry recovery
 hints: valid action list, missing-param list, an example, a `hint` string.
 
-In addition to the tools, the server exposes **11 resources** for low-context-cost
-reads (`ableton://session/snapshot`, `ableton://browser/*`, `ableton://plugins/installed`,
-`ableton://reference/*`, `ableton://guides/*`). Multi-step workflows live as Claude
+In addition to the tools, the server exposes **12 resources** (11 static + 1
+templated) for low-context-cost reads (`ableton://session/snapshot`,
+`ableton://browser/*`, `ableton://plugins/installed`, `ableton://reference/*`,
+`ableton://guides/*`, plus the templated `hallucinote://song/{slug}/annotations`). Multi-step workflows live as Claude
 Code skills (`.claude/skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
 `/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,
 `/pattern-compose` — so they're assistant-callable, not just user-facing slash commands.

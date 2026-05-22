@@ -130,6 +130,53 @@ def test_actions_for_sorts_help_first(isolated_registry):
     assert names[1:] == ["info", "set_tempo"]  # alphabetical after help
 
 
+def test_db_writes_requires_runs_server_side(isolated_registry):
+    """db_writes is a server-side-only concern — the Live-vendored Remote
+    Script doesn't see the Hallucinote DB at all. The schema catches the
+    typo at action-construction time, not at first dispatch.
+    """
+    with pytest.raises(ValueError, match="db_writes=True"):
+        Action(
+            tool="ableton_annotation",
+            name="add",
+            description="",
+            params=(ParamSpec(name="song_slug", type="str"),),
+            handler=lambda ctx, *, song_slug: None,
+            db_writes=True,
+        )
+
+
+def test_db_writes_requires_song_slug_param(isolated_registry):
+    """The dispatcher uses ``song_slug`` to resolve the per-song DB; an
+    action that opts into auto-provenance without naming that param can't
+    actually thread provenance.
+    """
+    with pytest.raises(ValueError, match="requires a 'song_slug' param"):
+        Action(
+            tool="ableton_annotation",
+            name="add",
+            description="",
+            params=(ParamSpec(name="kind", type="str"),),
+            handler=lambda ctx, *, kind: None,
+            runs_server_side=True,
+            db_writes=True,
+        )
+
+
+def test_db_writes_accepts_runs_server_side_with_song_slug(isolated_registry):
+    action = Action(
+        tool="ableton_annotation",
+        name="add",
+        description="",
+        params=(ParamSpec(name="song_slug", type="str"),),
+        handler=lambda ctx, *, song_slug, _request_id=None: None,
+        runs_server_side=True,
+        db_writes=True,
+    )
+    assert action.db_writes is True
+    assert action.runs_server_side is True
+
+
 def test_required_and_optional_params_partition():
     action = Action(
         tool="ableton_track",

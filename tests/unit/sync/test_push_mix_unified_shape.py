@@ -132,7 +132,9 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
         "volume", "panning", "mute", "solo", "arm", "color"
     }
     assert len(create_return_calls) == 1
-    assert create_return_calls[0].args == {"action": "create", "name": "A-Reverb"}
+    # Arc 7 / P7: M.create_return strips the slot prefix → DB stores
+    # "Reverb"; push re-emits it stripped, Live re-adds "A-".
+    assert create_return_calls[0].args == {"action": "create", "name": "Reverb"}
 
     # Build a fake song with one track + one return slot so the dispatcher
     # can actually execute the planner's calls.

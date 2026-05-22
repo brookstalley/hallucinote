@@ -23,7 +23,7 @@ extension).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
@@ -226,7 +226,14 @@ _BROWSER_URI_ROOTS: tuple[str, ...] = _BROWSER_LOAD_ROOTS + (
 _BROWSER_WALK_DEPTH = 8
 
 
-def _walk_for_uri(node: Any, target_uri: str, depth_left: int) -> Any:
+def _walk_for_uri(
+    node: Any, target_uri: str, depth_left: int, path: list[str],
+) -> tuple[Any, list[str] | None]:
+    """Return (BrowserItem, path_segments) or (None, None).
+
+    ``path`` is the path TO AND INCLUDING the current node. Returned
+    path on a match is a *copy* (caller-owned).
+    """
     # Gate on is_loadable so an empty / folder URI doesn't resolve to a
     # non-loadable node and produce a misleading "did not append" error
     # later. browser.load_item requires a loadable BrowserItem.
@@ -234,33 +241,47 @@ def _walk_for_uri(node: Any, target_uri: str, depth_left: int) -> Any:
         bool(getattr(node, "is_loadable", False))
         and getattr(node, "uri", None) == target_uri
     ):
-        return node
+        return node, list(path)
     if depth_left <= 0:
-        return None
+        return None, None
     for child in getattr(node, "children", ()) or ():
-        match = _walk_for_uri(child, target_uri, depth_left - 1)
+        child_path = path + [str(getattr(child, "name", ""))]
+        match, match_path = _walk_for_uri(
+            child, target_uri, depth_left - 1, child_path,
+        )
         if match is not None:
-            return match
-    return None
+            return match, match_path
+    return None, None
 
 
-def _walk_for_name(node: Any, name: str, depth_left: int) -> Any:
+def _walk_for_name(
+    node: Any, name: str, depth_left: int, path: list[str],
+) -> tuple[Any, list[str] | None]:
     if (
         bool(getattr(node, "is_loadable", False))
         and str(getattr(node, "name", "")) == name
     ):
-        return node
+        return node, list(path)
     if depth_left <= 0:
-        return None
+        return None, None
     for child in getattr(node, "children", ()) or ():
-        match = _walk_for_name(child, name, depth_left - 1)
+        child_path = path + [str(getattr(child, "name", ""))]
+        match, match_path = _walk_for_name(
+            child, name, depth_left - 1, child_path,
+        )
         if match is not None:
-            return match
-    return None
+            return match, match_path
+    return None, None
 
 
-def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
+def _resolve_preset_query(
+    browser: Any, query: dict[str, Any],
+) -> tuple[Any, list[str]]:
     """Resolve a ``preset_query`` dict to a single loadable BrowserItem.
+
+    Returns ``(item, path)`` where ``path`` is the full segment list
+    from the root key to the resolved item's name. Raises ValueError
+    on 0-match or 2+-match ambiguity (see body).
 
     Compose-time portable preset selection: snapshot stores a query
     (root + pattern + optional mode/path_prefix) instead of a per-machine
@@ -363,7 +384,7 @@ def _resolve_preset_query(browser: Any, query: dict[str, Any]) -> Any:
             "or add path_prefix to narrow the scope (the paths above "
             "are the disambiguating segments)."
         )
-    return found_items[0]
+    return found_items[0], matches[0]["path"]
 
 
 def _roots_for_kind(kind: str) -> tuple[str, ...]:
@@ -404,8 +425,12 @@ def _format_kind_failure_criteria(kind: str) -> str:
 
 def _find_browser_item(
     browser: Any, *, kind: str, preset_uri: str | None
-) -> Any:
-    """Resolve a BrowserItem to hand to ``browser.load_item``.
+) -> tuple[Any, list[str] | None]:
+    """Resolve a BrowserItem (and its path) to hand to ``browser.load_item``.
+
+    Returns ``(item, path)`` on success — ``path`` is the segments from
+    the root key (e.g. ``"instruments"``) down to the resolved item's
+    name. Returns ``(None, None)`` on failure.
 
     With ``preset_uri``: walk every root (including plugins / packs / user
     library) looking for an exact ``uri`` match. With ``kind`` only:
@@ -429,19 +454,23 @@ def _find_browser_item(
             root_node = getattr(browser, root_name, None)
             if root_node is None:
                 continue
-            match = _walk_for_uri(root_node, preset_uri, _BROWSER_WALK_DEPTH)
+            match, match_path = _walk_for_uri(
+                root_node, preset_uri, _BROWSER_WALK_DEPTH, [root_name],
+            )
             if match is not None:
-                return match
-        return None
+                return match, match_path
+        return None, None
 
     for root_name in _roots_for_kind(kind):
         root_node = getattr(browser, root_name, None)
         if root_node is None:
             continue
-        match = _walk_for_name(root_node, kind, _BROWSER_WALK_DEPTH)
+        match, match_path = _walk_for_name(
+            root_node, kind, _BROWSER_WALK_DEPTH, [root_name],
+        )
         if match is not None:
-            return match
-    return None
+            return match, match_path
+    return None, None
 
 
 def _refresh_parent(
@@ -459,12 +488,62 @@ def _refresh_parent(
     return context.song.return_tracks[parent_idx - 1]
 
 
+def _canonical_class_name(device: Any) -> str:
+    """The identity string used to detect chain-position class changes.
+
+    Mirrors the response field ``loaded_class_name`` (class_display_name
+    when present, else class_name, else empty) so the pre/post snapshots
+    compare against the same surface the caller sees in the response.
+    """
+    return (
+        getattr(device, "class_display_name", None)
+        or getattr(device, "class_name", None)
+        or ""
+    )
+
+
+def _raise_silent_noop(
+    *,
+    parent_kind: str,
+    parent_idx: int,
+    chain_after: list[Any],
+) -> NoReturn:
+    """A2-resid: surface what's actually on the parent so the caller can
+    diagnose without a separate ableton_device(action='list') probe.
+
+    Two empirical no-op causes: (a) browser silently no-ops because a
+    matching device is already at the expected position (the punk-fate
+    `--reset`-then-repush repro) and (b) the item isn't actually
+    loadable on this parent kind (instrument on a return). Listing the
+    existing chain disambiguates: if a same-class device already sits at
+    the expected position, that's (a).
+    """
+    existing = [
+        f"{i + 1}:{getattr(d, 'class_name', '?')}"
+        for i, d in enumerate(chain_after)
+    ]
+    existing_str = ", ".join(existing) if existing else "(empty)"
+    suffix = (
+        "; the item may not be loadable on this parent (instrument on a return)"
+        if parent_kind == "return"
+        else ""
+    )
+    raise RuntimeError(
+        f"load: Live did not append a device on {parent_kind} "
+        f"{parent_idx} after browser.load_item. Existing chain: "
+        f"[{existing_str}]. Most common cause: a device with matching "
+        f"class is already present at the expected position (Live "
+        f"silently no-ops the load){suffix}."
+    )
+
+
 def load_handler(
     context: LiveContext,
     *,
     kind: str,
     preset_uri: str | None = None,
     preset_query: dict[str, Any] | None = None,
+    browser_path: list[str] | None = None,
     track_index: int | None = None,
     return_index: int | None = None,
 ) -> dict[str, Any]:
@@ -496,10 +575,31 @@ def load_handler(
     ``preset_query`` and ``preset_uri`` are mutually exclusive — pass one
     or the other (or neither, for kind-only).
 
+    ``browser_path`` (Arc 7-tail / E3, W13-A v1.0) is the fallback
+    identity surface. When passed alongside ``preset_uri``, the handler
+    tries the URI walk first; if the URI doesn't resolve (the
+    per-machine FileId differs across machines or the plugin moved
+    between catalog versions), the handler falls back to a path-scoped
+    browser search using ``browser_path[0]`` as the root,
+    ``browser_path[1:-1]`` as ``path_prefix``, and ``browser_path[-1]``
+    as the exact-match pattern. Refuses on 0-match (the plugin isn't
+    installed at the captured path on this machine) and on multi-match
+    with teaching errors so the agent can decide whether to retry with
+    different scope or surface the gap to the user. The path's vendor /
+    pack segments discriminate same-display-name plugins across
+    manufacturers — the W13-A "Case A: same plugin, different catalog
+    id" cross-machine portability problem.
+
     Selects the destination via ``song.view.selected_track = parent`` and
-    calls ``application.browser.load_item(item)``. The new device appears
-    at the tail of the destination's top-level device chain; Live 12.4
-    exposes no public re-ordering API, so the position is fixed.
+    calls ``application.browser.load_item(item)``. The new device usually
+    appears at the tail of the destination's top-level device chain;
+    Live 12.4 exposes no public re-ordering API, so the position is
+    fixed. Some load combinations (empirically observed: Drum Rack onto a
+    track whose chain ends with an Instrument Rack) instead REPLACE the
+    existing device in place — the chain length stays the same but the
+    class at the affected position changes. The post-condition accepts
+    both shapes (append and replace-in-place); ``device_index`` in the
+    response identifies whichever position the new device occupies.
     """
     parent, parent_kind, parent_idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index
@@ -512,6 +612,30 @@ def load_handler(
             "one (preset_query for portable compose-time selection, "
             "preset_uri for an unambiguous per-machine URI)"
         )
+    if browser_path is not None:
+        if not isinstance(browser_path, list) or len(browser_path) < 1 or not all(
+            isinstance(s, str) and s for s in browser_path
+        ):
+            raise ValueError(
+                "browser_path must be a non-empty list of non-empty strings "
+                "from the browser root to the loaded item's name — got "
+                f"{browser_path!r}"
+            )
+        if preset_uri is None:
+            # browser_path is the FALLBACK for preset_uri — it's not a
+            # standalone selector. Composers wanting a path-scoped search
+            # without a per-machine URI should use preset_query (the
+            # canonical portable selector); browser_path activates only
+            # alongside preset_uri so the fast path tries the FileId
+            # first. Surfacing this avoids confusion about which selector
+            # actually drives the walk.
+            raise ValueError(
+                "browser_path is the fallback identity for preset_uri — "
+                "pass it alongside preset_uri so the handler tries the "
+                "FileId first and falls back to a path-scoped search if "
+                "the URI doesn't resolve. For standalone portable "
+                "selection, use preset_query."
+            )
 
     application = getattr(context, "application", None)
     if application is None:
@@ -526,9 +650,40 @@ def load_handler(
         )
 
     if preset_query is not None:
-        item = _resolve_preset_query(browser, preset_query)
+        item, resolved_path = _resolve_preset_query(browser, preset_query)
     else:
-        item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+        item, resolved_path = _find_browser_item(
+            browser, kind=kind, preset_uri=preset_uri,
+        )
+    if item is None and browser_path is not None:
+        # E3 fallback identity: the per-machine preset_uri didn't
+        # resolve (different FileId on this machine, or plugin moved
+        # between catalog versions). Synthesize a preset_query from the
+        # captured browser_path — root is the path's first segment,
+        # path_prefix is the middle, pattern is the leaf (exact match,
+        # since the leaf in the captured path is the display name of
+        # the plugin / preset that was originally loaded). Surfaces
+        # 0-match and multi-match through the same teaching-error
+        # surface as preset_query, with a fallback-context prefix so
+        # the caller knows the URI was tried first.
+        fallback_query = {
+            "root": browser_path[0],
+            "pattern": browser_path[-1],
+            "mode": "substring",
+            "case_sensitive": True,
+        }
+        if len(browser_path) > 2:
+            fallback_query["path_prefix"] = browser_path[1:-1]
+        try:
+            item, resolved_path = _resolve_preset_query(
+                browser, fallback_query,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"load fallback identity (W13-A v1.0) refused after "
+                f"preset_uri={preset_uri!r} did not resolve and the "
+                f"browser_path={browser_path!r} fallback failed: {exc}"
+            ) from None
     if item is None:
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"
@@ -547,7 +702,7 @@ def load_handler(
             "browser.load_item"
         )
 
-    chain_before = len(parent.devices)
+    chain_before_classes = [_canonical_class_name(d) for d in parent.devices]
     view.selected_track = parent
     browser.load_item(item)
 
@@ -557,41 +712,75 @@ def load_handler(
         context, parent_kind=parent_kind, parent_idx=parent_idx
     )
     chain_after = list(fresh_parent.devices)
-    if len(chain_after) <= chain_before:
-        # A2-resid: surface what's actually on the parent so the caller can
-        # diagnose without a separate ableton_device(action='list') probe.
-        # The two empirical no-append causes are (a) browser silently no-ops
-        # because a matching device is already at this position (the
-        # punk-fate `--reset`-then-repush repro) and (b) the item isn't
-        # actually loadable on this parent kind (instrument on a return).
-        # The pre-A2-resid error only named (b), which misleads on (a) —
-        # by far the more common case in iteration loops. Listing the
-        # existing chain disambiguates: if a same-class device already sits
-        # at the expected position, that's (a).
+    chain_after_classes = [_canonical_class_name(d) for d in chain_after]
+    if len(chain_after) > len(chain_before_classes):
+        # Append case (the common shape): Live grew the chain by N >= 1.
+        new_index = len(chain_after)
+        new_device = chain_after[-1]
+    elif len(chain_after) == len(chain_before_classes):
+        # Same length — either replace-in-place (one position changed
+        # class) or a silent no-op (Live did nothing because a matching
+        # device was already at the expected position).
+        changed = [
+            i
+            for i, (b, a) in enumerate(
+                zip(chain_before_classes, chain_after_classes)
+            )
+            if a != b
+        ]
+        if len(changed) == 1:
+            new_index = changed[0] + 1
+            new_device = chain_after[changed[0]]
+        elif not changed:
+            _raise_silent_noop(
+                parent_kind=parent_kind,
+                parent_idx=parent_idx,
+                chain_after=chain_after,
+            )
+        else:
+            existing = [
+                f"{i + 1}:{cls or '?'}"
+                for i, cls in enumerate(chain_after_classes)
+            ]
+            raise RuntimeError(
+                f"load: Live changed multiple devices on {parent_kind} "
+                f"{parent_idx} after browser.load_item — unexpected shape "
+                f"({len(changed)} positions changed). Post-load chain: "
+                f"[{', '.join(existing)}]."
+            )
+    else:
+        # chain shrank — also unexpected; Live shouldn't drop devices on
+        # a load. Surface what we observed.
         existing = [
-            f"{i + 1}:{getattr(d, 'class_name', '?')}"
-            for i, d in enumerate(chain_after)
+            f"{i + 1}:{cls or '?'}"
+            for i, cls in enumerate(chain_after_classes)
         ]
         existing_str = ", ".join(existing) if existing else "(empty)"
-        suffix = (
-            "; the item may not be loadable on this parent (instrument on a return)"
-            if parent_kind == "return"
-            else ""
-        )
         raise RuntimeError(
-            f"load: Live did not append a device on {parent_kind} "
-            f"{parent_idx} after browser.load_item. Existing chain: "
-            f"[{existing_str}]. Most common cause: a device with matching "
-            f"class is already present at the expected position (Live "
-            f"silently no-ops the load){suffix}."
+            f"load: chain on {parent_kind} {parent_idx} shrank after "
+            f"browser.load_item (pre={len(chain_before_classes)}, "
+            f"post={len(chain_after)}). Post-load chain: [{existing_str}]."
         )
-    new_device = chain_after[-1]
-    new_index = len(chain_after)
+    # Arc 7 / P5: surface the device's resolved class display name so
+    # the caller can detect a kind / preset_uri mismatch without a
+    # follow-up ableton_device(action='list'). Same canonical extraction
+    # as the pre/post chain snapshots above so the response field and
+    # the post-condition detection agree on identity.
+    loaded_class_name = _canonical_class_name(new_device)
     result: dict[str, Any] = {
         "device_index": new_index,
         "kind": kind,
+        "loaded_class_name": loaded_class_name,
         "name": getattr(new_device, "name", ""),
         "parent_kind": parent_kind,
+        # Arc 7-tail / E3 (W13-A v1.0): the path the loader walked from
+        # the browser root to the loaded item's name. Captured into
+        # `devices.browser_path_json` at snapshot ingest time so a
+        # future push on a different machine — where the per-machine
+        # FileId in preset_uri may not resolve — can fall back to
+        # `ableton_browser(action='search')` scoped by this path to
+        # discriminate same-display-name plugins by vendor / pack.
+        "resolved_path": resolved_path,
     }
     result.update(_parent_address(parent_kind, parent_idx))
     if preset_uri is not None:
@@ -1503,7 +1692,9 @@ def load_in_rack_handler(
             "application.browser not exposed in this Live version"
         )
 
-    item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+    item, _resolved_path = _find_browser_item(
+        browser, kind=kind, preset_uri=preset_uri,
+    )
     if item is None:
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"

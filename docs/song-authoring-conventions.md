@@ -72,8 +72,8 @@ This applies most strongly to `make-me-X` mode (see `/song-new`): the deliverabl
 Per-part microtiming — push (early), pull/drag (late), swing, shuffle — is part of how a part is *written*, not a humanize pass run after the fact. Generators take a `feel` parameter per call. Three rules:
 
 1. **Per-part, per-helper-call.** Granularity is the generator call. Punk drums + lazy bluegrass guitar in the same section is valid — two calls, two feel dicts, different intents at the same time. So is verse drums punching forward + chorus drums dragging back — same part, different clips, different feels. Don't put a song-level or section-level shared groove instance in the way; each call states its own feel.
-2. **Freeform or structured, at the call site.** A `feel` value is either a string (`"push hard"`, `"drag eighths"`, `"swing-16ths heavy"`) or a structured per-beat offsets dict (`{2: -0.01, 4: -0.015}` — micro-shifts in beats). Strings are model-interpreted at generation time in the context of the call's other args (meter, density, etc.). No registries; no enums.
-3. **Coordinated across instruments where the genre calls for it.** Bossa nova guitar comp + bossa nova drums share a feel — pass the same string to both. Punk drums + lazy bluegrass guitar deliberately don't.
+2. **Express intent as a dict; strings live in the prompt, not the call.** The generator API is dict-only — `Feel = Mapping[float, float] | None`. The dict maps within-bar positions to micro-shifts in beats (`{2.0: -0.01, 2.75: -0.02}` = beat 3 ten ticks early, beat-3.75 twenty ticks early). When the composer's intent reaches the LLM as freeform language (`"push hard"`, `"drag eighths"`, `"swing-16ths heavy"`), the model resolves that to a dict at compose time in the context of the call's other args (meter, density, etc.) and emits the dict literal into the call. Passing a string directly to the generator raises a `TypeError`. No registries; no enums. Negative within-bar shifts are valid math, but `start_beats < 0` after the bar offset is refused at the mutator boundary — either drop the bar-1 shift or author a pickup pattern explicitly.
+3. **Coordinated across instruments where the genre calls for it.** Bossa nova guitar comp + bossa nova drums share a feel — resolve the freeform intent once (in the prompt) and pass the same dict to both calls. Punk drums + lazy bluegrass guitar deliberately don't share.
 
 ```python
 # Verse — drums punch forward, guitar drags
@@ -115,6 +115,13 @@ if crash_note is None:
 # Fail-fast — refuse early at composition start when the kit can't
 # deliver the section's required pads.
 kit.assert_has("kick", "snare", "ride", "crash")  # raises with the missing list
+
+# Pass `strict=True` to additionally refuse pre-capture state — the
+# kit has no mappings yet, so default mode would silently pass via
+# GM fall-through and surface the wrong-sound case on the next
+# session. Run capture first (`/song-snapshot` or
+# `/song-pick-instruments`) before turning strict on.
+kit.assert_has("kick", "snare", "ride", "crash", strict=True)
 ```
 
 `kit.pitch_of("ride")` on Hot Rod Kit raises `KeyError` naming the colliding chain (`"Cowbell Fenk Chick"`) and pointing at `kit.try_pitch_of`. That's the structural guard against the sun-zone-done cautionary tale — the cowbell-on-metal disaster fails loudly at compose time instead of playing a wrong sound for the whole song.
@@ -187,6 +194,30 @@ Two structural non-supports the planner refuses at v1 (W10-F):
 - **Mixer envelopes on audio tracks** can't be authored. The DB doesn't model audio session clips (`scope.later`); the existing envelope-emitter family needs a session clip on the target track. Workaround: same sub-bus pattern.
 
 Long envelopes spanning multiple session clips are also W10-F-refused — see that chunk's docs for the per-section partition pattern (v1.1 will auto-partition).
+
+---
+
+## Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)
+
+Discrete-enum device parameters automate the same way as continuous ones — Live exposes them as numeric (`value_items.index(name)`) — but composing at the index level forces authors to memorize Live's enum ordering. `M.create_enum_envelope` is the compose-time sugar:
+
+```python
+M.create_enum_envelope(
+    conn,
+    device_id=amp_id,
+    parameter_name="Amp Type",
+    breakpoints=[
+        {"time_beats": 0.0, "value": "Clean"},     # reggae section
+        {"time_beats": 32.0, "value": "Heavy"},    # metal section
+    ],
+)
+```
+
+The helper resolves enum names via `device_parameters.value_items_json` — populated at pull time when the param's `is_quantized=True`. If the snapshot doesn't have the param's cardinality yet (pre-E1 capture, or the param wasn't captured at all), pass `value_items=[...]` explicitly as an escape hatch. Numeric authoring still works via `M.create_envelope` + `M.replace_breakpoints` directly.
+
+On the MCP side, `ableton_automation(action='write_envelope', value_type='enum', ...)` mirrors the same surface for direct callers (planner-emitted envelopes go through the numeric path since the DB stores indices). `value_type='enum'` is only valid for `target_kind='device_parameter'` — mixer / pan / send / clip_cc / clip_pitch_bend / note_expression target continuous parameters by definition.
+
+Breakpoints default to `curve='hold'` for enum envelopes (Live's `Envelope.insert_step` semantics — discrete-enum params can't ramp).
 
 ---
 

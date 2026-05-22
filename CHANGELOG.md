@@ -6,7 +6,58 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased work — v1.1 plan continues in `docs/v11-requirements.md` (Arcs 5-7)._
+_No unreleased work._
+
+## [1.3.0] — 2026-05-22
+
+**Arcs 5 + 6 + 7 + 7-tail: iteration-loop polish, song-author hygiene, production polish, and per-section enum-parameter envelope authoring.** Five feature PRs bundled (Arcs 5/6/7/7-tail + sun-zone-done v2 rebuild + reference-song hygiene). v1.1 requirements plan (Arcs 5-7) closed.
+
+### Added — Arc 7-tail (E1+E2+E3, PR #85 + #86)
+
+- **Per-section enum-parameter envelope authoring (E1).** Schema lift `device_parameters.value_items_json` carries enum cardinality at pull `detail='full'`; new mutator `M.create_enum_envelope` resolves enum-name breakpoints (`["Clean", "Heavy", ...]`) to numeric indices via DB snapshot or `value_items` kwarg escape-hatch; MCP `write_envelope` accepts `value_type='enum' | 'continuous'` mirroring `set_parameter`'s dual path. The sun-zone-done song uses this for its Amp Type Clean↔Heavy genre flips.
+- **Device-load post-condition hardening (E2).** `load_handler` post-condition now accepts three success shapes: append (chain grew), replace-in-place (chain length unchanged but class at one position changed), and silent-no-op (still an error, but distinguished from real loads). Multi-position-change and chain-shrink raise distinct `RuntimeError`s. `_canonical_class_name(device)` factored so pre-load snapshot and `loaded_class_name` response use the same `class_display_name || class_name || ""` rule. `_raise_silent_noop` typed `NoReturn` so refactors can't silently fall through.
+- **W13-A v1.0 instrument fallback identity (E3).** Cross-machine plugin-load portability via captured browser path. Single new column `devices.browser_path_json` carries JSON-encoded path segments — design shift from the original two-column (manufacturer + pack_name) plan since vendor/pack live at different depths across Live's browser tree. MCP `load_handler` accepts `browser_path` alongside `preset_uri`, falls back via synthesized `preset_query` on URI-walk failure, reuses the existing strict-resolution path. Load response surfaces `resolved_path` so capture flows can record automatically. Push planner emits `browser_path` alongside `preset_uri`.
+- **`load_in_rack_handler` regression fix.** Empirical-Live verification surfaced that E3's refactor of `_find_browser_item` (returning `tuple[item, path]`) had updated the standalone `load_handler` callsite but missed `load_in_rack_handler` at `handlers/device.py:1695`. The `_FakeBrowser` unit-test fake was type-permissive — silently shipping the regression. Fixed the callsite AND tightened the fake with `isinstance(item, _FakeItem)` that would have caught the original. Hits the "Unit fakes that mirror an *assumed* Live API give false confidence" learning.
+
+### Added — Arc 7 production polish (P1, P4, P5, P7) + Arc 2 / B5 (PR #84)
+
+- **Envelope WRITE polish (P1).** `write_envelope_handler` threads `note_duration` so the note_expression branch extends its last step to note end (W7-0 clip-scoped fix in note-LOCAL coords). `sidechain_trigger` gains `envelope_start_beats` to floor the first attack window at a section boundary. Three `_emit_*_envelope` emitters (mixer / send / device_parameter) consolidate into thin shells around `_resolve_and_translate_to_session_clip` + `_emit_session_clip_envelope_post_warnings` helpers.
+- **Nested-rack tombstone CTE (P4).** `_tombstone_untouched`'s device_chain / device / device_parameter SELECTs now go through a `WITH RECURSIVE` CTE so chains parented by `parent_rack_device_id` are enumerated alongside top-level chains. Recursion terminates naturally.
+- **`loaded_class_name` in load response (P5).** `ableton_device(action='load')` response includes the loaded device's `class_display_name` (with `class_name` fallback) so callers can detect kind / preset_uri mismatches without a follow-up `device.list` probe.
+- **W4-C strip enforced at mutator boundary (P7).** `M.create_return` / `M.update_return` strip Live's `<letter>-` slot prefix; shared helper extracted to `hallucinote/return_naming.py` so `capture.py` and `mutations.py` import from one place.
+- **MCP auto-mutate (Arc 2 / B5).** MCP dispatcher auto-opens a `M.request(kind='mutate')` around `ableton_annotation` writes via `provenance.auto_request` so handlers get `_request_id` threaded automatically and emitted events carry full provenance.
+
+### Added — Arc 6 song-author hygiene (H1-H5, PR #82)
+
+- H1: `full-band-rock/build.py` + `solo-piano-ambient/build.py` switched to `resolve_db_path()` so per-branch DBs pick up D4's display-name ALTER.
+- H2: `songs/falling-walking/tests/test_build.py` renamed to `tests/test_falling_walking_build.py` per the per-song unique-test-name convention.
+- H3-H5: kit-strict guards (`assert_has(strict=True)`); negative-beats refusal at the DB mutator; minor planner doc polish.
+
+### Added — Arc 5 iteration-loop polish (P1-P6, PR #81)
+
+- Compose-time iteration UX polish: clip-humanize velocity-jitter via DB-as-source-of-truth (W23-B); push-cli `cleanup-default-scaffold` subcommand (W18-D) bundles the post-execute default-track cleanup; `Q.get_latest_request_for_song` + `Q.get_events_for_request` (W23-C) close the provenance reachability loop; ApplyResult.details for transparent diff after pull/push.
+
+### Changed — sun-zone-done v2 rebuild (PR #86)
+
+- Full rebuild from `decisions/01-intent-and-theme.md` (the user's brief). New decisions docs 02-06; new build.py with monolithic 256-beat Rhythm Gtr clip hosting the Amp Type envelope (the structural fix for Live 12.4 LOM's clip-coverage requirement on `device_parameter` envelopes — one envelope per `(device, parameter)`, must be hosted by a clip covering the envelope's full beat range; ONE long clip is the structural answer). Other tracks (drums / bass / organ / lead) use per-section clips for compose-time convenience. Empirical-Live verified: all 10 push phases ok including `envelopes 1/1`; envelope round-trip from Live matches authored breakpoints exactly.
+
+### Changed — reference-song hygiene sweep (PR #86)
+
+- W4-C convention sweep: snapshots in falling-walking / full-band-rock / solo-piano-ambient updated to use stripped return names (`"Reverb"` not `"A-Reverb"`, etc.) in both `returns[].name` and every track's `sends` map keys. Module-level `pytest.mark.filterwarnings` on `tests/unit/capture/test_capture.py` for fixtures that legitimately use prefixed names (the dedicated warn test uses `pytest.warns()` which overrides the filter).
+
+### Fixed
+
+- Mutator boundary now strips W4-C return-name prefix (P7); previously only the capture layer stripped, leaving a hand-authoring trap if `M.create_return` was called directly.
+- `load_in_rack_handler` tuple-unpack regression (above).
+- `pre-v1-walkthrough.md`-style canary friction-log comments removed from the three reference songs' build.py / tests.
+
+### Tests
+
+Suite: 1950 / 1950 passing (+46 from the v1.2.0 baseline at 1904). Per-song tests: falling-walking (5), full-band-rock (3), solo-piano-ambient (3), sun-zone-done (4 incl. the restored idempotency regression test). Empirical-Live round-trip verifications closed for both E1 (sun-zone-done Amp Type envelope) and E2 (load post-condition across 27/27 device loads).
+
+### After upgrade
+
+Re-run `/ableton-mcp-install` to refresh Live's vendored Remote Script (Arc 7-tail E1/E2/E3 ship new MCP wire shapes — `value_type='enum'`, `browser_path`, `loaded_class_name` — that need both halves of the bridge in sync).
 
 ## [1.2.0] — 2026-05-22
 

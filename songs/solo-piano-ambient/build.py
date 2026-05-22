@@ -24,12 +24,14 @@ import json
 from pathlib import Path
 
 from hallucinote.capture import replay_capture
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import harmony
 from hallucinote.generators.envelopes import volume_swell
 from hallucinote.generators.output import GeneratorOutput
 
-DB_PATH = Path(__file__).parent / "solo-piano-ambient.db"
+# Per-branch DB path so feature branches don't clobber each other's state.
+# Convention matches `falling-walking/build.py`.
+DB_PATH = resolve_db_path("solo-piano-ambient", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # Section bar boundaries (1-based; end is the start of the next section).
@@ -238,9 +240,6 @@ def _author_envelopes(conn, song_id: str, tracks: dict[str, str],
         {"time_beats": bloom_end + 48.0,       "value": 0.42, "curve_kind": "linear"},
         {"time_beats": recede_end,             "value": 0.30, "curve_kind": "linear"},
     ]
-    # Returns are stored under the stripped name (Live's "A-"/"B-" slot prefix
-    # is removed by capture.strip_return_slot_prefix on the way in). The
-    # snapshot's "A-Reverb" became "Reverb" in the DB. See friction log.
     env_id = M.create_envelope(
         conn, song_id=song_id, target_kind="send_level",
         target_track_id=tracks["01 Piano"],

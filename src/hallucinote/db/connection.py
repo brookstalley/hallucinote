@@ -84,6 +84,27 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # reads. Existing rows get NULL — pre-D4 callers stored the
     # internal class in `kind`; a clean re-pull rewrites both fields.
     ("devices", "class_name", "TEXT"),
+    # Arc 7-tail / E1: device_parameters gains the enum cardinality —
+    # JSON array of value_items in Live's order (index = numeric value).
+    # NULL for continuous params. Captured at pull time from
+    # ableton_device(action='get_parameters', detail='full'). Used by
+    # M.create_enum_envelope to resolve enum-name breakpoints into
+    # numeric values without forcing build.py authors to hand-list the
+    # cardinality on every call.
+    ("device_parameters", "value_items_json", "TEXT"),
+    # Arc 7-tail / E3 (W13-A v1.0): devices gain the resolved browser
+    # path segments — JSON array of strings from the browser root to the
+    # loaded item (e.g. ["instruments", "Operator", "Bass", "Sub Bass"]
+    # or ["plug-ins", "Native Instruments", "Massive X", "FatBass"]).
+    # NULL when the device pre-dates E3 capture or was created without a
+    # browser walk. Used by the push planner's fallback identity path:
+    # when preset_uri (per-machine FileId) fails to resolve, the
+    # resolver re-queries ableton_browser(action='search') scoped by
+    # path[0] (root) + path[1:-1] (path_prefix) with pattern=display_name.
+    # The path captures vendor / pack as path segments — unambiguous
+    # across browser-tree depths (third-party plugins, Live packs, suite
+    # instruments all carry vendor / pack at different depths).
+    ("devices", "browser_path_json", "TEXT"),
 )
 
 

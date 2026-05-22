@@ -136,6 +136,74 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert any("not linked" in n for n in plan.notes)
 
 
+def test_plan_push_devices_threads_browser_path_alongside_preset_uri(
+    conn, song, session, linked_track,
+):
+    """E3 (W13-A v1.0): when a device has both preset_uri and
+    browser_path captured, the planner emits both — preset_uri is the
+    fast path, browser_path is the fallback identity for cross-machine
+    FileId mismatches."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Massive X",
+        display_name="FatBass",
+        preset_uri="query:Plugin#FileId_AUTHOR_MACHINE",
+        browser_path=["plug-ins", "Native Instruments", "Massive X", "FatBass"],
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args["preset_uri"] == "query:Plugin#FileId_AUTHOR_MACHINE"
+    assert load.args["browser_path"] == [
+        "plug-ins", "Native Instruments", "Massive X", "FatBass",
+    ]
+
+
+def test_plan_push_devices_browser_path_omitted_when_using_preset_query(
+    conn, song, session, linked_track,
+):
+    """When the snapshot prefers preset_query (portable form), the
+    planner does not also emit browser_path — preset_query is itself
+    the path-scoped selector, so layering both would be redundant."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="Kit",
+        preset_query={"root": "drums", "pattern": "909"},
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert "preset_query" in load.args
+    assert "browser_path" not in load.args
+
+
+def test_plan_push_devices_preset_uri_only_no_browser_path(
+    conn, song, session, linked_track,
+):
+    """Pre-E3 snapshots have preset_uri but no browser_path — the
+    planner emits just preset_uri, no fallback identity surface. Loaders
+    on a different machine where the FileId doesn't resolve will fail
+    loudly rather than silently picking a same-display-name plugin from
+    a different vendor."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="Late Nite", preset_uri="query:Drums#FileId_X",
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args["preset_uri"] == "query:Drums#FileId_X"
+    assert "browser_path" not in load.args
+
+
 def test_plan_push_devices_threads_preset_query_to_load(
     conn, song, session, linked_track,
 ):

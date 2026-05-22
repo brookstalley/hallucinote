@@ -2,16 +2,36 @@
 
 W4-C: one-shot migration to strip Live's `<slot-letter>-` prefix from
 existing DBs created before the cross-layer fix.
+
+Arc 7 / P7: `M.create_return` now strips the prefix at the mutator
+boundary too, so new DBs can't contain prefixed return names. The tests
+below seed legacy data via raw SQL (bypassing the mutator) to simulate
+DBs created before the mutator-level fix landed — this is what the
+migration tool exists for.
 """
 from __future__ import annotations
 
 import importlib.util
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
+
+
+def _insert_return_raw(conn, *, song_id: str, name: str, position: int) -> str:
+    """Insert a return via raw SQL, bypassing M.create_return's prefix strip.
+    Used to seed legacy-prefixed names that the migration tool will fix."""
+    rid = uuid.uuid4().hex
+    conn.execute(
+        """INSERT INTO returns
+               (id, song_id, name, position, volume, pan, color)
+           VALUES (?, ?, ?, ?, NULL, NULL, NULL)""",
+        (rid, song_id, name, position),
+    )
+    return rid
 
 _ROOT = Path(__file__).resolve().parents[3]
 _MIGRATE_PATH = _ROOT / "tools" / "migrate_returns_strip_prefix.py"
@@ -37,9 +57,9 @@ def test_migration_strips_a_through_z_prefix(db_path):
     untouched. The mutation count equals the number actually stripped."""
     conn = init_db(db_path)
     sid = M.create_song(conn, name="t", key="Dm")
-    M.create_return(conn, song_id=sid, name="A-Reverb", position=1)
-    M.create_return(conn, song_id=sid, name="B-Delay", position=2)
-    M.create_return(conn, song_id=sid, name="Stereo Bus", position=3)  # no prefix
+    _insert_return_raw(conn, song_id=sid, name="A-Reverb", position=1)
+    _insert_return_raw(conn, song_id=sid, name="B-Delay", position=2)
+    _insert_return_raw(conn, song_id=sid, name="Stereo Bus", position=3)  # no prefix
     conn.commit()
     conn.close()
 
@@ -61,7 +81,7 @@ def test_migration_is_idempotent(db_path):
     """Re-running on an already-stripped DB is a no-op."""
     conn = init_db(db_path)
     sid = M.create_song(conn, name="t", key="Dm")
-    M.create_return(conn, song_id=sid, name="A-Reverb", position=1)
+    _insert_return_raw(conn, song_id=sid, name="A-Reverb", position=1)
     conn.commit()
     conn.close()
 
@@ -77,7 +97,7 @@ def test_migration_strips_only_one_prefix(db_path):
     """`A-B-Comp` → `B-Comp` (one strip), not `Comp` (recursive)."""
     conn = init_db(db_path)
     sid = M.create_song(conn, name="t", key="Dm")
-    M.create_return(conn, song_id=sid, name="A-B-Comp", position=1)
+    _insert_return_raw(conn, song_id=sid, name="A-B-Comp", position=1)
     conn.commit()
     conn.close()
 
@@ -94,9 +114,9 @@ def test_migration_leaves_non_slot_prefixes_alone(db_path):
     `Bus` (no hyphen) — all pass through unchanged."""
     conn = init_db(db_path)
     sid = M.create_song(conn, name="t", key="Dm")
-    M.create_return(conn, song_id=sid, name="Ghost-Reverb", position=1)
-    M.create_return(conn, song_id=sid, name="a-mine",       position=2)
-    M.create_return(conn, song_id=sid, name="Bus",          position=3)
+    _insert_return_raw(conn, song_id=sid, name="Ghost-Reverb", position=1)
+    _insert_return_raw(conn, song_id=sid, name="a-mine",       position=2)
+    _insert_return_raw(conn, song_id=sid, name="Bus",          position=3)
     conn.commit()
     conn.close()
 

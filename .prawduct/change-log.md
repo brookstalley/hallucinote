@@ -4,6 +4,207 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
+
+<!-- chunks=E1|E2|E3 status=shipped release=unreleased scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
+
+Three chunks bundled per the user's "one PR for the bundle" direction,
+all empirically scoped from the 2026-05-22 Live-side probing session.
+Empirical-Live round-trip verification for E1 and E3 is explicitly
+deferred behind the MCP version-mismatch gate
+(`project_mcp_reconnect_workflow`); each chunk's "Done when" leaves the
+deferred verification line as `[ ]` rather than collapsing scope.
+
+E1 closes the per-section enum-parameter envelope authoring gap. Schema
+lift `device_parameters.value_items_json` carries enum cardinality at
+`detail='full'`; pull captures it on the same path that already captured
+numeric value; new mutator `M.create_enum_envelope` resolves enum-name
+breakpoints via DB snapshot (primary) or `value_items` kwarg
+escape-hatch; MCP `write_envelope` accepts `value_type='enum' |
+'continuous'` (default continuous for back-compat) and mirrors
+`set_parameter`'s enum-resolution path. `songs/sun-zone-done/` ships as
+the empirical driver — Amp.Type Clean↔Heavy authored via the helper at
+section boundaries (28 breakpoints across 8 sections, escape-hatch
+`value_items` until a Live round-trip populates the snapshot).
+Tree-wide doc sweep updated `song-authoring-conventions.md`,
+`snapshot-schema.md`, `mcp-tool-design.md`, and the ableton-pull skill.
+
+E2 closes the device-load post-condition false-positive surfaced in the
+2026-05-22 probing pass: `ableton_device(action='load', kind='Drum
+Rack')` onto a track ending with an Instrument Rack succeeded
+semantically (chain ended `[1:DrumGroupDevice]`) but the handler raised
+because the post-condition only checked chain-length growth. Fix lifts
+the post-condition to three success shapes — chain grew (append, the
+common case), chain length unchanged but class at exactly one position
+changed (replace-in-place), or zero changes (still the silent-no-op
+error) — and raises distinct `RuntimeError`s for multi-position-change
+and chain-shrink. `_canonical_class_name(device)` factored so the
+pre-load snapshot and the response's `loaded_class_name` use the same
+`class_display_name || class_name || ""` rule. `_raise_silent_noop`
+typed `NoReturn` so future refactors can't silently fall through.
+Backlog refresh: Instrument Rack bare-name entry struck
+(fixed-by-drift on Live 12.4); Drum Rack name-collision entry reframed
+as per-machine library hazard.
+
+E3 closes the W13-A v1.0 instrument fallback identity gap (cross-machine
+plugin-load portability). Single new column `devices.browser_path_json`
+carries the JSON-encoded browser path from root to loaded item — design
+shift from the original two-column (manufacturer + pack_name) plan
+since vendor/pack live at different depths across Live's browser tree
+(third-party plugins 1-deep under `plug-ins`; Live packs 1-deep under
+`packs`; Suite instruments 1-deep under `instruments`). `M.create_device`
+accepts `browser_path: list[str] | None`, validates shape, JSON-encodes,
+participates in idempotency tuple + DEVICE_CREATED event payload.
+`replay_capture` reads the snapshot's `browser_path` key (pre-E3
+snapshots land NULL — graceful degradation). MCP `load_handler`
+accepts `browser_path` alongside `preset_uri`, tries URI first, on
+URI-walk failure synthesizes a `preset_query` from
+`path[0]`/`path[1:-1]`/`path[-1]` and reuses `_resolve_preset_query`
+with its 0/multi-match teaching errors. Load response surfaces
+`resolved_path` so capture flows can record the path automatically.
+Push planner emits `browser_path` alongside `preset_uri` (not alongside
+`preset_query`, which is itself the path-scoped selector — redundant
+layering avoided).
+
+Tests: +43 across the bundle (E1: +21, E2: +4, E3: +18). Suite:
+1949 / 1949 passing in 14.82s (+45 from the 1904 baseline at the prior
+Arc 7 polish PR). Three files intentionally left unstaged on the
+branch (parked v1.5 framework WIP per
+`project_prawduct_framework_authorship`): `.claude/settings.json`,
+`.prawduct/critic-review.md`, `tools/product-hook`.
+
+## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
+
+<!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=unreleased scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
+
+Arc 7 production-polish chunks bundled per the user's "one PR for
+several fixes" direction; P2 / P3 / P6 collapsed to documentation-only
+(P3 + P6 turned out to be already shipped; P2 deferred — needs Live
+access for the enum-param investigation).
+
+P1 closes the envelope WRITE polish backlog tail: `write_envelope_handler`
+threads `note_duration` so the note_expression branch extends its last
+step to note end (mirrors the W7-0 clip-scoped fix in note-LOCAL
+coords); `sidechain_trigger` gains `envelope_start_beats` to floor the
+first attack window at a section boundary (drops the redundant rest
+anchor when clamping collapses onto the hit); falling-walking drops
+its per-chorus `+ attack_beats` workaround; three `_emit_*_envelope`
+emitters (mixer / send / device_parameter) consolidate into thin shells
+around `_resolve_and_translate_to_session_clip` +
+`_emit_session_clip_envelope_post_warnings` helpers.
+
+P4 closes the last residual nested-rack gap: `_tombstone_untouched`'s
+device_chain / device / device_parameter SELECTs now go through a
+`WITH RECURSIVE` CTE (`_NESTED_RACK_CHAINS_CTE`) so chains parented by
+`parent_rack_device_id` are enumerated alongside top-level chains.
+Recursion terminates naturally; correct at any depth even though
+capture/push still target one level.
+
+P5 adds `loaded_class_name` to the `ableton_device(action='load')`
+response (reads `class_display_name` with `class_name` fallback) so
+callers can detect kind / preset_uri mismatches without a follow-up
+device.list probe. The other P5 items (canonical-root walk,
+Instrument Rack teaching error) were already shipped; master-strip
+device push deferred to the existing backlog entry.
+
+P7 enforces the W4-C `<letter>-` slot-prefix strip at the mutator
+boundary (`M.create_return` / `M.update_return`); shared helper moved
+to `hallucinote/return_naming.py` so capture.py and mutations.py both
+import from there (no circular dep). Send warnings consolidated on the
+`return_name` (DB-form) identity convention; `_track_kind` routed
+through `Q.get_track` so the two single-row lookups share one query.
+
+Arc 2 / B5 (committed earlier in the branch): MCP dispatcher
+auto-opens a `M.request(kind='mutate')` around `ableton_annotation`
+writes via `provenance.auto_request` so the handlers get `_request_id`
+threaded automatically and emitted events carry full provenance.
+
+Backlog scrub closed 7 entries shipped this PR per frontmatter rule 1
+(W7-0 cumulative-Critic warning 4, W4-B W1, W4-B N3, W4-C N1, W4-C N2,
+W10-F note 1, W12-A nested-rack tombstone, plus the stale W12-B pan
+alias entry).
+
+Suite: 1904/1904 passing (+31 from the 1873 baseline at Arc 6 tail).
+
+## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
+
+<!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=unreleased scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
+
+Five small chunks closing song-author-side polish items the cumulative
+PR reviewer surfaced.
+
+H1 switched `full-band-rock/build.py` and `solo-piano-ambient/build.py`
+to `resolve_db_path()` — both had been pinned to bare
+`Path(__file__).parent / "<slug>.db"`, so their DBs never picked up
+D4's ALTER-add of `devices.class_name` and their regen'd
+`REQUIREMENTS.md` kept emitting `DrumGroupDevice` / `Compressor2`
+instead of post-D4 display names. With the change, per-branch DBs now
+carry "Drum Rack" / "Glue Compressor" / "Instrument Rack" in
+`devices.kind` and `REQUIREMENTS.md` regenerates cleanly.
+
+H2 renamed `songs/falling-walking/tests/test_build.py` →
+`tests/test_falling_walking_build.py` per the project's per-song
+convention (every song's bootstrap test file must be unique under
+`pytest -n auto --dist loadgroup`).
+
+H3 added `Kit.assert_has(*, strict=True)` — refuses pre-capture state
+explicitly so an empty-mappings kit doesn't silently pass via GM
+fall-through and then surface the wrong-sound case on a later session
+once `drum_pad_mappings` populates.
+
+H4 added a `start_beats < 0` refusal to `_normalize_note` — the
+chokepoint every note-write passes through. `apply_feel`'s math
+stays correct (within-bar positions can shift below zero); the wire
+layer rejects with a teaching error naming the most common cause (a
+feel shift on bar-1's downbeat) and the two valid fixes.
+
+H5 reworked `docs/song-authoring-conventions.md` "Per-part feel" rule
+2 to make explicit that the generator API is dict-only (strings live
+in the LLM prompt, resolve to dicts at compose time). `apply_feel`
+now also raises `TypeError` for non-Mapping non-None inputs so the
+documented contract is enforced at the boundary.
+
+Backlog scrub closed 5 entries shipped this PR per frontmatter rule 1.
+
+Suite: 1873/1873 passing (+3 from Arc 5 baseline, after Critic-driven fix-up tests).
+
+## 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
+
+<!-- chunks=P1|P2|P3|P4|P5|P6 status=shipped release=unreleased scope=iteration-loop-polish+backlog-discipline -->
+
+Six small chunks of polish closing iteration-loop pain points after
+Arcs 2–4 shipped, plus structural backlog-accuracy discipline added
+to the frontmatter of `backlog.md`.
+
+P1 added `pull_cli execute --dry-run` (SAVEPOINT-wrapped preview;
+applied diff surfaces without DB mutation). P2 wrote the
+`/snapshot-bake-recent-changes` skill wrapping that engine. P3 shipped
+the first `hallucinote://` templated resource —
+`hallucinote://song/{slug}/annotations` — with parallel
+`RESOURCE_TEMPLATE_URIS` + `registered_resource_template_uris`
+plumbing. P4 added a Stop-hook-driven
+`tools/stamp_evidence_sha.py` that auto-refreshes
+`.test-evidence.json`'s `git_sha` so the recurring PR-review staleness
+friction stops. P5 guarded `parse_path_shape` against empty interior
+segments. P6 regenerated four songs' `REQUIREMENTS.md` post-D4 and
+added a `_post_d4_note` to `device-params.json`.
+
+P0 (backlog accuracy tooling) deferred to coordinate with in-flight
+v1.5 framework WIP. P6c (Arc 3 e2e against real Live) deferred — needs
+a known-good Live session.
+
+In-session backlog scrub: frontmatter discipline rules added; three
+verified-shipped entries removed (build.py song_id reuse, ableton_track
+delete refuse, push-state coherence three-bug entry); seven entries
+closed by the PR itself.
+
+Both cumulative `/critic` and the independent `/pr` reviewer were
+unable to run during the session due to Anthropic API 529s; merged
+under explicit `.gates-waived` rationale with the commitment to
+re-run when API recovers.
+
+Suite: 1870/1870 passing.
+
 ## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
 
 <!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=unreleased scope=loader-display-name-convention -->

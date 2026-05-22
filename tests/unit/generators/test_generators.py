@@ -270,6 +270,27 @@ def test_feel_none_preserves_canonical_positions():
     assert [n["start_beats"] for n in baseline] == [n["start_beats"] for n in feel_none]
 
 
+def test_apply_feel_raises_typeerror_for_string_intent():
+    """Arc 6 / H5: the generator API is dict-only. Freeform feel intent
+    ("push hard", "drag eighths") lives in the LLM prompt and resolves
+    to a dict at compose time. A string slipping through to the
+    generator surfaces as a typed boundary error, not a 10-frame-deep
+    AttributeError on `'str'.get(...)`."""
+    from hallucinote.generators.primitives import apply_feel
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        apply_feel(0.5, "push hard")  # type: ignore[arg-type]
+
+
+def test_apply_feel_raises_typeerror_for_other_non_mapping():
+    """Same guard for lists / tuples / numbers — anything that isn't a
+    Mapping or None gets the typed teaching error."""
+    from hallucinote.generators.primitives import apply_feel
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        apply_feel(0.5, [(0.0, -0.02)])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="must be a Mapping"):
+        apply_feel(0.5, 0.02)  # type: ignore[arg-type]
+
+
 def test_kick_stumble_feel_shifts_downbeat_early():
     """Pushing the downbeat earlier nudges every bar's kick on beat 0.0."""
     notes = drums.kick_stumble(2, kit=_KIT, feel={0.0: -0.02})

@@ -10,13 +10,13 @@
   },
   "returns": [
     {
-      "index": 1, "name": "A-Reverb", "volume": 0.85, "panning": 0.0,
+      "index": 1, "name": "Reverb", "volume": 0.85, "panning": 0.0,
       "devices": [
         {"index": 1, "name": "Reverb", "class": "Reverb", "_note": "Default reverb, no params dialed yet"}
       ]
     },
     {
-      "index": 2, "name": "B-Delay", "volume": 0.85, "panning": 0.0,
+      "index": 2, "name": "Delay", "volume": 0.85, "panning": 0.0,
       "devices": [
         {"index": 1, "name": "Delay", "class": "Delay", "_note": "Default delay, no params dialed yet"}
       ]
@@ -31,7 +31,7 @@
     {
       "index": 5, "name": "01 Drums", "type": "midi",
       "volume": 0.6249, "panning": 0.0,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Late Nite Kit", "class": "Drum Rack", "kind": "instrument",
@@ -62,7 +62,7 @@
     {
       "index": 6, "name": "02 Sub Bass", "type": "midi",
       "volume": 0.5749, "panning": 0.0,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Operator", "class": "Operator", "kind": "instrument",
@@ -98,7 +98,7 @@
     {
       "index": 7, "name": "03 Synth Bass", "type": "midi",
       "volume": 0.6149, "panning": 0.0,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Fat Square Bass", "class": "Instrument Rack", "kind": "instrument_rack",
@@ -130,7 +130,7 @@
     {
       "index": 8, "name": "04 Verse Pad", "type": "midi",
       "volume": 0.6600, "panning": 0.0,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Levitate Lead", "class": "Wavetable", "kind": "instrument",
@@ -185,7 +185,7 @@
     {
       "index": 9, "name": "05 Chorus Pluck", "type": "midi",
       "volume": 0.8149, "panning": 0.25,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Kyoto Pluck", "class": "Instrument Rack", "kind": "instrument_rack",
@@ -214,7 +214,7 @@
     {
       "index": 10, "name": "06 Bell", "type": "midi",
       "volume": 0.6000, "panning": -0.30,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Gametal", "class": "Meld", "kind": "instrument",
@@ -257,7 +257,7 @@
     {
       "index": 11, "name": "07 Bridge EP", "type": "midi",
       "volume": 0.7400, "panning": 0.0,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Electric", "class": "Electric", "kind": "instrument",
@@ -283,7 +283,7 @@
     {
       "index": 12, "name": "08 Chiptune Lead", "type": "midi",
       "volume": 0.7200, "panning": 0.0, "arm": true,
-      "sends": {"A-Reverb": 0.0, "B-Delay": 0.0},
+      "sends": {"Reverb": 0.0, "Delay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Old School Raver", "class": "Meld", "kind": "instrument",

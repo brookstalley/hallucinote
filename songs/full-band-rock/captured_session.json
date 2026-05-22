@@ -17,19 +17,19 @@
   },
   "returns": [
     {
-      "index": 1, "name": "A-Vocal Verb", "volume": 0.85, "panning": 0.0,
+      "index": 1, "name": "Vocal Verb", "volume": 0.85, "panning": 0.0,
       "devices": [
         {"index": 1, "name": "Reverb", "class": "Reverb", "_note": "Long plate-ish vocal verb (params not dialed)"}
       ]
     },
     {
-      "index": 2, "name": "B-Drum Room", "volume": 0.80, "panning": 0.0,
+      "index": 2, "name": "Drum Room", "volume": 0.80, "panning": 0.0,
       "devices": [
         {"index": 1, "name": "Reverb", "class": "Reverb", "_note": "Short room (params not dialed)"}
       ]
     },
     {
-      "index": 3, "name": "C-Bus Comp", "volume": 0.75, "panning": 0.0,
+      "index": 3, "name": "Bus Comp", "volume": 0.75, "panning": 0.0,
       "devices": [
         {"index": 1, "name": "Glue Compressor", "class": "Glue Compressor", "_note": "Parallel-compression bus — 100% wet from sources (params not dialed)"}
       ]
@@ -39,7 +39,7 @@
     {
       "index": 1, "name": "01 Drums", "type": "midi",
       "volume": 0.78, "panning": 0.0,
-      "sends": {"A-Vocal Verb": 0.0, "B-Drum Room": 0.25, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.0, "Drum Room": 0.25, "Bus Comp": 0.0},
       "devices": [
         {
           "index": 1, "name": "Kit-Core 808", "class": "Drum Rack", "kind": "instrument",
@@ -51,7 +51,7 @@
     {
       "index": 2, "name": "02 Bass", "type": "midi",
       "volume": 0.72, "panning": 0.0,
-      "sends": {"A-Vocal Verb": 0.0, "B-Drum Room": 0.0, "C-Bus Comp": 1.0},
+      "sends": {"Vocal Verb": 0.0, "Drum Room": 0.0, "Bus Comp": 1.0},
       "devices": [
         {
           "index": 1, "name": "Operator", "class": "Operator", "kind": "instrument",
@@ -62,19 +62,19 @@
     {
       "index": 3, "name": "03 Rhythm Guitar", "type": "audio",
       "volume": 0.70, "panning": -0.20,
-      "sends": {"A-Vocal Verb": 0.0, "B-Drum Room": 0.0, "C-Bus Comp": 1.0},
+      "sends": {"Vocal Verb": 0.0, "Drum Room": 0.0, "Bus Comp": 1.0},
       "_note": "AUDIO TRACK PLACEHOLDER — would hold guitar audio clips in production. DB doesn't model audio clips (scope.later). build.py will not author any clips on this track. Push planner behaviour for audio tracks with no clips is one of the canary's central questions."
     },
     {
       "index": 4, "name": "04 Lead Guitar", "type": "audio",
       "volume": 0.70, "panning": 0.25,
-      "sends": {"A-Vocal Verb": 0.0, "B-Drum Room": 0.0, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.0, "Drum Room": 0.0, "Bus Comp": 0.0},
       "_note": "AUDIO TRACK PLACEHOLDER (see 03)."
     },
     {
       "index": 5, "name": "05 Keys", "type": "midi",
       "volume": 0.65, "panning": 0.0,
-      "sends": {"A-Vocal Verb": 0.15, "B-Drum Room": 0.0, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.15, "Drum Room": 0.0, "Bus Comp": 0.0},
       "devices": [
         {
           "index": 1, "name": "Spitfire LABS Soft Piano", "class": "PluginDevice", "kind": "instrument",
@@ -86,7 +86,7 @@
     {
       "index": 6, "name": "06 Backing Vox Pad", "type": "midi",
       "volume": 0.55, "panning": 0.0,
-      "sends": {"A-Vocal Verb": 0.30, "B-Drum Room": 0.0, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.30, "Drum Room": 0.0, "Bus Comp": 0.0},
       "devices": [
         {
           "index": 1, "name": "Analog", "class": "Analog", "kind": "instrument",
@@ -97,7 +97,7 @@
     {
       "index": 7, "name": "07 Lead Vocal", "type": "audio",
       "volume": 0.85, "panning": 0.0, "arm": true,
-      "sends": {"A-Vocal Verb": 0.30, "B-Drum Room": 0.0, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.30, "Drum Room": 0.0, "Bus Comp": 0.0},
       "devices": [
         {
           "index": 1, "name": "Sidechain Comp (drum-key)", "class": "Compressor", "kind": "audio_effect",
@@ -109,7 +109,7 @@
     {
       "index": 8, "name": "08 Parallel Comp Bus", "type": "audio",
       "volume": 0.50, "panning": 0.0,
-      "sends": {"A-Vocal Verb": 0.0, "B-Drum Room": 0.0, "C-Bus Comp": 0.0},
+      "sends": {"Vocal Verb": 0.0, "Drum Room": 0.0, "Bus Comp": 0.0},
       "_note": "AUDIO TRACK PLACEHOLDER for the parallel-comp bus routing TARGET. In real Live, this would be the destination for bass+rhythm-guitar bus routes. Track output routing (track → group/bus) is `scope.later` per project-state.yaml, so the routing itself is unmodeled. The track exists only as an organizational stand-in."
     }
   ]

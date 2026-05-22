@@ -11,6 +11,17 @@ from hallucinote.capture import (
 )
 from hallucinote.db import init_db, mutations as M, queries as Q
 
+# Several fixtures in this module deliberately use Live's `<letter>-` prefixed
+# return names (e.g. `"A-Reverb"`) — they simulate captured Live state, where
+# the prefix is part of Live's wire shape. `replay_capture` strips on the way
+# in (W4-C convention) and emits a UserWarning. The dedicated warn test
+# (`test_replay_warns_when_stripping_slot_prefix`) uses `pytest.warns(...)`
+# which overrides this filter for its scope; everywhere else the warn is
+# strip-path-working-correctly noise, not a fixture defect.
+pytestmark = pytest.mark.filterwarnings(
+    r"ignore:.*stripped Live's <letter>- slot prefix.*:UserWarning"
+)
+
 
 # ---------- W4-C: strip_return_slot_prefix ----------
 

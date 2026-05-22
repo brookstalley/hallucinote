@@ -4,6 +4,75 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
+
+<!-- chunks=E1|E2|E3 status=shipped release=unreleased scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
+
+Three chunks bundled per the user's "one PR for the bundle" direction,
+all empirically scoped from the 2026-05-22 Live-side probing session.
+Empirical-Live round-trip verification for E1 and E3 is explicitly
+deferred behind the MCP version-mismatch gate
+(`project_mcp_reconnect_workflow`); each chunk's "Done when" leaves the
+deferred verification line as `[ ]` rather than collapsing scope.
+
+E1 closes the per-section enum-parameter envelope authoring gap. Schema
+lift `device_parameters.value_items_json` carries enum cardinality at
+`detail='full'`; pull captures it on the same path that already captured
+numeric value; new mutator `M.create_enum_envelope` resolves enum-name
+breakpoints via DB snapshot (primary) or `value_items` kwarg
+escape-hatch; MCP `write_envelope` accepts `value_type='enum' |
+'continuous'` (default continuous for back-compat) and mirrors
+`set_parameter`'s enum-resolution path. `songs/sun-zone-done/` ships as
+the empirical driver — Amp.Type Clean↔Heavy authored via the helper at
+section boundaries (28 breakpoints across 8 sections, escape-hatch
+`value_items` until a Live round-trip populates the snapshot).
+Tree-wide doc sweep updated `song-authoring-conventions.md`,
+`snapshot-schema.md`, `mcp-tool-design.md`, and the ableton-pull skill.
+
+E2 closes the device-load post-condition false-positive surfaced in the
+2026-05-22 probing pass: `ableton_device(action='load', kind='Drum
+Rack')` onto a track ending with an Instrument Rack succeeded
+semantically (chain ended `[1:DrumGroupDevice]`) but the handler raised
+because the post-condition only checked chain-length growth. Fix lifts
+the post-condition to three success shapes — chain grew (append, the
+common case), chain length unchanged but class at exactly one position
+changed (replace-in-place), or zero changes (still the silent-no-op
+error) — and raises distinct `RuntimeError`s for multi-position-change
+and chain-shrink. `_canonical_class_name(device)` factored so the
+pre-load snapshot and the response's `loaded_class_name` use the same
+`class_display_name || class_name || ""` rule. `_raise_silent_noop`
+typed `NoReturn` so future refactors can't silently fall through.
+Backlog refresh: Instrument Rack bare-name entry struck
+(fixed-by-drift on Live 12.4); Drum Rack name-collision entry reframed
+as per-machine library hazard.
+
+E3 closes the W13-A v1.0 instrument fallback identity gap (cross-machine
+plugin-load portability). Single new column `devices.browser_path_json`
+carries the JSON-encoded browser path from root to loaded item — design
+shift from the original two-column (manufacturer + pack_name) plan
+since vendor/pack live at different depths across Live's browser tree
+(third-party plugins 1-deep under `plug-ins`; Live packs 1-deep under
+`packs`; Suite instruments 1-deep under `instruments`). `M.create_device`
+accepts `browser_path: list[str] | None`, validates shape, JSON-encodes,
+participates in idempotency tuple + DEVICE_CREATED event payload.
+`replay_capture` reads the snapshot's `browser_path` key (pre-E3
+snapshots land NULL — graceful degradation). MCP `load_handler`
+accepts `browser_path` alongside `preset_uri`, tries URI first, on
+URI-walk failure synthesizes a `preset_query` from
+`path[0]`/`path[1:-1]`/`path[-1]` and reuses `_resolve_preset_query`
+with its 0/multi-match teaching errors. Load response surfaces
+`resolved_path` so capture flows can record the path automatically.
+Push planner emits `browser_path` alongside `preset_uri` (not alongside
+`preset_query`, which is itself the path-scoped selector — redundant
+layering avoided).
+
+Tests: +43 across the bundle (E1: +21, E2: +4, E3: +18). Suite:
+1949 / 1949 passing in 14.82s (+45 from the 1904 baseline at the prior
+Arc 7 polish PR). Three files intentionally left unstaged on the
+branch (parked v1.5 framework WIP per
+`project_prawduct_framework_authorship`): `.claude/settings.json`,
+`.prawduct/critic-review.md`, `tools/product-hook`.
+
 ## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
 
 <!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=unreleased scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->

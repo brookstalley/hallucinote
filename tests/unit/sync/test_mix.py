@@ -115,7 +115,9 @@ def test_create_return_emits_event_and_returns_uuid(conn, song):
     assert isinstance(rid, str) and len(rid) == 32
     rows = Q.get_returns_for_song(conn, song)
     assert len(rows) == 1
-    assert rows[0]["name"] == "A-Reverb"
+    # Arc 7 / P7: M.create_return strips Live's `<letter>-` slot prefix
+    # at the mutator boundary — DB stores SUFFIX-only names (W4-C).
+    assert rows[0]["name"] == "Reverb"
     assert rows[0]["position"] == 1
     last = _events(conn)[-1]
     assert last["kind"] == E.RETURN_CREATED
@@ -126,7 +128,9 @@ def test_update_return_partial(conn, song):
     rid = M.create_return(conn, song_id=song, name="A", position=1)
     M.update_return(conn, return_id=rid, volume=0.9, name="A-Reverb")
     row = Q.get_return(conn, rid)
-    assert row["name"] == "A-Reverb"
+    # Arc 7 / P7: M.update_return strips the slot prefix from `name`
+    # (mirrors create_return) — DB stores SUFFIX-only names (W4-C).
+    assert row["name"] == "Reverb"
     assert row["volume"] == pytest.approx(0.9)
 
 
@@ -231,7 +235,9 @@ def test_get_sends_for_song_returns_matrix(conn, song):
     M.set_send_level(conn, from_track_id=t2, to_return_id=r1, level=0.4)
     rows = Q.get_sends_for_song(conn, song)
     assert len(rows) == 3
-    # Sorted by track_index then return position
-    assert (rows[0]["from_track_name"], rows[0]["return_name"]) == ("Drums", "A-Reverb")
-    assert (rows[1]["from_track_name"], rows[1]["return_name"]) == ("Drums", "B-Delay")
-    assert (rows[2]["from_track_name"], rows[2]["return_name"]) == ("Pad", "A-Reverb")
+    # Sorted by track_index then return position. Arc 7 / P7: return
+    # names are stripped at the mutator boundary, so "A-Reverb" /
+    # "B-Delay" land as "Reverb" / "Delay" in the DB.
+    assert (rows[0]["from_track_name"], rows[0]["return_name"]) == ("Drums", "Reverb")
+    assert (rows[1]["from_track_name"], rows[1]["return_name"]) == ("Drums", "Delay")
+    assert (rows[2]["from_track_name"], rows[2]["return_name"]) == ("Pad", "Reverb")

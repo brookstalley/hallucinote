@@ -8,6 +8,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _No unreleased work._
 
+## [1.3.1] — 2026-05-22
+
+**Compose-time audit-log retrieval + W13-A v1.0 round-trip closeout + W6-K real-Live finding.** Three small focused landings (PRs #89 + #90 + #91) bundled — each closes a gap in v1.3.0's structural surfaces.
+
+### Added — `/decisions` skill + audit-log query (PR #89, Group 2)
+
+- **`Q.find_related_decisions(conn, song_id, *, keywords, scope=None, limit=20)`** — single `UNION ALL` across `requests.prompt_text + requests.metadata_json` and `annotations.body`, song-scoped, AND-of-keywords, most-recent-first across both sources. Each row carries a synthetic `source` column (`'request'` or `'annotation'`) so the formatter can route per-source rendering.
+- **`/decisions` skill + `tools/decisions_cli.py`** — markdown-output CLI mirroring `/song-context`'s shape, `context: fork`, `user-invocable: true`. Surfaces the audit-log layer (compose-time prompts + decision rationale) that `/song-context`'s markdown ADR search couldn't reach. The two skills are complementary by design — both query `annotations.body`, but `/decisions` reads `requests` directly while `/song-context` queries the markdown ADR layer via FTS5.
+- **Load-bearing convention documented**: at compose time, the LLM writes its reasoning into `requests.metadata_json.decision_rationale` (consumer surface motivates the convention).
+
+### Added — Snapshot drift completeness (PRs #90 + #91, W13-A v1.0 round-trip closeout)
+
+- **DB schema dual-declaration canary** — `init_db` reads `_ADDED_COLUMNS` and runs `PRAGMA table_info` per column; raises if any additive column is declared in `_ADDED_COLUMNS` but missing from `schema.sql` (or vice versa). Caught 7 real drifts immediately on rollout. Closes the structural enforcement gap surfaced repeatedly across E1 / Sweep B / Arc 4 column lifts.
+- **Drift comparator fix** — post-push `probe-and-link` re-probe stopped spamming false "device drift" notes (~17 per push). Comparator was reading `class_name` (internal Live identifier) instead of `class_display_name` (the post-D4 convention the DB stores).
+- **`load_in_rack_handler` symmetric post-condition** — mirrors `load_handler`'s three-shape post-condition (append / replace-in-place / no-change-error). No empirical driver in current songs; closes the structural asymmetry that would have surfaced identically if Live exhibited replace-in-place inside a rack chain.
+- **`set_device_parameter` empty-list rejection** — refuses `value_items=[]` for parity with `M.create_enum_envelope`'s kwarg path (the asymmetric paper-cut from E1's Critic review).
+- **`merge_snapshots` stickiness floor (G1-C)** — Python helper + CLI subcommand + `/song-snapshot` integration. Capture probes can't expose `browser_path` (Live doesn't track per-device browser origin), so refreshing via probes would silently drop the W13-A v1.0 fallback identity for every device. `merge_snapshots` carries forward sticky fields where identity matches.
+- **Snapshot-write side of `resolved_path → browser_path` (E3 follow-up, PR #91).** Closes the W13-A v1.0 autonomous round-trip: `/song-pick-instruments` now captures `resolved_path` per `ableton_device(action='load')` and threads the records to `compile_snapshot(browser_paths=...)`. New `hallucinote.capture.inject_browser_paths(snapshot, loads)` writes `browser_path` into top-level device entries. `hallucinote.capture.preserve_browser_paths(old, new)` is the refresh path's preservation primitive — identity-keyed `(parent_kind, parent_index, position, class)` so swapped/moved devices drop their stale paths silently. Validated end-to-end in real Live 12: positive fallback (stale `preset_uri` + valid `browser_path` → loads) and negative fallback (bogus path → refuses with teaching error naming the missing segment).
+- **Push planner: malformed-`preset_query` fallback threads `browser_path`.** Symmetry fix in `sync/push.py:_emit_device_calls` so the malformed-JSON branch (corner-of-corner, but real) doesn't silently drop the fallback identity.
+
+### Fixed — W6-K real-Live `set_sidechain` normalized-S/C-Gain refusal (PR #91)
+
+- **`set_sidechain(gain_db=N)` now refuses on Compressor and devices like it.** Empirical Live 12 finding (real-Live smoke 2026-05-22): Compressor's `S/C Gain` has internal range 0.0..1.0 (normalized) but displays in dB — writing `gain_db` straight to `parameter.value` trips Live's range check. Live exposes no public dB→normalized conversion (`str_for_value` exists but `value_for_str` does not). Handler pre-validates `gain_db` before any mutation; if `gain_param.min==0.0 && gain_param.max==1.0`, raises a teaching error pointing at `set_parameter` with the empirical Compressor curve (`0.0 → -inf dB`, `0.4 → 0 dB`, `1.0 → +24 dB`) for calibration. dB-native plugins (range outside 0..1) keep the existing convenience path.
+- **Test fixture corrected** — `_compressor_with_routing()`'s `S/C Gain` was `min=-24/max=24` (an *assumed* dB-native shape); now `min=0/max=1` to mirror real Live. Hits the project's existing "fakes that mirror an *assumed* Live API give false confidence" learning.
+
+### Tests
+
+Suite: 2016 / 2016 passing (+66 from the v1.3.0 baseline at 1950). +23 from `/decisions`, +15 from G1 sweep, +25 from E3 snapshot-write, +3 from S/C Gain refusal.
+
+### After upgrade
+
+Re-run `/ableton-mcp-install` to refresh Live's vendored Remote Script (the S/C Gain fix lands in `set_sidechain_handler` which executes inside Live). `/mcp` reconnect alone won't pick it up — Live caches Control Surface modules at startup.
+
 ## [1.3.0] — 2026-05-22
 
 **Arcs 5 + 6 + 7 + 7-tail: iteration-loop polish, song-author hygiene, production polish, and per-section enum-parameter envelope authoring.** Five feature PRs bundled (Arcs 5/6/7/7-tail + sun-zone-done v2 rebuild + reference-song hygiene). v1.1 requirements plan (Arcs 5-7) closed.

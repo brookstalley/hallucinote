@@ -45,10 +45,17 @@ def _route_resolver(song_db, monkeypatch):
     """Redirect ``_resolve_song_db`` to the test fixture's DB path for the
     duration of every test in this module — handlers think they're
     resolving a real songs/<slug>/ layout but actually use tmp_path.
+    Also routes ``hallucinote_mcp.provenance._resolve_song_db_path`` so
+    the dispatcher's auto-provenance lands on the same fixture DB.
     """
+    from hallucinote_mcp import provenance
+
     db_path, _song_id, _slug = song_db
     monkeypatch.setattr(
         annotation_handlers, "_resolve_song_db", lambda _slug: db_path
+    )
+    monkeypatch.setattr(
+        provenance, "_resolve_song_db_path", lambda _slug: db_path
     )
 
 
@@ -308,3 +315,216 @@ def test_add_handler_returns_clean_dict_in_success_path(song_db):
     )
     assert "error" not in result
     assert result["body"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher integration — auto-provenance for db_writes actions (Arc 2 / B5)
+# ---------------------------------------------------------------------------
+
+
+def _events_for_annotation(db_path: Path, annotation_id: str) -> list[Any]:
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            "SELECT * FROM events WHERE payload_json LIKE ? ORDER BY seq",
+            (f'%"annotation_id":"{annotation_id}"%',),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def test_dispatch_add_via_mcp_opens_kind_mutate_request(song_db):
+    """End-to-end: dispatching an annotation `add` through ``dispatcher.dispatch``
+    opens an ``M.request(kind='mutate')`` and threads its id into the
+    ANNOTATION_ADDED event, so the audit trail has full provenance.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    db_path, song_id, slug = song_db
+
+    resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="add",
+        params={"song_slug": slug, "kind": "intent", "body": "weight getting worse"},
+    ))
+    assert resp.ok, resp.error
+    annotation_id = resp.result["id"]
+
+    # ANNOTATION_ADDED event carries a request_id pointing at a kind='mutate' row.
+    events = _events_for_annotation(db_path, annotation_id)
+    added = [e for e in events if e["kind"] == "annotation_added"]
+    assert len(added) == 1
+    request_id = added[0]["request_id"]
+    assert request_id is not None, "auto-provenance should have threaded a request_id"
+
+    # The request row exists with kind='mutate' + outcome='ok' + bound to song.
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        req = conn.execute(
+            "SELECT * FROM requests WHERE id = ?", (request_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert req["kind"] == "mutate"
+    assert req["outcome"] == "ok"
+    assert req["song_id"] == song_id
+    assert req["actor"] == "llm"
+
+
+def test_dispatch_update_via_mcp_threads_provenance(song_db):
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    db_path, _song_id, slug = song_db
+
+    # Seed: add (auto-provenance) so we have an id to update.
+    add_resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="add",
+        params={"song_slug": slug, "kind": "intent", "body": "initial"},
+    ))
+    annotation_id = add_resp.result["id"]
+
+    update_resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="update",
+        params={
+            "song_slug": slug,
+            "annotation_id": annotation_id,
+            "body": "revised",
+        },
+    ))
+    assert update_resp.ok, update_resp.error
+
+    events = _events_for_annotation(db_path, annotation_id)
+    updates = [e for e in events if e["kind"] == "annotation_updated"]
+    assert len(updates) == 1
+    assert updates[0]["request_id"] is not None
+
+    # The add and update events should belong to DIFFERENT request rows —
+    # each MCP call opens its own kind='mutate' parent.
+    added = [e for e in events if e["kind"] == "annotation_added"]
+    assert added[0]["request_id"] != updates[0]["request_id"]
+
+
+def test_dispatch_delete_via_mcp_threads_provenance(song_db):
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    db_path, _song_id, slug = song_db
+
+    add_resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="add",
+        params={"song_slug": slug, "kind": "intent", "body": "doomed"},
+    ))
+    annotation_id = add_resp.result["id"]
+
+    del_resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="delete",
+        params={"song_slug": slug, "annotation_id": annotation_id},
+    ))
+    assert del_resp.ok, del_resp.error
+
+    events = _events_for_annotation(db_path, annotation_id)
+    removed = [e for e in events if e["kind"] == "annotation_removed"]
+    assert len(removed) == 1
+    assert removed[0]["request_id"] is not None
+
+
+def test_dispatch_list_via_mcp_does_not_open_request(song_db):
+    """`list` is a read — db_writes=False — so the dispatcher must NOT open
+    a provenance request. Sanity test that the flag actually gates.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    db_path, _song_id, slug = song_db
+
+    before = _count_requests(db_path)
+    resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="list",
+        params={"song_slug": slug},
+    ))
+    assert resp.ok
+    after = _count_requests(db_path)
+    assert after == before, "list is read-only; no kind='mutate' request should land"
+
+
+def _count_requests(db_path: Path) -> int:
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_dispatch_add_with_missing_song_db_still_returns_teaching_error(tmp_path: Path, monkeypatch):
+    """If the song DB doesn't exist yet, auto-provenance degrades silently
+    (no request row) and the handler surfaces its own teaching error —
+    the LLM sees the same diagnostic shape as before.
+    """
+    from hallucinote_mcp import provenance
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    bogus_path = tmp_path / "no-such-song.db"
+    monkeypatch.setattr(
+        annotation_handlers, "_resolve_song_db", lambda _slug: bogus_path
+    )
+    monkeypatch.setattr(
+        provenance, "_resolve_song_db_path", lambda _slug: bogus_path
+    )
+
+    resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="add",
+        params={"song_slug": "ghost", "kind": "intent", "body": "x"},
+    ))
+    assert not resp.ok
+    assert "ghost" in (resp.error or "")
+
+
+def test_dispatch_handler_exception_closes_request_failed(song_db):
+    """If the handler raises mid-flight, the auto-provenance request closes
+    with outcome='failed' — the audit trail must show the cycle didn't
+    complete.
+    """
+    from hallucinote_mcp.dispatcher import dispatch
+    from hallucinote_mcp.wire import Request
+
+    db_path, _song_id, slug = song_db
+    # `track_index=99` → handler raises (no such track) AFTER auto-provenance
+    # opened the request. The except-translate path in the dispatcher returns
+    # a structured error response; the request row should be closed failed.
+    resp = dispatch(Request(
+        tool="ableton_annotation",
+        action="add",
+        params={
+            "song_slug": slug,
+            "kind": "todo",
+            "body": "nope",
+            "track_index": 99,
+        },
+    ))
+    assert not resp.ok
+
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM requests WHERE kind = 'mutate' ORDER BY ts DESC LIMIT 1"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == "failed"

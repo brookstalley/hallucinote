@@ -40,8 +40,6 @@ for the headline; the rest is the body with shape, sizing, and verifiable signal
 
 - **Arc 3 deferred — live verification end-to-end for `compat check --probe` + `pull_cli execute`.** Unit tests cover both wire shapes against the production schema via per-helper fake `send_fn`s, but full-loop verification against a real Live session was deferred (Control Surface slot wasn't enabled in this session). Sanity-pass against a real DB+Live on first compose-time use is still worth surfacing. Sized: trivial (one CLI call each, both already documented in build-plan/skills). (Arc 3 cumulative Critic 2026-05-21)
 
-- **Arc 2 deferred — MCP dispatcher auto-`kind='mutate'` parent.** When an MCP write call lands with no `parent_id` in the request envelope, the dispatcher could open a `kind='mutate'` request automatically so every write gets degraded-but-present provenance. Blocked today by the dispatcher having no DB awareness — which DB? per-call lookup by song_slug from validated params? A future chunk should: (a) add a notion of "ambient DB context" to the dispatcher (per-process default + per-call override), (b) auto-open the parent before handler dispatch, (c) close on success/failure. Sized: medium (touches dispatcher, schema, every write-action contract). (Arc 2 cumulative Critic 2026-05-21)
-
 - **Per-section parameter automation (esp. enum params like Amp.Type) is a missing authoring tool.** sun-zone-done's "channel-switched guitar amp" design (Clean amp for reggae sections, Heavy for metal sections) needed Amp.Type automation per clip / per section. The hallucinote envelope API supports continuous-param automation cleanly, but enum-param automation (e.g., Amp Type = "Clean" → "Heavy" at section boundaries) wasn't obvious from the API surface. Two viable shapes to investigate: (a) clip-level enum-param automation via the envelope mechanism with discrete breakpoints; (b) two Amp devices in the chain + per-device on/off automation per section. Either way, "alternating sections want different patches/devices on the same track" is a recurring authoring pattern (this song, any genre-mashup song, any song with verse/chorus tone differences) that deserves a documented recipe. Sized: medium (investigate + document; possibly add helper API). (sun-zone-done push 2026-05-20)
 
 - **Cross-song shared drum-kit mappings (post-M1-C).** M1-C ships `drum_pad_mappings` scoped per-song (rows reference `devices.id`, which is per-song). But the same Drum Rack `.adg` loaded on machine A and machine B will have the same pad layout (chain names + MIDI notes are kit-intrinsic). Hoisting mappings into a shared layer keyed on `(preset_uri OR preset_query OR plugin_identity)` would let one capture run benefit every song using that kit — and benefit other users if we ever ship a community-share path. Aligns with project memory `project_cross_song_reuse` (shared kits/grooves/templates table family). Deferred from M1-C scoping 2026-05-20: per-song works fine for v1.0; cross-song hoist is a non-trivial schema and ownership design (who owns the mapping when two captures disagree). Sized: medium. (M1-C scoping 2026-05-20)
@@ -76,7 +74,7 @@ for the headline; the rest is the body with shape, sizing, and verifiable signal
 
 - **`_serialize_markdown` defensive: list items may contain `,` / `[` / `]`.** W8-B's `write_markdown_ref` calls `_serialize_markdown` to round-trip frontmatter through the YAML-subset parser. List items (`tags`, `related`, `bars`) get serialized as `[a, b, c]` without quoting. If a future tag or `related` path contains a `,` or `[` / `]`, the parser will silently split or fail to parse on the next reindex. Today's tags are slug-shaped so this isn't exercised, but the wrap is the LLM-facing surface. Defensive fix: either (a) quote list items containing those chars, (b) reject them at serialization time with a teaching error, or (c) switch to a multi-line list format in the parser. Sized as ~10 LoC + 2 tests. (W8-B Critic cumulative note 3, 2026-05-19)
 
-- **W8-C framework-coupled wiring — session briefing + CLAUDE.md addendum for `/song-context`.** The Wave 8 plan named two targets for W8-C: (a) extend `tools/product-hook` so the session briefing surfaces in-scope song decisions + structural annotations; (b) add a CLAUDE.md addendum mirroring the existing `/learnings [topic]` guidance for `/song-context`. Both files are currently in the parked-upstream-framework set per project memory `project_prawduct_framework_authorship`. Adding hallucinote-specific behavior to those files would conflict with the in-flight upstream sync. W8-C shipped only the SKILL.md "When to invoke" guidance enhancement; the framework-coupled pieces are deferred until upstream sync settles. Then: (1) `product-hook` should detect "song in-scope" (any file touched in a `songs/<name>/` folder during the session) and inject a `Song context:` block with the song's most-recent 5 decisions + all `kind: structural-fact` annotations; (2) CLAUDE.md should add a line like "Before non-trivial composition, run `/song-context [topic]`" next to the existing `/learnings` guidance. (W8-C descope 2026-05-19)
+- **W8-C framework-coupled wiring — session briefing + CLAUDE.md addendum for song context (markdown decisions/annotations AND DB-table annotations).** The Wave 8 plan named two targets for W8-C: (a) extend `tools/product-hook` so the session briefing surfaces in-scope song decisions + annotations; (b) add a CLAUDE.md addendum mirroring the existing `/learnings [topic]` guidance for song context. Both files are currently in the parked-upstream-framework set per project memory `project_prawduct_framework_authorship`. Adding hallucinote-specific behavior to those files would conflict with the in-flight upstream sync. W8-C shipped only the SKILL.md "When to invoke" guidance enhancement; the framework-coupled pieces are deferred until upstream sync settles. Then: (1) `product-hook` should detect "song in-scope" (any file touched in a `songs/<name>/` folder during the session) and inject a `Song context:` block with the song's most-recent 5 markdown decisions + markdown structural-fact annotations + `Q.get_annotations_for_song(..., kind='intent'|'structure')` from the W23-B annotations table; (2) CLAUDE.md should add a line like "Before non-trivial composition, run `/song-context [topic]` and read DB annotations via `ableton_annotation(action='list')`" next to the existing `/learnings` guidance. **Verifiable signal:** opening Claude Code in a session that touched `songs/<slug>/` injects a `Song context:` block; CLAUDE.md mentions `ableton_annotation(action='list')`. (W8-C descope 2026-05-19; expanded to cover W23-B DB annotations 2026-05-22)
 
 - **Agent-side push/pull/capture skill wraps in `M.request(...)`.** W8-B (2026-05-19) shipped the request-lifecycle building blocks (`M.request` context manager, `M.close_request`, `kind` parameter on `create_request`, `MARKDOWN_REF_RECORDED` audit event). The Wave 8 plan named "wire push/pull/capture drivers" as a goal but those entry points are agent-orchestrated (the skills in `.claude/skills/ableton-push|pull` and the capture flow), not Python drivers — there's no Python function to wrap. The next move is to update the three skills' SKILL.md so they instruct the agent to wrap its mutator calls in `with M.request(conn, kind='push'|'pull'|'capture', actor='llm', ...)` so cycle metadata + nested events accumulate cleanly. Not blocking V1; mutator surface is in place. (W8-B 2026-05-19; Critic scope-truthfulness note resolved by descoping here)
 
@@ -88,120 +86,7 @@ for the headline; the rest is the body with shape, sizing, and verifiable signal
 
 - **`_TRANSACTION_DEPTH` module-level state may leak under thread/async patterns.** W7-A's SAVEPOINT-based reentrant `transaction()` keeps depth in a module-level `dict[int, int]` keyed by `id(conn)`. Single-threaded today (per project preferences "Sync throughout. SQLite WAL + timeout=10.0. No async planned"), but if the project ever adopts thread/async patterns the depth counter would interleave. Defensive options: (a) use a `WeakKeyDictionary` keyed by the connection object directly; (b) attach the counter to the connection via a wrapper; (c) explicit `threading.local` if multi-threaded use ever lands. Sized as ~5 LoC + 1 thread-safety test. (W7 cumulative-Critic note 3, 2026-05-19)
 
-- **HIGH PRIORITY — Provenance log: capture prompts, round-trip cycles, and "really anything" via the existing `requests` + `events` tables.** The `events` audit log + `requests` higher-level intent table already exist (every mutator emits an event tied to a request — project invariant per architecture memory). The bones are there, but a lot of useful provenance is being thrown away today:
-  1. **Prompts.** When the user (or Claude) drives composition, `requests.intent` ends up holding terse labels like `"create song"` or `"set track volume"`. The actual LLM-facing prompt text — *"build a verse that feels like weight getting worse"* — is not captured. Future sessions can't reconstruct *why* a song looks the way it does.
-  2. **Round-trip cycles.** Push/pull operations fan out into many per-mutator `actor='sync'` events. There's no top-level row marking "push cycle started → 47 plan calls → 3 warns → 0 failures → finished at T+8.2s." The cycle as a discrete operation is invisible.
-  3. **Compose sessions.** No record of "this Claude session (model X, git SHA Y, branch Z) touched the song between T0 and T1." Cross-session forensics requires manual scanning of `events.ts`.
-  4. **Snapshots / captures.** `capture.replay_capture` writes events with `actor='sync'`, but there's no header row tying the snapshot timestamp + Live-set identity to the event burst.
-
-  **Shape: extend `requests`, don't add a parallel table.** Today `requests` has `(id, ts, actor, intent, payload_json, song_id)`. Proposed additions:
-  ```
-  kind         TEXT NOT NULL DEFAULT 'mutate'  -- 'compose' | 'push' | 'pull' | 'capture' | 'analyze' | 'mutate'
-  prompt_text  TEXT                            -- full LLM-facing prompt when applicable
-  duration_ms  INTEGER                         -- wall-clock duration for cycle-shaped requests
-  outcome      TEXT                            -- 'ok' | 'partial' | 'failed' (NULL during open cycle)
-  parent_id    TEXT REFERENCES requests(id)    -- nest compose-session under cycle (or vice versa)
-  metadata_json TEXT                           -- {model, git_sha, branch, session_id, hostname, ...}
-  ```
-  The existing `payload_json` already accepts arbitrary JSON; `prompt_text` is split out so it's first-class queryable. `kind` lets queries answer "show me every push cycle" vs "show me every prompt."
-
-  **Mutator surface — entry points (DON'T inline in every callsite):**
-  - `M.open_request(conn, *, kind, intent, prompt_text=None, song_id=None, parent_id=None, ...) -> request_id` — opens a request, returns id; all subsequent mutator events tie to it. Already exists in spirit; needs the new kwargs.
-  - `M.close_request(conn, *, request_id, outcome='ok', duration_ms=None)` — marks a cycle done.
-  - Context-manager wrapper: `with M.request(conn, kind='push', intent='falling-walking → live', prompt_text=...) as rid:` — auto-closes on exit, records duration. Reduces ceremony.
-
-  **Wiring touchpoints:**
-  - **Push/pull skill drivers** open a `kind='push'` / `kind='pull'` request before fan-out, close it after `apply_*_results`. Sync events automatically nest underneath via `request_id`.
-  - **Capture** opens `kind='capture'`, attaches Live-set path + timestamp to `metadata_json`.
-  - **Claude Code compose sessions** open `kind='compose'` at session start with `prompt_text` = the user's initial message, `metadata_json` = {model, git_sha, branch}. Sub-actions nest via `parent_id`. This is the entry point the user can write in their session-briefing hook.
-  - **The MCP server's per-tool dispatcher** could auto-open a `kind='mutate'` request per top-level tool call if no parent exists, capturing the tool's args as `prompt_text` (degraded but always-present provenance).
-
-  **Query surface:**
-  - `Q.get_requests_for_song(conn, song_id, *, kind=None, since=None)` — timeline.
-  - `Q.get_events_for_request(conn, request_id)` — drill-down on a cycle.
-  - `Q.get_compose_history(conn, song_id)` — kind='compose' filtered, ordered, with prompt previews.
-  - `Q.find_related_decisions(conn, song_id, *, keywords, scope=None)` — substring/keyword search across `requests.prompt_text` + `requests.metadata_json.decision_rationale` + `annotations.body`. Returns ordered hits with timestamps + (optionally) parent context. Single SQL `LIKE` pass is enough for v1; semantic search (embeddings) is a follow-on if the dataset grows.
-
-  **Read-path UX — this is the payoff and the design driver.** Provenance is *context the LLM uses when collaborating on the song*, not a passive audit. The retrieval surface enables both directions of musical conversation:
-
-  **Defensive — challenge contradictions:**
-  > User: *"Accentuate the backbeats in the verse."*
-  > Claude (after retrieving prior decisions): *"Actually we brought those down on 2026-05-26 to contrast with the chorus — happy to adjust if you want to revisit that, but are you sure?"*
-
-  **Generative — propose connections the user hasn't drawn yet:**
-  > User: *"Let's make the break go dim7."*
-  > Claude (after retrieving structural facts + prior decisions): *"That'll work great with the intro that starts dim7 and goes major — let's echo the first few notes."*
-
-  The defensive case prevents regression on deliberate choices. The generative case is the bigger payoff: the LLM has the whole song's structural + intentional context in working memory and **does the creative connection-drawing on its own** once the data is findable. The system's job is to surface broad relevant context cheaply, not to encode musical similarity (per project memory `feedback_prefer_llm_over_deterministic_module`).
-
-  This requires three disciplines, not just schema:
-  1. **Decisions are recorded WITH RATIONALE, not just actions.** When the LLM makes a non-trivial compositional choice, the `requests` entry that wraps it MUST capture the *why*, not only the *what*. Convention: `requests.intent` = the user's surface request; `requests.metadata_json.decision_rationale` = the LLM's reasoning that produced the specific values. The mutator events under it carry the mechanical change (velocity drop, envelope edit) — the request carries the meaning. Structural facts that aren't decisions per se (e.g., "the intro is dim7 → major") rate the same treatment via annotations so they ride along the same retrieval surface.
-
-  2. **Before non-trivial work, the LLM retrieves prior context — broadly.** Not just exact-match against the user's prompt; the retrieval should pull in:
-     - Decisions about the SAME element ("the break") — defensive case.
-     - Decisions/annotations about RELATED CONCEPTS ("dim7" anywhere, harmonic moves, the bridge's chord pattern) — generative case.
-     - STRUCTURAL FACTS about adjacent sections — the LLM can draw connections only if it can see them.
-
-     Add a `/decisions [topic]` skill (analogous to `/learnings`) or a pre-task pattern: at the start of any compositional ask, run `find_related_decisions` with both the prompt's noun-phrases AND a broader semantic dragnet (related sections, related concepts the LLM extracts before searching). Surface the hits BEFORE acting; the LLM uses them to either challenge gently (defensive) or propose connections (generative). The LLM owns the creative synthesis — don't bake musical-similarity logic into the retriever.
-
-  3. **The session briefing surfaces decisions + structural facts, not just recent activity.** "Last 5 prompts" is weaker than "last 5 *deliberate decisions with rationale*" combined with "key structural annotations spanning the whole song." For a song with 3 sections, surface the section-scoped annotations on every session start — they're the working-memory shorthand a human collaborator would carry between sessions. Filter on `metadata_json.decision_rationale IS NOT NULL` (or a `kind='decision'` sub-classification) plus include all `annotations` with `kind IN ('intent', 'structure')`.
-
-  This is also where provenance meets annotations: a deliberate compositional decision SHOULD often also produce a permanent annotation (the rationale graduates from request metadata to a song-scoped or section-scoped annotation if it'll guide future work). Provenance captures every decision in real time; annotations are the curated subset worth keeping forever. A small helper `M.promote_decision_to_annotation(conn, request_id)` would automate the common case.
-
-  **Relationship to the song-annotations entry below:** annotations are AUTHOR-FACING intent (the *why* of the song, written deliberately, read forward to drive composition). The provenance log is PROCESS-FACING history (the *how* the song got built — but with the rationale-discipline above, also *why* each decision was made at that moment). Provenance captures every decision in real time as the song evolves; annotations are the curated subset worth keeping forever. They share a retrieval pattern (`find_related_decisions` queries both) and a promotion path (provenance entries with durable rationale can be promoted to annotations).
-
-  **Out of scope for v1:** transcript persistence (just the seed prompt — full conversation transcripts live in Claude Code's own storage and would balloon the DB); multi-user attribution (single-user assumption holds); cross-DB merge of requests (forklift to event-store flip).
-
-  **Sizing:** ~1 chunk for schema + mutator entry points + a few wiring points (push/pull/capture drivers). Session-briefing integration + LLM-side prompt-capture hook is a separate small chunk. MCP-side auto-capture on tool calls is a stretch chunk if it ever lands.
-  (Feature request 2026-05-19; user-flagged HIGH PRIORITY — sibling to annotations entry)
-
-- **HIGH PRIORITY — Song annotations: persist composer intent + stylistic notes alongside the song data.** Today the DB stores structure (notes, envelopes, devices, arrangement) but not the *meaning* behind it. The LLM-native workflow needs a place to accumulate the why: "the verse is sad, like weight getting worse; then the chorus it just evaporates," "last chorus goes around once in minor, then once in min7," "this bass line is weaving between drum parts at 95 and 100 BPM," "don't sidechain the bass on the bridge — let it bloom." Updated continuously as composition progresses; read back by every future agent session for context. **Why this is high priority:** annotations ARE the song requirements, captured in-place. Without them, every new session starts cold — Claude can read the structural DB but not the intent, so it can't act on aesthetic decisions the user already made. Bundle the requirements into the song itself, not in a separate brief.
-
-  **Proposed shape — single polymorphic `annotations` table:**
-  ```
-  annotations (
-    id            TEXT PRIMARY KEY,
-    song_id       TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
-    track_id      TEXT REFERENCES tracks(id) ON DELETE CASCADE,  -- nullable
-    start_bar     REAL,                                           -- nullable
-    end_bar       REAL,                                           -- nullable (open-ended OK)
-    kind          TEXT NOT NULL,    -- 'intent' | 'stylistic' | 'structure' | 'reference' | 'todo'
-    body          TEXT NOT NULL,
-    created_at    REAL NOT NULL,
-    updated_at    REAL NOT NULL,
-    CHECK (end_bar IS NULL OR end_bar > start_bar),
-    CHECK (start_bar IS NOT NULL OR end_bar IS NULL)
-  )
-  ```
-  Three scoping levels fall out of column nullability:
-  - **Song-scoped** = `track_id` NULL, `start_bar` NULL → applies to the whole song.
-  - **Time-scoped** = `track_id` NULL, `start_bar` set, `end_bar` optional → applies to a time range or point in song time.
-  - **Track-scoped** = `track_id` set, time optional → applies to a track (optionally over a time range).
-
-  Name conflict caveat: existing `notes` table is MIDI notes. `annotations` disambiguates cleanly; alternatives considered: `commentary`, `prose_notes`.
-
-  **Mutator surface:**
-  - `M.add_annotation(conn, *, song_id, track_id=None, start_bar=None, end_bar=None, kind, body, ...)`
-  - `M.update_annotation(conn, *, annotation_id, body=None, kind=None, ...)`
-  - `M.delete_annotation(conn, *, annotation_id, ...)`
-  - Events: `ANNOTATION_ADDED` / `ANNOTATION_UPDATED` / `ANNOTATION_REMOVED`.
-
-  **Query surface:**
-  - `Q.get_annotations_for_song(conn, song_id, *, kind=None)` — all
-  - `Q.get_annotations_for_track(conn, track_id)` — track-scoped only
-  - `Q.get_annotations_at_bar(conn, song_id, bar)` — time-active at bar (start_bar ≤ bar < end_bar, or unbounded end)
-
-  **MCP surface (DB-only domain — no Ableton round-trip; Live doesn't model these):**
-  - `ableton_annotation` tool OR action on `ableton_session` — single namespace for `list` / `add` / `update` / `delete` / `get_at_bar`.
-  - Resources: a `hallucinote://annotations/<song_id>` resource for cheap full-song reads.
-  - Prompts: a `compose_with_intent` prompt template that walks the LLM through reading annotations BEFORE generating.
-
-  **Session-start integration:** the session briefing (or a CLAUDE.md addendum) should surface "song annotations exist; read them before composing." Without this nudge, the LLM may build without context even with the data available.
-
-  **Out of scope for v1 of this feature:** versioning of annotation bodies, multi-user attribution, attachments (only text). Composer attribution rides on the existing `events.actor` field.
-
-  **Sizing:** ~1-2 chunks. Schema + mutators + queries + events (one chunk); MCP surface + skill integration + session-briefing wiring (one chunk).
-  (Feature request 2026-05-19; user-flagged HIGH PRIORITY)
+- **HIGH PRIORITY — Compose-time provenance retrieval (`/decisions` skill + `find_related_decisions` query).** The provenance WRITE surface is now end-to-end: `requests` schema with `kind`/`prompt_text`/`duration_ms`/`outcome`/`parent_id`/`metadata_json` (W8-B), `M.request()` context manager (W8-B), read queries `list_requests_for_song` / `get_latest_request_for_song` / `get_events_for_request` / `get_request_event_summary` (W23-A), push + pull driver wraps (W23-C), and MCP dispatcher auto-`kind='mutate'` parent for `ableton_annotation` write actions (Arc 2 / B5, 2026-05-22). What's missing is the COMPOSE-TIME READ PATH that turns the audit log into working context for the LLM: (a) `Q.find_related_decisions(conn, song_id, *, keywords, scope=None)` — single SQL `LIKE` pass across `requests.prompt_text` + `requests.metadata_json` (decision_rationale key) + `annotations.body`, ordered with optional parent context; (b) `/decisions [topic]` skill (analogous to `/learnings`) that runs the query in a forked context. **Payoff (the design driver):** the defensive case ("we brought the backbeats down on 2026-05-26 — are you sure you want to undo that?") and the generative case ("dim7 echoes the intro — let's echo the first few notes too") both depend on the LLM being able to retrieve prior decisions + rationale before non-trivial work. Without retrieval, every compose session starts cold. **Discipline (load-bearing):** decisions must be recorded WITH RATIONALE — convention is `requests.metadata_json.decision_rationale` for the LLM's reasoning, with the mechanical changes in the events under it. Structural facts that aren't decisions per se ride on `annotations` (already shipped via W23-B). **Verifiable signal:** `Q.find_related_decisions` exists in `src/hallucinote/db/queries.py`; `.claude/skills/decisions/SKILL.md` exists. **Out of scope:** transcript persistence; multi-user attribution; cross-DB merge (post-event-store flip). **Sized:** small (query + skill). Session-briefing integration is tracked separately by the W8-C entry. (Feature request 2026-05-19; refreshed 2026-05-22 after Arc 2 / B5 closed the dispatcher auto-mutate residual.)
 
 - **Envelope discovery on pull — envelopes authored only in Live.** W7-A (2026-05-19) ships `plan_pull_envelopes` in **DB-mirrored mode**: it iterates `envelopes` rows that already exist in the DB and refreshes their breakpoints from Live. This closes the round-trip case (DB-authored envelope → user tweaks in Live → pull → DB updated). It does NOT discover envelopes the user authored *only* in Live without a corresponding DB row — those would require enumerating every linked clip × supported `target_kind`, every linked device parameter, etc., which explodes the read surface (~10s-100s of probes per pull on a real song). A future "envelope discovery" pass could batch-probe likely surfaces (e.g. only on clips/devices/tracks the user mutated recently per `events` log) and fan out judiciously. Not blocking V1 — the round-trip story closes the dominant authoring loop. (W7-A 2026-05-19)
 

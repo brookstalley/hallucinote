@@ -29,6 +29,7 @@ import re
 from typing import Any, Callable, Protocol
 
 from . import schema
+from .provenance import auto_request
 from .wire import Request, Response, error, ok
 
 
@@ -393,9 +394,23 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
     # Server-side-only actions execute directly on the MCP server side
     # (no Live needed). The handler is responsible for any I/O it needs
     # (filesystem, local DB, etc.) and receives context=None.
+    #
+    # Arc 2 / B5: actions flagged ``db_writes=True`` get automatic
+    # provenance — the dispatcher opens an ``M.request(kind='mutate')``
+    # against the song's DB and threads its id into the handler via the
+    # ``_request_id`` kwarg. ``auto_request`` degrades to yielding None
+    # when provenance can't be established (e.g. song DB missing); the
+    # handler still runs and surfaces its own teaching error.
     if action.runs_server_side:
         try:
-            result = action.handler(None, **validated)  # type: ignore[misc]
+            if action.db_writes:
+                with auto_request(
+                    tool=action.tool, action_name=action.name, params=validated,
+                ) as rid:
+                    extra: dict[str, Any] = {"_request_id": rid} if rid is not None else {}
+                    result = action.handler(None, **validated, **extra)  # type: ignore[misc]
+            else:
+                result = action.handler(None, **validated)  # type: ignore[misc]
         except KeyError as exc:
             logger.warning(
                 "schema bug: %s(%r) server-side handler referenced unknown "

@@ -105,6 +105,7 @@ register(
         ),
         handler=annotation_handlers.add_handler,
         runs_server_side=True,
+        db_writes=True,
         example=(
             "ableton_annotation(action='add', song_slug='falling-walking', "
             "kind='intent', body='verse is sad; weight getting worse')"
@@ -205,6 +206,7 @@ register(
         ),
         handler=annotation_handlers.update_handler,
         runs_server_side=True,
+        db_writes=True,
         example=(
             "ableton_annotation(action='update', song_slug='falling-walking', "
             "annotation_id='<id from list>', body='updated text')"
@@ -231,6 +233,7 @@ register(
         ),
         handler=annotation_handlers.delete_handler,
         runs_server_side=True,
+        db_writes=True,
         example=(
             "ableton_annotation(action='delete', song_slug='falling-walking', "
             "annotation_id='<id from list>')"

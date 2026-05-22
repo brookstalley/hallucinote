@@ -1057,6 +1057,27 @@ def _emit_device_calls(
             "action": "load",
             "kind": device["kind"],
         }
+        # Arc 7-tail / E3 (W13-A v1.0): the captured browser path is a
+        # fallback identity for the cross-machine "same plugin, different
+        # catalog id" case. Threaded alongside whichever of preset_query
+        # / preset_uri the planner emits — the load handler uses it when
+        # the per-machine FileId in preset_uri doesn't resolve. Extracted
+        # once at the top so every branch below can attach it.
+        browser_path_raw = (
+            device["browser_path_json"]
+            if "browser_path_json" in device.keys() else None
+        )
+        browser_path_value: list[str] | None = None
+        if browser_path_raw is not None:
+            try:
+                browser_path_value = json.loads(browser_path_raw)
+            except (json.JSONDecodeError, TypeError) as exc:
+                plan.warn(
+                    f"device {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r}: stored browser_path is not valid "
+                    f"JSON ({exc}); loading without the fallback identity "
+                    "path — cross-machine FileId mismatch will fail"
+                )
         # Sweep B: preset_query (portable) takes precedence over preset_uri
         # (per-machine). The MCP load handler refuses if both are set, so
         # the planner must pick one. Composer's expressed preference wins.
@@ -1074,27 +1095,12 @@ def _emit_device_calls(
                 )
                 if device["preset_uri"] is not None:
                     load_args["preset_uri"] = device["preset_uri"]
+                    if browser_path_value is not None:
+                        load_args["browser_path"] = browser_path_value
         elif device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
-            # Arc 7-tail / E3 (W13-A v1.0): also pass the captured
-            # browser path so the load handler can fall back to a
-            # path-scoped browser search if the per-machine FileId in
-            # preset_uri doesn't resolve on the target machine (the
-            # "same plugin, different catalog id" cross-machine case).
-            browser_path_raw = (
-                device["browser_path_json"]
-                if "browser_path_json" in device.keys() else None
-            )
-            if browser_path_raw is not None:
-                try:
-                    load_args["browser_path"] = json.loads(browser_path_raw)
-                except (json.JSONDecodeError, TypeError) as exc:
-                    plan.warn(
-                        f"device {device['display_name']!r} on {parent_kind} "
-                        f"{parent_name!r}: stored browser_path is not valid "
-                        f"JSON ({exc}); loading without the fallback identity "
-                        "path — cross-machine FileId mismatch will fail"
-                    )
+            if browser_path_value is not None:
+                load_args["browser_path"] = browser_path_value
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,
@@ -2698,7 +2704,17 @@ def _match_devices_for_linked_parents(
                     # to write yet.
                     continue
                 db_class = db_dev["kind"]
-                live_class = live_dev.get("class_name", "")
+                # Arc 4 / D4: DB stores `kind` as the post-rename display
+                # name (`class_display_name`). The MCP probe surfaces both
+                # `class_display_name` (display) and `class_name` (internal,
+                # e.g. `Eq8`, `Compressor2`, `InstrumentVector`). Compare
+                # against the display value to match the DB's storage
+                # convention; fall back to `class_name` so older probe
+                # responses (pre-`class_display_name`) still resolve.
+                live_class = (
+                    live_dev.get("class_display_name")
+                    or live_dev.get("class_name", "")
+                )
                 if db_class != live_class:
                     result.notes.append(
                         f"device drift at {parent_kind}#{ableton_index} "

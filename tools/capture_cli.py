@@ -45,6 +45,7 @@ from hallucinote.capture import (  # noqa: E402
     capture_plan,
     diff_snapshots,
     format_diff_summary,
+    merge_snapshots,
 )
 
 
@@ -75,6 +76,33 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     return 0 if not diff else 1
 
 
+def _cmd_merge(args: argparse.Namespace) -> int:
+    """Apply browser_path stickiness from `old` onto `new`, emitting the
+    merged snapshot to stdout (or `--output`). `/song-snapshot` uses this
+    between diff and overwrite so a refresh probe doesn't wipe load-time
+    fields the list-time probes don't surface.
+    """
+    old_path = Path(args.old)
+    new_path = Path(args.new)
+    if not old_path.exists():
+        print(f"error: old snapshot not found: {old_path}", file=sys.stderr)
+        return 2
+    if not new_path.exists():
+        print(f"error: new snapshot not found: {new_path}", file=sys.stderr)
+        return 2
+    old = json.loads(old_path.read_text())
+    new = json.loads(new_path.read_text())
+    merged = merge_snapshots(old, new)
+    if args.output:
+        Path(args.output).write_text(
+            json.dumps(merged, indent=2, sort_keys=True) + "\n"
+        )
+    else:
+        json.dump(merged, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
@@ -95,6 +123,21 @@ def main() -> int:
     diff_p.add_argument("old", help="Path to existing captured_session.json")
     diff_p.add_argument("new", help="Path to fresh capture (e.g. .refresh.json)")
     diff_p.set_defaults(func=_cmd_diff)
+
+    merge_p = sub.add_parser(
+        "merge",
+        help=(
+            "Merge two snapshots: take `new` as base, preserve sticky "
+            "device fields (browser_path) from `old` where `new` omits them"
+        ),
+    )
+    merge_p.add_argument("old", help="Path to existing captured_session.json")
+    merge_p.add_argument("new", help="Path to fresh capture (e.g. .refresh.json)")
+    merge_p.add_argument(
+        "--output", "-o", default=None,
+        help="Write merged JSON to PATH (default: stdout)",
+    )
+    merge_p.set_defaults(func=_cmd_merge)
 
     args = p.parse_args()
     if args.plan:

@@ -247,6 +247,44 @@ def test_plan_push_devices_preset_query_precedence_when_only_query_set(
     assert "preset_uri" not in load.args
 
 
+def test_plan_push_devices_malformed_preset_query_fallback_threads_browser_path(
+    conn, song, session, linked_track,
+):
+    """E3 follow-up: when preset_query is malformed JSON, the planner
+    falls back to preset_uri. browser_path must thread on that branch too
+    (was asymmetric pre-fix — only the preset_uri-primary branch threaded
+    it). Otherwise the cross-machine FileId fallback identity is silently
+    dropped whenever preset_query happens to be unparseable.
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Massive X",
+        display_name="FatBass",
+        preset_uri="query:Plugin#FileId_AUTHOR",
+        browser_path=["plug-ins", "Native Instruments", "Massive X", "FatBass"],
+    )
+    # The mutator always writes well-formed JSON. Inject malformed JSON
+    # directly to exercise the fallback branch — the planner has to be
+    # resilient to a corrupted preset_query column regardless of how it
+    # got there.
+    conn.execute(
+        "UPDATE devices SET preset_query = ? WHERE id = ?",
+        ("{not valid json", did),
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args["preset_uri"] == "query:Plugin#FileId_AUTHOR"
+    assert load.args["browser_path"] == [
+        "plug-ins", "Native Instruments", "Massive X", "FatBass",
+    ]
+    assert any(
+        "preset_query is not valid JSON" in n for n in plan.notes
+    )
+
+
 def test_plan_push_devices_skips_params_when_device_unlinked(
     conn, song, session, linked_track,
 ):

@@ -1728,7 +1728,7 @@ def load_in_rack_handler(
             "issue with the empirical probe (capabilities action + "
             "introspect on the rack device)."
         )
-    chain_before = len(chain.devices)
+    chain_before_classes = [_canonical_class_name(d) for d in chain.devices]
     rack_view.selected_chain = chain
     # Also select the parent track so the browser-load fires in the right
     # context — Live's browser.load_item routes through the highlighted
@@ -1742,18 +1742,68 @@ def load_in_rack_handler(
     fresh_chains = _resolve_rack_chains(fresh_rack)
     fresh_chain = _resolve_chain_by_index(fresh_chains, chain_index)
     chain_after = list(fresh_chain.devices)
-    if len(chain_after) <= chain_before:
+    chain_after_classes = [_canonical_class_name(d) for d in chain_after]
+    # Mirror E2's three-shape post-condition from load_handler: append
+    # (chain grew), replace-in-place (same length, one position changed
+    # class), silent no-op (same length, no changes — raise teaching
+    # error). Pre-fix this branch checked chain-length-only, which would
+    # misread a replace-in-place as a no-op.
+    if len(chain_after) > len(chain_before_classes):
+        nested_position = len(chain_after)
+        new_device = chain_after[-1]
+    elif len(chain_after) == len(chain_before_classes):
+        changed = [
+            i
+            for i, (b, a) in enumerate(
+                zip(chain_before_classes, chain_after_classes)
+            )
+            if a != b
+        ]
+        if len(changed) == 1:
+            nested_position = changed[0] + 1
+            new_device = chain_after[changed[0]]
+        elif not changed:
+            existing = [
+                f"{i + 1}:{cls or '?'}"
+                for i, cls in enumerate(chain_after_classes)
+            ]
+            existing_str = ", ".join(existing) if existing else "(empty)"
+            raise RuntimeError(
+                f"load_in_rack: Live did not append a device on chain "
+                f"{chain_index} of rack {device_index} after "
+                f"browser.load_item. Existing chain: [{existing_str}]. "
+                "Most common cause: a device with matching class is "
+                "already present at the expected position (Live silently "
+                "no-ops the load); the item may not be loadable on this "
+                "rack type, or the chain-selection step didn't take effect."
+            )
+        else:
+            existing = [
+                f"{i + 1}:{cls or '?'}"
+                for i, cls in enumerate(chain_after_classes)
+            ]
+            raise RuntimeError(
+                f"load_in_rack: Live changed multiple devices on chain "
+                f"{chain_index} of rack {device_index} after "
+                f"browser.load_item — unexpected shape ({len(changed)} "
+                f"positions changed). Post-load chain: "
+                f"[{', '.join(existing)}]."
+            )
+    else:
+        existing = [
+            f"{i + 1}:{cls or '?'}"
+            for i, cls in enumerate(chain_after_classes)
+        ]
+        existing_str = ", ".join(existing) if existing else "(empty)"
         raise RuntimeError(
-            f"load_in_rack: Live did not append a device on chain "
-            f"{chain_index} of rack {device_index} after browser.load_item; "
-            "the item may not be loadable on this rack type, or the "
-            "chain-selection step didn't take effect"
+            f"load_in_rack: chain {chain_index} of rack {device_index} "
+            f"shrank after browser.load_item (pre={len(chain_before_classes)}, "
+            f"post={len(chain_after)}). Post-load chain: [{existing_str}]."
         )
-    new_device = chain_after[-1]
     result: dict[str, Any] = {
         "device_index": device_index,
         "chain_index": chain_index,
-        "nested_device_position": len(chain_after),
+        "nested_device_position": nested_position,
         "kind": kind,
         "name": getattr(new_device, "name", ""),
         "parent_kind": parent_kind,

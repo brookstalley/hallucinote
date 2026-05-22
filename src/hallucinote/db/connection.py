@@ -41,6 +41,7 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     """Open + apply schema. Idempotent: schema uses IF NOT EXISTS throughout,
     plus an explicit column-add pass for ALTER cases that CREATE doesn't cover.
     """
+    _check_schema_canary()
     conn = connect(db_path)
     conn.executescript(_SCHEMA_PATH.read_text())
     _ensure_added_columns(conn)
@@ -120,6 +121,52 @@ def _ensure_added_columns(conn: sqlite3.Connection) -> None:
         if col in by_table[table]:
             continue
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+
+
+_SCHEMA_CANARY_CHECKED = False
+
+
+def _check_schema_canary() -> None:
+    """Verify ``_ADDED_COLUMNS`` is also declared in ``schema.sql``.
+
+    Every additive column lift gets two declarations by convention:
+    ``schema.sql`` (fresh-DB CREATE TABLE) and ``_ADDED_COLUMNS`` (the
+    ALTER pass for existing DBs). The two can drift silently because
+    ``_ensure_added_columns`` papers over a missing ``schema.sql`` entry
+    by ALTERing the column in after CREATE TABLE — so a fresh DB ends
+    up correct even though ``schema.sql`` lies. This canary runs against
+    an in-memory DB seeded only from ``schema.sql`` (no migration pass)
+    and flags any ``_ADDED_COLUMNS`` entry the fresh DB is missing.
+
+    First-call-per-process; results cached via module-level flag so the
+    canary runs once regardless of how many DBs ``init_db`` opens.
+    """
+    global _SCHEMA_CANARY_CHECKED
+    if _SCHEMA_CANARY_CHECKED:
+        return
+    _SCHEMA_CANARY_CHECKED = True
+    canary_conn = sqlite3.connect(":memory:")
+    try:
+        canary_conn.executescript(_SCHEMA_PATH.read_text())
+        missing: list[str] = []
+        cache: dict[str, set[str]] = {}
+        for table, col, _defn in _ADDED_COLUMNS:
+            if table not in cache:
+                rows = canary_conn.execute(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
+                cache[table] = {r[1] for r in rows}
+            if col not in cache[table]:
+                missing.append(f"{table}.{col}")
+    finally:
+        canary_conn.close()
+    if missing:
+        raise RuntimeError(
+            "schema canary: _ADDED_COLUMNS declares column(s) that aren't "
+            f"in schema.sql: {', '.join(missing)}. Add the matching column "
+            "declarations to schema.sql's CREATE TABLE block — fresh DBs "
+            "and existing DBs must agree on the same final shape."
+        )
 
 
 def _git_current_branch(cwd: Path | None = None) -> str | None:

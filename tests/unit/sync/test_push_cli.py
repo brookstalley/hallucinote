@@ -570,6 +570,73 @@ def test_probe_and_link_binds_track_device(conn, song, session):
     assert result.matched_devices[0]["class_name"] == "Drum Rack"
 
 
+def test_probe_and_link_matches_via_class_display_name(conn, song, session):
+    """Arc 4 / D4: DB stores `kind` as the post-rename display name
+    (`EQ Eight`, `Compressor`, `Drum Rack`). The MCP probe surfaces BOTH
+    `class_display_name` (display) AND `class_name` (internal, e.g. `Eq8`,
+    `Compressor2`, `InstrumentGroupDevice`). The comparator must read
+    `class_display_name` to match the DB's storage convention — otherwise
+    every re-probe after push emits noisy false drift notes for the
+    common case where Live's internal name differs from the display.
+    Reproduces the 2026-05-22 sun-zone-done post-push false-drift spam.
+    """
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bass", kind="midi")
+    device_id = _make_chain_with_device(
+        conn, parent_track_id=tid, position=1, kind="EQ Eight",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 2, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 2): [
+                {
+                    "device_index": 1,
+                    "name": "EQ",
+                    "class_name": "Eq8",
+                    "class_display_name": "EQ Eight",
+                },
+            ],
+        },
+    )
+    assert result.matched_devices == [{
+        "db_id": device_id,
+        "parent_kind": "track",
+        "parent_index": 2,
+        "position": 1,
+        "class_name": "EQ Eight",
+    }]
+    # No drift note — display names agree even though class_name differs.
+    assert not any("device drift" in n for n in result.notes), result.notes
+
+
+def test_probe_and_link_falls_back_to_class_name_when_display_absent(
+    conn, song, session,
+):
+    """Older probe responses (pre-`class_display_name`) only surface
+    `class_name`. The comparator must still match in that case — the
+    fallback keeps existing fixtures and real-world older snapshots
+    working without churn."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Reverb",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+        live_devices_by_parent={
+            ("return", 1): [
+                # No class_display_name key — older probe shape.
+                {"device_index": 1, "name": "Reverb", "class_name": "Reverb"},
+            ],
+        },
+    )
+    assert len(result.matched_devices) == 1
+    assert result.matched_devices[0]["db_id"] == device_id
+    assert not any("device drift" in n for n in result.notes), result.notes
+
+
 def test_probe_and_link_skips_class_mismatch_at_same_position(conn, song, session):
     """DB has Reverb at position 1; Live has a Delay there. Don't link
     (push will load the DB's Reverb over Live's Delay) and surface a note

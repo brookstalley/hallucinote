@@ -873,6 +873,156 @@ def diff_snapshots(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Snapshot merge (Group 1 / G1-C — browser_path stickiness floor)
+# ---------------------------------------------------------------------------
+# `browser_path` (Arc 7-tail / E3, W13-A v1.0) is captured at LOAD time by
+# the MCP load handler's `resolved_path` response field. The list-time
+# probes that drive `/song-snapshot` (`ableton_track(action='info')`,
+# `ableton_device(action='get_parameters')`) don't surface it — Live's API
+# exposes the path only via the browser walk performed at load.
+#
+# Without stickiness, refreshing a snapshot would wipe every device's
+# `browser_path`, breaking the W13-A v1.0 cross-machine fallback identity
+# whenever someone re-snapshots a song. Autonomous re-capture (load-time
+# snapshot write) is the longer-term fix and is tracked separately; this
+# merge helper is the floor that keeps existing values from getting lost.
+#
+# Sticky fields (preserved when `new` omits them):
+#   - device-level `browser_path`
+# Other fields use `new`'s value verbatim (intentional drift: a knob move
+# captured in the fresh probe must overwrite the on-disk value).
+
+_DEVICE_STICKY_FIELDS: tuple[str, ...] = ("browser_path",)
+
+
+def _merge_devices(
+    old_devices: list[dict[str, Any]] | None,
+    new_devices: list[dict[str, Any]] | None,
+    _depth: int = 0,
+) -> list[dict[str, Any]]:
+    """Walk two device arrays (matched by `index`), returning `new` with
+    sticky fields copied from the matching `old` entry when `new` doesn't
+    carry them. Recurses one level into nested rack `chains` to match the
+    capture / replay / diff depth invariant.
+    """
+    new = new_devices or []
+    old_by_idx = {
+        int(d["index"]): d for d in (old_devices or []) if "index" in d
+    }
+    merged: list[dict[str, Any]] = []
+    for nd in new:
+        if "index" not in nd:
+            merged.append(nd)
+            continue
+        od = old_by_idx.get(int(nd["index"]))
+        if od is None:
+            merged.append(nd)
+            continue
+        entry = dict(nd)
+        for field in _DEVICE_STICKY_FIELDS:
+            if entry.get(field) in (None, [], {}) and od.get(field) not in (
+                None, [], {},
+            ):
+                entry[field] = od[field]
+        if _depth == 0 and (entry.get("chains") or od.get("chains")):
+            entry["chains"] = _merge_chains(
+                od.get("chains"), entry.get("chains"),
+            )
+        merged.append(entry)
+    return merged
+
+
+def _merge_chains(
+    old_chains: list[dict[str, Any]] | None,
+    new_chains: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Walk two nested-chain arrays (matched by `chain_index`), merging
+    each chain's devices at `_depth=1`. Returns the new chains with
+    stickiness applied; an old-only chain isn't preserved (chain
+    structure tracks Live, not the snapshot's history)."""
+    new = new_chains or []
+    old_by_idx = {
+        int(c["chain_index"]): c for c in (old_chains or [])
+        if "chain_index" in c
+    }
+    merged: list[dict[str, Any]] = []
+    for nc in new:
+        if "chain_index" not in nc:
+            merged.append(nc)
+            continue
+        oc = old_by_idx.get(int(nc["chain_index"]))
+        if oc is None:
+            merged.append(nc)
+            continue
+        entry = dict(nc)
+        entry["devices"] = _merge_devices(
+            oc.get("devices"), nc.get("devices"), _depth=1,
+        )
+        merged.append(entry)
+    return merged
+
+
+def merge_snapshots(
+    old: dict[str, Any], new: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a snapshot dict that takes `new` as base but preserves
+    sticky device fields (`browser_path`) from `old` where `new` omits
+    them. Other fields use `new`'s value verbatim — a snapshot refresh
+    must reflect the user's actual changes (knob moves, send tweaks,
+    track renames) without false drift.
+
+    The merge is structural — track / return / device identity is
+    `index`; nested-rack chains match by `chain_index`. Recurses one
+    level into rack chains to match capture/replay/diff depth.
+    """
+    out = dict(new)
+    old_tracks = old.get("tracks") or []
+    new_tracks = new.get("tracks") or []
+    old_tracks_by_idx = {
+        int(t["index"]): t for t in old_tracks if "index" in t
+    }
+    merged_tracks: list[dict[str, Any]] = []
+    for nt in new_tracks:
+        if "index" not in nt:
+            merged_tracks.append(nt)
+            continue
+        ot = old_tracks_by_idx.get(int(nt["index"]))
+        if ot is None:
+            merged_tracks.append(nt)
+            continue
+        entry = dict(nt)
+        if ot.get("devices") or nt.get("devices"):
+            entry["devices"] = _merge_devices(
+                ot.get("devices"), nt.get("devices"),
+            )
+        merged_tracks.append(entry)
+    out["tracks"] = merged_tracks
+
+    old_returns = old.get("returns") or []
+    new_returns = new.get("returns") or []
+    old_returns_by_idx = {
+        int(r["index"]): r for r in old_returns if "index" in r
+    }
+    merged_returns: list[dict[str, Any]] = []
+    for nr in new_returns:
+        if "index" not in nr:
+            merged_returns.append(nr)
+            continue
+        or_ = old_returns_by_idx.get(int(nr["index"]))
+        if or_ is None:
+            merged_returns.append(nr)
+            continue
+        entry = dict(nr)
+        if or_.get("devices") or nr.get("devices"):
+            entry["devices"] = _merge_devices(
+                or_.get("devices"), nr.get("devices"),
+            )
+        merged_returns.append(entry)
+    out["returns"] = merged_returns
+    return out
+
+
 def format_diff_summary(diff: dict[str, Any]) -> str:
     """One-screen human-readable summary of a diff dict. The skill prints this
     for the user, then asks to confirm overwrite. Detailed per-param drift is

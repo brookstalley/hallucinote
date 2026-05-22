@@ -2343,6 +2343,105 @@ def test_load_in_rack_selects_chain_and_loads(loaded_actions):
     assert resp.result["chain_index"] == 1
 
 
+def _build_rack_load_ctx(chain, on_load):
+    """Set up a rack + browser fake whose load_item runs `on_load(chain)`.
+    Returns the dispatch context. Used by the post-condition tests below
+    to exercise specific chain_after shapes that the top-level
+    load_handler covers but load_in_rack used to miss.
+    """
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    track = FakeTrack("T1", devices=[rack])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+
+    class _FakeItem:
+        def __init__(self, name: str):
+            self.name = name
+            self.is_loadable = True
+            self.is_folder = False
+            self.uri = ""
+            self.children = ()
+
+    class _FakeBrowser:
+        def __init__(self, item):
+            for root in (
+                "audio_effects", "instruments", "midi_effects", "drums",
+                "plugins", "user_library", "samples", "sounds",
+            ):
+                node = _FakeItem(root)
+                node.is_loadable = False
+                node.is_folder = True
+                node.children = (item,) if root == "audio_effects" else ()
+                setattr(self, root, node)
+
+        def load_item(self, item):
+            on_load(chain)
+
+    item = _FakeItem("Compressor2")
+    ctx.application.browser = _FakeBrowser(item)
+    return ctx
+
+
+def test_load_in_rack_replace_in_place_returns_changed_position(loaded_actions):
+    """Symmetric with load_handler's three-shape post-condition (E2).
+    Live's browser-load can swap a device at the same chain position
+    when an item with the same canonical class is already at the tail —
+    chain length stays the same, one position changes class. Handler
+    must return that position, not raise "did not append".
+    """
+    chain = _FakeChain("Lead", devices=[
+        FakeDevice("Old", class_name="Operator"),
+    ])
+
+    def _replace_in_place(c):
+        c.devices[0] = FakeDevice("New", class_name="Compressor2")
+
+    ctx = _build_rack_load_ctx(chain, _replace_in_place)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load_in_rack",
+            params={
+                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["nested_device_position"] == 1
+    assert resp.result["name"] == "New"
+
+
+def test_load_in_rack_silent_noop_raises_with_existing_chain(loaded_actions):
+    """When Live silently no-ops the load (same length, no changes), the
+    handler must raise a teaching error that lists the existing chain so
+    the caller can diagnose without a follow-up get_device_chains probe.
+    Mirrors load_handler's `_raise_silent_noop` shape.
+    """
+    chain = _FakeChain("Lead", devices=[
+        FakeDevice("Existing", class_name="Compressor2"),
+    ])
+
+    def _no_op(_c):
+        pass  # Live silently no-ops; chain unchanged after browser.load_item
+
+    ctx = _build_rack_load_ctx(chain, _no_op)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load_in_rack",
+            params={
+                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "did not append" in err
+    assert "1:Compressor2" in err
+    assert "silently no-ops" in err
+
+
 # ---------- run_on_main discipline ----------
 
 

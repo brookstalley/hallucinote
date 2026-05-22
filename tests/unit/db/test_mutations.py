@@ -1720,6 +1720,21 @@ def test_set_device_parameter_omits_value_items_for_continuous(conn, amp_device)
     assert row["value_items_json"] is None
 
 
+def test_set_device_parameter_rejects_empty_value_items(conn, amp_device):
+    """E1 Critic paper-cut: empty value_items=[] used to silently coerce
+    to NULL, asymmetric with M.create_enum_envelope's kwarg path which
+    raises on []. Both paths now raise — callers must pass None for
+    continuous params or a non-empty list for enum params.
+    """
+    with pytest.raises(ValueError) as exc:
+        M.set_device_parameter(
+            conn, device_id=amp_device, name="Amp Type",
+            value_display="Clean", value_items=[],
+        )
+    assert "value_items=[]" in str(exc.value)
+    assert "non-empty" in str(exc.value)
+
+
 def test_create_enum_envelope_resolves_via_snapshot(conn, amp_device):
     """Primary path: helper looks up value_items from the captured
     device-parameter snapshot. Author writes enum names; helper stores

@@ -88,7 +88,14 @@ python tools/capture_cli.py diff \
 
 Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes / no / show full diff)"*
 
-- **yes** → `mv songs/<slug>/captured_session.refresh.json songs/<slug>/captured_session.json` and confirm.
+- **yes** → merge first, then move. The merge preserves sticky device fields (`browser_path` — captured at load time, not surfaced by list-time probes) so a refresh doesn't wipe the W13-A v1.0 cross-machine fallback identity:
+  ```bash
+  python tools/capture_cli.py merge \
+    songs/<slug>/captured_session.json \
+    songs/<slug>/captured_session.refresh.json \
+    -o songs/<slug>/captured_session.json
+  rm songs/<slug>/captured_session.refresh.json
+  ```
 - **no** → delete the `.refresh` file and stop. Tell the user "no changes written."
 - **show full diff** → cat the stdout JSON and re-ask.
 

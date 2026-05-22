@@ -344,3 +344,110 @@ def test_diff_truthy_when_any_change(mutator) -> None:
     new = copy.deepcopy(old)
     mutator(new)
     assert diff_snapshots(old, new), "expected diff to be truthy after mutation"
+
+
+# ---------- merge_snapshots: browser_path stickiness (G1-C) ----------
+
+
+def test_merge_preserves_track_device_browser_path_when_new_omits_it() -> None:
+    """Refresh probes use list-time tools (ableton_track(action='info'),
+    ableton_device(action='get_parameters')) which don't surface
+    browser_path — only the load-time response carries `resolved_path`.
+    Without stickiness, every snapshot refresh would wipe the cross-
+    machine fallback identity captured at load time. Merge keeps it.
+    """
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    old["tracks"][1]["devices"][0]["browser_path"] = [
+        "instruments", "Operator", "Bass",
+    ]
+    new = copy.deepcopy(old)
+    # Refresh probe forgot browser_path on the Operator (the realistic case).
+    del new["tracks"][1]["devices"][0]["browser_path"]
+    merged = merge_snapshots(old, new)
+    assert merged["tracks"][1]["devices"][0]["browser_path"] == [
+        "instruments", "Operator", "Bass",
+    ]
+
+
+def test_merge_lets_new_browser_path_overwrite_when_present() -> None:
+    """If the refresh DOES carry browser_path (e.g. a future load-time
+    autonomous capture lands), the new value wins — merge isn't a one-way
+    accretion path. Drift toward fresher state, not toward older."""
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    old["tracks"][1]["devices"][0]["browser_path"] = [
+        "instruments", "Operator", "OldPreset",
+    ]
+    new = copy.deepcopy(old)
+    new["tracks"][1]["devices"][0]["browser_path"] = [
+        "instruments", "Operator", "NewPreset",
+    ]
+    merged = merge_snapshots(old, new)
+    assert merged["tracks"][1]["devices"][0]["browser_path"] == [
+        "instruments", "Operator", "NewPreset",
+    ]
+
+
+def test_merge_preserves_return_device_browser_path() -> None:
+    """Returns get the same stickiness as tracks — symmetric paths."""
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    old["returns"][0]["devices"][0]["browser_path"] = [
+        "audio_effects", "Reverb", "Hall",
+    ]
+    new = copy.deepcopy(old)
+    del new["returns"][0]["devices"][0]["browser_path"]
+    merged = merge_snapshots(old, new)
+    assert merged["returns"][0]["devices"][0]["browser_path"] == [
+        "audio_effects", "Reverb", "Hall",
+    ]
+
+
+def test_merge_preserves_browser_path_inside_nested_rack_chain() -> None:
+    """Devices inside a rack's nested chain get the same stickiness —
+    the depth-1 walk mirrors capture / replay / diff."""
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    old["tracks"][0]["devices"][0]["chains"] = [
+        {
+            "chain_index": 1, "name": "Lead", "devices": [
+                {
+                    "index": 1, "name": "Compressor", "class": "Compressor",
+                    "browser_path": ["audio_effects", "Compressor"],
+                },
+            ],
+        },
+    ]
+    new = copy.deepcopy(old)
+    del new["tracks"][0]["devices"][0]["chains"][0]["devices"][0]["browser_path"]
+    merged = merge_snapshots(old, new)
+    nested = merged["tracks"][0]["devices"][0]["chains"][0]["devices"][0]
+    assert nested["browser_path"] == ["audio_effects", "Compressor"]
+
+
+def test_merge_doesnt_resurrect_devices_dropped_from_new() -> None:
+    """If new omits a device that old had, the merge follows new — old
+    isn't allowed to resurrect dropped state. Same shape for tracks /
+    returns / chains."""
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    old["tracks"][0]["devices"][0]["browser_path"] = ["x"]
+    new = copy.deepcopy(old)
+    # User deleted the Drum Rack between snapshots.
+    new["tracks"][0]["devices"] = [d for d in new["tracks"][0]["devices"]
+                                    if d["index"] != 1]
+    merged = merge_snapshots(old, new)
+    assert [d["index"] for d in merged["tracks"][0]["devices"]] == [2]
+
+
+def test_merge_non_sticky_fields_use_new_value() -> None:
+    """A knob move captured in the fresh probe must overwrite the on-disk
+    value — only declared sticky fields are special. Volume drift through.
+    """
+    from hallucinote.capture import merge_snapshots
+    old = _base_snapshot()
+    new = copy.deepcopy(old)
+    new["tracks"][0]["volume"] = 0.5
+    merged = merge_snapshots(old, new)
+    assert merged["tracks"][0]["volume"] == 0.5

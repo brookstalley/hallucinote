@@ -226,6 +226,29 @@ def test_replace_clip_notes_swaps_full_note_set(conn, clip):
     assert p["prev_count"] == 5 and p["new_count"] == 2
 
 
+def test_insert_notes_refuses_negative_start_beats(conn, clip):
+    """Arc 6 / H4: `apply_feel({0.0: -0.02})` on bar-1's downbeat
+    produces `start_beats=-0.02`. The math is correct in isolation
+    but Live's MIDI clip has no negative-beat region — the wire layer
+    can't represent it. Catch it at the mutator boundary with a
+    teaching error pointing at the most common cause."""
+    with pytest.raises(ValueError, match="start_beats=-0.02.*negative"):
+        M.insert_notes(
+            conn, clip_id=clip,
+            notes=[_make_note(start=-0.02)],
+        )
+    # Mutator refusal is transactional — no notes landed.
+    assert Q.get_notes_for_clip(conn, clip) == []
+
+
+def test_insert_notes_accepts_zero_start_beats(conn, clip):
+    """Regression guard for H4: start_beats=0.0 is the canonical bar-
+    boundary value and must not be falsely rejected by the < 0
+    check."""
+    ids = M.insert_notes(conn, clip_id=clip, notes=[_make_note(start=0.0)])
+    assert len(ids) == 1
+
+
 def test_replace_clip_notes_rolls_back_on_failure(conn, clip):
     """Mid-batch validation error must leave the prior notes intact and emit no event.
 

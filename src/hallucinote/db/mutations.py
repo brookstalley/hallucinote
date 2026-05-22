@@ -1065,9 +1065,30 @@ def delete_clip(
 
 
 def _normalize_note(n: NoteDict) -> tuple:
-    """Validate + extract canonical fields. Raises KeyError on missing required."""
+    """Validate + extract canonical fields. Raises KeyError on missing required.
+
+    Arc 6 / H4: rejects ``start_beats < 0`` at the mutator boundary with a
+    teaching error pointing at the most common cause — a ``feel`` shift
+    that pushed bar-1's downbeat below zero. ``apply_feel`` math itself
+    is correct (within-bar positions can shift below 0.0 conceptually);
+    the wire layer can't represent it (Live's MIDI clip has no
+    negative-beat region). Catching it here puts the diagnostic next to
+    the call site that ships invalid data, not the generator that's
+    doing math correctly.
+    """
     pitch = int(n["pitch"])
     start = float(n["start_beats"])
+    if start < 0:
+        raise ValueError(
+            f"_normalize_note: start_beats={start!r} is negative — Live's "
+            "MIDI clip has no negative-beat region. Common cause: a "
+            "`feel` dict shifted bar-1's downbeat below zero "
+            "(`feel={0.0: -0.02}` on bar 1's start). Either drop the "
+            "bar-1 shift, or author a pickup/anacrusis pattern with a "
+            "positive offset. The `apply_feel` math is correct in "
+            "isolation; this guard catches notes that can't survive the "
+            "wire."
+        )
     dur = float(n["duration_beats"])
     vel = int(n["velocity"])
     mute = int(n.get("mute", 0))

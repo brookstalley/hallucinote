@@ -222,6 +222,33 @@ def test_primer_resource_count_matches_actual_registry():
     )
 
 
+def test_readme_resource_count_matches_actual_registry():
+    """Pattern-sweep guard #2 (Arc 7 cumulative Critic): the README's
+    headline resource count drifted to 11 when the templated resource
+    landed — exactly the failure mode the "tree-wide pattern sweeps"
+    learning warned about. Pin the README the same way PRIMER is pinned.
+
+    Tolerates either '12 resources' OR '12 resources (11 static + 1
+    templated)' — the count itself is what's load-bearing."""
+    import re
+    from pathlib import Path
+
+    total = len(RESOURCE_URIS) + len(RESOURCE_TEMPLATE_URIS)
+    readme_path = Path(__file__).resolve().parents[2] / "README.md"
+    text = readme_path.read_text()
+    match = re.search(r"(\d+) resources", text)
+    assert match is not None, (
+        "README must advertise the total resource count (substring "
+        "'N resources') so readers see the surface size up front"
+    )
+    assert int(match.group(1)) == total, (
+        f"README claims {match.group(1)} resources but the registry "
+        f"has {total} (={len(RESOURCE_URIS)} static + "
+        f"{len(RESOURCE_TEMPLATE_URIS)} templated). "
+        "Update hallucinote_mcp/README.md."
+    )
+
+
 # ---------- Templated resources (W11-A: hallucinote:// + slug-in-URI) ----------
 
 

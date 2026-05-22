@@ -29,9 +29,10 @@ import time
 import uuid
 from typing import Any, Iterator, Sequence
 
-from hallucinote.db import events as E
+from hallucinote.db import events as E, queries as Q
 from hallucinote.db.connection import transaction
 from hallucinote.preset_query import normalize as _normalize_preset_query
+from hallucinote.return_naming import strip_return_slot_prefix
 
 
 # ---------------------------------------------------------------------------
@@ -2044,7 +2045,14 @@ def create_return(
 ) -> str:
     """Create a return track. `position` is the return's index in Live (1-based,
     matching captured_session.json). Volume/pan optional; default state is
-    whatever Live applies to a freshly-created return."""
+    whatever Live applies to a freshly-created return.
+
+    Arc 7 / P7: `name` is normalized through `strip_return_slot_prefix`
+    so a caller (build.py, snapshot replay) passing Live's `<letter>-`
+    prefixed form can't poison the DB. Returns store SUFFIX-only names
+    (W4-C convention). Idempotent: already-stripped names pass through.
+    """
+    name = strip_return_slot_prefix(name)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
         """SELECT id, name, volume, pan, color FROM returns
@@ -2111,12 +2119,19 @@ def update_return(
     reason: str | None = None,
     **changes: Any,
 ) -> None:
-    """Partial update by id. `changes` keys must be in _RETURN_FIELDS."""
+    """Partial update by id. `changes` keys must be in _RETURN_FIELDS.
+
+    Arc 7 / P7: when `name` is updated, normalize through
+    `strip_return_slot_prefix` so callers can't sneak Live's
+    `<letter>-` slot prefix into the DB (mirrors `create_return`).
+    """
     bad = set(changes) - _RETURN_FIELDS
     if bad:
         raise ValueError(f"unsupported fields: {sorted(bad)}")
     if not changes:
         return
+    if "name" in changes:
+        changes["name"] = strip_return_slot_prefix(changes["name"])
     row = conn.execute(
         "SELECT song_id FROM returns WHERE id = ?", (return_id,)
     ).fetchone()
@@ -2826,9 +2841,11 @@ BREAKPOINT_CURVE_KINDS = frozenset({"linear", "hold", "fast", "slow"})
 def _track_kind(
     conn: sqlite3.Connection, track_id: str,
 ) -> str | None:
-    row = conn.execute(
-        "SELECT kind FROM tracks WHERE id = ?", (track_id,),
-    ).fetchone()
+    # Arc 7 / P7: route through Q.get_track instead of an inline SELECT
+    # so this and `sync.push._track_kind_for_envelope` share the same
+    # single-row lookup (one query name to maintain when the tracks
+    # schema evolves).
+    row = Q.get_track(conn, track_id)
     return None if row is None else row["kind"]
 
 
@@ -3851,6 +3868,24 @@ def build_session(
     close_request(conn, request_id=bs.request_id, outcome="ok")
 
 
+_NESTED_RACK_CHAINS_CTE = """
+WITH RECURSIVE song_chains(id) AS (
+    -- Anchor: top-level chains (parented by a track or return in this song).
+    SELECT dc.id FROM device_chains dc
+    LEFT JOIN tracks t ON t.id = dc.parent_track_id
+    LEFT JOIN returns r ON r.id = dc.parent_return_id
+    WHERE t.song_id = ? OR r.song_id = ?
+    UNION
+    -- Recursive: chains parented by a rack device that itself lives in
+    -- a song-rooted chain. Walks nested-rack hierarchies of any depth;
+    -- terminates naturally when no more chains reference the frontier.
+    SELECT dc.id FROM device_chains dc
+    JOIN devices d ON d.id = dc.parent_rack_device_id
+    JOIN song_chains sc ON sc.id = d.chain_id
+)
+"""
+
+
 def _tombstone_untouched(conn: sqlite3.Connection, bs: BuildSession) -> None:
     """Delete build-owned rows for this song not touched in this build.
 
@@ -3889,33 +3924,26 @@ def _tombstone_untouched(conn: sqlite3.Connection, bs: BuildSession) -> None:
         elif kind == "device_chain":
             row_ids = [
                 r["id"] for r in conn.execute(
-                    """SELECT dc.id FROM device_chains dc
-                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
-                       LEFT JOIN returns r ON r.id = dc.parent_return_id
-                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    _NESTED_RACK_CHAINS_CTE + "SELECT id FROM song_chains",
                     (song_id, song_id),
                 ).fetchall()
             ]
         elif kind == "device":
             row_ids = [
                 r["id"] for r in conn.execute(
-                    """SELECT d.id FROM devices d
-                       JOIN device_chains dc ON dc.id = d.chain_id
-                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
-                       LEFT JOIN returns r ON r.id = dc.parent_return_id
-                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    _NESTED_RACK_CHAINS_CTE
+                    + "SELECT d.id FROM devices d "
+                    + "JOIN song_chains sc ON sc.id = d.chain_id",
                     (song_id, song_id),
                 ).fetchall()
             ]
         elif kind == "device_parameter":
             row_ids = [
                 r["id"] for r in conn.execute(
-                    """SELECT dp.id FROM device_parameters dp
-                       JOIN devices d ON d.id = dp.device_id
-                       JOIN device_chains dc ON dc.id = d.chain_id
-                       LEFT JOIN tracks t ON t.id = dc.parent_track_id
-                       LEFT JOIN returns r ON r.id = dc.parent_return_id
-                       WHERE t.song_id = ? OR r.song_id = ?""",
+                    _NESTED_RACK_CHAINS_CTE
+                    + "SELECT dp.id FROM device_parameters dp "
+                    + "JOIN devices d ON d.id = dp.device_id "
+                    + "JOIN song_chains sc ON sc.id = d.chain_id",
                     (song_id, song_id),
                 ).fetchall()
             ]

@@ -173,6 +173,58 @@ def test_sidechain_trigger_clamps_negative_anchor_to_zero():
     assert bps[0]["time_beats"] == 0.0
 
 
+def test_sidechain_trigger_clamps_first_anchor_to_envelope_start():
+    """P1: envelope_start_beats floors the first attack window's rest anchor
+    so the envelope's beat range stays inside a section's session clip. A
+    kick on the chorus downbeat would otherwise emit a pre-attack anchor
+    at (hit - attack_beats) — outside the chorus clip, refused by Live's
+    session-clip-only envelope routing."""
+    out = sidechain_trigger(
+        target_track_id="t1",
+        at_beats=[124.0, 128.0],  # chorus downbeats
+        attack_beats=0.02,
+        recovery_beats=0.5,
+        envelope_start_beats=124.0,
+    )
+    bps = out.envelopes[0]["breakpoints"]
+    # First anchor lands AT chorus_start (124.0), not 123.98.
+    assert bps[0]["time_beats"] == 124.0
+    # Every breakpoint is >= envelope_start_beats.
+    assert all(bp["time_beats"] >= 124.0 for bp in bps)
+
+
+def test_sidechain_trigger_drops_anchor_when_clamped_at_hit():
+    """When envelope_start_beats coincides with the hit (no leading-ramp
+    room), the rest anchor is dropped — the duck breakpoint is the
+    envelope's first."""
+    out = sidechain_trigger(
+        target_track_id="t1",
+        at_beats=[124.0],
+        attack_beats=0.02,
+        recovery_beats=0.5,
+        envelope_start_beats=124.0,
+    )
+    bps = out.envelopes[0]["breakpoints"]
+    # Without envelope_start_beats this would be 3 breakpoints (anchor +
+    # duck + recovery). With the clamp at the hit, the leading anchor is
+    # absorbed into the duck — 2 breakpoints.
+    assert len(bps) == 2
+    assert bps[0]["time_beats"] == 124.0
+    assert bps[0]["value"] != bps[1]["value"]  # duck then recovery
+
+
+def test_sidechain_trigger_rejects_hit_before_envelope_start():
+    """A hit timed before envelope_start_beats can't be ducked because the
+    duck breakpoint would land outside the section. Reject loudly rather
+    than emit a silently-clipped envelope."""
+    with pytest.raises(ValueError, match="envelope_start_beats"):
+        sidechain_trigger(
+            target_track_id="t1",
+            at_beats=[123.5, 124.0],
+            envelope_start_beats=124.0,
+        )
+
+
 def test_sidechain_trigger_rejects_empty_hits():
     with pytest.raises(ValueError, match="at_beats"):
         sidechain_trigger(target_track_id="t1", at_beats=[])
@@ -250,7 +302,10 @@ def test_sidechain_trigger_output_persists_via_mutators(tmp_path):
         assert len(envs) == 1
         assert envs[0]["target_kind"] == "mixer_volume"
         bps = Q.get_breakpoints(conn, envelope_id=envs[0]["id"])
-        # Two non-overlapping hits, 3 breakpoints each = 6
-        assert len(bps) == 6
+        # First hit at 0.0 → attack_start clamps to 0.0 == hit, so the
+        # leading rest anchor is dropped (no leading-ramp room) → 2
+        # breakpoints (duck + recovery). Second hit at 4.0 has space →
+        # 3 breakpoints (anchor + duck + recovery). Total = 5.
+        assert len(bps) == 5
     finally:
         conn.close()

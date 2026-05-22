@@ -551,3 +551,112 @@ def test_tombstone_clip_removed_when_dropped_from_build(conn):
     clips = Q.get_clips_for_track(conn, tid_new)
     slots = {c["slot"] for c in clips}
     assert slots == {1}
+
+
+def test_tombstone_walks_into_nested_rack_chains(conn):
+    """Arc 7 / P4: chains parented by `parent_rack_device_id` (inside a
+    Drum Rack / Instrument Rack / Audio Effect Rack) used to be invisible
+    to the tombstone walker — its SELECT joined only through
+    `parent_track_id` / `parent_return_id`, so a build-owned nested-rack
+    inner chain (and its devices) would survive even when build dropped
+    them. With the WITH RECURSIVE CTE, the walker enumerates nested
+    chains and tombstones their build-owned rows correctly.
+
+    Scenario: first build creates a track with a Drum Rack device + one
+    inner chain holding a kit piece. Second build keeps the rack but
+    drops the inner chain — the inner chain (and its inner device) must
+    tombstone."""
+    # First build: track + rack device + inner chain + inner device.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+        top_chain = M.create_device_chain(conn, parent_track_id=tid)
+        rack = M.create_device(
+            conn, chain_id=top_chain, position=1, kind="DrumGroupDevice",
+            display_name="Drum Rack",
+        )
+        inner_chain = M.create_device_chain(
+            conn, parent_rack_device_id=rack,
+        )
+        M.create_device(
+            conn, chain_id=inner_chain, position=1, kind="Sampler",
+            display_name="Kick",
+        )
+
+    # Confirm pre-state: the inner chain + inner device exist.
+    pre = conn.execute(
+        "SELECT COUNT(*) AS n FROM device_chains "
+        "WHERE parent_rack_device_id IS NOT NULL"
+    ).fetchone()
+    assert pre["n"] == 1
+    pre_devs = conn.execute(
+        "SELECT COUNT(*) AS n FROM devices d "
+        "JOIN device_chains dc ON dc.id = d.chain_id "
+        "WHERE dc.parent_rack_device_id IS NOT NULL"
+    ).fetchone()
+    assert pre_devs["n"] == 1
+
+    # Second build: rack stays, inner chain is NOT touched → must tombstone.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid_new = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+        top_chain_new = M.create_device_chain(conn, parent_track_id=tid_new)
+        M.create_device(
+            conn, chain_id=top_chain_new, position=1, kind="DrumGroupDevice",
+            display_name="Drum Rack",
+        )
+        # Deliberately do NOT recreate the inner chain.
+
+    post = conn.execute(
+        "SELECT COUNT(*) AS n FROM device_chains "
+        "WHERE parent_rack_device_id IS NOT NULL"
+    ).fetchone()
+    assert post["n"] == 0, (
+        "Inner chain should have been tombstoned; the walker now "
+        "enumerates chains via parent_rack_device_id"
+    )
+    post_devs = conn.execute(
+        "SELECT COUNT(*) AS n FROM devices d "
+        "JOIN device_chains dc ON dc.id = d.chain_id "
+        "WHERE dc.parent_rack_device_id IS NOT NULL"
+    ).fetchone()
+    assert post_devs["n"] == 0, (
+        "Inner device should have been tombstoned alongside its chain"
+    )
+
+
+def test_tombstone_preserves_touched_nested_rack_chain(conn):
+    """Companion to nested-rack tombstone: when build *does* touch the
+    inner chain (idempotent re-build), the walker must NOT tombstone it.
+    Guards against false positives from the recursive enumeration."""
+    # First build creates the nested structure.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+        top_chain = M.create_device_chain(conn, parent_track_id=tid)
+        rack = M.create_device(
+            conn, chain_id=top_chain, position=1, kind="DrumGroupDevice",
+            display_name="Drum Rack",
+        )
+        M.create_device_chain(conn, parent_rack_device_id=rack)
+
+    rack_id_before = conn.execute(
+        "SELECT id FROM device_chains WHERE parent_rack_device_id IS NOT NULL"
+    ).fetchone()["id"]
+
+    # Second build: re-touch the same structure (idempotent).
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid_new = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+        top_chain_new = M.create_device_chain(conn, parent_track_id=tid_new)
+        rack_new = M.create_device(
+            conn, chain_id=top_chain_new, position=1, kind="DrumGroupDevice",
+            display_name="Drum Rack",
+        )
+        M.create_device_chain(conn, parent_rack_device_id=rack_new)
+
+    rack_id_after = conn.execute(
+        "SELECT id FROM device_chains WHERE parent_rack_device_id IS NOT NULL"
+    ).fetchone()
+    assert rack_id_after is not None
+    assert rack_id_after["id"] == rack_id_before

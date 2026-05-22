@@ -1098,6 +1098,41 @@ def test_returns_schema_check_rejects_out_of_range_mute(conn, song):
         conn.execute("UPDATE returns SET mute = 2 WHERE id = ?", (rid,))
 
 
+# ---------- Arc 7 / P7: mutator-level letter-prefix strip ----------
+
+
+def test_create_return_strips_live_letter_prefix_from_name(conn, song):
+    """Arc 7 / P7: `M.create_return` normalizes Live's `<letter>-` slot
+    prefix off the name before insert, so a hand-authored snapshot or a
+    build.py call passing the prefixed form (e.g. 'A-Reverb') can't
+    poison the DB — push then re-emits the suffix and Live re-adds its
+    own slot prefix. Idempotent for already-stripped names."""
+    rid_a = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    rid_b = M.create_return(conn, song_id=song, name="Delay", position=2)
+    rows = {Q.get_return(conn, r)["name"] for r in (rid_a, rid_b)}
+    assert rows == {"Reverb", "Delay"}  # both stored without the prefix
+
+
+def test_update_return_strips_letter_prefix_when_renaming(conn, song):
+    """`M.update_return` mirrors create — passing `name='B-Delay'` lands
+    'Delay' in the DB. Guards against build.py code paths that round-trip
+    a name through Live first."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.update_return(conn, return_id=rid, name="B-Delay")
+    assert Q.get_return(conn, rid)["name"] == "Delay"
+
+
+def test_update_return_passthrough_when_name_already_stripped(conn, song):
+    """Idempotent: a stripped name passes through unchanged. No false
+    positives even if a name happens to look prefix-shaped after the
+    first character (e.g. 'M-Pad', kept because the regex matches a
+    single uppercase letter + hyphen — 'M-Pad' is stripped to 'Pad').
+    This test pins the canonical behavior, not the edge."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    M.update_return(conn, return_id=rid, name="Reverb")  # no-op rename
+    assert Q.get_return(conn, rid)["name"] == "Reverb"
+
+
 def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
     rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
     with pytest.raises(sqlite3.IntegrityError):

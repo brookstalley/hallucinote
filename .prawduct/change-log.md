@@ -4,6 +4,59 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
+
+<!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=unreleased scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
+
+Arc 7 production-polish chunks bundled per the user's "one PR for
+several fixes" direction; P2 / P3 / P6 collapsed to documentation-only
+(P3 + P6 turned out to be already shipped; P2 deferred — needs Live
+access for the enum-param investigation).
+
+P1 closes the envelope WRITE polish backlog tail: `write_envelope_handler`
+threads `note_duration` so the note_expression branch extends its last
+step to note end (mirrors the W7-0 clip-scoped fix in note-LOCAL
+coords); `sidechain_trigger` gains `envelope_start_beats` to floor the
+first attack window at a section boundary (drops the redundant rest
+anchor when clamping collapses onto the hit); falling-walking drops
+its per-chorus `+ attack_beats` workaround; three `_emit_*_envelope`
+emitters (mixer / send / device_parameter) consolidate into thin shells
+around `_resolve_and_translate_to_session_clip` +
+`_emit_session_clip_envelope_post_warnings` helpers.
+
+P4 closes the last residual nested-rack gap: `_tombstone_untouched`'s
+device_chain / device / device_parameter SELECTs now go through a
+`WITH RECURSIVE` CTE (`_NESTED_RACK_CHAINS_CTE`) so chains parented by
+`parent_rack_device_id` are enumerated alongside top-level chains.
+Recursion terminates naturally; correct at any depth even though
+capture/push still target one level.
+
+P5 adds `loaded_class_name` to the `ableton_device(action='load')`
+response (reads `class_display_name` with `class_name` fallback) so
+callers can detect kind / preset_uri mismatches without a follow-up
+device.list probe. The other P5 items (canonical-root walk,
+Instrument Rack teaching error) were already shipped; master-strip
+device push deferred to the existing backlog entry.
+
+P7 enforces the W4-C `<letter>-` slot-prefix strip at the mutator
+boundary (`M.create_return` / `M.update_return`); shared helper moved
+to `hallucinote/return_naming.py` so capture.py and mutations.py both
+import from there (no circular dep). Send warnings consolidated on the
+`return_name` (DB-form) identity convention; `_track_kind` routed
+through `Q.get_track` so the two single-row lookups share one query.
+
+Arc 2 / B5 (committed earlier in the branch): MCP dispatcher
+auto-opens a `M.request(kind='mutate')` around `ableton_annotation`
+writes via `provenance.auto_request` so the handlers get `_request_id`
+threaded automatically and emitted events carry full provenance.
+
+Backlog scrub closed 7 entries shipped this PR per frontmatter rule 1
+(W7-0 cumulative-Critic warning 4, W4-B W1, W4-B N3, W4-C N1, W4-C N2,
+W10-F note 1, W12-A nested-rack tombstone, plus the stale W12-B pan
+alias entry).
+
+Suite: 1904/1904 passing (+31 from the 1873 baseline at Arc 6 tail).
+
 ## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
 
 <!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=unreleased scope=song-author-hygiene+kit-strict+negative-beats-refusal -->

@@ -454,6 +454,75 @@ def test_write_envelope_note_expression(loaded_actions):
     assert ("note", 60, 1.0, "pitch") not in clip.clear_envelope_calls
 
 
+def test_write_envelope_note_expression_extends_tail_to_note_end(loaded_actions):
+    """W7-0 anchor (note_expression branch). When the caller supplies
+    note_duration, the last step's duration must extend to note_duration
+    (per-note envelopes use note-LOCAL coords: [0, note_duration]) so
+    the held value survives to note end. Without it, Live's envelope
+    reverts to default after the last breakpoint, leaving an audible
+    artifact between last_t and note_end — the same pathology the
+    clip-scoped tail anchor fixed for clip_cc / pitch_bend."""
+    ctx, clip = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                "note_duration": 4.0,  # note spans beats 1.0..5.0 (note-local 0.0..4.0)
+                "axis": "pitch",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.0},
+                    {"time_beats": 0.5, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    env = clip.envelopes_by_target[("note", 60, 1.0, "pitch")]
+    # Two insert_step calls: segment (0.0, 0.5, value=0.0) + tail
+    # (0.5, 3.5, value=0.5). The tail's duration covers [last_t,
+    # note_duration] = [0.5, 4.0], so the final value holds for 3.5
+    # beats — survives to the note's end (note-local time 4.0).
+    assert len(env.steps) == 2
+    seg_t, seg_dur, seg_v = env.steps[0]
+    tail_t, tail_dur, tail_v = env.steps[1]
+    assert (seg_t, seg_v) == (0.0, 0.0)
+    assert (tail_t, tail_v) == (0.5, 0.5)
+    assert tail_dur == 3.5  # 4.0 (note-end) - 0.5 (last_t)
+
+
+def test_write_envelope_note_expression_without_duration_falls_back_to_anchor(loaded_actions):
+    """Backwards-compat: omitting note_duration falls back to the legacy
+    zero-duration anchor (matches the original W7-0 design when the
+    caller doesn't know the note's end). Push-side planners always
+    supply note_duration from the DB; the bare-call path keeps the
+    same shape as before this change."""
+    ctx, clip = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0,
+                "axis": "pitch",
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.0},
+                    {"time_beats": 0.5, "value": 0.5},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    env = clip.envelopes_by_target[("note", 60, 1.0, "pitch")]
+    # Tail step has zero duration (legacy anchor behavior).
+    assert env.steps[-1] == (0.5, 0.0, 0.5)
+
+
 def test_write_envelope_note_expression_invalid_axis(loaded_actions):
     ctx, _ = _track_with_clip()
     resp = dispatch(

@@ -117,6 +117,18 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
             ),
         ),
         ParamSpec(
+            name="note_duration", type="float", required=False, minimum=0.0,
+            description=(
+                "Optional for target_kind='note_expression'. The note's "
+                "duration in beats. When supplied, the last breakpoint's "
+                "held value is extended to note_duration (per-note "
+                "envelopes use note-LOCAL coordinates [0, note_duration]) "
+                "so it survives to note end instead of reverting to the "
+                "parameter default. Mirrors the clip-length tail anchor "
+                "used for clip_cc / clip_pitch_bend."
+            ),
+        ),
+        ParamSpec(
             name="axis", type="str", required=False, enum=_AXIS_ENUM,
             description=(
                 "Required for target_kind='note_expression'. The MPE axis: "
@@ -172,7 +184,8 @@ register(
             "clip_cc → track_index + location + clip_index + cc_number; "
             "clip_pitch_bend → track_index + location + clip_index; "
             "note_expression → track_index + location + clip_index + "
-            "note_pitch + note_start_beats + axis; "
+            "note_pitch + note_start_beats + axis (+ note_duration to "
+            "extend the last-step tail to note end); "
             "device_parameter → (track_index | return_index) + "
             "device_index + parameter_name + location + clip_index; "
             "mixer_volume / mixer_pan → (track_index | return_index) "

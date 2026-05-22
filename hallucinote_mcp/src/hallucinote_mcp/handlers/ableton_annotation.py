@@ -158,6 +158,7 @@ def add_handler(
     start_bar: float | None = None,
     end_bar: float | None = None,
     track_index: int | None = None,
+    _request_id: str | None = None,
 ) -> dict[str, Any]:
     """Wrap ``M.add_annotation``. Returns the new annotation as a dict.
 
@@ -165,6 +166,11 @@ def add_handler(
     callers don't need to know the internal UUID. If both ``track_index``
     and ``start_bar`` are set, the annotation is track+time-scoped
     (overlap-active when in the bar range AND on the named track).
+
+    ``_request_id`` is injected by the dispatcher's auto-provenance path
+    (Arc 2 / B5) when this action is invoked via MCP — it threads into
+    ``M.add_annotation`` so the emitted ``ANNOTATION_ADDED`` event ties
+    back to the dispatcher's ``kind='mutate'`` request.
     """
     try:
         conn = _open_song_conn(song_slug)
@@ -191,6 +197,7 @@ def add_handler(
             track_id=track_id,
             start_bar=start_bar,
             end_bar=end_bar,
+            request_id=_request_id,
         )
         conn.commit()
         row = conn.execute(
@@ -258,8 +265,13 @@ def update_handler(
     kind: str | None = None,
     start_bar: float | None = None,
     end_bar: float | None = None,
+    _request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Update one annotation in-place. Only the fields passed are touched."""
+    """Update one annotation in-place. Only the fields passed are touched.
+
+    ``_request_id`` is injected by the dispatcher's auto-provenance path
+    (Arc 2 / B5) — see ``add_handler`` for the threading rationale.
+    """
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
@@ -287,7 +299,9 @@ def update_handler(
                 "update requires at least one of body / kind / start_bar / "
                 "end_bar to be set."
             )
-        M.update_annotation(conn, annotation_id=annotation_id, **kwargs)
+        M.update_annotation(
+            conn, annotation_id=annotation_id, request_id=_request_id, **kwargs,
+        )
         conn.commit()
         updated = conn.execute(
             "SELECT * FROM annotations WHERE id = ?", (annotation_id,)
@@ -302,14 +316,21 @@ def delete_handler(
     *,
     song_slug: str,
     annotation_id: str,
+    _request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Delete one annotation. Idempotent: deleting a missing id is a no-op."""
+    """Delete one annotation. Idempotent: deleting a missing id is a no-op.
+
+    ``_request_id`` is injected by the dispatcher's auto-provenance path
+    (Arc 2 / B5) — see ``add_handler`` for the threading rationale.
+    """
     try:
         conn = _open_song_conn(song_slug)
     except FileNotFoundError:
         raise _teach_song_not_found(song_slug)
     try:
-        M.delete_annotation(conn, annotation_id=annotation_id)
+        M.delete_annotation(
+            conn, annotation_id=annotation_id, request_id=_request_id,
+        )
         conn.commit()
         return {"annotation_id": annotation_id, "deleted": True}
     finally:

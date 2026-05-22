@@ -587,9 +587,22 @@ def load_handler(
         )
     new_device = chain_after[-1]
     new_index = len(chain_after)
+    # Arc 7 / P5: surface the device's resolved class display name so
+    # the caller can detect a kind / preset_uri mismatch without a
+    # follow-up ableton_device(action='list'). Prefer class_display_name
+    # (the Arc 4 / D4 native attribute the rest of the pipeline uses)
+    # and fall back to class_name when the wrapper is too old to expose
+    # it. Empty string when neither is present rather than None so the
+    # wire shape stays string-typed.
+    loaded_class_name = (
+        getattr(new_device, "class_display_name", None)
+        or getattr(new_device, "class_name", None)
+        or ""
+    )
     result: dict[str, Any] = {
         "device_index": new_index,
         "kind": kind,
+        "loaded_class_name": loaded_class_name,
         "name": getattr(new_device, "name", ""),
         "parent_kind": parent_kind,
     }

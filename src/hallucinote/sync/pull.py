@@ -29,7 +29,8 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import RACK_CLASS_NAMES, strip_return_slot_prefix
+from hallucinote.capture import RACK_CLASS_NAMES
+from hallucinote.return_naming import strip_return_slot_prefix
 
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
@@ -1694,8 +1695,14 @@ def _apply_track_sends(
         seen_names.add(return_name)
         ret_row = Q.get_return_by_name(conn, song_id=song_id, name=return_name)
         if ret_row is None:
+            # Arc 7 / P7: identify the return by its DB form (`return_name`),
+            # not Live's `<letter>-` prefixed UI form (`raw_name`). The user
+            # reasons in DB-shaped terms — `Q.get_return_by_name` expects the
+            # stripped name — so the message matches the lookup that just
+            # failed. Live's prefixed form only appears in the UI; the
+            # snapshot author writes the stripped name too (W4-C).
             out.warnings.append(
-                f"track {track_row['name']!r} send -> {raw_name!r}: "
+                f"track {track_row['name']!r} send -> {return_name!r}: "
                 "no matching return in DB; skipping (V1 does not auto-create)"
             )
             continue

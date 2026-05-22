@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import strip_return_slot_prefix
+from hallucinote.return_naming import strip_return_slot_prefix
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
@@ -1142,6 +1142,7 @@ def _emit_device_calls(
 #                                   breakpoints
 #   target_kind='note_expression'   track_index, location='session', clip_index,
 #                                   note_pitch, note_start_beats, axis,
+#                                   note_duration (optional tail anchor),
 #                                   breakpoints
 #   target_kind='device_parameter'  (track_index | return_index), device_index,
 #                                   parameter_name, breakpoints
@@ -1529,6 +1530,7 @@ def _emit_note_expression_envelope(
             "clip_index": clip_at,
             "note_pitch": note_row["pitch"],
             "note_start_beats": float(note_row["start_beats"]),
+            "note_duration": float(note_row["duration_beats"]),
             "axis": envelope["parameter_path"],
             "breakpoints": breakpoints_mcp,
         },
@@ -1661,6 +1663,90 @@ def _warn_extra_placements(
     )
 
 
+def _resolve_and_translate_to_session_clip(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    envelope: sqlite3.Row,
+    breakpoints_mcp: list[dict[str, Any]],
+    host_track_id: str,
+    host_track_at: int,
+) -> tuple[int, list[dict[str, Any]], _CoveringPlacement, float] | None:
+    """Resolve the host session clip for a clip-scoped envelope kind
+    (mixer / send / device_parameter) and translate breakpoints into the
+    clip's local coordinate system.
+
+    Shared core of the three ``_emit_*_envelope`` functions — the same
+    placement-resolution + clip-link-resolution + breakpoint-translation
+    + skip-with-warn paths fire identically for every clip-scoped kind.
+    The kind-specific differences (which device address args to emit,
+    which extra fields on the ToolCall) stay in the caller.
+
+    Returns ``(clip_at, local_bps, placement, env_max)`` on success.
+    Returns ``None`` after emitting a target_kind-aware skip-with-warn
+    when either:
+      - no arrangement_clip on ``host_track_id`` covers the envelope's
+        beat range (Live 12.4 LOM requires session-clip routing for
+        clip-scoped envelope kinds), or
+      - the matched session clip has no Ableton link in this session.
+    """
+    target_kind = envelope["target_kind"]
+    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
+    placement = _resolve_envelope_session_clip(
+        conn, song_id=song_id,
+        target_track_id=host_track_id,
+        env_min=env_min, env_max=env_max,
+    )
+    if placement is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({target_kind}): no arrangement "
+            f"clip on track {host_track_at} covers beat range [{env_min:g}, "
+            f"{env_max:g}]; Live 12.4 requires session-clip routing for "
+            f"{target_kind} envelopes (W4-B). Options: (a) extend or split "
+            "an existing session clip on this track to cover the range, "
+            "(b) add an arrangement_clip placement that fully spans "
+            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope by "
+            "hand into per-section sub-envelopes whose ranges each fit a "
+            "session clip. Auto-partition is v1.1 scope (W10-F follow-up). "
+            "Skipping."
+        )
+        return None
+    clip_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
+    )
+    if clip_at is None:
+        plan.warn(
+            f"envelope {envelope['id']} ({target_kind}): session clip "
+            f"{placement.clip_id} (covering placement) not linked; skipping"
+        )
+        return None
+    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
+    return clip_at, local_bps, placement, env_max
+
+
+def _emit_session_clip_envelope_post_warnings(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    local_bps: list[dict[str, Any]],
+    placement: _CoveringPlacement,
+    env_max: float,
+) -> None:
+    """Fire the four after-the-fact warnings every clip-scoped emitter
+    runs after ``plan.add()``: lossy curve hints, extra arrangement
+    placements (W4-A duplicate_to_arrangement snapshot semantics),
+    multiple covering clips, and trimmed placements. Pulled out of the
+    three emitter shells to keep behavior identical across kinds."""
+    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
+    _warn_extra_placements(plan, envelope=envelope, placement=placement)
+    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
+    _warn_trimmed_placement(
+        plan, envelope=envelope, placement=placement, env_max=env_max,
+    )
+
+
 def _emit_device_parameter_envelope(
     plan: PushPlan,
     conn: sqlite3.Connection,
@@ -1721,36 +1807,14 @@ def _emit_device_parameter_envelope(
             "skipping"
         )
         return
-    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
-    placement = _resolve_envelope_session_clip(
-        conn, song_id=song_id,
-        target_track_id=parent_track_id,
-        env_min=env_min, env_max=env_max,
+    routing = _resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song_id, session_id=session_id,
+        envelope=envelope, breakpoints_mcp=breakpoints_mcp,
+        host_track_id=parent_track_id, host_track_at=parent_at,
     )
-    if placement is None:
-        plan.warn(
-            f"envelope {envelope['id']} (device_parameter): no arrangement "
-            f"clip on track {parent_at} covers beat range [{env_min:g}, "
-            f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "device_parameter envelopes (W4-B). Options: (a) extend or "
-            "split an existing session clip on this track to cover the "
-            "range, (b) add an arrangement_clip placement that fully spans "
-            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope by "
-            "hand into per-section sub-envelopes whose ranges each fit a "
-            "session clip. Auto-partition is v1.1 scope (W10-F follow-up). "
-            "Skipping."
-        )
+    if routing is None:
         return
-    clip_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
-    )
-    if clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} (device_parameter): session clip "
-            f"{placement.clip_id} (covering placement) not linked; skipping"
-        )
-        return
-    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
+    clip_at, local_bps, placement, env_max = routing
     plan.add(ToolCall(
         tool="ableton_automation",
         args={
@@ -1770,11 +1834,9 @@ def _emit_device_parameter_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
-    _warn_extra_placements(plan, envelope=envelope, placement=placement)
-    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
-    _warn_trimmed_placement(
-        plan, envelope=envelope, placement=placement, env_max=env_max,
+    _emit_session_clip_envelope_post_warnings(
+        plan, envelope=envelope, local_bps=local_bps,
+        placement=placement, env_max=env_max,
     )
 
 
@@ -1806,37 +1868,14 @@ def _emit_mixer_envelope(
             f"{track_id} not linked; skipping"
         )
         return
-    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
-    placement = _resolve_envelope_session_clip(
-        conn, song_id=song_id,
-        target_track_id=track_id,
-        env_min=env_min, env_max=env_max,
+    routing = _resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song_id, session_id=session_id,
+        envelope=envelope, breakpoints_mcp=breakpoints_mcp,
+        host_track_id=track_id, host_track_at=track_at,
     )
-    if placement is None:
-        plan.warn(
-            f"envelope {envelope['id']} ({envelope['target_kind']}): no "
-            f"arrangement clip on track {track_at} covers beat range "
-            f"[{env_min:g}, {env_max:g}]; Live 12.4 requires session-clip "
-            f"routing for {envelope['target_kind']} envelopes (W4-B). "
-            "Options: (a) extend or split an existing session clip on "
-            "this track to cover the range, (b) add an arrangement_clip "
-            f"placement that fully spans [{env_min:g}, {env_max:g}], or "
-            "(c) partition the envelope by hand into per-section "
-            "sub-envelopes whose ranges each fit a session clip. "
-            "Auto-partition is v1.1 scope (W10-F follow-up). Skipping."
-        )
+    if routing is None:
         return
-    clip_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
-    )
-    if clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} ({envelope['target_kind']}): "
-            f"session clip {placement.clip_id} (covering placement) not "
-            "linked; skipping"
-        )
-        return
-    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
+    clip_at, local_bps, placement, env_max = routing
     plan.add(ToolCall(
         tool="ableton_automation",
         args={
@@ -1854,11 +1893,9 @@ def _emit_mixer_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
-    _warn_extra_placements(plan, envelope=envelope, placement=placement)
-    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
-    _warn_trimmed_placement(
-        plan, envelope=envelope, placement=placement, env_max=env_max,
+    _emit_session_clip_envelope_post_warnings(
+        plan, envelope=envelope, local_bps=local_bps,
+        placement=placement, env_max=env_max,
     )
 
 
@@ -1892,36 +1929,14 @@ def _emit_send_envelope(
             f"(track={track_at}, return={return_at}); skipping"
         )
         return
-    env_min, env_max = _envelope_beat_range(breakpoints_mcp)
-    placement = _resolve_envelope_session_clip(
-        conn, song_id=song_id,
-        target_track_id=track_id,
-        env_min=env_min, env_max=env_max,
+    routing = _resolve_and_translate_to_session_clip(
+        plan, conn, song_id=song_id, session_id=session_id,
+        envelope=envelope, breakpoints_mcp=breakpoints_mcp,
+        host_track_id=track_id, host_track_at=track_at,
     )
-    if placement is None:
-        plan.warn(
-            f"envelope {envelope['id']} (send_level): no arrangement clip "
-            f"on track {track_at} covers beat range [{env_min:g}, "
-            f"{env_max:g}]; Live 12.4 requires session-clip routing for "
-            "send_level envelopes (W4-B). Options: (a) extend or split an "
-            "existing session clip on this track to cover the range, "
-            "(b) add an arrangement_clip placement that fully spans "
-            f"[{env_min:g}, {env_max:g}], or (c) partition the envelope "
-            "by hand into per-section sub-envelopes whose ranges each fit "
-            "a session clip. Auto-partition is v1.1 scope (W10-F "
-            "follow-up). Skipping."
-        )
+    if routing is None:
         return
-    clip_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="clip", db_id=placement.clip_id,
-    )
-    if clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} (send_level): session clip "
-            f"{placement.clip_id} (covering placement) not linked; skipping"
-        )
-        return
-    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
+    clip_at, local_bps, placement, env_max = routing
     plan.add(ToolCall(
         tool="ableton_automation",
         args={
@@ -1940,11 +1955,9 @@ def _emit_send_envelope(
             f"{len(local_bps)} breakpoint(s)"
         ),
     ))
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
-    _warn_extra_placements(plan, envelope=envelope, placement=placement)
-    _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
-    _warn_trimmed_placement(
-        plan, envelope=envelope, placement=placement, env_max=env_max,
+    _emit_session_clip_envelope_post_warnings(
+        plan, envelope=envelope, local_bps=local_bps,
+        placement=placement, env_max=env_max,
     )
 
 

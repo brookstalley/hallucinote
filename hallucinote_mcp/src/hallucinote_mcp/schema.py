@@ -149,6 +149,21 @@ class Action:
     # Server-side handlers receive ``context=None`` and must NOT rely on
     # Live API access. They're free to do filesystem / DB / network I/O.
     runs_server_side: bool = False
+    # Arc 2 / B5: server-side actions that write to the Hallucinote DB
+    # opt in to automatic provenance. When True, the dispatcher opens an
+    # `M.request(kind='mutate', ...)` against the song's DB before the
+    # handler runs and threads its id into the handler via the
+    # ``_request_id`` keyword, so every emitted event ties back to the
+    # MCP call that produced it. The handler stays in charge of its own
+    # DB connection / commits — provenance rides on a separate
+    # short-lived conn (autocommit + WAL makes both writes durable
+    # without coordination). Requires ``runs_server_side`` (only
+    # server-side handlers touch the local Hallucinote DB today) and
+    # that the action declares a ``song_slug`` param the dispatcher can
+    # resolve to a per-song DB; the dispatcher degrades gracefully (no
+    # request opened) when the DB or song row doesn't exist yet, so the
+    # handler can still surface its own teaching error.
+    db_writes: bool = False
 
     def __post_init__(self) -> None:
         if self.tool not in TOOLS:
@@ -196,6 +211,20 @@ class Action:
                     f"Action {self.tool}({self.name!r}): runs_server_side and "
                     f"runs_on_worker are mutually exclusive — server-side "
                     f"actions never reach the Remote Script's worker thread"
+                )
+        if self.db_writes:
+            if not self.runs_server_side:
+                raise ValueError(
+                    f"Action {self.tool}({self.name!r}): db_writes=True "
+                    f"requires runs_server_side=True (only server-side "
+                    f"handlers reach the local Hallucinote DB)"
+                )
+            param_names = {p.name for p in self.params}
+            if "song_slug" not in param_names:
+                raise ValueError(
+                    f"Action {self.tool}({self.name!r}): db_writes=True "
+                    f"requires a 'song_slug' param so the dispatcher can "
+                    f"resolve the per-song DB for the provenance request"
                 )
 
     def required_params(self) -> tuple[str, ...]:

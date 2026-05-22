@@ -36,9 +36,15 @@ If it errors, stop. Tell the user to open Live with the right set loaded and con
 Resolve the song's session_id. If the user gave one, use it; otherwise list the song's sessions:
 
 ```bash
-sqlite3 songs/<slug>/<slug>.db \
+DB_PATH=$(python3 -c "from hallucinote.db.connection import resolve_db_path; print(resolve_db_path('<slug>'))")
+sqlite3 "$DB_PATH" \
   "SELECT id, name FROM ableton_sessions WHERE song_id IN (SELECT id FROM songs WHERE name = '<slug>') ORDER BY rowid DESC LIMIT 5"
 ```
+
+The per-branch DB convention (`resolve_db_path()`) produces
+`songs/<slug>/<slug>-<branch>.db` inside any git repo, so a bare
+`songs/<slug>/<slug>.db` only exists outside a worktree. Always
+resolve via the helper.
 
 Pick the most recent one or ask the user to confirm which. If none exist, refuse — they need to `push_cli probe-and-link --auto-session` first.
 
@@ -69,7 +75,7 @@ Show the user a compact summary — don't dump the whole `applied.details` JSON 
 >  *- Drums / Compressor / Threshold: -12.0 dB → -6.0 dB*
 >  *- Bass / Wavetable / Sub Decay: 0.50 → 0.72*
 >  *- Master / Glue Compressor / Makeup: 0.0 dB → 2.0 dB*
-> *Bake these into songs/<slug>/<slug>.db? (yes / no / show full diff)"*
+> *Bake these into the song DB (`$DB_PATH` from Step 0)? (yes / no / show full diff)"*
 
 Branch:
 

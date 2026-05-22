@@ -4,6 +4,85 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
+
+<!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=unreleased scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
+
+Five small chunks closing song-author-side polish items the cumulative
+PR reviewer surfaced.
+
+H1 switched `full-band-rock/build.py` and `solo-piano-ambient/build.py`
+to `resolve_db_path()` — both had been pinned to bare
+`Path(__file__).parent / "<slug>.db"`, so their DBs never picked up
+D4's ALTER-add of `devices.class_name` and their regen'd
+`REQUIREMENTS.md` kept emitting `DrumGroupDevice` / `Compressor2`
+instead of post-D4 display names. With the change, per-branch DBs now
+carry "Drum Rack" / "Glue Compressor" / "Instrument Rack" in
+`devices.kind` and `REQUIREMENTS.md` regenerates cleanly.
+
+H2 renamed `songs/falling-walking/tests/test_build.py` →
+`tests/test_falling_walking_build.py` per the project's per-song
+convention (every song's bootstrap test file must be unique under
+`pytest -n auto --dist loadgroup`).
+
+H3 added `Kit.assert_has(*, strict=True)` — refuses pre-capture state
+explicitly so an empty-mappings kit doesn't silently pass via GM
+fall-through and then surface the wrong-sound case on a later session
+once `drum_pad_mappings` populates.
+
+H4 added a `start_beats < 0` refusal to `_normalize_note` — the
+chokepoint every note-write passes through. `apply_feel`'s math
+stays correct (within-bar positions can shift below zero); the wire
+layer rejects with a teaching error naming the most common cause (a
+feel shift on bar-1's downbeat) and the two valid fixes.
+
+H5 reworked `docs/song-authoring-conventions.md` "Per-part feel" rule
+2 to make explicit that the generator API is dict-only (strings live
+in the LLM prompt, resolve to dicts at compose time). `apply_feel`
+now also raises `TypeError` for non-Mapping non-None inputs so the
+documented contract is enforced at the boundary.
+
+Backlog scrub closed 5 entries shipped this PR per frontmatter rule 1.
+
+Suite: 1873/1873 passing (+3 from Arc 5 baseline, after Critic-driven fix-up tests).
+
+## 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
+
+<!-- chunks=P1|P2|P3|P4|P5|P6 status=shipped release=unreleased scope=iteration-loop-polish+backlog-discipline -->
+
+Six small chunks of polish closing iteration-loop pain points after
+Arcs 2–4 shipped, plus structural backlog-accuracy discipline added
+to the frontmatter of `backlog.md`.
+
+P1 added `pull_cli execute --dry-run` (SAVEPOINT-wrapped preview;
+applied diff surfaces without DB mutation). P2 wrote the
+`/snapshot-bake-recent-changes` skill wrapping that engine. P3 shipped
+the first `hallucinote://` templated resource —
+`hallucinote://song/{slug}/annotations` — with parallel
+`RESOURCE_TEMPLATE_URIS` + `registered_resource_template_uris`
+plumbing. P4 added a Stop-hook-driven
+`tools/stamp_evidence_sha.py` that auto-refreshes
+`.test-evidence.json`'s `git_sha` so the recurring PR-review staleness
+friction stops. P5 guarded `parse_path_shape` against empty interior
+segments. P6 regenerated four songs' `REQUIREMENTS.md` post-D4 and
+added a `_post_d4_note` to `device-params.json`.
+
+P0 (backlog accuracy tooling) deferred to coordinate with in-flight
+v1.5 framework WIP. P6c (Arc 3 e2e against real Live) deferred — needs
+a known-good Live session.
+
+In-session backlog scrub: frontmatter discipline rules added; three
+verified-shipped entries removed (build.py song_id reuse, ableton_track
+delete refuse, push-state coherence three-bug entry); seven entries
+closed by the PR itself.
+
+Both cumulative `/critic` and the independent `/pr` reviewer were
+unable to run during the session due to Anthropic API 529s; merged
+under explicit `.gates-waived` rationale with the commitment to
+re-run when API recovers.
+
+Suite: 1870/1870 passing.
+
 ## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
 
 <!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=unreleased scope=loader-display-name-convention -->

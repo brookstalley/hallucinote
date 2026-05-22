@@ -36,10 +36,12 @@ import json
 from pathlib import Path
 
 from hallucinote.capture import replay_capture
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import bass, drums, harmony
 
-DB_PATH = Path(__file__).parent / "full-band-rock.db"
+# Per-branch DB path so feature branches don't clobber each other's state.
+# Convention matches `falling-walking/build.py`.
+DB_PATH = resolve_db_path("full-band-rock", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # Section bar boundaries (1-based; end is the start of the next section).

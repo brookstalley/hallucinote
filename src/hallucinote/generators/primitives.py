@@ -20,9 +20,34 @@ Feel = Mapping[float, float] | None
 
 
 def apply_feel(within_bar_position: float, feel: Feel) -> float:
-    """Return the within-bar position with the feel shift applied, or unchanged when feel is None."""
+    """Return the within-bar position with the feel shift applied, or unchanged when feel is None.
+
+    The generator API is dict-only — strings live in the LLM prompt and
+    resolve to a dict at compose time before reaching the call site.
+    A non-mapping ``feel`` raises ``TypeError`` immediately so authors
+    don't get a stack trace ten frames deep when a string slips through.
+
+    Negative results are mathematically valid here — a `feel={0.0: -0.02}`
+    shifting bar-1's downbeat by -0.02 returns -0.02. The function is a
+    pure within-bar math primitive that doesn't know about absolute
+    timeline starts. The mutator boundary (`_normalize_note` in
+    `db/mutations.py`) refuses notes whose ABSOLUTE `start_beats` ends
+    up negative — that's the layer where reality (Live's MIDI clip has
+    no negative-beat region) intrudes. Authors who want to shift bar-1's
+    downbeat earlier need to either drop that shift on bar 1 or author
+    a pickup/anacrusis pattern explicitly.
+    """
     if feel is None:
         return within_bar_position
+    if not isinstance(feel, Mapping):
+        raise TypeError(
+            f"apply_feel: feel must be a Mapping[float, float] or None, "
+            f"got {type(feel).__name__}. Freeform feel intent "
+            f"(\"push hard\", \"drag eighths\") lives in the LLM prompt; "
+            "the model resolves it to a dict literal at compose time "
+            "before reaching the generator call. See "
+            "docs/song-authoring-conventions.md \"Per-part feel\"."
+        )
     return within_bar_position + feel.get(within_bar_position, 0.0)
 
 # Standard GM-ish drum pitches (MIDI). Match the kit used in falling-walking;

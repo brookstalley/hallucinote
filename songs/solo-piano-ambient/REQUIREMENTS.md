@@ -12,7 +12,7 @@ None. This song uses only Live's built-in devices — no additional installs nee
 
 Listed here for completeness — these ship with Live and don't need separate installation:
 
-`Delay`, `InstrumentGroupDevice`, `Reverb`.
+`Delay`, `Instrument Rack`, `Reverb`.
 
 ---
 

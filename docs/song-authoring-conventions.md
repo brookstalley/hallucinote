@@ -72,8 +72,8 @@ This applies most strongly to `make-me-X` mode (see `/song-new`): the deliverabl
 Per-part microtiming — push (early), pull/drag (late), swing, shuffle — is part of how a part is *written*, not a humanize pass run after the fact. Generators take a `feel` parameter per call. Three rules:
 
 1. **Per-part, per-helper-call.** Granularity is the generator call. Punk drums + lazy bluegrass guitar in the same section is valid — two calls, two feel dicts, different intents at the same time. So is verse drums punching forward + chorus drums dragging back — same part, different clips, different feels. Don't put a song-level or section-level shared groove instance in the way; each call states its own feel.
-2. **Freeform or structured, at the call site.** A `feel` value is either a string (`"push hard"`, `"drag eighths"`, `"swing-16ths heavy"`) or a structured per-beat offsets dict (`{2: -0.01, 4: -0.015}` — micro-shifts in beats). Strings are model-interpreted at generation time in the context of the call's other args (meter, density, etc.). No registries; no enums.
-3. **Coordinated across instruments where the genre calls for it.** Bossa nova guitar comp + bossa nova drums share a feel — pass the same string to both. Punk drums + lazy bluegrass guitar deliberately don't.
+2. **Express intent as a dict; strings live in the prompt, not the call.** The generator API is dict-only — `Feel = Mapping[float, float] | None`. The dict maps within-bar positions to micro-shifts in beats (`{2.0: -0.01, 2.75: -0.02}` = beat 3 ten ticks early, beat-3.75 twenty ticks early). When the composer's intent reaches the LLM as freeform language (`"push hard"`, `"drag eighths"`, `"swing-16ths heavy"`), the model resolves that to a dict at compose time in the context of the call's other args (meter, density, etc.) and emits the dict literal into the call. Passing a string directly to the generator raises a `TypeError`. No registries; no enums. Negative within-bar shifts are valid math, but `start_beats < 0` after the bar offset is refused at the mutator boundary — either drop the bar-1 shift or author a pickup pattern explicitly.
+3. **Coordinated across instruments where the genre calls for it.** Bossa nova guitar comp + bossa nova drums share a feel — resolve the freeform intent once (in the prompt) and pass the same dict to both calls. Punk drums + lazy bluegrass guitar deliberately don't share.
 
 ```python
 # Verse — drums punch forward, guitar drags
@@ -115,6 +115,13 @@ if crash_note is None:
 # Fail-fast — refuse early at composition start when the kit can't
 # deliver the section's required pads.
 kit.assert_has("kick", "snare", "ride", "crash")  # raises with the missing list
+
+# Pass `strict=True` to additionally refuse pre-capture state — the
+# kit has no mappings yet, so default mode would silently pass via
+# GM fall-through and surface the wrong-sound case on the next
+# session. Run capture first (`/song-snapshot` or
+# `/song-pick-instruments`) before turning strict on.
+kit.assert_has("kick", "snare", "ride", "crash", strict=True)
 ```
 
 `kit.pitch_of("ride")` on Hot Rod Kit raises `KeyError` naming the colliding chain (`"Cowbell Fenk Chick"`) and pointing at `kit.try_pitch_of`. That's the structural guard against the sun-zone-done cautionary tale — the cowbell-on-metal disaster fails loudly at compose time instead of playing a wrong sound for the whole song.

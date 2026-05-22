@@ -307,3 +307,36 @@ def test_assert_has_raises_for_unknown_canonical_in_args():
     kit = Kit.gm_default()
     with pytest.raises(KeyError, match="unknown canonical"):
         kit.assert_has("kick", "rde")  # rde is a typo
+
+
+def test_assert_has_strict_refuses_empty_kit():
+    """Arc 6 / H3: strict mode catches the pre-capture state that the
+    default mode lets slide via GM fall-through. Documented design
+    choice from Arc 1 / A3: a build.py that calls assert_has() before
+    the first capture would silently pass, then surface the wrong-
+    sound case on the NEXT session once drum_pad_mappings is
+    populated. Strict mode refuses pre-capture explicitly."""
+    kit = Kit(name="Pre-Capture", device_id=None, mappings_by_note={})
+    with pytest.raises(KeyError, match="no captured pad mappings yet"):
+        kit.assert_has("kick", "snare", strict=True)
+
+
+def test_assert_has_strict_passes_when_kit_is_captured_and_complete():
+    """Regression guard for strict mode: when the kit IS captured and
+    has every canonical, strict=True still passes (it only adds the
+    pre-capture check, doesn't replace the pad-presence check)."""
+    kit = Kit.from_dict({
+        "kick": 36, "snare": 38, "hat_closed": 42, "hat_open": 46,
+        "crash": 49, "ride": 51,
+    }, name="Complete Kit")
+    kit.assert_has("kick", "snare", "ride", "crash", strict=True)
+    # No exception = pass.
+
+
+def test_assert_has_strict_still_catches_missing_pads_after_capture():
+    """A captured kit missing pads — strict mode surfaces the same
+    teaching error as default mode (the missing-pad path runs after
+    the empty-mappings check, unchanged)."""
+    kit = Kit.from_dict({"kick": 36, "snare": 38}, name="Sparse Captured")
+    with pytest.raises(KeyError, match="missing canonical pad"):
+        kit.assert_has("kick", "ride", strict=True)

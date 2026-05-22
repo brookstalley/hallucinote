@@ -94,6 +94,34 @@ def test_parse_path_shape_rejects_whitespace_only_pattern():
         parse_path_shape("drums/   ")
 
 
+def test_parse_path_shape_rejects_empty_interior_segment_double_slash():
+    """Arc 5 / P5: ``Drums//Kit`` previously parsed as
+    ``path_prefix=['']`` and failed at probe time with
+    ``kind_unresolvable``. The new guard fails at the authoring
+    boundary with a teaching message instead, so the typo surfaces
+    where it can be fixed quickly."""
+    with pytest.raises(ValueError, match="empty interior segment"):
+        parse_path_shape("drums//Kit")
+
+
+def test_parse_path_shape_rejects_whitespace_only_interior_segment():
+    """Same guard for a whitespace-only interior segment — Live's
+    browser can't match against blank, so we fail loud."""
+    with pytest.raises(ValueError, match="empty interior segment"):
+        parse_path_shape("drums/   /Kit")
+
+
+def test_parse_path_shape_allows_multiple_valid_interior_segments():
+    """Regression guard: the new check must not over-reject genuine
+    multi-segment paths."""
+    out = parse_path_shape("audio_effects/Reverbs/Halls/Cathedral")
+    assert out == {
+        "root": "audio_effects",
+        "pattern": "Cathedral",
+        "path_prefix": ["Reverbs", "Halls"],
+    }
+
+
 def test_parse_path_shape_rejects_non_string_input():
     """Defensive — callers should pass str, but a stray dict here would
     silently produce garbage path data through `.split('/')` on a

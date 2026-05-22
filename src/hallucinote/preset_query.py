@@ -74,6 +74,18 @@ def parse_path_shape(path: str) -> dict:
             "the pattern must be non-empty"
         )
     path_prefix = list(segments[1:-1])
+    # Arc 5 / P5: reject empty interior segments at the authoring boundary.
+    # ``"Drums//Kit"`` previously yielded ``path_prefix=['']`` — Live's
+    # browser can't match an empty segment, so it surfaced as
+    # ``kind_unresolvable`` at probe time. Failing here makes the
+    # diagnostic surface AT the typo, not five layers down.
+    for seg in path_prefix:
+        if not seg.strip():
+            raise ValueError(
+                f"preset_query path {path!r} has an empty interior segment; "
+                "double-slashes and whitespace-only segments are rejected — "
+                "use a single '/' between non-empty segments"
+            )
     out: dict = {"root": root_raw, "pattern": pattern}
     if path_prefix:
         out["path_prefix"] = path_prefix

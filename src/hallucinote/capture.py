@@ -594,6 +594,7 @@ def compile_snapshot(
     session_info: dict[str, Any],
     returns: list[dict[str, Any]],
     tracks: list[dict[str, Any]],
+    browser_paths: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble a snapshot dict from raw MCP probe outputs.
 
@@ -605,8 +606,16 @@ def compile_snapshot(
 
     Output is normalized to the snapshot schema documented in this module.
     Devices/clips on inputs are preserved verbatim; replay ignores them.
+
+    `browser_paths` (Arc 7-tail / E3, snapshot-write side of W13-A v1.0):
+    optional list of load records the caller accumulated by reading each
+    `ableton_device(action='load')` response's `resolved_path`. Each record
+    is `{track_index|return_index: int, device_index: int, browser_path:
+    [str, ...]}`. When supplied, the function injects `browser_path` into
+    the matching top-level device entry on the assembled snapshot so the
+    cross-machine fallback identity round-trips through capture.
     """
-    return {
+    snapshot = {
         "song": {
             "tempo": session_info.get("tempo"),
             "signature": session_info.get("signature"),
@@ -615,6 +624,223 @@ def compile_snapshot(
         "returns": returns,
         "tracks": tracks,
     }
+    if browser_paths:
+        inject_browser_paths(snapshot, browser_paths)
+    return snapshot
+
+
+# ---------------------------------------------------------------------------
+# Browser-path injection / preservation (Arc 7-tail / E3, snapshot-write side)
+# ---------------------------------------------------------------------------
+# E3 (Arc 7-tail, 2026-05-22) shipped the READ side of W13-A v1.0:
+# `ableton_device(action='load')` returns `resolved_path`, replay_capture
+# consumes snapshot `browser_path` into `devices.browser_path_json`, push
+# threads it back to the load handler as a fallback identity. The producer
+# side — where the agent captures `resolved_path` from a fresh load and
+# attaches it to the snapshot's device entry — lives here.
+#
+# Two surfaces:
+#
+# - `inject_browser_paths(snapshot, loads)` — used by `/song-pick-instruments`
+#   (and any other load-driven flow) after `ableton_device(action='load')`.
+#   The agent records each load's `resolved_path` into a list of records;
+#   this helper writes them into the right device entries on the assembled
+#   snapshot. Top-level devices only (track + return chains); nested rack
+#   chain devices loaded via `load_in_rack` are out of scope for v1 since
+#   no current skill drives that path.
+#
+# - `preserve_browser_paths(old, new)` — used by `/song-snapshot` (the
+#   refresh flow). Capture probes don't expose `browser_path` (Live doesn't
+#   track each loaded device's browser origin), so without preservation
+#   every refresh would silently drop the fallback identity for every
+#   device. The helper copies `browser_path` from `old` to `new` for
+#   devices whose identity matches (same parent index + position + class).
+#   `browser_path` already present in `new` (e.g. just-loaded via
+#   `inject_browser_paths`) wins over the old value.
+
+
+def _attach_browser_path_to_device(
+    parent: dict[str, Any],
+    *,
+    device_index: int,
+    browser_path: list[str],
+    parent_kind: str,
+    parent_index: int,
+) -> None:
+    """Write `browser_path` onto the device at position `device_index` (1-based)
+    in `parent["devices"]`. Raises if no such device exists — the caller
+    passed a stale record."""
+    devices = parent.get("devices") or []
+    for d in devices:
+        if int(d.get("index", -1)) == device_index:
+            d["browser_path"] = list(browser_path)
+            return
+    raise ValueError(
+        f"inject_browser_paths: no device at index={device_index} on "
+        f"{parent_kind} {parent_index} (parent has "
+        f"{len(devices)} device(s))"
+    )
+
+
+def inject_browser_paths(
+    snapshot: dict[str, Any],
+    loads: list[dict[str, Any]],
+) -> None:
+    """Attach `browser_path` to snapshot device entries the agent just loaded.
+
+    Each load record (one per `ableton_device(action='load')` call the
+    agent ran while assembling the snapshot):
+
+      {"track_index":  int (>=1), "device_index": int (>=1),
+       "browser_path": [str, ...]}
+      OR
+      {"return_index": int (>=1), "device_index": int (>=1),
+       "browser_path": [str, ...]}
+
+    `browser_path` is the value the MCP load handler returned as
+    `resolved_path` — segments from the browser root key to the loaded
+    item's leaf name. The push planner threads this onto subsequent loads
+    as a fallback identity when the per-machine preset_uri stops resolving
+    (different Live install, plugin moved between catalog versions).
+
+    Mutates `snapshot` in place. Raises on malformed records or on records
+    that don't match any device in the snapshot.
+    """
+    for record in loads:
+        bp = record.get("browser_path")
+        if not isinstance(bp, list) or not bp or not all(
+            isinstance(s, str) and s for s in bp
+        ):
+            raise ValueError(
+                "inject_browser_paths: each record must carry a non-empty "
+                "browser_path list of non-empty strings; got "
+                f"{bp!r} on record {record!r}"
+            )
+        if "device_index" not in record:
+            raise ValueError(
+                f"inject_browser_paths: record missing device_index: {record!r}"
+            )
+        device_index = int(record["device_index"])
+        if device_index < 1:
+            raise ValueError(
+                f"inject_browser_paths: device_index must be >= 1, got "
+                f"{device_index} on record {record!r}"
+            )
+        has_track = "track_index" in record
+        has_return = "return_index" in record
+        if has_track == has_return:
+            raise ValueError(
+                "inject_browser_paths: each record must carry exactly one of "
+                f"track_index or return_index; got {record!r}"
+            )
+        if has_track:
+            ti = int(record["track_index"])
+            for t in snapshot.get("tracks") or []:
+                if int(t.get("index", -1)) == ti:
+                    _attach_browser_path_to_device(
+                        t,
+                        device_index=device_index,
+                        browser_path=bp,
+                        parent_kind="track",
+                        parent_index=ti,
+                    )
+                    break
+            else:
+                raise ValueError(
+                    f"inject_browser_paths: no track with index={ti} in "
+                    "snapshot"
+                )
+        else:
+            ri = int(record["return_index"])
+            for r in snapshot.get("returns") or []:
+                if int(r.get("index", -1)) == ri:
+                    _attach_browser_path_to_device(
+                        r,
+                        device_index=device_index,
+                        browser_path=bp,
+                        parent_kind="return",
+                        parent_index=ri,
+                    )
+                    break
+            else:
+                raise ValueError(
+                    f"inject_browser_paths: no return with index={ri} in "
+                    "snapshot"
+                )
+
+
+def _collect_browser_paths(
+    snapshot: dict[str, Any],
+) -> dict[tuple[str, int, int, Any], list[str]]:
+    """Build an identity-keyed lookup of every top-level device that carries
+    a `browser_path`. Key: (parent_kind, parent_index, device_index, class).
+    The class is included so re-using an index slot with a different device
+    (e.g. swap Operator for Wavetable at position 1) doesn't carry forward
+    a stale path that no longer matches identity."""
+    out: dict[tuple[str, int, int, Any], list[str]] = {}
+    for t in snapshot.get("tracks") or []:
+        if "index" not in t:
+            continue
+        ti = int(t["index"])
+        for d in t.get("devices") or []:
+            bp = d.get("browser_path")
+            if not bp or "index" not in d:
+                continue
+            out[("track", ti, int(d["index"]), d.get("class"))] = list(bp)
+    for r in snapshot.get("returns") or []:
+        if "index" not in r:
+            continue
+        ri = int(r["index"])
+        for d in r.get("devices") or []:
+            bp = d.get("browser_path")
+            if not bp or "index" not in d:
+                continue
+            out[("return", ri, int(d["index"]), d.get("class"))] = list(bp)
+    return out
+
+
+def preserve_browser_paths(
+    old: dict[str, Any],
+    new: dict[str, Any],
+) -> None:
+    """Copy `browser_path` from `old` snapshot to `new` for devices whose
+    identity matches (same parent index + position + class).
+
+    Used by `/song-snapshot` during refresh: capture probes don't expose
+    `browser_path` (Live doesn't track each loaded device's browser
+    origin), so without this preservation every refresh would silently
+    drop the cross-machine fallback identity for every device.
+
+    A `browser_path` already present on a `new` device wins (e.g. the
+    flow just loaded a fresh device and `inject_browser_paths` attached
+    its `resolved_path`). Position-or-class identity mismatch drops the
+    old path silently — the device at that slot is a different one now.
+
+    Mutates `new` in place.
+    """
+    old_paths = _collect_browser_paths(old)
+    if not old_paths:
+        return
+    for t in new.get("tracks") or []:
+        if "index" not in t:
+            continue
+        ti = int(t["index"])
+        for d in t.get("devices") or []:
+            if d.get("browser_path") or "index" not in d:
+                continue
+            key = ("track", ti, int(d["index"]), d.get("class"))
+            if key in old_paths:
+                d["browser_path"] = list(old_paths[key])
+    for r in new.get("returns") or []:
+        if "index" not in r:
+            continue
+        ri = int(r["index"])
+        for d in r.get("devices") or []:
+            if d.get("browser_path") or "index" not in d:
+                continue
+            key = ("return", ri, int(d["index"]), d.get("class"))
+            if key in old_paths:
+                d["browser_path"] = list(old_paths[key])
 
 
 # ---------------------------------------------------------------------------

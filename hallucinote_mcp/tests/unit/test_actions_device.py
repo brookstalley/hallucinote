@@ -1701,7 +1701,9 @@ class _Routing:
 
 def _compressor_with_routing() -> FakeDevice:
     """A faked Compressor2 with the full sidechain surface: S/C params
-    plus the input_routing_* API."""
+    plus the input_routing_* API. W6-K real-Live 2026-05-22:
+    Compressor's S/C Gain has internal range 0.0..1.0 (normalized) —
+    fake mirrors that so the dB-rejection path is exercised."""
     comp = FakeDevice(
         "Comp",
         class_name="Compressor2",
@@ -1709,7 +1711,7 @@ def _compressor_with_routing() -> FakeDevice:
             FakeParam("Device On", 1.0),
             FakeParam("Threshold", 0.85),
             FakeParam("S/C On", 0.0),
-            FakeParam("S/C Gain", 0.4, min=-24.0, max=24.0),
+            FakeParam("S/C Gain", 0.4, min=0.0, max=1.0),
             FakeParam("S/C Mix", 1.0),
         ],
     )
@@ -1922,8 +1924,57 @@ def test_set_sidechain_enables_via_canonical_param(loaded_actions):
     """No more class whitelist — set_sidechain works on ANY device that
     exposes the canonical S/C On parameter (Compressor, Compressor2,
     Glue, Gate, Multiband Dynamics, third-party plugins matching the
-    naming hints)."""
+    naming hints). gain_db is covered by separate dB-native /
+    normalized-refuse tests below."""
     comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={
+                "track_index": 1, "device_index": 1, "enabled": True,
+                "source_display_name": "1-Drums",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    sc_on = next(p for p in comp.parameters if p.name == "S/C On")
+    assert sc_on.value == 1.0
+    assert comp.input_routing_type.display_name == "1-Drums"
+
+
+def _compressor_with_db_native_gain() -> FakeDevice:
+    """A hypothetical compressor whose S/C Gain IS dB-native (range
+    -24..24). Used to validate that the gain_db path still works for
+    devices that don't follow Live's normalized-0..1 convention."""
+    comp = FakeDevice(
+        "Comp-dB",
+        class_name="ThirdPartyComp",
+        parameters=[
+            FakeParam("Device On", 1.0),
+            FakeParam("Threshold", 0.85),
+            FakeParam("S/C On", 0.0),
+            FakeParam("S/C Gain", 0.0, min=-24.0, max=24.0),
+            FakeParam("S/C Mix", 1.0),
+        ],
+    )
+    comp.input_routing_type = _Routing("No Input")
+    comp.input_routing_channel = _Routing("Post FX")
+    comp.available_input_routing_types = [
+        _Routing("1-Drums"), _Routing("No Input"),
+    ]
+    comp.available_input_routing_channels = [
+        _Routing("Pre FX"), _Routing("Post FX"), _Routing("Post Mixer"),
+    ]
+    return comp
+
+
+def test_set_sidechain_gain_db_succeeds_on_db_native_param(loaded_actions):
+    """When the gain param's range is NOT normalized 0..1, gain_db
+    writes through directly — preserving the convenience wrapper for
+    plugins that expose a true dB-native gain."""
+    comp = _compressor_with_db_native_gain()
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
     resp = dispatch(
         Request(
@@ -1936,11 +1987,58 @@ def test_set_sidechain_enables_via_canonical_param(loaded_actions):
         context=ctx,
     )
     assert resp.ok is True, resp.error
-    sc_on = next(p for p in comp.parameters if p.name == "S/C On")
     sc_gain = next(p for p in comp.parameters if p.name == "S/C Gain")
-    assert sc_on.value == 1.0
     assert sc_gain.value == 3.0
     assert comp.input_routing_type.display_name == "1-Drums"
+
+
+def test_set_sidechain_gain_db_refuses_on_normalized_param(loaded_actions):
+    """W6-K real-Live finding (2026-05-22): Live's Compressor S/C Gain
+    has internal range 0..1 despite displaying in dB. Writing gain_db
+    directly trips Live's range check. Handler refuses with a teaching
+    error pointing at set_parameter."""
+    comp = _compressor_with_routing()
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={
+                "track_index": 1, "device_index": 1, "enabled": True,
+                "source_display_name": "1-Drums", "gain_db": 3.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "normalized" in err
+    assert "set_parameter" in err
+    assert "S/C Gain" in err
+
+
+def test_set_sidechain_normalized_gain_refusal_does_not_touch_state(loaded_actions):
+    """The gain_db pre-validation refusal happens BEFORE enable/routing
+    side effects — partial-application would leave the user with a
+    half-configured sidechain that's hard to reason about."""
+    comp = _compressor_with_routing()
+    sc_on_before = next(p for p in comp.parameters if p.name == "S/C On").value
+    routing_before = comp.input_routing_type.display_name
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_sidechain",
+            params={
+                "track_index": 1, "device_index": 1, "enabled": True,
+                "source_display_name": "1-Drums", "gain_db": 3.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    # Neither side effect applied.
+    sc_on = next(p for p in comp.parameters if p.name == "S/C On")
+    assert sc_on.value == sc_on_before
+    assert comp.input_routing_type.display_name == routing_before
 
 
 def test_set_sidechain_works_on_glue_for_enable_only(loaded_actions):

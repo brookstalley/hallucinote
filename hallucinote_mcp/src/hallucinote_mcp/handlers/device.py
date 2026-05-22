@@ -1325,6 +1325,41 @@ def set_sidechain_handler(
             "'set_input_routing')."
         )
 
+    # Pre-validate gain_db before any mutation so refusal doesn't leave
+    # the enable / routing side effects half-applied. W6-K real-Live
+    # 2026-05-22: Live's Compressor S/C Gain has internal range
+    # min=0.0 max=1.0 (normalized) but reports value_display in dB —
+    # writing gain_db (e.g. 3.0) directly trips Live's range check
+    # ("Invalid value. Check the parameters range with min/max"). Live
+    # exposes no public dB→normalized conversion for DeviceParameter,
+    # so we refuse with a teaching error and route the caller to
+    # set_parameter (which takes the raw 0..1 value).
+    if gain_db is not None:
+        if gain_param is None:
+            class_name = getattr(dev, "class_name", "<unknown>")
+            raise NotImplementedError(
+                f"set_sidechain: device {class_name!r} has a sidechain-"
+                "enable param but no canonical gain param (no S/C Gain "
+                "found). Set gain via ableton_device(action='set_parameter') "
+                "after discovering the right name with get_parameters."
+            )
+        g_min = float(getattr(gain_param, "min", 0.0))
+        g_max = float(getattr(gain_param, "max", 1.0))
+        if g_min == 0.0 and g_max == 1.0:
+            class_name = getattr(dev, "class_name", "<unknown>")
+            raise NotImplementedError(
+                f"set_sidechain: device {class_name!r} has a normalized "
+                f"{gain_param.name!r} parameter (range 0.0..1.0) — `gain_db` "
+                "is unsafe here because Live exposes no public dB→normalized "
+                "conversion for DeviceParameter. Set the gain via "
+                f"ableton_device(action='set_parameter', "
+                f"parameter_name={gain_param.name!r}, value=<0..1>) "
+                "directly with the desired normalized value. For empirical "
+                "calibration, get_parameters reports value_display in dB at "
+                "any given raw value — Compressor's S/C Gain maps approximately "
+                "0.0=-inf dB, 0.4=0 dB, 1.0=+24 dB (non-linear curve)."
+            )
+
     # Toggle enable.
     enable_param.value = 1.0 if enabled else 0.0
 
@@ -1341,14 +1376,8 @@ def set_sidechain_handler(
         )
 
     if gain_db is not None:
-        if gain_param is None:
-            class_name = getattr(dev, "class_name", "<unknown>")
-            raise NotImplementedError(
-                f"set_sidechain: device {class_name!r} has a sidechain-"
-                "enable param but no canonical gain param (no S/C Gain "
-                "found). Set gain via ableton_device(action='set_parameter') "
-                "after discovering the right name with get_parameters."
-            )
+        # gain_param is guaranteed non-None and dB-native by the pre-
+        # validation above; safe to write directly.
         gain_param.value = float(gain_db)
 
     result: dict[str, Any] = {

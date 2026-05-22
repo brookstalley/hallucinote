@@ -197,6 +197,31 @@ def test_primer_advertises_resources():
     assert "ableton://" in PRIMER  # at least one URI shown
 
 
+def test_primer_resource_count_matches_actual_registry():
+    """Pattern-sweep guard (post-Arc-6 Critic): the PRIMER's resource count
+    headline drifted from 11 to 12 when Arc 5 / P3 added the first
+    templated resource (`hallucinote://song/{slug}/annotations`). A
+    future resource addition without a parallel PRIMER edit gets
+    caught here — the test asserts the quoted total matches
+    `len(RESOURCE_URIS) + len(RESOURCE_TEMPLATE_URIS)`."""
+    import re
+    from hallucinote_mcp.server import PRIMER
+
+    total = len(RESOURCE_URIS) + len(RESOURCE_TEMPLATE_URIS)
+    # PRIMER says "N resources" — sniff the headline number.
+    match = re.search(r"(\d+) resources", PRIMER)
+    assert match is not None, (
+        "PRIMER must advertise the total resource count (substring "
+        "'N resources') so clients see the surface size on initialize"
+    )
+    assert int(match.group(1)) == total, (
+        f"PRIMER claims {match.group(1)} resources but the registry has "
+        f"{total} (={len(RESOURCE_URIS)} static + "
+        f"{len(RESOURCE_TEMPLATE_URIS)} templated). "
+        "Update PRIMER in hallucinote_mcp/src/hallucinote_mcp/server.py."
+    )
+
+
 # ---------- Templated resources (W11-A: hallucinote:// + slug-in-URI) ----------
 
 

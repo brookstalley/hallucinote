@@ -297,7 +297,9 @@ class Kit:
             return _GM_DEFAULTS[canonical_name]
         return _canonical_to_chain(canonical_name, self.mappings_by_note)
 
-    def assert_has(self, *canonical_names: str) -> None:
+    def assert_has(
+        self, *canonical_names: str, strict: bool = False,
+    ) -> None:
         """Refuse early if this kit can't deliver every named canonical pad.
 
         Bulk fail-fast validation — call at the top of ``build.py`` before
@@ -307,10 +309,33 @@ class Kit:
         :class:`KeyError` naming the missing pads and the kit's captured
         chains.
 
-        Empty kit (pre-capture) treats every canonical as present via the
-        GM-default fall-through in :meth:`try_pitch_of` — this method only
-        catches genuine kit-incompleteness, not pre-capture state.
+        Modes:
+
+        - **Default (``strict=False``)**: empty kit (pre-capture) treats
+          every canonical as present via the GM-default fall-through in
+          :meth:`try_pitch_of`. The method only catches genuine kit-
+          incompleteness — "the kit can deliver these canonicals or fall
+          through to GM."
+
+        - **``strict=True``**: refuse on empty mappings too. Use when
+          you want "I want to know the kit's pads are characterized AND
+          deliver these canonicals" — guards against the sequence where
+          ``assert_has`` silently passes pre-capture, then the next
+          session populates ``drum_pad_mappings`` and ``pitch_of`` raises
+          on the wrong-sound case. Run capture first (e.g., via
+          ``/song-pick-instruments`` or ``/song-snapshot``) before
+          calling with ``strict=True``.
         """
+        if strict and not self.mappings_by_note:
+            raise KeyError(
+                f"Kit {self.name!r} has no captured pad mappings yet — "
+                "strict assert_has refuses pre-capture state because the "
+                "GM-default fall-through would silently pass every "
+                "canonical, then surface the wrong-sound case on a later "
+                "session once drum_pad_mappings is populated. Run capture "
+                "first (e.g. /song-snapshot or /song-pick-instruments) and "
+                "retry."
+            )
         missing = [c for c in canonical_names if self.try_pitch_of(c) is None]
         if missing:
             raise KeyError(

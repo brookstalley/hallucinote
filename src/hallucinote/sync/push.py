@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.capture import strip_return_slot_prefix
+from hallucinote.return_naming import strip_return_slot_prefix
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 

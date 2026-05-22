@@ -43,21 +43,25 @@ These are **initial** sends. If post-push iteration reveals the mix needs adjust
 
 ### The Amp Type envelope — E1's empirical driver
 
-This is the song's structural test of Arc 7-tail's enum-parameter envelope authoring. **Per-section partition** (one envelope segment per section clip on the Rhythm Gtr track):
+This is the song's structural test of Arc 7-tail's enum-parameter envelope authoring. Per-section character:
 
 | Section | Amp Type | Why |
 |---|---|---|
 | `intro` | Clean | Setting the chill mood. |
-| `verse1` | Clean | Reggae character. |
+| `verse1` | Clean | Reggae character (no breakpoint — Clean carries from intro). |
 | `chorus1` | Heavy | Metal interruption. |
 | `verse2` | Clean | Back to chill. |
 | `chorus2` | Heavy | Second metal interruption. |
-| `bridge` | Heavy | Sustained metal. |
+| `bridge` | Heavy | Sustained metal (no breakpoint — Heavy carries from chorus2). |
 | `outro` | Clean | Exhausted return to chill. |
 
-**Authoring approach (lesson learned from the prior build):** the envelope **must be authored per session clip** (Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a session clip covering the envelope's beat range). The prior build's mistake was authoring one big envelope spanning all 7 sections — Live couldn't route it because no single session clip covered all 256 beats. This rebuild authors 7 small envelopes, each scoped to a single section's session clip.
+**Authoring approach — monolithic rhythm-gtr clip + single envelope.** Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a session clip covering the envelope's full beat range. The schema constraint is **one envelope per `(device, parameter)`** — you can't author seven separate envelopes for the same Amp Type parameter, even if they target different time ranges. The structural fix:
 
-Each section's envelope is a single breakpoint at beat 0 of the clip with `curve='hold'` — instantly sets the Amp Type for that section. No transitions within sections; transitions happen at section boundaries via the next clip's envelope.
+- **Rhythm Gtr is monolithic.** One session clip on the Rhythm Gtr track, 256 beats long (the whole song / 64 bars), holding all the per-section gtr notes concatenated.
+- **One envelope, five breakpoints.** Breakpoints sit at the genre-flip boundaries with `curve_kind='hold'`: beat 0 → Clean, beat 64 → Heavy, beat 96 → Clean, beat 128 → Heavy, beat 224 → Clean. Same-value section boundaries get no breakpoint (`verse1` inherits Clean from `intro`; `bridge` inherits Heavy from `chorus2`).
+- **Other tracks (drums / bass / organ / lead) stay per-section** — their clips are short and per-section for compose-time convenience; only Rhythm Gtr is monolithic because only Rhythm Gtr hosts an envelope.
+
+The prior build (v1) authored one envelope across all sections AND used per-section clips for Rhythm Gtr — the planner correctly refused because no single clip covered all 256 beats. The v2 fix is the monolithic-clip approach above. The empirical-Live verification (Arc 7-tail commit `ec4e74c`, 2026-05-22) confirmed all 10 push phases ok including `envelopes 1/1` and the read-back from Live matched the authored breakpoints exactly.
 
 ### Master + Vocal Bus
 

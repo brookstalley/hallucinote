@@ -39,8 +39,8 @@ The result: machine-tight everything, with the bass *slightly* ahead to feel "ru
 
 ### How this is implemented
 
-- **Drums:** the drum helper accepts a `feel` parameter. Reggae sections pass `feel='drag-skank'` (custom per-pad offsets per the table above); metal sections pass `feel='straight'`.
-- **Bass / Gtr / Organ / Lead:** the build authors notes with explicit `start_beats` offsets — the offsets are encoded in the hand-authored note lists, not computed at runtime. This makes the feel inspectable at compose time + visible in the DB.
+- **Drums:** separate helper per genre — `_reggae_drums(start_beats, length_beats, *, lazy=0.04)` bakes the per-pad drag offsets directly into note `start_beats` (snare +0.04, hat +0.02, kick on grid); `_metal_drums(start_beats, length_beats)` emits 16th-grid notes with no offsets. The numeric offsets in the table above ARE the values in code; there's no shared `feel` enum because the two grooves diverge on every pad — a single parameter abstraction would have to model "which pads drag and by how much" per genre, which collapses to having separate helpers anyway.
+- **Bass / Gtr / Organ / Lead:** the build authors notes with explicit `start_beats` offsets — the offsets are encoded in the hand-authored note lists, not computed at runtime. This makes the feel inspectable at compose time + visible in the DB. (Exception: the very first note of each clip — `start_beats=0.0` — can't carry a negative push; helpers clamp to zero so Live's no-negative-beats invariant is satisfied.)
 - **Microtiming is final.** No `/clip-humanize` velocity-jitter pass on top — the velocities are already shaped (see below) and any timing humanization would muddy the deliberate feel choices.
 
 ### Velocity shaping (separate from microtiming, but part of feel)

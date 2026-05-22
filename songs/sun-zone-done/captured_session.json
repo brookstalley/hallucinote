@@ -1,44 +1,42 @@
 {
-  "_note": "Hand-authored chain snapshot for sun-zone-done. Sound design IS composition — chains ship in the snapshot, not as a post-push mix pass. Uses preset_query for cross-machine portable resolution (Sweep B). Tempo 180 / 4/4 / E (Em); 3 returns (Plate / Room / DubDelay); 7 tracks (6 instrument + 1 empty vocal bus pre-wired with sends).",
-  "_capture_status": "synthetic: composer-time chains, pre-push",
+  "_note": "HAND-AUTHORED synthetic snapshot for sun-zone-done. v2 rebuild: 5 instrument tracks + 3 returns. Reggae↔metal mashup; same instruments throughout, Amp Type on Rhythm Gtr is the genre-flip mechanism (per-section enum envelope, partitioned per clip per `06-per-section-feel.md` to satisfy Live 12.4 LOM's clip-coverage requirement).",
+  "_capture_status": "synthetic: scaffold for v2 rebuild; refresh via /song-snapshot once pushed and tweaked in Live",
   "song": {
     "tempo": 180.0,
     "signature": "4/4",
-    "track_count": 7,
+    "track_count": 5,
     "return_track_count": 3,
     "master": {"volume": 0.85, "panning": 0.0}
   },
   "returns": [
     {
       "index": 1, "name": "Plate", "volume": 0.85, "panning": 0.0,
-      "_note": "Plate-character reverb. Reggae spaces, lead voice, future vocals.",
       "devices": [
         {
           "index": 1, "name": "Hybrid Reverb", "class": "Hybrid Reverb",
           "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "Vocal Plate Hall", "path_prefix": ["Hybrid Reverb"]}
+          "preset_query": {"root": "audio_effects", "pattern": "Hybrid Reverb"},
+          "_note": "Plate-character reverb for dub vibes; long tail."
         }
       ]
     },
     {
-      "index": 2, "name": "Room", "volume": 0.85, "panning": 0.0,
-      "_note": "Short room reverb. Metal tightness, snare body.",
+      "index": 2, "name": "Room", "volume": 0.80, "panning": 0.0,
       "devices": [
         {
-          "index": 1, "name": "Hybrid Reverb", "class": "Hybrid Reverb",
+          "index": 1, "name": "Reverb", "class": "Reverb",
           "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "Small Dark Room", "path_prefix": ["Hybrid Reverb"]}
+          "_note": "Tight room for metal punch; short tail."
         }
       ]
     },
     {
-      "index": 3, "name": "DubDelay", "volume": 0.85, "panning": 0.0,
-      "_note": "Tape-character delay. Reggae transitions, organ skanks, WHACK tail. Tempo-synced (set dotted-8th post-load for dub feel).",
+      "index": 3, "name": "DubDelay", "volume": 0.75, "panning": 0.0,
       "devices": [
         {
           "index": 1, "name": "Echo", "class": "Echo",
           "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "Dub Syndicate", "path_prefix": ["Echo"]}
+          "_note": "Quarter-note echo with feedback for reggae snare bounces."
         }
       ]
     }
@@ -47,183 +45,118 @@
     {
       "index": 1, "name": "01 Drums", "type": "midi",
       "volume": 0.75, "panning": 0.0,
-      "sends": {"Plate": 0.15, "Room": 0.35, "DubDelay": 0.0},
-      "_note": "Hot Rod Kit — punchy rock-leaning Drum Rack, full GM-style pad mapping (kick=36 / rim=37 / snare=38 / hat=42 / open=46 / crash=49 / ride=51). Velocity authoring carries the genre dynamic. One-drop pattern for reggae, gallop+double-kick for metal.",
+      "sends": {"Plate": 0.15, "Room": 0.10, "DubDelay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Hot Rod Kit", "class": "Drum Rack",
           "kind": "instrument",
-          "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"}
+          "preset_query": {"root": "drums", "pattern": "Hot Rod Kit"},
+          "_note": "Drum Rack with Hot Rod Kit preset; known-good on this machine. Pads addressed by MIDI note via the kit helper."
         },
         {
           "index": 2, "name": "EQ Eight", "class": "EQ Eight",
           "kind": "audio_effect"
         },
         {
-          "index": 3, "name": "Boom in E", "class": "Drum Buss",
+          "index": 3, "name": "Drum Buss", "class": "Drum Buss",
           "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "^Boom in E\\.adv$", "path_prefix": ["Drum Buss"], "mode": "regex"},
-          "_note": "Drum Buss preset tuned for the song's E tonic — bus glue + character, baked-in authorship."
+          "_note": "Bus glue + character; default preset."
         },
         {
-          "index": 4, "name": "Glue Compressor", "class": "Glue Compressor",
+          "index": 4, "name": "Compressor", "class": "Compressor",
           "kind": "audio_effect"
         }
       ]
     },
-
     {
       "index": 2, "name": "02 Bass", "type": "midi",
       "volume": 0.70, "panning": 0.0,
-      "sends": {"Plate": 0.0, "Room": 0.0, "DubDelay": 0.0},
-      "_note": "Tension modeled electric bass — same instrument, articulation flips between fingered reggae round and palm-muted metal tight. Mud killer: NO sends.",
-      "devices": [
-        {
-          "index": 1, "name": "Electric Driven Bass", "class": "Tension",
-          "kind": "instrument",
-          "preset_query": {"root": "instruments", "pattern": "Electric Driven Bass", "path_prefix": ["Tension"]}
-        },
-        {
-          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
-          "kind": "audio_effect",
-          "_note": "HPF below 35 Hz; gentle low-mid bump at 200 Hz for body. Tune post-load."
-        },
-        {
-          "index": 3, "name": "Gritty Bass", "class": "Saturator",
-          "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "Gritty Bass", "path_prefix": ["Saturator"]},
-          "_note": "Bass saturation is composition, not a mix afterthought."
-        },
-        {
-          "index": 4, "name": "Compressor", "class": "Compressor",
-          "kind": "audio_effect",
-          "_note": "Light, ~4:1, fast attack — tames metal palm-mute spikes without strangling reggae dynamics."
-        }
-      ]
-    },
-
-    {
-      "index": 3, "name": "03 Rhythm Gtr", "type": "midi",
-      "volume": 0.70, "panning": 0.0,
-      "sends": {"Plate": 0.10, "Room": 0.20, "DubDelay": 0.0},
-      "_note": "One modeled Strat-style guitar; Amp's Type+Drive parameters automated per section (Clean for reggae skanks, Heavy/Metalic for metal gallops). Same instrument, two amp states.",
-      "devices": [
-        {
-          "index": 1, "name": "Single Coil Guitar", "class": "Tension",
-          "kind": "instrument",
-          "preset_query": {"root": "instruments", "pattern": "Single Coil Guitar", "path_prefix": ["Tension"]}
-        },
-        {
-          "index": 2, "name": "Amp", "class": "Amp",
-          "kind": "audio_effect",
-          "_note": "Defaults to Clean type for reggae. Type and Gain parameters automated per section."
-        },
-        {
-          "index": 3, "name": "4x12 Cab", "class": "Cabinet",
-          "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "4x12 Cab", "path_prefix": ["Cabinet"]}
-        },
-        {
-          "index": 4, "name": "EQ Eight", "class": "EQ Eight",
-          "kind": "audio_effect",
-          "_note": "Cut mud below 100 Hz, presence boost at 3 kHz."
-        },
-        {
-          "index": 5, "name": "Compressor", "class": "Compressor",
-          "kind": "audio_effect",
-          "_note": "Light, tames metal palm-mute spikes."
-        }
-      ]
-    },
-
-    {
-      "index": 4, "name": "04 Organ", "type": "midi",
-      "volume": 0.65, "panning": -0.25,
-      "sends": {"Plate": 0.20, "Room": 0.0, "DubDelay": 0.15},
-      "_note": "Hammond-style drawbar organ. Bandstand preset has the right reggae-skank bite. Drops out entirely in metal sections (clip-level — no notes).",
-      "devices": [
-        {
-          "index": 1, "name": "Organ Bandstand", "class": "Instrument Rack",
-          "kind": "instrument_rack",
-          "preset_query": {"root": "instruments", "pattern": "Organ Bandstand", "path_prefix": ["Wavetable"]},
-          "_note": "Wavetable-based Organ Bandstand rack (modern version). Pattern duplicates with Instrument Rack root — path_prefix disambiguates."
-        },
-        {
-          "index": 2, "name": "Chorus-Ensemble", "class": "Chorus-Ensemble",
-          "kind": "audio_effect",
-          "_note": "Bakes Leslie-cabinet shimmer into the organ tone. Authorship, not mix-time tweak."
-        },
-        {
-          "index": 3, "name": "EQ Eight", "class": "EQ Eight",
-          "kind": "audio_effect",
-          "_note": "HPF below 200 Hz (stays above the vocal hole). Gentle high boost for skank presence."
-        }
-      ]
-    },
-
-    {
-      "index": 5, "name": "05 Lead Voice", "type": "midi",
-      "volume": 0.65, "panning": 0.0,
-      "sends": {"Plate": 0.30, "Room": 0.15, "DubDelay": 0.20},
-      "_note": "PLACEHOLDER for future vocals. Mono Wavetable lead carries the vocal melody in E3-E4 (up to G4 in metal shouts). Saturator+Comp pre-applies the vocal-bus treatment so when real vocals arrive the FX chain matches. See decisions/05-vocals-and-placeholder-lead.md.",
-      "devices": [
-        {
-          "index": 1, "name": "Wavetable", "class": "Wavetable",
-          "kind": "instrument",
-          "_note": "Bare Wavetable instance. Configure post-load: mono mode on, glide ~30ms, saw wavetable, slight unison detune. Per-section patch variation: warm filtered saw for reggae, brighter cut-through for metal."
-        },
-        {
-          "index": 2, "name": "A Bit Warmer", "class": "Saturator",
-          "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "A Bit Warmer", "path_prefix": ["Saturator"]}
-        },
-        {
-          "index": 3, "name": "EQ Eight", "class": "EQ Eight",
-          "kind": "audio_effect",
-          "_note": "Carved for E3-E4 register; presence at 2-3 kHz."
-        },
-        {
-          "index": 4, "name": "Compressor", "class": "Compressor",
-          "kind": "audio_effect",
-          "_note": "Vocal-style smoothing: 4:1, medium attack."
-        }
-      ]
-    },
-
-    {
-      "index": 6, "name": "06 Counter-Melody", "type": "midi",
-      "volume": 0.55, "panning": 0.20,
-      "sends": {"Plate": 0.40, "Room": 0.0, "DubDelay": 0.30},
-      "_note": "PERMANENT layer — stays when vocals arrive. Operator bell-FM sits B4-E5 (above vocal register). Higher reverb/delay puts it slightly behind the vocal in depth.",
+      "sends": {"Plate": 0.0, "Room": 0.05, "DubDelay": 0.0},
       "devices": [
         {
           "index": 1, "name": "Operator", "class": "Operator",
           "kind": "instrument",
-          "_note": "Bare Operator. Configure post-load: FM algorithm with bell-like ratio (e.g., A=1, B=3.5 mod into A), short envelopes, slight modulation."
+          "_note": "Warm sine sub-bass; default Operator patch (will be tuned via build.py if needed)."
         },
         {
-          "index": 2, "name": "A Bit Warmer", "class": "Saturator",
-          "kind": "audio_effect",
-          "preset_query": {"root": "audio_effects", "pattern": "A Bit Warmer", "path_prefix": ["Saturator"]}
+          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
+          "kind": "audio_effect"
         },
         {
-          "index": 3, "name": "EQ Eight", "class": "EQ Eight",
-          "kind": "audio_effect",
-          "_note": "HPF below 400 Hz; presence in 4-6 kHz."
-        },
-        {
-          "index": 4, "name": "Compressor", "class": "Compressor",
-          "kind": "audio_effect",
-          "_note": "Light, holds the part steady against the placeholder lead."
+          "index": 3, "name": "Compressor", "class": "Compressor",
+          "kind": "audio_effect"
         }
       ]
     },
-
     {
-      "index": 7, "name": "07 Vocal Bus", "type": "midi",
+      "index": 3, "name": "03 Rhythm Gtr", "type": "midi",
       "volume": 0.70, "panning": 0.0,
-      "sends": {"Plate": 0.30, "Room": 0.15, "DubDelay": 0.20},
-      "_note": "EMPTY — pre-wired for future vocals. Send levels match Lead Voice so vocals slot into the same spatial placement. No instrument/devices yet; vocal-tracking session adds EQ/Comp/De-Esser to taste. When real vocals arrive, sidechain sources (organ + rhythm gtr) repoint from Lead Voice -> Vocal Bus."
+      "sends": {"Plate": 0.05, "Room": 0.10, "DubDelay": 0.0},
+      "devices": [
+        {
+          "index": 1, "name": "Tension", "class": "Tension",
+          "kind": "instrument",
+          "_note": "Synth guitar via Tension; pluck/strum model. The Amp downstream provides the genre-flip character."
+        },
+        {
+          "index": 2, "name": "Amp", "class": "Amp",
+          "kind": "audio_effect",
+          "_note": "Genre-flip device. Amp Type per-section envelope: Clean for reggae, Heavy for metal. See 05-instrumentation-and-chains.md."
+        },
+        {
+          "index": 3, "name": "Cabinet", "class": "Cabinet",
+          "kind": "audio_effect"
+        },
+        {
+          "index": 4, "name": "EQ Eight", "class": "EQ Eight",
+          "kind": "audio_effect"
+        },
+        {
+          "index": 5, "name": "Compressor", "class": "Compressor",
+          "kind": "audio_effect"
+        }
+      ]
+    },
+    {
+      "index": 4, "name": "04 Organ", "type": "midi",
+      "volume": 0.65, "panning": -0.15,
+      "sends": {"Plate": 0.20, "Room": 0.05, "DubDelay": 0.0},
+      "devices": [
+        {
+          "index": 1, "name": "Operator", "class": "Operator",
+          "kind": "instrument",
+          "_note": "Hammond-style organ via Operator; default patch (tunable). Drops out during metal sections (no metal clips on this track)."
+        },
+        {
+          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
+          "kind": "audio_effect"
+        },
+        {
+          "index": 3, "name": "Chorus-Ensemble", "class": "Chorus-Ensemble",
+          "kind": "audio_effect",
+          "_note": "Light chorus for organ character."
+        }
+      ]
+    },
+    {
+      "index": 5, "name": "05 Lead", "type": "midi",
+      "volume": 0.70, "panning": 0.0,
+      "sends": {"Plate": 0.25, "Room": 0.10, "DubDelay": 0.0},
+      "devices": [
+        {
+          "index": 1, "name": "Wavetable", "class": "Wavetable",
+          "kind": "instrument",
+          "_note": "Warm pad / lead voice; placeholder for the eventual vocal hook."
+        },
+        {
+          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
+          "kind": "audio_effect"
+        },
+        {
+          "index": 3, "name": "Compressor", "class": "Compressor",
+          "kind": "audio_effect"
+        }
+      ]
     }
   ]
 }

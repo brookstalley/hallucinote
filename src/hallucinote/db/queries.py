@@ -764,6 +764,97 @@ def get_request_event_summary(
     return {r["kind"]: r["n"] for r in rows}
 
 
+def find_related_decisions(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    keywords: list[str],
+    limit: int = 20,
+) -> list[sqlite3.Row]:
+    """Search a song's audit log + annotations for prior compose-time
+    decisions matching one or more keywords.
+
+    Three sources are scanned in a single UNION ALL pass, song-scoped:
+      - ``requests.prompt_text`` — verbatim seed prompt for compose / push /
+        pull / mutate cycles.
+      - ``requests.metadata_json`` — bag carrying the convention key
+        ``decision_rationale`` (the LLM's reasoning at compose time).
+      - ``annotations.body`` — structured composer-intent notes from
+        ``ableton_annotation(action='create', ...)``.
+
+    Multi-keyword semantics: AND across keywords on each source — every
+    keyword must appear (case-insensitive LIKE) in the row's searchable
+    text. Single-keyword callers pass a one-element list. Empty
+    ``keywords`` returns ``[]`` (no broad-dump path; broad listing is
+    what ``list_requests_for_song`` / ``get_annotations_for_song`` are
+    for).
+
+    Each row carries a synthetic ``source`` column (``'request'`` or
+    ``'annotation'``) and a synthetic ``sort_ts`` column (``requests.ts``
+    or ``annotations.created_at``) so callers can route per-source
+    rendering and rely on most-recent-first ordering across types.
+
+    Out of scope: cross-song search; multi-user attribution; semantic /
+    embedding search; track / bar scope filters (callers compose with
+    ``get_annotations_for_track`` / ``get_annotations_at_bar`` if they
+    need a narrower window).
+    """
+    if not keywords:
+        return []
+    patterns = [f"%{k}%" for k in keywords]
+    # AND-of-keywords on each side: every keyword must appear in the row's
+    # searchable text. Built as an explicit AND chain so we can reuse the
+    # patterns list across both arms of the UNION.
+    request_match_sql = " AND ".join(
+        "(prompt_text LIKE ? OR metadata_json LIKE ?)" for _ in patterns
+    )
+    annotation_match_sql = " AND ".join("body LIKE ?" for _ in patterns)
+    request_params: list[Any] = [song_id]
+    for pat in patterns:
+        request_params.extend((pat, pat))
+    annotation_params: list[Any] = [song_id]
+    for pat in patterns:
+        annotation_params.append(pat)
+    # NULL columns on each side maintain a uniform row shape — every
+    # SELECT returns the same column list in the same order, so callers
+    # can read both source kinds without type-routing by source.
+    sql = f"""
+        SELECT 'request' AS source,
+               id,
+               ts AS sort_ts,
+               actor,
+               kind,
+               intent,
+               prompt_text,
+               metadata_json,
+               NULL AS body,
+               NULL AS track_id,
+               NULL AS start_bar,
+               NULL AS end_bar
+          FROM requests
+         WHERE song_id = ? AND {request_match_sql}
+        UNION ALL
+        SELECT 'annotation' AS source,
+               id,
+               created_at AS sort_ts,
+               NULL AS actor,
+               kind,
+               NULL AS intent,
+               NULL AS prompt_text,
+               NULL AS metadata_json,
+               body,
+               track_id,
+               start_bar,
+               end_bar
+          FROM annotations
+         WHERE song_id = ? AND {annotation_match_sql}
+        ORDER BY sort_ts DESC
+        LIMIT ?
+    """
+    params = request_params + annotation_params + [limit]
+    return conn.execute(sql, params).fetchall()
+
+
 def find_markdown_refs_for_request(
     conn: sqlite3.Connection, request_id: str
 ) -> list[sqlite3.Row]:

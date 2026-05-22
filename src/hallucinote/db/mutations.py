@@ -2656,8 +2656,18 @@ def set_device_parameter(
     value_items_json: str | None = None
     if value_items is not None:
         items_list = [str(item) for item in value_items]
-        if items_list:
-            value_items_json = json.dumps(items_list)
+        # Reject empty value_items=[] symmetrically with M.create_enum_envelope's
+        # kwarg path. An empty list is ambiguous — pass None for continuous
+        # params, or a non-empty list for enum params. Pre-fix this branch
+        # silently coerced [] to NULL, asymmetric with the envelope path
+        # which raised. (E1 Critic paper-cut 2026-05-22.)
+        if not items_list:
+            raise ValueError(
+                "value_items=[] is ambiguous — pass None for continuous "
+                "params or a non-empty list of enum strings (Live's "
+                "value_items tuple in order)"
+            )
+        value_items_json = json.dumps(items_list)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
         """SELECT id, value_display, value_normalized, value_items_json

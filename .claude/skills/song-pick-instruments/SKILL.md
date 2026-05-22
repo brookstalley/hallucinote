@@ -58,6 +58,17 @@ Reject unknown modes with a teaching error listing the valid choices.
    - **First device** — use `/track-new-with-instrument` (creates the track + loads the first device, typically the instrument), OR if the track exists, call `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)` directly.
    - **Subsequent devices in the chain** — call `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)` once per device, in order. Each lands at the end of the track's device chain, after the instrument.
    - **`kind` is REQUIRED**. Pass the browser node's `name` directly — that's the BROWSER DISPLAY NAME the loader matches against. Examples that work: `Drum Rack`, `EQ Eight`, `Wavetable`, `Compressor`, `Phaser-Flanger`. Arc 4 / D4: Live's internal class names (`DrumGroupDevice`, `Eq8`, `InstrumentVector`, etc.) no longer resolve — there's no translation table anymore, the loader uses what Live's `device.class_display_name` reports natively. Third-party plugins use the same string in both spaces.
+   - **Capture `resolved_path` after each load (E3, W13-A v1.0 snapshot-write side).** Every `ableton_device(action='load')` response carries `resolved_path` — the browser-path segments from the root key to the loaded item's name (e.g. `["instruments", "Operator"]` or `["plugins", "Native Instruments", "Massive X", "FatBass"]`). Keep a running list of load records as you go through the chain:
+     ```python
+     loads = []  # accumulate across all tracks
+     # after each ableton_device(action='load') call:
+     loads.append({
+         "track_index": <i>,
+         "device_index": <response.device_index>,
+         "browser_path": <response.resolved_path>,
+     })
+     ```
+     The list gets handed to `compile_snapshot(..., browser_paths=loads)` in step 6 so the snapshot carries the cross-machine fallback identity. Skipping this step doesn't break the load itself — push falls back to `preset_uri` alone — but it means a teammate on a different Live install won't be able to auto-resolve the part if their per-machine FileId differs.
    - **Sends** — set initial send levels with `ableton_track(action='set_send', track_index=<i>, return_index=<j>, value=<0..1>)`. Skip 0.0-level sends.
 
 5. **Write a signal-chain decision (W17-G).** After the user confirms the chains, write `songs/<slug>/decisions/NN-signal-chains.md` (next free `NN`, typically right after `08-instrument-picks.md` or replacing it for fresh songs). Shape:
@@ -89,7 +100,24 @@ Reject unknown modes with a teaching error listing the valid choices.
 
    This decision file IS the sound design. Treat post-instrument processing as authorship, not as a "mix-time follow-up." Older songs that have an `08-instrument-picks.md` with a "mix-time follow-ups" section: leave it as historical (don't backport), and write the new chains decision alongside.
 
-6. **Capture for the DB.** After loading, run `tools/capture_cli.py` (or invoke `/song-snapshot`) so `captured_session.json` reflects the full chain per track. The captured `devices[]` array preserves chain order; each device's `(class, display_name, manufacturer, pack_name, params_dialed)` is what W13-A's fallback-identity path uses to re-find equivalents on another machine.
+6. **Capture for the DB.** After loading, run the capture probes yourself (the same sequence `tools/capture_cli.py plan` documents — global session info, returns, per-track info + sends + device parameters + nested rack chains) and assemble the result via `compile_snapshot`, passing your accumulated `loads` list:
+
+   ```python
+   from hallucinote.capture import compile_snapshot
+   import json, pathlib
+
+   snapshot = compile_snapshot(
+       session_info=<dict from ableton_session(action='info')>,
+       returns=<probed returns>,
+       tracks=<probed tracks>,
+       browser_paths=loads,  # the list you accumulated in step 4
+   )
+   pathlib.Path("songs/<slug>/captured_session.json").write_text(
+       json.dumps(snapshot, indent=2)
+   )
+   ```
+
+   Do NOT delegate this step to `/song-snapshot` — that skill's job is *refreshing* an existing snapshot from probes (it can't see `resolved_path` because Live doesn't track each device's browser origin after load). Only the just-loaded flow has the `resolved_path` values in hand, so the just-loaded flow is what writes them to the snapshot. The captured `devices[]` array preserves chain order; each device's `(class, display_name, browser_path, manufacturer, pack_name, params_dialed)` is what W13-A's fallback-identity path uses to re-find equivalents on another machine.
 
 7. **For unrestricted mode only:** tell the user explicitly that the song is not strict-portable; collaborators will need to install whatever `compat check` flags before their push.
 

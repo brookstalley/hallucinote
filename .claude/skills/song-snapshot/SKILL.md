@@ -56,19 +56,28 @@ For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — Arc 4 
 
 ## Step 2 — Write the fresh capture to a side-by-side file
 
-Compile the dict and write it to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Use this Python invocation so the assembly goes through the canonical helper:
+Compile the dict and write it to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Capture probes don't expose `browser_path` (Live doesn't track each loaded device's browser origin), so the refresh would silently lose the W13-A v1.0 fallback identity for every device — `preserve_browser_paths` carries the old paths forward where device identity (parent index + position + class) still matches:
 
 ```python
-from hallucinote.capture import compile_snapshot
+from hallucinote.capture import compile_snapshot, preserve_browser_paths
 import json, pathlib
 
-snapshot = compile_snapshot(
+old_path = pathlib.Path("songs/<slug>/captured_session.json")
+old = json.loads(old_path.read_text())
+
+new = compile_snapshot(
     session_info=<dict you assembled>,
     returns=<list>,
     tracks=<list>,
 )
+# E3 (W13-A v1.0): carry browser_path forward for devices whose identity
+# (parent index + position + class) still matches. Devices the user
+# swapped/moved drop their old path silently — it's stale for the new
+# device at that slot.
+preserve_browser_paths(old, new)
+
 pathlib.Path("songs/<slug>/captured_session.refresh.json").write_text(
-    json.dumps(snapshot, indent=2)
+    json.dumps(new, indent=2)
 )
 ```
 
@@ -88,7 +97,14 @@ python tools/capture_cli.py diff \
 
 Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes / no / show full diff)"*
 
-- **yes** → `mv songs/<slug>/captured_session.refresh.json songs/<slug>/captured_session.json` and confirm.
+- **yes** → merge first, then move. The merge preserves sticky device fields (`browser_path` — captured at load time, not surfaced by list-time probes) so a refresh doesn't wipe the W13-A v1.0 cross-machine fallback identity:
+  ```bash
+  python tools/capture_cli.py merge \
+    songs/<slug>/captured_session.json \
+    songs/<slug>/captured_session.refresh.json \
+    -o songs/<slug>/captured_session.json
+  rm songs/<slug>/captured_session.refresh.json
+  ```
 - **no** → delete the `.refresh` file and stop. Tell the user "no changes written."
 - **show full diff** → cat the stdout JSON and re-ask.
 

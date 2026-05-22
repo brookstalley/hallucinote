@@ -274,8 +274,18 @@ CREATE TABLE IF NOT EXISTS devices (
     id              TEXT PRIMARY KEY,
     chain_id        TEXT NOT NULL REFERENCES device_chains(id) ON DELETE CASCADE,
     position        INTEGER NOT NULL,
+    -- Arc 4 / D4: `kind` is the browser DISPLAY NAME (= Live's
+    -- `device.class_display_name`): "Compressor", "Phaser-Flanger",
+    -- "EQ Eight", "Operator". The loader's kind-as-given walk matches
+    -- against this directly in Live's browser tree.
     kind            TEXT NOT NULL,
     display_name    TEXT NOT NULL,
+    -- Arc 4 / D4: Live's INTERNAL class identifier ("Compressor2",
+    -- "PhaserNew", "PluginDevice"). Informational + drives plugin
+    -- classification (compat-check reads this to detect third-party
+    -- plugins). Captured-from-Live writes populate it; hand-authored
+    -- snapshots may omit it.
+    class_name      TEXT,
     preset_uri      TEXT,
     -- Sweep B: compose-time portable preset selector. JSON-serialized
     -- {root, pattern, mode?, path_prefix?, case_sensitive?}. Resolved at
@@ -501,7 +511,22 @@ CREATE TABLE IF NOT EXISTS requests (
     actor           TEXT NOT NULL,
     intent          TEXT NOT NULL,
     payload_json    TEXT,
-    song_id         TEXT REFERENCES songs(id) ON DELETE SET NULL
+    song_id         TEXT REFERENCES songs(id) ON DELETE SET NULL,
+    -- W8-B: cycle metadata. Populated at create_request time + closed by
+    -- M.close_request. `kind` discriminates compose / push / pull /
+    -- capture / mutate. `duration_ms` and `outcome` (success / failure /
+    -- aborted) close out the cycle.
+    kind            TEXT,
+    duration_ms     INTEGER,
+    outcome         TEXT,
+    -- Arc 2 / B3: provenance rationale fields. `prompt_text` carries the
+    -- verbatim seed prompt. `parent_id` self-FKs so an MCP auto-`mutate`
+    -- request chains to its enclosing `compose` parent (degraded but
+    -- always-present provenance). `metadata_json` is a bag of contextual
+    -- signals — {model, git_sha, branch, session_id, hostname, ...}.
+    prompt_text     TEXT,
+    parent_id       TEXT REFERENCES requests(id) ON DELETE SET NULL,
+    metadata_json   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);

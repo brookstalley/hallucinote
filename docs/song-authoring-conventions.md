@@ -197,6 +197,30 @@ Long envelopes spanning multiple session clips are also W10-F-refused — see th
 
 ---
 
+## Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)
+
+Discrete-enum device parameters automate the same way as continuous ones — Live exposes them as numeric (`value_items.index(name)`) — but composing at the index level forces authors to memorize Live's enum ordering. `M.create_enum_envelope` is the compose-time sugar:
+
+```python
+M.create_enum_envelope(
+    conn,
+    device_id=amp_id,
+    parameter_name="Amp Type",
+    breakpoints=[
+        {"time_beats": 0.0, "value": "Clean"},     # reggae section
+        {"time_beats": 32.0, "value": "Heavy"},    # metal section
+    ],
+)
+```
+
+The helper resolves enum names via `device_parameters.value_items_json` — populated at pull time when the param's `is_quantized=True`. If the snapshot doesn't have the param's cardinality yet (pre-E1 capture, or the param wasn't captured at all), pass `value_items=[...]` explicitly as an escape hatch. Numeric authoring still works via `M.create_envelope` + `M.replace_breakpoints` directly.
+
+On the MCP side, `ableton_automation(action='write_envelope', value_type='enum', ...)` mirrors the same surface for direct callers (planner-emitted envelopes go through the numeric path since the DB stores indices). `value_type='enum'` is only valid for `target_kind='device_parameter'` — mixer / pan / send / clip_cc / clip_pitch_bend / note_expression target continuous parameters by definition.
+
+Breakpoints default to `curve='hold'` for enum envelopes (Live's `Envelope.insert_step` semantics — discrete-enum params can't ramp).
+
+---
+
 ## Tempo of non-4/4 BPM
 
 Live's BPM is always the **quarter-note pulse**, regardless of meter. If you're thinking in another pulse (eighth in 7/8, dotted-quarter in 6/8, etc.), use the `hallucinote.tempo.to_live_bpm` helper:

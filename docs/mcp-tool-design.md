@@ -270,7 +270,7 @@ V1 close-out 2026-05-17 partially resolved gap #4: `ableton_note(action='list')`
 | Action | Args |
 |---|---|
 | `help`, `list`, `clear`, `clear_all` | inherit `manage_clip_automation` shape |
-| `write_envelope` | `target_kind: clip_cc\|clip_pitch_bend\|note_expression\|device_parameter\|mixer_volume\|mixer_pan\|send_level`, target identifiers, `breakpoints` |
+| `write_envelope` | `target_kind: clip_cc\|clip_pitch_bend\|note_expression\|device_parameter\|mixer_volume\|mixer_pan\|send_level`, target identifiers, `breakpoints`, optional `value_type: continuous\|enum` (enum requires `target_kind='device_parameter'`; mirrors `set_parameter`'s enum path) |
 | `get_envelope` | `target_kind`, target identifiers (new — gap today) |
 
 The seven-target envelope shape Hallucinote's `mcp_names.ALIASES_TODAY` already models (`write_clip_cc_envelope`, `write_clip_pitch_bend_envelope`, ..., 8 entries) collapses into one `ableton_automation(action='write_envelope', target_kind=...)`.

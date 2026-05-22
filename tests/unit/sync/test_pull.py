@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from typing import Any
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -1691,31 +1692,41 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
 
 
 def _params_payload(
-    *entries: tuple[str, float, str, float, float, bool],
+    *entries: tuple,
     track_index: int = 5,
     device_index: int = 1,
 ) -> dict:
     """Build an `ableton_device(action='get_parameters', detail='full')`
     payload from ``(name, value, value_display, min, max, is_enum)``
-    tuples. Mirrors the real ``get_parameters_handler`` shape with
-    ``detail='full'`` so apply tests exercise the wire form W5-D
-    actually sees.
+    tuples — or 7-tuples carrying a trailing ``value_items`` list for
+    enum params (matches the real handler's detail='full' output where
+    is_enum=True params carry value_items per handlers/device.py).
     """
+    params: list[dict[str, Any]] = []
+    for entry in entries:
+        if len(entry) == 6:
+            name, value, display, min_v, max_v, is_enum = entry
+            value_items: list[str] | None = None
+        elif len(entry) == 7:
+            name, value, display, min_v, max_v, is_enum, value_items = entry
+        else:
+            raise ValueError(f"unexpected param entry shape: {entry!r}")
+        item: dict[str, Any] = {
+            "name": name,
+            "value": float(value),
+            "value_display": display,
+            "min": float(min_v),
+            "max": float(max_v),
+            "is_enum": bool(is_enum),
+        }
+        if value_items is not None:
+            item["value_items"] = list(value_items)
+        params.append(item)
     return {
         "device_index": device_index,
         "parent_kind": "track",
         "track_index": track_index,
-        "parameters": [
-            {
-                "name": name,
-                "value": float(value),
-                "value_display": display,
-                "min": float(min_v),
-                "max": float(max_v),
-                "is_enum": bool(is_enum),
-            }
-            for (name, value, display, min_v, max_v, is_enum) in entries
-        ],
+        "parameters": params,
     }
 
 
@@ -2093,6 +2104,82 @@ def test_apply_device_parameters_clamps_normalized_to_valid_range(
     assert out.mutations == 1
     row = Q.get_device_parameters(conn, did)[0]
     assert row["value_normalized"] == pytest.approx(1.0)
+
+
+def test_apply_device_parameters_captures_value_items_for_enum(
+    conn, song, session,
+):
+    """E1: pull persists value_items for enum params so the compose-time
+    envelope helper can resolve enum-name breakpoints without the
+    build.py author hand-listing the cardinality."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Guitar")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Amp", display_name="Amp",
+    )
+    amp_items = ["Clean", "Boost", "Blues", "Heavy", "Smith", "Lead", "Bass"]
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Amp Type", 0.0, "Clean", 0.0, 6.0, True, amp_items),
+                ("Bass", 0.5, "0.50", 0.0, 1.0, False),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2
+    row = conn.execute(
+        "SELECT value_items_json FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (did, "Amp Type"),
+    ).fetchone()
+    assert json.loads(row["value_items_json"]) == amp_items
+    # Continuous param stays NULL.
+    bass = conn.execute(
+        "SELECT value_items_json FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (did, "Bass"),
+    ).fetchone()
+    assert bass["value_items_json"] is None
+
+
+def test_apply_device_parameters_value_items_change_triggers_update(
+    conn, song, session,
+):
+    """Cardinality drift is a real change — pull must update the snapshot
+    so the compose-time helper sees the current enum shape."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Guitar")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Amp", display_name="Amp",
+    )
+    # Seed with a stale (pre-E1-style) snapshot — no value_items captured.
+    M.set_device_parameter(
+        conn, device_id=did, name="Amp Type",
+        value_display="Clean", value_normalized=None,
+    )
+    amp_items = ["Clean", "Boost", "Blues", "Heavy", "Smith", "Lead", "Bass"]
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            _params_payload(
+                ("Amp Type", 0.0, "Clean", 0.0, 6.0, True, amp_items),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # value_items_json transition NULL → JSON is a real diff.
+    assert out.mutations == 1
+    row = conn.execute(
+        "SELECT value_items_json FROM device_parameters WHERE device_id = ?",
+        (did,),
+    ).fetchone()
+    assert json.loads(row["value_items_json"]) == amp_items
 
 
 def test_apply_device_parameters_missing_device_row_warns(conn, song, session):

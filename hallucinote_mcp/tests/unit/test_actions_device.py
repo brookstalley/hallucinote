@@ -779,6 +779,373 @@ def test_load_no_chain_growth_on_return_keeps_instrument_hint(loaded_actions):
     assert "instrument on a return" in err
 
 
+def test_load_resolved_path_present_on_kind_only(loaded_actions):
+    """E3 (W13-A v1.0): the load response carries the resolved browser path
+    (segments from the root key to the leaf's name) — captured into
+    `devices.browser_path_json` at snapshot ingest time."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["resolved_path"] == ["instruments", "Operator"]
+
+
+def test_load_resolved_path_present_on_preset_uri(loaded_actions):
+    """preset_uri lookups also surface the resolved path so the snapshot
+    can capture the vendor / pack scope for future cross-machine push."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    plugin = FakeBrowserItem(
+        "FatBass", uri="query:Plugin#FileId_9999", is_loadable=True,
+    )
+    massive = FakeBrowserItem("Massive X", is_loadable=False, children=(plugin,))
+    ni = FakeBrowserItem(
+        "Native Instruments", is_loadable=False, children=(massive,),
+    )
+    ctx.application.browser.plugins.children.append(ni)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Massive X",
+                "preset_uri": "query:Plugin#FileId_9999",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["resolved_path"] == [
+        "plugins", "Native Instruments", "Massive X", "FatBass",
+    ]
+
+
+def test_load_browser_path_fallback_resolves_when_preset_uri_misses(loaded_actions):
+    """E3 (W13-A v1.0): preset_uri is per-machine. On a target machine
+    where the FileId differs, the URI walk returns nothing; the handler
+    then falls back to a path-scoped browser search using browser_path.
+    The leaf name (browser_path[-1]) is the exact-match pattern; the
+    middle segments scope the walk via path_prefix; the first segment is
+    the root. Same-display-name plugins from different vendors are
+    discriminated by the path scope."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Two FatBass leaves under different vendors — display-name-only would
+    # be ambiguous. The captured browser_path scopes the search.
+    fatbass_ni = FakeBrowserItem(
+        "FatBass", uri="query:Plugin#FileId_THIS_MACHINE", is_loadable=True,
+    )
+    massive = FakeBrowserItem(
+        "Massive X", is_loadable=False, children=(fatbass_ni,),
+    )
+    ni = FakeBrowserItem(
+        "Native Instruments", is_loadable=False, children=(massive,),
+    )
+    fatbass_other = FakeBrowserItem(
+        "FatBass", uri="query:Plugin#FileId_OTHER", is_loadable=True,
+    )
+    diva = FakeBrowserItem("Diva", is_loadable=False, children=(fatbass_other,))
+    uhe = FakeBrowserItem("u-he", is_loadable=False, children=(diva,))
+    ctx.application.browser.plugins.children.extend([ni, uhe])
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Massive X",
+                # The snapshot's URI is stale on this machine.
+                "preset_uri": "query:Plugin#STALE_FILE_ID",
+                "browser_path": [
+                    "plugins", "Native Instruments", "Massive X", "FatBass",
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    # The fallback resolves to the NI/Massive X branch — not the u-he one.
+    assert ctx.application.browser.load_calls[0].uri == \
+        "query:Plugin#FileId_THIS_MACHINE"
+    assert resp.result["resolved_path"] == [
+        "plugins", "Native Instruments", "Massive X", "FatBass",
+    ]
+
+
+def test_load_browser_path_fallback_refuses_on_zero_match(loaded_actions):
+    """E3 (W13-A v1.0): plugin not installed at the captured path on this
+    machine — fallback refuses with a teaching error that names the
+    captured path so the agent can decide whether to surface the gap to
+    the user."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Browser has no plugins at all.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Massive X",
+                "preset_uri": "query:Plugin#STALE",
+                "browser_path": [
+                    "plugins", "Native Instruments", "Massive X", "FatBass",
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "fallback identity" in err
+    # Failure mode: either the path_prefix isn't navigable (vendor folder
+    # missing entirely) OR the walk found 0 loadable leaves at the
+    # captured scope. Both refuse cleanly with the captured segments
+    # named in the teaching error.
+    assert "Native Instruments" in err
+
+
+def test_load_browser_path_fallback_refuses_on_multi_match(loaded_actions):
+    """E3 (W13-A v1.0): on a target machine where the captured path scope
+    matches more than one loadable (e.g. multiple presets share the same
+    leaf name within the same vendor folder), the fallback refuses with
+    the ambiguity teaching error so the agent doesn't silently pick the
+    wrong one."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Two FatBass leaves under the SAME vendor — captured path scope can't
+    # disambiguate; multi-match must refuse rather than guess.
+    fatbass_a = FakeBrowserItem(
+        "FatBass", uri="query:Plugin#FileId_A", is_loadable=True,
+    )
+    fatbass_b = FakeBrowserItem(
+        "FatBass", uri="query:Plugin#FileId_B", is_loadable=True,
+    )
+    massive = FakeBrowserItem(
+        "Massive X", is_loadable=False, children=(fatbass_a, fatbass_b),
+    )
+    ni = FakeBrowserItem(
+        "Native Instruments", is_loadable=False, children=(massive,),
+    )
+    ctx.application.browser.plugins.children.append(ni)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Massive X",
+                "preset_uri": "query:Plugin#STALE",
+                "browser_path": [
+                    "plugins", "Native Instruments", "Massive X", "FatBass",
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "fallback identity" in err
+    assert "ambiguous" in err
+
+
+def test_load_browser_path_requires_preset_uri(loaded_actions):
+    """browser_path is the fallback FOR preset_uri — passing it alone is
+    a teaching error (composers wanting standalone path-scoped search
+    should use preset_query, which carries the same shape)."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Operator",
+                "browser_path": ["instruments", "Operator", "Bass", "Sub Bass"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "fallback" in err
+    assert "preset_query" in err  # teaches the alternative
+
+
+def test_load_browser_path_rejects_bad_shape(loaded_actions):
+    """Empty list / non-string elements are rejected with a teaching
+    error before any browser walk happens."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Operator",
+                "preset_uri": "query:Operator",
+                "browser_path": [],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "browser_path" in (resp.error or "")
+
+
+def test_load_browser_path_fallback_not_used_when_preset_uri_resolves(loaded_actions):
+    """When preset_uri DOES resolve, the fallback is not consulted —
+    keeps the deterministic fast path as the dominant case. Lock-test:
+    we don't want surprise fallback behavior on the happy path."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    leaf = FakeBrowserItem(
+        "Sub Bass", uri="query:Operator#FileId_HERE", is_loadable=True,
+    )
+    bass = FakeBrowserItem("Bass", is_loadable=False, children=(leaf,))
+    op = FakeBrowserItem("Operator", is_loadable=False, children=(bass,))
+    ctx.application.browser.instruments.children.append(op)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "kind": "Operator",
+                "preset_uri": "query:Operator#FileId_HERE",
+                # The browser_path is provided but the URI already resolves,
+                # so the response path should reflect the URI walk's result.
+                "browser_path": ["instruments", "Operator", "Bass", "Sub Bass"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert ctx.application.browser.load_calls[0].uri == \
+        "query:Operator#FileId_HERE"
+    assert resp.result["resolved_path"] == [
+        "instruments", "Operator", "Bass", "Sub Bass",
+    ]
+
+
+def test_load_replace_in_place_succeeds(loaded_actions):
+    """E2: Live's browser sometimes REPLACES the existing device in place
+    instead of appending — empirically observed when loading a Drum Rack
+    onto a track that already has an Instrument Rack. Chain length stays
+    the same but the class at the affected position changes. The
+    post-condition must accept this shape and the response's
+    `device_index` must point at the replaced position so the caller can
+    follow up correctly (e.g. set_parameter on the freshly-loaded
+    device). Before this fix the handler raised
+    `RuntimeError: load: Live did not append ...` even though the load
+    succeeded semantically — masking the real shape and forcing callers
+    to retry / probe."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Existing Rack", class_name="InstrumentGroupDevice"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    # Replace-in-place: load_item swaps the device at position 1 rather
+    # than appending. Mirrors the empirical Drum-Rack-onto-Instrument-Rack
+    # finding (2026-05-22 probing session).
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        new = FakeDevice(name=item.name, class_name="DrumGroupDevice")
+        track.devices[0] = new
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    # device_index points at the replaced position (not the tail), and
+    # loaded_class_name reflects the actual class Live ended up with.
+    assert resp.result["device_index"] == 1
+    assert resp.result["loaded_class_name"] == "DrumGroupDevice"
+    assert resp.result["kind"] == "Drum Rack"
+    assert len(track.devices) == 1
+
+
+def test_load_no_chain_growth_same_class_still_fails(loaded_actions):
+    """E2 boundary: the silent-no-op error path is unchanged for the case
+    where chain length is the same AND no class changed (a same-class
+    device already at the expected position, Live no-ops the load).
+    Pre-A2-resid behavior preserved: surface the existing chain so the
+    caller can diagnose without a separate `list` probe."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Existing", class_name="Compressor2"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Comp")
+    ctx.application.browser.load_item = lambda item: \
+        ctx.application.browser.load_calls.append(item)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "did not append" in err
+    assert "Compressor2" in err
+
+
+def test_load_multi_position_change_raises(loaded_actions):
+    """E2 defensive branch: if Live somehow returned a same-length chain
+    where MORE THAN one position's class changed, the post-condition
+    must surface that — we have no model for it and don't want to
+    silently pick a 'new device'. The empirical replace-in-place case
+    affects exactly one position; this guards against future Live
+    behavior changes that would otherwise pass through unnoticed."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("A", class_name="ClassA"),
+        FakeDevice("B", class_name="ClassB"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "ClassZ", uri="query:ClassZ")
+    # Same length, two positions changed class — defensive shape.
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices[0] = FakeDevice("X", class_name="ClassX")
+        track.devices[1] = FakeDevice("Z", class_name="ClassZ")
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "ClassZ"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "multiple devices" in err
+    # The diagnostic chain includes the post-load classes so the caller
+    # can see what happened.
+    assert "ClassX" in err
+    assert "ClassZ" in err
+
+
+def test_load_chain_shrink_raises(loaded_actions):
+    """E2 defensive branch: a load should never shrink the chain.
+    Surface what we observed so we don't pretend a tail-pick succeeded."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("A", class_name="ClassA"),
+        FakeDevice("B", class_name="ClassB"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "ClassZ", uri="query:ClassZ")
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.pop()  # shrank
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "ClassZ"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "shrank" in err
+    assert "pre=2" in err
+    assert "post=1" in err
+
+
 def test_load_no_chain_growth_on_empty_track_shows_empty_chain(loaded_actions):
     """A2-resid: empty chain renders as `(empty)` so the message is
     unambiguous about the parent's actual state."""

@@ -147,6 +147,20 @@ def _replay_devices(
         # without baking in this machine's FileId.
         preset_query = d.get("preset_query")
         preset_uri = d.get("guess_uri") if preset_query is None else None
+        # Arc 7-tail / E3 (W13-A v1.0): snapshots may carry the browser
+        # path the device was originally loaded from (captured by the
+        # MCP load handler's `resolved_path` response field). The push
+        # planner threads this through to the load handler as a
+        # fallback identity when the per-machine preset_uri doesn't
+        # resolve. Pre-E3 snapshots omit it — devices stay loadable
+        # via preset_uri / kind-only, just without cross-machine
+        # FileId fallback.
+        browser_path_raw = d.get("browser_path")
+        browser_path: list[str] | None
+        if isinstance(browser_path_raw, list) and browser_path_raw:
+            browser_path = [str(s) for s in browser_path_raw]
+        else:
+            browser_path = None
         # Arc 4 / D4: snapshots may carry `class_name` (Live's internal
         # class identifier) alongside `class` (the browser display name
         # the loader matches). Capture-from-Live populates both; hand-
@@ -162,6 +176,7 @@ def _replay_devices(
             class_name=d.get("class_name"),
             preset_uri=preset_uri,
             preset_query=preset_query,
+            browser_path=browser_path,
             actor=actor,
             request_id=request_id,
             reason=reason,
@@ -173,6 +188,12 @@ def _replay_devices(
                     f"expected dict with 'value' key, got {p!r}"
                 )
             normalized = p.get("normalized")
+            raw_items = p.get("value_items")
+            value_items = (
+                [str(item) for item in raw_items]
+                if isinstance(raw_items, (list, tuple))
+                else None
+            )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,
@@ -181,6 +202,7 @@ def _replay_devices(
                 value_normalized=(
                     float(normalized) if normalized is not None else None
                 ),
+                value_items=value_items,
                 actor=actor,
                 request_id=request_id,
                 reason=reason,

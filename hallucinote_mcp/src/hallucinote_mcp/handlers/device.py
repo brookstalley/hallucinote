@@ -1692,7 +1692,9 @@ def load_in_rack_handler(
             "application.browser not exposed in this Live version"
         )
 
-    item = _find_browser_item(browser, kind=kind, preset_uri=preset_uri)
+    item, _resolved_path = _find_browser_item(
+        browser, kind=kind, preset_uri=preset_uri,
+    )
     if item is None:
         if preset_uri is not None:
             criteria = f"preset_uri={preset_uri!r}"

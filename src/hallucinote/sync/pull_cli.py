@@ -69,8 +69,14 @@ import sys
 from pathlib import Path
 
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.db.connection import connect
+from hallucinote.db.connection import connect, transaction
 from hallucinote.sync import pull
+
+
+class _DryRunRollback(Exception):
+    """Internal sentinel — raised inside ``transaction(conn)`` to force a
+    rollback after the diff has been computed for ``--dry-run`` mode.
+    Never propagates past ``_cmd_execute``."""
 
 
 _DOMAINS = {
@@ -248,6 +254,13 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     → write file → apply` dance is fine for offline scripting but heavy
     for the common case ("I tweaked a few knobs in Live; bake them so the
     next push doesn't overwrite my work"). This subcommand collapses it.
+
+    ``--dry-run`` wraps the request + apply in a SAVEPOINT that always
+    rolls back, so the caller sees what WOULD change without committing.
+    The output JSON's ``applied`` block reflects the diff that was
+    computed; ``dry_run`` is echoed so a wrapper (e.g. the
+    ``/snapshot-bake-recent-changes`` skill) can confirm the run was
+    preview-only before promoting to a real apply.
     """
     if args.domain not in _DOMAINS:
         raise SystemExit(
@@ -260,44 +273,66 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     plan = planner(conn, song_id=song_id, session_id=args.session_id)
     results = _execute_plan_via_mcp(plan)
 
-    request_id = M.create_request(
-        conn,
-        actor="sync",
-        intent=(
-            f"pull_cli execute domain={args.domain} session={args.session_id}"
-        ),
-        kind="pull",
-        payload={
-            "domain": args.domain,
-            "session_id": args.session_id,
-            "song_id": song_id,
-        },
-        song_id=song_id,
-        reason=args.reason,
-        metadata=M.provenance_metadata(
-            extra={
-                "driver": "pull_cli.execute",
-                "session_id": args.session_id,
+    def _open_apply_close() -> tuple[str, "pull.ApplyResult"]:
+        request_id = M.create_request(
+            conn,
+            actor="sync",
+            intent=(
+                f"pull_cli execute domain={args.domain} "
+                f"session={args.session_id}"
+                + (" (dry-run)" if args.dry_run else "")
+            ),
+            kind="pull",
+            payload={
                 "domain": args.domain,
+                "session_id": args.session_id,
+                "song_id": song_id,
+                "dry_run": args.dry_run,
             },
-        ),
-    )
-    try:
-        applied = pull.apply_pull_results(
-            conn, results,
-            song_id=song_id, session_id=args.session_id,
-            actor="sync", request_id=request_id,
-            reason=args.reason or f"pull from session {args.session_id}",
+            song_id=song_id,
+            reason=args.reason,
+            metadata=M.provenance_metadata(
+                extra={
+                    "driver": "pull_cli.execute",
+                    "session_id": args.session_id,
+                    "domain": args.domain,
+                    "dry_run": args.dry_run,
+                },
+            ),
         )
-    except Exception:
-        M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
-        raise
-    M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
+        try:
+            applied_inner = pull.apply_pull_results(
+                conn, results,
+                song_id=song_id, session_id=args.session_id,
+                actor="sync", request_id=request_id,
+                reason=args.reason or f"pull from session {args.session_id}",
+            )
+        except Exception:
+            M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
+            raise
+        M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
+        return request_id, applied_inner
+
+    if args.dry_run:
+        # Open an outer transaction whose unconditional rollback covers the
+        # request row, the apply mutations, and the close-request update.
+        # The diff still surfaces via `applied` (computed before rollback).
+        holder: list[tuple[str, "pull.ApplyResult"]] = []
+        try:
+            with transaction(conn):
+                holder.append(_open_apply_close())
+                raise _DryRunRollback
+        except _DryRunRollback:
+            pass
+        request_id, applied = holder[0]
+    else:
+        request_id, applied = _open_apply_close()
 
     out = {
         "domain": args.domain,
         "song_id": song_id,
         "session_id": args.session_id,
+        "dry_run": args.dry_run,
         "plan": plan.to_dict(),
         "applied": applied.to_dict(),
     }
@@ -347,6 +382,16 @@ def main(argv: list[str] | None = None) -> int:
     _add_db_args(p_exec)
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
+    p_exec.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help=(
+            "Compute diffs and run apply inside a SAVEPOINT that always "
+            "rolls back. The output JSON reports what WOULD change; the "
+            "DB is byte-identical after the call. Used by the "
+            "`/snapshot-bake-recent-changes` skill to preview before "
+            "committing."
+        ),
+    )
     p_exec.set_defaults(func=_cmd_execute)
 
     args = parser.parse_args(argv)

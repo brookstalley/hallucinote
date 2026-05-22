@@ -6,7 +6,7 @@ Resources differ from tools structurally:
   - **Resources** are addressable content; the MCP client (or the agent)
     reads them by URI without consuming a per-tool turn.
 
-Wave M-6 ships 11 resources:
+Wave M-6 ships 11 static resources; Arc 5 / P3 adds 1 templated resource:
 
 Live-backed (delegate to existing handlers via the server's
 ``handle_tool_call`` so they reuse the forward-to-Remote-Script path):
@@ -175,7 +175,7 @@ def _song_annotations(slug: str) -> str:
 
 
 def register_resources(mcp: Any) -> None:
-    """Wire all 11 resources onto a FastMCP instance.
+    """Wire all 12 resources (11 static + 1 templated) onto a FastMCP instance.
 
     Called once at server boot from ``server.create_server``. Each
     resource's loader is a thin wrapper (most just delegate); the

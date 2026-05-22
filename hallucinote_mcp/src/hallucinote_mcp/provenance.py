@@ -9,8 +9,10 @@ without forcing every callsite to remember to wrap.
 
 DB connection model: this module opens its own short-lived connection for the
 request lifecycle; the handler still opens its own for the writes. SQLite
-autocommit + WAL (configured by `hallucinote.db.connection.connect`) makes
-both writes durable across connections without explicit coordination.
+autocommit + WAL (configured by `hallucinote.db.connection.connect`) lets the
+handler's connection see the request row on its first read, and lets the
+request-close write commit after the handler's writes — both directions
+durable across connections without explicit coordination.
 
 Import discipline: this module lives in `hallucinote_mcp` but reaches into
 the main `hallucinote` package, which is NOT vendored into Live's User
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 logger = logging.getLogger("hallucinote_mcp.provenance")
@@ -42,7 +45,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
 
 # Test seam: lets the unit suite point the resolver at a temp path without
 # the full songs/<slug>/<slug>-<branch>.db layout.
-def _resolve_song_db_path(song_slug: str) -> Any:
+def _resolve_song_db_path(song_slug: str) -> Path:
     return resolve_db_path(song_slug)
 
 

@@ -15,7 +15,7 @@ If you've installed something but the push preflight still flags it as missing, 
 
 Listed here for completeness — these ship with Live and don't need separate installation:
 
-`AnalogDevice`, `Compressor2`, `DrumGroupDevice`, `GlueCompressor`, `Operator`, `Reverb`.
+`Analog`, `Compressor`, `Drum Rack`, `Glue Compressor`, `Operator`, `Reverb`.
 
 ---
 

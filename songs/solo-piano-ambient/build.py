@@ -24,12 +24,14 @@ import json
 from pathlib import Path
 
 from hallucinote.capture import replay_capture
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import harmony
 from hallucinote.generators.envelopes import volume_swell
 from hallucinote.generators.output import GeneratorOutput
 
-DB_PATH = Path(__file__).parent / "solo-piano-ambient.db"
+# Per-branch DB path so feature branches don't clobber each other's state.
+# Convention matches `falling-walking/build.py`.
+DB_PATH = resolve_db_path("solo-piano-ambient", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # Section bar boundaries (1-based; end is the start of the next section).

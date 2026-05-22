@@ -315,6 +315,39 @@ def registered_resource_uris(mcp: FastMCP) -> list[str]:
     )
 
 
+def registered_resource_template_uris(mcp: FastMCP) -> list[str]:
+    """Return the URI templates of all templated resources on FastMCP.
+
+    Templated resources can't be enumerated by concrete URI alone — the
+    ``{slug}``-style placeholders stay unresolved until a client reads
+    them with a binding. This helper returns the registered templates
+    themselves so tests can assert "the W11-A surface is wired."
+
+    Arc 5 / P3: first user. Future per-song hallucinote:// resources
+    will surface here too.
+    """
+    for attr in ("_resource_manager", "resource_manager"):
+        manager = getattr(mcp, attr, None)
+        if manager is None:
+            continue
+        for store_attr in ("_templates", "templates"):
+            store = getattr(manager, store_attr, None)
+            if isinstance(store, dict):
+                templates: list[str] = []
+                for k, v in store.items():
+                    template = (
+                        getattr(v, "uri_template", None) if v is not None else None
+                    )
+                    templates.append(
+                        str(template) if template is not None else str(k)
+                    )
+                return sorted(templates)
+    raise RuntimeError(
+        "Could not introspect FastMCP resource-template registry — "
+        "FastMCP API may have changed"
+    )
+
+
 def registered_tool_names(mcp: FastMCP) -> list[str]:
     """Return the names of all tools registered on the FastMCP instance.
 
@@ -343,4 +376,5 @@ __all__ = [
     "handle_tool_call",
     "registered_tool_names",
     "registered_resource_uris",
+    "registered_resource_template_uris",
 ]

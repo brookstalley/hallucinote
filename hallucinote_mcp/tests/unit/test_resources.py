@@ -5,8 +5,17 @@ import json
 
 import pytest
 
-from hallucinote_mcp.resources import RESOURCE_URIS, _read_guide, _read_reference_json
-from hallucinote_mcp.server import create_server, registered_resource_uris
+from hallucinote_mcp.resources import (
+    RESOURCE_TEMPLATE_URIS,
+    RESOURCE_URIS,
+    _read_guide,
+    _read_reference_json,
+)
+from hallucinote_mcp.server import (
+    create_server,
+    registered_resource_template_uris,
+    registered_resource_uris,
+)
 
 
 # ---------- Surface lock ----------
@@ -186,3 +195,85 @@ def test_primer_advertises_resources():
     from hallucinote_mcp.server import PRIMER
     assert "Resources" in PRIMER or "resources" in PRIMER.lower()
     assert "ableton://" in PRIMER  # at least one URI shown
+
+
+# ---------- Templated resources (W11-A: hallucinote:// + slug-in-URI) ----------
+
+
+_EXPECTED_TEMPLATE_URIS = {
+    "hallucinote://song/{slug}/annotations",
+}
+
+
+def test_resource_template_uri_list_matches_design():
+    """Arc 5 / P3 lock: the templated URI tuple stays in sync with the
+    register_resources(mcp) wiring. New per-song hallucinote:// resources
+    add a row here AND a parallel registration."""
+    assert set(RESOURCE_TEMPLATE_URIS) == _EXPECTED_TEMPLATE_URIS, (
+        "RESOURCE_TEMPLATE_URIS drifted from the W11-A / Arc 5 design. "
+        "Either update the build plan and this test, OR revert the drift."
+    )
+
+
+def test_create_server_registers_song_annotations_template():
+    """End-to-end: create_server wires the hallucinote://song/{slug}/annotations
+    template into FastMCP's resource-template registry."""
+    mcp = create_server()
+    actual = set(registered_resource_template_uris(mcp))
+    assert actual == _EXPECTED_TEMPLATE_URIS, (
+        f"FastMCP template registry differs from RESOURCE_TEMPLATE_URIS.\n"
+        f"  missing: {_EXPECTED_TEMPLATE_URIS - actual}\n"
+        f"  extra:   {actual - _EXPECTED_TEMPLATE_URIS}"
+    )
+
+
+def test_song_annotations_resource_returns_annotations_for_slug(tmp_path, monkeypatch):
+    """End-to-end: resolve a slug, read annotations from the song's DB,
+    return them as JSON. Mirrors the ableton_annotation(action='list',
+    song_slug=<slug>) shape so an LLM agent gets the same data from a
+    zero-turn-cost resource fetch."""
+    # Set up a real per-song DB the handler can resolve to.
+    from hallucinote.db import mutations as M
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.handlers import ableton_annotation as ah
+    from hallucinote_mcp.resources import _song_annotations
+
+    db_path = tmp_path / "fw.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="fw", title="FW", key="Dm")
+    M.add_annotation(
+        conn, song_id=song_id, kind="intent",
+        body="verse feels like weight getting worse",
+    )
+    M.add_annotation(
+        conn, song_id=song_id, kind="stylistic",
+        body="don't sidechain the bass on the bridge — let it bloom",
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(ah, "_resolve_song_db", lambda slug: db_path)
+
+    out = json.loads(_song_annotations("fw"))
+    assert "annotations" in out
+    bodies = {a["body"] for a in out["annotations"]}
+    assert "verse feels like weight getting worse" in bodies
+    assert (
+        "don't sidechain the bass on the bridge — let it bloom" in bodies
+    )
+
+
+def test_song_annotations_resource_unknown_slug_raises_teaching_error(
+    tmp_path, monkeypatch
+):
+    """Unknown slug must surface the same teaching error the
+    ableton_annotation(action='list') tool path raises — failure modes
+    are consistent across tool + resource surfaces."""
+    from hallucinote_mcp.handlers import ableton_annotation as ah
+    from hallucinote_mcp.resources import _song_annotations
+
+    monkeypatch.setattr(
+        ah, "_resolve_song_db", lambda slug: tmp_path / f"{slug}.db",
+    )
+    with pytest.raises(Exception, match=r"(?i)song.*not.*found|no song"):
+        _song_annotations("does-not-exist")

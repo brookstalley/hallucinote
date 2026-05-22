@@ -26,6 +26,14 @@ Static guides (shipped as markdown in the package data dir):
   - ``ableton://guides/error-recovery``
   - ``ableton://guides/gaps``
 
+Arc 5 / P3 introduces the first **templated** resource for the
+DB-side surface (per W11-A's ``hallucinote://song/<slug>/...``
+hierarchy in ``project-state.yaml``). Templates are addressed via
+``{slug}`` placeholders and live in a separate ``RESOURCE_TEMPLATE_URIS``
+tuple, mirrored by ``registered_resource_template_uris`` on the
+server module:
+  - ``hallucinote://song/{slug}/annotations``
+
 The registration happens in ``register_resources(mcp)`` called by
 ``server.create_server``.
 """
@@ -56,6 +64,15 @@ RESOURCE_URIS: tuple[str, ...] = (
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
     "ableton://guides/gaps",
+)
+
+
+# Templated URI list — addressed with ``{slug}`` placeholders so a single
+# registration covers every song. First Arc 5 / P3 surface; future
+# hallucinote:// per-song resources land here. Locked by
+# `test_resource_template_uri_list_matches_design`.
+RESOURCE_TEMPLATE_URIS: tuple[str, ...] = (
+    "hallucinote://song/{slug}/annotations",
 )
 
 
@@ -126,6 +143,30 @@ def _plugins_installed() -> str:
         handle_tool_call("ableton_browser", "plugins_list", {}),
         indent=2,
     )
+
+
+# ---------------------------------------------------------------------------
+# DB-backed templated resources (W11-A: ``hallucinote://song/<slug>/...``)
+# ---------------------------------------------------------------------------
+
+
+def _song_annotations(slug: str) -> str:
+    """Composer-intent annotations for ``<slug>``, as JSON.
+
+    Cheap-context companion to ``ableton_annotation(action='list',
+    song_slug=...)`` — same Q.get_annotations_for_song read, surfaced
+    as a templated resource so an LLM agent can fetch annotations
+    without burning a tool-call turn before composing.
+
+    Delegates to ``ableton_annotation.list_handler`` (whose ``_context``
+    parameter is unused per its dispatcher-shape contract). Unknown slug
+    surfaces the same teaching error the tool path raises, so failure
+    modes are consistent across surfaces.
+    """
+    from ..handlers import ableton_annotation as ah
+
+    result = ah.list_handler(None, song_slug=slug)  # type: ignore[arg-type]
+    return json.dumps(result, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -273,5 +314,27 @@ def register_resources(mcp: Any) -> None:
     def guide_gaps() -> str:
         return _read_guide("gaps")
 
+    # ---- Templated DB-backed resources (W11-A introduction) ----
+    @mcp.resource(
+        "hallucinote://song/{slug}/annotations",
+        name="song_annotations",
+        description=(
+            "Composer-intent annotations for the song identified by "
+            "<slug>. Read-only mirror of "
+            "ableton_annotation(action='list', song_slug=<slug>) "
+            "exposed as a templated resource so agents can fetch "
+            "annotations as a zero-turn-cost resource read before "
+            "non-trivial composition. Unknown slug returns a teaching "
+            "error matching the tool surface."
+        ),
+        mime_type="application/json",
+    )
+    def song_annotations(slug: str) -> str:
+        return _song_annotations(slug)
 
-__all__ = ["RESOURCE_URIS", "register_resources"]
+
+__all__ = [
+    "RESOURCE_URIS",
+    "RESOURCE_TEMPLATE_URIS",
+    "register_resources",
+]

@@ -2305,7 +2305,18 @@ def test_load_in_rack_selects_chain_and_loads(loaded_actions):
         def load_item(self, item: _Any) -> None:
             # Simulate Live: appends the device to the currently-selected
             # chain. The handler should have set selected_chain on
-            # rack.view BEFORE calling load_item.
+            # rack.view BEFORE calling load_item. Mirror Live's actual
+            # type discipline — `browser.load_item` accepts an item
+            # object, not a tuple/list/etc. The Arc 7-tail / E3 refactor
+            # changed `_find_browser_item` to return `(item, path)`; if
+            # the rack-load callsite forgets to unpack, this assertion
+            # catches it (the type-permissive prior fake silently
+            # accepted the 2-tuple and shipped the regression).
+            assert isinstance(item, _FakeItem), (
+                f"browser.load_item expects a browser item, got {type(item).__name__} "
+                f"({item!r}) — callsite likely forgot to unpack "
+                "_find_browser_item's (item, path) tuple"
+            )
             assert rack.view.selected_chain is chain, (
                 "handler should have set rack.view.selected_chain before "
                 "browser.load_item"

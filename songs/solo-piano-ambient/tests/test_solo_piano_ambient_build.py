@@ -45,10 +45,6 @@ def test_build_runs_clean_and_produces_canary_shape(build_module):
         assert "01 Piano" in tracks_by_name
         assert "Master" in tracks_by_name
 
-        # Returns — exactly two. Names are STRIPPED of the Live slot prefix
-        # ("A-Reverb" -> "Reverb") by capture.strip_return_slot_prefix on
-        # replay. See friction log: this is non-obvious for hand-authored
-        # snapshots since the snapshot field reads "A-Reverb".
         returns = Q.get_returns_for_song(conn, song_id)
         return_names = sorted(r["name"] for r in returns)
         assert return_names == ["Delay", "Reverb"], return_names

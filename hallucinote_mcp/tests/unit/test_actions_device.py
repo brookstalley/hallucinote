@@ -375,6 +375,29 @@ def test_load_appends_to_chain(loaded_actions):
     assert len(ctx.application.browser.load_calls) == 1
 
 
+def test_load_response_carries_loaded_class_name(loaded_actions):
+    """Arc 7 / P5: the load response includes `loaded_class_name`
+    (the device's resolved class_display_name) so callers can detect a
+    kind / preset_uri mismatch without a follow-up
+    ``ableton_device(action='list')`` probe. Falls back to class_name
+    when class_display_name isn't exposed (older Live wrappers); empty
+    string when neither is present."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Compressor", uri="query:Comp")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Compressor"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # FakeBrowser.load_item creates a FakeDevice that sets both
+    # class_name and class_display_name to the item's name. Caller can
+    # detect mismatches via this field.
+    assert resp.result["loaded_class_name"] == "Compressor"
+
+
 def test_load_on_return(loaded_actions):
     ctx = FakeCtx(FakeSong(
         tracks=[FakeTrack("T1")],

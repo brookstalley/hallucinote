@@ -1,5 +1,10 @@
 # Runbook — full-band-rock
 
+> **Historical session log.** Filenames and paths reflect the state at
+> session time (2026-05-19). Per-song bootstrap test files are now
+> named `test_<slug>_build.py` (post-Arc-6 convention); references
+> below to `tests/test_build.py` reflect the older bare-name pattern.
+
 **Agent run start**: 2026-05-19 12:15 PT (session begin)
 **Agent run end**: 2026-05-19 12:26 PT (~11 min wall clock; mostly authoring, fewer phases pushed than solo-piano-ambient)
 **Live state at start**: 4 tracks (1-MIDI, 2-MIDI, 3-Audio, 4-Audio) / 2 returns (A-Reverb, B-Delay) / 8 scenes / 120 BPM / 4/4 (default new set, Live 12.4 via MCP bridge)

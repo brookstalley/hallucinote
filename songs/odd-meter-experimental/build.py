@@ -44,10 +44,12 @@ import json
 from pathlib import Path
 
 from hallucinote.capture import replay_capture
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.tempo import to_live_bpm
 
-DB_PATH = Path(__file__).parent / "odd-meter-experimental.db"
+# Per-branch DB path so feature branches don't clobber each other's state.
+# Convention matches `falling-walking/build.py`.
+DB_PATH = resolve_db_path("odd-meter-experimental", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 # Live's beats-per-bar in 7/8.

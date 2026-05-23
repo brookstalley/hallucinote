@@ -140,6 +140,37 @@ def test_hash_file_still_distinguishes_genuinely_different_content(tmp_path: Pat
     assert h_a.hexdigest() != h_b.hexdigest()
 
 
+def test_hash_file_preserves_binary_content_through_nul_sniff(tmp_path: Path):
+    """When a fingerprint entry contains a NUL byte, the CRLF→LF
+    normalization is skipped — a future ``_FINGERPRINT_PATHS`` entry
+    pointing at a non-Python file (JSON manifest with literal CRLF,
+    static ``.als`` skeleton, ``.so``) keeps every byte intact rather
+    than having ``b"\\r\\n"`` substrings silently rewritten.
+
+    Two binary blobs differing only in a CRLF→LF substitution must
+    hash differently — the load-bearing property the NUL-sniff
+    defends. (Python source files have no NUL bytes, so the existing
+    CRLF/LF stability test continues to apply for them.)
+    """
+    from hallucinote_mcp import _hash_file
+
+    crlf_binary = tmp_path / "manifest.bin"
+    lf_binary = tmp_path / "manifest2.bin"
+    # Embed a NUL byte alongside a CRLF — without the sniff, the
+    # replace would silently collapse the two files.
+    crlf_binary.write_bytes(b"hdr\x00payload\r\nfooter")
+    lf_binary.write_bytes(b"hdr\x00payload\nfooter")
+
+    h_crlf = hashlib.sha256()
+    _hash_file(h_crlf, crlf_binary, "same-rel-key")
+    h_lf = hashlib.sha256()
+    _hash_file(h_lf, lf_binary, "same-rel-key")
+    assert h_crlf.hexdigest() != h_lf.hexdigest(), (
+        "binary files (NUL byte present) must hash byte-for-byte; the "
+        "CRLF→LF normalization must NOT fire on them"
+    )
+
+
 def test_compute_fingerprint_returns_unknown_on_os_error(monkeypatch):
     """When walking the source tree raises ``OSError`` (the filesystem
     layer is unhappy for some reason — permission denied, I/O error,

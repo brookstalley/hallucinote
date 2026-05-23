@@ -1267,21 +1267,32 @@ def delete_notes(
         return
     placeholders = ",".join("?" * len(note_ids))
     rows = conn.execute(
-        f"SELECT DISTINCT clip_id FROM notes WHERE id IN ({placeholders})",
+        f"SELECT id, clip_id FROM notes WHERE id IN ({placeholders})",
         tuple(note_ids),
     ).fetchall()
-    affected_clips = [r["clip_id"] for r in rows]
+    by_clip: dict[str, list[str]] = {}
+    for r in rows:
+        by_clip.setdefault(r["clip_id"], []).append(r["id"])
+    affected_clips = list(by_clip.keys())
     conn.execute(f"DELETE FROM notes WHERE id IN ({placeholders})", tuple(note_ids))
     for cid in affected_clips:
         _touch_clip(conn, cid)
-    _emit(
-        conn,
-        E.NOTES_DELETED,
-        {"note_ids": list(note_ids), "affected_clips": affected_clips},
-        actor=actor,
-        request_id=request_id,
-        reason=reason,
-    )
+    # Emit one NOTES_DELETED event per affected clip so events.clip_id is set
+    # — symmetric with NOTE_UPDATED + insert_notes, and the events.clip_id
+    # column drives `_latest_actor_for(row_kind='clip')`'s tombstone-actor
+    # lookup. Single-event-with-affected_clips payload missed that lookup,
+    # leaving a build-owned clip whose only LLM-touch was `delete_notes`
+    # falsely tombstone-eligible.
+    for cid, cid_note_ids in by_clip.items():
+        _emit(
+            conn,
+            E.NOTES_DELETED,
+            {"note_ids": cid_note_ids, "affected_clips": [cid]},
+            clip_id=cid,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
 
 
 def update_notes_by_tag(

@@ -75,7 +75,8 @@ F2 strike-through marks delete_notes events.clip_id as shipped (Critic
 note from the bundle review). Settings.json banner refreshed from v1.4.0
 to v1.5.0 alongside the post-sync state.
 
-Test count: **2027 passing** (+11 vs. 2016 baseline pre-wave). Both
+Test count: **2027 passing** (11 new tests this wave: 1 schema
+enrichment, 1 fingerprint NUL-sniff, 2 delete_notes, 7 migrate). Both
 cumulative-Critic and PR-review gates clean.
 
 ## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)

@@ -359,13 +359,11 @@ def test_migrate_rolls_back_on_failure(db_path, monkeypatch):
             self.row_factory = inner.row_factory
 
         def __setattr__(self, name, value):
-            if name in ("_inner",):
-                object.__setattr__(self, name, value)
-            else:
-                object.__setattr__(self, name, value)
-                # also propagate row_factory etc. to the inner conn
-                if name == "row_factory":
-                    self._inner.row_factory = value
+            object.__setattr__(self, name, value)
+            if name == "row_factory" and hasattr(self, "_inner"):
+                # Propagate row_factory to the inner conn so cursor results
+                # come back as sqlite3.Row (matches migrate()'s expectation).
+                self._inner.row_factory = value
 
         def execute(self, sql, *args):
             if "ableton_links SET db_kind" in sql:

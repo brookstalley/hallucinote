@@ -2657,13 +2657,15 @@ def cmd_stop(project_dir: Path) -> int:
         current_chunk_id = _current_chunk_id_from_status(prawduct_dir)
         if current_chunk_id is not None:
             chunk_type, type_error = _parse_build_plan_chunk_type(prawduct_dir, current_chunk_id)
-            # v1.5.1 Chunk 04(a): surface parse errors (e.g. typo'd Type value).
-            # Pre-fix, the error was silently discarded so the author never saw
-            # the "unknown type: ..." message the parser produces. Surfacing in
-            # waiver_notes makes the typo visible at session-end and in the next
-            # stop-hook briefing without changing fail-closed semantics (the
-            # chunk still runs as `code` per the parser's default).
-            if type_error:
+            # v1.5.1 Chunk 04(a): surface typo'd Type values. Pre-fix, the
+            # parser's "unknown type: ..." message was discarded so the author
+            # never saw it. Surfacing in waiver_notes makes the typo visible
+            # at session-end and in the next stop-hook briefing without
+            # changing fail-closed semantics (chunk still runs as `code` per
+            # parser default). Restricted to "unknown type:" errors only —
+            # "chunk not found" / "missing build-plan" errors indicate a
+            # structural fixture issue, not actionable user feedback.
+            if type_error and type_error.startswith("unknown type:"):
                 waiver_notes.append(f"chunk-type-parse-error: {type_error}")
             if chunk_type == "designer-handoff" and not doc_only:
                 designer_handoff_skip = True
@@ -3319,9 +3321,11 @@ def _is_trivial_fileset_eligible(project_dir: Path) -> tuple[bool, str]:
             path = path[1:-1]
         if not path:
             continue
-        if _is_metadata_path(path):
-            continue
 
+        # v1.5.1 Chunk 04(b): metadata-path filtering lives inside
+        # `_classify_trivial_change` (returns None for both src and dst
+        # metadata paths). Single check site = no drift between this gate
+        # and `_pr_diff_is_trivial`.
         is_addition = status[0] == "A" or status == "??"
         is_deletion = "D" in status
         violation = _classify_trivial_change(
@@ -3959,8 +3963,12 @@ def _pr_diff_is_trivial(project_dir: Path) -> tuple[bool, str]:
             path = parts[2].strip()
         else:
             path = parts[-1].strip()
-        if not path or _is_metadata_path(path):
+        if not path:
             continue
+        # v1.5.1 Chunk 04(b): metadata-path filtering lives inside
+        # `_classify_trivial_change` (handles both src and dst). Single
+        # check site = no drift between this PR-boundary gate and the
+        # stop-hook gate in `_is_trivial_fileset_eligible`.
         is_addition = status == "A"
         is_deletion = status == "D"
         violation = _classify_trivial_change(

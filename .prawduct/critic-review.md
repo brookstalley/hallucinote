@@ -8,7 +8,7 @@ You are an independent reviewer. You have NOT seen the builder's reasoning — t
 
 ## Setup
 
-1. **Determine your mode** from `$ARGUMENTS` (see Modes below). Default: `final`.
+1. **Resolve your mode.** If `$ARGUMENTS` contains a recognized mode token (`chunk`, `final`, `cumulative`, `verify-resolutions`), use it and record `mode_chosen_by: "explicit-args"`. Otherwise (no args / empty / unrecognized), run `python3 tools/product-hook infer-critic-mode` — stdout is one line `<mode>|<rationale>` (v1.5 Chunk 03). Use the mode it returns and record the rationale verbatim as `mode_chosen_by`. Fall-through behavior when no rule fires: the helper returns `chunk` if an active build plan exists, `final` otherwise. The subcommand returns `final|fallback-no-tools-lib` in legacy product repos that haven't received the inference helper.
 2. Read `.prawduct/project-state.yaml` for context (current work, what exists)
 3. Assess scope and nature of changes (git diff or read changed files)
 4. Read relevant artifacts in `.prawduct/artifacts/`
@@ -17,7 +17,7 @@ You are an independent reviewer. You have NOT seen the builder's reasoning — t
 
 ## Modes
 
-The Critic runs in one of three modes, selected by the caller via `$ARGUMENTS` (the build cycle invokes you as `/critic chunk`, `/critic final`, or `/critic cumulative`):
+The Critic runs in one of four modes, selected by the caller via `$ARGUMENTS` (the build cycle invokes you as `/critic chunk`, `/critic final`, `/critic cumulative`, or `/critic verify-resolutions`):
 
 **`chunk`** — fast per-chunk review. Target: 1-2 minutes on a large repo.
 - **Goals run:** 1 (Nothing Is Broken), 2 (Nothing Is Missing), 3 (Nothing Is Unintended) — local correctness against the chunk's just-changed files.
@@ -38,12 +38,21 @@ The Critic runs in one of three modes, selected by the caller via `$ARGUMENTS` (
 - **Execution:** single pass for trivial/small work; coordinator pattern for medium/large.
 - **Use when:** before invoking `/pr create`. The `/pr` skill calls `python3 tools/product-hook check-cumulative-critic` and refuses to open the PR without a fresh, blocking-free cumulative record. This mode catches cross-chunk integration cracks that per-chunk and end-of-cycle reviews can't see.
 
-**Default rule:** if `$ARGUMENTS` is empty, lacks a recognized mode token, or is ambiguous → run as `final`. Fail safe to thoroughness. Never silently downgrade to `chunk`.
+**`verify-resolutions`** — delta re-review against prior findings, after the builder fixes a BLOCKING/WARNING round. Target: 1-2 minutes.
+- **Goals run:** 1 (Nothing Is Broken), 2 (Nothing Is Missing), 3 (Nothing Is Unintended) — same as `chunk` mode, narrower surface.
+- **Scope:** read the prior `.prawduct/.critic-findings.json`; scope is (prior `files_reviewed`) ∪ (files changed since prior `commit_reviewed`, via `git diff --name-only <commit_reviewed>` + `git ls-files --others --exclude-standard`). The canonical implementation is `_compute_verify_resolutions_scope` in `tools/product-hook`.
+- **Execution:** always single-pass.
+- **Use when:** the prior review flagged 1-2 BLOCKING/WARNING findings, the builder fixed them, and re-running `chunk`/`final` would re-walk the full diff at full latency for a localized change.
+- **Demotion (fall through to `chunk`/`final`):** missing prior findings, `commit_reviewed` absent / null / unresolvable in current repo, no prior BLOCKING/WARNING findings (nothing to verify), or scope widens past `len(files_since_commit) > 2 * len(prior_files_reviewed) + 5`. Fail-closed throughout.
+- **Stop-hook gate:** a `verify-resolutions` findings file clears the gate only when the current chunk diff is a subset of the findings' `files_reviewed`. Out-of-scope files (builder added work after the verify pass) keep the gate blocked with a specific message naming the out-of-scope files.
+
+**Default rule:** if `$ARGUMENTS` is empty, lacks a recognized mode token, or is ambiguous → run as `final`. Fail safe to thoroughness. Never silently downgrade to `chunk` or `verify-resolutions`.
 
 **Chunk type axis (v1.4 F6).** Each chunk also declares `Type:` — orthogonal to mode. Mode controls *how deep* the review is; Type controls *what kind of work* is under review. Read the current chunk's `Type:` from `build-plan.md` and apply:
 
 - **`code`** (default): full protocol per the mode above.
 - **`doc-only`**: skip test-evidence checks (Goal 1) and symbol-coverage checks; review prose deliverables for requirement coverage and scope discipline.
+- **`trivial`**: full Goals 1-3 with the **rationale-vs-diff fit** sub-check added to Goal 3 (see Goal 3 below). File-set bounds and required-rationale presence are machine-enforced before the Critic runs — when you see a `Type: trivial` chunk, those layers have already passed. Your job is the judgment backstop: does the diff actually match the `**Trivial because:**` claim? BLOCKING for mismatch; WARNING for low-information rationale.
 - **`cleanup`**: structural-only review (Goals 1-3); tolerate a zero diff (the deletion *is* the deliverable); skip symbol coverage.
 - **`designer-handoff`**: **output a single line — `Review skipped — Type: designer-handoff (visual handoff; review-by-human)` — and exit clean. Do NOT write a findings file.** The stop-hook Critic gate also skips for this Type (structural enforcement of the carveout).
 - **`cumulative-final`**: marker on the last chunk of a multi-chunk plan; doesn't change protocol but signals that a separate `/critic cumulative` run is required before `/pr create`.
@@ -54,8 +63,8 @@ Missing or unrecognized `Type:` → treat as `code` (full protocol). Refuse to h
 
 | Form | Where it appears | Values |
 |---|---|---|
-| **Short token** (caller-side) | `$ARGUMENTS`, build plan field `Critic mode:`, slash-command argument | `chunk`, `final`, or `cumulative` |
-| **Verbose string** (persisted-side) | `.prawduct/.critic-findings.json` `mode` field, session briefings, gate WARNINGs | `"chunk (lighter pass, not ready for push)"`, `"final (full review, ready for push)"`, or `"cumulative (bundle review, ready for merge)"` |
+| **Short token** (caller-side) | `$ARGUMENTS`, build plan field `Critic mode:`, slash-command argument | `chunk`, `final`, `cumulative`, or `verify-resolutions` |
+| **Verbose string** (persisted-side) | `.prawduct/.critic-findings.json` `mode` field, session briefings, gate WARNINGs | `"chunk (lighter pass, not ready for push)"`, `"final (full review, ready for push)"`, `"cumulative (bundle review, ready for merge)"`, or `"verify-resolutions (delta review, prior findings only)"` |
 
 You read the short token from `$ARGUMENTS`. You write the verbose string to `.critic-findings.json`. Verbose strings are intentional: the JSON is read by humans during session briefings — the value itself communicates the implication without requiring docs.
 
@@ -76,7 +85,7 @@ Every requirement implemented or explicitly descoped → **BLOCKING**. **Accepta
 **Operator verification (v1.4 F10):** When `operator_verification_required: true` in `project-state.yaml` AND the current chunk's build-plan section declares `**Visual change:** yes`, `.prawduct/operator-verification.md` must contain an entry whose heading or body references this chunk — missing → **NOTE** ("chunk declares a visual change but no operator-verification entry exists; append one before `/pr create`"). The gate itself is enforced by `product-hook check-operator-verification` from `/pr create`; this NOTE catches the enqueue omission early. No `**Visual change:**` field or `operator_verification_required: false` ⇒ check is skipped.
 
 ### 3. Nothing Is Unintended
-No unlisted dependencies → **BLOCKING**. No undocumented architectural decisions → **BLOCKING**. No scope creep → **WARNING**. No broad exception swallowing → **WARNING**. Catches marked with `# prawduct:ok-broad-except` are intentional but still verifiable — confirm they log and are at system boundaries. The marker means "intentional," not "exempt."
+No unlisted dependencies → **BLOCKING**. No undocumented architectural decisions → **BLOCKING**. No scope creep → **WARNING**. No broad exception swallowing → **WARNING**. Catches marked with `# prawduct:ok-broad-except` are intentional but still verifiable — confirm they log and are at system boundaries. The marker means "intentional," not "exempt." **Rationale-vs-diff fit (`Type: trivial` only):** read the chunk's `**Trivial because:**` rationale from `build-plan.md` and compare against the actual diff. Rationale claims one kind of change (rename, type annotations, mechanical edit) but diff contains another (new function definitions, modified control flow, behavior shifts) → **BLOCKING** (scope expansion past trivial declaration). Low-information rationale (single word, "small change", "easy fix") → **WARNING** ("rationale provides no testable claim; rewrite to name the specific kind of change"). Strong rationale points at the structural property bounding risk; weak rationale describes feeling. File-set bounds and rationale presence are machine-enforced by the stop hook before you see the chunk; this sub-check is the judgment backstop.
 
 ### 4. Everything Is Coherent
 Artifacts match code bidirectionally → **WARNING** if stale. **Project preferences:** code must follow `project-preferences.md` conventions → **BLOCKING** if violated. Infrastructure assumptions match declared dependencies → **WARNING** if mismatched. **README and top-level docs:** actively read the README when features are added/removed/renamed; wrong or misleading instructions → **BLOCKING**; missing new capabilities or describing removed features → **WARNING**. **Documentation drift:** comments contradicting code, type annotations not matching runtime, API docs not matching implementation → **WARNING**. **Changelog scope:** only check entries added/modified in the current changeset — older changelog entries are append-only history. Do not flag them for stale terminology, outdated counts, or superseded descriptions. **CLAUDE.md size:** CLAUDE.md is an instruction file, not an architecture reference. Check the project-specific content (outside PRAWDUCT markers): over ~150 lines → **WARNING** ("CLAUDE.md project content is N lines — move architecture descriptions, config tables, and component inventories to docs/ or .prawduct/artifacts/"). This check applies to the current changeset — if the changeset adds content that belongs elsewhere, flag it. **Derived views (when `views_enabled: true`):** three blocks derive from change-log.md tags via `product-hook regen-views` — build-plan `## Status` checkboxes (from `status=shipped`), `.prawduct/release-notes.md` (from `release=`), and `scope_rollups:` in project-state.yaml (from `scope=`). Tag is the source of truth. Any view ↔ tag mismatch (stale checkbox, missing release-notes section, stale scope_rollups) → **WARNING** ("run regen-views"). A chunk marked complete with no `status=shipped` tag → **WARNING**. Don't flag derived files independently for stale terminology or content — flag the source change-log entry instead.
@@ -146,6 +155,9 @@ Write to `.prawduct/.critic-findings.json`:
   "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
   "duration_seconds": 180,
   "mode": "final (full review, ready for push)",
+  "mode_chosen_by": "rule-3 final: last unchecked chunk of 4-chunk plan is in progress",
+  "commit_reviewed": "<git rev-parse HEAD at review time>",
+  "base_reviewed": null,
   "files_reviewed": ["src/app.py"],
   "findings": [
     {"goal": "Nothing Is Unintended", "severity": "warning", "summary": "description"}
@@ -157,9 +169,15 @@ Write to `.prawduct/.critic-findings.json`:
 `mode` must be exactly one of:
 - `"chunk (lighter pass, not ready for push)"` — when invoked with the `chunk` short token.
 - `"final (full review, ready for push)"` — when invoked with the `final` short token, or when defaulting because no recognized token was passed.
+- `"cumulative (bundle review, ready for merge)"` — when invoked with the `cumulative` short token (v1.4 F2 — required by `/pr create`).
+- `"verify-resolutions (delta review, prior findings only)"` — when invoked with the `verify-resolutions` short token (v1.5 Chunk 02 — delta re-review against prior findings; `files_reviewed` is the prior scope ∪ files-since-`commit_reviewed`).
 
-The verbose string is required; the bare short token (`"chunk"` / `"final"`) is rejected by the hook validator.
+The verbose string is required; the bare short token (`"chunk"` / `"final"` / `"cumulative"` / `"verify-resolutions"`) is rejected by the hook validator.
 
 `duration_seconds`: your best estimate of wall-clock review time. Surfaced in session briefing to set expectations.
+
+`commit_reviewed` (v1.5 Chunk 01): record `git rev-parse HEAD` at review time. Anchors the delta computation that the `verify-resolutions` mode reads (Chunk 02) — without it, the next review can't tell which files have changed since this review's baseline. `base_reviewed`: in `cumulative` mode, record `git merge-base <base-branch> HEAD`; in other modes, `null`. Both fields are optional for back-compat with pre-v1.5 findings files; populate them whenever a SHA is resolvable. Wrong types (e.g., integer SHA) are rejected by the validator.
+
+`mode_chosen_by` (v1.5 Chunk 03): the verbatim rationale from `python3 tools/product-hook infer-critic-mode`, or the literal string `"explicit-args"` when `$ARGUMENTS` overrode inference. Optional for back-compat with pre-v1.5 findings; populate whenever Step 1's resolve-mode protocol ran. The field is post-hoc introspection — when a Critic round picks the wrong mode, `mode_chosen_by` tells the builder which rule fired (so the inference rules can be tuned).
 
 Clean review: empty findings array, summary says "No issues found."

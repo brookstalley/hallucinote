@@ -599,10 +599,21 @@ _EVIDENCE_COVERAGE_LEVELS = frozenset({"referenced", "executed"})
 _CRITIC_MODE_CHUNK = "chunk (lighter pass, not ready for push)"
 _CRITIC_MODE_FINAL = "final (full review, ready for push)"
 _CRITIC_MODE_CUMULATIVE = "cumulative (bundle review, ready for merge)"
+# v1.5 Chunk 02 — verify-resolutions: delta review against prior findings'
+# scope. Cheaper than chunk/final for the common case of "Critic flagged 1-2
+# BLOCKING findings, builder fixed them, re-review pays full latency to
+# confirm the fix." Scope = prior files_reviewed ∪ files changed since
+# `commit_reviewed` (Chunk 01's anchor). Demotes to /critic final when scope
+# widens past `len(delta) > 2 * len(prior) + 5` or when prior findings lack
+# the anchor.
+_CRITIC_MODE_VERIFY_RESOLUTIONS = (
+    "verify-resolutions (delta review, prior findings only)"
+)
 _CRITIC_MODE_VALUES = frozenset({
     _CRITIC_MODE_CHUNK,
     _CRITIC_MODE_FINAL,
     _CRITIC_MODE_CUMULATIVE,
+    _CRITIC_MODE_VERIFY_RESOLUTIONS,
 })
 
 
@@ -2135,9 +2146,249 @@ def validate_critic_findings(findings_path: Path) -> bool:
             mode = data["mode"]
             if not isinstance(mode, str) or mode not in _CRITIC_MODE_VALUES:
                 return False
+        # v1.5 Chunk 01 — commit_reviewed / base_reviewed anchor the delta
+        # computation for the verify-resolutions mode (Chunk 02). Optional
+        # for back-compat with pre-v1.5 findings files (which simply cannot
+        # serve as a verify-resolutions baseline). When present, must be a
+        # NON-EMPTY string SHA or None — wrong types and empty strings are
+        # writer drift (empty string would silently anchor at no commit,
+        # breaking Chunk 02's delta computation), surfaced here.
+        for sha_field in ("commit_reviewed", "base_reviewed"):
+            if sha_field in data:
+                val = data[sha_field]
+                if val is None:
+                    continue
+                if not isinstance(val, str) or not val.strip():
+                    return False
+        # v1.5 Chunk 03 — mode_chosen_by records which rule fired in the
+        # inference helper, or the literal "explicit-args" when the
+        # builder overrode inference. Optional for back-compat. When
+        # present, must be a non-empty string — empty strings and wrong
+        # types are writer drift (the field's whole purpose is post-hoc
+        # introspection of mode selection; empty defeats that).
+        if "mode_chosen_by" in data:
+            val = data["mode_chosen_by"]
+            if not isinstance(val, str) or not val.strip():
+                return False
         return True
     except Exception:  # prawduct:ok-broad-except — validation must not crash gate check
         return False
+
+
+def _compute_verify_resolutions_scope(
+    prawduct_dir: Path, project_dir: Path
+) -> tuple[list[str], str]:
+    """Compute the file scope a ``/critic verify-resolutions`` pass should review.
+
+    Reads the *prior* ``.prawduct/.critic-findings.json`` (the record the
+    builder is about to re-verify) and returns the union of:
+
+      1. ``files_reviewed`` from the prior record — files the Critic already
+         examined — but only when actionable findings (BLOCKING or WARNING)
+         exist. NOTE-only and clean records have nothing to verify.
+      2. Files changed since ``commit_reviewed`` — anchor recorded in Chunk
+         01 — computed as ``git diff --name-only <commit_reviewed>`` plus
+         untracked files. Mirrors ``_coverage_changed_files``'s diff +
+         ls-files-others union so the verify pass sees the same shape the
+         cumulative-Critic flow does.
+
+    Returns ``(scope, reason)``. ``scope`` is sorted; ``reason`` is human-
+    readable. Successful computations return a non-empty scope and a reason
+    prefixed ``ok:``. All other cases return an empty scope and a categorized
+    reason so the caller (Critic agent or stop-hook gate) can fall safely
+    through to ``/critic chunk`` or ``/critic final``:
+
+      - ``no-findings:`` — prior findings file missing.
+      - ``unreadable-findings:`` — JSON parse or I/O failure.
+      - ``no-commit-reviewed:`` — anchor absent / null / empty. Pre-v1.5
+        records are valid for the schema but cannot serve as a verify
+        baseline; the helper fails closed.
+      - ``no-actionable-findings:`` — only NOTEs (or empty findings). Verify-
+        resolutions has nothing to re-check.
+      - ``invalid-files-reviewed:`` — schema-permitted but unusable
+        (non-list or empty list).
+      - ``unresolved-commit:`` — ``commit_reviewed`` does not resolve in
+        the current repo (rebase, force-push, or simply never on this
+        branch). Cannot compute a delta.
+      - ``git-diff-failed:`` — the diff invocation itself failed.
+      - ``scope-widened:`` — demotion criterion ``len(delta) > 2 * len(prior)
+        + 5`` tripped. The prior surface no longer covers what changed; a
+        partial review would mislead. Fall through to ``/critic final``.
+
+    Fail-closed throughout — when the helper cannot anchor a delta it
+    refuses to compute one rather than silently shrinking the review.
+    """
+    findings_path = prawduct_dir / ".critic-findings.json"
+    if not findings_path.is_file():
+        return [], (
+            "no-findings: .prawduct/.critic-findings.json is missing — "
+            "run /critic chunk or /critic final first"
+        )
+    try:
+        data = json.loads(findings_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return [], f"unreadable-findings: {exc}"
+
+    commit_reviewed = data.get("commit_reviewed")
+    if not isinstance(commit_reviewed, str) or not commit_reviewed.strip():
+        return [], (
+            "no-commit-reviewed: prior findings lack commit_reviewed — "
+            "cannot anchor delta. Run /critic chunk or /critic final."
+        )
+
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return [], "invalid-findings: prior findings.findings is not a list"
+    actionable = [
+        f for f in findings
+        if isinstance(f, dict) and f.get("severity") in ("blocking", "warning")
+    ]
+    if not actionable:
+        return [], (
+            "no-actionable-findings: prior review had no blocking/warning "
+            "findings — verify-resolutions has nothing to verify. "
+            "Run /critic chunk or /critic final."
+        )
+
+    prior_files = data.get("files_reviewed")
+    if not isinstance(prior_files, list) or not prior_files:
+        return [], (
+            "invalid-files-reviewed: prior findings.files_reviewed is "
+            "missing or empty"
+        )
+    prior_files_set = {f for f in prior_files if isinstance(f, str) and f.strip()}
+
+    # rev-parse with the `^{commit}` peel rejects non-commit refs and SHAs
+    # that don't resolve. fail-closed: any non-0 → no delta computable.
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit_reviewed}^{{commit}}"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        return [], (
+            f"unresolved-commit: commit_reviewed {commit_reviewed[:12]} "
+            "does not resolve in the current repo — cannot compute delta. "
+            "Run /critic chunk or /critic final."
+        )
+
+    diff_proc = subprocess.run(
+        ["git", "diff", "--name-only", commit_reviewed],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if diff_proc.returncode != 0:
+        return [], f"git-diff-failed: {diff_proc.stderr.strip()}"
+    delta_files = {
+        line.strip() for line in diff_proc.stdout.splitlines() if line.strip()
+    }
+
+    ls_proc = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if ls_proc.returncode == 0:
+        delta_files.update(
+            line.strip() for line in ls_proc.stdout.splitlines() if line.strip()
+        )
+
+    # Filter metadata before threshold and scope union. The session-end
+    # gate already ignores ``_is_metadata_path`` files (``.prawduct/``,
+    # ``.claude/settings.json``, etc.) when computing the chunk diff;
+    # counting them here would inflate ``delta_files`` against the
+    # widening threshold and falsely demote a legitimate fix flow whose
+    # only delta beyond the prior surface is incidental state churn
+    # (the very ``.critic-findings.json`` the prior review wrote,
+    # ``.session-reflected``, ``.session-git-baseline``, etc.). Symmetric
+    # with ``_verify_resolutions_gate_check`` — both sides of "what
+    # counts as a chunk file" agree.
+    delta_files = {f for f in delta_files if not _is_metadata_path(f)}
+
+    # Demotion: when the delta has grown well past the prior review's
+    # surface, a verify pass would mislead — most of what changed wasn't
+    # part of the prior review's scope at all. Threshold mirrors the build
+    # plan (Chunk 02): linear factor 2 plus floor 5 so small priors don't
+    # demote on a single unrelated edit.
+    if len(delta_files) > 2 * len(prior_files_set) + 5:
+        return [], (
+            f"scope-widened: {len(delta_files)} files changed since "
+            f"commit_reviewed (prior surface {len(prior_files_set)} files; "
+            f"demotion threshold len(delta) > 2 * prior + 5). Fall through "
+            "to /critic chunk or /critic final."
+        )
+
+    scope = sorted(prior_files_set | delta_files)
+    return scope, (
+        f"ok: scope = {len(scope)} files "
+        f"(prior surface {len(prior_files_set)} + delta {len(delta_files)} "
+        f"since {commit_reviewed[:12]})"
+    )
+
+
+def _verify_resolutions_gate_check(
+    prawduct_dir: Path, project_dir: Path, findings_path: Path
+) -> tuple[bool, str]:
+    """Stop-hook gate helper: when the Critic findings file is in
+    ``verify-resolutions`` mode, accept only when the current chunk diff is
+    a subset of the verify pass's declared scope.
+
+    Returns ``(True, "")`` for any other mode — the standard gate logic
+    applies. For ``verify-resolutions``:
+
+      - ``(True, "")`` — current session-changed files (excluding metadata
+        paths the regular Critic gate also ignores) are all within the
+        findings' ``files_reviewed`` set.
+      - ``(False, reason)`` — at least one chunk-diff file is outside the
+        declared scope. The verify pass is stale relative to the current
+        diff; the gate keeps the block in place and surfaces the reason so
+        the builder runs ``/critic chunk`` or ``/critic final`` instead.
+
+    Fail-closed: a JSON read failure or schema gap returns ``(False, reason)``
+    rather than silently clearing the gate (see learnings: "Escape hatches
+    in classification create silent failures").
+    """
+    try:
+        data = json.loads(findings_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return False, (
+            f"verify-resolutions findings unreadable ({exc}). Run /critic "
+            "chunk or /critic final."
+        )
+
+    if data.get("mode") != _CRITIC_MODE_VERIFY_RESOLUTIONS:
+        return True, ""
+
+    files_reviewed = data.get("files_reviewed")
+    if not isinstance(files_reviewed, list):
+        return False, (
+            "verify-resolutions findings have no files_reviewed list. "
+            "Run /critic chunk or /critic final."
+        )
+    scope = {f for f in files_reviewed if isinstance(f, str) and f.strip()}
+
+    session_changed = {
+        f for f in _get_session_changed_files(project_dir)
+        if not _is_metadata_path(f)
+    }
+
+    out_of_scope = sorted(session_changed - scope)
+    if not out_of_scope:
+        return True, ""
+
+    sample = ", ".join(out_of_scope[:3])
+    more = f" (+{len(out_of_scope) - 3} more)" if len(out_of_scope) > 3 else ""
+    return False, (
+        f"verify-resolutions findings declare {len(scope)} file(s) in scope "
+        f"but the current chunk diff includes {len(out_of_scope)} file(s) "
+        f"outside scope ({sample}{more}). Run /critic chunk or /critic final."
+    )
 
 
 def _count_build_plan_chunks(prawduct_dir: Path) -> tuple[int, int]:
@@ -2183,24 +2434,34 @@ def _count_build_plan_chunks(prawduct_dir: Path) -> tuple[int, int]:
         return 0, 0
 
 
+_CRITIC_MODE_GOALS_1_3_ONLY = frozenset({
+    _CRITIC_MODE_CHUNK,
+    _CRITIC_MODE_VERIFY_RESOLUTIONS,
+})
+
+
 def _critic_session_satisfies_gate(prawduct_dir: Path) -> tuple[bool, str]:
     """Check whether the latest Critic findings satisfy end-of-cycle synthesis.
 
     Returns ``(True, "")`` when the gate is satisfied, ``(False, reason)``
     otherwise. The gate is advisory: it fires when a multi-chunk build plan
-    has all chunks marked ``[x]`` but the most recent Critic review was
-    ``chunk`` mode — meaning end-of-cycle goals (Coherence, Design, Learnings
-    Cross-Check, Backlog Reconciliation, Framework-Specific Checks) were
-    skipped.
+    has all chunks marked ``[x]`` but the most recent Critic review ran
+    Goals 1-3 only — ``chunk`` and ``verify-resolutions`` modes both skip
+    end-of-cycle goals (Coherence, Design, Learnings Cross-Check, Backlog
+    Reconciliation, Framework-Specific Checks). v1.5 Chunk 02 extended the
+    case-4 trigger to verify-resolutions so a plan that closes with a delta
+    re-review doesn't silently bypass final-mode synthesis.
 
     Specific cases (in order):
     1. No build plan, or no chunks declared → satisfied (non-chunked work).
     2. Single-chunk plan → satisfied (the one Critic run is the final).
     3. Multi-chunk plan with incomplete chunks → satisfied (mid-cycle).
-    4. Multi-chunk plan, all chunks ``[x]``, latest mode is ``_CRITIC_MODE_CHUNK``
+    4. Multi-chunk plan, all chunks ``[x]``, latest mode is in
+       ``_CRITIC_MODE_GOALS_1_3_ONLY`` (chunk or verify-resolutions)
        → unsatisfied. Run ``/critic final`` for end-of-cycle synthesis.
     5. Multi-chunk plan, all chunks ``[x]``, latest mode is ``_CRITIC_MODE_FINAL``
-       (or absent — legacy records default to final) → satisfied.
+       (or absent — legacy records default to final), or ``_CRITIC_MODE_CUMULATIVE``
+       → satisfied (full goal set ran).
 
     Caller is expected to invoke this only after the existing critic-required
     blocker has cleared (i.e. findings exist and ``validate_critic_findings``
@@ -2222,10 +2483,10 @@ def _critic_session_satisfies_gate(prawduct_dir: Path) -> tuple[bool, str]:
     except (json.JSONDecodeError, OSError):
         return True, ""
     mode = data.get("mode", _CRITIC_MODE_FINAL)
-    if mode == _CRITIC_MODE_CHUNK:
+    if mode in _CRITIC_MODE_GOALS_1_3_ONLY:
         return False, (
             f"All {total} chunks complete; last Critic review was "
-            f"'{_CRITIC_MODE_CHUNK}'. Run /critic final for end-of-cycle "
+            f"'{mode}'. Run /critic final for end-of-cycle "
             "synthesis (Coherence, Design, Learnings Cross-Check, Backlog "
             "Reconciliation) before pushing."
         )
@@ -2380,17 +2641,47 @@ def cmd_stop(project_dir: Path) -> int:
     # (code, doc-only, cleanup, cumulative-final) leave the gate behavior
     # unchanged — only Critic's *protocol* adjusts inside the agent.
     designer_handoff_skip = False
-    if has_changes and has_build_plan and not doc_only:
+    # v1.5 Chunk 04 — Type: trivial fileset + rationale enforcement. The
+    # checks fire BEFORE the Critic gate and emit BLOCKING for any
+    # violation, but the chunk is still treated as `code` for gate
+    # purposes (so the Critic gate still applies on top). Fail-closed:
+    # over-declaring `trivial` produces a named blocker pointing at the
+    # specific bound violated, never a silent carveout. The trivial
+    # check does NOT honor the doc-only skip — bounds like
+    # "no edits under agents/" matter even when the diff is empirically
+    # all-.md (the agents/ tree itself is pure prose). Doc-only only
+    # carves out the Critic protocol (which has no code to review); the
+    # trivial-declaration contract is independent.
+    trivial_block_reason = ""
+    if has_changes and has_build_plan:
         current_chunk_id = _current_chunk_id_from_status(prawduct_dir)
         if current_chunk_id is not None:
             chunk_type, _ = _parse_build_plan_chunk_type(prawduct_dir, current_chunk_id)
-            if chunk_type == "designer-handoff":
+            if chunk_type == "designer-handoff" and not doc_only:
                 designer_handoff_skip = True
                 waiver_notes.append(
                     f"critic: skipped (Chunk {current_chunk_id} declares Type: designer-handoff — v1.4 F6 carveout)"
                 )
+            elif chunk_type == "trivial":
+                fileset_ok, fileset_reason = _is_trivial_fileset_eligible(project_dir)
+                if not fileset_ok:
+                    trivial_block_reason = fileset_reason
+                else:
+                    _, rationale_error = _parse_build_plan_chunk_trivial_rationale(
+                        prawduct_dir, current_chunk_id
+                    )
+                    if rationale_error:
+                        trivial_block_reason = rationale_error
 
     critic_would_block = False
+    # v1.5 Chunk 02: when the fresh, schema-valid findings file is in
+    # verify-resolutions mode, the gate must also confirm that the current
+    # chunk diff is a subset of the verify pass's declared scope. Out-of-
+    # scope means the builder added work after the verify pass — the
+    # findings are stale relative to the current diff. The reason string is
+    # surfaced verbatim in the blocker so the builder knows which files
+    # widened the scope.
+    verify_resolutions_block_reason = ""
     if has_changes and has_build_plan and not doc_only and not designer_handoff_skip:
         critic_would_block = True
         critic_findings = prawduct_dir / ".critic-findings.json"
@@ -2402,13 +2693,28 @@ def cmd_stop(project_dir: Path) -> int:
                     critic_findings.stat().st_mtime, tz=timezone.utc
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if findings_mtime > session_start and validate_critic_findings(critic_findings):
-                    critic_would_block = False
+                    in_scope, scope_reason = _verify_resolutions_gate_check(
+                        prawduct_dir, project_dir, critic_findings
+                    )
+                    if in_scope:
+                        critic_would_block = False
+                    else:
+                        verify_resolutions_block_reason = scope_reason
             except Exception:  # prawduct:ok-broad-except — gate check must not crash session end
                 pass
 
     if critic_would_block:
         if "critic" in waivers:
             waiver_notes.append(f"critic: waived ({waivers['critic']})")
+        elif verify_resolutions_block_reason:
+            blockers.append(
+                "CRITIC REVIEW (verify-resolutions stale): "
+                f"{verify_resolutions_block_reason}\n"
+                "  Verify-resolutions findings clear the gate only when the current chunk\n"
+                "  diff is within the verify pass's declared scope. The chunk has grown\n"
+                "  beyond that surface, so the prior review's conclusions no longer cover\n"
+                "  what changed. Re-run with a wider mode before ending the session.\n"
+            )
         else:
             blockers.append(
                 "CRITIC REVIEW: The build plan includes Critic review in each chunk's \"Done when\" steps,\n"
@@ -2416,6 +2722,16 @@ def cmd_stop(project_dir: Path) -> int:
                 "  run `/critic` now. The Critic reads .prawduct/critic-review.md for instructions\n"
                 "  and records findings to .prawduct/.critic-findings.json\n"
             )
+
+    # v1.5 Chunk 04: Type: trivial enforcement runs alongside the Critic
+    # gate (not in place of it). The chunk is still treated as `code`
+    # for gate purposes; this block adds a separate BLOCKING if either
+    # the file-set bound or rationale presence failed.
+    if trivial_block_reason:
+        blockers.append(
+            f"TYPE: TRIVIAL — declared but {trivial_block_reason}.\n"
+            "  Either fix the violation or change Type to `code`.\n"
+        )
 
     # Gate 2.5: Advisory mode gate — fires only when Gate 2 passed, which
     # already enforces this-session freshness on the findings file. So if we
@@ -2460,18 +2776,22 @@ def cmd_stop(project_dir: Path) -> int:
                         pass
 
                 if has_pr:
-                    # Symmetry with `/pr create` Step 1b: when the PR diff is
-                    # currently doc-only (merge-base...HEAD all .md), the
-                    # cumulative-Critic and PR-reviewer gates were legitimately
-                    # skipped at create-time and no evidence file was written.
-                    # Gate 3 would otherwise block session end with a misleading
-                    # "no review evidence" error for a PR that doesn't need one.
-                    # If a later session adds non-.md changes, this check returns
-                    # False and the gate fires as intended — matching the create-
-                    # flow contract.
+                    # Symmetry with `/pr create` Steps 1b/1c: when the PR diff
+                    # is doc-only (all .md) or trivial (every commit fileset-
+                    # eligible per Chunk 04 bounds), the cumulative-Critic and
+                    # PR-reviewer gates were legitimately skipped at create-
+                    # time and no evidence file was written. Gate 3 would
+                    # otherwise block session end with a misleading "no review
+                    # evidence" error for a PR that doesn't need one. If a
+                    # later session adds non-.md or fileset-violating commits,
+                    # both checks return False and the gate fires as intended
+                    # — matching the create-flow contract.
                     pr_is_doc_only, _ = _pr_diff_is_doc_only(project_dir)
-                    if pr_is_doc_only:
-                        pass  # PR diff is all .md — no evidence required
+                    pr_is_trivial, _ = (
+                        (False, "") if pr_is_doc_only else _pr_diff_is_trivial(project_dir)
+                    )
+                    if pr_is_doc_only or pr_is_trivial:
+                        pass  # Fast-path eligible — no evidence required
                     else:
                         # Check for review evidence with content validation
                         branch_file = current_branch.replace("/", "--") + ".json"
@@ -2602,8 +2922,20 @@ _BUILD_PLAN_NEW_QUALIFIER_RE = re.compile(r"\bnew\s+`([^`\s]+)`")
 # Matches `- **Type:** <token>` or `**Type:** <token>` as a list item; trailing
 # parenthetical prose is allowed and ignored.
 _BUILD_PLAN_TYPE_RE = re.compile(r"^[\s\-\*]*\*\*Type:\*\*\s*([A-Za-z][\w\-]*)")
+# v1.5 Chunk 04 — `trivial` joins the allowed set. File-set bounds (no
+# edits under agents/, methodology/, templates/; no CLAUDE.md edit; no
+# test deletion; no new files) + required `**Trivial because:**`
+# rationale are enforced structurally; semantic-fit is Critic Goal 3 in
+# Chunk 05. Size is unbounded — trivial is a semantic claim, not a LOC
+# metric.
 _BUILD_PLAN_ALLOWED_TYPES = frozenset(
-    {"code", "doc-only", "cleanup", "designer-handoff", "cumulative-final"}
+    {"code", "doc-only", "cleanup", "designer-handoff", "cumulative-final", "trivial"}
+)
+# `**Trivial because:** <rationale>` — first line; continuation lines (no
+# list-item / heading prefix) are joined onto the rationale until the next
+# field. Empty after the colon → missing-rationale.
+_BUILD_PLAN_TRIVIAL_RATIONALE_RE = re.compile(
+    r"^[\s\-\*]*\*\*Trivial because:\*\*\s*(.*)$"
 )
 
 
@@ -2714,7 +3046,7 @@ def _parse_build_plan_chunk_type(
     """Extract the `Type:` declaration from a chunk's build-plan section.
 
     Returns ``(chunk_type, error)``. ``chunk_type`` is one of
-    ``code | doc-only | cleanup | designer-handoff | cumulative-final``.
+    ``code | doc-only | cleanup | designer-handoff | cumulative-final | trivial``.
     Default (field absent) is ``code`` — fail-closed so a missing declaration
     runs the full Critic protocol rather than silently triggering a carveout
     (learnings: "escape hatches in classification create silent failures").
@@ -2774,6 +3106,212 @@ def _parse_build_plan_chunk_type(
         allowed = ", ".join(sorted(_BUILD_PLAN_ALLOWED_TYPES))
         return None, f"unknown type: {declared!r} (allowed: {allowed})"
     return declared, None
+
+
+def _parse_build_plan_chunk_trivial_rationale(
+    prawduct_dir: Path, chunk_id: str
+) -> tuple[str | None, str | None]:
+    """Extract the ``**Trivial because:**`` rationale from a chunk's section.
+
+    Returns ``(rationale, error)``. Empty or absent field → ``(None,
+    "missing-rationale: Type: trivial requires non-empty **Trivial
+    because:** field")``. Multi-line rationale (continuation lines without
+    a list-item / heading prefix) is joined into a single string until the
+    next field.
+
+    Section discovery mirrors ``_parse_build_plan_chunk_type`` —
+    name-anchored on ``### Chunk <chunk_id>:`` with leading-zero
+    tolerance; fenced code blocks are skipped.
+    """
+    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    if not plan_path.is_file():
+        return None, f"missing build-plan: {plan_path}"
+    try:
+        content = plan_path.read_text()
+    except OSError as exc:
+        return None, f"unreadable build-plan: {exc}"
+
+    target = chunk_id.lstrip("0") or "0"
+
+    in_section = False
+    in_fence = False
+    section_found = False
+    capturing = False
+    rationale_lines: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### Chunk "):
+            rest = stripped[len("### Chunk "):]
+            head = rest.split(":", 1)[0].strip()
+            head_norm = head.lstrip("0") or "0"
+            if in_section:
+                break  # hit sibling chunk
+            if head_norm == target:
+                in_section = True
+                section_found = True
+            continue
+        if not in_section:
+            continue
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = _BUILD_PLAN_TRIVIAL_RATIONALE_RE.match(line)
+        if m:
+            capturing = True
+            first = m.group(1).strip()
+            if first:
+                rationale_lines.append(first)
+            continue
+        if capturing:
+            # Stop at the next list-item field, bolded label, or sub-heading.
+            if (
+                stripped.startswith("- **")
+                or stripped.startswith("* **")
+                or stripped.startswith("**")
+                or stripped.startswith("#")
+            ):
+                break
+            if stripped:
+                rationale_lines.append(stripped)
+
+    if not section_found:
+        return None, f"chunk {chunk_id!r} not found in build-plan"
+    if not capturing:
+        return None, (
+            "missing-rationale: Type: trivial requires non-empty "
+            "**Trivial because:** field"
+        )
+    rationale = " ".join(rationale_lines).strip()
+    if not rationale:
+        return None, (
+            "missing-rationale: Type: trivial requires non-empty "
+            "**Trivial because:** field"
+        )
+    return rationale, None
+
+
+def _classify_trivial_change(
+    *,
+    path: str,
+    src_path: str | None,
+    is_addition: bool,
+    is_deletion: bool,
+) -> str | None:
+    """Single-file path-rule check for the ``Type: trivial`` file-set
+    bounds. Returns the violation reason or ``None`` when the change
+    is eligible. Shared by ``_is_trivial_fileset_eligible`` (Chunk 04 —
+    working-tree porcelain) and ``_pr_diff_is_trivial`` (Chunk 05 —
+    per-commit name-status diff). Centralizing the rule set prevents
+    the stop-hook gate and the PR-boundary gate from drifting apart
+    silently.
+
+    The caller translates its status format into the boolean inputs
+    (porcelain handles 2-char codes; name-status handles single-char).
+    Path bounds are catastrophic-blast-radius classes regardless of
+    size — size is intentionally not a bound.
+    """
+    if path == "CLAUDE.md":
+        return f"claude-md-edited: {path}"
+    if path.startswith("agents/"):
+        return f"agent-file-edited: {path}"
+    if path.startswith("methodology/"):
+        return f"methodology-edited: {path}"
+    if path.startswith("templates/"):
+        return f"template-edited: {path}"
+    if is_deletion and path.startswith("tests/"):
+        return f"test-file-deleted: {path}"
+    if src_path is not None and src_path.startswith("tests/"):
+        return f"test-file-deleted: {src_path} (renamed out)"
+    if is_addition:
+        return f"new-file: {path}"
+    return None
+
+
+def _is_trivial_fileset_eligible(project_dir: Path) -> tuple[bool, str]:
+    """Check the current session's diff against the ``Type: trivial``
+    file-set bounds. Returns ``(eligible, reason)``.
+
+    Bounds (catastrophic-blast-radius classes, regardless of size):
+    no edits under ``agents/``, ``methodology/``, or ``templates/``; no
+    edits to ``CLAUDE.md``; no test-file removals (porcelain ``D`` under
+    ``tests/`` OR rename whose source path is under ``tests/`` — a
+    ``git mv`` out of the test directory is semantically a deletion);
+    no newly-tracked files (porcelain ``A`` or ``??``).
+
+    Size is intentionally NOT a bound — trivial is a semantic judgment.
+    An 80-LOC project-wide rename can qualify; a 5-line state-machine
+    change cannot. The semantic claim lives in
+    ``**Trivial because:**``; Critic Goal 3 validates rationale-vs-diff
+    fit (Chunk 05).
+
+    Reason strings name the specific bound that failed for actionable
+    stop-hook messaging — e.g. ``"agent-file-edited: agents/critic/SKILL.md"``.
+    The first violating file wins (deterministic order: porcelain
+    output ordering); the user fixes one violation at a time.
+
+    Uses session-baseline filtering so pre-session dirt doesn't count
+    against the chunk (mirrors ``git_has_session_changes``).
+
+    Path-bound rules are delegated to ``_classify_trivial_change`` so
+    the PR-boundary helper (``_pr_diff_is_trivial``) applies an
+    identical rule set — same bounds checked at session-end and at
+    PR creation.
+    """
+    output = git_status_output(project_dir)
+    if output is None:
+        # No git or git error — defer to other gates; treat as eligible
+        # so the trivial check doesn't fail the build when git itself is
+        # the problem.
+        return True, ""
+
+    prawduct_dir = get_prawduct_dir(project_dir)
+    baseline_path = prawduct_dir / ".session-git-baseline"
+    baseline_lines: set[str] = set()
+    if baseline_path.is_file():
+        try:
+            baseline_lines = set(baseline_path.read_text().splitlines())
+        except (UnicodeDecodeError, OSError):
+            pass
+
+    for line in output.splitlines():
+        if not line or line in baseline_lines:
+            continue
+        if len(line) < 4:
+            continue
+        status = line[:2]
+        raw = line[3:].strip()
+        src_path: str | None = None
+        if " -> " in raw:
+            src_raw, dst_raw = raw.split(" -> ", 1)
+            src_path = src_raw.strip()
+            if src_path.startswith('"') and src_path.endswith('"'):
+                src_path = src_path[1:-1]
+            path = dst_raw.strip()
+        else:
+            path = raw
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+        if not path:
+            continue
+        if _is_metadata_path(path):
+            continue
+
+        is_addition = status[0] == "A" or status == "??"
+        is_deletion = "D" in status
+        violation = _classify_trivial_change(
+            path=path,
+            src_path=src_path,
+            is_addition=is_addition,
+            is_deletion=is_deletion,
+        )
+        if violation is not None:
+            return False, violation
+
+    return True, ""
 
 
 def _current_chunk_id_from_status(prawduct_dir: Path) -> str | None:
@@ -3318,12 +3856,179 @@ def cmd_check_pr_doc_only(project_dir: Path) -> int:
     return 1
 
 
+def _pr_diff_is_trivial(project_dir: Path) -> tuple[bool, str]:
+    """Shared helper: is every commit on ``merge-base...HEAD`` fileset-
+    eligible per Chunk 04's ``Type: trivial`` path bounds?
+
+    Returns ``(is_trivial, status_message)``. ``is_trivial`` is True only
+    when at least one commit exists ahead of base AND every commit's
+    file changes satisfy ``_classify_trivial_change``. The first
+    violating commit short-circuits with a reason naming the SHA and
+    the specific bound (e.g.
+    ``"not-trivial: commit a1b2c3d agent-file-edited: agents/foo.md"``).
+
+    Mirrors ``_pr_diff_is_doc_only`` at the PR boundary — same base
+    resolution via ``_coverage_resolve_base``, same fail-closed posture
+    on missing base / git failure / empty diff. Does NOT re-validate
+    rationale fit; that's the per-chunk Critic's job at chunk-mode
+    review time. This helper trusts that every chunk's rationale was
+    Critic-passed and only checks the structural file-set bounds.
+
+    Per-commit (not cumulative) walk: a PR that adds an ``agents/``
+    file in commit 1 and removes it in commit 2 has an empty cumulative
+    diff but is NOT fast-path eligible — the commit 1 violation is
+    real signal that the work crossed a catastrophic-blast-radius
+    boundary at least once during the build.
+    """
+    base, base_note = _coverage_resolve_base(project_dir)
+    if base is None:
+        return False, f"no-base: {base_note}"
+
+    # `git log --name-status --format=%H` emits one commit SHA per line
+    # followed by one tab-separated <status>\t<path> (or
+    # <status>\t<src>\t<dst> for renames) line per changed file, with
+    # a blank line between commits. Reverse order is irrelevant — we
+    # short-circuit on first violation regardless.
+    proc = subprocess.run(
+        [
+            "git",
+            "log",
+            "--name-status",
+            "-M",  # enable rename detection so test-renamed-out-of-tests/ trips
+            "--format=%H",
+            f"{base}..HEAD",
+        ],
+        cwd=str(project_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return False, f"git-failed: git log {base}..HEAD failed: {proc.stderr.strip()}"
+
+    lines = proc.stdout.splitlines()
+    if not any(line.strip() for line in lines):
+        return False, f"empty-diff: no commits ahead of {base}"
+
+    current_sha: str | None = None
+    commits_seen = 0
+    for raw in lines:
+        line = raw.rstrip()
+        if not line:
+            continue
+        # A bare 40-hex line is a commit header.
+        if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
+            current_sha = line
+            commits_seen += 1
+            continue
+        # Otherwise it's a name-status entry for the current commit.
+        if current_sha is None:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0].strip()
+        if not status:
+            continue
+        # R<score> / C<score> rows are: <status>\t<src>\t<dst>
+        src_path: str | None = None
+        if status[0] in ("R", "C") and len(parts) >= 3:
+            src_path = parts[1].strip()
+            path = parts[2].strip()
+        else:
+            path = parts[-1].strip()
+        if not path or _is_metadata_path(path):
+            continue
+        is_addition = status == "A"
+        is_deletion = status == "D"
+        violation = _classify_trivial_change(
+            path=path,
+            src_path=src_path,
+            is_addition=is_addition,
+            is_deletion=is_deletion,
+        )
+        if violation is not None:
+            return False, f"not-trivial: commit {current_sha[:7]} {violation}"
+
+    return True, (
+        f"trivial: {commits_seen} commit(s) ahead of {base} all fileset-eligible"
+    )
+
+
+def cmd_check_pr_trivial(project_dir: Path) -> int:
+    """Fast-path gate for `/pr create`: report whether every commit in
+    ``merge-base...HEAD`` is fileset-eligible per Chunk 04's
+    ``Type: trivial`` path bounds.
+
+    Exit 0 when at least one commit exists ahead of base AND every
+    commit clears the bounds — the `/pr` skill skips the cumulative-
+    Critic and PR-reviewer gates in this case. This is the PR-boundary
+    parallel to the doc-only fast-path: same fail-closed shape, same
+    Gate-3 alignment at session end.
+
+    Exit 1 otherwise (any commit touches ``agents/``/``methodology/``/
+    ``templates/``/``CLAUDE.md``, adds a new file, removes a test
+    file, empty diff, no resolvable base, or git failure). Fails
+    closed: when the gate cannot be evaluated, fall through to the
+    full review path rather than silently skipping it.
+    """
+    is_trivial, status = _pr_diff_is_trivial(project_dir)
+    if is_trivial:
+        print(
+            f"{status} — cumulative-Critic and PR-reviewer gates may be skipped."
+        )
+        return 0
+    suffix = (
+        ". Trivial fast-path is not applicable."
+        if status.startswith("empty-diff")
+        else ". Falling back to full review path."
+        if status.startswith(("no-base", "git-failed"))
+        else ". Full review required."
+    )
+    print(f"{status}{suffix}", file=sys.stderr)
+    return 1
+
+
+def cmd_infer_critic_mode(project_dir: Path, args: str | None) -> int:
+    """Print ``<mode>|<rationale>`` for the inferred ``/critic`` mode.
+
+    Thin wrapper around ``tools.lib.critic_mode.infer_mode`` (v1.5
+    Chunk 03). The subcommand exists so the Critic SKILL can call
+    inference without expanding its ``allowed-tools`` to ``Bash(python3
+    -c *)`` — keeping the structural "no arbitrary code execution"
+    constraint enforceable.
+
+    Output format: a single stdout line ``<mode>|<rationale>`` where
+    ``<mode>`` is one of the short tokens (``chunk`` / ``final`` /
+    ``cumulative`` / ``verify-resolutions``) and ``<rationale>`` is the
+    human-readable explanation suitable for both stdout reporting and
+    the ``mode_chosen_by`` field in ``.critic-findings.json``.
+
+    Fail-safe: when ``tools/lib`` is absent (product repos that
+    haven't yet received the lib propagation), returns ``final|
+    fallback-no-tools-lib`` so the Critic falls through to thorough
+    review rather than crashing. Same fail-safe direction as the
+    SKILL's "missing/unrecognized mode → final" rule.
+    """
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    try:
+        from lib import infer_mode  # noqa: PLC0415 — lazy keeps top-level cheap
+    except ImportError:
+        print("final|fallback-no-tools-lib")
+        return 0
+    mode, rationale = infer_mode(project_dir, args)
+    print(f"{mode}|{rationale}")
+    return 0
+
+
 _USAGE = (
     "Usage: product-hook "
     "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
     "verify-chunk-refs [chunk_id]|verify-coverage|"
     "check-operator-verification|accept-operator-verification <rationale>|"
-    "check-pr-doc-only|regen-views}"
+    "check-pr-doc-only|check-pr-trivial|regen-views|infer-critic-mode [args]}"
 )
 
 
@@ -3357,8 +4062,13 @@ def main() -> int:
         return cmd_accept_operator_verification(project_dir, rationale)
     elif command == "check-pr-doc-only":
         return cmd_check_pr_doc_only(project_dir)
+    elif command == "check-pr-trivial":
+        return cmd_check_pr_trivial(project_dir)
     elif command == "regen-views":
         return cmd_regen_views(project_dir)
+    elif command == "infer-critic-mode":
+        args = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else None
+        return cmd_infer_critic_mode(project_dir, args)
     else:
         print(_USAGE, file=sys.stderr)
         return 1

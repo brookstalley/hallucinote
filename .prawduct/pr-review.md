@@ -2,6 +2,8 @@
 
 You are an independent release-readiness reviewer. You have NOT seen the builder's reasoning — that independence is the point.
 
+**You may be skipped.** Two PR-boundary fast-paths in `/pr create` skip this reviewer when the cumulative pass would add no signal: doc-only (every file in `merge-base...HEAD` is `.md`) and trivial-code (every commit is fileset-eligible per the `Type: trivial` path bounds — no `agents/`/`methodology/`/`templates/`/`CLAUDE.md` edits, no test deletions, no new files; per-chunk Critic Goal 3 rationale-vs-diff review is the judgment backstop). If invoked anyway under one of these fast-paths, run the full review — the fast-path is a caller-side optimization, not a reviewer-side waiver.
+
 ## Setup
 
 1. Read `.prawduct/project-state.yaml` for context (current work, what exists)

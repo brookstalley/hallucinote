@@ -8,6 +8,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _No unreleased work._
 
+## [1.3.2] — 2026-05-23
+
+**Hygiene wave — five backlog items closed in one bundle (PR #94).** Two P0 bugfixes, one P0 test coverage gap, one P1 schema enrichment, one P3 defensive guard. No new product surfaces; the value is correctness + future-defensiveness on existing ones.
+
+### Fixed — `delete_notes` tags `events.clip_id` per affected clip
+
+- **`db/mutations.delete_notes`** now emits one `NOTES_DELETED` event per affected clip with `events.clip_id` populated, symmetric with `NOTE_UPDATED` + `insert_notes`. Previously emitted a single event with `clip_id=None`, so `_latest_actor_for(row_kind='clip')` — which scans `events.clip_id` directly — missed the LLM touch and a build-owned clip whose only LLM edit was `delete_notes` became falsely tombstone-eligible on the next build.
+- Single-clip path (the only shape today's `sync/pull.py:2971` exercises) unchanged externally — still one event, just with the column populated. Multi-clip path yields per-clip events instead of one spanning many, also restoring per-clip granularity on the events table.
+
+### Fixed — `_hash_file` NUL-byte sniff for binary safety
+
+- **`hallucinote_mcp/__init__._hash_file`** now skips CRLF→LF normalization when the file contains a NUL byte (binary heuristic). Forward-defensive against a future contributor adding a non-Python entry to `_FINGERPRINT_PATHS` (JSON manifest with embedded CRLF, static `.als` skeleton, `.so` binary) — without the sniff, `b"\r\n"` substrings would be silently rewritten and the fingerprint would drift for non-drift. Python source has no NUL bytes, so the existing cross-platform stability path is unchanged.
+
+### Added — JSONSchema enum/min/max/description enrichment
+
+- **MCP server `_register_tool`** propagates `ParamSpec.enum` / `minimum` / `maximum` / `description` into FastMCP's pydantic-derived wire schema via `Annotated[Optional[T], Field(...)]`. Agents that consult the schema can now prune impossible calls earlier (e.g. `cc_number` 0–127, `bpm` 20–999, the seven `target_kind` enums) rather than waiting for the dispatcher's teaching error. Dispatch-time validation is unchanged.
+
+### Added — `tools/migrate_arrangement_clip.py` synthetic-fixture test coverage
+
+- **7-case test file** covering the one-shot `arrangement` → `arrangement_clips` migration: table+index renames, event-kind rename, JSON1 payload-key rewrite (with a sentinel kind proving unrelated rows stay untouched), `ableton_links.db_kind` rename, second-run no-op idempotency, both-tables-present refusal, and full rollback on mid-transaction failure. Round-trip was previously verified manually on falling-walking's real DB; this locks the contract.
+
+### Verified — W8-B agent-side `M.request` wrap already shipped
+
+- Verified the backlog item ("Agent-side push/pull/capture skill wraps in `M.request(...)`") is structurally satisfied by W23-C: `push_execute.py:410` opens `kind='push'`, `pull_cli.py:161+277` open `kind='pull'`, the MCP dispatcher's `auto_request` opens `kind='mutate'`, and `/song-snapshot` doesn't mutate the DB (the snapshot file IS the deliverable). Entry deleted from backlog as stale.
+
+### Verified
+
+- **Suite: 2027 / 2027 passing** (+11 new tests this wave: 1 schema enrichment + 1 fingerprint NUL-sniff + 2 `delete_notes` + 7 migrate).
+- Cumulative `/critic` + independent `/pr` reviewer both clean (0 blocking, 0 warnings, notes addressed inline).
+
+### Notes
+
+- Banner refreshed from Prawduct v1.4.0 to v1.5.0 (post-sync state).
+- Backlog scrub deletes the five closed entries inline per discipline rules #1 + #3 ("close-in-the-same-PR", "no inline RESOLVED scar tissue"). `docs/v11-requirements.md` F2 strike-through marks `delete_notes events.clip_id` as shipped.
+
 ## [1.3.1] — 2026-05-22
 
 **Compose-time audit-log retrieval + W13-A v1.0 round-trip closeout + W6-K real-Live finding.** Three small focused landings (PRs #89 + #90 + #91) bundled — each closes a gap in v1.3.0's structural surfaces.

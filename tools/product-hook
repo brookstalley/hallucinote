@@ -2656,7 +2656,15 @@ def cmd_stop(project_dir: Path) -> int:
     if has_changes and has_build_plan:
         current_chunk_id = _current_chunk_id_from_status(prawduct_dir)
         if current_chunk_id is not None:
-            chunk_type, _ = _parse_build_plan_chunk_type(prawduct_dir, current_chunk_id)
+            chunk_type, type_error = _parse_build_plan_chunk_type(prawduct_dir, current_chunk_id)
+            # v1.5.1 Chunk 04(a): surface parse errors (e.g. typo'd Type value).
+            # Pre-fix, the error was silently discarded so the author never saw
+            # the "unknown type: ..." message the parser produces. Surfacing in
+            # waiver_notes makes the typo visible at session-end and in the next
+            # stop-hook briefing without changing fail-closed semantics (the
+            # chunk still runs as `code` per the parser's default).
+            if type_error:
+                waiver_notes.append(f"chunk-type-parse-error: {type_error}")
             if chunk_type == "designer-handoff" and not doc_only:
                 designer_handoff_skip = True
                 waiver_notes.append(
@@ -3209,11 +3217,25 @@ def _classify_trivial_change(
     the stop-hook gate and the PR-boundary gate from drifting apart
     silently.
 
+    Metadata paths (``.prawduct/``, ``.claude/settings.json``, etc. —
+    see ``_is_metadata_path``) are treated as out-of-scope and return
+    ``None``. The check applies to BOTH ``path`` (rename dst / single-
+    file change) AND ``src_path`` (rename src) — without that
+    symmetry, a rename FROM a metadata path that landed somewhere
+    interesting would silently be classified, and a rename TO a
+    metadata path would be classified differently depending on which
+    gate ran (the callers previously did dst-only filtering before
+    calling this helper — v1.5.1 Chunk 04(b) consolidates).
+
     The caller translates its status format into the boolean inputs
     (porcelain handles 2-char codes; name-status handles single-char).
     Path bounds are catastrophic-blast-radius classes regardless of
     size — size is intentionally not a bound.
     """
+    if _is_metadata_path(path):
+        return None
+    if src_path is not None and _is_metadata_path(src_path):
+        return None
     if path == "CLAUDE.md":
         return f"claude-md-edited: {path}"
     if path.startswith("agents/"):
@@ -3989,6 +4011,47 @@ def cmd_check_pr_trivial(project_dir: Path) -> int:
     return 1
 
 
+def cmd_compute_verify_resolutions_scope(project_dir: Path) -> int:
+    """Print the file scope a ``/critic verify-resolutions`` pass should review.
+
+    Thin CLI wrapper around ``_compute_verify_resolutions_scope`` (v1.5
+    Chunk 02) so the Critic SKILL can call the canonical helper instead
+    of reimplementing the widening-threshold prose. Defense-in-depth: the
+    Critic's verify-resolutions invocation now computes the same scope
+    the stop-hook gate enforces; drift between the two is no longer
+    possible (v1.5.1 Chunk 03 — backlog 2026-05-21).
+
+    Output format:
+      stdout: one file path per line (the union of prior ``files_reviewed``
+              and files-changed-since-``commit_reviewed``, sorted).
+              Empty stdout when the helper returns no scope.
+      stderr: one line with the helper's reason string.
+
+    Exit codes:
+      0 - scope computed; stdout lists files; stderr reason starts ``ok:``.
+      1 - cannot compute (no prior findings, no ``commit_reviewed``,
+          unreadable findings, no actionable findings, unresolved commit,
+          git failure, invalid files_reviewed). The Critic should fall
+          back to ``/critic chunk`` or ``/critic final`` and record
+          ``mode_chosen_by: "fallback-no-prior-findings"`` (or similar).
+      2 - scope widened past the demotion threshold
+          (``len(delta) > 2 * len(prior) + 5``). The Critic should fall
+          back to ``/critic final`` and record
+          ``mode_chosen_by: "fallback-scope-widened"``.
+    """
+    prawduct_dir = get_prawduct_dir(project_dir)
+    scope, reason = _compute_verify_resolutions_scope(prawduct_dir, project_dir)
+    if scope:
+        for f in scope:
+            print(f)
+    print(reason, file=sys.stderr)
+    if reason.startswith("ok:"):
+        return 0
+    if reason.startswith("scope-widened:"):
+        return 2
+    return 1
+
+
 def cmd_infer_critic_mode(project_dir: Path, args: str | None) -> int:
     """Print ``<mode>|<rationale>`` for the inferred ``/critic`` mode.
 
@@ -4028,7 +4091,8 @@ _USAGE = (
     "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
     "verify-chunk-refs [chunk_id]|verify-coverage|"
     "check-operator-verification|accept-operator-verification <rationale>|"
-    "check-pr-doc-only|check-pr-trivial|regen-views|infer-critic-mode [args]}"
+    "check-pr-doc-only|check-pr-trivial|regen-views|infer-critic-mode [args]|"
+    "compute-verify-resolutions-scope}"
 )
 
 
@@ -4069,6 +4133,8 @@ def main() -> int:
     elif command == "infer-critic-mode":
         args = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else None
         return cmd_infer_critic_mode(project_dir, args)
+    elif command == "compute-verify-resolutions-scope":
+        return cmd_compute_verify_resolutions_scope(project_dir)
     else:
         print(_USAGE, file=sys.stderr)
         return 1

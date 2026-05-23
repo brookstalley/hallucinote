@@ -145,7 +145,7 @@ Follow-ons live in Arc 3 (CLI orchestration of `browser_dry_runs`) and Arc 1 (`c
 ## Arc 6 — Schema/mutator defensive fixes (cumulative janitorial chunk)
 
 - **F1 — W4-C suffix-only invariant: structural enforcement.** Push the return-name slot-prefix strip into `M.create_return` / `M.update_return` so all callers benefit. Add schema-level `CHECK (name NOT GLOB '[A-Z]-*')`.
-- **F2 — W12-A delete_notes events.clip_id edge case.** Emit one `NOTES_DELETED` event per affected clip with `clip_id` set (or extend the tombstone-actor lookup to scan `affected_clips`).
+- ~~**F2 — W12-A delete_notes events.clip_id edge case.** Emit one `NOTES_DELETED` event per affected clip with `clip_id` set (or extend the tombstone-actor lookup to scan `affected_clips`).~~ Shipped 2026-05-23 (commit `b123e93`): per-clip emit chosen over payload-scan, symmetric with `NOTE_UPDATED` + `insert_notes` so `events.clip_id` carries consistent semantics for every clip-touching event.
 - **F3 — W7-A `_TRANSACTION_DEPTH` thread-safety.** Defensive `WeakKeyDictionary` or `threading.local` (not exercised today; defensive for future async/thread adoption).
 - **F4 — `_serialize_markdown` list-item quoting defensive.** Quote (or reject) list items containing `,` / `[` / `]`.
 - **F5 — `sidechain_trigger` principled section-clamp.** Add `envelope_start_beats` parameter (or floor `attack_start` to a configurable section start) so the generator clips the pre-attack window without shifting the hits themselves.

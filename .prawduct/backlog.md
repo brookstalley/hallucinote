@@ -1,16 +1,30 @@
 # Backlog — Hallucinote
 
 <!--
-Last scrubbed: 2026-05-22 (verified each entry against current code)
-Last scrubbed by: Claude (Group 2 close-out scrub)
+Last scrubbed: 2026-05-23 (hygiene wave fix/hygiene-wave-p0-p1-p3 close-out)
+Last scrubbed by: Claude (hygiene wave: P0 + P1 + P3 sweep)
 
-This pass removed: Arc 3 live verification (shipped post-2026-05-21), clean-default-scaffold
-≥1-track (auto-session `cleanup-default-scaffold` ships), compose-time `preset_query` (push.py
-resolves it), W13-A v1.0 fallback (shipped v1.3.1), Drum Rack `loaded_class_name` (Arc 7/P5),
-`tools/capture.py` collision (file no longer exists), W4-E mixer-column docs nit (rolled into
-push skill), legacy-tool prose in falling-walking.md (shipped), `docs/mcp-requirements.md`
-gap #4 prose (shipped), and the two `sync/push.py` raw SELECTs (only one remains at line
-1452, a JOIN of a different shape — see polish entries).
+2026-05-23 pass removed: P0 W12-A `delete_notes` clip_id fix (shipped — one
+NOTES_DELETED event per affected clip with clip_id set); P0 W8-B agent-side
+M.request wraps (verified ALREADY shipped by W23-C — `push_execute.py:410`
+opens kind='push', `pull_cli.py:161+277` open kind='pull', MCP dispatcher's
+`auto_request` opens kind='mutate'; `/song-snapshot` doesn't mutate DB);
+P0 `tools/migrate_arrangement_clip.py` tests (shipped — 7 cases including
+JSON1 payload rewrite + both-tables-present refusal + rollback);
+P1 JSONSchema enum/min/max/description enrichment (shipped via
+`Annotated[Optional[T], Field(...)]` in `_register_tool`); P3
+`_FINGERPRINT_PATHS` binary-safety guard (shipped — NUL-byte sniff skips
+CRLF→LF normalization).
+
+2026-05-22 pass removed: Arc 3 live verification (shipped post-2026-05-21),
+clean-default-scaffold ≥1-track (auto-session `cleanup-default-scaffold`
+ships), compose-time `preset_query` (push.py resolves it), W13-A v1.0
+fallback (shipped v1.3.1), Drum Rack `loaded_class_name` (Arc 7/P5),
+`tools/capture.py` collision (file no longer exists), W4-E mixer-column
+docs nit (rolled into push skill), legacy-tool prose in falling-walking.md
+(shipped), `docs/mcp-requirements.md` gap #4 prose (shipped), and the two
+`sync/push.py` raw SELECTs (only one remains at line 1452, a JOIN of a
+different shape — see polish entries).
 
 Discipline (load-bearing — drift here ruined the d159e4c scrub):
 
@@ -48,21 +62,13 @@ bands as the codebase + product shape evolves.
 
 ## P0 — Highest leverage (small effort, real benefit, ready to ship)
 
-- **W12-A edge case: `delete_notes` doesn't set `events.clip_id` when a single clip is affected.** `delete_notes` (in `db/mutations.py`) emits `NOTES_DELETED` with `clip_id=None` because the operation is multi-clip in shape (`affected_clips` lives in the payload). Consequence: a build-owned clip whose only LLM-touch was a `delete_notes` call has no events.clip_id row for it, so `_latest_actor_for` (clip path uses events.clip_id) doesn't see the LLM as the latest actor — the clip becomes tombstone-eligible on the next build. Fix candidates: (a) emit one `NOTES_DELETED` event per affected clip with clip_id set; (b) set clip_id when `len(affected_clips)==1`; (c) extend clip-tombstone-actor lookup to also scan payload's affected_clips. **Verifiable signal:** grep `db/mutations.py` for the `delete_notes` event emission; today it passes `clip_id=None`. **Sized:** small. (W12-A PR review re-review residual, 2026-05-19)
-
-- **Agent-side push/pull/capture skill wraps in `M.request(...)`.** W8-B (2026-05-19) shipped the request-lifecycle building blocks (`M.request` context manager, `M.close_request`, `kind` parameter on `create_request`, `MARKDOWN_REF_RECORDED` audit event). The push/pull/capture entry points are agent-orchestrated (skills, not Python drivers), so the move is to update the three SKILL.md files to instruct the agent to wrap mutator calls in `with M.request(conn, kind='push'|'pull'|'capture', actor='llm', ...)`. **Verifiable signal:** grep `.claude/skills/ableton-push/SKILL.md` + `.claude/skills/ableton-pull/SKILL.md` + the capture skill for `M.request`; today none match. **Sized:** trivial (three SKILL.md edits, no code). (W8-B 2026-05-19)
-
 - **Master-strip device chains.** `device_chains.parent_track_id` accepts the `kind='master'` row, but `plan_push_devices` (`src/hallucinote/sync/push.py:928-966`) skips `kind='master'` at line 963-966 ("Master tracks don't carry devices"). Master limiters, master EQs, and master bus saturators are common in real mixes. Needs a master-specific push path (no track_index — reaches the master strip directly) and a corresponding MCP gap entry if any. **Verifiable signal:** `plan_push_devices` no longer early-returns on `kind='master'`. **Sized:** small. falling-walking has no master devices today, so it's non-blocking but cheap. (builder, chunk 4a; updated 2026-05-17 after `'return'` reservation was dropped)
-
-- **`tools/migrate_arrangement_clip.py` has no automated tests.** Manual round-trip verified end-to-end on falling-walking's real DB (32 placements + 32 events + 3 indexes rewritten; second run no-ops). A small synthetic-fixture test would lock the contract — particularly the JSON1 payload-key rewrite and the idempotency guard against both-tables-present. **Verifiable signal:** `tests/unit/tools/test_migrate_arrangement_clip.py` exists. **Sized:** single test file. (PR review #19 + #24, 2026-05-17)
 
 ## P1 — Strong benefit, moderate effort
 
 - **Backlog accuracy structural enforcement — `product-hook backlog-stale-check` subcommand + Critic goal "closed-but-not-removed".** Both target files (`tools/product-hook`, `.prawduct/critic-review.md`) carry uncommitted v1.5 framework WIP introducing `/critic verify-resolutions` mode — landing this as a sibling would PR the framework work per memory `project_prawduct_framework_authorship`. **Two parts:** (a) `product-hook backlog-stale-check` subcommand — parses backlog entries, surfaces > 60-day candidates + diff-grep against recent PRs flags shipped-but-not-removed candidates; output rides the session briefing; (b) Critic / PR-reviewer goal extension — for cumulative reviews, grep diff for keywords matching open backlog headlines + named files/functions; flag PRs that ship work matching an entry without deleting it in the same diff. **Verifiable signal:** `python3 tools/product-hook backlog-stale-check` exists and exits 0; `.claude/skills/critic/SKILL.md` (or `.prawduct/critic-review.md`) contains a goal block naming "backlog closed-but-not-removed". **Sized:** small once unblocked. **Land after** v1.5 framework sync (verify-resolutions) ships, or coordinate with the user to bundle into that sync. (Arc 5 P0 deferral 2026-05-21)
 
 - **Derived-views drift: `regen-views` no longer errors but still emits nothing.** Refreshed 2026-05-22: `python3 tools/product-hook regen-views` now exits 0 (no `ModuleNotFoundError`), and `tools/lib/` exists. The source-of-truth side is healthy — tagged change-log entries (`chunks=...|status=...|release=...|scope=...`) land in `.prawduct/change-log.md` for every entry since 2026-05-20. The view-derivation side is still inert: `scope_rollups: {}` in `.prawduct/project-state.yaml` stays empty, and `.prawduct/release-notes.md` is never created. Likely a tag-parsing or write-side bug in the regen logic. Two paths: (a) fix the regen path (likely in the framework-WIP `tools/product-hook` — coordinate with the upstream sync); (b) flip `views_enabled: false` in `project-state.yaml` until the fix lands. **Verifiable signal:** `scope_rollups` block in `project-state.yaml` is non-empty AND `.prawduct/release-notes.md` exists after a `regen-views` run. (W10-B/C/D + W12-C/W15-D + W15-B Critic notes, 2026-05-19/20; refreshed 2026-05-22)
-
-- **Enrich the flat-wire JSONSchema with `enum` / `minimum` / `maximum` / `description` from `ParamSpec`.** Today's per-tool wrappers expose every action's params as keyword-only Optionals, but only Python type + Optional flows into the wire schema; `ParamSpec` already carries `enum` (e.g., `target_kind` across the 7 envelope families), `minimum` / `maximum` (e.g., `cc_number` 0-127, `bpm` 20-999), and `description`. The dispatcher still enforces these at runtime via teaching errors so correctness is intact, but agents could prune impossible calls earlier with a richer schema. Wire via `typing.Annotated[type, Field(...)]` or by editing the generated schema post-registration. **Verifiable signal:** `hallucinote_mcp/src/hallucinote_mcp/server.py::_register_tool` propagates enum/min/max into the wire schema; a wire-schema test confirms round-trip. **Sized:** small refactor. (critic W2, Chunk W2-1 2026-05-18)
 
 - **Arrangement-VIEW state pull (loop region, follow mode, view zoom).** Distinct from arrangement-clip-placement pull (which M+1-3b shipped). `ableton_arrangement(action='info')` exposes the view state but there is no DB home for loop region or view zoom today; tempo/signature are better diffed against `tempo_map`/`time_signature_map` via dedicated probes. Needs an explicit decision: add DB columns for view state (probably on `ableton_sessions` — it's session-bound view state, not authored song data) or leave view state non-round-tripped per "DB is the score, not the rehearsal-room state." Filed for explicit decision, not silent drop. **Verifiable signal:** a `ableton_sessions` column for loop region exists OR a decision-record in `decisions/` says "view state intentionally not round-tripped." (reflection, M+1-3 re-plan 2026-05-17)
 
@@ -101,8 +107,6 @@ bands as the codebase + product shape evolves.
 - **FastMCP private-API access in `test_server.py`.** Three tests reach into `mcp._tool_manager._tools[name]` directly to fetch a `Tool` for `.run()`. The existing `registered_tool_names` helper tries multiple attribute names for FastMCP version-drift resilience; a symmetric `get_registered_tool(mcp, name)` would centralize the version-coupling. **Verifiable signal:** `get_registered_tool` helper exists in tests. (critic W2 N1, Chunk W2-1 2026-05-18)
 
 - **Clear + note_expression: omit-required-args path untested.** `ableton_automation(action='clear', target_kind='note_expression')` raises the gap-citing `NotImplementedError` regardless of whether note_pitch / note_start_beats / axis were supplied (gap check fires before parameter validation). Asymmetric with `write_envelope` which validates first. Either add a docstring note or a one-line test pinning the precedence. (critic, Chunk D 2026-05-18)
-
-- **`_FINGERPRINT_PATHS` binary-safety invariant lives only in the docstring.** `hallucinote_mcp/__init__.py:29` defines the fingerprint set; `_hash_file` normalizes `\r\n → \n` before hashing on the assumption every fingerprinted entry is Python source. A future contributor adding a non-Python entry (JSON manifest, `.so`, static `.als` skeleton) could silently corrupt the hash. Options: (a) skip normalization for entries that fail a NUL-byte sniff; (b) import-time validator asserting each resolved fingerprint file ends in `.py`. **Sized:** tiny — one helper + one test. (critic feat/wave-4 W4-F N1, 2026-05-18)
 
 - **W6-K real-Live smoke — remaining surfaces.** Wave 6 shipped a substantial MCP-side surface validated against fakes. Sidechain smoke landed with `c80d4a6` (2026-05-22 — S/C Gain refusal fix). Still wants real-Live empirical confirmation: (a) `read_envelope` round-trips on a mixer_volume / device_parameter envelope; (b) `get_device_chains` structure on a real Drum Rack; (c) `load_in_rack` + `set_parameter_in_rack` on an InstrumentGroupDevice; (d) `set_input_routing` finds the right RoutingType by display_name; (e) W5-F deferred — round-trip parity on parameter-dialed native instruments via the W5-D pull path. (W6 close-out 2026-05-19; sidechain shipped 2026-05-22)
 

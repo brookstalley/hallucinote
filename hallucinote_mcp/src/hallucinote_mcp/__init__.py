@@ -84,16 +84,25 @@ def _hash_file(hasher: "hashlib._Hash", path: Path, rel: str) -> None:
 
     Line endings are normalized (CRLF → LF) before hashing so the
     fingerprint is stable across Windows (or any git checkout with
-    autocrlf=true) and Unix. Without this, the same source tree
+    autocrlf=true) and Unix — without this, the same source tree
     produces different fingerprints depending on how it was checked
-    out — and the handshake then surfaces a version mismatch for
-    semantically-identical code. Safe to apply because every entry
-    in :data:`_FINGERPRINT_PATHS` is Python source (no binaries).
+    out, and the handshake surfaces a version mismatch for
+    semantically-identical code.
+
+    Normalization is skipped for files containing a NUL byte
+    (heuristic: binary content). A future contributor adding a
+    non-Python entry to :data:`_FINGERPRINT_PATHS` — a JSON manifest
+    with embedded CRLF, a static ``.als`` skeleton, a ``.so`` — would
+    otherwise have ``b"\\r\\n"`` substrings silently corrupted by the
+    replace. NUL-sniffing keeps the Python-source path identical while
+    making the invariant self-defending.
     """
     hasher.update(rel.encode("utf-8"))
     hasher.update(b"\x00")
     try:
-        content = path.read_bytes().replace(b"\r\n", b"\n")
+        content = path.read_bytes()
+        if b"\x00" not in content:
+            content = content.replace(b"\r\n", b"\n")
         hasher.update(content)
     except OSError:
         hasher.update(b"<unreadable>")

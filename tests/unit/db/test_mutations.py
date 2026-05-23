@@ -325,6 +325,46 @@ def test_delete_notes(conn, clip):
     assert ev["kind"] == E.NOTES_DELETED
 
 
+def test_delete_notes_sets_event_clip_id(conn, clip):
+    """Single-clip delete tags `events.clip_id` so `_latest_actor_for(row_kind='clip')`
+    sees the delete as a touch on that clip. Without this, a build-owned clip
+    whose only LLM-touch was `delete_notes` falsely tombstone-eligible.
+    """
+    ids = M.insert_notes(conn, clip_id=clip, notes=[_make_note(start=i) for i in range(2)])
+    M.delete_notes(conn, note_ids=ids, actor="llm")
+    row = conn.execute(
+        "SELECT clip_id, actor FROM events WHERE kind = ? ORDER BY seq DESC LIMIT 1",
+        (E.NOTES_DELETED,),
+    ).fetchone()
+    assert row["clip_id"] == clip
+    assert row["actor"] == "llm"
+    # Latest-actor lookup (the tombstone-protection path) sees the LLM touch.
+    assert M._latest_actor_for(conn, row_kind="clip", row_id=clip) == "llm"
+
+
+def test_delete_notes_multi_clip_emits_event_per_clip(conn, track):
+    """Multi-clip delete emits one NOTES_DELETED event per affected clip so
+    every event carries a specific clip_id — the column drives clip-touch
+    lookups and would lose granularity if a single event spanned multiple clips.
+    """
+    clip_a = M.create_clip(conn, track_id=track, slot=1, length_beats=16.0, name="a")
+    clip_b = M.create_clip(conn, track_id=track, slot=2, length_beats=16.0, name="b")
+    a_ids = M.insert_notes(conn, clip_id=clip_a, notes=[_make_note(start=0)])
+    b_ids = M.insert_notes(conn, clip_id=clip_b, notes=[_make_note(start=0)])
+    M.delete_notes(conn, note_ids=[*a_ids, *b_ids], actor="llm")
+    rows = conn.execute(
+        "SELECT clip_id, payload_json FROM events WHERE kind = ? ORDER BY seq",
+        (E.NOTES_DELETED,),
+    ).fetchall()
+    assert len(rows) == 2
+    by_clip = {r["clip_id"]: json.loads(r["payload_json"]) for r in rows}
+    assert set(by_clip.keys()) == {clip_a, clip_b}
+    assert by_clip[clip_a]["note_ids"] == a_ids
+    assert by_clip[clip_b]["note_ids"] == b_ids
+    assert by_clip[clip_a]["affected_clips"] == [clip_a]
+    assert by_clip[clip_b]["affected_clips"] == [clip_b]
+
+
 def test_update_notes_by_tag_velocity_delta(conn, clip):
     M.insert_notes(
         conn,

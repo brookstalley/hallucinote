@@ -4,6 +4,81 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
+
+<!-- chunks=hygiene status=shipped release=unreleased scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
+
+Five backlog items closed in one feature branch (fix/hygiene-wave-p0-p1-p3),
+each with tightly-scoped regression tests, accurate root-cause commit
+messages, and same-PR backlog deletions per discipline rules #1 + #3.
+
+**P0 `delete_notes` clip_id fix** (`b123e93`): `delete_notes` previously
+emitted a single NOTES_DELETED event with `clip_id=None`, so
+`_latest_actor_for(row_kind='clip')` — which scans `events.clip_id`
+directly — missed the touch. A build-owned clip whose only LLM-touch
+was delete_notes became falsely tombstone-eligible. Fix emits one event
+per affected clip with `clip_id` set, symmetric with NOTE_UPDATED +
+insert_notes so events.clip_id carries consistent semantics for every
+clip-touching event. Single-clip path (the only shape today's
+`sync/pull.py:2971` exercises) still emits one event; multi-clip path
+yields per-clip events instead of one spanning many, also restoring
+per-clip granularity on the events.clip_id column.
+
+**P0 W8-B verification** (no code): verified the agent-side push/pull/
+capture wrap-in-M.request item is already structurally satisfied by
+W23-C — `push_execute.py:410` opens kind='push', `pull_cli.py:161+277`
+open kind='pull', MCP dispatcher's `auto_request` opens kind='mutate',
+and `/song-snapshot` doesn't mutate the DB (the snapshot file IS the
+deliverable). Entry deleted from backlog as stale.
+
+**P0 `tools/migrate_arrangement_clip.py` test coverage** (`6369c21`):
+401-line synthetic-fixture test file with 7 cases covering the one-shot
+`arrangement` → `arrangement_clips` migration: table+index renames,
+event-kind rename, JSON1 payload-key rewrite (with a sentinel kind
+proving unrelated rows stay untouched and that no legacy
+`arrangement_id` key survives anywhere), `ableton_links.db_kind` rename,
+second-run no-op idempotency, both-tables-present refusal, and full
+rollback on mid-transaction failure. Loader pattern mirrors
+`test_migrate_returns_strip_prefix.py` (importlib.util + raw-SQL seeding
+via the inverse rename).
+
+**P1 JSONSchema enum/min/max/description enrichment** (`44955e1`):
+ParamSpec already carries `enum` / `minimum` / `maximum` / `description`
+(used by the dispatcher's teaching errors and `action='help'`), but
+only the Python type flowed into FastMCP's pydantic-derived JSONSchema.
+Agents saw `Optional[int]` for `cc_number` (no 0–127 bound),
+`Optional[str]` for `target_kind` (no seven-value enum), and no
+descriptions — pruning impossible calls happened only after the
+dispatcher's error. New helper `_annotated_param_type` wraps each
+param's Python type in `Annotated[Optional[T], Field(...)]` inside
+`_register_tool`: `ge` / `le` for ranges, `description` passes through,
+and `json_schema_extra={"enum": [...]}` for runtime-data enums.
+Dispatch-time validation is unchanged; this widens the discovery surface
+only. Test pins three representatives (bpm 20–999+description,
+target_kind enum, cc_number 0–127 integer range).
+
+**P3 `_FINGERPRINT_PATHS` binary-safety guard** (`49e546d`):
+`_hash_file`'s CRLF→LF normalization is correct for the current
+`_FINGERPRINT_PATHS` membership (every entry resolves to Python source),
+but the invariant lived only in the docstring. A future contributor
+adding a non-Python entry (JSON manifest with embedded CRLF, static
+`.als` skeleton, `.so`) would have `b"\r\n"` substrings silently
+corrupted by the replace. Fix sniffs the read bytes for a NUL byte: if
+present (binary heuristic), skip the replace and hash byte-for-byte.
+Python source has no NUL bytes, so the existing CRLF/LF cross-platform
+stability path is unchanged for them. Test pins the new invariant —
+two binary blobs differing only in a CRLF↔LF substitution must hash
+differently.
+
+Backlog scrub closes the five entries inline. `docs/v11-requirements.md`
+F2 strike-through marks delete_notes events.clip_id as shipped (Critic
+note from the bundle review). Settings.json banner refreshed from v1.4.0
+to v1.5.0 alongside the post-sync state.
+
+Test count: **2027 passing** (11 new tests this wave: 1 schema
+enrichment, 1 fingerprint NUL-sniff, 2 delete_notes, 7 migrate). Both
+cumulative-Critic and PR-review gates clean.
+
 ## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
 
 <!-- chunks=E1|E2|E3 status=shipped release=unreleased scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->

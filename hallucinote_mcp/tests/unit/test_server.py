@@ -211,6 +211,53 @@ def test_every_tool_input_schema_flattens_action_params():
                 )
 
 
+def test_input_schema_propagates_enum_min_max_description_from_paramspec():
+    """ParamSpec carries ``enum`` / ``minimum`` / ``maximum`` / ``description``;
+    the flat-wire schema must surface them so agents can prune impossible
+    calls before dispatch instead of only after the teaching error.
+
+    Three representative checks: ``bpm`` (numeric min+max+description),
+    ``target_kind`` (string enum), ``cc_number`` (integer min+max).
+    Dispatch-time validation is the source of truth; this test pins the
+    discovery surface.
+    """
+    mcp = create_server()
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+
+    # bpm — numeric range + description (lives on ableton_session.set_tempo)
+    sess_props = by_name["ableton_session"].inputSchema["properties"]
+    bpm = sess_props["bpm"]
+    assert bpm.get("description") == "Tempo in BPM. Live's allowed range is 20-999."
+    # pydantic v2 emits the constraint inside the ``anyOf`` branch that
+    # carries the actual type, not on the top-level node — Optional[float]
+    # widens to ``anyOf: [{type: number, ...}, {type: null}]``.
+    branches = bpm["anyOf"]
+    number_branch = next(b for b in branches if b.get("type") == "number")
+    assert number_branch["minimum"] == 20.0
+    assert number_branch["maximum"] == 999.0
+
+    # target_kind — string enum (lives on ableton_automation.write_envelope)
+    auto_props = by_name["ableton_automation"].inputSchema["properties"]
+    target_kind = auto_props["target_kind"]
+    assert set(target_kind["enum"]) == {
+        "clip_cc",
+        "clip_pitch_bend",
+        "note_expression",
+        "device_parameter",
+        "mixer_volume",
+        "mixer_pan",
+        "send_level",
+    }
+
+    # cc_number — integer range (lives on ableton_automation.write_envelope)
+    cc_number = auto_props["cc_number"]
+    cc_branches = cc_number["anyOf"]
+    int_branch = next(b for b in cc_branches if b.get("type") == "integer")
+    assert int_branch["minimum"] == 0
+    assert int_branch["maximum"] == 127
+
+
 def test_tool_call_via_fastmcp_accepts_flat_kwargs():
     """End-to-end: the FastMCP wrapper accepts ``bpm=132.0`` at the top
     level — the documented call shape. Forwards to the Remote Script with

@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from . import client, schema
 from .dispatcher import dispatch
@@ -37,6 +38,36 @@ _PARAM_TYPE_MAP: dict[str, type] = {
     "list": list,
     "dict": dict,
 }
+
+
+def _annotated_param_type(spec: schema.ParamSpec) -> Any:
+    """Translate a ``ParamSpec`` into ``Annotated[Optional[T], Field(...)]``
+    so FastMCP's pydantic-derived JSONSchema carries ``description``,
+    ``minimum`` / ``maximum``, and ``enum`` — not just the Python type.
+
+    Agents that consult the wire schema can prune impossible calls earlier
+    (e.g. ``cc_number`` 0–127 limits, the seven ``target_kind`` enums)
+    instead of waiting for the dispatcher's teaching error. Dispatch-time
+    validation is unchanged; this widens the discovery surface only.
+    """
+    py_type = _PARAM_TYPE_MAP.get(spec.type, Any)
+    optional_type = Optional[py_type]
+
+    field_kwargs: dict[str, Any] = {"default": None}
+    if spec.description:
+        field_kwargs["description"] = spec.description
+    if spec.minimum is not None:
+        field_kwargs["ge"] = spec.minimum
+    if spec.maximum is not None:
+        field_kwargs["le"] = spec.maximum
+    if spec.enum:
+        # ``enum`` lives in ``json_schema_extra`` rather than ``Literal[...]``:
+        # the dispatcher (not the wire schema) is the source of truth for
+        # rejection, and a runtime ``Literal`` would force callers to widen
+        # to ``str`` anyway since the enum members are runtime data.
+        field_kwargs["json_schema_extra"] = {"enum": list(spec.enum)}
+
+    return Annotated[optional_type, Field(**field_kwargs)]
 
 
 logger = logging.getLogger("hallucinote_mcp")
@@ -238,16 +269,16 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     ]
     annotations: dict[str, Any] = {"action": str, "return": dict}
     for spec in params:
-        py_type = _PARAM_TYPE_MAP.get(spec.type, Any)
+        annotated = _annotated_param_type(spec)
         sig_params.append(
             inspect.Parameter(
                 spec.name,
                 inspect.Parameter.KEYWORD_ONLY,
                 default=None,
-                annotation=Optional[py_type],
+                annotation=annotated,
             )
         )
-        annotations[spec.name] = Optional[py_type]
+        annotations[spec.name] = annotated
 
     # Envelope-level escape hatch: per-call bypass of the strict
     # server/Remote-Script version handshake. Injected as a synthetic

@@ -3,7 +3,7 @@ description: PR lifecycle management — create, update, merge, or check status 
 argument-hint: "[create|update|merge|status]"
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Bash(gh *), Bash(git *), Bash(python3 tools/product-hook test-status), Bash(python3 tools/product-hook check-cumulative-critic), Bash(python3 tools/product-hook check-operator-verification), Bash(python3 tools/product-hook accept-operator-verification *), Bash(python3 tools/product-hook check-pr-doc-only), Read, Write, Agent
+allowed-tools: Bash(gh *), Bash(git *), Bash(python3 tools/product-hook test-status), Bash(python3 tools/product-hook check-cumulative-critic), Bash(python3 tools/product-hook check-operator-verification), Bash(python3 tools/product-hook accept-operator-verification *), Bash(python3 tools/product-hook check-pr-doc-only), Bash(python3 tools/product-hook check-pr-trivial), Read, Write, Agent
 ---
 
 You are managing the PR lifecycle for this project. Detect the current state and take the appropriate action.
@@ -41,7 +41,13 @@ Verify on a feature branch (not main/master/develop). Verify commits ahead of ba
 **Run `python3 tools/product-hook check-pr-doc-only`.** This mirrors the stop hook's session-end behavior at the PR boundary: when every file in `merge-base...HEAD` ends in `.md`, the cumulative-Critic and PR-reviewer gates add no value and are skipped.
 
 - **Exit 0 (`doc-only`)**: Skip Steps 2, 2b, 3, and 4 — jump straight to Step 5 (Create PR). Note the skip in the PR description (e.g. "Doc-only PR — review gates skipped per check-pr-doc-only"). Tell the user which gates were skipped and why.
-- **Exit 1 (anything else — `not-doc-only`, `empty-diff`, `no-base`, `git-failed`)**: Proceed to Step 2. The gate fails closed; any failure to evaluate falls through to the full review path.
+- **Exit 1 (anything else — `not-doc-only`, `empty-diff`, `no-base`, `git-failed`)**: Proceed to Step 1c.
+
+### Step 1c: Trivial-code fast-path
+**Run `python3 tools/product-hook check-pr-trivial`.** Parallel to Step 1b for the proportional-effort knob on code work: when every commit on `merge-base...HEAD` is fileset-eligible per the `Type: trivial` path bounds (no edits under `agents/`/`methodology/`/`templates/`, no `CLAUDE.md` edits, no test-file removals, no newly-tracked files), every chunk's rationale was Critic-passed in chunk-mode review and the cumulative pass would add no signal. The cumulative-Critic and PR-reviewer gates are skipped. Size is intentionally not a bound — trivial is a semantic claim, validated per-chunk by Critic Goal 3 (rationale-vs-diff fit).
+
+- **Exit 0 (`trivial`)**: Skip Steps 2, 2b, 3, and 4 — jump straight to Step 5 (Create PR). Note the skip in the PR description (e.g. "Trivial-code PR — review gates skipped per check-pr-trivial; every commit is fileset-eligible per Type: trivial bounds"). Tell the user which gates were skipped and why.
+- **Exit 1 (anything else — `not-trivial: commit <sha> <bound>`, `empty-diff`, `no-base`, `git-failed`)**: Proceed to Step 2. The gate fails closed; any failure to evaluate falls through to the full review path.
 
 ### Step 2: Cumulative-Critic gate — MANDATORY
 **Run `python3 tools/product-hook check-cumulative-critic`.** This gate requires a fresh, blocking-free `cumulative`-mode Critic record covering `merge-base...HEAD`. If it exits non-zero, **STOP**: invoke `/critic cumulative` to produce the missing record, resolve any blocking findings, then re-check. Do NOT proceed to Step 3 until this gate passes.
@@ -120,6 +126,7 @@ PR review evidence is stored in `.prawduct/.pr-reviews/<branch-name>.json` (with
 - The reviewer reads `.prawduct/pr-review.md` for its instructions
 - Run the full test suite before creating a PR — but check `python3 tools/product-hook test-status` first; skip the run if it reports `current`
 - **Doc-only fast-path (Step 1b):** when `check-pr-doc-only` reports the entire `merge-base...HEAD` diff is `.md`, the cumulative-Critic and PR-reviewer gates are skipped. The gate fails closed — any error in evaluation falls through to the full review path. Mirrors the stop hook's `_session_changes_are_doc_only` exemption at the PR boundary.
+- **Trivial-code fast-path (Step 1c):** when `check-pr-trivial` reports every commit on `merge-base...HEAD` is fileset-eligible per the `Type: trivial` path bounds (no `agents/`/`methodology/`/`templates/`/`CLAUDE.md` edits, no test deletions, no new files), the cumulative-Critic and PR-reviewer gates are skipped. Per-chunk Critic rationale-vs-diff review is the judgment backstop; the cumulative pass would add no signal when each chunk already cleared its own gate. Fails closed.
 - **Run `python3 tools/product-hook check-cumulative-critic` before creating a PR** — this gate refuses to open a PR without a fresh, blocking-free `cumulative`-mode Critic record (see Step 2). The cumulative review (`merge-base...HEAD`) catches cross-chunk integration cracks per-chunk reviews can't see.
 - **Run `python3 tools/product-hook check-operator-verification`** — when `operator_verification_required: true`, the gate refuses to open a PR if `.prawduct/operator-verification.md` has any pending entries. Drain via `python3 tools/prawduct-setup.py verify <dir> <VRF-id>` or override per-PR with `--accept-pending-verification "rationale"` (see Step 2b).
 - Include review findings summary in the PR description

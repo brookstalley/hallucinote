@@ -531,17 +531,24 @@ Two `[expr]` objects, one per crossing event.
 Box text:
 
 ```
-expr ($f1 < $i2) && ($f0 >= $i2) && ($i3 == 1)
+expr ($f2 < $i3) && ($f1 >= $i3) && ($i4 == 1)
 ```
+
+> **Note on `[expr]` inlet references.** Max's `[expr]` uses
+> **1-indexed** variable names: `$f1` / `$i1` / `$s1` refers to the
+> LEFTMOST inlet (inlet 0 in patchcord-numbering terms), `$f2`/`$i2`
+> to the next inlet, and so on. There is no `$f0` / `$i0`. So the
+> hot inlet's variable is `$f1`, not `$f0` as you might expect from
+> 0-based outlet/inlet numbering elsewhere in this guide.
 
 Inlets:
 
-| Inlet | Type | Source | Role |
-|---|---|---|---|
-| 0 (hot) | float | observer outlet (current_beat) | triggers eval |
-| 1 (cold) | float | `[value prev_beat]` outlet | prior beat |
-| 2 (cold) | int | `[value v_start_at_beat]` outlet | start threshold |
-| 3 (cold) | int | `[value v_arm]` outlet | armed gate |
+| Inlet (0-based) | `[expr]` ref | Type | Source | Role |
+|---|---|---|---|---|
+| 0 (hot)  | `$f1` | float | observer outlet (current_beat) | triggers eval |
+| 1 (cold) | `$f2` | float | `[value prev_beat]` outlet | prior beat |
+| 2 (cold) | `$i3` | int | `[value v_start_at_beat]` outlet | start threshold |
+| 3 (cold) | `$i4` | int | `[value v_arm]` outlet | armed gate |
 
 Wire:
 - observer → `[expr ...]` inlet 0 (will need `[deferlow]` for prev_beat update, see D.5)
@@ -1714,6 +1721,7 @@ Every Max object referenced in this guide, alphabetical:
 | Assumed `[udpreceive]` has a right outlet for sender info | It doesn't — vanilla Max `[udpreceive]` has one outlet (the OSC messages); CNMAT's variants are the same | Carry the reply destination in the OSC query payload (Section C.3) |
 | Assumed `[udpsend]` has a right inlet for `host port` config | It doesn't — single inlet, retarget via `host <sym>` / `port <int>` MESSAGES (same convention as `[udpreceive]` `port <N>`) | Send config as separate prepended messages to the same inlet (Sections C.3, F.6) |
 | Downstream sees `host s` / `port 0` instead of real values | `[t l b]` outlet types reversed in wiring expectations — outlet 0 is `l` (list), outlet 1 is `b` (bang); wiring unpack to outlet 1 feeds bangs (not the list), so unpack emits defaults | Use `[t b l]` instead: `b` on outlet 0 (left), `l` on outlet 1 (right) — fires right-to-left, so list fires first then bang, which is the destination-then-reply order |
+| `[expr]` box turns red with `$f0` / `$i0` | Max's `[expr]` uses **1-indexed** inlet variables — leftmost inlet is `$f1` / `$i1` / `$s1`, NOT `$f0` / `$i0` | Shift all variable numbers up by 1: inlet 0 → `$f1`, inlet 1 → `$f2`, etc. |
 | `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |

@@ -115,7 +115,10 @@ while Type is still Int, Max will clamp to 11255. With Float type,
 the range accepts the full 11000-11400 span. Then set Unit Style to
 Int so the UI renders integers despite the Float storage.
 
-Or, if you edit the object box directly:
+For reference, the existing `Port` box's attribute string should end
+up looking like this (you're MODIFYING the Chunk 1 box, not adding a
+new one — adding a new box would create a duplicate parameter that
+Live renames to `OSC Port[1]` / `Port[1]`):
 
 ```
 live.numbox @parameter_enable 1 @parameter_longname "OSC Port" @parameter_shortname Port @_parameter_range 11000. 11400. @_parameter_initial 11000. @_parameter_unitstyle 5

@@ -76,10 +76,13 @@ but in practice we're playing the arrangement anyway to capture features.
   incremental, not a new component.
 - **Unified surface.** `ableton_render` and `ableton_analysis` collapse to
   the same plumbing.
-- **Per-track config is parameter writes.** Each `.amxd` instance exposes
-  `record_arm` (bool) and `output_path` (string); the Remote Script sets
-  these via the existing socket. No track creation, no input routing
-  matrix, no folder-layout assumptions.
+- **Per-track config is parameter writes + OSC.** Each `.amxd` instance
+  exposes `record_arm` (bool, Live parameter) and `osc_port` (int, Live
+  parameter). The output path is delivered out-of-band via OSC `/path`
+  (Live parameters are float/int/enum only — strings need a side channel,
+  per Chunk 1 in-Live findings; see `learnings.md`). The Remote Script
+  writes `Arm` (short name) via the existing socket; the harness sends
+  `/path` via UDP before arming.
 - **PDC handles alignment.** Live's plugin delay compensation aligns each
   track's recorded file at the master bus, so dry+wet pairs are
   sample-aligned for reverb deconvolution.
@@ -343,7 +346,7 @@ The loop is **measurable**. We don't claim "the mix sounds better"; we claim con
 
 `docs/v11-requirements.md:206` reserves `ableton_render` and `ableton_analysis`. With `sfrecord~`, they collapse to shared plumbing:
 
-- **`ableton_render`** → set `record_arm=true` and `output_path` on every analyzer device, set transport to arrangement start, play to end. Returns the `captures/<timestamp>/` directory of WAVs + a `manifest.json` (DB seq number, intent snapshot, sample rate, analyzer version).
+- **`ableton_render`** → deliver per-instance OSC `/path`, set `Arm=1` on every analyzer device, set transport to arrangement start, play to end. (Chunk 2 architecture: deliver `/start_at_beat` and `/stop_at_beat` so recording boundaries are transport-position-driven inside the patch — sample-accurate, tempo-change-immune, multi-analyzer-aligned for free. See `build-plan.md` Chunk 2 architecture decision.) Returns the `captures/<timestamp>/` directory of WAVs + a `manifest.json` (DB seq number, intent snapshot, sample rate, analyzer version).
 - **`ableton_analysis`** has two flavors:
   - **Streaming** — exposes the OSC feature sidecar's ring as a resource. The LLM can subscribe to per-track LUFS-M / band ratios during playback.
   - **Post-render** — takes a `captures/` directory + song DB; returns a `MixReport` (per-stem + per-master metrics + intent-aware findings keyed to DB state + optional `compare_to` diff against a baseline).
@@ -361,13 +364,13 @@ Prove the end-to-end shape works on one known song. *Structural* validation — 
 ### In scope (must work end-to-end)
 
 **Capture path**
-- `HallucinoteAnalyzer.amxd` exposing two parameters: `record_arm` (bool) and `output_path` (string).
+- `HallucinoteAnalyzer.amxd` exposing two Live parameters: `record_arm` (bool, short name `Arm`) and `osc_port` (int, short name `Port`). Output path is delivered out-of-band via OSC `/path` because Live parameters are float/int/enum only (per Chunk 1 in-Live findings).
 - `sfrecord~` writing 32-bit float stereo WAVs at Live's sample rate.
 - OSC emitter sending three features (LUFS-M, true peak, low-mid band power) at ~30 Hz. *Minimal feature set on purpose — the OSC path is being plumbing-validated, not feature-completed.*
 - Auto-load on every audio track + return + master, hooked into `/song-new` and triggered idempotently on first analysis request for pre-existing songs.
 
 **Render action**
-- One MCP action: `ableton_render` arms every analyzer, sets `output_path` per track to `songs/<slug>/captures/<timestamp>/<track-id>.wav`, starts transport at arrangement start, stops at arrangement end, disarms.
+- One MCP action: `ableton_render` arms every analyzer, delivers per-instance OSC `/path` for `songs/<slug>/captures/<timestamp>/<track-id>.wav`, starts transport at arrangement start, stops at arrangement end, disarms.
 - Returns the captures directory path and a `manifest.json` (DB seq number, intent snapshot, sample rate, track-id ↔ filename map, analyzer version).
 
 **Analysis pipeline — three analyses**

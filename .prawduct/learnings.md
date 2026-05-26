@@ -85,3 +85,43 @@ Chunk 1 of the audio-analysis MVP hit this in shape: the "Done when" list mixed 
 4. Don't commit the spec-and-driver pass alone — leave the work uncommitted so the chunk commit lands atomically when verification passes. (Or commit the pass with an explicit `chunk: 1 of 2` marker so the next session knows the binary handoff is mid-flight.)
 
 The failure mode this prevents: shipping a "Chunk 1 complete" claim that's actually 60% done because the binary authoring slipped to "later" and the verification was waved through.
+
+## Live parameters are float / int / enum only — strings need an out-of-band channel
+
+**When designing an M4L device's exposed parameters, never assume a "string parameter" can exist as a Live parameter. Live's Remote Script API and automation system only carry float, int, and enum values. `live.text` exposes a string *as a UI element*, but not as something the Remote Script can `set_parameter` against — its parameter type field literally won't accept "Symbol/String".**
+
+**Why:** the M4L parameter mapping layer (the thing that shows knobs in Live's device view and lets Remote Scripts write them) is fundamentally numeric. Strings can be displayed in a `live.text` UI object but cannot be the value of a Live parameter. The spec for `HallucinoteAnalyzer.amxd` originally assumed `output_path` could be a string Live parameter; it can't.
+
+**How to apply:**
+1. Any string config (file paths, IDs, signatures) the Python side wants to push to the device must go through an out-of-band channel — typically OSC via `udpreceive` + `OSC-route` (CNMAT package), with the OSC port itself an int Live parameter.
+2. When sketching a new M4L device spec, audit the parameter table: every row must be coercible to float/int/enum. Anything string-typed must be re-homed onto an OSC inbound or onto the device's filename / class metadata.
+3. When updating the spec mid-authoring, also amend any Python harness that assumed the old shape — the harness's `set_parameter(name='Output Path', ...)` becomes an OSC client + `set_parameter(name='OSC Port', ...)`.
+
+Confirmed during Chunk 1 of the audio-analysis MVP: the `live.text` inspector's Type dropdown only offers float / int / enum, which surfaced the constraint. Spec was amended, OSC inbound chain was specified, and Chunk 2's reserved list was updated (signature and track_id have the same string constraint and were re-routed onto the same inbound channel).
+
+## Live's Remote Script API surfaces parameters by short name, not long name
+
+**When writing or driving an M4L device parameter from the Python side (`ableton_device.set_parameter`, `get_parameters`), the parameter address must be the `parameter_shortname` value from the Max patch, NOT the `parameter_longname`. The Remote Script API's `Parameter.name` attribute reads from `parameter_shortname` if set; the long name only appears in Live's UI parameter list for humans.**
+
+**Why:** the spec for `HallucinoteAnalyzer.amxd` originally specified long name "Record Arm" as the addressing key, and the Chunk 1 harness wrote `parameter_name="Record Arm"`. The authored `.amxd` set both `parameter_longname: "Record Arm"` and `parameter_shortname: "Arm"`. `ableton_device(action='get_parameters', ...)` returned `{name: "Arm", ...}` — the short name. A `set_parameter` call against "Record Arm" raises an unknown-parameter error; against "Arm" succeeds. Same for "OSC Port" / "Port".
+
+**How to apply:**
+1. When specifying an M4L device's parameter table, declare both names but mark the **short name** as the addressing key. The long name is documentation; the short name is the contract.
+2. Always verify by calling `get_parameters` against a loaded instance — the returned `name` field is the address future writes will use.
+3. If both names are the same (no `parameter_shortname` set in the patch JSON), the long name IS the short name; no ambiguity. The gotcha only bites when authoring picks distinct names for UI compactness.
+
+Confirmed Chunk 1 in-Live verification, audio-analysis MVP: only after probing the live device did the address mismatch surface. The harness and spec were both updated; this rule applies to Chunk 2's `ensure_analyzers_loaded` and any future M4L device the project authors.
+
+## sfrecord~ control API: bare integers (1 / 0), not `record N`
+
+**When driving Max's `sfrecord~` from a patch, use the documented bare-integer left-inlet API: `1` (integer) starts recording, `0` (integer) stops AND finalizes the WAV header in one operation. There is no `close` message, no `stop` message, and no `record 0` stop variant — those are not part of sfrecord~'s API and are either silently ignored or rejected with "doesn't understand". The `record <N>` message is a SEPARATE API for fixed-duration recording (`record 100` = "record for 100 ms then auto-stop"); using `record 1` as if it meant "start recording" produces a 1-millisecond capture, not an indefinite one.**
+
+**Why:** the [Max sfrecord~ docs](https://docs.cycling74.com/max8/refpages/sfrecord~) say "A non-zero value begins recording, and 0 stops recording and closes the file." The number-to-left-inlet API is the documented control surface. The `record <duration>` message is for timed recordings only. Confirmed via Max Console output during Chunk 1 of the audio-analysis MVP — both `stop` and `close` produced explicit "sfrecord~: doesn't understand" prints, and `record 0` failed to stop a recording that kept growing for 127 s past the patch's "stop" command. Switching to bare `0` immediately produced clean, properly-finalized WAVs.
+
+**How to apply:**
+1. Wire `live.toggle` (or whatever produces the 0/1 trigger) so the bare integer reaches `sfrecord~`'s left inlet. On rising edge, sequence `open <path>` BEFORE the `1` via `[t b b]` right-then-left ordering (right outlet fires first in Max).
+2. On falling edge, just send `0` — no separate close needed. The file is finalized atomically.
+3. After a `0`, sfrecord~ requires a fresh `open <path>` before the next `1`. If you need to record twice without reloading the patch, send a new `open` each time.
+4. Never use `record 1` to mean "start". It means "record for 1 millisecond." If you see a 44-frame capture at 44.1 kHz (≈ 1 ms), this is the bug.
+
+This rule applies to any future Max for Live audio-effect device the project authors. The trap is high-leverage because `record 1`/`record 0` *looks* like a sensible API by analogy with bool toggles, and the docs bury the bare-integer API in prose rather than highlighting it as the canonical control surface.

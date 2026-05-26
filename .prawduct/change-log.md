@@ -4,6 +4,45 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
+
+<!-- chunks=1 status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Chunk 1 of the audio-analysis MVP closed with track-only proof-of-life
+verified in Live: `HallucinoteAnalyzer.amxd` (Max for Live audio effect)
+records a clean WAV under Remote Script control. The full Chunk 1 arc
+landed in two passes: the Python-side deliverables (numpy/scipy/soundfile
+deps, synthetic-stem fixtures, PDC alignment unit test, spec, throwaway
+harness) landed 2026-05-23, and the binary `.amxd` authoring + in-Live
+verification + close-out landed 2026-05-26.
+
+In-Live verification surfaced three M4L-authoring traps now codified in
+spec + learnings.md as durable rules:
+
+1. **Live parameters are float/int/enum only** — strings need an
+   out-of-band OSC channel. `output_path` cannot be a Live parameter;
+   delivered via `/path` to `[udpreceive]`.
+2. **Remote Script API uses short names** — `Parameter.name` returns the
+   `parameter_shortname`, not the long name. Harness addresses `Arm` /
+   `Port`, not `Record Arm` / `OSC Port`.
+3. **`sfrecord~` uses bare integers** — `1` (start) / `0` (stop AND
+   finalize). NOT `record 1` (= "record 1 ms" — produced 44-frame
+   captures), NOT `stop` / `close` (rejected with "doesn't understand").
+
+The MCP-latency-bounded recording window observed in Chunk 1 (~2 s wider
+than transport play window due to ~700 ms per `set_parameter` round-trip)
+pinned the **transport-position-driven, beat-based** recording boundary
+design for Chunk 2. The patch will read Live's transport at signal rate
+and start/stop `sfrecord~` at requested beat positions; arm parameter
+becomes a gate, not a boundary definer. Sample-accurate, tempo-change-
+immune, multi-analyzer-aligned for free.
+
+Chunk 1 GO criteria explicitly tightened to track-only proof-of-life
+scope (clean WAV, header finalized, format correct, signal reaches
+`sfrecord~`). Strict-duration and track-vs-master PDC alignment deferred
+to Chunk 2 (both require master-strip MCP support, a known Chunk 2
+deliverable). Full test suite green: 2033 passed in 18.42 s.
+
 ## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
 
 <!-- chunks=hygiene status=shipped release=unreleased scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->

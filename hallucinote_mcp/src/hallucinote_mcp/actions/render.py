@@ -78,12 +78,10 @@ register(
             ParamSpec(
                 name="song_slug",
                 type="str",
-                required=False,
                 description=(
                     "Hallucinote song slug. Drives the default output_dir "
-                    "(songs/<slug>/captures/<iso-timestamp>/). Optional — "
-                    "callers can also pass an explicit output_dir to "
-                    "render against an arbitrary location."
+                    "(songs/<slug>/captures/<iso-timestamp>/). Required — "
+                    "captures live next to the song they belong to."
                 ),
             ),
             ParamSpec(

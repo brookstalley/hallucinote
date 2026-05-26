@@ -111,12 +111,12 @@ All parameters must be **automatable + scripted-name'd** so Hallucinote's
 Remote Script can write them via the existing `ableton_device.set_parameter`
 path.
 
-| Scripting name    | Long name        | Short name (what `set_parameter` uses) | Type | Range / values | Default | Introduced |
-|---|---|---|---|---|---|---|
-| `record_arm`      | `Record Arm`     | `Arm`        | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1         | 0     | Chunk 1 |
-| `osc_port`        | `OSC Port`       | `Port`       | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11000 | Chunk 1 (range widened in Chunk 2) |
-| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11001 | Chunk 2 |
-| `emit_enabled`    | `Emit Features`  | `Emit`       | bool toggle (`live.toggle`)                                                        | 0 / 1         | 1     | Chunk 2 |
+| Scripting name    | Long name        | Short name (what `set_parameter` uses) | Type | Range / values | Default |
+|---|---|---|---|---|---|
+| `record_arm`      | `Record Arm`     | `Arm`        | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1         | 0     |
+| `osc_port`        | `OSC Port`       | `Port`       | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11000 |
+| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11001 |
+| `emit_enabled`    | `Emit Features`  | `Emit`       | bool toggle (`live.toggle`)                                                        | 0 / 1         | 1     |
 
 **Port allocation policy** (Chunk 2): `ensure_analyzers_loaded` assigns
 per-instance `Port` deterministically by surface address, so the next
@@ -128,13 +128,9 @@ sweep recovers the same layout without inspecting prior state.
 - Master: `11200`.
 - Emit port (shared sidecar): `11001` (default; overridable per-run).
 
-The Chunk 1 default of `osc_port = 11000` becomes "track 1's inbound
-port" under this scheme — backwards-compatible with the throwaway
-harness. The spec's pre-Chunk-2 11000-11100 range was based on the
-single-instance proof-of-life; widening to 11000-11400 fits the
-realistic multi-analyzer install without sacrificing collision
-detection (the patch can't bind two `[udpreceive]` to the same port,
-so accidental port collisions surface as bind failures at patch load).
+The 11000-11400 range fits ~200 tracks + ~50 returns + the master.
+Accidental port collisions surface as `[udpreceive]` bind failures
+at patch load — the patch can't silently double-bind.
 
 **Note:** Live's Remote Script API surfaces parameters by their **short name**
 — `ableton_device(action='get_parameters', ...)` returns `{name: "Arm", ...}`
@@ -400,15 +396,9 @@ hopeless. By making `Arm` the gate ("do you care about transport
 events?") and the beat observer the boundary ("which transport
 events?"), MCP latency becomes irrelevant to the recording window.
 
-**Chunk 1 backwards-compatibility:**
-
-The Chunk 1 harness wrote `Arm=1` and immediately started transport
-without setting `/start_at_beat` — it expected `Arm=1` to begin
-recording right away. Chunk 2's patch treats unset `start_at_beat` as
-"start immediately on next transport play event" so the Chunk 1 path
-still works for one-off debugging. The harness is intentionally
-deprecated in Chunk 2 (`ableton_render` is its replacement), but the
-patch shouldn't make stale invocations of it confusing.
+**Unset `start_at_beat` / `stop_at_beat` is an error.** The driver
+(`ableton_render`) MUST send both before raising `Arm`; the patch
+refuses to begin recording without them.
 
 ## OSC feature emitter (Chunk 2)
 
@@ -521,54 +511,13 @@ Do **not** write a script that splices patchlines into the JSON portion
 of the `.amxd` binary. It looks like it works (the file parses, the
 header sizes update), and Live rejects it on load.
 
-## Verifying the build (Chunk 1 GO/NO-GO)
-
-Chunk 1 is a **track-only proof-of-life**. It verifies that `sfrecord~`
-works under Remote Script control. It does NOT verify multi-analyzer
-alignment (track + master) or strict timing precision — both deferred
-to Chunk 2 (master-strip MCP support + transport-position-sync, see
-build-plan.md).
-
-Once the patch loads in Live and the Remote Script is running:
-
-1. Drop the device on one audio track carrying audible audio (a MIDI track
-   with an instrument + arrangement-playing clip is fine).
-2. Run `hallucinote_mcp/tools/test_capture.py` against that track.
-3. The harness writes a WAV to `/tmp/hallucinote-chunk1-<timestamp>/`.
-4. The harness's `_inspect_wav` reports the verification automatically:
-   - **status: clean** — non-silent audio, no clipping
-   - **subtype: FLOAT**, **channels: 2**, **sample_rate: Live's SR**
-   - **frames > 0** — WAV header was properly finalized
-   - **audio_start_s / audio_end_s** — bracket the actual audio content
-     (will be padded with MCP-latency silence at head/tail; this is
-     expected and structural)
-5. Record any `sfrecord~` quirks in the chunk handoff for the Chunk 2 author.
-
-## GO criteria (Chunk 1 scope, shipped 2026-05-26)
-
-- WAV exists at expected path with expected dtype/channels/SR.
-- WAV header is finalized (soundfile reports frames > 0).
-- Audio content is non-silent (peak above -60 dBFS, no clipping).
-- Param writes from the harness reliably trigger record start/stop via
-  the patch's rising/falling-edge handlers.
-
-## NO-GO criteria (Chunk 1)
-
-- WAV missing, empty (0 frames), or unreadable.
-- Audio is silent (peak ≤ -60 dBFS) — signal isn't reaching `sfrecord~`.
-- `Arm` parameter writes don't reliably trigger record start (race
-  condition between Remote Script parameter-write and `sfrecord~` open).
-
-NO-GO at the Chunk 1 level fell back to the spike's Resampling-tracks
-alternative (§1). Chunk 1 went GO; this fallback path is no longer hot.
 
 ---
 
 ## Verifying the build (Chunk 2 GO/NO-GO)
 
-Chunk 2 verifies the multi-analyzer capture path end-to-end. Unlike
-Chunk 1 (one analyzer, one track, throwaway harness), Chunk 2's verify
-is `ableton_render` on a real song — every track + every return +
+Chunk 2 verifies the multi-analyzer capture path end-to-end:
+`ableton_render` on a real song — every audio track + every return +
 master picks up an analyzer; one playback pass produces N+R+1 WAVs +
 a manifest.
 

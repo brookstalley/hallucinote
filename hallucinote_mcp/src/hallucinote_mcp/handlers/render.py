@@ -93,17 +93,9 @@ def _utc_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _default_captures_dir(song_slug: str | None) -> Path:
-    """`songs/<slug>/captures/<iso-timestamp>/` per the agreed layout.
-
-    Falls back to a `./captures/<timestamp>/` shape if no slug is
-    provided — useful for one-off renders against an open Live set
-    that isn't (yet) bound to a Hallucinote song.
-    """
-    ts = _utc_timestamp()
-    if song_slug:
-        return Path("songs") / song_slug / "captures" / ts
-    return Path("captures") / ts
+def _default_captures_dir(song_slug: str) -> Path:
+    """`songs/<slug>/captures/<iso-timestamp>/` per the agreed layout."""
+    return Path("songs") / song_slug / "captures" / _utc_timestamp()
 
 
 def _wav_filename(inst: AnalyzerInstance) -> str:
@@ -191,7 +183,7 @@ def ensure_loaded_handler(context: LiveContext) -> dict[str, Any]:
 def render_handler(
     context: LiveContext,
     *,
-    song_slug: str | None = None,
+    song_slug: str,
     output_dir: str | None = None,
     post_roll_beats: float = _DEFAULT_POST_ROLL_BEATS,
     start_at_beat: int = 0,
@@ -204,8 +196,8 @@ def render_handler(
     """End-to-end render: ensure analyzers, deliver paths, play, capture.
 
     Inputs:
-      - ``song_slug`` (optional): the Hallucinote song slug. Drives the
-        default ``output_dir`` (``songs/<slug>/captures/<iso-ts>/``).
+      - ``song_slug``: the Hallucinote song slug. Drives the default
+        ``output_dir`` (``songs/<slug>/captures/<iso-ts>/``). Required.
       - ``output_dir`` (optional): absolute or relative path. Created
         if missing. Overrides the slug-derived default.
       - ``post_roll_beats``: extra beats to let transport run past
@@ -231,20 +223,20 @@ def render_handler(
     )
     captures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Compute window.
-    total_length_beats = _arrangement_length_beats(context)
-    if stop_at_beat is None:
-        # If the arrangement has zero length (a song scaffolded but not
-        # composed yet), we still want a render harness to work for
-        # smoke-testing — use a 4-bar minimum window.
-        end_beat = int(max(total_length_beats, 16.0))
-    else:
-        end_beat = int(stop_at_beat)
+    # Compute window. `song.last_event_time` is Live's arrangement length;
+    # an empty arrangement (last_event_time == 0) is the caller's bug, not
+    # ours — surface it loud.
+    end_beat = (
+        int(stop_at_beat) if stop_at_beat is not None
+        else int(_arrangement_length_beats(context))
+    )
     if end_beat <= start_at_beat:
         raise ValueError(
             f"render: stop_at_beat ({end_beat}) must be > "
             f"start_at_beat ({start_at_beat}); the patch refuses to "
-            "arm with a non-positive window"
+            "arm with a non-positive window. If you're rendering an "
+            "empty arrangement, compose first or pass an explicit "
+            "stop_at_beat."
         )
 
     # Per-analyzer setup: deliver path, track_id, beat window via OSC.

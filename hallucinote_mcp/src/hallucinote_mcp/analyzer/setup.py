@@ -292,33 +292,16 @@ def _find_analyzer_index(devices: list[Any]) -> int | None:
     """1-based device_index of the first HallucinoteAnalyzer in the chain.
 
     Match by ``class_display_name == ANALYZER_DEVICE_NAME``. For M4L
-    devices Live surfaces the .amxd filename here, which is what we
-    install. Falls through to ``class_name`` (some Live versions
-    populate one but not the other for plain Max Audio Effects). If
-    multiple are present (a user-side duplicate from a prior buggy
-    sweep), we return the FIRST one — subsequent ones are unreachable
-    by name addressing and a later cleanup pass can prune; idempotency
-    of this function trumps duplicate removal.
+    devices Live surfaces the .amxd filename here. If multiple are
+    present (a user-side duplicate from a prior buggy sweep), we
+    return the FIRST one — subsequent ones are unreachable by name
+    addressing and a later cleanup pass can prune; idempotency of
+    this function trumps duplicate removal.
     """
     for i, dev in enumerate(devices, start=1):
-        if _is_analyzer(dev):
+        if getattr(dev, "class_display_name", None) == ANALYZER_DEVICE_NAME:
             return i
     return None
-
-
-def _is_analyzer(device: Any) -> bool:
-    display = getattr(device, "class_display_name", None) or ""
-    if display == ANALYZER_DEVICE_NAME:
-        return True
-    name = getattr(device, "name", None) or ""
-    class_name = getattr(device, "class_name", None) or ""
-    # Fall through to `name` ONLY when class_display_name is empty — name
-    # is user-editable, so a user could rename a non-HallucinoteAnalyzer
-    # device to "HallucinoteAnalyzer" and we'd false-positive. The
-    # class_name path is the safer fallback for older Live versions.
-    return class_name == ANALYZER_DEVICE_NAME or (
-        not display and not class_name and name == ANALYZER_DEVICE_NAME
-    )
 
 
 def _track_carries_audio(track: Any) -> bool:

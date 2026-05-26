@@ -332,6 +332,7 @@ def test_render_sends_path_track_id_and_beat_window_via_osc(
     per-instance OSC port."""
     render_handlers.render_handler(
         ctx_two_tracks_one_return,
+        song_slug="t",
         output_dir=str(tmp_path / "c"),
         _osc_factory=osc_factory,
         _sidecar=stub_sidecar,
@@ -360,6 +361,7 @@ def test_render_arms_then_disarms_all_analyzers(
     forgotten Arm=1 would leak into the next render."""
     render_handlers.render_handler(
         ctx_two_tracks_one_return,
+        song_slug="t",
         output_dir=str(tmp_path / "c"),
         _osc_factory=osc_factory,
         _sidecar=stub_sidecar,
@@ -383,6 +385,7 @@ def test_render_starts_and_stops_transport_exactly_once(
 ):
     render_handlers.render_handler(
         ctx_two_tracks_one_return,
+        song_slug="t",
         output_dir=str(tmp_path / "c"),
         _osc_factory=osc_factory,
         _sidecar=stub_sidecar,
@@ -415,6 +418,7 @@ def test_render_marks_status_incomplete_on_timeout(
     try:
         result = render_handlers.render_handler(
             ctx_two_tracks_one_return,
+            song_slug="t",
             output_dir=str(tmp_path / "c"),
             _osc_factory=osc_factory,
             _sidecar=stub_sidecar,
@@ -452,6 +456,7 @@ def test_render_rejects_inverted_beat_window(
     with pytest.raises(ValueError, match="must be >"):
         render_handlers.render_handler(
             ctx_two_tracks_one_return,
+            song_slug="t",
             output_dir=str(tmp_path / "c"),
             start_at_beat=64,
             stop_at_beat=64,  # equal to start → invalid window
@@ -472,6 +477,7 @@ def test_render_per_surface_wav_filenames_are_deterministic(
     captures across renders by basename."""
     a = render_handlers.render_handler(
         ctx_two_tracks_one_return,
+        song_slug="t",
         output_dir=str(tmp_path / "c1"),
         _osc_factory=osc_factory,
         _sidecar=stub_sidecar,
@@ -479,6 +485,7 @@ def test_render_per_surface_wav_filenames_are_deterministic(
     )
     b = render_handlers.render_handler(
         ctx_two_tracks_one_return,
+        song_slug="t",
         output_dir=str(tmp_path / "c2"),
         _osc_factory=osc_factory,
         _sidecar=stub_sidecar,

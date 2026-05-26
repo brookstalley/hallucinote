@@ -447,68 +447,113 @@ This is the most intricate region. Pure-Max state machine using
 `[expr]` for the threshold-crossing logic and `[deferlow]` to update
 the `prev_beat` AFTER the comparisons fire.
 
-### D.1. The observer
+### D.1. The observer (canonical pattern)
 
-Box text:
+The naive form — `live.observer @path live_set @property current_song_time`
+as a single box with all attributes — silently fails to fire in Max
+for Live (audio-analysis MVP Chunk 2 sub-chunk 2B in-Live verification,
+2026-05-26). The `@property` attribute isn't honored at load and the
+device's loadbang chain can be poisoned by the failed observer.
 
-```
-live.observer @path live_set @property current_song_time
-```
-
-> **Property-name trap.** Live 12 exposes `current_song_time` on
-> `live_set`. If your Live version surfaces it as `song_time` instead,
-> the observer falls silent (no error, no output). Test by adding a
-> temporary `[print obs]` on its outlet, pressing play in Live, and
-> watching for a stream of floats. If silent: try `@property
-> song_time`, `@property current_song_time`, then probe with
-> `ableton_session(action='introspect', target='song', what='dir')`
-> from the MCP to find the actual property name.
-
-The observer emits one float per scheduler tick: the current beat
-position (0-based, beats from arrangement start, float).
-
-### D.2. Latched-state objects
-
-You need three `[value]` objects to hold latched state (read by the
-[expr] later):
+**Use the multi-box canonical pattern** instead:
 
 ```
-value prev_beat
-value v_start_at_beat   ← shadow of /start_at_beat retainer, see below
-value v_stop_at_beat    ← shadow of /stop_at_beat retainer
-value v_arm             ← shadow of Arm parameter
-```
-
-> **Why shadow `[value]`s instead of reading the originals directly?**
-> Max's `[expr]`'s cold inlets latch the most recently received value.
-> They DON'T pull from elsewhere on demand. So each cold inlet needs
-> a `[value]` whose emission fans out to the cold inlet AND keeps
-> getting re-emitted whenever the source changes. The cleanest pattern
-> is to make a local shadow that mirrors the source.
-
-Wire the shadows to fan in from the sources:
-
-```
-[value start_at_beat]   (the Section C.2 retainer; default @triggers 1
-                          re-emits on every OSC write)
+[live.thisdevice]              ← emits bang when device fully embedded in Live
         │ outlet 0
         ▼
-[value v_start_at_beat]   ← shadow, ALSO @triggers 1 default; the
-                            chain is purely about decoupling so the
-                            expr's cold inlet sees a stable handle
-```
-
-Same shadow chain for `stop_at_beat`. For `Arm`, tap the `live.toggle`'s
-outlet directly:
-
-```
-[live.toggle (Arm)]   (Chunk 1)
-        │ outlet 0 (emits 0 or 1 on each toggle change)
+[live.path live_set]           ← resolves the path; emits "id <N>"
+        │ outlet 0
         ▼
-[value v_arm]
+[live.observer]                ← receives "id <N>" → starts observing the object
 ```
 
-Initialize `prev_beat` at patch load:
+`[live.observer]` ALSO needs to know WHICH property to observe on that
+object. The `@property` attribute approach doesn't work — **send a
+`property <name>` message at load** instead. Split the live.thisdevice
+bang via `[t b b]`:
+
+```
+[live.thisdevice]
+        │
+        ▼
+   [t b b]
+   ├── outlet 1 (right, fires FIRST)
+   │      ▼
+   │   [live.path live_set] → [live.observer] inlet 0   (sets object via "id <N>")
+   │
+   └── outlet 0 (left, fires SECOND)
+          ▼
+      [message property current_song_time]
+          │
+          ▼
+      [live.observer] inlet 0                            (sets property to observe)
+```
+
+Box text:
+- `live.thisdevice` (no args)
+- `live.path live_set` (path string as constructor arg)
+- `live.observer` (NO @property attribute — set via message)
+- `t b b` (split the device-ready bang)
+- `message property current_song_time` (a MESSAGE box containing the literal `property current_song_time`)
+
+**`live.observer` outputs only the VALUE** (a bare float), not
+`<property_name> <value>` as some Max documentation suggests. Wire
+its outlet directly to the downstream consumers — DO NOT insert
+`[route current_song_time]` (it filters everything out because there's
+no property-name prefix to match).
+
+> **Property-name probe.** If observer doesn't fire when transport
+> plays (no floats scrolling from a temp `[print obs]` on its outlet),
+> the property name may be wrong for your Live version. Probe via
+> `ableton_session(action='introspect', target='song', what='dir')`
+> from the MCP — look for `<name>` whose paired `add_<name>_listener`
+> method exists. In Live 12, `current_song_time` works.
+
+> **Trap: keep the patcher editor closed during testing.** Max's
+> patcher editor (the window you open via Live's "Edit" button) and
+> Live's runtime device fight over the udpreceive socket — and
+> `live.observer` may not fire when the editor is open. Save with
+> Cmd-S, close the patcher window (Cmd-W on the patcher), then test.
+> Re-open only to make further edits.
+
+### D.2. Latched-state storage objects
+
+Each `[expr]` cold inlet latches the most recently received value.
+Each needs a storage box whose outlet feeds the cold inlet. **Use
+`[i]` (int) and `[f]` (float)** — NOT `[value]`. Max's `[value]`
+silently stores writes without emitting them downstream in current
+Max for Live versions, so cold inlets fed from `[value]` outlets
+never get updated (audio-analysis MVP Chunk 2 sub-chunk 2B
+in-Live verification).
+
+| Source | Storage box | Type | Feeds expr inlet |
+|---|---|---|---|
+| `[value start_at_beat]` (Section C.2 retainer) | `[i]` | int | inlet 2 of expr_start |
+| `[value stop_at_beat]` (Section C.2 retainer) | `[i]` | int | inlet 2 of expr_stop |
+| `[live.toggle (Arm)]` outlet | `[i]` | int | inlet 3 of BOTH exprs |
+| `[live.observer]` outlet (deferred via `[deferlow]`) | `[f]` | float | inlet 1 of BOTH exprs |
+
+> **Skip the `[value]` shadows entirely** — the Section C.2 retainers
+> can pass their value directly through an `[i]` chain to the expr.
+> So the wiring is:
+>
+> ```
+> [OSC-route /start_at_beat] → [i] → [i] → [expr_start] inlet 2
+> ```
+>
+> One `[i]` after the OSC route for defensive int coercion, one `[i]`
+> right before the expr to provide the cold-inlet handle. NO `[value]`
+> in between.
+
+> **No `[== on]` symbol-to-int converter needed.** In current Max
+> versions, `[live.toggle]` outputs **int 0 or 1** directly (not the
+> symbol "off"/"on" as some older Max docs suggest). Wire
+> `[live.toggle (Arm)]` outlet directly to the `[i]` for v_arm. If you
+> add a `[== on]` shim, it INVERTS the value because `[== on]` coerces
+> the symbol arg `on` to int 0, so it returns `1` when input is 0 and
+> `0` when input is 1. Trap; just don't.
+
+Initialize `prev_beat` at patch load. Use `[f]` (NOT `[value]`):
 
 ```
 [loadbang]
@@ -517,10 +562,13 @@ Initialize `prev_beat` at patch load:
    [-1.]                ← sentinel "no prior beat seen"
         │
         ▼
-[value prev_beat]
+[f]                    ← prev_beat storage; default 0 but loadbang overrides to -1
 ```
 
-Box text: `-1.`
+Box text: `-1.` (message box containing `-1.`)
+
+The prev_beat `[f]` ALSO has a SECOND input: a reset on Arm-rising-edge.
+See Section E.4.
 
 ### D.3. The crossing-detection [expr] pair
 
@@ -545,23 +593,23 @@ Inlets:
 
 | Inlet (0-based) | `[expr]` ref | Type | Source | Role |
 |---|---|---|---|---|
-| 0 (hot)  | `$f1` | float | observer outlet (current_beat) | triggers eval |
-| 1 (cold) | `$f2` | float | `[value prev_beat]` outlet | prior beat |
-| 2 (cold) | `$i3` | int | `[value v_start_at_beat]` outlet | start threshold |
-| 3 (cold) | `$i4` | int | `[value v_arm]` outlet | armed gate |
+| 0 (hot)  | `$f1` | float | `[live.observer]` outlet (current_beat) | triggers eval |
+| 1 (cold) | `$f2` | float | `[f]` (prev_beat storage) outlet | prior beat |
+| 2 (cold) | `$i3` | int | `[i]` (start_at_beat shadow) outlet | start threshold |
+| 3 (cold) | `$i4` | int | `[i]` (v_arm — direct from live.toggle) outlet | armed gate |
 
 Wire:
-- observer → `[expr ...]` inlet 0 (will need `[deferlow]` for prev_beat update, see D.5)
-- `[value prev_beat]` outlet → `[expr ...]` inlet 1
-- `[value v_start_at_beat]` outlet → `[expr ...]` inlet 2
-- `[value v_arm]` outlet → `[expr ...]` inlet 3
+- `[live.observer]` outlet → `[expr ...]` inlet 0 (will need `[deferlow]` for prev_beat update, see D.5)
+- `[f]` (prev_beat) outlet → `[expr ...]` inlet 1
+- `[i]` (start_at_beat shadow) outlet → `[expr ...]` inlet 2
+- `[i]` (v_arm — direct from live.toggle) outlet → `[expr ...]` inlet 3
 
 Output: 1 (true) or 0 (false) on each observer tick.
 
 #### D.3.b. `expr_stop_crossed`
 
-Identical box text and wiring, except inlet 2 sources from
-`[value v_stop_at_beat]` instead of `v_start_at_beat`.
+Identical box text and wiring, except inlet 2 sources from the
+`[i]` shadowing `stop_at_beat` instead of `start_at_beat`.
 
 ### D.4. Convert 0/1 output to bangs (only on TRUE)
 
@@ -594,14 +642,14 @@ to `current_beat` AFTER the two exprs have fired — for the NEXT tick.
 Use `[deferlow]`:
 
 ```
-[live.observer ...]
+[live.observer]
         │ outlet 0 (current_beat as float)
         ├─→ [expr expr_start_crossed] inlet 0 (triggers immediately)
         ├─→ [expr expr_stop_crossed] inlet 0 (triggers immediately)
         └─→ [deferlow]
                 │ outlet 0
                 ▼
-           [value prev_beat]     ← updates after the current scheduler tick completes
+           [f] (prev_beat)     ← updates after the current scheduler tick completes
 ```
 
 `[deferlow]` pushes the message to the low-priority queue, which runs
@@ -659,23 +707,31 @@ Visually trace from the `[live.toggle (Arm)]`'s outlet:
 `[t b b]`. Leave everything downstream — we'll feed `[t b b]` from
 the new observer-based source.
 
-**Keep `[change]` + `[sel 0]` for the "user pulled the cord" path:**
-also add a separate `[sel 0]` parallel to `[sel 1]` to detect falling
-edge of `Arm` — this is the "stop now" path for when the user
-manually disarms mid-recording.
+**Keep `[change]` + `[sel 0 1]` for the "user pulled the cord" path AND for prev_beat reset:**
+`[sel 0 1]` has two outputs — outlet 0 (matched 0, falling edge) and
+outlet 1 (matched 1, rising edge). Outlet 0 drives the stop chain
+("user pulled the cord"). Outlet 1 drives the prev_beat reset (see
+Section E.4 below) — without it, the crossing detection fires once
+at load and never again, because prev_beat gets stuck past the
+start threshold.
 
 ```
 [live.toggle (Arm)]
-        │ outlet 0
+        │ outlet 0 (emits int 0 or 1 — NO [== on] needed in current Max versions)
         ▼
    [change]
         │
-        ├──→ [sel 1]    (rising edge — UNUSED now; can delete or leave dangling)
-        └──→ [sel 0]    (falling edge — preserved as "user pulled the cord" stop path)
-                │
-                ▼
-               (will feed the stop chain below)
+        ▼
+   [sel 0 1]
+   ├── outlet 0 (matched 0 — falling edge) → "user pulled the cord" stop path
+   └── outlet 1 (matched 1 — rising edge)  → prev_beat reset (Section E.4)
 ```
+
+> **No `[== on]` symbol-to-int shim needed.** In current Max versions,
+> `[live.toggle]` outputs int 0/1 directly. Adding `[== on]` between
+> live.toggle and downstream INVERTS the value (because `[== on]`
+> coerces the symbol `on` to int 0, so `0==0→1` and `1==0→0`). Trap
+> we hit during Chunk 2B verification; don't add the shim.
 
 ### E.3. Wire the new start trigger from D.4's `start_crossed_bang`
 
@@ -746,17 +802,53 @@ For visibility into the guard firing or refusing, add a `[print PathGuard]`
 that watches the `[gate]`'s control inlet — `0` printed when has_path
 hasn't been set, `1` when the harness has sent `/path` at least once.
 
-### E.4. Wire the new stop trigger
+### E.4. Reset `prev_beat` on Arm rising edge
+
+**Load-bearing for repeatable arming.** At loadbang, prev_beat starts
+at -1. The first observer tick after the patch loads might detect a
+"crossing" simply because prev_beat (-1) < start_at_beat. After
+`[deferlow]` updates prev_beat to the current beat, that crossing
+condition is no longer satisfied — and won't be again unless prev_beat
+resets.
+
+Without a reset, you can arm + play + nothing fires (because the
+crossing was already "spent" at load time, before /start_at_beat /
+/path / Arm were properly set up).
+
+**Fix:** every time Arm transitions 0→1 (a rising edge), reset
+prev_beat to -1. Then the next observer tick will see prev=-1, current
+slightly past 0, → can detect the upcoming crossing of start_at_beat.
+
+Wire `[sel 0 1]` outlet 1 (matched 1 — rising edge of Arm) to the
+SAME `[-1.]` message that loadbang feeds. The `[-1.]` then drives
+the prev_beat `[f]`:
+
+```
+[loadbang] ──────────────┐
+                         │
+[sel 0 1] outlet 1 ──────┤
+                         │
+                         ▼
+                      [-1.]              ← shared "reset to -1" message
+                         │
+                         ▼
+                       [f] (prev_beat)
+```
+
+Two sources fire the same message. The `[f]` for prev_beat resets to
+-1 on (a) device load AND (b) every arm transition.
+
+### E.5. Wire the new stop trigger
 
 The stop trigger fires from TWO sources OR'd together:
 
 1. `stop_crossed_bang` (from D.4)
-2. Falling-edge-of-Arm from E.2 (user pulled the cord)
+2. `[sel 0 1]` outlet 0 (matched 0 — falling-edge-of-Arm — "user pulled the cord")
 
 ```
    stop_crossed_bang ─────┐
                           ├──→ [t b]   (just to fan in cleanly)
-   falling_edge_arm ──────┘    │
+   sel_0_1 outlet 0 ──────┘    │
                                ▼
                            [0]            ← the integer 0 (sfrecord~ stop+finalize)
                                │
@@ -766,7 +858,7 @@ The stop trigger fires from TWO sources OR'd together:
 
 Box text: `0` for the message object emitting the int.
 
-### E.5. Sanity-check the wiring
+### E.6. Sanity-check the wiring
 
 Add temporary `[print]` objects on each new bang outlet:
 
@@ -1412,6 +1504,18 @@ Live loads the patch.
 Before `Cmd-S`-ing the patch, verify each Chunk 2 addition with
 console probes. The Max console (`Cmd-M`) is your friend.
 
+> **CRITICAL workflow rule — close the patcher editor between tests.**
+> Max's patcher editor (the window opened via Live's "Edit" button)
+> and Live's runtime device fight over the `udpreceive` socket. With
+> the patcher editor open, the runtime device's udpreceive may fail
+> to bind, AND `live.observer` may silently not fire. Symptom: OSC
+> messages reach SOMETHING but the wrong instance; recording never
+> starts. Workflow: open the patcher to make changes, `Cmd-S` to save,
+> **`Cmd-W` to close the patcher window** (NOT Cmd-Q on Max — just
+> close the patcher; keep `Window → Max Console` open to watch prints).
+> Re-open the patcher only when you need to edit further.
+> See learnings.md "M4L editor vs Live runtime UDP conflict".
+
 ### G.1. Live parameter visibility check
 
 In Max, drop a temporary `[live.thisdevice]` and bang it:
@@ -1743,6 +1847,12 @@ Every Max object referenced in this guide, alphabetical:
 | Downstream sees `host s` / `port 0` instead of real values | `[t l b]` outlet types reversed in wiring expectations — outlet 0 is `l` (list), outlet 1 is `b` (bang); wiring unpack to outlet 1 feeds bangs (not the list), so unpack emits defaults | Use `[t b l]` instead: `b` on outlet 0 (left), `l` on outlet 1 (right) — fires right-to-left, so list fires first then bang, which is the destination-then-reply order |
 | `[expr]` box turns red with `$f0` / `$i0` | Max's `[expr]` uses **1-indexed** inlet variables — leftmost inlet is `$f1` / `$i1` / `$s1`, NOT `$f0` / `$i0` | Shift all variable numbers up by 1: inlet 0 → `$f1`, inlet 1 → `$f2`, etc. |
 | Trying to check "is this symbol empty?" with `[if ... <empty>]` or `[length]` | `<empty>` isn't a Max literal in `[if]`; `[length]` measures LIST length, not symbol-character count — always returns 1 for a single symbol | Use a separate `[value has_X]` int flag, set to 1 by the message that populates the symbol; gate downstream actions with `[gate]` controlled by the flag (Sections E.3, F.5) |
+| `[value]` stores writes but downstream never sees them — connected `[print]` silent, exprs see stale values | Max for Live's `[value]` in current versions doesn't emit on write — only on bang. Cold inlets fed via `[value]` outlets stay at their default | Use `[i]` (int) or `[f]` (float) instead of `[value]` for storage. Both emit on every write. Trade-off: lose named-shared-variable semantics, but for local-only use that doesn't matter |
+| `live.toggle` outlet appears to be inverted — Arm=1 in Live makes downstream see 0 | A `[== on]` symbol-to-int shim was added between live.toggle and downstream. In current Max versions, live.toggle outputs **int 0/1 directly**. `[== on]` then compares int input to the symbol arg `on`, which Max coerces to int 0 — so `0==0→1` and `1==0→0`, inverting the value | Remove `[== on]`. Wire `[live.toggle]` outlet directly to downstream `[i]` storage |
+| `live.observer @path live_set @property current_song_time` never fires — observer outlet silent during transport play | The `@property` attribute on `[live.observer]` isn't honored at load in current Max versions. AND a misconfigured live.observer can silently poison the patcher's loadbang sequence, breaking other init prints | Use the canonical chain: `[live.thisdevice]` → `[live.path live_set]` → `[live.observer]` (no @property arg). At loadbang, ALSO send a `property current_song_time` message to `[live.observer]`'s inlet 0 (via a separate `[message]` box driven off live.thisdevice through a `[t b b]`). Section D.1 walks through this |
+| `[route current_song_time]` after live.observer drops everything | live.observer outputs just the bare value (a float), NOT `<property_name> <value>`. `[route <symbol>]` filters by leading symbol and finds no match | Delete `[route current_song_time]` entirely. Wire live.observer outlet directly to expr / deferlow / etc |
+| Crossing-detection expr fires once at load then never again, even with transport playing | `prev_beat` starts at -1 at loadbang. The first observer tick after device load satisfies (prev=-1 < start) && (current=anywhere >= start), so the expr returns true ONCE. Then `[deferlow]` updates prev_beat to current_beat, and subsequent ticks can't detect a new crossing. By the time the user arms + plays from beat 0, prev_beat is already past start_at_beat | Reset prev_beat to -1 on Arm rising edge. Wire `[sel 0 1]` outlet 1 (matched 1 — rising edge of Arm after `[change]`) to the same `[-1.]` message that loadbang drives. Section E.4 |
+| Max patcher editor open + Live runtime instance simultaneously — OSC routes silently wrong | Both Max-editor and Live-runtime have their own instance of the patcher. They fight over the udpreceive socket; one binds, the other can't, and `live.observer` may not fire in either or both. Symptom: signature reply works erratically; transport observer silent | Always Cmd-S to save, then Cmd-W to close the patcher editor window before runtime testing. Keep `Window → Max Console` open separately (it persists after the patcher closes) |
 | `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |

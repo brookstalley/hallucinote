@@ -4,6 +4,81 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2B partial — in-Live recording-path verification
+
+<!-- chunks=2b-partial status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Sub-chunk 2B's recording-path half shipped. The HallucinoteAnalyzer
+`.amxd` was extended in Max's GUI to the Chunk 2 contract, and the
+transport-position-sync render was verified end-to-end against Live's
+transport on a Hallucinote song.
+
+**GO criterion met:** render window [4, 12] beats at 180 BPM produced
+`/tmp/chunk2_dtest.wav` as FLOAT/stereo/44.1 kHz with duration
+2.6703s vs expected 2.6667s — **+3.6ms / +0.31 audio buffer drift**,
+far inside the spec's ±4 buffer tolerance. Peak -8.19 dBFS, clean
+audio content from the source track's instrument. Transport-position-
+sync delivered the architectural win pinned at Chunk 1 close: no more
+MCP-latency padding around the recording window.
+
+**M4L surface authored:** widened `Port` Live param to 11000-11400
+(via Float + Unit Style = Int — Live's Int parameter cap is 256),
+added `EmitPort` + `Emit` Live params, added four new OSC routes
+(`/track_id` symbol retainer, `/start_at_beat` int, `/stop_at_beat`
+int, `/signature/query` with explicit reply-args), built the
+canonical `live.thisdevice → live.path live_set → live.observer`
+transport observer with `property current_song_time` sent as
+runtime message, replaced all `[value]` cold-inlet storage with
+`[i]`/`[f]` (the `[value]` non-emit issue), wired `[t b b]` →
+open + 1 → sfrecord cascade, gated via `has_path` flag, added
+prev_beat reset on Arm rising edge.
+
+**Five durable M4L learnings landed in learnings.md** — each was a
+multi-hour in-Live discovery, codified so the next M4L author starts
+from a better baseline:
+
+- `[value]` doesn't emit on write — use `[i]` / `[f]` for cold-inlet
+  storage. The `[value]` object stores writes silently; only banged
+  reads emit. Trade-off: lose named-shared semantics for emit-on-write
+  reliability.
+- `live.toggle` emits int 0/1 directly — no `[== on]` shim needed
+  (and adding it INVERTS the value because `==` coerces the symbol
+  arg `on` to int 0).
+- `live.observer` needs runtime `property <name>` message; the
+  `@property` constructor attribute silently fails AND can poison
+  the patcher's loadbang sequence. Outputs bare value (no
+  `<prop> <val>` prefix), so `[route <prop>]` filters out everything
+  if added downstream.
+- M4L patcher editor and Live runtime conflict over `udpreceive` —
+  close the patcher window (Cmd-W, not Cmd-Q) before runtime
+  testing. Keep `Window → Max Console` open separately.
+
+Plus the install bug fix at e388242 (which prevented this whole
+debugging session from being even longer): the install skill was
+copying the `m4l/` subdir into Remote Scripts in addition to the
+proper Presets/Audio Effects/Max Audio Effect/ location, so Live's
+browser indexed the analyzer twice and the user kept dragging the
+stale Chunk 1 copy onto tracks while editing the Chunk 2 copy. Fix
+landed in `install_paths.py` (added `m4l` to `REMOTE_SCRIPT_EXCLUDE_DIRS_ANY`)
++ install skill body update.
+
+The authoring guide `AUTHORING-CHUNK-2B.md` was rewritten through
+Section D (observer chain), Section E.2 (live.toggle directly; no
+`[== on]`), new Section E.4 (prev_beat reset on Arm rising edge),
+Section G preamble (close-the-editor workflow rule), and the
+appendix traps table (six new rows for each discovered gotcha).
+
+Python-side: 2103/2103 tests still passing, no regressions.
+
+**Remaining for full Chunk 2 close:** Section F feature emitter
+(audio tap → K-weighted LUFS + sample peak + low-mid band → 30 Hz
+OSC frames to sidecar), in-Live master-strip analyzer load
+(`master=True` path; Python side ready), multi-analyzer simultaneous
+capture verification, PDC cross-correlation between track and master
+WAVs, `/critic chunk`. The recording-path verification alone is the
+hardest architectural piece — the rest is incremental in-Live
+authoring + verification work.
+
 ## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
 
 <!-- chunks=2a status=shipped release=unreleased scope=audio-analysis-mvp -->

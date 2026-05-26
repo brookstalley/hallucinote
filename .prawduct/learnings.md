@@ -152,3 +152,81 @@ This rule applies to any future Max for Live device the project authors with Int
 2. Install skill's Step 3d (analyzer copy) targets ONLY `Presets/Audio Effects/Max Audio Effect/`. There's no second target location.
 3. Uninstall skill should remove BOTH the Remote Script Python files AND the `Presets/.../HallucinoteAnalyzer.amxd`. (Currently W12-D-scoped — the uninstall skill removes Remote Scripts; analyzer cleanup is a follow-up.)
 4. When debugging "my edits aren't showing up," the FIRST check is: are there multiple `.amxd` files with the same name under `<User Library>`? `find ~/Music/Ableton/"User Library" -name HallucinoteAnalyzer.amxd` surfaces them quickly. The running device is whichever path Live's browser entry points at; the user's edits go to whichever path Max's editor has open.
+
+## M4L `[value]` doesn't emit on write — use `[i]` / `[f]` for cold-inlet storage
+
+**Max for Live's `[value]` object in current Max versions stores writes silently — its outlet only emits when banged, not on receive. This breaks any chain that feeds `[value]` and expects downstream consumers to react (cold inlets of `[expr]`, `[gate]` control inputs, `[print]` boxes, etc.). Use `[i]` (int) or `[f]` (float) instead — both emit on every write.** The trade-off is losing named-shared-variable semantics across patchers; for local-only use within a single patcher that doesn't matter.
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B in-Live verification (2026-05-26), the patch's `[loadbang] → [0] → [value has_path] → [print has_path_now]` chain didn't fire `has_path_now: 0` at load. We bypassed `[value has_path]` with a direct `[loadmess 0] → [print has_path_now]` connection and the print fired. Putting `[value has_path]` back in the chain stopped the print again. Swapping `[value]` for `[i]` fixed it. Same fix applied to `v_arm`, `v_start_at_beat`, `v_stop_at_beat`, and `prev_beat` (the last using `[f]` since prev_beat is a float). Without the fix, expr cold inlets latched their default values (0) and the crossing-detection never returned true.
+
+**How to apply:**
+1. When wiring a storage box whose outlet must trigger downstream on receive, prefer `[i]` / `[f]` over `[value]`.
+2. Reserve `[value <name>]` for read-only public state that other parts of the patcher will explicitly bang for retrieval — e.g., `[value hallucinote_path]` (read via `[t b b]` outlet) is fine because the consumer explicitly bangs it.
+3. If you inherit a patch with `[value]` boxes in trigger chains, swap them as a one-line fix.
+
+## M4L `live.toggle` outlet emits int (0/1) directly — no `[== on]` shim needed
+
+**In current Max versions, `[live.toggle]`'s outlet emits int 0 (off) or int 1 (on) directly when its bound Live parameter changes. NOT the symbol "off"/"on". Adding a `[== on]` symbol-to-int converter shim between live.toggle and downstream INVERTS the value, because `[== on]` coerces the symbol arg `on` to int 0 — so `0==0→1` and `1==0→0`. Wire `[live.toggle]` outlet DIRECTLY to downstream `[i]` storage or trigger chains.**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-26), early debugging surfaced "off: bad number" errors in the Max console — which looked like live.toggle was emitting the symbol "off" to a numeric destination. We added `[== on]` to convert symbols to ints, and the chain APPEARED to work. But on closer inspection (a `[print TOGGLE_RAW]` placed directly on live.toggle's outlet showed `TOGGLE_RAW: 0`), live.toggle was already emitting int 0. `[== on]` then compared int 0 to symbol arg `on` (coerced to int 0), returned 1 — inverted. With `[== on]` removed, the chain worked correctly. The "off: bad number" errors were a separate event (perhaps a parameter-init flow we never fully traced) and didn't actually flow through the downstream chain.
+
+**How to apply:**
+1. Wire `[live.toggle]` outlet directly to int-consuming downstream (`[i]`, `[change]`, `[sel 0 1]`, `[expr ... $i ...]`).
+2. If you see "off: bad number" or similar console errors during M4L load, don't assume they're from the chain you care about. Probe with a `[print TOGGLE_RAW]` directly on the live.toggle outlet to see what's actually being emitted.
+3. The `[== on]` pattern shows up in some older Max for Live tutorials. Treat those tutorials as potentially stale.
+
+## M4L `live.observer` needs runtime `property <name>` message; outputs bare value
+
+**`[live.observer @property current_song_time]` as a single box with the property as an @attribute silently fails to fire in current Max versions. The `@property` attribute isn't honored at load. Also: when configured correctly, `live.observer` outputs ONLY the value (a bare float/int), not `<property_name> <value>` as some Max documentation suggests — so `[route <prop>]` downstream filters everything out.**
+
+**Canonical pattern that works:**
+
+```
+[live.thisdevice]                 ← fires bang when device fully embedded in Live
+        │
+        ▼
+   [t b b]
+   ├── outlet 1 (right, fires FIRST)
+   │      ▼
+   │   [live.path live_set]
+   │      │
+   │      ▼
+   │   [live.observer] inlet 0    ← receives "id <N>", configures object
+   │
+   └── outlet 0 (left, fires SECOND)
+          ▼
+      [message property current_song_time]
+          │
+          ▼
+      [live.observer] inlet 0     ← receives property message, starts observing
+```
+
+Then `[live.observer]` outlet emits the bare float every time the property changes — wire it DIRECTLY to downstream consumers (no `[route]`).
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B in-Live verification (2026-05-26), the patch's transport observer chain didn't fire. Adding `[print OBS_RAW]` directly on live.observer's outlet showed nothing during transport play. Restructuring to the canonical thisdevice→path→observer pattern with `property` as a runtime message made OBS_RAW fire with bare float values (e.g., `OBS_RAW: 4.493`). `[route current_song_time]` downstream of observer was filtering everything because there's no property-name prefix in the output.
+
+**How to apply:**
+1. Use `[live.thisdevice] → [live.path <path>] → [live.observer]` as separate boxes; don't compress into a single `live.observer @path @property` box.
+2. Send `property <name>` as a runtime message (via `[message property <name>]`) to live.observer's inlet at load time.
+3. Don't add `[route]` after live.observer — the output is bare value, no symbol prefix to match.
+4. To diagnose "is the observer firing?", add `[print OBS_RAW]` directly on its outlet. If nothing prints during the property's actual change, the chain isn't configured correctly — re-check the multi-box pattern.
+
+## M4L patcher editor and Live runtime fight over udpreceive — close the editor before testing
+
+**When a Max for Live patcher is open in Max's patcher editor (the window that opens when you click Live's "Edit" button on a device), Max-editor and Live-runtime each have an instance of the patcher. They compete for the `udpreceive` socket binding. Symptoms: multiple "binding to port N" then "bind unsuccessful" console messages; OSC messages reach SOMETHING but unpredictably; `live.observer` may silently not fire; saving the patch doesn't reliably propagate changes to the running instance.**
+
+**Workflow rule: ALWAYS close the patcher editor window before runtime testing.**
+1. Make changes in Max's patcher editor.
+2. `Cmd-S` to save.
+3. `Cmd-W` to close the patcher window — NOT `Cmd-Q` on Max as a whole. Keep `Window → Max Console` open (it's a separate window that persists).
+4. In Live, click the device's on/off LED off+on to force a fresh device instantiation.
+5. Test from outside (MCP, Python OSC sender, etc.).
+6. Re-open the patcher editor (Live's Edit button) only when you need to make further changes.
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B verification (2026-05-26), the patcher's OSC chain behaved inconsistently for hours of debugging. Reference thread on the Cycling '74 forum confirms this is a documented M4L issue: "max4live device opened for editing is never going to behave same way as when it is just loaded in Live" (Cycling '74 forum, Nov 2021). The udpreceive object can't bind from two patcher instances simultaneously. With editor closed, all behavior stabilized — signature reply, has_path flag, observer all worked cleanly.
+
+**How to apply:**
+1. Treat patcher editor and runtime as mutually exclusive for testing purposes.
+2. If you must keep the editor open (e.g., to watch a `[print]` while testing), accept that observed behavior may not match what end-users will see.
+3. The Max console window (Window → Max Console) is independent of the patcher editor window — close patcher, keep console.
+4. For complex M4L debugging cycles, the close-patcher / open-patcher dance is part of the workflow, not optional.

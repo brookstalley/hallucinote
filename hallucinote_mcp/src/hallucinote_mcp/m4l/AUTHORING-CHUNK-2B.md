@@ -1,726 +1,1673 @@
-# HallucinoteAnalyzer.amxd — Chunk 2B authoring guide (Max GUI)
+# HallucinoteAnalyzer.amxd — Chunk 2B authoring guide (Max patch-level detail)
 
-This is the **step-by-step procedure** for extending the Chunk 1 `.amxd`
-in Max for Live's GUI to meet the Chunk 2 contract in
-`HallucinoteAnalyzer.amxd.spec.md`. The spec is the WHY; this doc is
-the HOW.
-
-Read the spec first (or have it open in a second window). It defines
-the parameters, OSC routes, behavior contract, and the GO/NO-GO
-criteria you're authoring toward.
+This is the **patch-level recipe** for extending the Chunk 1 `.amxd`
+to meet the Chunk 2 contract in
+[`HallucinoteAnalyzer.amxd.spec.md`](./HallucinoteAnalyzer.amxd.spec.md).
+The spec is the WHY; this doc is the HOW, down to which objects to
+instantiate, what `@attributes` to set, and which outlet of object A
+connects to which inlet of object B.
 
 **Audience:** someone comfortable with Max (you authored Chunk 1).
-This guide tells you what to instantiate, what to wire, and which
-inspector values to set — not how Max patching works in general.
+This guide is exhaustive on the new patch surface — paste object-box
+text verbatim where shown, follow the patchcord arrows, set the
+Inspector values listed in tables.
 
 ---
 
-## Pre-flight
+## Conventions
+
+- `[object @attr value]` — what you type into a new Max object box.
+  Hit Tab to confirm. Some Inspector-only attributes are noted
+  separately.
+- `outlet N` is 0-indexed left-to-right. So a `[t b b]` has `outlet 0`
+  (left) and `outlet 1` (right). Max's trigger objects fire
+  right-to-left, so `outlet 1` fires *before* `outlet 0`.
+- `inlet N` is 0-indexed left-to-right. Inlet 0 is the "hot" inlet
+  on most objects (causes evaluation); others are "cold" (just
+  latch values for later).
+- Symbols: a Max "symbol" is an interned string. OSC string args
+  arrive as symbols.
+- Per the spec, the Chunk 1 patch uses CNMAT's `[OSC-route]` (the
+  CNMAT OSC package, available via Max's Package Manager). All
+  Chunk 2 OSC routes use the same family. Don't mix with vanilla
+  `[route]` — pattern semantics differ.
+
+---
+
+## Section 0 — Pre-flight
 
 ### 0.1. Back up the Chunk 1 `.amxd`
 
 ```bash
-cp ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/HallucinoteAnalyzer.amxd \
-   ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/HallucinoteAnalyzer.chunk1.bak.amxd
+cp "$HOME/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd" \
+   "$HOME/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.chunk1.bak.amxd"
 ```
 
-The Chunk 1 `.amxd` shipped clean — keep it as a recovery point. If
-Max corrupts the file mid-edit (you'll know — Live's load fails with
-`createdevice error 6: device file broken`), restore from the backup
-and start over.
+If Max corrupts the file mid-edit (symptom: Live's load fails with
+`createdevice error 6: device file broken` after a save), restore
+from the backup and start over. Don't try to recover the corrupted
+file — the binary container's chunk sizes get out of sync in ways
+that look valid to parsers but fail Max's deeper validation.
 
-### 0.2. Open the device in Max
+### 0.2. Open in Max via Live's Edit button
 
-In Live, drop the Chunk 1 `HallucinoteAnalyzer` onto any audio track,
-then click the **Edit** button on the device. This opens it in Max
-with Live's bundled runtime (NOT standalone Max). Patching view
-(`Cmd-E` to toggle) is where you'll work.
+In Live, drop the existing `HallucinoteAnalyzer` onto any audio track,
+then click the **Edit** button on the device strip. This opens the
+patch inside Max with Live's bundled runtime — NOT standalone Max. Use
+`Cmd-E` (macOS) / `Ctrl-E` (Windows) to toggle Patching/Presentation
+mode. Stay in Patching mode for everything in this guide.
 
-### 0.3. Layout planning (eyeball it before you start)
+### 0.3. Verify CNMAT OSC package is loaded
 
-The Chunk 2 additions roughly double the patch's surface area. Before
-clicking anything, decide where each region lives. Suggested layout:
+Drop a fresh `[OSC-route /foo]` box in an empty area. If the object
+box shows in red (= unresolved), the CNMAT OSC package isn't
+installed. Open Max's Package Manager (`File > Show Package Manager`),
+search "CNMAT OSC", install, restart Max. Delete the test object.
+
+### 0.4. Visual layout planning
+
+The Chunk 2 surface roughly doubles the patch's area. Suggested
+regions (delete each region's `[comment]` after authoring; they're
+just guides):
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Top:   Live parameters row (Arm, Port, EmitPort, Emit)     │
-├─────────────────────────────────────────────────────────────┤
-│ Left:  Inbound OSC chain (existing /path + new routes)     │
-│ Right: Transport observer + recording trigger              │
-├─────────────────────────────────────────────────────────────┤
-│ Center: sfrecord~ (unchanged from Chunk 1)                 │
-├─────────────────────────────────────────────────────────────┤
-│ Bottom: Feature-extraction branch + outbound OSC           │
-└─────────────────────────────────────────────────────────────┘
+[comment Live params (top row)]
+[comment Inbound OSC routes (left column)]
+[comment Transport observer + state machine (right-center)]
+[comment sfrecord~ recording chain (center, unchanged from Chunk 1)]
+[comment Feature extraction (bottom)]
+[comment Outbound OSC emitter (bottom-right)]
 ```
-
-Don't fight the layout later — it's easier to grow into empty real
-estate than to rearrange working signal flow.
 
 ---
 
 ## Section A — Widen the existing `Port` range
 
-The Chunk 1 spec said `Port` accepted 11000-11100. Chunk 2's port
-allocation policy (see spec §"Port allocation policy") uses up to
-11400. Existing `Port` numbox needs widening so `ensure_analyzers_loaded`
-can assign return-track ports (11100+) and master (11200) without
-clamping.
+### A.1. Locate the `Port` `live.numbox`
 
-**Steps:**
+It's the Chunk 1 parameter with Short Name `Port`. Find it and click
+once to select.
 
-1. Click the existing `live.numbox` for `Port` (currently displayed
-   in Live's parameter list as "OSC Port").
-2. Open Inspector (`Cmd-I`).
-3. Change `Range/Enum` from `11000 11100` to `11000 11400`.
-4. Leave `Initial Value`, `Type`, `Parameter Visibility`, scripting
-   name, long name, short name untouched. Those are correct.
+### A.2. Inspector: widen the range
 
-**Verify:** the inspector's "Range" field reads `11000 11400`. Click
-elsewhere to commit. Don't save yet — we'll save once at the end
-after every section's changes are in.
+Open Inspector (`Cmd-I`). Change:
+
+| Attribute | Before (Chunk 1) | After (Chunk 2) |
+|---|---|---|
+| Range | `11000 11100` | `11000 11400` |
+
+Or, if you edit the object box directly, set `@_parameter_range 11000. 11400.`
+(note the trailing dots — `live.numbox`'s range stores floats even
+when Type is Int). Leave every other attribute alone.
+
+### A.3. Verify
+
+Live's parameter list still shows "OSC Port" with the same long/short
+name. The slider's range now goes to 11400.
 
 ---
 
 ## Section B — Add two new Live parameters
 
-### B.1. `osc_emit_port` (outbound port)
+### B.1. `osc_emit_port` (outbound port — Live param `EmitPort`)
 
-Drag in a new `live.numbox`. Inspector:
+Drag in a new object box, type:
 
-| Inspector field | Value |
-|---|---|
-| Scripting Name | `osc_emit_port` |
-| Long Name | `OSC Emit Port` |
-| Short Name | `EmitPort` |
-| Type | `Int` |
-| Range/Enum | `11000 11400` |
-| Initial Value | `11001` |
-| Initial Enable | `Yes` |
-| Parameter Visibility | `Automated and Stored` |
-| Parameter Modulation Mode | `None` |
+```
+live.numbox @_parameter_range 11000. 11400. @_parameter_initial 11001. @parameter_enable 1 @parameter_longname "OSC Emit Port" @parameter_shortname EmitPort @parameter_unitstyle 0 @parameter_modulation_mode 0
+```
 
-> **Trap (from Chunk 1, see learnings.md):** "Parameter Visibility =
-> Stored Only" silently bakes `parameter_invisible: 1` into the patch
-> and hides the param from Live's Remote Script API. Use
-> **Automated and Stored** even though the inspector label is
-> confusing. The Remote Script's `get_parameters` returning an empty
-> list (or this parameter missing) is the visible symptom.
+Then open Inspector and verify these (some are not settable via
+@attributes in all Max versions — use Inspector to confirm):
 
-### B.2. `emit_enabled` (feature emitter on/off)
+| Attribute | Value | Notes |
+|---|---|---|
+| Scripting Name | `osc_emit_port` | Inspector pane > "Scripting Name" |
+| Type | `Int` | "Type" pulldown |
+| Parameter Visibility | `Automated and Stored` | **CRITICAL** — `Stored Only` hides it from Remote Script API |
+| Initial Enable | `Yes` | so the stored initial value loads on patch open |
+| Modulation Mode | `None` | "Modulation Mode" pulldown |
 
-Drag in a new `live.toggle`. Inspector:
+> **Trap (Chunk 1 learning):** Parameter Visibility = "Stored Only"
+> silently bakes `parameter_invisible: 1` into the patch JSON. Live's
+> Remote Script API will NOT return the parameter from
+> `get_parameters` — `ensure_analyzers_loaded`'s `set_parameter_handler`
+> call raises ValueError. Use "Automated and Stored" even though the
+> name is confusing.
 
-| Inspector field | Value |
+### B.2. `emit_enabled` (Live param `Emit`)
+
+Drag in a new object box, type:
+
+```
+live.toggle @parameter_enable 1 @parameter_longname "Emit Features" @parameter_shortname Emit @parameter_initial 1
+```
+
+Inspector confirmations:
+
+| Attribute | Value |
 |---|---|
 | Scripting Name | `emit_enabled` |
-| Long Name | `Emit Features` |
-| Short Name | `Emit` |
-| Initial Value | `1` |
-| Initial Enable | `Yes` |
 | Parameter Visibility | `Automated and Stored` |
-| Parameter Modulation Mode | `None` |
+| Modulation Mode | `None` |
 
-> **Trap (Chunk 1):** the Remote Script API uses the **Short Name**
-> (`Emit`, not `Emit Features`). Make sure the short name is exactly
-> `Emit` — `ensure_analyzers_loaded` addresses it that way.
+### B.3. Verify the parameter surface in Live
 
-### B.3. Verify the parameter list in Live
-
-Save the patch (`Cmd-S` — in Live's Edit context this updates the
-in-Live instance immediately) and check that the Live device view
-shows all four parameters: `Record Arm`, `OSC Port`, `OSC Emit Port`,
-`Emit Features`. If any are missing, the visibility setting didn't
-take — re-check Section B.1 / B.2 step 6.
-
----
-
-## Section C — Add four new inbound OSC routes
-
-The Chunk 1 `[udpreceive]` already handles `/path`. Chunk 2 adds:
-
-- `/track_id <symbol>` → retained value, used by feature emitter
-- `/start_at_beat <int>` → retained value, transport observer reads it
-- `/stop_at_beat <int>` → retained value, transport observer reads it
-- `/signature?` → reply with `/signature hallucinote-analyzer-v1`
-
-### C.1. Add `/track_id` route
-
-Next to the existing `[OSC-route /path]`, add `[OSC-route /track_id]`.
-
-- Its left outlet (matched messages) → `[t l]` (trigger anything) →
-  `[value @triggers 0]` (stores the symbol; `@triggers 0` makes it
-  store without firing downstream — feature emitter will pull on demand).
-- Give the `[value]` object the name `track_id_retained` via the
-  `@varname track_id_retained` attribute. This makes it referenceable
-  by other parts of the patch with `[value track_id_retained]`.
-
-> The `[value]` object's *triggers* attribute matters: with `@triggers 1`
-> (the default), every received symbol re-fires the outlet, spamming
-> downstream listeners every time the Python side re-sends `/track_id`
-> at render setup. `@triggers 0` (set-on-write, read-on-bang) is what
-> we want — track_id should only fan out when the emitter pulls it.
-
-### C.2. Add `/start_at_beat` and `/stop_at_beat` routes
-
-Two more `[OSC-route]` objects, identical shape to C.1 but:
-
-| Route | varname for the `[value]` retainer |
-|---|---|
-| `/start_at_beat` | `start_at_beat` |
-| `/stop_at_beat` | `stop_at_beat` |
-
-Both retainers also use `@triggers 0` — the transport-position
-observer will read them, it shouldn't fire when they change.
-
-Type coercion: OSC ints arrive as `int` in Max, but if the harness ever
-sends them as floats (off-by-one of the OSC type tag), the comparison
-in the observer breaks. Put `[i]` (the int truncator) between the
-route's outlet and the `[value]` to coerce defensively.
-
-### C.3. Add `/signature?` query/reply
-
-This is the only Chunk 2 OSC route that REPLIES rather than retains.
-
-- Add `[OSC-route /signature]` (note the trailing `?` is part of the
-  match — use `[OSC-route /signature?]`).
-- Its outlet → `[t b]` (trigger bang on any incoming message) →
-  `[prepend /signature]` → `[append hallucinote-analyzer-v1]` (or use
-  a single `[message /signature hallucinote-analyzer-v1]` triggered by
-  the bang).
-- The reply goes to `[udpsend]` — but to WHICH host:port? The sender's.
-  `[udpreceive]`'s **right outlet** emits the source `host port` of
-  the most recent incoming packet. Wire that right outlet into
-  `[unpack s i]` → `[pak host port]` → `[udpsend]`'s right inlet
-  (the `host port` configuration inlet), then send the
-  `/signature hallucinote-analyzer-v1` message into `[udpsend]`'s
-  left inlet.
-
-> **Order of operations matters.** The reply destination
-> (`host port`) MUST be configured on `[udpsend]` BEFORE the message
-> arrives at its left inlet, or it sends to the previous (or empty)
-> destination. Use `[t l b]` (trigger list-then-bang) so the host/port
-> packing fires before the reply message.
-
-> **Why an OSC query and not a Live parameter?** See spec §"Signature
-> surface" — short answer: strings can't be Live parameters, the
-> filename-inference approach is brittle, and an enum parameter
-> pollutes the device's surface.
-
----
-
-## Section D — Transport-position observer
-
-The patch needs to read Live's current song-time at the audio
-scheduler's rate so it can fire `sfrecord~` start/stop when transport
-crosses requested beats.
-
-### D.1. Instantiate the observer
-
-Drag in `[live.observer]`. Inspector / object box:
-
-- `@property` → `song_time` (some Live versions call this attribute
-  differently; if `song_time` doesn't observe, try `current_song_time`)
-- `@path` → `live_set` (the song-level path)
-
-### D.2. Convert song_time to beats
-
-`song_time` is in beats already in Live 12. Wire its outlet to
-`[unpack 0.]` to strip the `time` symbol prefix if your version of
-Max emits it as a list, otherwise direct.
-
-### D.3. Cross-detection logic
-
-The observer fires on EVERY change (audio scheduler rate). Build a
-small change-detection state machine:
+Save (`Cmd-S`) — Live updates the in-Live device immediately. Open
+the device's parameter list in Live (right-click the device strip in
+the chain, or use the Configure mode). All four parameters must
+appear:
 
 ```
-[live.observer @property song_time]
+Record Arm    (toggle, 0/1)
+OSC Port      (int, 11000-11400)
+OSC Emit Port (int, 11000-11400)
+Emit Features (toggle, 0/1)
+```
+
+If a parameter is missing, its Visibility is still wrong — re-check
+Inspector.
+
+Test from Python that the Remote Script API surfaces all four short
+names:
+
+```python
+from hallucinote_mcp.client import send
+from hallucinote_mcp.wire import Request
+r = send(Request(tool="ableton_device", action="get_parameters",
+                 params={"track_index": 1, "device_index": 1}))
+print({p["name"] for p in r.result["parameters"]})
+# Should include {"Arm", "Port", "EmitPort", "Emit"}
+```
+
+(Run this with Live open + the analyzer loaded on track 1.)
+
+---
+
+## Section C — Inbound OSC routes
+
+The Chunk 1 patch already has:
+
+```
+[udpreceive 11000]
+    │ (left outlet — matched OSC messages from any client)
+    ├──> [OSC-route /path]  ──[outlet 0]──> [prepend open] ──> [sfrecord~]
+    │                                                        + retain via [value path_retained]
+    │
+    │ (right outlet — sender host:port of most recent packet)
+    └──> (currently unconnected)
+```
+
+You'll add three more inbound routes plus a query/reply path.
+
+### C.1. `/track_id <symbol>` — retained track identity
+
+Build this chain to the left of (or below) the existing `[OSC-route /path]`:
+
+```
+[OSC-route /track_id]
+        │ outlet 0 (matched symbol)
+        ▼
+   [value track_id_retained]            ← stores the symbol; emits on read
+        │
+        (no downstream — the feature emitter pulls via [value track_id_retained] elsewhere)
+```
+
+The `[value]` object's box text:
+
+```
+value track_id_retained
+```
+
+It implicitly has `@triggers 1` by default — on EVERY incoming symbol
+write, it emits the symbol downstream. That's the behavior we want
+here: when the harness re-sends `/track_id` before a render, the
+feature emitter's `[sprintf]` (Section F.5) rebuilds the destination
+address with the new id.
+
+**Connect:** `[OSC-route /track_id]` outlet 0 → `[value track_id_retained]` inlet 0.
+
+> **Note on initialization.** At patch load, `[value track_id_retained]`
+> is empty (symbol `<empty>`). The feature emitter (Section F.6)
+> gates on non-empty so frames don't go out with `/hallucinote/track//features`.
+
+### C.2. `/start_at_beat <int>` and `/stop_at_beat <int>`
+
+Two more routes, identical shape, defensive int coercion:
+
+```
+[OSC-route /start_at_beat]            [OSC-route /stop_at_beat]
+        │ outlet 0                            │ outlet 0
+        ▼                                     ▼
+       [i]                                   [i]                  ← int coercion (defensive)
+        │                                     │
+        ▼                                     ▼
+[value start_at_beat]                  [value stop_at_beat]
+```
+
+Box text for the retainers:
+
+```
+value start_at_beat
+value stop_at_beat
+```
+
+Default `@triggers 1` — the state machine in Section D needs to know
+when these change so it can re-evaluate (e.g., the harness updates
+the window between renders).
+
+**Connect:**
+- `[OSC-route /start_at_beat]` outlet 0 → `[i]` inlet 0 → `[value start_at_beat]` inlet 0
+- `[OSC-route /stop_at_beat]` outlet 0 → `[i]` inlet 0 → `[value stop_at_beat]` inlet 0
+
+> **Why `[i]`?** OSC type tags should arrive as `,i` (int). But if a
+> client mistakenly sends `,f` (float, e.g., `64.0`), it'd arrive as
+> a float and our comparisons in the state machine would still work
+> mathematically but `change` detection breaks (a re-sent 64 becomes
+> 64.0 which differs from 64). `[i]` truncates defensively.
+
+### C.3. `/signature/query` → signature reply
+
+This route REPLIES rather than retains. It needs three pieces:
+
+1. The route box that matches `/signature/query`.
+2. The reply construction (`/signature hallucinote-analyzer-v1` as
+   an OSC message).
+3. The destination configuration on `[udpsend]` — re-targeting to
+   the sender's host:port extracted from `[udpreceive]`'s right outlet.
+
+#### C.3.a. `[udpreceive]`'s right outlet — extract sender host:port
+
+The Chunk 1 patch's `[udpreceive 11000]` has a right outlet that
+emits the source `host port` of the most recent packet. This is
+unconnected in Chunk 1; we tap it now.
+
+Add:
+
+```
+[udpreceive 11000]
+        │ outlet 1 (right — sender host port as 'symbol int')
+        ▼
+   [unpack s i]
+        │ outlet 0          │ outlet 1
+       (host symbol)       (port int)
+            ╲                ╱
+             ╲              ╱
+              ▼            ▼
+              [pak s i 0 0]                    ← stash latest sender host:port
+              │ outlet 0 (list: host port)
+              ▼
+   (we'll route this to [udpsend]'s 'host port' configuration inlet below)
+```
+
+Box text:
+- `unpack s i`
+- `pak s i 0 0` (`@triggers 1` default — emits on either inlet change; rightmost change updates port, leftmost change updates host then emits)
+
+> Why `pak` not `pack`? `[pak]` emits on any inlet change, so a new
+> packet's host+port immediately re-stashes. `[pack]` only fires on
+> the left inlet (host); a port change wouldn't propagate.
+
+Actually we want symmetric: re-stash whenever either changes. Use
+`pak` and remove the trailing `0 0` (those defaults are just
+type-spec placeholders). Final form:
+
+```
+[pak s i]
+```
+
+#### C.3.b. The `/signature/query` route + reply chain
+
+Build:
+
+```
+[OSC-route /signature/query]
+        │ outlet 0  (bangs on any incoming /signature/query message, payload ignored)
+        ▼
+   [t b]                                ← discard payload, keep the bang
         │
         ▼
-   [unpack 0.]                    (current_beat, as float)
-        │
-        ├──> [pak current 0. start 0. stop 0.]
-        │                ▲                ▲
-        │                │                │
-        │       [value start_at_beat]  [value stop_at_beat]
-        │             (bang every observer tick to read latest)
+   ┌─── two-step trigger via [t b b] ──────────────────────────────────────┐
+   │                                                                       │
+   │  [t b b]                                                               │
+   │   │ outlet 1 (fires FIRST, right-to-left)                              │
+   │   ▼                                                                   │
+   │  (use it to re-load the current sender host:port into udpsend's       │
+   │   right inlet, so the destination is set BEFORE the message arrives)  │
+   │   │                                                                   │
+   │   ▼                                                                   │
+   │   [value sender_host_port]   ← reads latest stashed sender host:port  │
+   │   │ outlet 0                                                          │
+   │   ▼                                                                   │
+   │   ┌─── flows into [udpsend]'s right inlet (host port config) ────┐    │
+   │   │                                                              │    │
+   │                                                                       │
+   │   outlet 0 (fires SECOND)                                             │
+   │   ▼                                                                   │
+   │  [message /signature hallucinote-analyzer-v1]                          │
+   │   │ outlet 0                                                          │
+   │   ▼                                                                   │
+   │   ┌─── flows into [udpsend]'s left inlet (OSC message) ──────────┐    │
+   │   └──────────────────────────────────────────────────────────────┘    │
+   └───────────────────────────────────────────────────────────────────────┘
+```
+
+That's a lot. Compressed:
+
+```
+[OSC-route /signature/query]
+        │ outlet 0
+        ▼
+   [t b b]
+        ├── outlet 1 ─→ [value sender_host_port] ─→ [udpsend]'s inlet 1 (host port config)
+        └── outlet 0 ─→ [message /signature hallucinote-analyzer-v1] ─→ [udpsend]'s inlet 0 (message)
+```
+
+`[value sender_host_port]` is the SAME stash you populated in
+Section C.3.a — its outlet emits on the bang.
+
+Box text:
+- `t b b`
+- `value sender_host_port` (used in C.3.a to receive the host:port list, used here to read it on a bang)
+- `message /signature hallucinote-analyzer-v1` — a `[message]` object containing the literal text (this is a single object with that text as its message contents)
+
+#### C.3.c. The `[udpsend]` for signature replies
+
+Box text:
+
+```
+udpsend
+```
+
+(No host/port args — we configure them dynamically.)
+
+Wire:
+- inlet 0 (left, the message): from C.3.b's outlet-0 fire → `[message /signature hallucinote-analyzer-v1]` outlet → here
+- inlet 1 (right, host port config): from C.3.a's `[pak s i]` outlet OR from C.3.b's outlet-1 fire of `[value sender_host_port]` (which reads from C.3.a's stash)
+
+> **Trap.** `[udpsend]` accepts a `host port` configuration message
+> as a list of two args: `<host_symbol> <port_int>`. If you send the
+> reply BEFORE configuring the destination, it goes nowhere (or to
+> the previous destination). The `[t b b]` right-then-left fire order
+> in C.3.b is load-bearing: it sets destination FIRST, then sends.
+
+> **C.3.a vs C.3.c — same udpsend?** Yes. The single
+> outbound-reply `[udpsend]` is configured-then-fired on every
+> `/signature/query`. Don't create a second `[udpsend]` for the
+> feature emitter — Section F.5's emitter has its own `[udpsend]`
+> with a different (configurable, default 11001) static destination.
+
+---
+
+## Section D — Transport-position observer + state machine
+
+This is the most intricate region. Pure-Max state machine using
+`[expr]` for the threshold-crossing logic and `[deferlow]` to update
+the `prev_beat` AFTER the comparisons fire.
+
+### D.1. The observer
+
+Box text:
+
+```
+live.observer @path live_set @property current_song_time
+```
+
+> **Property-name trap.** Live 12 exposes `current_song_time` on
+> `live_set`. If your Live version surfaces it as `song_time` instead,
+> the observer falls silent (no error, no output). Test by adding a
+> temporary `[print obs]` on its outlet, pressing play in Live, and
+> watching for a stream of floats. If silent: try `@property
+> song_time`, `@property current_song_time`, then probe with
+> `ableton_session(action='introspect', target='song', what='dir')`
+> from the MCP to find the actual property name.
+
+The observer emits one float per scheduler tick: the current beat
+position (0-based, beats from arrangement start, float).
+
+### D.2. Latched-state objects
+
+You need three `[value]` objects to hold latched state (read by the
+[expr] later):
+
+```
+value prev_beat
+value v_start_at_beat   ← shadow of /start_at_beat retainer, see below
+value v_stop_at_beat    ← shadow of /stop_at_beat retainer
+value v_arm             ← shadow of Arm parameter
+```
+
+> **Why shadow `[value]`s instead of reading the originals directly?**
+> Max's `[expr]`'s cold inlets latch the most recently received value.
+> They DON'T pull from elsewhere on demand. So each cold inlet needs
+> a `[value]` whose emission fans out to the cold inlet AND keeps
+> getting re-emitted whenever the source changes. The cleanest pattern
+> is to make a local shadow that mirrors the source.
+
+Wire the shadows to fan in from the sources:
+
+```
+[value start_at_beat]   (the Section C.2 retainer; default @triggers 1
+                          re-emits on every OSC write)
+        │ outlet 0
+        ▼
+[value v_start_at_beat]   ← shadow, ALSO @triggers 1 default; the
+                            chain is purely about decoupling so the
+                            expr's cold inlet sees a stable handle
+```
+
+Same shadow chain for `stop_at_beat`. For `Arm`, tap the `live.toggle`'s
+outlet directly:
+
+```
+[live.toggle (Arm)]   (Chunk 1)
+        │ outlet 0 (emits 0 or 1 on each toggle change)
+        ▼
+[value v_arm]
+```
+
+Initialize `prev_beat` at patch load:
+
+```
+[loadbang]
         │
         ▼
-   [route current start stop]
-   (route by the symbol prefix you packed)
+   [-1.]                ← sentinel "no prior beat seen"
+        │
+        ▼
+[value prev_beat]
 ```
 
-Honestly, the simplest shape is a JavaScript object (`[js]`) that
-holds the prior beat as state and emits messages on threshold
-crossings — Max's pure-message scheduling makes the state machine
-verbose otherwise. If you prefer to stay pure-Max:
+Box text: `-1.`
+
+### D.3. The crossing-detection [expr] pair
+
+Two `[expr]` objects, one per crossing event.
+
+#### D.3.a. `expr_start_crossed`
+
+Box text:
 
 ```
-prior_beat = [value prior_beat @triggers 0]
-              (initialize to -1 at [loadbang])
-
-on every observer tick:
-  if Arm == 1
-     and prior_beat < start_at_beat
-     and current_beat >= start_at_beat:
-        → fire start-recording chain
-  if Arm == 1
-     and prior_beat < stop_at_beat
-     and current_beat >= stop_at_beat:
-        → fire stop-recording chain
-  prior_beat := current_beat
+expr ($f1 < $i2) && ($f0 >= $i2) && ($i3 == 1)
 ```
 
-Express the inequality checks with `[<]` and `[>=]` Max objects + an
-`[&&]` (logical and). Each comparison's result feeds a `[sel 1]` or
-`[gate]` to fire its respective trigger only on the true→true edge.
+Inlets:
 
-### D.4. Connect to the existing Arm gate
+| Inlet | Type | Source | Role |
+|---|---|---|---|
+| 0 (hot) | float | observer outlet (current_beat) | triggers eval |
+| 1 (cold) | float | `[value prev_beat]` outlet | prior beat |
+| 2 (cold) | int | `[value v_start_at_beat]` outlet | start threshold |
+| 3 (cold) | int | `[value v_arm]` outlet | armed gate |
 
-The `[live.toggle]` for `Arm` already exists. Tap its parameter value
-(via `[live.observer @property value @path Arm]` OR by routing the
-toggle's output through a `[live.thisdevice]`-rooted path). Use it to
-GATE the start/stop fire chains:
+Wire:
+- observer → `[expr ...]` inlet 0 (will need `[deferlow]` for prev_beat update, see D.5)
+- `[value prev_beat]` outlet → `[expr ...]` inlet 1
+- `[value v_start_at_beat]` outlet → `[expr ...]` inlet 2
+- `[value v_arm]` outlet → `[expr ...]` inlet 3
+
+Output: 1 (true) or 0 (false) on each observer tick.
+
+#### D.3.b. `expr_stop_crossed`
+
+Identical box text and wiring, except inlet 2 sources from
+`[value v_stop_at_beat]` instead of `v_start_at_beat`.
+
+### D.4. Convert 0/1 output to bangs (only on TRUE)
+
+After each `[expr]`:
 
 ```
-start-crossing-detected ──> [gate]
-                              ↑
-                          Arm value (0 or 1)
-                              │
-                              ▼
-                       open <path> + 1 → sfrecord~
+[expr ...]
+        │ outlet 0 (0 or 1 per observer tick)
+        ▼
+   [sel 1]
+        │ outlet 0 (bangs ONLY when input is exactly 1)
+        ▼
+   (start-crossed bang)
 ```
 
-When `Arm == 0`, the gate blocks; transport crossings have no effect.
-This is the "Arm-as-gate, observer-as-boundary" model from the spec.
+Box text: `sel 1`
+
+Now you have:
+- `start_crossed_bang` — bangs on the observer tick where transport
+  crosses start_at_beat while armed
+- `stop_crossed_bang` — bangs on the observer tick where transport
+  crosses stop_at_beat while armed
+
+### D.5. Update `prev_beat` AFTER the exprs evaluate
+
+The exprs read `prev_beat` from their cold inlet; the cold inlet
+value was set on the previous tick. We need to update `prev_beat`
+to `current_beat` AFTER the two exprs have fired — for the NEXT tick.
+
+Use `[deferlow]`:
+
+```
+[live.observer ...]
+        │ outlet 0 (current_beat as float)
+        ├─→ [expr expr_start_crossed] inlet 0 (triggers immediately)
+        ├─→ [expr expr_stop_crossed] inlet 0 (triggers immediately)
+        └─→ [deferlow]
+                │ outlet 0
+                ▼
+           [value prev_beat]     ← updates after the current scheduler tick completes
+```
+
+`[deferlow]` pushes the message to the low-priority queue, which runs
+after the audio thread and after the current scheduler tick's
+high-priority messages. By the time it fires, the exprs have already
+evaluated using the OLD prev_beat — exactly what we want.
+
+Box text: `deferlow`
 
 ---
 
-## Section E — Rewire the recording trigger
+## Section E — Rewire recording trigger
 
-Chunk 1's patch fired `open <path>` + `1` on the **rising edge of
-the Arm parameter**. Chunk 2 fires it on the **transport-position
-crossing while armed**. This means: disconnect the existing Arm rising-
-edge handler from the open+start chain, and connect the observer's
-start-crossing-detected output instead.
+In Chunk 1, the rising-edge of `Arm` directly triggered
+`open <path>` + `1` to `sfrecord~`. In Chunk 2, `Arm` is a gate and
+the transport observer triggers the recording. You're replacing one
+chain with a new one.
 
-### E.1. Find and disconnect the old Arm rising-edge chain
+### E.1. Find the Chunk 1 chain to disconnect
 
-In Chunk 1, the chain was approximately:
-
-```
-Arm (live.toggle) → [sel 1] (true on rising edge)
-                  → [t b b] (right-then-left)
-                  → right: [value path_retained] → [prepend open] → sfrecord~
-                  → left:  [1( → sfrecord~
-```
-
-Delete the cable from `[sel 1]` to `[t b b]`. Leave the rest of the
-chain in place — we'll feed `[t b b]` from the new source.
-
-### E.2. Connect the observer's start-crossing to `[t b b]`
-
-The "start-crossing-detected" bang you built in Section D.3, gated by
-Arm in Section D.4 — wire it into the `[t b b]` that was the rising-
-edge handler's downstream. The open + 1 sequence now fires at the
-transport-position boundary.
-
-### E.3. Stop-crossing → `[0]` → sfrecord~
-
-Similarly, Chunk 1's falling-edge handler sent `0` to `sfrecord~`.
-Wire BOTH:
-- Falling edge of Arm (the "user pulled the cord" path)
-- AND the stop-crossing-detected output from Section D.3
-
-…into a `[trigger 0]` (or `[message 0]`) → `sfrecord~` left inlet.
-Either source stops the recording.
-
-### E.4. Verify pre-arm guard still works
-
-The Chunk 1 rising-edge handler had a guard: if no `/path` had been
-received since patch load, refuse to arm and `[print]` the error.
-Make sure the start-crossing handler in E.2 has the SAME guard —
-check `[value path_retained]` is non-empty before firing `open`.
-Without this, the patch silently records to whatever stale path it
-last had.
-
----
-
-## Section F — Feature-extraction branch
-
-This is the heaviest section. The audio inlet is tapped (not
-intercepted) and feeds three parallel extractors. Their outputs are
-packed into a 3-float OSC frame and sent at ~30 Hz to the sidecar.
-
-### F.1. Tap the audio inlet
-
-Use `[receive~ inlet_audio]` if the audio inlet is exposed by name,
-or a `[send~ tap_audio]` upstream + `[receive~ tap_audio]` here.
-**The tap must NOT add latency** (PDC alignment with the master
-analyzer depends on this — see spec §"Inlets / outlets").
-
-### F.2. LUFS-M (K-weighted, 400 ms momentary)
-
-K-weighting is ITU-R BS.1770-4: a high-shelf (+4 dB above ~1500 Hz)
-followed by a high-pass (~38 Hz, -3 dB).
-
-**Stage 1 — High-shelf biquad** (at 48 kHz; see SR note below):
-```
-[biquad~ 1.53512485958697 -2.69169618940638 1.19839281085285 -1.69065929318241 0.73248077421585]
-```
-
-**Stage 2 — High-pass biquad** (at 48 kHz):
-```
-[biquad~ 1.0 -2.0 1.0 -1.99004745483398 0.99007225036621]
-```
-
-Chain Stage 1 → Stage 2 (signal flow), then:
-
-**Mean square over 400 ms** (the "momentary" integration window):
-```
-filtered → [*~] (square: connect to its own second inlet for x²)
-         → [avg~ @sr-relative 1] over 400 ms window
-```
-
-If `[avg~]` isn't available in your Max version, build the window
-from `[delay~ 19200]` (400 ms at 48 kHz) + a running sum. Easier: use
-`[poly~]` with a small avg patcher.
-
-**Convert to LUFS:**
-```
-mean_square → [log10~] → [*~ 10.] → [+~ -0.691]
-```
-
-The `-0.691` is the BS.1770 absolute scale offset (so a -23 LUFS
-pink-noise reference reads exactly -23.0 after K-weighting and
-integration).
-
-**Snapshot at emit rate:** `[snapshot~]` driven by the `[metro]`
-in F.5 will sample this at 30 Hz. Don't snapshot in the audio thread.
-
-> **SR note (deferred to post-MVP).** The biquad coefficients above
-> are computed for 48 kHz. At 44.1 kHz the K-weighting filter
-> characteristic shifts slightly (the +4 dB shelf turnover lands ~7%
-> higher, the -3 dB HP corner lands ~7% higher). LUFS-M reads ~0.2-0.4
-> LU low at 44.1 kHz vs. Live's meter. For MVP this is acceptable
-> noise — Hallucinote's MixReport doesn't gate on sub-LU precision.
-> A future enhancement runs the coefficient math at `[loadbang]`
-> from `[samplerate~]`. **Document the assumption in your patch with
-> a `[comment]` block** so the next Chunk-3 author knows the
-> precondition.
-
-### F.3. Sample peak
+Visually trace from the `[live.toggle (Arm)]`'s outlet:
 
 ```
-tap_audio → [peakamp~] → [snapshot~] (at the metro rate)
-         → [log10~] → [*~ 20.]
+[live.toggle (Arm)]
+        │ outlet 0
+        ▼
+   [change]                ← only emits on actual value change
+        │
+        ▼
+   [sel 1]                 ← fires bang only on 1 (rising edge)
+        │
+        ▼
+   [t b b]                 ← right-then-left: right reads path, left fires '1'
+        │ outlet 1 (right, fires first)
+        │      ▼
+        │   [value path_retained]
+        │      │
+        │      ▼
+        │   [prepend open]
+        │      │
+        │      ▼
+        │   [sfrecord~]   inlet 0 (left, message inlet)
+        │
+        │ outlet 0 (left, fires second)
+        ▼
+   [1]                     ← the integer 1
+        │
+        ▼
+   [sfrecord~]   inlet 0
 ```
 
-The `[peakamp~]` object holds the peak between snapshots and resets
-on read — exactly the "peak between emit frames" semantics we want.
-Output is dBFS (negative for non-clipping signal).
+### E.2. Cut and reconnect
 
-### F.4. Low-mid (200-500 Hz) band power
+**Delete:** the patchcord from `[sel 1]` (rising-edge detector) to
+`[t b b]`. Leave everything downstream — we'll feed `[t b b]` from
+the new observer-based source.
 
-Cascade two `[biquad~]` (2-pole HP at 200 Hz, 2-pole LP at 500 Hz).
-At 12 dB/oct each you get a comfortable band-pass with -6 dB at the
-edges; the MVP doesn't need sharp skirts.
-
-Coefficients (48 kHz, Butterworth):
-```
-HP 200 Hz:  [biquad~ 0.97803 -1.95606 0.97803 -1.95558 0.95654]
-LP 500 Hz:  [biquad~ 0.00102 0.00205 0.00102 -1.95558 0.95968]
-```
-
-(These are approximations — fine-tune with `[filtergraph~]` if you
-care. The MVP only uses this band-power value in Chunk 3's master-bus
-contribution attribution; relative comparisons across stems matter
-more than absolute calibration.)
-
-Then:
-```
-bandpassed → [*~] (self-multiply: x²)
-           → [avg~ over 100 ms]
-           → [snapshot~] (at metro rate)
-           → [log10~] → [*~ 10.]
-```
-
-Output is dB relative to full scale.
-
-### F.5. Pack + emit at 30 Hz
+**Keep `[change]` + `[sel 0]` for the "user pulled the cord" path:**
+also add a separate `[sel 0]` parallel to `[sel 1]` to detect falling
+edge of `Arm` — this is the "stop now" path for when the user
+manually disarms mid-recording.
 
 ```
-[metro 33]                              ← every 33 ms = ~30 Hz
-   │
-   ├──> bang [snapshot~] for LUFS-M     ─┐
-   ├──> bang [snapshot~] for peak       ─┤
-   ├──> bang [snapshot~] for low-mid    ─┤
-   └──> bang [value track_id_retained]  ─┤
-                                         │
-                  ┌──────────────────────┘
-                  ▼
-        [pak f f f]   (LUFS-M, peak, low-mid)
-                  │
-                  ▼
-        [prepend address]
-                  ▲
-                  │   address built dynamically:
-                  │   track_id → [sprintf /hallucinote/track/%s/features] → set $1
-                  │
-                  ▼
-        [gate] ────── gated by `Emit` Live parameter (0 = mute)
-        and also by track_id non-empty check
-                  │
-                  ▼
-        [udpsend 127.0.0.1 <osc_emit_port>]
-                  ▲
-                  │
-        EmitPort change → [pak host port] → right inlet (re-bind destination)
+[live.toggle (Arm)]
+        │ outlet 0
+        ▼
+   [change]
+        │
+        ├──→ [sel 1]    (rising edge — UNUSED now; can delete or leave dangling)
+        └──→ [sel 0]    (falling edge — preserved as "user pulled the cord" stop path)
+                │
+                ▼
+               (will feed the stop chain below)
 ```
 
-The `[metro]` should be turned ON at `[loadbang]` so feature emission
-starts as soon as Live's audio engine runs. The `Emit` gate lets users
-disable the emitter without affecting recording.
-
-### F.6. Gate frames when track_id isn't set
-
-If `track_id_retained` is empty (string `""`) the address would be
-`/hallucinote/track//features` — malformed. The sidecar's parser
-rejects empty track_ids, so frames would silently drop, but it's
-cleaner to gate on the patch side.
+### E.3. Wire the new start trigger from D.4's `start_crossed_bang`
 
 ```
-[value track_id_retained] → [length] → [> 0] → [gate]'s control inlet
+(D.4's start_crossed_bang outlet)
+        │
+        ▼
+   [t b b]            ← right-then-left order: right reads path, left fires 1
+        │ outlet 1 (right, fires first)
+        │      ▼
+        │   [value path_retained]    ← Chunk 1's path retainer; unchanged
+        │      │ outlet 0
+        │      ▼
+        │   [if $i1 != <empty> then bang else nothing]   ← guard: refuse if no path
+        │      (express as: [t s] → [length] → [> 0] → [sel 1] → bang)
+        │      ▼
+        │   [prepend open]
+        │      │
+        │      ▼
+        │   [sfrecord~]   inlet 0
+        │
+        │ outlet 0 (left, fires second — sends start)
+        ▼
+   [1]
+        │
+        ▼
+   [sfrecord~]   inlet 0
 ```
 
-(Or use a `[route]` that drops the empty case.)
+The "no path → don't arm" guard (Chunk 1's safety) is reproduced via
+a length check on `path_retained` before `prepend open` fires. If
+path is empty, the chain stops there and `sfrecord~` never receives
+the `open`. Add `[print PathGuard]` on the failure path so the Max
+console shows the abort.
 
----
+Compact form for the guard:
 
-## Section G — Sanity test inside Max (before saving)
+```
+[value path_retained]
+        │ outlet 0 (symbol)
+        ▼
+   [t s s]
+   ├── outlet 1 → [length] → [> 0] → [gate]   ← gates the path message
+   └── outlet 0 → [gate]'s message inlet      ← the actual path symbol
+        │ (gate's outlet emits the path only if length > 0)
+        ▼
+   [prepend open]
+        ...
+```
 
-You can verify a lot from the Max console before involving Live's
-Remote Script or the MCP server.
+### E.4. Wire the new stop trigger
 
-### G.1. Open the Max console
+The stop trigger fires from TWO sources OR'd together:
 
-`View > Open Max Console` (`Cmd-M`).
+1. `stop_crossed_bang` (from D.4)
+2. Falling-edge-of-Arm from E.2 (user pulled the cord)
 
-### G.2. Probe the parameter list
+```
+   stop_crossed_bang ─────┐
+                          ├──→ [t b]   (just to fan in cleanly)
+   falling_edge_arm ──────┘    │
+                               ▼
+                           [0]            ← the integer 0 (sfrecord~ stop+finalize)
+                               │
+                               ▼
+                          [sfrecord~]   inlet 0
+```
 
-Drag in `[live.thisdevice]`. Click its outlet to bang. The console
-prints the device's parameter list — confirm all four short names
-appear: `Arm`, `Port`, `EmitPort`, `Emit`.
+Box text: `0` for the message object emitting the int.
 
-### G.3. Test inbound OSC
+### E.5. Sanity-check the wiring
 
-Open Terminal:
-```bash
-echo "Try sending OSC manually if you want — easiest is via Python:"
-python3 -c "
+Add temporary `[print]` objects on each new bang outlet:
+
+```
+start_crossed_bang ─→ [print START]
+stop_crossed_bang  ─→ [print STOP]
+falling_edge_arm   ─→ [print ARM_DROP]
+```
+
+Save (`Cmd-S`). In Live: drop the device on a track with audio,
+send via Python harness:
+
+```python
 import socket, struct
 def osc(addr, *args):
     def s(x): r = x.encode() + b'\x00'; return r + b'\x00' * ((-len(r)) % 4)
-    def i(x): return struct.pack('>i', x)
-    types = ',' + ''.join('s' if isinstance(a,str) else 'i' for a in args)
-    body = b''.join(s(a) if isinstance(a,str) else i(a) for a in args)
+    def i(x): return struct.pack('>i', int(x))
+    types = ',' + ''.join('s' if isinstance(a, str) else 'i' for a in args)
+    body = b''.join(s(a) if isinstance(a, str) else i(a) for a in args)
     return s(addr) + s(types) + body
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
-sock.sendto(osc('/start_at_beat', 0), ('127.0.0.1', 11000))
-sock.sendto(osc('/stop_at_beat', 16), ('127.0.0.1', 11000))
-"
+sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sk.sendto(osc('/path', '/tmp/test_chunk2b.wav'), ('127.0.0.1', 11000))
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
+sk.sendto(osc('/start_at_beat', 8), ('127.0.0.1', 11000))
+sk.sendto(osc('/stop_at_beat', 24), ('127.0.0.1', 11000))
 ```
 
-Add `[print track_id_in]` / `[print start_beat_in]` / `[print stop_beat_in]`
-hanging off each route's outlet temporarily. The Max console should
-show each value as it arrives. Remove the `[print]` objects before
-saving.
-
-### G.4. Test the signature reply
-
-After sending `/signature?`, the patch should reply on the source
-port. Run a UDP receiver on whatever port you sent FROM (the OS picks
-a random source port unless you bind one) — easier to bind a known
-port:
-
-```python
-import socket
-listen = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-listen.bind(('127.0.0.1', 12345))
-listen.settimeout(2.0)
-send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# Send /signature? from port 12345 (use the listen socket to send so
-# the source port matches what we're listening on)
-listen.sendto(<osc bytes for /signature?>, ('127.0.0.1', 11000))
-print(listen.recvfrom(4096))  # should print /signature hallucinote-analyzer-v1
-```
-
-### G.5. Test the feature emitter
-
-Run the sidecar's listen port (default 11001):
-```python
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind(('127.0.0.1', 11001))
-s.settimeout(2.0)
-for _ in range(5):
-    print(s.recvfrom(4096))
-```
-
-Play audio through the track Live's running the analyzer on. You
-should see five OSC frames printed, each starting with
-`/hallucinote/track/test:1/features` followed by three floats.
-
-If you see no frames: check `Emit` is set to 1, `track_id` was sent
-(test G.3), and the `[metro 33]` is running (`[loadbang]` should
-have started it).
-
-### G.6. Test the transport-position observer (the trickiest one)
-
-This requires running Live's transport, since `[live.observer]`
-won't fire without the song clock advancing.
-
-1. Set Arm = 0 in Live's device view.
-2. Send `/path /tmp/test_chunk2b.wav`, `/track_id test:1`,
-   `/start_at_beat 8`, `/stop_at_beat 24` via OSC.
-3. Set Arm = 1.
-4. In Live, position playhead at bar 1 (beat 0) and press space.
-5. The patch should NOT start writing until transport reaches beat 8
-   (bar 3 in 4/4). Add `[print obs_state]` on the observer's outlet
-   temporarily to watch its ticks scroll past.
-6. At beat 8: `sfrecord~` should open `/tmp/test_chunk2b.wav` and
-   start writing.
-7. At beat 24: `sfrecord~` should stop (send 0). Console should
-   show no further activity.
-8. Set Arm = 0.
-
-Inspect the WAV:
-```bash
-python3 -c "
-import soundfile as sf
-f = sf.SoundFile('/tmp/test_chunk2b.wav')
-print(f'frames={len(f)}, sr={f.samplerate}, ch={f.channels}, subtype={f.subtype}')
-"
-```
-
-At 120 BPM, 16 beats = 8 seconds = 384,000 frames at 48 kHz. Tolerance:
-±1 audio buffer (typically 512 samples).
+Then in Live: position playhead at bar 1, set Arm=1, press play.
+Max console should print `START` at beat 8, `STOP` at beat 24.
+After verifying, remove the `[print]` debug objects.
 
 ---
 
-## Section H — Save + copy back to source tree
+## Section F — Feature extraction branch
 
-### H.1. Save the patch
+A parallel audio tap (NOT in series — don't break Chunk 1's
+pass-through signal) that runs three feature extractors and emits
+30 Hz OSC frames.
 
-`Cmd-S` in Max. Live receives the updated patch immediately.
+### F.1. Tap the audio inlet
+
+In the existing patch, the audio inlet routes via `[plugin~]` (or
+equivalent — check the Chunk 1 patch). Add a parallel tap:
+
+```
+[plugin~] outlet 0 ──┬──> [plugout~] (existing — sonic pass-through)
+                     ├──> [sfrecord~] inlet 1 (existing — left channel record)
+                     └──> [send~ tap_L]    ← NEW
+
+[plugin~] outlet 1 ──┬──> [plugout~] outlet 1 (existing)
+                     ├──> [sfrecord~] inlet 2 (existing — right channel record)
+                     └──> [send~ tap_R]    ← NEW
+```
+
+Box text: `send~ tap_L` and `send~ tap_R`.
+
+Then receive in the feature-extraction region:
+
+```
+[receive~ tap_L]   [receive~ tap_R]
+```
+
+> **Why send~/receive~ rather than direct patchcords?** Visual
+> clarity — the feature region lives at the bottom of the patch;
+> direct cords across the whole patch get messy. `send~`/`receive~`
+> add zero sample delay.
+
+### F.2. K-weighted LUFS-M (momentary)
+
+ITU-R BS.1770-4: two cascaded biquads (high-shelf + high-pass), then
+mean-square over 400 ms, then dB conversion with the -0.691 offset.
+
+**Mix to mono** (L+R)/2 — momentary loudness is mono-summed:
+
+```
+[receive~ tap_L]   [receive~ tap_R]
+        │                │
+        ▼                ▼
+       [+~]                       ← signal add
+        │
+        ▼
+       [*~ 0.5]                   ← halve to keep -3 dB headroom on mono sum
+        │ outlet 0
+        ▼
+    (mono signal, feed both K-weight cascade and band-power cascade)
+```
+
+Box text: `+~`, `*~ 0.5`.
+
+**Stage 1 — high-shelf biquad** (BS.1770-4 reference, 48 kHz):
+
+```
+biquad~ 1.53512485958697 -2.69169618940638 1.19839281085285 -1.69065929318241 0.73248077421585
+```
+
+The args are `a0 a1 a2 b1 b2` (Max's biquad~ convention — feedforward
+then feedback). The values above are BS.1770-4's pre-filter at 48 kHz.
+
+**Stage 2 — high-pass biquad** (BS.1770-4 reference, 48 kHz):
+
+```
+biquad~ 1.0 -2.0 1.0 -1.99004745483398 0.99007225036621
+```
+
+Chain:
+
+```
+mono signal → [biquad~ <stage 1 coefs>] → [biquad~ <stage 2 coefs>] → (K-weighted signal)
+```
+
+**Square the K-weighted signal** (for mean-of-squares):
+
+```
+K-weighted signal ──┬──→ [*~] inlet 0
+                    └──→ [*~] inlet 1     ← self-multiply: x²
+                                │
+                                ▼
+                          (x² signal)
+```
+
+Box text: `*~` (no args — both inlets used).
+
+**Mean-square over 400 ms** using `[average~]`:
+
+```
+x² signal → [average~ 19200 bipolar] → (mean square at audio rate)
+```
+
+Box text: `average~ 19200 bipolar`
+
+The "bipolar" mode computes the simple mean of the signal (without
+absolute-value or sqrt). Since x² is non-negative, this gives
+mean-of-squares. 19200 samples at 48 kHz = 400 ms. At 44.1 kHz this
+becomes ~436 ms — close enough for MVP.
+
+**Convert to LUFS** (sample at metro rate, then compute in
+control-rate land):
+
+```
+mean square at audio rate
+        │
+        ▼
+   [snapshot~]              ← banged by [metro 33] (Section F.5)
+        │ outlet 0 (float)
+        ▼
+   [if $f1 > 0 then (10 * log10($f1)) - 0.691 else -inf]
+        (express as: [expr ($f1 > 0.) ? (10. * log10($f1)) - 0.691 : -120.]
+         where -120 stands in for "silent" — log of zero is -inf,
+         the sidecar treats -120 dBFS as "effectively silent")
+```
+
+Box text: `snapshot~`, then:
+
+```
+expr ($f1 > 0.) ? (10. * log10($f1)) - 0.691 : -120.
+```
+
+Output: LUFS-M as a float, on each metro tick.
+
+### F.3. Sample peak
+
+Simpler — `[peakamp~]` accumulates the peak between bangs, output is
+linear 0-1.
+
+```
+mono signal → [peakamp~] inlet 0      ← signal input
+
+(metro 33's bang) → [peakamp~] inlet 0 (also)    ← bang resets + outputs
+                                       ↑
+                                  send bangs here
+
+[peakamp~] outlet 0 (float, linear 0-1 peak since last bang)
+        │
+        ▼
+   [expr ($f1 > 0.) ? 20. * log10($f1) : -120.]
+        │ outlet 0 (float, peak in dBFS)
+```
+
+Box text: `peakamp~`, then the expr as shown.
+
+> `[peakamp~]` takes the signal on inlet 0 AND bangs on inlet 0 —
+> they share the inlet. The bang triggers output AND resets the
+> internal peak accumulator.
+
+### F.4. Low-mid (200-500 Hz) band power
+
+Two cascaded biquads (HP at 200 Hz, LP at 500 Hz), square, average
+over 100 ms, snapshot, log.
+
+**HP at 200 Hz** (Butterworth 2-pole, 48 kHz, approximate):
+
+```
+biquad~ 0.97803 -1.95606 0.97803 -1.95558 0.95654
+```
+
+**LP at 500 Hz** (Butterworth 2-pole, 48 kHz, approximate):
+
+```
+biquad~ 0.00102 0.00205 0.00102 -1.95558 0.95968
+```
+
+Chain:
+
+```
+mono signal → [biquad~ HP coefs] → [biquad~ LP coefs] → (band-passed signal)
+```
+
+**Square, average, snapshot:**
+
+```
+band-passed signal ──┬──→ [*~] inlet 0
+                     └──→ [*~] inlet 1                        ← self-square
+                              │
+                              ▼
+                     [average~ 4800 bipolar]              ← 100 ms at 48 kHz
+                              │
+                              ▼
+                     [snapshot~]                          ← banged by metro
+                              │
+                              ▼
+                     [expr ($f1 > 0.) ? 10. * log10($f1) : -120.]
+                              │ outlet 0
+                            (low_mid_power in dB)
+```
+
+Same `snapshot~` / expr / box text pattern as F.2.
+
+### F.5. Pack and emit at 30 Hz
+
+The pack-and-emit chain:
+
+```
+[loadbang]
+    │
+    ▼
+[1]                        ← start the metro on patch load
+    │
+    ▼
+[metro 33]                 ← every 33 ms = ~30 Hz
+    │ outlet 0 (bang)
+    │
+    ├──→ [snapshot~] (LUFS-M chain, Section F.2) inlet 0 (bang for snapshot)
+    ├──→ [peakamp~]  (Section F.3)               inlet 0 (bang for read + reset)
+    ├──→ [snapshot~] (low-mid chain, Section F.4) inlet 0 (bang for snapshot)
+    └──→ (no need to bang track_id — [value]s don't need a bang on read in [sprintf])
+```
+
+Box text: `metro 33`, `loadbang`, `1`.
+
+Each of the three feature exprs (F.2, F.3, F.4) outputs a float once
+per metro tick. Collect them into a 3-element list:
+
+```
+LUFS-M expr     ──→ [pack f f f] inlet 0   (hot — triggers list output)
+peak expr       ──→ [pack f f f] inlet 1   (cold — latched)
+low-mid expr    ──→ [pack f f f] inlet 2   (cold — latched)
+```
+
+Box text: `pack f f f`.
+
+> The inlet that fires must be the LAST one to be updated on each
+> tick, otherwise we'd emit a list with a stale value. Since metro
+> fires all three feature snapshots SIMULTANEOUSLY (well, in sequence
+> within the same scheduler tick), pick whichever you wire to inlet 0;
+> in practice connecting LUFS-M to inlet 0 works because the other
+> two are updated within the same tick before the `[pack]` evaluates.
+>
+> If you see stale values in the OSC frames, swap the wiring so the
+> LAST-to-update feature goes to inlet 0.
+
+**Build the dynamic OSC address:**
+
+```
+[value track_id_retained]   (Section C.1)
+        │ outlet 0 (symbol)
+        ▼
+   [sprintf /hallucinote/track/%s/features]
+        │ outlet 0 (symbol — the full OSC address)
+        ▼
+   (latches into the message-construction step below)
+```
+
+Box text: `sprintf /hallucinote/track/%s/features`.
+
+**Construct the outbound OSC message:**
+
+`[udpsend host port]` accepts a list whose first element is the
+address (a symbol) followed by args. So:
+
+```
+[sprintf ...] outlet ──→ [pak s f f f] inlet 0   (cold — latches address)
+
+(metro tick) → trigger the feature snapshots → [pack f f f] outlet emits list
+                                                      │
+                                                      ▼
+                                          (need to combine address + 3 floats)
+```
+
+Actually, `[pack f f f]` outputs a 3-element float list. We need to
+prepend the address as a symbol. Easiest:
+
+```
+[pack f f f] outlet 0 (list: f f f)
+        │
+        ▼
+   [prepend dummy]              ← we'll replace 'dummy' with the dynamic address
+        │ outlet 0 (list: <dummy> f f f)
+```
+
+But `[prepend]` takes a STATIC prefix. To make it dynamic, use
+`[prepend set]` pattern OR use `[pak]` to bundle address + floats:
+
+```
+[pack f f f] outlet     ──→ [pak s f f f] inlet 1   (cold — receives the 3 floats packed... wait this doesn't work)
+```
+
+Hmm. The cleanest pattern in Max for "dynamically prefix a symbol to
+a list" is via `[sprintf]` or `[message]`:
+
+Approach via `[message]`:
+
+```
+[message $1 $2 $3 $4]                 ← takes 4 args via inlet, outputs as list
+
+   address (symbol)  ──→ [message]'s SECOND inlet (sets $1)        
+   feature_LUFS    ──→ [message]'s THIRD inlet (sets $2)
+   feature_peak    ──→ [message]'s FOURTH inlet (sets $3)
+   feature_lowmid  ──→ [message]'s FIFTH inlet (sets $4)
+   
+   (any bang to inlet 0 fires the message with current $1..$4)
+```
+
+Wait — `[message]` in Max only has TWO inlets: inlet 0 (fires on
+incoming message or bang), inlet 1 (sets the message contents). It
+doesn't have $-arg inlets. To pre-set $1..$N you SEND a list to
+inlet 1: the list elements become $1, $2, ... and then inlet 0 fires.
+
+So:
+
+```
+(metro tick) →
+        │
+        ▼
+   [pak s f f f]                ← pack address (symbol) + 3 floats into a list
+        │ inlet 0 (cold-stash) — connect address (sprintf outlet) here  
+        │ inlet 1 (cold) — connect LUFS-M expr here
+        │ inlet 2 (cold) — connect peak expr here
+        │ inlet 3 (cold) — connect low-mid expr here
+        │ 
+        │ (hot inlet must fire last — bang from metro post-feature-snapshot)
+        │
+        ▼
+   outlet (list: <address> <lufs> <peak> <lowmid>)
+        │
+        ▼
+   [udpsend 127.0.0.1 11001]        ← left inlet 0 — message
+```
+
+But `[pak]` fires on ANY inlet change, so it fires three times per
+tick (or four if address also changes). Each fire emits the current
+latched values. For OSC, getting THREE near-identical packets per
+tick (each with one feature updated and the others stale) is
+basically as bad as the stale-value problem.
+
+The clean solution: use `[pack s f f f]` (capital P? no — Max uses
+lowercase. `pack` fires only on LEFTMOST inlet change, holds others
+latched).
+
+Box text: `pack s f f f`.
+
+Wiring:
+
+```
+address (sprintf outlet)  ──→ [pack s f f f] inlet 0   (HOT — triggers emission)
+LUFS-M expr               ──→ [pack s f f f] inlet 1   (cold — latched)
+peak expr                 ──→ [pack s f f f] inlet 2   (cold)
+low-mid expr              ──→ [pack s f f f] inlet 3   (cold)
+```
+
+But now address has to be the LAST thing to update per metro tick.
+Re-arrange the metro fan-out:
+
+```
+[metro 33]
+    │ outlet 0 (bang)
+    │
+    ├──→ [snapshot~] (peak)                inlet 0
+    ├──→ [snapshot~] (low-mid)             inlet 0  (actually peakamp~ shares inlet 0 for signal+bang)
+    ├──→ [snapshot~] (LUFS-M)              inlet 0
+    │
+    │  (now the three feature exprs have emitted their floats; pack's
+    │   inlets 1, 2, 3 are latched with fresh values)
+    │
+    └──→ (bang the address chain LAST)
+            │
+            ▼
+       [value track_id_retained] (re-emits the symbol via its outlet, into [sprintf])
+            │
+            ▼
+       [sprintf /hallucinote/track/%s/features]
+            │
+            ▼
+       [pack s f f f] inlet 0 (HOT — fires the pack with current latched floats)
+            │
+            ▼
+       outlet (list: <address> <lufs> <peak> <lowmid>)
+```
+
+To make the metro fire the address chain LAST, use `[t b b b b]`
+right-to-left ordering:
+
+```
+[metro 33]
+    │
+    ▼
+[t b b b b]
+   │ outlet 3 (rightmost — fires FIRST)  →  [peakamp~] (read)
+   │ outlet 2                            →  [snapshot~] (low-mid) inlet 0
+   │ outlet 1                            →  [snapshot~] (LUFS-M) inlet 0
+   │ outlet 0 (leftmost — fires LAST)    →  bang the address chain
+```
+
+(`[peakamp~]`'s inlet 0 takes both signal and bang; the bang
+triggers a read+reset.)
+
+> **Why bang `[snapshot~]` instead of letting it run continuously?**
+> `[snapshot~]` is silent until banged — banging samples the signal
+> NOW. This is exactly the "sample audio-rate signal at control-rate"
+> behavior we want.
+
+Box text: `t b b b b`.
+
+**Gate by `Emit` (the emit_enabled toggle):**
+
+```
+[pack s f f f] outlet
+        │
+        ▼
+   [gate]                       ← gate's outlet emits only when control inlet is 1
+        │
+        ▼ (gated outbound message)
+
+[live.toggle (Emit)] outlet 0 ──→ [gate]'s inlet 0 (control)
+```
+
+Box text: `gate`.
+
+**Gate by non-empty track_id** (defensive):
+
+```
+[value track_id_retained] outlet → [length] → [> 0]
+                                                │ outlet 0 (1 if non-empty)
+                                                ▼
+                                           [gate]'s control inlet
+                                           (... actually we already have one gate above;
+                                            chain a second gate OR AND the two flags)
+```
+
+Simpler: AND the two conditions:
+
+```
+[live.toggle (Emit)] outlet → [pak 0 0] inlet 0
+[value track_id_retained] outlet → [length] → [> 0] → [pak 0 0] inlet 1
+                                                              │
+                                                              ▼
+                                                         outlet (list: emit, has_id)
+                                                              │
+                                                              ▼
+                                                         [expr $i1 && $i2]    ← AND
+                                                              │
+                                                              ▼
+                                                         [gate]'s control inlet
+```
+
+Hmm this is getting hairy. Simpler: TWO `[gate]`s in series, one
+controlled by each flag:
+
+```
+[pack s f f f] outlet
+        │
+        ▼
+   [gate]  control: Emit
+        │
+        ▼
+   [gate]  control: has_track_id   (1 if [value track_id_retained] length > 0)
+        │
+        ▼
+   [udpsend 127.0.0.1 11001]
+```
+
+For the has_track_id flag, drive it from any update to
+`[value track_id_retained]`:
+
+```
+[value track_id_retained]
+        │ outlet 0 (symbol; emits on every write)
+        ▼
+   [length]         ← emits the symbol's length (int)
+        │
+        ▼
+   [> 0]            ← 1 if non-empty, 0 otherwise
+        │
+        ▼
+   (drives the second [gate]'s control inlet)
+```
+
+Box text: `length`, `> 0`.
+
+> But `[length]` doesn't take a symbol — it takes a list and returns
+> the list length. For a symbol's CHARACTER count, use `[regexp]` or
+> `[strcmp]` against the empty symbol `<empty>`. Actually:
+>
+> ```
+> [== <empty>]      ← returns 1 if symbol is the empty symbol
+> ```
+>
+> Then NOT it:
+>
+> ```
+> [value track_id_retained]
+>         │
+>         ▼
+>    [== <empty>]   ← outputs 1 if empty, 0 if non-empty
+>         │
+>         ▼
+>    [== 0]         ← invert: 1 if NON-empty
+>         │
+>         ▼
+>    (drives gate)
+> ```
+>
+> Slight kludge, but clean enough. Alternative: store a separate
+> `[value has_track_id]` that gets set to 1 by the `/track_id`
+> route and never decays — simpler.
+
+Pragmatic choice: set a `[value has_track_id]` flag in Section C.1's
+chain:
+
+```
+[OSC-route /track_id]
+        │ outlet 0
+        ├──→ [value track_id_retained]
+        └──→ [t s]                            ← discard the value
+                │
+                ▼
+            [1]                               ← set flag to 1
+                │
+                ▼
+            [value has_track_id]
+```
+
+Then use that `[value has_track_id]` to drive the gate (no string
+arithmetic needed). Add to the patch's `[loadbang]` chain:
+
+```
+[loadbang] ──→ [0] ──→ [value has_track_id]     ← initialize to "no track_id yet"
+```
+
+### F.6. The outbound `[udpsend]`
+
+Box text: `udpsend 127.0.0.1 11001`
+
+(Default destination; configurable via `EmitPort` parameter as below.)
+
+**Re-target on EmitPort change:**
+
+```
+[live.numbox (EmitPort)] outlet 0
+        │ (int)
+        ▼
+   [pak 127.0.0.1 0]      ← prepend constant host, port latches in
+        │ outlet 0 (list: '127.0.0.1' <port>)
+        ▼
+   (drives [udpsend]'s right inlet — host port config)
+```
+
+Box text: `pak 127.0.0.1 0`.
+
+Wire the metro-driven message chain (Section F.5) to `[udpsend]`'s
+LEFT inlet (inlet 0); wire the `[pak 127.0.0.1 0]` outlet to
+`[udpsend]`'s RIGHT inlet (inlet 1).
+
+Also fire `[live.numbox (EmitPort)]` at `[loadbang]` so the initial
+destination is configured before the first metro tick fires:
+
+```
+[loadbang]
+        │
+        ▼
+   [delay 100]              ← small delay to let parameter init settle
+        │
+        ▼
+   (bang [live.numbox (EmitPort)] to re-emit its stored value)
+```
+
+Actually `[live.numbox]`'s stored value should auto-emit at patch
+load if Initial Enable is Yes. Verify by adding a temporary
+`[print EmitPort_init]` after the [live.numbox]'s outlet — should
+print `11001` (or whatever the stored value is) right after Live
+loads the patch.
+
+### F.7. Full F-section assembly diagram (sanity-check yourself)
+
+```
+                          [receive~ tap_L]   [receive~ tap_R]
+                                  │                   │
+                                  └─── [+~] ──── [*~ 0.5] ─── (mono signal)
+                                                       │
+            ┌─────────── (mono) ──────────┬──────── (mono) ────────────┐
+            │                             │                            │
+            ▼                             ▼                            ▼
+  [biquad~ HS coefs]                  [peakamp~]              [biquad~ HP-200 coefs]
+            │                             │                            │
+            ▼                       (bang inlet0                        ▼
+  [biquad~ HP coefs]                from metro)                [biquad~ LP-500 coefs]
+            │                             │                            │
+            ▼                             │                            ▼
+       [*~] self                          │                       [*~] self
+            │                             │                            │
+            ▼                             │                            ▼
+  [average~ 19200 bipolar]                │                  [average~ 4800 bipolar]
+            │                             │                            │
+            ▼                             │                            ▼
+       [snapshot~]                        │                       [snapshot~]
+            │                             │                            │
+            ▼                             ▼                            ▼
+[expr (LUFS conversion)]    [expr (peak conversion)]    [expr (low-mid conversion)]
+            │                             │                            │
+            └────────── (3 floats) ───────┴────────────────────────────┘
+                                          │
+                                          ▼
+                              [pack s f f f]      ← address into inlet 0 (hot)
+                                          │      floats into inlets 1/2/3 (cold)
+                                          ▼
+                                       [gate]  control: Emit
+                                          │
+                                          ▼
+                                       [gate]  control: has_track_id
+                                          │
+                                          ▼
+                              [udpsend 127.0.0.1 11001]   right inlet ← (host port from EmitPort)
+```
+
+---
+
+## Section G — In-Max sanity tests (before saving)
+
+Before `Cmd-S`-ing the patch, verify each Chunk 2 addition with
+console probes. The Max console (`Cmd-M`) is your friend.
+
+### G.1. Live parameter visibility check
+
+In Max, drop a temporary `[live.thisdevice]` and bang it:
+
+```
+[live.thisdevice]
+        │ outlet 0 (emits 'id' on patch load)
+        ▼
+   [print thisdevice]
+```
+
+Patch console should show the device's id at load. More usefully,
+from Python (with the device on track 1):
+
+```python
+from hallucinote_mcp.client import send
+from hallucinote_mcp.wire import Request
+
+r = send(Request(tool="ableton_device", action="get_parameters",
+                 params={"track_index": 1, "device_index": 1}))
+names = {p["name"] for p in r.result["parameters"]}
+assert {"Arm", "Port", "EmitPort", "Emit"} <= names, f"missing: {{'Arm','Port','EmitPort','Emit'}} - names = {{'Arm','Port','EmitPort','Emit'}} - names}"
+print("OK: all four short names present")
+```
+
+### G.2. Inbound OSC routing
+
+Add temporary `[print track_id_in]`, `[print start_in]`,
+`[print stop_in]` on the outlets of `[OSC-route /track_id]` etc.
+
+From Python:
+
+```python
+import socket, struct
+def osc(addr, *args):
+    def s(x): r = x.encode() + b'\x00'; return r + b'\x00' * ((-len(r)) % 4)
+    def i(x): return struct.pack('>i', int(x))
+    types = ',' + ''.join('s' if isinstance(a, str) else 'i' for a in args)
+    body = b''.join(s(a) if isinstance(a, str) else i(a) for a in args)
+    return s(addr) + s(types) + body
+
+sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
+sk.sendto(osc('/start_at_beat', 16), ('127.0.0.1', 11000))
+sk.sendto(osc('/stop_at_beat', 32), ('127.0.0.1', 11000))
+```
+
+Max console should print:
+```
+track_id_in: test:1
+start_in: 16
+stop_in: 32
+```
+
+Remove the `[print]`s before saving.
+
+### G.3. Signature reply round-trip
+
+Bind a UDP receiver on a fixed source port, send `/signature/query`
+from it, listen for the reply:
+
+```python
+import socket, struct, time
+
+def osc(addr, *args):
+    def s(x): r = x.encode() + b'\x00'; return r + b'\x00' * ((-len(r)) % 4)
+    def i(x): return struct.pack('>i', int(x))
+    types = ',' + ''.join('s' if isinstance(a, str) else 'i' for a in args)
+    body = b''.join(s(a) if isinstance(a, str) else i(a) for a in args)
+    return s(addr) + s(types) + body
+
+# Bind a known source port so the patch's reply lands somewhere we listen
+sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sk.bind(("127.0.0.1", 12345))
+sk.settimeout(2.0)
+
+# Send /signature/query FROM port 12345 TO patch's port 11000
+sk.sendto(osc("/signature/query"), ("127.0.0.1", 11000))
+
+# Read the reply (should arrive at 12345 because [udpsend] retargets to sender)
+data, addr = sk.recvfrom(4096)
+print(f"reply from {addr}:")
+# Decode (lazy — just look at the first 60 bytes)
+print(data[:60])
+# Expect /signature\x00\x00,s\x00\x00hallucinote-analyzer-v1\x00
+assert b"hallucinote-analyzer-v1" in data, "signature mismatch"
+print("OK: signature reply received")
+```
+
+If timeout: check (in order)
+1. `[OSC-route /signature/query]` outlet is wired
+2. `[t b b]` is right-to-left fire order — destination set BEFORE message
+3. `[pak s i]` is connected to `[udpsend]`'s right inlet
+4. The sender host:port stash (`[value sender_host_port]`) was
+   populated (check by adding `[print stash]` on the `[pak s i]`'s
+   outlet — it should print `127.0.0.1 12345` when the query arrives)
+
+### G.4. Feature emitter rate
+
+Bind a listener on 11001 (the default `EmitPort`):
+
+```python
+import socket, struct, time
+
+sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sk.bind(("127.0.0.1", 11001))
+sk.settimeout(2.0)
+
+# Run audio through the track. Then:
+count = 0
+t0 = time.monotonic()
+while time.monotonic() - t0 < 2.0:
+    try:
+        data, _ = sk.recvfrom(4096)
+        count += 1
+    except socket.timeout:
+        break
+print(f"received {count} frames in 2.0 s — expected ~60")
+```
+
+Targets:
+- `~60 frames` per 2 seconds (30 Hz). ±10% tolerance.
+- Each frame address starts with `/hallucinote/track/test:1/features`
+  (assuming you sent `/track_id test:1` first).
+- Payload type tag `,fff` followed by 12 bytes (3 floats).
+
+If 0 frames: check `[live.toggle (Emit)]` is on (1), `has_track_id`
+flag is 1 (because you sent `/track_id` first), and the metro is
+running (Max console: add `[print metro]` between `[metro 33]` and
+the `[t b b b b]`).
+
+### G.5. Transport-position observer
+
+Send a full render setup and play transport:
+
+```python
+# (osc() function as above)
+import socket
+sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sk.sendto(osc('/path', '/tmp/chunk2b_smoketest.wav'), ('127.0.0.1', 11000))
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
+sk.sendto(osc('/start_at_beat', 4), ('127.0.0.1', 11000))
+sk.sendto(osc('/stop_at_beat', 12), ('127.0.0.1', 11000))
+```
+
+In Live: set Arm = 1, position playhead at bar 1, press space.
+
+Add `[print obs_state]` temporarily on the `[live.observer]` outlet
+and `[print start_cross]` / `[print stop_cross]` on the
+`[sel 1]` outputs in Section D.4.
+
+Expected console scroll: floats from observer climbing from 0.0
+upward; `start_cross` bangs once when the observer crosses 4.0;
+`stop_cross` bangs once when it crosses 12.0.
+
+Inspect the WAV after stopping transport:
+
+```bash
+python3 -c "
+import soundfile as sf
+f = sf.SoundFile('/tmp/chunk2b_smoketest.wav')
+print(f'frames={len(f)}, sr={f.samplerate}, ch={f.channels}, subtype={f.subtype}')
+print(f'duration = {len(f) / f.samplerate:.3f} s')
+"
+```
+
+At 120 BPM, 8 beats (4→12) = 4 seconds = 192,000 frames at 48 kHz.
+Tolerance: ±1 audio buffer (typically ±512 samples). If you see
+significantly more (the old MCP-latency-bounded padding), the
+observer wiring isn't gating the recording — review Section D.
+
+After verification, remove ALL the `[print]` debug objects.
+
+---
+
+## Section H — Save + copy back
+
+### H.1. Save the patch (in Max)
+
+`Cmd-S` saves through Max's GUI write path — the only safe way to
+serialize an `.amxd` (see spec §"Authoring workflow").
 
 ### H.2. Verify in Live
 
-Reload the device in Live (drag it off, drop a fresh one on, or
-restart Live). All four parameters visible? Set Arm = 1 with a
-preceding `/path` + `/track_id` + start/stop beats sent via OSC —
-does recording happen at the expected beats? If yes → continue.
+Reload the device in Live (drag a fresh instance from the browser).
+Sanity:
 
-### H.3. Copy the `.amxd` back into the package source tree
+- All four parameters visible in the device's parameter list.
+- Setting Arm=1 alone (without OSC inputs) does NOT start recording
+  — the patch correctly waits for transport to cross start_at_beat.
+- After `ableton_render(action='render', song_slug='falling-walking')`,
+  WAVs appear under `songs/falling-walking/captures/<ts>/`.
 
-The User Library is the authoritative location for Max; the package
-source needs an identical copy for `pip install` to ship it via
-`pyproject.toml`'s `package-data`.
+### H.3. Copy back to the package source tree
 
 ```bash
-cp ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/HallucinoteAnalyzer.amxd \
-   ~/source/hallucinote/hallucinote_mcp/src/hallucinote_mcp/m4l/HallucinoteAnalyzer.amxd
+cp "$HOME/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd" \
+   "$HOME/source/hallucinote/hallucinote_mcp/src/hallucinote_mcp/m4l/HallucinoteAnalyzer.amxd"
 ```
 
 (Adjust paths if your checkout is elsewhere.)
 
-### H.4. Stage + commit
+### H.4. Stage
 
 ```bash
 cd ~/source/hallucinote
-git add hallucinote_mcp/src/hallucinote_mcp/m4l/HallucinoteAnalyzer.amxd
-git status  # should show only the .amxd as modified
+git status     # shows only HallucinoteAnalyzer.amxd as modified
+git diff --stat HallucinoteAnalyzer.amxd   # binary diff — won't show content
 ```
 
-Don't commit yet — wait for the full Section I verification to pass.
+**Don't commit yet** — Section I's in-Live verification must pass
+first.
 
 ---
 
-## Section I — In-Live end-to-end verification (Chunk 2 GO/NO-GO)
+## Section I — Chunk 2 GO/NO-GO verification
 
-The spec's GO/NO-GO criteria are at the bottom of
-`HallucinoteAnalyzer.amxd.spec.md`. Quick checklist:
+See spec §"Verifying the build (Chunk 2 GO/NO-GO)" for the canonical
+criteria. Quick checklist:
 
-1. **Install with the updated MCP:** run `/ableton-mcp-install`. Step
-   3d should detect the new `.amxd` and copy it. (If Live's running,
-   the skill will refuse — quit Live first.)
-2. **Open a multi-track Hallucinote song** with at least one return
-   (e.g., `falling-walking`).
-3. **Restart Claude Code** (`/mcp` reconnect respawns the server with
-   the new `ableton_render` action registered).
-4. **Run `ableton_render(action='ensure_loaded')`** — should report
-   `loaded_count: N+R+1, existing_count: 0` on first call,
-   `loaded_count: 0, existing_count: N+R+1` on second call.
-5. **Run `ableton_render(action='render', song_slug='<slug>')`** —
-   should produce `songs/<slug>/captures/<ts>/` with one WAV per
-   surface + `manifest.json`.
-6. **Verify GO criteria** (spec §"GO criteria (Chunk 2 scope)"):
-   - Every WAV is FLOAT/stereo/Live's SR with audio content above -60 dBFS
-   - WAV duration matches arrangement length ± one audio buffer (no
-     MCP-latency padding around the content — the transport-position-sync win)
-   - Cross-correlate any track WAV vs master WAV; lag ≤ 64 samples
-     (PDC alignment)
-   - Sidecar received ≥ 1 frame per analyzer (visible in
-     `manifest.json`'s `frames_received` field)
-   - Two consecutive renders produce two independent captures dirs
+1. `/ableton-mcp-install` runs cleanly (Step 3d picks up the new
+   `.amxd`; M4L probe runs).
+2. Open a multi-track song (`falling-walking`).
+3. Restart Claude Code (`/mcp` reconnect respawns the server).
+4. `ableton_render(action='ensure_loaded')` reports
+   `loaded_count: N+R+1` on first run, `existing_count: N+R+1` on
+   second.
+5. `ableton_render(action='render', song_slug='falling-walking')`
+   produces `songs/falling-walking/captures/<ts>/` with N+R+1 WAVs
+   + `manifest.json` + `manifest.status == "ok"`.
+6. Each WAV is FLOAT/stereo/Live's SR with audio content above
+   -60 dBFS.
+7. WAV duration matches `song.last_event_time` ± one audio buffer.
+8. Cross-correlate any track WAV vs master WAV; lag ≤ 64 samples.
+9. `manifest.frames_received` > 0 per analyzer.
+10. Two consecutive renders produce two independent captures dirs.
 
-If any of these fail, the patch needs adjustment — restart from the
-relevant section above. The spec's NO-GO criteria list common causes
-for each failure mode.
+If any fail, the spec's NO-GO criteria list common causes. Review
+the relevant section above.
 
 ---
 
 ## Section J — Close-out
 
-After the in-Live verification passes:
+After GO:
 
-1. Commit the `.amxd`:
-   ```
+1. **Commit the `.amxd`:**
+   ```bash
+   git add hallucinote_mcp/src/hallucinote_mcp/m4l/HallucinoteAnalyzer.amxd
    git commit -m "chunk 2 of 2 (audio-analysis MVP, Chunk 2): in-Live close-out + .amxd"
    ```
-2. Update `.prawduct/.test-evidence.json` with the in-Live results
-   (frame counts, render duration, alignment lag).
-3. Append a reflection to `.prawduct/.session-reflected` — same
-   pattern as Chunk 1's close-out, document any traps that surfaced.
-4. Update `.prawduct/artifacts/build-plan.md`'s Status section — mark
-   Chunk 2 `[x]`.
-5. Add a `chunks=2 | status=shipped | release=unreleased | scope=audio-analysis-mvp`
-   change-log entry.
-6. Run `/critic chunk` for the cumulative Chunk 2 review.
-7. The branch is now ready for `/pr` if/when you want to merge.
+2. **Update `.prawduct/.test-evidence.json`** with in-Live results
+   (frame count, render duration, alignment lag).
+3. **Append reflection** to `.prawduct/.session-reflected` — document
+   any traps that surfaced.
+4. **Mark Chunk 2 `[x]`** in `.prawduct/artifacts/build-plan.md`.
+5. **Add change-log entry** `chunks=2 | status=shipped | release=unreleased | scope=audio-analysis-mvp`.
+6. **Run `/critic chunk`** for the cumulative Chunk 2 review.
+7. Branch is ready for `/pr` if/when you want to merge.
 
 ---
 
-## Common traps (from Chunk 1's experience)
+## Appendix — Object inventory
 
-If something doesn't work in Max, check these first — Chunk 1 hit
-each of them, and they're now durable rules in `learnings.md`:
+Every Max object referenced in this guide, alphabetical:
 
-| Symptom | Likely cause | Fix |
+| Object | Purpose | Where used |
 |---|---|---|
-| Remote Script API can't see a parameter | `Parameter Visibility = Stored Only` (silently sets `parameter_invisible:1`) | Set to `Automated and Stored` |
-| `set_parameter(name='Record Arm')` says unknown parameter | API uses short name | Use `Arm` |
-| `set_parameter(name='OSC Emit Port')` says unknown | API uses short name | Use `EmitPort` |
-| WAV has 44 frames (~1 ms) | Used `record 1` instead of `1` | Use bare integer `1` to start, `0` to stop |
-| `sfrecord~` ignores `close` / `stop` messages | They aren't part of the documented API | Use `0` to stop AND finalize |
-| `sfrecord~` says "start requested without preceding 'open'" | `1` arrived before `open <path>` | Use `[t b b]` right-then-left so `open`'s chain fires first |
-| Live rejects the device with `createdevice error 6` | You hand-edited the JSON inside the `.amxd` binary | Restore the backup; only ever save via Max GUI |
-| OSC sender receives no reply for `/signature?` | `[udpsend]` destination wasn't configured before the message | `[t l b]` to set host:port FIRST, then fire reply |
-| Feature emitter sends frames with empty track_id | No `/track_id` received yet | Gate emission on `[value track_id_retained]` length > 0 |
-| Recording window starts/stops at wrong beats | `[live.observer]` observed wrong property | Try `current_song_time` if `song_time` doesn't fire |
+| `average~ <samples> bipolar` | sliding mean of signal | F.2, F.4 |
+| `biquad~ a0 a1 a2 b1 b2` | 2-pole filter section | F.2 (K-weighting), F.4 (band-pass) |
+| `change` | emit only on value change | E.2 |
+| `delay 100` | delay in milliseconds | F.6 (init order) |
+| `deferlow` | push to low-priority queue | D.5 |
+| `expr <expression>` | evaluate arithmetic / boolean | D.3, F.2, F.3, F.4 |
+| `gate` | gate a signal/message by control | F.5, F.6 |
+| `i` | int truncator | C.2 |
+| `length` | list/symbol length | F.5 (alternative approach) |
+| `live.numbox` | Live parameter (numeric) | A, B.1 |
+| `live.observer` | Live LOM property observer | D.1 |
+| `live.thisdevice` | self-reference (id, sample rate, etc.) | G.1 |
+| `live.toggle` | Live parameter (boolean) | B.2 |
+| `loadbang` | bang on patch load | F.5, F.6 |
+| `message <text>` | static or dynamic message | C.3 |
+| `metro 33` | bang every 33 ms | F.5 |
+| `OSC-route /path/literal` | route OSC by address | C |
+| `pack <typespec>` | pack into list (fires on left inlet) | F.5 |
+| `pak <typespec>` | pack into list (fires on any inlet) | C.3, F.6 |
+| `peakamp~` | sample-peak accumulator | F.3 |
+| `pipe N` | delay messages by N ms | (not used; alternative to deferlow) |
+| `plugin~` / `plugout~` | M4L audio in/out | F.1 |
+| `prepend <prefix>` | prepend static prefix to list | (alternative for F.5) |
+| `print <label>` | log to Max console | sanity tests throughout |
+| `receive~ <name>` | named audio receiver | F.1 |
+| `send~ <name>` | named audio sender | F.1 |
+| `sel <value>` | bang when input matches | D.4, E.2 |
+| `sfrecord~` | audio file writer | E.3, E.4 (unchanged from Chunk 1) |
+| `snapshot~` | sample audio signal at control rate | F.2, F.4 |
+| `sprintf <format>` | format string with %s/%d | F.5 |
+| `t <typespec>` | trigger (right-to-left fire order) | C.3, D, E.3, F.5 |
+| `udpreceive <port>` | UDP message receiver | C (unchanged base from Chunk 1) |
+| `udpsend [host port]` | UDP message sender | C.3 (reply), F.6 (emitter) |
+| `value <varname>` | named state cell | C, D, E |
 
-If you hit a NEW trap that isn't in this list, capture it in
-`.prawduct/learnings.md` during close-out — future M4L authoring
-work will benefit.
+---
+
+## Appendix — Common traps (Chunk 1 carryover + new for Chunk 2)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Parameter missing from Remote Script's `get_parameters` | Visibility = "Stored Only" | Set to "Automated and Stored" |
+| `set_parameter(name='Record Arm')` fails | API uses short name | Use `Arm` (same for `Emit`, `EmitPort`) |
+| WAV is ~44 frames | Used `record 1` instead of `1` | Send bare integer `1` to start, `0` to stop |
+| `sfrecord~` rejects `close`/`stop` | Not part of documented API | Use `0` only |
+| WAV missing despite Arm=1 + transport play | `start_at_beat` not received or observer property wrong | Verify with `[print obs]`; try `current_song_time` vs `song_time` |
+| Recording window is too long (~2 s padding) | `Arm`-driven trigger still wired (Chunk 1 path) | Re-do Section E.2 disconnect |
+| Recording starts and stops correctly but duration is off | `prev_beat` not updating, or updating BEFORE expr evaluates | Section D.5 `[deferlow]` is the fix — verify order |
+| `/signature/query` returns no reply | `[udpsend]` host:port not configured before message | Section C.3.b `[t b b]` order |
+| OSC reply goes to wrong port | `[value sender_host_port]` stash not updated by `[udpreceive]` right outlet | Section C.3.a wiring |
+| Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
+| Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |
+| Live rejects device with `createdevice error 6` | Patch saved via non-GUI path or hand-edited binary | Restore from `.chunk1.bak.amxd`; only ever save via Max GUI |
+| Live's main thread freezes during render | `[average~]` window size or `[metro]` running on audio thread | Verify `[average~]` is at control rate, not signal |
+| LUFS-M values off by ~0.3 LU vs Live's meters | 48 kHz biquad coefficients running at 44.1 kHz | Document; SR-adaptive coefficient math is post-MVP |

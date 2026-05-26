@@ -37,10 +37,12 @@ commit. Binary file — no text diffs; the spec is the auditable surface.
 - **Hallucinote signature** — a fixed string `"hallucinote-analyzer-v1"`
   used by `ensure_analyzers_loaded` to distinguish HallucinoteAnalyzer
   instances from other Max devices that happen to share a name. Surfaced
-  via OSC query `/signature?` → reply `/signature hallucinote-analyzer-v1`
+  via OSC query `/signature/query` → reply `/signature hallucinote-analyzer-v1`
   on the inbound port. (See [Signature surface](#signature-surface) below
   for why OSC-query won over the enum-parameter and filename-inference
-  alternatives.)
+  alternatives. The hierarchical query path avoids the `?` OSC wildcard
+  character that would otherwise make `/signature?` ambiguous in clients
+  that do pattern-matched address dispatch.)
 - **Transport-position-driven recording boundaries** — the Python harness
   no longer defines the recording window via MCP-latency-bounded
   `Arm` toggles. Instead, the patch reads Live's transport position at
@@ -84,7 +86,7 @@ audio inlet  R  ──┤
                   │       ├──> [OSC-route /track_id] → [value $track_id]      (Chunk 2)
                   │       ├──> [OSC-route /start_at_beat] → [int] → start-beat   (Chunk 2)
                   │       ├──> [OSC-route /stop_at_beat] → [int] → stop-beat     (Chunk 2)
-                  │       └──> [OSC-route /signature] → reply via [udpsend]      (Chunk 2)
+                  │       └──> [OSC-route /signature/query] → reply via [udpsend]  (Chunk 2)
                   │
                   └──> Feature-extraction branch (Chunk 2)
                             │
@@ -229,13 +231,16 @@ considered; the OSC-query path wins:
   not a contract, and any user-renamed device file would break the
   check. Couples identity to the install path, which is the surface
   the install skill is *about* to start auto-managing.
-- ✅ **OSC query/response**. Inbound `/signature?` on `osc_port`; the
-  patch replies via `[udpsend]` to the sender's host:port (extracted
-  from `[udpreceive]`'s status output) with `/signature
+- ✅ **OSC query/response**. Inbound `/signature/query` on `osc_port`;
+  the patch replies via `[udpsend]` to the sender's host:port
+  (extracted from `[udpreceive]`'s status output) with `/signature
   hallucinote-analyzer-v1`. Identity lives inside the patch as a
   hardcoded constant; doesn't pollute the parameter surface;
-  works the same whether the device file was renamed or not;
-  reuses the OSC channel already in place from Chunk 1.
+  works the same whether the device file was renamed or not; reuses
+  the OSC channel already in place from Chunk 1. The hierarchical
+  query path (`/signature/query`) avoids the `?` OSC pattern-match
+  wildcard that would make `/signature?` ambiguous in OSC clients
+  that dispatch by pattern.
 
 The signature value is a **versioned string** so future incompatible
 patch revisions can identify themselves (`hallucinote-analyzer-v2`,

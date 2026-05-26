@@ -163,8 +163,9 @@ Implementation hints (informative, not contractual):
   shared sidecar port (11201) while listening on per-instance inbound
   ports (11000, 11001, 11002 …). On `osc_port` change, send
   `[prepend port]` → `[udpreceive]` so the bind updates without a patch
-  reload. On `osc_emit_port` change, repack the destination via
-  `[pak host port]` → `[udpsend]`.
+  reload. On `osc_emit_port` change, send `[prepend port]` →
+  `[udpsend]`'s single inlet (symmetric to udpreceive's
+  config-by-message convention).
 - On `[loadbang]`, push each `live.numbox`'s current value into its
   destination so the initial port matches the stored value, not just the
   Max object's constructor argument.

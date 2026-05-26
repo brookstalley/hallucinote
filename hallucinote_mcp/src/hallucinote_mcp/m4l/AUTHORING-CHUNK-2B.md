@@ -314,74 +314,76 @@ send the reply). The wire shape:
 > destination in the OSC payload removes the dependency on Max-object
 > internals and makes the contract auditable from the wire.
 
-#### C.3.a. The route + unpack args
+> **Single-inlet udpsend model.** Max's `[udpsend]` has ONE inlet,
+> not two. Destination is retargeted by sending `host <symbol>` or
+> `port <int>` MESSAGES to the same inlet (interpreted as config
+> based on the message's first symbol). Any message that doesn't
+> match `host ...` or `port ...` is sent as data. This mirrors
+> `[udpreceive]`'s single-port convention (Chunk 1 already uses
+> `prepend port` → `[udpreceive]` to change the listen port the
+> same way). The signature-reply chain therefore sends three
+> messages to the same `[udpsend]` inlet in order: `host <sym>`,
+> `port <int>`, then the reply.
+
+#### C.3.a. The route + unpack args + build config messages
 
 ```
 [OSC-route /signature/query]
         │ outlet 0 (matched: list <reply_host> <reply_port>)
         ▼
    [unpack s i]
-        │ outlet 0 (host symbol)   │ outlet 1 (port int)
-        │                          │
-        │                          ▼
-        │                      latched in [pak s i]'s right inlet (cold)
-        │                          ▲
-        │                          │
-        └─────────────────────→ [pak s i] inlet 0 (HOT — triggers emission)
-                                    │
-                                    ▼ outlet 0 (list: host port — destination)
-                                    │
-                                    ▼
-                          (drives [udpsend]'s right inlet — see C.3.c)
+   ├── outlet 0 (host symbol)  →  [prepend host]  →  (to [udpsend] inlet 0)
+   └── outlet 1 (port int)     →  [prepend port]  →  (to [udpsend] inlet 0)
 ```
 
 Box text:
 - `unpack s i`
-- `pak s i`
+- `prepend host`
+- `prepend port`
 
-> Order of operation: `[unpack s i]` fires outlets right-to-left, so
-> port (outlet 1) fires FIRST and latches into `[pak s i]`'s inlet 1
-> (cold), then host (outlet 0) fires SECOND and triggers `[pak]` to
-> emit its list (host already on hot inlet 0, port already latched).
-> The output is `<host> <port>` in that order.
+`[prepend host]` takes the symbol on its inlet and prepends the
+literal symbol `host`, emitting a list like `host 127.0.0.1`.
+`[prepend port]` does the same with the literal `port`, emitting
+`port 12345`. Both lists go to `[udpsend]`'s sole inlet.
 
-#### C.3.b. Fire the reply destination, then the reply message
+#### C.3.b. Fire destination-then-reply via `[t l b]`
 
-Now we need to (a) push the destination into `[udpsend]`'s right
-inlet, (b) fire the reply message into its left inlet — in that
-order. Tap the same `unpack` outlets again via a `[t l]`-then-bang
-pattern, OR use the `[pak]`'s emit-list event as both the
-destination AND the "now fire the reply" trigger:
-
-```
-[pak s i] outlet 0 (list: host port)
-        │
-        ├──→ (destination): into [udpsend]'s right inlet
-        │
-        └──→ [t l b]
-                ├── outlet 1 (fires FIRST: re-emit the list as l for the destination path above — already done)
-                └── outlet 0 (fires SECOND: bang the reply message)
-                        │
-                        ▼
-                   [message /signature hallucinote-analyzer-v1]
-                        │ outlet 0 (list: /signature hallucinote-analyzer-v1)
-                        ▼
-                   (into [udpsend]'s left inlet — see C.3.c)
-```
-
-Simpler equivalent: `[pak s i]`'s emission carries the destination
-list, but you can't both DRIVE the destination AND trigger the reply
-message off the same single emission cleanly without a `[t]` to
-order them. So:
+The unpack fires its outlets right-to-left (port first, then host),
+so the two destination messages reach `[udpsend]` in order. We need
+the reply message to fire LAST, after both config messages land. Use
+`[t l b]` upstream of the unpack to gate the reply-bang behind the
+list-cascade:
 
 ```
-[pak s i] outlet 0
-        │
+[OSC-route /signature/query]
+        │ outlet 0 (list: <host_symbol> <port_int>)
         ▼
    [t l b]
-   ├── outlet 1 (right, fires FIRST: the list) ──→ [udpsend]'s right inlet (destination)
-   └── outlet 0 (left, fires SECOND: the bang)  ──→ [message /signature hallucinote-analyzer-v1] ──→ [udpsend]'s left inlet
+   ├── outlet 1 (RIGHT, fires FIRST: the list)
+   │      ▼
+   │   [unpack s i]
+   │      ├── outlet 0 (host symbol) → [prepend host] → [udpsend 127.0.0.1 0] inlet 0
+   │      └── outlet 1 (port int)    → [prepend port] → [udpsend 127.0.0.1 0] inlet 0
+   │
+   └── outlet 0 (LEFT, fires SECOND: bang)
+          ▼
+       [message /signature hallucinote-analyzer-v1]
+          ▼
+       [udpsend 127.0.0.1 0] inlet 0
 ```
+
+Order of operation at `[udpsend]`'s inlet:
+
+1. `[t l b]` outlet 1 fires → unpack's right outlet (port int) fires
+   → `[prepend port]` emits `port 12345` → `[udpsend]` retargets port.
+2. unpack's left outlet (host symbol) fires →
+   `[prepend host]` emits `host 127.0.0.1` → `[udpsend]` retargets host.
+3. `[t l b]` outlet 0 fires → `[message ...]` emits the reply →
+   `[udpsend]` sends to the now-correctly-configured destination.
+
+This works because Max scheduling runs each outlet's downstream
+cascade to completion before the next outlet of `[t]` fires. No
+`[deferlow]` needed.
 
 Box text:
 - `t l b`
@@ -394,11 +396,10 @@ Box text:
 
 > **Reply-address type tag.** Some OSC clients are strict about
 > address syntax in the FIRST list element. Max emits the leading
-> `/signature` as a symbol, which `[udpsend]` (via the CNMAT OSC
-> handling) packs as the OSC address. The second element
-> `hallucinote-analyzer-v1` becomes the `,s`-typed arg. Sidecar /
-> client parsers tested against this shape pass — the Section G.3
-> Python test confirms.
+> `/signature` as a symbol, which `[udpsend]` packs as the OSC
+> address. The second element `hallucinote-analyzer-v1` becomes the
+> `,s`-typed arg. Sidecar/client parsers tested against this shape
+> pass — the Section G.3 Python test confirms.
 
 #### C.3.c. The `[udpsend]` for signature replies
 
@@ -410,27 +411,22 @@ udpsend 127.0.0.1 0
 
 The `127.0.0.1 0` constructor args are placeholders — Max's `udpsend`
 expects host+port args at instantiation time even though we'll
-overwrite the destination dynamically via inlet 1. Without args the
-object renders red/unresolved with no visible inlets, which looks
-like the object is broken. The placeholder port `0` will be replaced
-on every query by the unpacked reply destination.
+overwrite the destination dynamically via `host <sym>` / `port <int>`
+config messages. Without args the object renders red/unresolved with
+no visible inlets, which looks like the object is broken. The
+placeholder `0` will be replaced by the `port <int>` message on every
+query.
 
-Wire:
-- inlet 0 (left, the OSC message): from C.3.b's `[message ...]` outlet → here
-- inlet 1 (right, host port config): from C.3.b's `[t l b]` outlet 1 (the list re-emitted as `l`) → here
-
-> **Trap.** `[udpsend]` accepts a `host port` configuration message
-> as a list of two args: `<host_symbol> <port_int>`. The destination
-> MUST be configured BEFORE the reply message lands at the left
-> inlet, or the message goes to the previous (or zero) destination.
-> The `[t l b]` right-then-left fire order in C.3.b is load-bearing.
+Wire (single inlet):
+- inlet 0 receives three message types in sequence per query:
+  `host <symbol>`, `port <int>`, then the reply OSC message itself.
 
 > **Trap.** If `udpsend` instantiated WITHOUT host+port args resolves
 > red/unresolved in your Max version, that's the cause — give it
-> placeholder args `127.0.0.1 0` (the port will be overwritten via
-> inlet 1 anyway). Alternative if your install lacks the vanilla
-> `udpsend` object entirely: `mxj net.udp.send 127.0.0.1 0` ships
-> with every Max version and accepts the same wire protocol.
+> placeholder args `127.0.0.1 0`. Alternative if your install lacks
+> the vanilla `udpsend` object entirely: `mxj net.udp.send 127.0.0.1 0`
+> ships with every Max version and accepts the same wire protocol
+> (same `host <sym>` / `port <int>` config-message convention).
 
 > **One udpsend or two?** The signature-reply `[udpsend]` (this one)
 > is distinct from the feature-emitter `[udpsend]` in Section F.6.
@@ -1310,38 +1306,33 @@ Box text: `udpsend 127.0.0.1 11201`
 
 ```
 [live.numbox (EmitPort)] outlet 0
-        │ (int)
+        │ (float — Type=Float, Unit Style=Int)
         ▼
-   [pak 127.0.0.1 0]      ← prepend constant host, port latches in
-        │ outlet 0 (list: '127.0.0.1' <port>)
-        ▼
-   (drives [udpsend]'s right inlet — host port config)
-```
-
-Box text: `pak 127.0.0.1 0`.
-
-Wire the metro-driven message chain (Section F.5) to `[udpsend]`'s
-LEFT inlet (inlet 0); wire the `[pak 127.0.0.1 0]` outlet to
-`[udpsend]`'s RIGHT inlet (inlet 1).
-
-Also fire `[live.numbox (EmitPort)]` at `[loadbang]` so the initial
-destination is configured before the first metro tick fires:
-
-```
-[loadbang]
+   [i]                      ← coerce float→int (prepend port expects int)
         │
         ▼
-   [delay 100]              ← small delay to let parameter init settle
-        │
+   [prepend port]           ← emits "port <N>" config message
+        │ outlet 0
         ▼
-   (bang [live.numbox (EmitPort)] to re-emit its stored value)
+   [udpsend 127.0.0.1 11201] inlet 0   ← single inlet absorbs config OR data
 ```
 
-Actually `[live.numbox]`'s stored value should auto-emit at patch
-load if Initial Enable is Yes. Verify by adding a temporary
-`[print EmitPort_init]` after the [live.numbox]'s outlet — should
-print `11201` (or whatever the stored value is) right after Live
-loads the patch.
+Box text: `i`, `prepend port`.
+
+Wire the metro-driven message chain (Section F.5) to the same single
+`[udpsend]` inlet — Max distinguishes the `port <N>` config message
+from feature-frame data messages by the leading symbol.
+
+> **No host retarget needed** for the feature emitter — the sidecar
+> always listens on 127.0.0.1, baked into the `[udpsend]` constructor
+> args. If the design ever needs cross-machine emission, add a
+> sibling `[prepend host]` chain analogous to Section C.3.a.
+
+`[live.numbox]`'s stored value auto-emits at patch load if Initial
+Enable is Yes (which Section B.1 requires). Verify by adding a
+temporary `[print EmitPort_init]` after `[live.numbox]`'s outlet —
+should print `11201` (or whatever the stored value is) right after
+Live loads the patch.
 
 ### F.7. Full F-section assembly diagram (sanity-check yourself)
 
@@ -1382,7 +1373,7 @@ loads the patch.
                                        [gate]  control: has_track_id
                                           │
                                           ▼
-                              [udpsend 127.0.0.1 11201]   right inlet ← (host port from EmitPort)
+                              [udpsend 127.0.0.1 11201]  ← single inlet; EmitPort sends `port <N>` config msgs here
 ```
 
 ---
@@ -1487,13 +1478,15 @@ If timeout: check (in order)
 1. `[OSC-route /signature/query]` outlet is wired — add `[print sigq]`
    on its outlet and confirm it prints `127.0.0.1 12345` (the args)
    when the query arrives.
-2. `[unpack s i]` outlet wiring (port to `[pak]` inlet 1 cold, host
-   to `[pak]` inlet 0 hot).
-3. `[t l b]` is right-to-left fire order — outlet 1 (destination
-   list) fires BEFORE outlet 0 (reply message bang).
-4. `[udpsend]`'s right inlet is being driven by the destination list.
-   Add `[print dest]` between `[t l b]`'s outlet 1 and `[udpsend]` —
-   should print `127.0.0.1 12345` per query.
+2. `[t l b]` is right-to-left fire order — outlet 1 (the list →
+   unpack → host/port config messages) fires BEFORE outlet 0 (the
+   reply message bang).
+3. `[prepend host]` and `[prepend port]` chains reach the same
+   `[udpsend]` inlet. Add `[print to_udpsend]` immediately upstream
+   of `[udpsend]` (between `[prepend host]` / `[prepend port]` /
+   `[message ...]` and the udpsend inlet) — three lines should
+   print per query, in order: `port 12345`, `host 127.0.0.1`,
+   `/signature hallucinote-analyzer-v1`.
 
 ### G.4. Feature emitter rate
 
@@ -1714,10 +1707,11 @@ Every Max object referenced in this guide, alphabetical:
 | WAV missing despite Arm=1 + transport play | `start_at_beat` not received or observer property wrong | Verify with `[print obs]`; try `current_song_time` vs `song_time` |
 | Recording window is too long (~2 s padding) | `Arm`-driven trigger still wired (Chunk 1 path) | Re-do Section E.2 disconnect |
 | Recording starts and stops correctly but duration is off | `prev_beat` not updating, or updating BEFORE expr evaluates | Section D.5 `[deferlow]` is the fix — verify order |
-| `/signature/query` returns no reply | `[udpsend]` host:port not configured before message landed at left inlet | Section C.3.b `[t l b]` right-to-left order |
-| OSC reply goes to wrong port | Query OSC args (`,si`: reply_host, reply_port) malformed or not threaded through `[unpack s i]` → `[pak s i]` correctly | Section C.3.a wiring; verify with `[print dest]` |
+| `/signature/query` returns no reply | `host`/`port` config messages didn't land at `[udpsend]` before the reply message | Section C.3.b `[t l b]` right-to-left order; verify with `[print to_udpsend]` upstream of the inlet — should print three lines per query in order |
+| OSC reply goes to wrong port | Query OSC args (`,si`: reply_host, reply_port) malformed or `[prepend port]` / `[prepend host]` chain not reaching `[udpsend]` | Section C.3.a wiring |
 | Assumed `[udpreceive]` has a right outlet for sender info | It doesn't — vanilla Max `[udpreceive]` has one outlet (the OSC messages); CNMAT's variants are the same | Carry the reply destination in the OSC query payload (Section C.3) |
-| `[udpsend]` shows red / no visible inlets | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0` (port gets overwritten via inlet 1 anyway). Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
+| Assumed `[udpsend]` has a right inlet for `host port` config | It doesn't — single inlet, retarget via `host <sym>` / `port <int>` MESSAGES (same convention as `[udpreceive]` `port <N>`) | Send config as separate prepended messages to the same inlet (Sections C.3, F.6) |
+| `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |
 | Live rejects device with `createdevice error 6` | Patch saved via non-GUI path or hand-edited binary | Restore from `.chunk1.bak.amxd`; only ever save via Max GUI |

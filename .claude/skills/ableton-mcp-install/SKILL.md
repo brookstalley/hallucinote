@@ -198,7 +198,7 @@ Example, with the args expanded for a real run:
 ```bash
 rsync -a \
   --exclude=/server.py \
-  --exclude=cli --exclude=tests --exclude=__pycache__ \
+  --exclude=cli --exclude=tests --exclude=__pycache__ --exclude=m4l \
   --exclude=*.pyc \
   "<package.root>/" \
   "<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp/"
@@ -213,7 +213,7 @@ robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote
 
 Example, with the args expanded:
 ```powershell
-robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" /E /XF "<package.root>\server.py" *.pyc /XD cli tests __pycache__
+robocopy "<package.root>" "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" /E /XF "<package.root>\server.py" *.pyc /XD cli tests __pycache__ m4l
 ```
 
 `/E` = copy subdirs including empty ones. `/XD` excludes directory names
@@ -228,7 +228,7 @@ not the `remote_script\server.py` Live needs:
 ```powershell
 Copy-Item -Path "<package.root>\*" -Destination "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Recurse
 Remove-Item -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\server.py"
-Remove-Item -Recurse -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\cli", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\tests"
+Remove-Item -Recurse -Force "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\cli", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\tests", "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp\m4l"
 Get-ChildItem -Path "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Filter __pycache__ -Recurse -Directory | Remove-Item -Recurse -Force
 Get-ChildItem -Path "<User Library>\Remote Scripts\Hallucinote\hallucinote_mcp" -Filter *.pyc -Recurse -File | Remove-Item -Force
 ```
@@ -290,6 +290,13 @@ load-bearing rule is the **exclude** list, not an allow list:
   anywhere under the copy.
 - There must be **no** `__pycache__/` directories — stale bytecode from
   the source venv would confuse Live's loader (different Python ABI).
+- There must be **no** `m4l/` directory — the `.amxd` device lives in
+  Live's `Presets/Audio Effects/Max Audio Effect/` directory (via
+  Step 3d). If `m4l/` is also copied here, Live's browser indexes
+  the device in BOTH locations and shows it twice, leading to
+  "which one am I editing?" confusion (audio-analysis MVP Chunk 2
+  sub-chunk 2B hit this — see learnings.md "M4L device source belongs
+  outside Remote Scripts").
 
 If any of those are present, the excludes didn't take effect; redo the
 copy before continuing — Live's embedded Python will fail to import the

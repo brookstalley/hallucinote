@@ -33,6 +33,13 @@ REMOTE_SCRIPT_EXCLUDE_DIRS_ANY: tuple[str, ...] = (
     "cli",              # console-script entry; pulls in serve.py which imports server.py
     "tests",            # outside the package proper, but covered for safety
     "__pycache__",      # bytecode caches; never relevant on install
+    "m4l",              # M4L device source — installed separately into
+                        # `Presets/Audio Effects/Max Audio Effect/` via the
+                        # install skill's analyzer-copy step. If included
+                        # here, Live's browser indexes BOTH locations and
+                        # shows the device twice, leading to "which one am
+                        # I editing?" confusion (audio-analysis MVP Chunk 2
+                        # sub-chunk 2B hit this — see learnings.md).
 )
 
 # File globs to exclude wherever they appear.

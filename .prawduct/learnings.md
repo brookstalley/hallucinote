@@ -140,3 +140,15 @@ This rule applies to any future Max for Live audio-effect device the project aut
 5. Symptom that triggers this rule: setting a `live.numbox` max to a value that's `> min + 255` and watching the Inspector snap it back to `min + 255` instead. Don't waste time looking for a "hidden" cap setting — switch Type to Float.
 
 This rule applies to any future Max for Live device the project authors with Int-displayed values exceeding 256 distinct steps (sample counts, port numbers, MIDI buffer sizes, etc.).
+
+## M4L device source belongs in `Presets/Audio Effects/Max Audio Effect/`, not Remote Scripts
+
+**When installing an M4L `.amxd` into Live, copy it to `<User Library>/Presets/Audio Effects/Max Audio Effect/` and nowhere else. If the same `.amxd` is also present anywhere else under `<User Library>` (e.g., inside the Remote Script's vendored package directory), Live's browser indexes BOTH copies and shows the device twice with the same display name. Users can then accidentally drag a stale copy onto a track and waste hours wondering why their Max edits don't show up — Max's editor saves to the file the device was loaded from, but the running instance is whichever file Live happened to load when the device was dragged from the browser.**
+
+**Why:** Live's User Library indexer is recursive — every `.amxd` anywhere under the User Library tree shows up in the browser's "Max Audio Effect" section. There's no "preferred location" priority; identical filenames in different directories appear as separate-but-identical entries. The Remote Script copy of the package (via the install skill's rsync/robocopy step) needs to EXCLUDE the `m4l/` source directory; otherwise the device file ends up duplicated. Confirmed audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-26): user saw two `HallucinoteAnalyzer` entries in browser, only one (the Remote Scripts copy) was stale, and the running instance was the stale one — Max edits to the Presets copy were invisible to the device for hours of debugging until the user noticed the duplicate.
+
+**How to apply:**
+1. Install skill's Remote Script copy step must EXCLUDE the `m4l/` source subdirectory (along with `cli/`, `tests/`, `__pycache__/`). See `install_paths.py:REMOTE_SCRIPT_EXCLUDE_DIRS_ANY`.
+2. Install skill's Step 3d (analyzer copy) targets ONLY `Presets/Audio Effects/Max Audio Effect/`. There's no second target location.
+3. Uninstall skill should remove BOTH the Remote Script Python files AND the `Presets/.../HallucinoteAnalyzer.amxd`. (Currently W12-D-scoped — the uninstall skill removes Remote Scripts; analyzer cleanup is a follow-up.)
+4. When debugging "my edits aren't showing up," the FIRST check is: are there multiple `.amxd` files with the same name under `<User Library>`? `find ~/Music/Ableton/"User Library" -name HallucinoteAnalyzer.amxd` surfaces them quickly. The running device is whichever path Live's browser entry points at; the user's edits go to whichever path Max's editor has open.

@@ -86,7 +86,7 @@ audio inlet  R  ──┤
                   │       ├──> [OSC-route /track_id] → [value $track_id]      (Chunk 2)
                   │       ├──> [OSC-route /start_at_beat] → [int] → start-beat   (Chunk 2)
                   │       ├──> [OSC-route /stop_at_beat] → [int] → stop-beat     (Chunk 2)
-                  │       └──> [OSC-route /signature/query] → reply via [udpsend]  (Chunk 2)
+                  │       └──> [OSC-route /signature/query] → unpack reply host+port → reply via [udpsend]  (Chunk 2)
                   │
                   └──> Feature-extraction branch (Chunk 2)
                             │
@@ -243,16 +243,21 @@ considered; the OSC-query path wins:
   not a contract, and any user-renamed device file would break the
   check. Couples identity to the install path, which is the surface
   the install skill is *about* to start auto-managing.
-- ✅ **OSC query/response**. Inbound `/signature/query` on `osc_port`;
-  the patch replies via `[udpsend]` to the sender's host:port
-  (extracted from `[udpreceive]`'s status output) with `/signature
+- ✅ **OSC query/response with explicit reply destination**. Inbound
+  `/signature/query <reply_host> <reply_port>` on `osc_port`; the
+  patch replies via `[udpsend]` to the explicit `reply_host:reply_port`
+  carried in the query's OSC args with `/signature
   hallucinote-analyzer-v1`. Identity lives inside the patch as a
-  hardcoded constant; doesn't pollute the parameter surface;
-  works the same whether the device file was renamed or not; reuses
-  the OSC channel already in place from Chunk 1. The hierarchical
-  query path (`/signature/query`) avoids the `?` OSC pattern-match
-  wildcard that would make `/signature?` ambiguous in OSC clients
-  that dispatch by pattern.
+  hardcoded constant; doesn't pollute the parameter surface; works
+  the same whether the device file was renamed or not; reuses the
+  OSC channel already in place from Chunk 1. The hierarchical query
+  path (`/signature/query`) avoids the `?` OSC pattern-match wildcard
+  that would make `/signature?` ambiguous in OSC clients that
+  dispatch by pattern. The explicit reply-destination args (vs. trying
+  to extract sender host:port from `[udpreceive]`'s status outlet)
+  removes the dependency on Max-object internals — vanilla
+  `[udpreceive]` exposes one outlet (the OSC messages), not a sender-
+  metadata sidechannel.
 
 The signature value is a **versioned string** so future incompatible
 patch revisions can identify themselves (`hallucinote-analyzer-v2`,

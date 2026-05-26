@@ -219,13 +219,17 @@ The Chunk 1 patch already has:
 
 ```
 [udpreceive 11000]
-    │ (left outlet — matched OSC messages from any client)
-    ├──> [OSC-route /path]  ──[outlet 0]──> [prepend open] ──> [sfrecord~]
-    │                                                        + retain via [value path_retained]
-    │
-    │ (right outlet — sender host:port of most recent packet)
-    └──> (currently unconnected)
+    │ (single outlet — matched OSC messages from any client; no
+    │  sender-metadata sidechannel)
+    └──> [OSC-route /path]  ──[outlet 0]──> [prepend open] ──> [sfrecord~]
+                                                            + retain via [value path_retained]
 ```
+
+> Vanilla Max's `[udpreceive]` exposes ONE outlet — the OSC messages.
+> It does NOT have a right outlet emitting sender host:port. The
+> signature reply path (C.3 below) therefore takes the reply
+> destination as explicit OSC args in the query message rather than
+> extracting it from socket-level metadata.
 
 You'll add three more inbound routes plus a query/reply path.
 
@@ -295,110 +299,106 @@ the window between renders).
 > mathematically but `change` detection breaks (a re-sent 64 becomes
 > 64.0 which differs from 64). `[i]` truncates defensively.
 
-### C.3. `/signature/query` → signature reply
+### C.3. `/signature/query <reply_host> <reply_port>` → signature reply
 
-This route REPLIES rather than retains. It needs three pieces:
+This route REPLIES rather than retains, and the reply destination is
+carried in the query's OSC args (the client tells the patch where to
+send the reply). The wire shape:
 
-1. The route box that matches `/signature/query`.
-2. The reply construction (`/signature hallucinote-analyzer-v1` as
-   an OSC message).
-3. The destination configuration on `[udpsend]` — re-targeting to
-   the sender's host:port extracted from `[udpreceive]`'s right outlet.
+- Query in: address `/signature/query`, type tag `,si`, args `<reply_host:symbol> <reply_port:int>`
+- Reply out: address `/signature`, type tag `,s`, args `<"hallucinote-analyzer-v1":symbol>`, sent to `<reply_host>:<reply_port>`
 
-#### C.3.a. `[udpreceive]`'s right outlet — extract sender host:port
+> **Why explicit reply args, not socket-level sender info?** Vanilla
+> Max's `[udpreceive]` exposes one outlet — the OSC messages. There's
+> no documented sender-host:port sidechannel. Putting the reply
+> destination in the OSC payload removes the dependency on Max-object
+> internals and makes the contract auditable from the wire.
 
-The Chunk 1 patch's `[udpreceive 11000]` has a right outlet that
-emits the source `host port` of the most recent packet. This is
-unconnected in Chunk 1; we tap it now.
-
-Add:
+#### C.3.a. The route + unpack args
 
 ```
-[udpreceive 11000]
-        │ outlet 1 (right — sender host port as 'symbol int')
+[OSC-route /signature/query]
+        │ outlet 0 (matched: list <reply_host> <reply_port>)
         ▼
    [unpack s i]
-        │ outlet 0          │ outlet 1
-       (host symbol)       (port int)
-            ╲                ╱
-             ╲              ╱
-              ▼            ▼
-              [pak s i 0 0]                    ← stash latest sender host:port
-              │ outlet 0 (list: host port)
-              ▼
-   (we'll route this to [udpsend]'s 'host port' configuration inlet below)
+        │ outlet 0 (host symbol)   │ outlet 1 (port int)
+        │                          │
+        │                          ▼
+        │                      latched in [pak s i]'s right inlet (cold)
+        │                          ▲
+        │                          │
+        └─────────────────────→ [pak s i] inlet 0 (HOT — triggers emission)
+                                    │
+                                    ▼ outlet 0 (list: host port — destination)
+                                    │
+                                    ▼
+                          (drives [udpsend]'s right inlet — see C.3.c)
 ```
 
 Box text:
 - `unpack s i`
-- `pak s i 0 0` (`@triggers 1` default — emits on either inlet change; rightmost change updates port, leftmost change updates host then emits)
+- `pak s i`
 
-> Why `pak` not `pack`? `[pak]` emits on any inlet change, so a new
-> packet's host+port immediately re-stashes. `[pack]` only fires on
-> the left inlet (host); a port change wouldn't propagate.
+> Order of operation: `[unpack s i]` fires outlets right-to-left, so
+> port (outlet 1) fires FIRST and latches into `[pak s i]`'s inlet 1
+> (cold), then host (outlet 0) fires SECOND and triggers `[pak]` to
+> emit its list (host already on hot inlet 0, port already latched).
+> The output is `<host> <port>` in that order.
 
-Actually we want symmetric: re-stash whenever either changes. Use
-`pak` and remove the trailing `0 0` (those defaults are just
-type-spec placeholders). Final form:
+#### C.3.b. Fire the reply destination, then the reply message
 
-```
-[pak s i]
-```
-
-#### C.3.b. The `/signature/query` route + reply chain
-
-Build:
+Now we need to (a) push the destination into `[udpsend]`'s right
+inlet, (b) fire the reply message into its left inlet — in that
+order. Tap the same `unpack` outlets again via a `[t l]`-then-bang
+pattern, OR use the `[pak]`'s emit-list event as both the
+destination AND the "now fire the reply" trigger:
 
 ```
-[OSC-route /signature/query]
-        │ outlet 0  (bangs on any incoming /signature/query message, payload ignored)
-        ▼
-   [t b]                                ← discard payload, keep the bang
+[pak s i] outlet 0 (list: host port)
+        │
+        ├──→ (destination): into [udpsend]'s right inlet
+        │
+        └──→ [t l b]
+                ├── outlet 1 (fires FIRST: re-emit the list as l for the destination path above — already done)
+                └── outlet 0 (fires SECOND: bang the reply message)
+                        │
+                        ▼
+                   [message /signature hallucinote-analyzer-v1]
+                        │ outlet 0 (list: /signature hallucinote-analyzer-v1)
+                        ▼
+                   (into [udpsend]'s left inlet — see C.3.c)
+```
+
+Simpler equivalent: `[pak s i]`'s emission carries the destination
+list, but you can't both DRIVE the destination AND trigger the reply
+message off the same single emission cleanly without a `[t]` to
+order them. So:
+
+```
+[pak s i] outlet 0
         │
         ▼
-   ┌─── two-step trigger via [t b b] ──────────────────────────────────────┐
-   │                                                                       │
-   │  [t b b]                                                               │
-   │   │ outlet 1 (fires FIRST, right-to-left)                              │
-   │   ▼                                                                   │
-   │  (use it to re-load the current sender host:port into udpsend's       │
-   │   right inlet, so the destination is set BEFORE the message arrives)  │
-   │   │                                                                   │
-   │   ▼                                                                   │
-   │   [value sender_host_port]   ← reads latest stashed sender host:port  │
-   │   │ outlet 0                                                          │
-   │   ▼                                                                   │
-   │   ┌─── flows into [udpsend]'s right inlet (host port config) ────┐    │
-   │   │                                                              │    │
-   │                                                                       │
-   │   outlet 0 (fires SECOND)                                             │
-   │   ▼                                                                   │
-   │  [message /signature hallucinote-analyzer-v1]                          │
-   │   │ outlet 0                                                          │
-   │   ▼                                                                   │
-   │   ┌─── flows into [udpsend]'s left inlet (OSC message) ──────────┐    │
-   │   └──────────────────────────────────────────────────────────────┘    │
-   └───────────────────────────────────────────────────────────────────────┘
+   [t l b]
+   ├── outlet 1 (right, fires FIRST: the list) ──→ [udpsend]'s right inlet (destination)
+   └── outlet 0 (left, fires SECOND: the bang)  ──→ [message /signature hallucinote-analyzer-v1] ──→ [udpsend]'s left inlet
 ```
-
-That's a lot. Compressed:
-
-```
-[OSC-route /signature/query]
-        │ outlet 0
-        ▼
-   [t b b]
-        ├── outlet 1 ─→ [value sender_host_port] ─→ [udpsend]'s inlet 1 (host port config)
-        └── outlet 0 ─→ [message /signature hallucinote-analyzer-v1] ─→ [udpsend]'s inlet 0 (message)
-```
-
-`[value sender_host_port]` is the SAME stash you populated in
-Section C.3.a — its outlet emits on the bang.
 
 Box text:
-- `t b b`
-- `value sender_host_port` (used in C.3.a to receive the host:port list, used here to read it on a bang)
-- `message /signature hallucinote-analyzer-v1` — a `[message]` object containing the literal text (this is a single object with that text as its message contents)
+- `t l b`
+- `message /signature hallucinote-analyzer-v1` — a `[message]` object whose
+  contents are the literal text `/signature hallucinote-analyzer-v1`
+  (Max parses this on emit into a list `<symbol /signature> <symbol hallucinote-analyzer-v1>`,
+  which `[udpsend]` interprets as a `,ss`-typed OSC message — fine for our
+  one-string-arg reply since clients parse the address from element 0
+  and the args from the rest).
+
+> **Reply-address type tag.** Some OSC clients are strict about
+> address syntax in the FIRST list element. Max emits the leading
+> `/signature` as a symbol, which `[udpsend]` (via the CNMAT OSC
+> handling) packs as the OSC address. The second element
+> `hallucinote-analyzer-v1` becomes the `,s`-typed arg. Sidecar /
+> client parsers tested against this shape pass — the Section G.3
+> Python test confirms.
 
 #### C.3.c. The `[udpsend]` for signature replies
 
@@ -408,23 +408,26 @@ Box text:
 udpsend
 ```
 
-(No host/port args — we configure them dynamically.)
+(No host/port args — destination configured dynamically per-query.)
 
 Wire:
-- inlet 0 (left, the message): from C.3.b's outlet-0 fire → `[message /signature hallucinote-analyzer-v1]` outlet → here
-- inlet 1 (right, host port config): from C.3.a's `[pak s i]` outlet OR from C.3.b's outlet-1 fire of `[value sender_host_port]` (which reads from C.3.a's stash)
+- inlet 0 (left, the OSC message): from C.3.b's `[message ...]` outlet → here
+- inlet 1 (right, host port config): from C.3.b's `[t l b]` outlet 1 (the list re-emitted as `l`) → here
 
 > **Trap.** `[udpsend]` accepts a `host port` configuration message
-> as a list of two args: `<host_symbol> <port_int>`. If you send the
-> reply BEFORE configuring the destination, it goes nowhere (or to
-> the previous destination). The `[t b b]` right-then-left fire order
-> in C.3.b is load-bearing: it sets destination FIRST, then sends.
+> as a list of two args: `<host_symbol> <port_int>`. The destination
+> MUST be configured BEFORE the reply message lands at the left
+> inlet, or the message goes to the previous (or zero) destination.
+> The `[t l b]` right-then-left fire order in C.3.b is load-bearing.
 
-> **C.3.a vs C.3.c — same udpsend?** Yes. The single
-> outbound-reply `[udpsend]` is configured-then-fired on every
-> `/signature/query`. Don't create a second `[udpsend]` for the
-> feature emitter — Section F.5's emitter has its own `[udpsend]`
-> with a different (configurable, default 11201) static destination.
+> **One udpsend or two?** The signature-reply `[udpsend]` (this one)
+> is distinct from the feature-emitter `[udpsend]` in Section F.6.
+> Two reasons: different lifecycles (signature-reply destination
+> changes per query; feature-emitter destination changes only when
+> `EmitPort` is rewritten); and a single `[udpsend]` whose
+> destination changes between an in-flight feature frame and a
+> signature reply would scramble the destinations under concurrent
+> load.
 
 ---
 
@@ -1435,8 +1438,8 @@ Remove the `[print]`s before saving.
 
 ### G.3. Signature reply round-trip
 
-Bind a UDP receiver on a fixed source port, send `/signature/query`
-from it, listen for the reply:
+Bind a listener, send `/signature/query` carrying the listener's
+host+port as args, listen for the reply:
 
 ```python
 import socket, struct, time
@@ -1448,18 +1451,20 @@ def osc(addr, *args):
     body = b''.join(s(a) if isinstance(a, str) else i(a) for a in args)
     return s(addr) + s(types) + body
 
-# Bind a known source port so the patch's reply lands somewhere we listen
+# Bind the listener; we'll tell the patch to reply here via OSC args
+listen_port = 12345
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.bind(("127.0.0.1", 12345))
+sk.bind(("127.0.0.1", listen_port))
 sk.settimeout(2.0)
 
-# Send /signature/query FROM port 12345 TO patch's port 11000
-sk.sendto(osc("/signature/query"), ("127.0.0.1", 11000))
+# Send the query with reply destination as OSC args (,si: host symbol, port int)
+sk.sendto(
+    osc("/signature/query", "127.0.0.1", listen_port),
+    ("127.0.0.1", 11000),
+)
 
-# Read the reply (should arrive at 12345 because [udpsend] retargets to sender)
 data, addr = sk.recvfrom(4096)
 print(f"reply from {addr}:")
-# Decode (lazy — just look at the first 60 bytes)
 print(data[:60])
 # Expect /signature\x00\x00,s\x00\x00hallucinote-analyzer-v1\x00
 assert b"hallucinote-analyzer-v1" in data, "signature mismatch"
@@ -1467,12 +1472,16 @@ print("OK: signature reply received")
 ```
 
 If timeout: check (in order)
-1. `[OSC-route /signature/query]` outlet is wired
-2. `[t b b]` is right-to-left fire order — destination set BEFORE message
-3. `[pak s i]` is connected to `[udpsend]`'s right inlet
-4. The sender host:port stash (`[value sender_host_port]`) was
-   populated (check by adding `[print stash]` on the `[pak s i]`'s
-   outlet — it should print `127.0.0.1 12345` when the query arrives)
+1. `[OSC-route /signature/query]` outlet is wired — add `[print sigq]`
+   on its outlet and confirm it prints `127.0.0.1 12345` (the args)
+   when the query arrives.
+2. `[unpack s i]` outlet wiring (port to `[pak]` inlet 1 cold, host
+   to `[pak]` inlet 0 hot).
+3. `[t l b]` is right-to-left fire order — outlet 1 (destination
+   list) fires BEFORE outlet 0 (reply message bang).
+4. `[udpsend]`'s right inlet is being driven by the destination list.
+   Add `[print dest]` between `[t l b]`'s outlet 1 and `[udpsend]` —
+   should print `127.0.0.1 12345` per query.
 
 ### G.4. Feature emitter rate
 
@@ -1693,8 +1702,9 @@ Every Max object referenced in this guide, alphabetical:
 | WAV missing despite Arm=1 + transport play | `start_at_beat` not received or observer property wrong | Verify with `[print obs]`; try `current_song_time` vs `song_time` |
 | Recording window is too long (~2 s padding) | `Arm`-driven trigger still wired (Chunk 1 path) | Re-do Section E.2 disconnect |
 | Recording starts and stops correctly but duration is off | `prev_beat` not updating, or updating BEFORE expr evaluates | Section D.5 `[deferlow]` is the fix — verify order |
-| `/signature/query` returns no reply | `[udpsend]` host:port not configured before message | Section C.3.b `[t b b]` order |
-| OSC reply goes to wrong port | `[value sender_host_port]` stash not updated by `[udpreceive]` right outlet | Section C.3.a wiring |
+| `/signature/query` returns no reply | `[udpsend]` host:port not configured before message landed at left inlet | Section C.3.b `[t l b]` right-to-left order |
+| OSC reply goes to wrong port | Query OSC args (`,si`: reply_host, reply_port) malformed or not threaded through `[unpack s i]` → `[pak s i]` correctly | Section C.3.a wiring; verify with `[print dest]` |
+| Assumed `[udpreceive]` has a right outlet for sender info | It doesn't — vanilla Max `[udpreceive]` has one outlet (the OSC messages); CNMAT's variants are the same | Carry the reply destination in the OSC query payload (Section C.3) |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |
 | Live rejects device with `createdevice error 6` | Patch saved via non-GUI path or hand-edited binary | Restore from `.chunk1.bak.amxd`; only ever save via Max GUI |

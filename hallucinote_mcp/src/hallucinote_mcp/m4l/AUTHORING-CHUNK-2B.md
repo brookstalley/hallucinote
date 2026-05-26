@@ -692,11 +692,15 @@ there's no clean Max idiom for "is this symbol empty?"
         │ outlet 0 (the path symbol)
         ├──→ [prepend open] → [sfrecord~]           (existing Chunk 1 wiring)
         ├──→ [value hallucinote_path]               (existing Chunk 1 retainer)
-        └──→ [t s] → [1] → [value has_path]         (NEW: set flag to 1)
+        └──→ [t b] → [1] → [value has_path]         (NEW: set flag to 1)
 ```
 
 Box text:
-- `t s` — discards the symbol, just propagates the trigger
+- `t b` — converts ANY incoming message into a bang on its outlet, so
+  the downstream `[1]` int box receives a bang (not the path symbol).
+  Using `[t s]` here is wrong: it would forward the path symbol, which
+  the int box can't coerce → "doesn't understand <path>" in the
+  Max console.
 - `1` — the integer 1 (the value to store in the flag)
 - `value has_path` — the flag
 
@@ -1305,7 +1309,7 @@ chain:
 [OSC-route /track_id]
         │ outlet 0
         ├──→ [value track_id_retained]
-        └──→ [t s]                            ← discard the value
+        └──→ [t b]                            ← convert symbol to bang (NOT `t s` — see Section E.3 note)
                 │
                 ▼
             [1]                               ← set flag to 1

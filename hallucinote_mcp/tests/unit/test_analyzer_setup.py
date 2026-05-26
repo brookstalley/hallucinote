@@ -38,7 +38,7 @@ def _analyzer_params() -> list[_FakeParam]:
         _FakeParam("Device On", 1.0),
         _FakeParam("Arm", 0.0),
         _FakeParam("Port", 11000.0, min=11000.0, max=11400.0),
-        _FakeParam("EmitPort", 11001.0, min=11000.0, max=11400.0),
+        _FakeParam("EmitPort", 11201.0, min=11000.0, max=11400.0),
         _FakeParam("Emit", 1.0),
     ]
 
@@ -298,18 +298,18 @@ def test_port_assignment_is_deterministic_per_surface():
     ))
     layout = ensure_analyzers_loaded(ctx)
     by_tid = layout.by_track_id()
-    # Tracks: 11000, 11002, 11004 (stride 2).
+    # Tracks: 11000, 11001, 11002 (stride 1).
     assert by_tid["track:1"].osc_port == 11000
-    assert by_tid["track:2"].osc_port == 11002
-    assert by_tid["track:3"].osc_port == 11004
-    # Returns: 11100, 11102.
+    assert by_tid["track:2"].osc_port == 11001
+    assert by_tid["track:3"].osc_port == 11002
+    # Returns: 11100, 11101.
     assert by_tid["return:1"].osc_port == 11100
-    assert by_tid["return:2"].osc_port == 11102
+    assert by_tid["return:2"].osc_port == 11101
     # Master: 11200.
     assert by_tid["master"].osc_port == 11200
-    # All share the same emit port by default.
+    # All share the same emit port by default (11201 — past master).
     emit_ports = {inst.osc_emit_port for inst in layout.instances}
-    assert emit_ports == {11001}
+    assert emit_ports == {11201}
 
 
 def test_sweep_writes_per_instance_port_via_live_param():
@@ -329,12 +329,12 @@ def test_sweep_writes_per_instance_port_via_live_param():
         )
         return next(p for p in analyzer.parameters if p.name == pname).value
 
-    # Track 1 → 11000, Track 2 → 11002 (stride 2).
+    # Track 1 → 11000, Track 2 → 11001 (stride 1).
     assert _param_value(ctx.song.tracks[0], "Port") == 11000.0
-    assert _param_value(ctx.song.tracks[1], "Port") == 11002.0
+    assert _param_value(ctx.song.tracks[1], "Port") == 11001.0
     # Both share the default emit port.
-    assert _param_value(ctx.song.tracks[0], "EmitPort") == 11001.0
-    assert _param_value(ctx.song.tracks[1], "EmitPort") == 11001.0
+    assert _param_value(ctx.song.tracks[0], "EmitPort") == 11201.0
+    assert _param_value(ctx.song.tracks[1], "EmitPort") == 11201.0
     # Master at 11200.
     assert _param_value(ctx.song.master_track, "Port") == 11200.0
 

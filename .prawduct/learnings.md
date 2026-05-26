@@ -125,3 +125,18 @@ Confirmed Chunk 1 in-Live verification, audio-analysis MVP: only after probing t
 4. Never use `record 1` to mean "start". It means "record for 1 millisecond." If you see a 44-frame capture at 44.1 kHz (≈ 1 ms), this is the bug.
 
 This rule applies to any future Max for Live audio-effect device the project authors. The trap is high-leverage because `record 1`/`record 0` *looks* like a sensible API by analogy with bool toggles, and the docs bury the bare-integer API in prose rather than highlighting it as the canonical control surface.
+
+## M4L Int parameter range capped at 256 — use Float + Unit Style Int
+
+**Live encodes Int-typed `live.numbox` parameter automation as a single byte (0-255), so an Int-typed Live parameter's range can hold at most 256 distinct values. Setting `Range: 11000 11400` on an Int-typed `live.numbox` silently clamps to `11000 11255` in Max's Inspector — the cap is not surfaced as an error, just a quiet snap. Per Max's documentation: "By convention, the Live application uses floating point numbers for its calculations; the native integer representation is limited to 256 values, with a default range of 0-255. When working with Live UI objects whose integer values will exceed this range, the Type attribute should be set to Float, and the Unit Style attribute should be set to Int." Float type removes the 256-step cap; Unit Style = Int renders the float as a whole number in the UI.**
+
+**Why:** Chunk 2 of the audio-analysis MVP needed `Port` and `EmitPort` ranges of 11000-11400 to accommodate the deterministic per-surface port allocation (100 audio tracks + 100 returns + master + emit). Setting the range with `Type = Int` clamped Max's Inspector to 11000-11255 silently, breaking the allocation. The Max docs explicitly call out Float+UnitStyle-Int as the documented convention for Int-displayed values exceeding 256 — this is not a workaround, it's the supported path.
+
+**How to apply:**
+1. For any `live.numbox` whose `max - min` will exceed 255, set Type = Float in the Inspector BEFORE setting Range. (Setting Range first under Type = Int clamps silently.)
+2. Set Unit Style = Int so the UI still renders whole numbers.
+3. The Remote Script's `set_parameter(value_type='continuous', value='11042.0')` writes through normally — Float-typed parameters accept float values via the existing continuous path. No client-side change needed.
+4. The patch's downstream handling should `[i]`-coerce the `live.numbox` outlet wherever an int is required (sample counts, port numbers as `[udpreceive]` arg, etc.).
+5. Symptom that triggers this rule: setting a `live.numbox` max to a value that's `> min + 255` and watching the Inspector snap it back to `min + 255` instead. Don't waste time looking for a "hidden" cap setting — switch Type to Float.
+
+This rule applies to any future Max for Live device the project authors with Int-displayed values exceeding 256 distinct steps (sample counts, port numbers, MIDI buffer sizes, etc.).

@@ -36,7 +36,7 @@ def _analyzer_params() -> list[_FakeParam]:
         _FakeParam("Device On", 1.0),
         _FakeParam("Arm", 0.0),
         _FakeParam("Port", 11000.0, min=11000.0, max=11400.0),
-        _FakeParam("EmitPort", 11001.0, min=11000.0, max=11400.0),
+        _FakeParam("EmitPort", 11201.0, min=11000.0, max=11400.0),
         _FakeParam("Emit", 1.0),
     ]
 
@@ -202,7 +202,7 @@ class _StubSidecar:
     .frames_received. Standalone (doesn't bind a socket) so tests don't
     contend with the shared sidecar's port."""
 
-    def __init__(self, port: int = 11001):
+    def __init__(self, port: int = 11201):
         self.port = port
         self.frames_received = 0
 
@@ -342,9 +342,9 @@ def test_render_sends_path_track_id_and_beat_window_via_osc(
     by_port: dict[int, list[str]] = {}
     for port, addr, _args in osc_sink:
         by_port.setdefault(port, []).append(addr)
-    # 4 analyzers → 4 ports (deterministic).
-    # Tracks: 11000 (T1), 11002 (T2). Return 1: 11100. Master: 11200.
-    expected_ports = {11000, 11002, 11100, 11200}
+    # 4 analyzers → 4 ports (deterministic, stride 1).
+    # Tracks: 11000 (T1), 11001 (T2). Return 1: 11100. Master: 11200.
+    expected_ports = {11000, 11001, 11100, 11200}
     assert set(by_port.keys()) == expected_ports
     # Each port saw exactly the four expected addresses in order.
     for port in expected_ports:

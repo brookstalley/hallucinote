@@ -116,23 +116,35 @@ path.
 | Scripting name    | Long name        | Short name (what `set_parameter` uses) | Type | Range / values | Default |
 |---|---|---|---|---|---|
 | `record_arm`      | `Record Arm`     | `Arm`        | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1         | 0     |
-| `osc_port`        | `OSC Port`       | `Port`       | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11000 |
-| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11001 |
+| `osc_port`        | `OSC Port`       | `Port`       | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11000 |
+| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11201 |
 | `emit_enabled`    | `Emit Features`  | `Emit`       | bool toggle (`live.toggle`)                                                        | 0 / 1         | 1     |
+
+**Why Type=Float with Unit Style=Int for the port parameters?** Live
+encodes Int-typed parameter automation as a single byte (0-255), so
+Int-typed `live.numbox` parameters have `max - min ≤ 255` silently
+clamped in Max's Inspector. Per Max's documentation: "When working
+with Live UI objects whose integer values will exceed this range,
+the Type attribute should be set to Float, and the Unit Style
+attribute should be set to Int." This renders whole-number values
+in the UI while removing the 256-step cap. The Remote Script's
+`set_parameter(value_type='continuous', value='11042.0')` writes
+through normally — the patch reads `[live.numbox]`'s outlet as a
+float and coerces with `[i]` where an int is needed.
 
 **Port allocation policy** (Chunk 2): `ensure_analyzers_loaded` assigns
 per-instance `Port` deterministically by surface address, so the next
 sweep recovers the same layout without inspecting prior state.
 
-- Tracks: `11000 + 2 * (track_index - 1)` (stride 2). Supports ~200
-  audio tracks before hitting 11400.
-- Returns: `11100 + 2 * (return_index - 1)`.
+- Tracks: `11000 + (track_index - 1)` (stride 1). Supports 100 audio tracks.
+- Returns: `11100 + (return_index - 1)`. Supports 100 returns.
 - Master: `11200`.
-- Emit port (shared sidecar): `11001` (default; overridable per-run).
+- Emit port (shared sidecar): `11201` (default; overridable per-run).
 
-The 11000-11400 range fits ~200 tracks + ~50 returns + the master.
-Accidental port collisions surface as `[udpreceive]` bind failures
-at patch load — the patch can't silently double-bind.
+Total span 11000-11201 = 202 ports. Range 11000-11400 leaves headroom
+for future expansion. Accidental port collisions surface as
+`[udpreceive]` bind failures at patch load — the patch can't silently
+double-bind.
 
 **Note:** Live's Remote Script API surfaces parameters by their **short name**
 — `ableton_device(action='get_parameters', ...)` returns `{name: "Arm", ...}`
@@ -147,12 +159,12 @@ Implementation hints (informative, not contractual):
   `set_parameter(value_type='continuous', value=1)` resolves to "on" cleanly.
 - `osc_port` drives the *inbound* `udpreceive`'s listen port. `osc_emit_port`
   drives the *outbound* `udpsend` destination port. They are deliberately
-  separate Live parameters so an installation that wants every analyzer to
-  emit features to one shared sidecar port (11001) while listening on
-  per-instance inbound ports (11000, 11002, 11003 …) just works. On
-  `osc_port` change, send `[prepend port]` → `[udpreceive]` so the bind
-  updates without a patch reload. On `osc_emit_port` change, repack the
-  destination via `[pak host port]` → `[udpsend]`.
+  separate Live parameters so every analyzer can emit features to one
+  shared sidecar port (11201) while listening on per-instance inbound
+  ports (11000, 11001, 11002 …). On `osc_port` change, send
+  `[prepend port]` → `[udpreceive]` so the bind updates without a patch
+  reload. On `osc_emit_port` change, repack the destination via
+  `[pak host port]` → `[udpsend]`.
 - On `[loadbang]`, push each `live.numbox`'s current value into its
   destination so the initial port matches the stored value, not just the
   Max object's constructor argument.
@@ -446,7 +458,8 @@ will surface the trade-off.
 
 **Destination:** `127.0.0.1:<osc_emit_port>` via `[udpsend]`. The
 emit port is per-instance (Live parameter), but `ensure_analyzers_loaded`
-configures every analyzer to emit to the same port (default 11001) so
+configures every analyzer to emit to the same port (default 11201,
+sitting just past the master analyzer's inbound port at 11200) so
 the sidecar opens one socket. Multiple analyzers writing to one UDP
 socket is fine — UDP delivery is best-effort and the sidecar's ring
 buffers are keyed by `track_id` (extracted from the address), so

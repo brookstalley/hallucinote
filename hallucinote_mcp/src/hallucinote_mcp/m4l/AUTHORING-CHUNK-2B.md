@@ -81,29 +81,54 @@ just guides):
 
 ---
 
-## Section A — Widen the existing `Port` range
+## Section A — Widen the existing `Port` range (and change its Type)
+
+The Chunk 1 `Port` is `Type = Int` with Range `11000 11100`. Chunk 2
+needs Range `11000 11400` — but Live's Int parameter automation
+encoding is a single byte, so `max - min > 255` silently clamps in
+Max's Inspector (you'll see Range reset to `11000 11255` if you try
+to set 11400 with Type = Int).
+
+Per Max's documentation: "When working with Live UI objects whose
+integer values will exceed this range, the Type attribute should be
+set to Float, and the Unit Style attribute should be set to Int."
+Type = Float removes the 256-step cap; Unit Style = Int makes the UI
+still render whole numbers.
 
 ### A.1. Locate the `Port` `live.numbox`
 
 It's the Chunk 1 parameter with Short Name `Port`. Find it and click
 once to select.
 
-### A.2. Inspector: widen the range
+### A.2. Inspector: change Type and widen the range
 
 Open Inspector (`Cmd-I`). Change:
 
 | Attribute | Before (Chunk 1) | After (Chunk 2) |
 |---|---|---|
+| Type | `Int` | `Float` |
+| Unit Style | (any) | `Int` |
 | Range | `11000 11100` | `11000 11400` |
 
-Or, if you edit the object box directly, set `@_parameter_range 11000. 11400.`
-(note the trailing dots — `live.numbox`'s range stores floats even
-when Type is Int). Leave every other attribute alone.
+Order matters: set Type to Float FIRST. If you try to widen the range
+while Type is still Int, Max will clamp to 11255. With Float type,
+the range accepts the full 11000-11400 span. Then set Unit Style to
+Int so the UI renders integers despite the Float storage.
+
+Or, if you edit the object box directly:
+
+```
+live.numbox @parameter_enable 1 @parameter_longname "OSC Port" @parameter_shortname Port @_parameter_range 11000. 11400. @_parameter_initial 11000. @_parameter_unitstyle 5
+```
+
+(`@_parameter_unitstyle 5` is "Int" — see the Max docs for the full
+Unit Style enum. If `5` doesn't take, set via the Inspector pulldown.)
 
 ### A.3. Verify
 
 Live's parameter list still shows "OSC Port" with the same long/short
-name. The slider's range now goes to 11400.
+name. The slider's range now goes to 11400, and the displayed value
+is a whole number even though the underlying Type is Float.
 
 ---
 
@@ -114,16 +139,17 @@ name. The slider's range now goes to 11400.
 Drag in a new object box, type:
 
 ```
-live.numbox @_parameter_range 11000. 11400. @_parameter_initial 11001. @parameter_enable 1 @parameter_longname "OSC Emit Port" @parameter_shortname EmitPort @parameter_unitstyle 0 @parameter_modulation_mode 0
+live.numbox @_parameter_range 11000. 11400. @_parameter_initial 11201. @parameter_enable 1 @parameter_longname "OSC Emit Port" @parameter_shortname EmitPort @parameter_modulation_mode 0
 ```
 
-Then open Inspector and verify these (some are not settable via
-@attributes in all Max versions — use Inspector to confirm):
+Then open Inspector and confirm these (some are not reliably
+settable via box-text @attributes — use Inspector):
 
 | Attribute | Value | Notes |
 |---|---|---|
 | Scripting Name | `osc_emit_port` | Inspector pane > "Scripting Name" |
-| Type | `Int` | "Type" pulldown |
+| Type | `Float` | **CRITICAL** — see Section A's "why Float+Int" rationale; Int caps the range at 256 steps |
+| Unit Style | `Int` | Renders the float as a whole number in the UI |
 | Parameter Visibility | `Automated and Stored` | **CRITICAL** — `Stored Only` hides it from Remote Script API |
 | Initial Enable | `Yes` | so the stored initial value loads on patch open |
 | Modulation Mode | `None` | "Modulation Mode" pulldown |
@@ -160,8 +186,8 @@ appear:
 
 ```
 Record Arm    (toggle, 0/1)
-OSC Port      (int, 11000-11400)
-OSC Emit Port (int, 11000-11400)
+OSC Port      (float-as-int, 11000-11400)
+OSC Emit Port (float-as-int, 11000-11400)
 Emit Features (toggle, 0/1)
 ```
 
@@ -395,7 +421,7 @@ Wire:
 > outbound-reply `[udpsend]` is configured-then-fired on every
 > `/signature/query`. Don't create a second `[udpsend]` for the
 > feature emitter — Section F.5's emitter has its own `[udpsend]`
-> with a different (configurable, default 11001) static destination.
+> with a different (configurable, default 11201) static destination.
 
 ---
 
@@ -1053,7 +1079,7 @@ So:
    outlet (list: <address> <lufs> <peak> <lowmid>)
         │
         ▼
-   [udpsend 127.0.0.1 11001]        ← left inlet 0 — message
+   [udpsend 127.0.0.1 11201]        ← left inlet 0 — message
 ```
 
 But `[pak]` fires on ANY inlet change, so it fires three times per
@@ -1185,7 +1211,7 @@ controlled by each flag:
    [gate]  control: has_track_id   (1 if [value track_id_retained] length > 0)
         │
         ▼
-   [udpsend 127.0.0.1 11001]
+   [udpsend 127.0.0.1 11201]
 ```
 
 For the has_track_id flag, drive it from any update to
@@ -1258,7 +1284,7 @@ arithmetic needed). Add to the patch's `[loadbang]` chain:
 
 ### F.6. The outbound `[udpsend]`
 
-Box text: `udpsend 127.0.0.1 11001`
+Box text: `udpsend 127.0.0.1 11201`
 
 (Default destination; configurable via `EmitPort` parameter as below.)
 
@@ -1296,7 +1322,7 @@ destination is configured before the first metro tick fires:
 Actually `[live.numbox]`'s stored value should auto-emit at patch
 load if Initial Enable is Yes. Verify by adding a temporary
 `[print EmitPort_init]` after the [live.numbox]'s outlet — should
-print `11001` (or whatever the stored value is) right after Live
+print `11201` (or whatever the stored value is) right after Live
 loads the patch.
 
 ### F.7. Full F-section assembly diagram (sanity-check yourself)
@@ -1338,7 +1364,7 @@ loads the patch.
                                        [gate]  control: has_track_id
                                           │
                                           ▼
-                              [udpsend 127.0.0.1 11001]   right inlet ← (host port from EmitPort)
+                              [udpsend 127.0.0.1 11201]   right inlet ← (host port from EmitPort)
 ```
 
 ---
@@ -1447,13 +1473,13 @@ If timeout: check (in order)
 
 ### G.4. Feature emitter rate
 
-Bind a listener on 11001 (the default `EmitPort`):
+Bind a listener on 11201 (the default `EmitPort`):
 
 ```python
 import socket, struct, time
 
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.bind(("127.0.0.1", 11001))
+sk.bind(("127.0.0.1", 11201))
 sk.settimeout(2.0)
 
 # Run audio through the track. Then:

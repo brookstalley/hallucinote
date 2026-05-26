@@ -31,13 +31,17 @@ trusts the name match.
 Port assignment is deterministic per surface kind + index so the next
 sweep recovers the same layout without inspecting prior state:
 
-- track ``N`` → inbound port ``11000 + 2 * (N - 1)``
-- return ``N`` → inbound port ``11100 + 2 * (N - 1)``
+- track ``N`` → inbound port ``11000 + (N - 1)`` (up to 100 audio tracks)
+- return ``N`` → inbound port ``11100 + (N - 1)`` (up to 100 returns)
 - master      → inbound port ``11200``
 
-Outbound emit port is a shared singleton (default ``11001``) so the
+Outbound emit port is a shared singleton (default ``11201``) so the
 sidecar opens one UDP socket. Multiple emitters fanning into one
 listener is the expected shape.
+
+The whole layout fits inside the M4L Int-parameter 256-step window
+(11000-11255) — Live encodes Int parameter automation as a single
+byte, so `max - min > 255` is silently clamped in Max's Inspector.
 """
 from __future__ import annotations
 
@@ -55,17 +59,27 @@ matches by exact string."""
 
 ANALYZER_SIGNATURE = "hallucinote-analyzer-v1"
 """Version-tagged identity reported by the patch in reply to OSC
-`/signature?`. The MVP doesn't query — name matching is enough — but
-the constant lives here for use in tests + future v2 patches."""
+`/signature/query`. The MVP doesn't query — name matching is enough —
+but the constant lives here for use in tests + future v2 patches."""
 
-DEFAULT_EMIT_PORT = 11001
+DEFAULT_EMIT_PORT = 11201
 """Sidecar listen port. Every analyzer's ``EmitPort`` Live parameter
-defaults to this so one shared UDP socket receives all feature frames."""
+defaults to this so one shared UDP socket receives all feature frames.
+Sits past the master analyzer's inbound port (11200) — can't be 11001
+with stride-1 inbound because that's track 2's inbound port."""
 
 _TRACK_PORT_BASE = 11000
 _RETURN_PORT_BASE = 11100
 _MASTER_PORT = 11200
-_PORT_STRIDE = 2
+_PORT_STRIDE = 1
+# Stride 1 packs tracks tightly (track N at 11000+N-1, return N at
+# 11100+N-1) and supports 100 tracks + 100 returns + master + sidecar
+# emit comfortably within 11000-11201. The `Port` / `EmitPort`
+# `live.numbox` Live parameters declare Type=Float with Unit Style=Int
+# to render as integers in the UI without hitting M4L's 256-step Int
+# parameter cap (Live encodes Int automation as a byte; max-min > 255
+# silently clamps in Max). See learnings.md "M4L Int parameter range
+# capped at 256 — use Float + Unit Style Int".
 
 
 @dataclass(frozen=True)

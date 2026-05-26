@@ -511,6 +511,12 @@ Do **not** write a script that splices patchlines into the JSON portion
 of the `.amxd` binary. It looks like it works (the file parses, the
 header sizes update), and Live rejects it on load.
 
+**Step-by-step authoring guide:** see
+[`AUTHORING-CHUNK-2B.md`](./AUTHORING-CHUNK-2B.md) — procedural recipe
+for the Chunk 2 GUI work (which objects to drag in, inspector values,
+wiring order, sanity checks). The spec (this file) is the contract;
+the authoring guide is the recipe.
+
 
 ---
 

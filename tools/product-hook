@@ -2614,6 +2614,12 @@ def cmd_stop(project_dir: Path) -> int:
                 "  If this session produced a durable lesson (a rule future sessions should follow),\n"
                 "  also add it to .prawduct/learnings.md. Learnings are concise standing rules;\n"
                 "  the session reflection is the story behind them.\n"
+                "\n"
+                "  Escape hatch: if this gate cannot be satisfied this session (rare for reflection —\n"
+                "  it is meant to be cheap), declare a waiver so this gate stops re-firing:\n"
+                "    echo '{\"reflection\": \"reason — be specific\"}' > .prawduct/.gates-waived\n"
+                "  Empty reasons are rejected; the file auto-clears next session. See\n"
+                "  .prawduct/build-governance.md \"Gate Waivers\" for when this is appropriate.\n"
             )
     elif (
         has_changes
@@ -2724,6 +2730,13 @@ def cmd_stop(project_dir: Path) -> int:
                 "  diff is within the verify pass's declared scope. The chunk has grown\n"
                 "  beyond that surface, so the prior review's conclusions no longer cover\n"
                 "  what changed. Re-run with a wider mode before ending the session.\n"
+                "\n"
+                "  Escape hatch: if Critic cannot run this session (e.g., wider mode is\n"
+                "  blocked by an external dependency), declare a waiver so this gate stops\n"
+                "  re-firing every turn:\n"
+                "    echo '{\"critic\": \"reason — be specific\"}' > .prawduct/.gates-waived\n"
+                "  Empty reasons are rejected; the file auto-clears next session. See\n"
+                "  .prawduct/build-governance.md \"Gate Waivers\" for when this is appropriate.\n"
             )
         else:
             blockers.append(
@@ -2731,6 +2744,15 @@ def cmd_stop(project_dir: Path) -> int:
                 "  but no Critic findings were recorded this session. If you have completed a chunk,\n"
                 "  run `/critic` now. The Critic reads .prawduct/critic-review.md for instructions\n"
                 "  and records findings to .prawduct/.critic-findings.json\n"
+                "\n"
+                "  Escape hatch: if Critic legitimately cannot run this session — e.g., the chunk\n"
+                "  is in a designer-handoff phase (mark `Type: designer-handoff` in the build plan\n"
+                "  to skip this gate automatically), or the GO/NO-GO is not yet verifiable because\n"
+                "  it depends on a human authoring step or external system — declare a waiver so\n"
+                "  this gate stops re-firing every turn:\n"
+                "    echo '{\"critic\": \"reason — be specific\"}' > .prawduct/.gates-waived\n"
+                "  Empty reasons are rejected; the file auto-clears next session. See\n"
+                "  .prawduct/build-governance.md \"Gate Waivers\" for when this is appropriate.\n"
             )
 
     # v1.5 Chunk 04: Type: trivial enforcement runs alongside the Critic
@@ -2828,6 +2850,14 @@ def cmd_stop(project_dir: Path) -> int:
                 f"PR REVIEW: PR exists for branch '{pr_block_branch}' but no valid review evidence found.\n"
                 "  Run /pr to invoke the PR reviewer before merging.\n"
                 "  The reviewer writes evidence to .prawduct/.pr-reviews/<branch>.json\n"
+                "\n"
+                "  Escape hatch: if PR review cannot run this session (e.g., reviewer agent is\n"
+                "  unavailable and merge is not imminent), declare a waiver so this gate stops\n"
+                "  re-firing every turn:\n"
+                "    echo '{\"pr\": \"reason — be specific\"}' > .prawduct/.gates-waived\n"
+                "  Empty reasons are rejected; the file auto-clears next session. PR review is\n"
+                "  the release-readiness gate — waive only when merge will not happen this\n"
+                "  session. See .prawduct/build-governance.md \"Gate Waivers\".\n"
             )
 
     # Surface any waivers so the agent (and reviewer) can see what was skipped.

@@ -346,19 +346,19 @@ literal symbol `host`, emitting a list like `host 127.0.0.1`.
 `[prepend port]` does the same with the literal `port`, emitting
 `port 12345`. Both lists go to `[udpsend]`'s sole inlet.
 
-#### C.3.b. Fire destination-then-reply via `[t l b]`
+#### C.3.b. Fire destination-then-reply via `[t b l]`
 
 The unpack fires its outlets right-to-left (port first, then host),
 so the two destination messages reach `[udpsend]` in order. We need
 the reply message to fire LAST, after both config messages land. Use
-`[t l b]` upstream of the unpack to gate the reply-bang behind the
+`[t b l]` upstream of the unpack to gate the reply-bang behind the
 list-cascade:
 
 ```
 [OSC-route /signature/query]
         │ outlet 0 (list: <host_symbol> <port_int>)
         ▼
-   [t l b]
+   [t b l]
    ├── outlet 1 (RIGHT, fires FIRST: the list)
    │      ▼
    │   [unpack s i]
@@ -374,11 +374,11 @@ list-cascade:
 
 Order of operation at `[udpsend]`'s inlet:
 
-1. `[t l b]` outlet 1 fires → unpack's right outlet (port int) fires
+1. `[t b l]` outlet 1 fires → unpack's right outlet (port int) fires
    → `[prepend port]` emits `port 12345` → `[udpsend]` retargets port.
 2. unpack's left outlet (host symbol) fires →
    `[prepend host]` emits `host 127.0.0.1` → `[udpsend]` retargets host.
-3. `[t l b]` outlet 0 fires → `[message ...]` emits the reply →
+3. `[t b l]` outlet 0 fires → `[message ...]` emits the reply →
    `[udpsend]` sends to the now-correctly-configured destination.
 
 This works because Max scheduling runs each outlet's downstream
@@ -386,7 +386,9 @@ cascade to completion before the next outlet of `[t]` fires. No
 `[deferlow]` needed.
 
 Box text:
-- `t l b`
+- `t b l`  (`b` = bang on outlet 0 / LEFT, `l` = list on outlet 1 / RIGHT;
+  Max fires right-to-left so the list path fires FIRST, the bang fires SECOND
+  — exactly the destination-then-reply order we need)
 - `message /signature hallucinote-analyzer-v1` — a `[message]` object whose
   contents are the literal text `/signature hallucinote-analyzer-v1`
   (Max parses this on emit into a list `<symbol /signature> <symbol hallucinote-analyzer-v1>`,
@@ -1478,7 +1480,7 @@ If timeout: check (in order)
 1. `[OSC-route /signature/query]` outlet is wired — add `[print sigq]`
    on its outlet and confirm it prints `127.0.0.1 12345` (the args)
    when the query arrives.
-2. `[t l b]` is right-to-left fire order — outlet 1 (the list →
+2. `[t b l]` is right-to-left fire order — outlet 1 (the list →
    unpack → host/port config messages) fires BEFORE outlet 0 (the
    reply message bang).
 3. `[prepend host]` and `[prepend port]` chains reach the same
@@ -1707,10 +1709,11 @@ Every Max object referenced in this guide, alphabetical:
 | WAV missing despite Arm=1 + transport play | `start_at_beat` not received or observer property wrong | Verify with `[print obs]`; try `current_song_time` vs `song_time` |
 | Recording window is too long (~2 s padding) | `Arm`-driven trigger still wired (Chunk 1 path) | Re-do Section E.2 disconnect |
 | Recording starts and stops correctly but duration is off | `prev_beat` not updating, or updating BEFORE expr evaluates | Section D.5 `[deferlow]` is the fix — verify order |
-| `/signature/query` returns no reply | `host`/`port` config messages didn't land at `[udpsend]` before the reply message | Section C.3.b `[t l b]` right-to-left order; verify with `[print to_udpsend]` upstream of the inlet — should print three lines per query in order |
+| `/signature/query` returns no reply | `host`/`port` config messages didn't land at `[udpsend]` before the reply message | Section C.3.b `[t b l]` right-to-left order; verify with `[print to_udpsend]` upstream of the inlet — should print three lines per query in order |
 | OSC reply goes to wrong port | Query OSC args (`,si`: reply_host, reply_port) malformed or `[prepend port]` / `[prepend host]` chain not reaching `[udpsend]` | Section C.3.a wiring |
 | Assumed `[udpreceive]` has a right outlet for sender info | It doesn't — vanilla Max `[udpreceive]` has one outlet (the OSC messages); CNMAT's variants are the same | Carry the reply destination in the OSC query payload (Section C.3) |
 | Assumed `[udpsend]` has a right inlet for `host port` config | It doesn't — single inlet, retarget via `host <sym>` / `port <int>` MESSAGES (same convention as `[udpreceive]` `port <N>`) | Send config as separate prepended messages to the same inlet (Sections C.3, F.6) |
+| Downstream sees `host s` / `port 0` instead of real values | `[t l b]` outlet types reversed in wiring expectations — outlet 0 is `l` (list), outlet 1 is `b` (bang); wiring unpack to outlet 1 feeds bangs (not the list), so unpack emits defaults | Use `[t b l]` instead: `b` on outlet 0 (left), `l` on outlet 1 (right) — fires right-to-left, so list fires first then bang, which is the destination-then-reply order |
 | `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |

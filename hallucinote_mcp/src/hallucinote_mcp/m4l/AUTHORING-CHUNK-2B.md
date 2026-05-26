@@ -679,52 +679,68 @@ manually disarms mid-recording.
 
 ### E.3. Wire the new start trigger from D.4's `start_crossed_bang`
 
+The "no path → don't arm" guard (Chunk 1 contract) uses a `[value has_path]`
+flag set by `/path` arrival — mirror of the `has_track_id` flag in
+Section F. Don't try to inspect the path symbol's "emptiness" directly;
+Max's `[length]` measures list length (not symbol-character count) and
+there's no clean Max idiom for "is this symbol empty?"
+
+**First, augment the `/path` route in Section C / Chunk 1** so it sets a flag:
+
+```
+[OSC-route /path]                                   (existing Chunk 1 box)
+        │ outlet 0 (the path symbol)
+        ├──→ [prepend open] → [sfrecord~]           (existing Chunk 1 wiring)
+        ├──→ [value hallucinote_path]               (existing Chunk 1 retainer)
+        └──→ [t s] → [1] → [value has_path]         (NEW: set flag to 1)
+```
+
+Box text:
+- `t s` — discards the symbol, just propagates the trigger
+- `1` — the integer 1 (the value to store in the flag)
+- `value has_path` — the flag
+
+And initialize the flag at patch load:
+
+```
+[loadbang] → [0] → [value has_path]
+```
+
+**Then wire the new start trigger through a `[gate]` controlled by `has_path`:**
+
 ```
 (D.4's start_crossed_bang outlet)
         │
         ▼
-   [t b b]            ← right-then-left order: right reads path, left fires 1
-        │ outlet 1 (right, fires first)
-        │      ▼
-        │   [value hallucinote_path]    ← Chunk 1's path retainer; unchanged
-        │      │ outlet 0
-        │      ▼
-        │   [if $i1 != <empty> then bang else nothing]   ← guard: refuse if no path
-        │      (express as: [t s] → [length] → [> 0] → [sel 1] → bang)
-        │      ▼
-        │   [prepend open]
-        │      │
-        │      ▼
-        │   [sfrecord~]   inlet 0
+   [gate]                       ← gate's outlet emits only when control == 1
+        ↑
+        │ control (0 or 1)
         │
-        │ outlet 0 (left, fires second — sends start)
-        ▼
-   [1]
-        │
-        ▼
-   [sfrecord~]   inlet 0
+[value has_path] outlet
+                  │ outlet 0 (gated bang — only fires if has_path == 1)
+                  ▼
+             [t b b]            ← right-then-left: right reads path, left fires 1
+             ├── outlet 1 (right, fires first)
+             │      ▼
+             │   [value hallucinote_path]    ← Chunk 1's path retainer; unchanged
+             │      │ outlet 0
+             │      ▼
+             │   [prepend open]
+             │      │
+             │      ▼
+             │   [sfrecord~]   inlet 0
+             │
+             └── outlet 0 (left, fires second — sends start)
+                    ▼
+                [1]
+                    │
+                    ▼
+                [sfrecord~]   inlet 0
 ```
 
-The "no path → don't arm" guard (Chunk 1's safety) is reproduced via
-a length check on `hallucinote_path` before `prepend open` fires. If
-path is empty, the chain stops there and `sfrecord~` never receives
-the `open`. Add `[print PathGuard]` on the failure path so the Max
-console shows the abort.
-
-Compact form for the guard:
-
-```
-[value hallucinote_path]
-        │ outlet 0 (symbol)
-        ▼
-   [t s s]
-   ├── outlet 1 → [length] → [> 0] → [gate]   ← gates the path message
-   └── outlet 0 → [gate]'s message inlet      ← the actual path symbol
-        │ (gate's outlet emits the path only if length > 0)
-        ▼
-   [prepend open]
-        ...
-```
+For visibility into the guard firing or refusing, add a `[print PathGuard]`
+that watches the `[gate]`'s control inlet — `0` printed when has_path
+hasn't been set, `1` when the harness has sent `/path` at least once.
 
 ### E.4. Wire the new stop trigger
 
@@ -1722,6 +1738,7 @@ Every Max object referenced in this guide, alphabetical:
 | Assumed `[udpsend]` has a right inlet for `host port` config | It doesn't — single inlet, retarget via `host <sym>` / `port <int>` MESSAGES (same convention as `[udpreceive]` `port <N>`) | Send config as separate prepended messages to the same inlet (Sections C.3, F.6) |
 | Downstream sees `host s` / `port 0` instead of real values | `[t l b]` outlet types reversed in wiring expectations — outlet 0 is `l` (list), outlet 1 is `b` (bang); wiring unpack to outlet 1 feeds bangs (not the list), so unpack emits defaults | Use `[t b l]` instead: `b` on outlet 0 (left), `l` on outlet 1 (right) — fires right-to-left, so list fires first then bang, which is the destination-then-reply order |
 | `[expr]` box turns red with `$f0` / `$i0` | Max's `[expr]` uses **1-indexed** inlet variables — leftmost inlet is `$f1` / `$i1` / `$s1`, NOT `$f0` / `$i0` | Shift all variable numbers up by 1: inlet 0 → `$f1`, inlet 1 → `$f2`, etc. |
+| Trying to check "is this symbol empty?" with `[if ... <empty>]` or `[length]` | `<empty>` isn't a Max literal in `[if]`; `[length]` measures LIST length, not symbol-character count — always returns 1 for a single symbol | Use a separate `[value has_X]` int flag, set to 1 by the message that populates the symbol; gate downstream actions with `[gate]` controlled by the flag (Sections E.3, F.5) |
 | `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |

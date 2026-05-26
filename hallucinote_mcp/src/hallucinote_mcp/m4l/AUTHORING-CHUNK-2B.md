@@ -222,7 +222,7 @@ The Chunk 1 patch already has:
     │ (single outlet — matched OSC messages from any client; no
     │  sender-metadata sidechannel)
     └──> [OSC-route /path]  ──[outlet 0]──> [prepend open] ──> [sfrecord~]
-                                                            + retain via [value path_retained]
+                                                            + retain via [value hallucinote_path]
 ```
 
 > Vanilla Max's `[udpreceive]` exposes ONE outlet — the OSC messages.
@@ -637,7 +637,7 @@ Visually trace from the `[live.toggle (Arm)]`'s outlet:
    [t b b]                 ← right-then-left: right reads path, left fires '1'
         │ outlet 1 (right, fires first)
         │      ▼
-        │   [value path_retained]
+        │   [value hallucinote_path]
         │      │
         │      ▼
         │   [prepend open]
@@ -686,7 +686,7 @@ manually disarms mid-recording.
    [t b b]            ← right-then-left order: right reads path, left fires 1
         │ outlet 1 (right, fires first)
         │      ▼
-        │   [value path_retained]    ← Chunk 1's path retainer; unchanged
+        │   [value hallucinote_path]    ← Chunk 1's path retainer; unchanged
         │      │ outlet 0
         │      ▼
         │   [if $i1 != <empty> then bang else nothing]   ← guard: refuse if no path
@@ -706,7 +706,7 @@ manually disarms mid-recording.
 ```
 
 The "no path → don't arm" guard (Chunk 1's safety) is reproduced via
-a length check on `path_retained` before `prepend open` fires. If
+a length check on `hallucinote_path` before `prepend open` fires. If
 path is empty, the chain stops there and `sfrecord~` never receives
 the `open`. Add `[print PathGuard]` on the failure path so the Max
 console shows the abort.
@@ -714,7 +714,7 @@ console shows the abort.
 Compact form for the guard:
 
 ```
-[value path_retained]
+[value hallucinote_path]
         │ outlet 0 (symbol)
         ▼
    [t s s]

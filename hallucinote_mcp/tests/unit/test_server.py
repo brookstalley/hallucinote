@@ -26,6 +26,90 @@ def test_primer_mentions_each_tool():
         assert tool in PRIMER, f"PRIMER missing {tool}"
 
 
+def test_primer_tool_count_matches_actual_registry():
+    """Pattern-sweep guard (Chunk 2 Critic): the PRIMER's tool count
+    headline ("N unified tools") drifted from 11 to 12 when
+    `ableton_render` landed. A future tool addition without a
+    parallel PRIMER edit gets caught here — mirrors the existing
+    `test_primer_resource_count_matches_actual_registry` guard so
+    the resource-count regression doesn't recur as a tool-count
+    regression."""
+    import re
+
+    match = re.search(r"(\d+) unified tools", PRIMER)
+    assert match is not None, (
+        "PRIMER must advertise the total tool count (substring "
+        "'N unified tools') so clients see the surface size on initialize"
+    )
+    assert int(match.group(1)) == len(schema.TOOLS), (
+        f"PRIMER claims {match.group(1)} unified tools but schema.TOOLS "
+        f"has {len(schema.TOOLS)}. Update PRIMER in "
+        "hallucinote_mcp/src/hallucinote_mcp/server.py."
+    )
+
+
+def test_readme_tool_count_matches_actual_registry():
+    """Pattern-sweep guard (Chunk 2 Critic): the project README's
+    headline tool count drifts when a new tool lands. Pinned the same
+    way the resource counts are pinned. Tolerates either bare 'N
+    unified Ableton tools' or 'N unified tools' phrasing."""
+    import re
+    from pathlib import Path
+
+    readme = Path(__file__).resolve().parents[3] / "README.md"
+    text = readme.read_text()
+    match = re.search(r"(\d+) unified (?:Ableton )?tools", text)
+    assert match is not None, (
+        "project README must advertise the total tool count (substring "
+        "'N unified tools' or 'N unified Ableton tools')"
+    )
+    assert int(match.group(1)) == len(schema.TOOLS), (
+        f"README claims {match.group(1)} unified tools but schema.TOOLS "
+        f"has {len(schema.TOOLS)}. Update README.md."
+    )
+
+
+def test_mcp_readme_tool_count_matches_actual_registry():
+    """Sibling guard for the hallucinote_mcp/README.md headline."""
+    import re
+    from pathlib import Path
+
+    readme = Path(__file__).resolve().parents[2] / "README.md"
+    text = readme.read_text()
+    match = re.search(r"(\d+) unified tools", text)
+    assert match is not None, (
+        "hallucinote_mcp/README.md must advertise the tool count"
+    )
+    assert int(match.group(1)) == len(schema.TOOLS), (
+        f"hallucinote_mcp/README claims {match.group(1)} unified tools "
+        f"but schema.TOOLS has {len(schema.TOOLS)}."
+    )
+
+
+def test_getting_started_guide_tool_count_matches_actual_registry():
+    """Sibling guard for resources/guides/getting-started.md — the
+    guide is shipped as an MCP resource, so its headline is part of
+    the visible surface."""
+    import re
+    from pathlib import Path
+
+    guide = (
+        Path(__file__).resolve().parents[2]
+        / "src" / "hallucinote_mcp"
+        / "resources" / "guides" / "getting-started.md"
+    )
+    text = guide.read_text()
+    match = re.search(r"(\d+)[- ]tool surface", text)
+    assert match is not None, (
+        "getting-started.md must headline the tool count "
+        "(substring 'N-tool surface')"
+    )
+    assert int(match.group(1)) == len(schema.TOOLS), (
+        f"getting-started.md claims {match.group(1)}-tool surface but "
+        f"schema.TOOLS has {len(schema.TOOLS)}."
+    )
+
+
 def test_handle_tool_call_help_works_without_remote():
     # After create_server, help actions are registered for every tool, so
     # action='help' should return ok without contacting the Remote Script.

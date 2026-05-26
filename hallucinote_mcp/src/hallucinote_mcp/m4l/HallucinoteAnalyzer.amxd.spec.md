@@ -12,9 +12,9 @@ commit. Binary file — no text diffs; the spec is the auditable surface.
 
 ---
 
-## Scope: Chunk 1 only
+## Scope: Chunk 1 (shipped) + Chunk 2 (this round)
 
-Chunk 1's `.amxd` is the **minimum viable proof of life**:
+**Chunk 1** (closed 2026-05-26) shipped the minimum viable proof of life:
 
 - One `sfrecord~` per instance, writing the inserting track's audio to disk.
 - Inbound OSC receiver for path delivery. (Live parameters are float / int /
@@ -22,11 +22,37 @@ Chunk 1's `.amxd` is the **minimum viable proof of life**:
   a Live parameter. The path is delivered out-of-band via OSC. See
   [Path delivery](#path-delivery-out-of-band-via-osc) below.)
 - Two exposed Live parameters (`record_arm`, `osc_port`).
-- Nothing else. No OSC *emitter*, no signature parameter, no `track_id`.
+- No OSC *emitter*, no signature parameter, no `track_id`.
 
-Chunk 2 extends this same patch with the outbound OSC feature emitter +
-`track_id` + a Hallucinote signature surface — all listed under
-"Reserved for Chunk 2" below so the build doesn't paint into a corner.
+**Chunk 2** extends this same patch with:
+
+- **Outbound OSC feature emitter** — LUFS-M, true peak (sample-peak proxy),
+  low-mid (200–500 Hz) band power per instance at ~30 Hz. UDP target
+  `127.0.0.1:<osc_emit_port>` (a new Live parameter; see below). Frame
+  shape: `/hallucinote/track/<track_id>/features [lufs_m, peak_dbfs, low_mid_power]`.
+- **`track_id` surface** — string-valued, delivered out-of-band via OSC
+  (same rationale as `/path`: Live params are float / int / enum only).
+  Inbound address `/track_id <symbol>`. Retained inside the patch so the
+  outbound feature frame can name itself.
+- **Hallucinote signature** — a fixed string `"hallucinote-analyzer-v1"`
+  used by `ensure_analyzers_loaded` to distinguish HallucinoteAnalyzer
+  instances from other Max devices that happen to share a name. Surfaced
+  via OSC query `/signature?` → reply `/signature hallucinote-analyzer-v1`
+  on the inbound port. (See [Signature surface](#signature-surface) below
+  for why OSC-query won over the enum-parameter and filename-inference
+  alternatives.)
+- **Transport-position-driven recording boundaries** — the Python harness
+  no longer defines the recording window via MCP-latency-bounded
+  `Arm` toggles. Instead, the patch reads Live's transport position at
+  signal rate and starts/stops `sfrecord~` when transport crosses
+  requested beats. `/start_at_beat <N>` and `/stop_at_beat <M>` arrive
+  via OSC. `Arm` just gates whether the patch ACTS on those events.
+  Buys sample-accurate boundaries, tempo-change immunity, and multi-
+  analyzer alignment for free (every analyzer observes the same Live
+  transport). See [Transport-position-driven timing](#transport-position-driven-timing-chunk-2).
+
+The Chunk 2 additions live alongside the Chunk 1 surface — they don't
+replace it. The Chunk 1 `Arm`/`Port`/`/path` interfaces are unchanged.
 
 ---
 
@@ -47,55 +73,104 @@ audio thread, which is what we want for sample-accurate alignment.
 audio inlet  L  ──┬──> [plugout~]                  (sonic pass-through to next device)
 audio inlet  R  ──┤
                   │
-                  └──> [sfrecord~ 2 @nchans 2]     (writes to disk)
-                              ↑
-                              │ messages: samptype float32 (at loadbang),
-                              │           open <path>,
-                              │           1 (start), 0 (stop+finalize)
-                              │
-                       [udpreceive <osc_port>] → [OSC-route /path] → [prepend open]
+                  ├──> [sfrecord~ 2 @nchans 2]     (writes to disk)
+                  │           ↑
+                  │           │ messages: samptype float32 (at loadbang),
+                  │           │           open <path>,
+                  │           │           1 (start), 0 (stop+finalize)
+                  │           │
+                  │  [udpreceive <osc_port>]                       Chunk 1 + Chunk 2 inbound
+                  │       ├──> [OSC-route /path] → [prepend open]
+                  │       ├──> [OSC-route /track_id] → [value $track_id]      (Chunk 2)
+                  │       ├──> [OSC-route /start_at_beat] → [int] → start-beat   (Chunk 2)
+                  │       ├──> [OSC-route /stop_at_beat] → [int] → stop-beat     (Chunk 2)
+                  │       └──> [OSC-route /signature] → reply via [udpsend]      (Chunk 2)
+                  │
+                  └──> Feature-extraction branch (Chunk 2)
+                            │
+                            ├──> LUFS-M (K-weighted, 400 ms momentary integration)
+                            ├──> peak (sample-peak proxy via [peakamp~] @ ~30 Hz)
+                            ├──> low-mid power (200–500 Hz bandpass → [average~] → dB)
+                            │
+                            └──> [pak f f f] @ 30 Hz → [prepend /hallucinote/track/<track_id>/features]
+                                                    → [udpsend 127.0.0.1 <osc_emit_port>]
 ```
 
 The dry path must reach the outlets with **no extra sample delay** beyond
 what `sfrecord~` introduces in the parallel branch (which is zero — it's a
-tap, not an insert). PDC alignment depends on this.
+tap, not an insert). PDC alignment depends on this. The feature-extraction
+branch is also a tap, not an insert — same zero-delay requirement.
+
+The transport-position observer (Chunk 2; see [Transport-position-driven
+timing](#transport-position-driven-timing-chunk-2)) lives in a
+control-rate region; it doesn't touch the audio path.
 
 ## Exposed Live parameters
 
-Both parameters must be **automatable + scripted-name'd** so Hallucinote's
+All parameters must be **automatable + scripted-name'd** so Hallucinote's
 Remote Script can write them via the existing `ableton_device.set_parameter`
 path.
 
-| Scripting name | Long name | Short name (what `set_parameter` uses) | Type | Range / values | Default |
-|---|---|---|---|---|---|
-| `record_arm`  | `Record Arm`  | `Arm`  | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1 | 0 |
-| `osc_port`    | `OSC Port`    | `Port` | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                       | 11000 – 11100 | 11000 |
+| Scripting name    | Long name        | Short name (what `set_parameter` uses) | Type | Range / values | Default | Introduced |
+|---|---|---|---|---|---|---|
+| `record_arm`      | `Record Arm`     | `Arm`        | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1         | 0     | Chunk 1 |
+| `osc_port`        | `OSC Port`       | `Port`       | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11000 | Chunk 1 (range widened in Chunk 2) |
+| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int (`live.numbox` w/ `Type = Int`, `@parameter_visible 1`)                        | 11000 – 11400 | 11001 | Chunk 2 |
+| `emit_enabled`    | `Emit Features`  | `Emit`       | bool toggle (`live.toggle`)                                                        | 0 / 1         | 1     | Chunk 2 |
+
+**Port allocation policy** (Chunk 2): `ensure_analyzers_loaded` assigns
+per-instance `Port` deterministically by surface address, so the next
+sweep recovers the same layout without inspecting prior state.
+
+- Tracks: `11000 + 2 * (track_index - 1)` (stride 2). Supports ~200
+  audio tracks before hitting 11400.
+- Returns: `11100 + 2 * (return_index - 1)`.
+- Master: `11200`.
+- Emit port (shared sidecar): `11001` (default; overridable per-run).
+
+The Chunk 1 default of `osc_port = 11000` becomes "track 1's inbound
+port" under this scheme — backwards-compatible with the throwaway
+harness. The spec's pre-Chunk-2 11000-11100 range was based on the
+single-instance proof-of-life; widening to 11000-11400 fits the
+realistic multi-analyzer install without sacrificing collision
+detection (the patch can't bind two `[udpreceive]` to the same port,
+so accidental port collisions surface as bind failures at patch load).
 
 **Note:** Live's Remote Script API surfaces parameters by their **short name**
 — `ableton_device(action='get_parameters', ...)` returns `{name: "Arm", ...}`
 not `{name: "Record Arm", ...}`. Harnesses and Chunk 2's
-`ensure_analyzers_loaded` must address the parameters as `Arm` and `Port`.
-Setting `parameter_longname` is still useful for the Live UI parameter list
-that humans browse.
+`ensure_analyzers_loaded` must address the parameters by their short names
+(`Arm`, `Port`, `EmitPort`, `Emit`). Setting `parameter_longname` is still
+useful for the Live UI parameter list that humans browse.
 
 Implementation hints (informative, not contractual):
 
-- Use `live.toggle` for `record_arm` so the Remote Script's
+- Use `live.toggle` for `record_arm` and `emit_enabled` so the Remote Script's
   `set_parameter(value_type='continuous', value=1)` resolves to "on" cleanly.
-- `osc_port` drives `udpreceive`'s listen port. On parameter change, send
-  `[prepend port]` → `[udpreceive]` so the bind updates without a patch
-  reload. On `[loadbang]`, push the current `live.numbox` value into the
-  same chain so the initial port matches the stored value, not just
-  `udpreceive`'s constructor argument.
-- Both controls need `Parameter Visibility = Automated and Stored` (NOT
+- `osc_port` drives the *inbound* `udpreceive`'s listen port. `osc_emit_port`
+  drives the *outbound* `udpsend` destination port. They are deliberately
+  separate Live parameters so an installation that wants every analyzer to
+  emit features to one shared sidecar port (11001) while listening on
+  per-instance inbound ports (11000, 11002, 11003 …) just works. On
+  `osc_port` change, send `[prepend port]` → `[udpreceive]` so the bind
+  updates without a patch reload. On `osc_emit_port` change, repack the
+  destination via `[pak host port]` → `[udpsend]`.
+- On `[loadbang]`, push each `live.numbox`'s current value into its
+  destination so the initial port matches the stored value, not just the
+  Max object's constructor argument.
+- `emit_enabled` gates the OSC emitter only. It does NOT gate
+  `sfrecord~` — recording is governed by `Arm` + the transport-position
+  observer.
+- All controls need `Parameter Visibility = Automated and Stored` (NOT
   `Stored Only` — that still bakes `parameter_invisible: 1` into the
   patch JSON and hides the param from Live's Remote Script API, despite
   the inspector label suggesting otherwise). This is the value that
-  surfaces the param to Live AND survives Live file save/load. (`record_arm` going to **0** at save time is fine —
-  arming is per-render, not authored state — but the parameter itself must
-  exist on patch load. `osc_port` should persist its per-instance value so
-  Chunk 2's `ensure_analyzers_loaded` doesn't have to re-assign on every
-  Live session open.)
+  surfaces the param to Live AND survives Live file save/load. (`record_arm`
+  going to **0** at save time is fine — arming is per-render, not authored
+  state — but the parameter itself must exist on patch load. `osc_port`,
+  `osc_emit_port`, and `emit_enabled` persist their per-instance values
+  so `ensure_analyzers_loaded` doesn't have to re-assign on every Live
+  session open.)
 
 ## Path delivery (out-of-band, via OSC)
 
@@ -116,6 +191,65 @@ via OSC instead of via a parameter write.
 - For Chunk 1's single-instance test, default `osc_port=11000` is fine.
   Chunk 2's `ensure_analyzers_loaded` assigns per-instance ports so
   multiple analyzers on different tracks don't collide.
+
+## Track-id delivery (Chunk 2; out-of-band, via OSC)
+
+The outbound feature frame needs an identity prefix
+(`/hallucinote/track/<track_id>/features ...`) so the sidecar can route
+frames to the right ring buffer. Like `/path`, the value is a string and
+can't be a Live parameter.
+
+- Inbound OSC address: `/track_id <symbol>` on `osc_port`.
+- Filtered by `[OSC-route /track_id]` and retained in the patch via
+  `[value $track_id]` (or equivalent). The outbound feature emitter
+  reads this retained value when composing the address; if no track_id
+  has been received since patch load, the emitter holds frames (does
+  NOT emit a placeholder address — empty / "unknown" identities would
+  poison the sidecar's ring buffer).
+- `track_id` strings are opaque to the patch. The Python side chooses
+  the shape (UUIDs in MVP, with the option to switch to `<song-slug>:<track-name>`
+  later for human-readability) — the patch just round-trips whatever
+  symbol it receives.
+- `ensure_analyzers_loaded` sends `/track_id` once per analyzer at
+  load time. The patch retains the value across Live session saves so
+  per-render re-assignment isn't required.
+
+## Signature surface (Chunk 2; via OSC query)
+
+`ensure_analyzers_loaded` needs to tell a HallucinoteAnalyzer instance
+apart from any other Max Audio Effect that happens to have the same
+device name. (Different M4L patches can be saved with the same display
+name; relying on device name alone is fragile.) Three options
+considered; the OSC-query path wins:
+
+- ❌ **Enum Live parameter** with one fixed slot (`signature = "hallucinote-analyzer-v1"`).
+  Hides identity behind another `get_parameters` call; pollutes the
+  device's parameter surface with a not-really-a-parameter; consumes one
+  of Live's limited Live-API parameter slots; offers no advantage over
+  OSC.
+- ❌ **Filename inference** via Live's `device.class_name` /
+  `device.class_display_name`. Today `class_display_name` equals the
+  `.amxd` filename for M4L devices — but that's an empirical behavior,
+  not a contract, and any user-renamed device file would break the
+  check. Couples identity to the install path, which is the surface
+  the install skill is *about* to start auto-managing.
+- ✅ **OSC query/response**. Inbound `/signature?` on `osc_port`; the
+  patch replies via `[udpsend]` to the sender's host:port (extracted
+  from `[udpreceive]`'s status output) with `/signature
+  hallucinote-analyzer-v1`. Identity lives inside the patch as a
+  hardcoded constant; doesn't pollute the parameter surface;
+  works the same whether the device file was renamed or not;
+  reuses the OSC channel already in place from Chunk 1.
+
+The signature value is a **versioned string** so future incompatible
+patch revisions can identify themselves (`hallucinote-analyzer-v2`,
+etc.) and `ensure_analyzers_loaded` can refuse to drive an
+incompatible analyzer. For Chunk 2's MVP, all analyzers emit
+`hallucinote-analyzer-v1`.
+
+The signature response carries no `track_id` — the caller correlates
+by the source UDP port it sent the query from (one query per analyzer
+instance, since each analyzer listens on its own `osc_port`).
 
 ## Behavior contract
 
@@ -182,28 +316,178 @@ for the canonical documentation.
   decoupled so a future "render only one section" use case still works.
 - `record_arm` held at 0: emit nothing. `sfrecord~` should not be open.
 
-### Transport-relative timing (Chunk 1 vs Chunk 2)
+### Transport-position-driven timing (Chunk 2)
 
-**Chunk 1 (current):** The harness sets `Arm=1` via MCP, then plays
-transport, then sleeps, then stops transport, then sets `Arm=0`. Each
-MCP round-trip is ~700 ms in practice, so the actual arm-high window
-inside the patch is ~2 s wider than the transport play window. The
-recorded WAV therefore has ~1.5–2 s of leading silence (before transport
-plays) and ~0.5–1 s of trailing silence (after transport stops). This is
-acceptable for Chunk 1's track-only proof-of-life — the audio content is
-still identifiable via the harness's `audio_start_s`/`audio_end_s`
-bracket analysis.
+Chunk 1 defined the recording window via MCP-latency-bounded `Arm`
+toggles: arm via MCP (~700 ms), play, sleep, stop, disarm via MCP (~700
+ms). Result: ~2 s of silence padding around the actual audio content,
+and worse, *non-deterministic* alignment between multiple analyzers in
+the same render — each one's arm-high window is bounded by an
+independent MCP round-trip. PDC math at the master-vs-track level
+breaks under that timing model.
 
-**Chunk 2 (planned):** Recording boundaries become **transport-position-
-driven** inside the patch — the patch reads Live's transport via
-`live.transport` (or equivalent) and starts/stops sfrecord~ at requested
-beat positions. This makes the recording sample-accurate, tempo-change-
-immune (beats are the unit), and gives multi-analyzer alignment for free
-(all analyzers observe the same Live transport, so they start at the
-same sample). The Python side passes `/start_at_beat <N>` and
-`/stop_at_beat <M>` via OSC; the patch handles the rest. MCP latency
-becomes irrelevant to the recording boundary because arming just gates
-whether the patch ACTS on transport events; it doesn't define them.
+Chunk 2 moves the boundary decision *into* the patch. The harness writes
+two integer-valued OSC messages before starting transport, and the
+patch handles the rest.
+
+**Inbound OSC (Chunk 2):**
+
+- `/start_at_beat <int>` — the absolute song beat at which `sfrecord~`
+  should start writing. Integer beats only for MVP (matches Live's
+  beat count convention; sub-beat alignment is a post-MVP refinement).
+- `/stop_at_beat <int>` — the absolute song beat at which `sfrecord~`
+  should stop AND finalize. Must be > `start_at_beat`. The patch
+  refuses to arm if the inequality doesn't hold.
+
+Both are retained inside the patch (`[value]`-style) and persist until
+overwritten or until the patch is reloaded. The harness owns "send
+fresh `/start_at_beat` + `/stop_at_beat` per render" — the patch does
+NOT clear them after firing.
+
+**Transport observer:**
+
+The patch subscribes to Live's transport-beat counter (via the
+`[live.observer]` external pointed at `live_set song_time`, OR the
+`live.thisdevice`-rooted equivalent that exposes the current song beat
+position). It runs at control rate — the granularity is one Max
+scheduler tick, which is fine for beat-accurate boundaries at all
+reasonable tempos. Sample-accurate (sub-tick) boundaries are
+deliberately out of scope for the MVP; if PDC math ever demands them,
+the upgrade path is `[plugsync~]` + signal-rate comparison, but
+empirical multi-analyzer alignment at tick rate looks adequate.
+
+**Behavior contract:**
+
+- `Arm=0`: patch ignores all transport events. `sfrecord~` is closed.
+- `Arm=1` + transport stopped: patch holds. `sfrecord~` is NOT open
+  yet. The retained `/path` is read but not acted on.
+- `Arm=1` + transport playing + current_beat < `start_at_beat`:
+  patch holds. `sfrecord~` is NOT open yet.
+- `Arm=1` + transport-position observer fires "current_beat crossed
+  `start_at_beat`": patch sends `open <path>` then `1` (integer) to
+  `sfrecord~` in the documented order (`[t b b]` right-then-left).
+  Recording is now active.
+- `Arm=1` + recording active + observer fires "current_beat crossed
+  `stop_at_beat`": patch sends `0` to `sfrecord~`. Recording is
+  finalized.
+- After the stop-beat crossing, the patch returns to the
+  "Arm=1 + holding" state. A subsequent `/start_at_beat` +
+  `/stop_at_beat` pair (with the harness having also sent a fresh
+  `/path`) re-arms for the next render WITHOUT requiring the harness
+  to toggle `Arm`. This is the multi-section render path: one Arm
+  cycle covers an arbitrary number of beat-windowed captures, each
+  written to its own path.
+- `Arm` falling edge (1 → 0) DURING active recording: patch sends `0`
+  to `sfrecord~` immediately (the "user pulled the cord" path). Same
+  rising-edge no-path / no-parent-dir guards apply.
+
+**Why beat-based, not sample-based, for the wire:**
+
+- Tempo automation between bars just works (the beat observer crosses
+  the boundary at the actual wall-clock moment dictated by the active
+  tempo, not by a sample count the harness pre-computed at one tempo).
+- Multi-analyzer alignment is structural — every analyzer observes the
+  same Live transport, so they all see `current_beat = start_at_beat`
+  at the same audio buffer.
+- The harness can express "record the entire arrangement" as
+  `(0, arrangement_length_in_beats)` regardless of tempo automation.
+
+**Why arm-as-gate (not arm-as-boundary):**
+
+`Arm` is a Live parameter; writes go through Remote Script with its
+~700 ms latency. Defining a sample-accurate boundary on top of that is
+hopeless. By making `Arm` the gate ("do you care about transport
+events?") and the beat observer the boundary ("which transport
+events?"), MCP latency becomes irrelevant to the recording window.
+
+**Chunk 1 backwards-compatibility:**
+
+The Chunk 1 harness wrote `Arm=1` and immediately started transport
+without setting `/start_at_beat` — it expected `Arm=1` to begin
+recording right away. Chunk 2's patch treats unset `start_at_beat` as
+"start immediately on next transport play event" so the Chunk 1 path
+still works for one-off debugging. The harness is intentionally
+deprecated in Chunk 2 (`ableton_render` is its replacement), but the
+patch shouldn't make stale invocations of it confusing.
+
+## OSC feature emitter (Chunk 2)
+
+Each analyzer emits a periodic feature frame to a Python sidecar. The
+sidecar maintains a per-`track_id` ring buffer and exposes the buffer
+to the rest of the MCP server as an internal API. Frames are emitted
+whenever Live's audio thread is running — independent of `Arm` /
+`sfrecord~` / transport state — so a future "always-on realtime
+mix-coaching" surface (post-MVP) sees data even when nothing is being
+recorded. `emit_enabled` (Live parameter) is the kill switch.
+
+**Frame shape:**
+
+- OSC address: `/hallucinote/track/<track_id>/features`
+- Payload: three 32-bit floats, in this order:
+  1. `lufs_m` — momentary loudness per ITU-R BS.1770-4, K-weighted,
+     400 ms integration window. Units: LUFS (LU above silence).
+     Patch implementation: K-weighting filter (high-shelf at 1.5 kHz
+     +4 dB → high-pass at 38 Hz) → squared → mean over 400 ms →
+     `10 * log10()` → minus 0.691 (the BS.1770 constant). Use
+     Max's `[poly~]` or a flat-patch implementation of the
+     pre-filter cascade; do NOT use a Max external whose
+     coefficients aren't documented.
+  2. `peak_dbfs` — sample-peak (NOT true-peak; true-peak requires
+     4× oversampling, deferred to Chunk 3's offline analysis). Read
+     via `[peakamp~]` polled at the emit rate. Units: dBFS.
+  3. `low_mid_power` — RMS power in the 200–500 Hz band. Patch
+     implementation: 200 Hz high-pass → 500 Hz low-pass (both 4th-
+     order Linkwitz-Riley or equivalent, ~24 dB/oct so the band is
+     well-defined) → `[average~]` over 100 ms → `10 * log10()`.
+     Units: dB relative to full scale. Chunk 3's master-bus
+     contribution attribution wants this band specifically because
+     it's where kick + bass interact (the "is the mix muddy" /
+     "what's clipping the master" diagnostic).
+
+**Emit rate:** ~30 Hz (every 33 ms). Driven by a `[metro 33]` →
+`[snapshot~]`-on-each-extractor chain. Rate is intentionally not
+exposed as a Live parameter; if it ever needs to be tuned, Chunk 3
+will surface the trade-off.
+
+**Destination:** `127.0.0.1:<osc_emit_port>` via `[udpsend]`. The
+emit port is per-instance (Live parameter), but `ensure_analyzers_loaded`
+configures every analyzer to emit to the same port (default 11001) so
+the sidecar opens one socket. Multiple analyzers writing to one UDP
+socket is fine — UDP delivery is best-effort and the sidecar's ring
+buffers are keyed by `track_id` (extracted from the address), so
+interleaving is the expected shape.
+
+**Gating:**
+
+- `emit_enabled=0`: no frames. The extractors keep running (no audio-
+  thread cost difference) but the `[udpsend]` is gated by a `[gate]`
+  upstream of the address-prepend.
+- `track_id` unset (no `/track_id <symbol>` received since patch
+  load): no frames. The frame builder gates on a non-empty
+  `[value $track_id]`, refusing to emit a placeholder address.
+- Audio thread idle (Live's audio engine off): no frames as a
+  side effect — `[metro]` runs but the extractors return -inf / 0
+  and the patch emits the literal zeros. Sidecar consumers must
+  tolerate this; the ring buffer treats -inf LUFS as "silent",
+  not as "broken".
+
+**What the patch does NOT compute (deferred to offline analysis):**
+
+- LUFS-integrated (LUFS-I) — the full song integration. Requires the
+  full WAV; computed by `pyloudnorm` in Chunk 3.
+- LUFS-short-term (LUFS-S) — 3 s sliding window. Computable inside
+  the patch but not needed for the MVP's realtime surface; offline
+  analysis derives it from the WAV.
+- True peak (oversampled) — 4× resample then max-abs. Computed in
+  Chunk 3 offline from the WAV; sample-peak is the realtime proxy.
+- PSR / dynamic range — derived offline.
+- Spectral centroid, 1/3-octave bands beyond low-mid, masking
+  ratios, intersample peaks — all deferred to offline analysis.
+
+The split is deliberate: the patch carries the minimum that
+realtime mix-coaching needs (deferred to post-MVP), the offline
+pipeline carries everything that benefits from looking at the
+whole stem.
 
 ## Install path (manual, Chunk 1)
 
@@ -260,7 +544,7 @@ Once the patch loads in Live and the Remote Script is running:
      expected and structural)
 5. Record any `sfrecord~` quirks in the chunk handoff for the Chunk 2 author.
 
-## GO criteria (Chunk 1 scope)
+## GO criteria (Chunk 1 scope, shipped 2026-05-26)
 
 - WAV exists at expected path with expected dtype/channels/SR.
 - WAV header is finalized (soundfile reports frames > 0).
@@ -268,52 +552,84 @@ Once the patch loads in Live and the Remote Script is running:
 - Param writes from the harness reliably trigger record start/stop via
   the patch's rising/falling-edge handlers.
 
-## NO-GO criteria
+## NO-GO criteria (Chunk 1)
 
 - WAV missing, empty (0 frames), or unreadable.
 - Audio is silent (peak ≤ -60 dBFS) — signal isn't reaching `sfrecord~`.
 - `Arm` parameter writes don't reliably trigger record start (race
   condition between Remote Script parameter-write and `sfrecord~` open).
 
-**Not in Chunk 1's GO scope (deferred to Chunk 2):**
-
-- **Strict duration match** (recording window precisely equals transport
-  play window). The current MCP-latency-bounded recording is structurally
-  ~2 s longer than the transport window. Chunk 2 fixes this with
-  transport-position-driven recording boundaries inside the patch.
-- **PDC alignment** (track vs master cross-correlation). Requires
-  simultaneous master analyzer capture, which requires master-strip MCP
-  support — Chunk 2 work.
-
-NO-GO at the Chunk 1 level falls back to the spike's Resampling-tracks
-alternative (§1) — re-plan before continuing to Chunk 2.
+NO-GO at the Chunk 1 level fell back to the spike's Resampling-tracks
+alternative (§1). Chunk 1 went GO; this fallback path is no longer hot.
 
 ---
 
-## Reserved for Chunk 2 (do NOT add in Chunk 1)
+## Verifying the build (Chunk 2 GO/NO-GO)
 
-Chunk 2 will extend this patch with the following. Listed here so the Chunk 1
-build leaves space for them without painting into a corner:
+Chunk 2 verifies the multi-analyzer capture path end-to-end. Unlike
+Chunk 1 (one analyzer, one track, throwaway harness), Chunk 2's verify
+is `ableton_render` on a real song — every track + every return +
+master picks up an analyzer; one playback pass produces N+R+1 WAVs +
+a manifest.
 
-- **`signature` surface** — value `"hallucinote-analyzer-v1"`. Used by
-  `ensure_analyzers_loaded` to detect existing analyzer instances vs other
-  Max devices that happen to share the name. Strings cannot be Live
-  parameters; Chunk 2 will decide between (a) an enum Live parameter with
-  a single fixed-value slot, (b) inferring identity from the device's
-  `.amxd` filename via the Live API, or (c) an OSC query/response on the
-  same `osc_port`.
-- **`track_id` surface** — same string constraint as `signature`. Chunk 2
-  will likely deliver it via OSC (e.g., `/track_id <symbol>`) using the
-  already-built inbound channel, mirroring how `/path` works in Chunk 1.
-- **OSC emitter** — `udpsend` to `127.0.0.1:<emit_port>` (separate from
-  the inbound port), frame format
-  `/hallucinote/track/<track_id>/features [lufs_m, peak_dbfs, low_mid_power]`
-  at ~30 Hz. Feature extraction from the audio inlet runs in parallel with
-  `sfrecord~`. May reuse `osc_port` for outbound or introduce
-  `osc_emit_port` — Chunk 2 decides.
+Once the Chunk 2 `.amxd` is built and copied into the User Library
+(via `/ableton-mcp-install`):
 
-Leave room in the patch for those additions. The Chunk 1 patch should
-already have visual real estate (e.g., a clearly-named region) for them so
-the Chunk 2 author isn't fighting layout. (`osc_port` and `[udpreceive]`
-are already in place from Chunk 1; Chunk 2 just adds the outbound side
-and the identity surface.)
+1. Open a Hallucinote song with multiple tracks and at least one
+   return. `falling-walking` is the obvious choice — it has the
+   typical 4 tracks + 2 returns shape.
+2. Invoke `ableton_render` via the MCP. The action's silent
+   ensure-analyzers sweep places HallucinoteAnalyzer on every
+   track + return + master if not already present, configures
+   ports + track_ids via OSC, then drives the render.
+3. Confirm `songs/falling-walking/captures/<timestamp>/` exists
+   with N+R+1 WAVs (one per analyzer) + `manifest.json`.
+4. Each WAV is FLOAT / stereo / Live's SR. Duration should match
+   the arrangement length within one buffer (no leading/trailing
+   silence padding — that's the transport-position-sync win).
+5. Cross-correlate any track WAV vs the master WAV; the lag should
+   be within ± 64 samples of zero (PDC alignment).
+6. While the render runs, confirm the OSC sidecar received feature
+   frames at ~30 Hz per analyzer (smoke test; the
+   `ableton_render` return value should report frame counts).
+
+### GO criteria (Chunk 2 scope)
+
+- `ableton_render` produces one WAV per analyzer + a manifest.
+- Every WAV is FLOAT / stereo / Live's SR with frames > 0 and audio
+  content above -60 dBFS (modulo intentionally-muted tracks).
+- WAV duration matches arrangement length within one audio buffer
+  (no MCP-latency silence padding around the content).
+- Any track WAV cross-correlated against the master WAV produces a
+  lag within ± 64 samples of zero (PDC alignment is structural —
+  every analyzer observes the same Live transport).
+- OSC sidecar receives ≥ one frame per analyzer per render. Full
+  ~30 Hz rate validation is post-MVP (the sidecar surface for
+  realtime mix-coaching ships after Chunk 4).
+- Running `ableton_render` twice produces two independent captures
+  directories — the silent ensure-analyzers sweep is idempotent.
+
+### NO-GO criteria (Chunk 2)
+
+- Recording boundaries are still MCP-latency-bounded (~2 s padding
+  around content). Likely cause: the transport-position observer
+  isn't actually observing, or the patch is still treating `Arm` as
+  the boundary.
+- PDC alignment is off by > 64 samples between analyzers in the
+  same render. Likely cause: the beat observer in different
+  analyzer instances is firing on different audio buffers (out-of-
+  sync due to a per-instance computation; should be reading Live's
+  shared transport).
+- OSC sidecar receives no frames during a render. Likely cause:
+  `emit_enabled` defaulted to 0, or `track_id` wasn't set, or the
+  emit port doesn't match the sidecar's listen port, or the K-
+  weighting / band-power extractors are stuck.
+- `ensure_analyzers_loaded` isn't idempotent — a second run
+  duplicates analyzers on tracks. Likely cause: signature check
+  failing (OSC query has no reply, or reply on a different port,
+  or `track_id` is being used as identity instead of signature).
+
+NO-GO at the Chunk 2 level falls back to a track-only render (skip
+master + skip returns) so Chunk 3 has at least per-track WAVs to
+work with while the alignment / sidecar / master-strip surface
+gets debugged in a follow-up.

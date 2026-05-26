@@ -481,3 +481,89 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     }
     assert by_target["track"].args["kind"] == "Compressor"
     assert by_target["return"].args["kind"] == "Reverb"
+
+
+# ---------- master-strip device chains (Chunk 2 — closes P0 backlog) -------
+
+
+@pytest.fixture
+def master_track(conn, song):
+    """A master-strip track in the DB. Bootstrapped by hand here because
+    the song fixture above doesn't create one — master strips are not
+    required for the bulk of the planner tests, so this is opt-in."""
+    return M.create_track(
+        conn, song_id=song, track_index=0, name="Master", kind="master",
+    )
+
+
+def test_plan_push_devices_walks_master_chain(
+    conn, song, session, master_track,
+):
+    """plan_push_devices no longer skips kind='master' tracks. With a master
+    device chain in the DB, the planner emits a load ToolCall addressed via
+    master=True (no track_index, no return_index). Closes the P0 backlog
+    entry "Master-strip device chains" (`src/hallucinote/sync/push.py:928-966`,
+    pre-Chunk-2)."""
+    cid = M.create_device_chain(conn, parent_track_id=master_track)
+    M.create_device(
+        conn, chain_id=cid, position=1,
+        kind="Limiter", display_name="Master Limiter",
+    )
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    loads = [c for c in plan.calls if c.args.get("action") == "load"]
+    assert len(loads) == 1
+    call = loads[0]
+    assert call.args.get("master") is True
+    assert "track_index" not in call.args
+    assert "return_index" not in call.args
+    assert call.args["kind"] == "Limiter"
+
+
+def test_plan_push_devices_master_chain_no_unlinked_track_warn(
+    conn, song, session, master_track,
+):
+    """Master strip has no ableton_link row (no track_index addressing).
+    The planner must NOT emit the TRACK-LEVEL "track ... not linked" warning
+    for the master — it's a singleton, not a missing track. (Device-level
+    "device ... not linked yet" warnings still apply per-device until
+    apply_push_results lands the device_index.)"""
+    cid = M.create_device_chain(conn, parent_track_id=master_track)
+    M.create_device(
+        conn, chain_id=cid, position=1,
+        kind="Limiter", display_name="Master Limiter",
+    )
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    assert not any(
+        n.startswith("track 'Master'") and "not linked" in n
+        for n in plan.notes
+    ), plan.notes
+
+
+def test_plan_push_devices_master_set_parameter_uses_master_kv(
+    conn, song, session, master_track,
+):
+    """When the master device is linked, parameter writes must use
+    master=True addressing too (not track_index)."""
+    cid = M.create_device_chain(conn, parent_track_id=master_track)
+    dev = M.create_device(
+        conn, chain_id=cid, position=1,
+        kind="Limiter", display_name="Master Limiter",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=dev, ableton_index=1,
+    )
+    M.set_device_parameter(
+        conn, device_id=dev, name="Ceiling",
+        value_display="-0.3 dB", value_normalized=0.9,
+    )
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    set_calls = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
+    assert len(set_calls) == 1
+    args = set_calls[0].args
+    assert args.get("master") is True
+    assert "track_index" not in args
+    assert "return_index" not in args
+    assert args["parameter_name"] == "Ceiling"

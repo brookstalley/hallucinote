@@ -1,0 +1,150 @@
+"""``ableton_render`` action schema.
+
+Two actions:
+
+  - ``ensure_loaded`` — idempotent silent sweep that places a
+    HallucinoteAnalyzer on every audio track + return + master.
+    Wired into ``/song-new``, ``/track-new-with-instrument``, and
+    ``/return-new`` skill postludes so analyzer placement keeps up
+    with structural changes silently.
+
+  - ``render`` — full end-to-end capture pass: ensure → deliver
+    paths + windows over OSC → arm → play → wait → stop → write
+    manifest. Produces one WAV per surface plus ``manifest.json``
+    in the captures directory.
+
+Both actions live behind one tool because they share lifecycle:
+``render`` always calls ``ensure_loaded`` in its preamble, and the
+``ensure_loaded`` surface gives callers a side door for "place the
+analyzers without rendering yet" workflows (e.g. a `/song-new`
+postlude that runs before any composition exists).
+"""
+from __future__ import annotations
+
+from ..handlers import render as render_handlers
+from ..schema import Action, ParamSpec, register
+
+
+register(
+    Action(
+        tool="ableton_render",
+        name="help",
+        description=(
+            "List all actions on ableton_render, with required/optional "
+            "params, examples, and tips."
+        ),
+        example="ableton_render(action='help')",
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_render",
+        name="ensure_loaded",
+        description=(
+            "Idempotent silent sweep — place a HallucinoteAnalyzer on every "
+            "audio track + return + master where it's missing. Detection is "
+            "by class_display_name=HallucinoteAnalyzer; existing instances "
+            "are recorded but not duplicated. Returns the per-surface "
+            "layout (track_id + OSC port + device_index)."
+        ),
+        handler=render_handlers.ensure_loaded_handler,
+        runs_on_worker=True,
+        example="ableton_render(action='ensure_loaded')",
+        tips=(
+            "Wired into /song-new, /track-new-with-instrument, and "
+            "/return-new skill postludes so structural mutations don't "
+            "leave the analyzer placement stale.",
+            "Running twice produces an identical layout — port "
+            "assignment is a pure function of the surface address.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_render",
+        name="render",
+        description=(
+            "End-to-end capture pass. Ensure analyzers are present, deliver "
+            "per-instance WAV paths + transport-position windows via OSC, "
+            "arm, play the arrangement, stop on stop_at_beat + post-roll, "
+            "disarm, and write the captures manifest. Produces one WAV per "
+            "surface plus manifest.json in the captures directory."
+        ),
+        params=(
+            ParamSpec(
+                name="song_slug",
+                type="str",
+                required=False,
+                description=(
+                    "Hallucinote song slug. Drives the default output_dir "
+                    "(songs/<slug>/captures/<iso-timestamp>/). Optional — "
+                    "callers can also pass an explicit output_dir to "
+                    "render against an arbitrary location."
+                ),
+            ),
+            ParamSpec(
+                name="output_dir",
+                type="str",
+                required=False,
+                description=(
+                    "Where to write WAVs + manifest.json. Created if it "
+                    "doesn't exist. Overrides the slug-derived default."
+                ),
+            ),
+            ParamSpec(
+                name="start_at_beat",
+                type="int",
+                required=False,
+                minimum=0,
+                description=(
+                    "Beat at which recording should start (0-based, "
+                    "matches Live's beat counter). Default 0 — the "
+                    "arrangement's start."
+                ),
+            ),
+            ParamSpec(
+                name="stop_at_beat",
+                type="int",
+                required=False,
+                minimum=1,
+                description=(
+                    "Beat at which recording should stop. Default: the "
+                    "arrangement's last_event_time (full song)."
+                ),
+            ),
+            ParamSpec(
+                name="post_roll_beats",
+                type="float",
+                required=False,
+                minimum=0.0,
+                description=(
+                    "Extra beats to let transport run past stop_at_beat "
+                    "before issuing Live's stop. Gives the patch's beat "
+                    "observer time to fire sfrecord~'s stop+finalize. "
+                    "Default 4 (one bar at 4/4)."
+                ),
+            ),
+        ),
+        handler=render_handlers.render_handler,
+        runs_on_worker=True,
+        example=(
+            "ableton_render(action='render', song_slug='falling-walking')"
+        ),
+        tips=(
+            "Per analyzer instance: WAV path + track_id + start/stop "
+            "beats are delivered out-of-band via OSC (Live params can't "
+            "carry strings); Arm is the gate (Live param), the patch's "
+            "beat observer is the boundary. See "
+            "m4l/HallucinoteAnalyzer.amxd.spec.md.",
+            "Returns {captures_dir, manifest_path, manifest, status}. "
+            "status='ok' on clean exit, 'incomplete' if transport "
+            "didn't reach stop_at_beat within the wait window (Live's "
+            "audio thread may have stalled; the partial WAVs are still "
+            "on disk).",
+        ),
+    )
+)

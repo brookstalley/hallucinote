@@ -4,6 +4,59 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
+
+<!-- chunks=2a status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Sub-chunk 2A of Chunk 2 closed with the full Python-side surface for
+the audio-capture pipeline. M4L authoring + in-Live verification (sub-
+chunk 2B) is the next deliverable; the split mirrors Chunk 1's per the
+"Human-authoring boundaries split the chunk" learning.
+
+What landed:
+
+- **Master-strip device push** — `plan_push_devices`
+  (`src/hallucinote/sync/push.py`) now walks `kind='master'` tracks and
+  emits load + set-parameter ToolCalls addressed via `master=True`
+  instead of `track_index`. The `ableton_device` action schema +
+  `_resolve_parent` accept the new addressing uniformly across every
+  device action. **Closes the P0 backlog entry "Master-strip device
+  chains"** (open since 2026-05-17).
+- **`hallucinote_mcp.analyzer` package** — `setup.ensure_analyzers_loaded`
+  (idempotent silent sweep over audio tracks + returns + master,
+  deterministic per-instance OSC port assignment, writes Port + EmitPort
+  Live params on load), `osc.AnalyzerOSC` (OSC 1.0 string/int packer
+  for `/path`, `/track_id`, `/start_at_beat`, `/stop_at_beat`),
+  `sidecar.OSCSidecar` (lazy-spawned UDP receiver with per-`track_id`
+  ring buffers, lenient frame parsing — malformed frames drop without
+  killing the receiver).
+- **`ableton_render` MCP tool** with two actions:
+  `ensure_loaded` (silent sweep, returns layout) and `render`
+  (orchestrates ensure-load → OSC delivery → batch arm → seek + play →
+  poll transport → batch disarm → manifest write). Render handler is
+  fully unit-tested via injected seams; status='ok' on clean exit,
+  'incomplete' on transport timeout.
+- **Install skill extension** — copies
+  `HallucinoteAnalyzer.amxd` from the package into Live's
+  `Presets/Audio Effects/Max Audio Effect/` during install, probes
+  M4L runtime (returns `None` for MVP — Live edition isn't reliably
+  detectable; skill asks the user).
+- **Auto-load postlude** wired into `/song-new`,
+  `/track-new-with-instrument`, and `/return-new` skill bodies so
+  structural mutations keep analyzer placement in sync.
+- **Spec extension** in `m4l/HallucinoteAnalyzer.amxd.spec.md`: full
+  Chunk 2 surface documented (OSC feature emitter shape, transport-
+  position observer behavior contract, signature OSC query rationale,
+  widened `Port` range to 11000-11400 for the deterministic per-
+  surface port allocation).
+- **`.gitignore`** updates for `songs/*/captures/`, `.hallucinote/stems/`,
+  `*.amxd~`.
+
+Test impact: +66 unit tests across `analyzer/*`, `actions_render`,
+`actions_device` (master-strip), `push_devices` (master-strip planner),
+`install_paths` (analyzer copy + M4L probe), `install_skill_consistency`
+(structural-skill postlude wiring). 2033 → 2099 passing.
+
 ## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
 
 <!-- chunks=1 status=shipped release=unreleased scope=audio-analysis-mvp -->

@@ -295,6 +295,99 @@ If any of those are present, the excludes didn't take effect; redo the
 copy before continuing — Live's embedded Python will fail to import the
 FastMCP-dependent files and abort loading the Control Surface.
 
+## Step 3d — Copy the HallucinoteAnalyzer M4L device
+
+The audio-analysis MVP ships a Max for Live device
+(`HallucinoteAnalyzer.amxd`) that records per-stem WAVs and streams
+realtime features. It must live in Live's Max Audio Effect Presets
+directory so the analyzer setup (`ableton_render(action='ensure_loaded')`)
+can find it via the browser.
+
+Target:
+```
+<User Library>/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd
+```
+
+### 3d.1. Resolve source + target
+
+```bash
+python -c "from hallucinote_mcp.install_paths import analyzer_amxd_source_path, analyzer_install_target; print('src=', analyzer_amxd_source_path()); print('dst=', analyzer_install_target(r'<chosen User Library>'))"
+```
+
+If `src` doesn't exist, the package install is incomplete (likely a
+partial pip install or a source checkout that omitted `m4l/`). Stop and
+tell the user to `pip install --force-reinstall hallucinote-mcp`. The
+analyzer is shipped inside the wheel under `hallucinote_mcp/m4l/`.
+
+### 3d.2. Confirm before overwriting
+
+If `dst` already exists, ask before overwriting. The user may have a
+locally-customized version (rare, but a Max GUI save lands back in the
+User Library — see the spec's "Authoring workflow"). Don't auto-replace
+without confirmation.
+
+### 3d.3. Copy
+
+The `.amxd` is a binary container — do NOT route it through any text
+filter. Plain file copy preserves the byte-exact content:
+
+**macOS / Linux:**
+```bash
+mkdir -p "<dst-parent>"
+cp "<src>" "<dst>"
+```
+
+**Windows (PowerShell):**
+```powershell
+New-Item -Path "<dst-parent>" -ItemType Directory -Force | Out-Null
+Copy-Item -Path "<src>" -Destination "<dst>"
+```
+
+**Windows (cmd.exe):**
+```cmd
+mkdir "<dst-parent>"
+copy /Y "<src>" "<dst>"
+```
+
+### 3d.4. Probe for Max for Live
+
+The analyzer is an M4L device; it requires Max for Live, which ships
+only with Live Suite. If the user has Live Standard or Lite, the
+device will appear in their browser but fail to load with
+"Max for Live not available" at runtime.
+
+```bash
+python -c "from hallucinote_mcp.install_paths import max_for_live_available; print(max_for_live_available())"
+```
+
+- Returns `True` — strong evidence M4L is available; proceed quietly.
+- Returns `False` — strong evidence M4L is NOT installed; stop and
+  tell the user the analyzer requires Live Suite. Don't refuse the
+  rest of the install — the MCP bridge still works for non-render
+  workflows; the user can decide whether to upgrade.
+- Returns `None` — can't tell. Ask the user "Is your Live edition
+  **Suite**? (The HallucinoteAnalyzer requires Max for Live, which
+  ships only with Suite.)". Their answer decides whether to mention
+  the analyzer in Step 5's hand-off.
+
+Today the probe always returns `None` (Live's edition isn't reliably
+detectable cross-version); the install skill asks every time. Future
+versions tighten this when reliable signals are available.
+
+### 3d.5. Verify
+
+After copy, the file must exist at the target path and be byte-equal
+to the source (or close to it — Live may rewrite trailing chunks on
+first load, so a strict byte equality check happens BEFORE first
+Live launch).
+
+```bash
+python -c "from hallucinote_mcp.install_paths import installed_analyzer_amxd; print(installed_analyzer_amxd(r'<chosen User Library>'))"
+```
+
+A `None` return means the copy didn't land — investigate (permission
+denied? wrong target path?) before continuing.
+
 ## Step 4 — Write the MCP server config
 
 Ask: project-local `.mcp.json` (default — in the current working directory)

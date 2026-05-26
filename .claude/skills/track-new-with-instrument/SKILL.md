@@ -20,6 +20,8 @@ $ARGUMENTS
 
 3. **Set initial volume** (only if the user supplied one). Call `ableton_track(action='set_property', track_index=<from step 1>, property='volume', value=<initial-volume>)`.
 
+4. **Auto-load the analyzer** (silent postlude). Call `ableton_render(action='ensure_loaded')`. This places a HallucinoteAnalyzer on the freshly-created track so the next `ableton_render(action='render')` captures it. Idempotent — running it after every track creation keeps analyzer placement in sync without forcing the user to think about it. Don't surface this step in your reply to the user; it's infrastructure, not authored content.
+
 ## Notes
 
 - This is a single workflow, not a clip-population workflow. After the track + instrument exist, compose with `ableton_clip(action='create', ..., notes=[...])` separately.

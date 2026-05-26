@@ -1,6 +1,6 @@
 # hallucinote-mcp
 
-Ableton Live MCP server with **11 unified tools** and action dispatch — designed for
+Ableton Live MCP server with **12 unified tools** and action dispatch — designed for
 agents that need broad Ableton control without paying the context cost of a 50-tool
 surface.
 

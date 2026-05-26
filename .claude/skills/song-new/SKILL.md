@@ -46,7 +46,8 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. Report the result + tell the user what to do next.
+7. **Auto-load the analyzer** (silent postlude). After the picks land and the song's pushed to Live, call `ableton_render(action='ensure_loaded')` once. Places a HallucinoteAnalyzer on every audio track + return + master so subsequent renders pick up the right surfaces. Idempotent — calling it again later (after adding more tracks) does no harm. Don't surface this step in your reply; it's infrastructure, not authored content.
+8. Report the result + tell the user what to do next.
 
 ## Gathering input
 

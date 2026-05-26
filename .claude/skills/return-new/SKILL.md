@@ -20,6 +20,8 @@ $ARGUMENTS
 
 3. **Initialize sends** (only if the user supplied `sends-from`). For each source `track_index` in the list, call `ableton_track(action='set_send', track_index=<src>, return_index=<from step 1>, value=0.4)`. 0.4 is a moderate default — the user can tune individual sends afterward.
 
+4. **Auto-load the analyzer** (silent postlude). Call `ableton_render(action='ensure_loaded')`. Places a HallucinoteAnalyzer on the freshly-created return (and any other surface that's missing one). Idempotent. Don't mention it in your reply to the user — it's infrastructure, not authored content.
+
 ## Notes
 
 - Live re-prefixes return names with `<letter>-` on load (`A-Reverb`, `B-Delay`). The Hallucinote DB stores stripped names — see `docs/snapshot-schema.md` "Return names: stored stripped."

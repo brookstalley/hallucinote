@@ -961,8 +961,19 @@ def plan_push_devices(
 
     for t in tracks:
         if t["kind"] == "master":
-            # Master tracks don't carry devices via the tracks table; real
-            # returns are handled in the loop below.
+            # Master strip is a song-level singleton — no ableton_link row
+            # (no track_index addressing) and no name disambiguation. Devices
+            # on the master are addressed via `master=True` at load time.
+            for chain in Q.get_device_chains_for_track(conn, t["id"]):
+                for device in Q.get_devices_for_chain(conn, chain["id"]):
+                    _emit_device_calls(
+                        plan, conn,
+                        session_id=session_id,
+                        parent_kind="master",
+                        parent_at=None,
+                        parent_name=t["name"],
+                        device=device,
+                    )
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=t["id"]
@@ -1017,15 +1028,20 @@ def _emit_device_calls(
     conn: sqlite3.Connection,
     *,
     session_id: str,
-    parent_kind: str,         # 'track' | 'return'
-    parent_at: int,
+    parent_kind: str,         # 'track' | 'return' | 'master'
+    parent_at: int | None,
     parent_name: str,
     device: sqlite3.Row,
 ) -> None:
     """Emit load + parameter calls for a single device. If the device isn't
     yet linked in this session, emit the load and skip parameter writes —
     the agent must call apply_push_results to record the new device_index
-    before parameters can be addressed."""
+    before parameters can be addressed.
+
+    ``parent_kind='master'`` is the master-strip path: ``parent_at`` is
+    ``None`` (master is a singleton, no index addressing), and the emitted
+    ToolCall uses ``master=True`` instead of ``track_index`` / ``return_index``.
+    """
     # W13-B (v0.9.0): placeholder devices represent an author-intentional
     # empty slot. Push leaves the chain position empty; the consumer
     # picks an instrument/effect to fill it. Skip cleanly with a warn so
@@ -1041,7 +1057,15 @@ def _emit_device_calls(
     device_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="device", db_id=device["id"]
     )
-    parent_arg = "track_index" if parent_kind == "track" else "return_index"
+    # Master strip addressing diverges from track/return: a boolean flag
+    # instead of an index. Captured up front so both load + set_parameter
+    # branches share one shape.
+    if parent_kind == "master":
+        parent_kv: dict[str, object] = {"master": True}
+    elif parent_kind == "track":
+        parent_kv = {"track_index": parent_at}
+    else:
+        parent_kv = {"return_index": parent_at}
     if device_at is None:
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.
@@ -1053,7 +1077,7 @@ def _emit_device_calls(
         # order they appear in the chain (position-asc) and Live's
         # tail-append will match.
         load_args = {
-            parent_arg: parent_at,
+            **parent_kv,
             "action": "load",
             "kind": device["kind"],
         }
@@ -1131,7 +1155,7 @@ def _emit_device_calls(
             tool="ableton_device",
             args={
                 "action": "set_parameter",
-                parent_arg: parent_at,
+                **parent_kv,
                 "device_index": device_at,
                 "parameter_name": p["name"],
                 "value": str(p["value_normalized"]),

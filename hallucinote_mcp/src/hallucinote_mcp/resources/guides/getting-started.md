@@ -1,11 +1,11 @@
 # hallucinote-mcp — Getting Started
 
-Welcome. This MCP server exposes Ableton Live as a unified 11-tool surface
+Welcome. This MCP server exposes Ableton Live as a unified 12-tool surface
 designed for low-context-cost agent interaction.
 
 ## The shape
 
-11 tools, each with an `action` parameter:
+12 tools, each with an `action` parameter:
 
 ```
 ableton_session     — global state, master, transport, view, tempo, signature, snapshot
@@ -19,6 +19,7 @@ ableton_arrangement — arrangement layout + cue points
 ableton_scene       — session-view scenes (rows of clip slots + tempo + signature)
 ableton_browser     — instruments, effects, plugins
 ableton_annotation  — composer-intent annotations on a song's DB (W8-C surface)
+ableton_render      — HallucinoteAnalyzer auto-load + WAV capture pass (audio analysis pipeline)
 ```
 
 **Discoverability**: every tool has `action='help'` that returns the full

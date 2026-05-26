@@ -11,20 +11,26 @@ import pytest
 
 from hallucinote_mcp import install_paths
 from hallucinote_mcp.install_paths import (
+    ANALYZER_AMXD_FILENAME,
     MCPConfigEntry,
     REMOTE_SCRIPT_EXCLUDE_DIRS_ANY,
     REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY,
     REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES,
+    analyzer_amxd_source_path,
+    analyzer_install_dir,
+    analyzer_install_target,
     candidate_user_libraries,
     default_user_library,
     describe_install_layout,
     existing_mcp_config_files,
     hallucinote_mcp_command,
+    installed_analyzer_amxd,
     installed_live_versions,
     installed_remote_script_version,
     live_is_running,
     live_log_path,
     malformed_mcp_config_files,
+    max_for_live_available,
     mcp_config_global_path,
     mcp_config_local_path,
     package_root,
@@ -886,3 +892,66 @@ def test_installed_remote_script_version_returns_none_when_base_version_missing(
         "# no BASE_VERSION here\n", encoding="utf-8",
     )
     assert installed_remote_script_version(tmp_path) is None
+
+
+# --- analyzer .amxd install (Chunk 2) ---------------------------------
+
+
+def test_analyzer_amxd_filename_is_stable():
+    """The filename doubles as the Live class_display_name. Renaming
+    breaks the analyzer setup's name-based detection — keep it pinned."""
+    assert ANALYZER_AMXD_FILENAME == "HallucinoteAnalyzer.amxd"
+
+
+def test_analyzer_amxd_source_path_resolves_under_package():
+    src = analyzer_amxd_source_path()
+    assert isinstance(src, pathlib.Path)
+    # Must live under hallucinote_mcp/m4l/.
+    assert src.parent.name == "m4l"
+    assert src.parent.parent == package_root()
+    # Sanity check: the file actually exists in the dev tree (and in
+    # any properly built wheel via package-data).
+    assert src.exists(), (
+        f"HallucinoteAnalyzer.amxd missing at {src!s} — check "
+        "pyproject.toml [tool.setuptools.package-data]"
+    )
+
+
+def test_analyzer_install_dir_is_under_user_library(tmp_path):
+    """Live's Max Audio Effect Presets directory lives at a fixed
+    subpath under the User Library — don't drift from it."""
+    expected = tmp_path / "Presets" / "Audio Effects" / "Max Audio Effect"
+    assert analyzer_install_dir(tmp_path) == expected
+
+
+def test_analyzer_install_target_is_in_install_dir(tmp_path):
+    target = analyzer_install_target(tmp_path)
+    assert target.parent == analyzer_install_dir(tmp_path)
+    assert target.name == ANALYZER_AMXD_FILENAME
+
+
+def test_installed_analyzer_amxd_returns_none_when_absent(tmp_path):
+    assert installed_analyzer_amxd(tmp_path) is None
+
+
+def test_installed_analyzer_amxd_returns_path_when_present(tmp_path):
+    target = analyzer_install_target(tmp_path)
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"fake amxd contents")
+    assert installed_analyzer_amxd(tmp_path) == target
+
+
+def test_installed_analyzer_amxd_ignores_directory_collision(tmp_path):
+    """If something at the target path is a directory (a leftover from
+    a botched install) we must NOT treat it as the installed file."""
+    target = analyzer_install_target(tmp_path)
+    target.mkdir(parents=True)
+    assert installed_analyzer_amxd(tmp_path) is None
+
+
+def test_max_for_live_available_returns_none_for_mvp():
+    """Today the probe is unreliable across Live versions, so we
+    deliberately return None and let the install skill ask the user.
+    Pinned as a test so the contract is explicit."""
+    assert max_for_live_available() is None
+    assert max_for_live_available("12.0.5") is None

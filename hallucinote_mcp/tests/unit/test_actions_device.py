@@ -181,9 +181,11 @@ class FakeSong:
         self,
         tracks: list[FakeTrack] | None = None,
         returns: list[FakeReturn] | None = None,
+        master: FakeTrack | None = None,
     ):
         self.tracks = tracks or [FakeTrack("T1"), FakeTrack("T2")]
         self.return_tracks = returns or [FakeReturn("A-Rev")]
+        self.master_track = master or FakeTrack("Master")
         self.view = FakeSongView()
 
 
@@ -307,7 +309,7 @@ def test_list_rejects_both_track_and_return(loaded_actions):
         context=_ctx_with_one_device(),
     )
     assert resp.ok is False
-    assert "not both" in (resp.error or "")
+    assert "not more than one" in (resp.error or "")
 
 
 def test_info_returns_parameter_count(loaded_actions):
@@ -2553,3 +2555,158 @@ def test_device_execution_marshals_to_main_thread(loaded_actions):
         context=ctx,
     )
     assert ctx.run_on_main_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Master-strip device chains (Chunk 2)
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with_master_device() -> FakeCtx:
+    """Song with one device on the master strip (a master limiter shape)."""
+    limiter = FakeDevice(
+        name="Limiter", class_name="Limiter",
+        parameters=[FakeParam("Ceiling", -0.3, min=-12.0, max=0.0)],
+    )
+    return FakeCtx(
+        FakeSong(
+            tracks=[FakeTrack("Drums")],
+            returns=[FakeReturn("A-Rev")],
+            master=FakeTrack("Master", devices=[limiter]),
+        )
+    )
+
+
+def test_list_on_master(loaded_actions):
+    ctx = _ctx_with_master_device()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="list",
+            params={"master": True},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    # Master is a singleton — response carries `master: True`, no index field.
+    assert resp.result["master"] is True
+    assert "track_index" not in resp.result
+    assert "return_index" not in resp.result
+    assert [d["name"] for d in resp.result["devices"]] == ["Limiter"]
+
+
+def test_list_rejects_master_with_track_index(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="list",
+            params={"master": True, "track_index": 1},
+        ),
+        context=_ctx_with_master_device(),
+    )
+    assert resp.ok is False
+    assert "not more than one" in (resp.error or "")
+
+
+def test_list_rejects_master_with_return_index(loaded_actions):
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="list",
+            params={"master": True, "return_index": 1},
+        ),
+        context=_ctx_with_master_device(),
+    )
+    assert resp.ok is False
+    assert "not more than one" in (resp.error or "")
+
+
+def test_master_false_is_not_addressing(loaded_actions):
+    """`master: false` must not count as an addressing — the schema still
+    requires exactly one of {track_index, return_index, master=true}."""
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="list",
+            params={"master": False},
+        ),
+        context=_ctx_with_master_device(),
+    )
+    assert resp.ok is False
+    assert ("track_index" in (resp.error or "")
+            or "exactly one" in (resp.error or ""))
+
+
+def test_info_on_master(loaded_actions):
+    ctx = _ctx_with_master_device()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="info",
+            params={"master": True, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    assert resp.result["master"] is True
+    assert resp.result["parameter_count"] == 1
+
+
+def test_get_parameters_on_master(loaded_actions):
+    ctx = _ctx_with_master_device()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={"master": True, "device_index": 1, "detail": "summary"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    names = [p["name"] for p in resp.result["parameters"]]
+    assert "Ceiling" in names
+
+
+def test_set_parameter_on_master(loaded_actions):
+    ctx = _ctx_with_master_device()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "master": True, "device_index": 1,
+                "parameter_name": "Ceiling", "value": "-1.0",
+                "value_type": "continuous",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    assert ctx.song.master_track.devices[0].parameters[0].value == -1.0
+
+
+def test_load_appends_to_master_chain(loaded_actions):
+    """browser.load_item against master_track must select master via
+    song.view, append the device, and produce a response addressed by
+    master=True (no track_index/return_index)."""
+    ctx = _ctx_with_master_device()
+    item = FakeBrowserItem(
+        name="Limiter", uri="query:Audio Effects#Limiter", is_loadable=True,
+    )
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"master": True, "kind": "Limiter"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    assert resp.result["master"] is True
+    # Live's selected_track was the master_track during the browser load.
+    # The fake's load_item appends a fresh device to selected_track —
+    # so the master_track's chain should now have two devices.
+    assert len(ctx.song.master_track.devices) == 2
+    assert ctx.application.browser.load_calls == [item]
+
+
+# `plan_push_devices` master-strip walk lives in tests/unit/sync/test_push_devices.py
+# next to the other planner-shape tests.

@@ -405,10 +405,15 @@ Box text:
 Box text:
 
 ```
-udpsend
+udpsend 127.0.0.1 0
 ```
 
-(No host/port args — destination configured dynamically per-query.)
+The `127.0.0.1 0` constructor args are placeholders — Max's `udpsend`
+expects host+port args at instantiation time even though we'll
+overwrite the destination dynamically via inlet 1. Without args the
+object renders red/unresolved with no visible inlets, which looks
+like the object is broken. The placeholder port `0` will be replaced
+on every query by the unpacked reply destination.
 
 Wire:
 - inlet 0 (left, the OSC message): from C.3.b's `[message ...]` outlet → here
@@ -419,6 +424,13 @@ Wire:
 > MUST be configured BEFORE the reply message lands at the left
 > inlet, or the message goes to the previous (or zero) destination.
 > The `[t l b]` right-then-left fire order in C.3.b is load-bearing.
+
+> **Trap.** If `udpsend` instantiated WITHOUT host+port args resolves
+> red/unresolved in your Max version, that's the cause — give it
+> placeholder args `127.0.0.1 0` (the port will be overwritten via
+> inlet 1 anyway). Alternative if your install lacks the vanilla
+> `udpsend` object entirely: `mxj net.udp.send 127.0.0.1 0` ships
+> with every Max version and accepts the same wire protocol.
 
 > **One udpsend or two?** The signature-reply `[udpsend]` (this one)
 > is distinct from the feature-emitter `[udpsend]` in Section F.6.
@@ -1705,6 +1717,7 @@ Every Max object referenced in this guide, alphabetical:
 | `/signature/query` returns no reply | `[udpsend]` host:port not configured before message landed at left inlet | Section C.3.b `[t l b]` right-to-left order |
 | OSC reply goes to wrong port | Query OSC args (`,si`: reply_host, reply_port) malformed or not threaded through `[unpack s i]` → `[pak s i]` correctly | Section C.3.a wiring; verify with `[print dest]` |
 | Assumed `[udpreceive]` has a right outlet for sender info | It doesn't — vanilla Max `[udpreceive]` has one outlet (the OSC messages); CNMAT's variants are the same | Carry the reply destination in the OSC query payload (Section C.3) |
+| `[udpsend]` shows red / no visible inlets | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0` (port gets overwritten via inlet 1 anyway). Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
 | Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |
 | Live rejects device with `createdevice error 6` | Patch saved via non-GUI path or hand-edited binary | Restore from `.chunk1.bak.amxd`; only ever save via Max GUI |

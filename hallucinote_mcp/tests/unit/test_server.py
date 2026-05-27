@@ -86,33 +86,6 @@ def test_mcp_readme_tool_count_matches_actual_registry():
     )
 
 
-def _deleted_test_getting_started_guide_tool_count_matches_actual_registry():
-    """REMOVED 2026-05-27 during doc scrub. The PRIMER (in server.py) is
-    now the canonical home for the tool count headline; getting-started.md
-    no longer restates it because the PRIMER reaches every agent on
-    `initialize` before any guide read. See
-    `test_primer_tool_count_matches_actual_registry` for the live guard.
-    """
-    import re
-    from pathlib import Path
-
-    guide = (
-        Path(__file__).resolve().parents[2]
-        / "src" / "hallucinote_mcp"
-        / "resources" / "guides" / "getting-started.md"
-    )
-    text = guide.read_text()
-    match = re.search(r"(\d+)[- ]tool surface", text)
-    assert match is not None, (
-        "getting-started.md must headline the tool count "
-        "(substring 'N-tool surface')"
-    )
-    assert int(match.group(1)) == len(schema.TOOLS), (
-        f"getting-started.md claims {match.group(1)}-tool surface but "
-        f"schema.TOOLS has {len(schema.TOOLS)}."
-    )
-
-
 def test_handle_tool_call_help_works_without_remote():
     # After create_server, help actions are registered for every tool, so
     # action='help' should return ok without contacting the Remote Script.

@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import socket
-import struct
 import threading
 from pathlib import Path
 from typing import Any
@@ -11,10 +9,6 @@ from typing import Any
 import pytest
 
 from hallucinote_mcp.analyzer.osc import AnalyzerOSC
-from hallucinote_mcp.analyzer.sidecar import (
-    OSCSidecar,
-    reset_shared_sidecar_for_tests,
-)
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import render as render_handlers
 from hallucinote_mcp.wire import Request

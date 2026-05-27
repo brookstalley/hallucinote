@@ -1,4 +1,4 @@
-"""FastMCP server — 11 unified tools + 12 resources (11 static + 1 templated) as MCP entry points.
+"""FastMCP server — 12 unified tools + 12 resources (11 static + 1 templated) as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -17,8 +17,12 @@ wrapper.
 """
 from __future__ import annotations
 
+import dataclasses
+import datetime as _dt
 import inspect
 import logging
+import os
+import pathlib
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -74,7 +78,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 11 unified tools + 12 resources (11 static + 1 per-song template) for Ableton Live,
+hallucinote-mcp — 12 unified tools + 12 resources (11 static + 1 per-song template) for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -89,6 +93,7 @@ Tools (call action='help' on any tool for its action menu):
   ableton_scene         session-view scenes + per-scene tempo/signature
   ableton_browser       instruments, effects, plugins
   ableton_annotation    composer-intent annotations on a song's DB (W8-C surface)
+  ableton_render        audio capture: HallucinoteAnalyzer auto-load + WAV capture pass
 
 Resources (read via resources/read, no turn cost):
   ableton://session/snapshot          session+tracks+returns in one read
@@ -112,7 +117,7 @@ Hard constraints:
 
 
 def create_server(name: str = "hallucinote-mcp") -> FastMCP:
-    """Construct the FastMCP server with all 11 tools registered.
+    """Construct the FastMCP server with all 12 tools registered.
 
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
@@ -149,6 +154,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
     _register_tool(mcp, "ableton_annotation", "Composer-intent annotations (W8-C): song/time/track-scoped composing notes attached to a song's DB. Distinct from the markdown decisions/annotations corpus surfaced via /song-context.")
+    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return + master (idempotent); render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by Chunk 3's ableton_analysis.")
 
     return mcp
 
@@ -192,9 +198,26 @@ def handle_tool_call(
     if not server_response.needs_remote:
         return server_response.to_dict()
 
-    # Forward to the Remote Script.
+    # Server-side path resolution for ableton_render(render). The render
+    # handler runs inside Live's process whose cwd is ``/`` (read-only on
+    # macOS), so relative paths like ``songs/<slug>/captures/<ts>`` fail
+    # with OSError. The MCP server's cwd IS the agent's repo root, so
+    # resolve the default + any relative output_dir to absolute HERE
+    # before forwarding.
+    if request.tool == "ableton_render" and request.action == "render":
+        request = _absolutize_render_output_dir(request)
+
+    # Forward to the Remote Script. ableton_render(render) drives full-
+    # arrangement playback before responding (minutes for a long song),
+    # so disable the default 15s read timeout for that path. Every other
+    # action returns within Live's main-thread budget — keep the bounded
+    # default so a stalled handler surfaces as a structured timeout
+    # error instead of hanging the MCP transport.
+    read_timeout: float | None = 15.0
+    if request.tool == "ableton_render" and request.action == "render":
+        read_timeout = None
     try:
-        remote_response = client.send(request)
+        remote_response = client.send(request, read_timeout=read_timeout)
     except client.LiveConnectionError as exc:
         from .wire import error as wire_error
 
@@ -210,6 +233,41 @@ def handle_tool_call(
         ).to_dict()
 
     return remote_response.to_dict()
+
+
+def _absolutize_render_output_dir(request: Request) -> Request:
+    """Resolve ``ableton_render(render)`` 's ``output_dir`` to an absolute
+    path, computing the slug-derived default when missing.
+
+    Why: the render handler runs on the Remote Script side (inside Live),
+    whose cwd is ``/`` on macOS — a read-only filesystem. The handler's
+    pre-existing default ``Path("songs") / slug / "captures" / ts`` is
+    relative; resolved against Live's cwd it becomes ``/songs/...`` and
+    ``mkdir(parents=True)`` raises ``OSError [Errno 30]``. The MCP server
+    process IS in the agent's repo root, so we resolve here.
+
+    Picking the timestamp here (rather than letting the handler do it)
+    avoids time-of-check / time-of-use drift between the directory the
+    server announces and the directory the handler creates.
+    """
+    params = dict(request.params)
+    raw = params.get("output_dir")
+    if isinstance(raw, str) and raw:
+        resolved = pathlib.Path(raw)
+        if not resolved.is_absolute():
+            resolved = (pathlib.Path(os.getcwd()) / resolved).resolve()
+        params["output_dir"] = str(resolved)
+        return dataclasses.replace(request, params=params)
+    # No explicit output_dir → compute the slug-derived default here,
+    # absolute. song_slug is a required param; let the handler raise if
+    # it's missing.
+    song_slug = params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return request  # let the handler emit its own teaching error
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    default = pathlib.Path(os.getcwd()) / "songs" / song_slug / "captures" / ts
+    params["output_dir"] = str(default.resolve())
+    return dataclasses.replace(request, params=params)
 
 
 def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:

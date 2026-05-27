@@ -423,8 +423,8 @@ def _author_envelopes(conn, song_id, tracks, returns) -> None:
     the v1 canary's role (demonstrate the v1 surface a sophisticated
     user actually has), this function intentionally authors NO
     envelopes — the unreachable surfaces are documented in their
-    docstrings + `docs/canary-songs/full-band-rock.md` + the
-    `ableton://guides/gaps.md` Group-D entries.
+    docstrings + `docs/archive/canary-songs/full-band-rock.md` + the
+    `ableton://guides/gaps` entries on master/audio envelope routing.
 
     v1.1 enhancements (filed in backlog):
       - The full sub-bus pattern demo (requires adding a kind='midi'

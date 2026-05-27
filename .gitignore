@@ -68,3 +68,12 @@ uv.lock
 # Per-machine push state (carries this machine's session/song UUIDs + timestamps)
 songs/*/.last-push-state.json
 songs/*/.last-push-errors.json
+
+# Audio-analysis MVP (Chunk 2) — heavy per-render WAVs + manifest live in
+# captures/ next to each song; the small MixReport JSONs in analysis/ ARE
+# checked in. `.hallucinote/stems/` is reserved for the post-MVP
+# "always-on" stem cache. `*.amxd~` is Max's autosave backup produced
+# when editing the device in the GUI; never source-of-truth.
+songs/*/captures/
+.hallucinote/stems/
+*.amxd~

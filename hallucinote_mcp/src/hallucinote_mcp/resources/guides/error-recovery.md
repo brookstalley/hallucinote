@@ -1,215 +1,73 @@
-# hallucinote-mcp — Error Recovery
+# Error recovery
 
-This server returns structured error responses with teaching hints. The
-patterns below cover the most common errors and the right fix for each.
+The server returns structured errors with teaching hints. Read the message and
+fix the input — retrying the same call with the same params will fail the same
+way. The error fields (`valid_actions`, `required`, `optional`, `example`,
+`hint`) tell you exactly what to change.
 
 ## Validation errors (param-level)
 
-### `param 'X' must be int, got bool` / `must be str, got int` / etc.
-Type mismatch on a parameter. Check the action's `params_schema` via
-`ableton_<tool>(action='help')` — every action's help entry includes the
-param type for each name.
+- **`param 'X' must be int, got bool`** (or similar type mismatches) — check
+  the action's `params_schema` via `ableton_<tool>(action='help')`.
+- **`param 'X'=Y not in enum [...]`** — the error lists valid values.
+- **`missing required param(s) for <tool>('<action>'): X, Y`** — the
+  `required` list is in `action='help'`.
+- **`unknown param(s) for <tool>('<action>'): foo`** — likely a typo.
 
-### `param 'X'=Y not in enum [...]`
-You passed a value outside the enum's allowed set. The error message
-lists the valid values. Common one: `target_kind` on
-`ableton_automation(action='write_envelope')` must be one of the seven
-envelope target families.
+## Range errors
 
-### `missing required param(s) for <tool>('<action>'): X, Y, Z`
-The action requires these params; you omitted them. The schema's
-`required` list is in `action='help'` output for that action.
+- **`value X out of range [min, max]`** — common cases: volume must be 0.0–1.0
+  (NOT dB), pan -1.0 to 1.0, MIDI velocity 1–127.
+- **`value X is out of range — pass -1 OR a value in [20, 999]`** — scene
+  `set_tempo` accepts -1 (clear override) OR a valid BPM; the gap is rejected.
 
-### `unknown param(s) for <tool>('<action>'): foo`
-You passed a param the action doesn't accept. Likely a typo. Check the
-action's help for the canonical names.
+## Address errors
 
-## Range errors (handler-level)
+- **`track_index X out of range [1, N]`** — call `ableton_track(action='list')`
+  to see what exists.
+- **`session slot X on track Y is empty; create a clip first`** — either
+  `ableton_clip(action='create', ...)` first, then your op, or pass
+  `replace=True` to create.
+- **`cue_create: a cue already exists at position_beats=X`** — Live's
+  `set_or_delete_cue` is a TOGGLE that would silently DELETE; use `cue_delete`
+  first if you want to replace.
+- **`cue_create: position_beats=X is past the song's last_event_time=Y`** —
+  place arrangement content covering this position first, then add the cue.
 
-### `value X out of range [min, max]`
-The schema accepted the type but the handler caught a value-bound
-violation. Common cases: track volume must be 0.0–1.0 (NOT dB), pan
-must be -1.0 to 1.0, MIDI velocity 1–127.
+## Cue creation latency
 
-### `value X is out of range — pass -1 OR a value in [20, 999]`
-Scene `set_tempo` accepts -1 (clear override) OR [20, 999] for an
-explicit scene tempo. The gap (-1, 0] and (0, 20) is rejected.
+Each `cue_create` takes ~150-400ms (Live's playhead-write + settle window).
+For multi-cue pushes, use `cue_create_batch` — one TCP round-trip, same
+per-cue cost. Concurrent `cue_create` / `seek` / `cue_delete` calls serialize
+on a per-Live lock.
 
-## Address errors (runtime)
+## Needs-Live errors
 
-### `track_index X out of range [1, N]`
-You addressed a track that doesn't exist. Call `ableton_track(action='list')`
-to see what's available and the current index range.
-
-### `session slot X on track Y is empty; create a clip first`
-You tried to operate on an empty session slot. Either:
-- `ableton_clip(action='create', location='session', track_index=Y,
-  clip_index=X, kind='midi', length=N)` first, then your operation, OR
-- pass `replace=True` to create when you want delete-and-create atomic.
-
-### `cue_create: a cue already exists at position_beats=X`
-Live's `set_or_delete_cue` is a TOGGLE that would silently DELETE the
-existing cue. The handler refuses to "create" at an occupied position.
-Use `cue_delete` first if you want to replace.
-
-### `cue_create: position_beats=X is past the song's last_event_time=Y`
-Live's `current_song_time` setter is clamped to the arrangement's
-extent. Place arrangement content covering this position first
-(`ableton_clip(action='create', location='arrangement', ...)`), then
-add the cue.
-
-## Cue creation — latency model
-
-Each `cue_create` takes **~150-400ms** end-to-end. Live's
-`Song.current_song_time` setter is asynchronous: the audio thread
-processes the write on its own buffer-aligned schedule, and Live's
-Python-visible getter reads a main-thread mirror that updates when the
-main thread pumps the audio-thread → mirror propagation event.
-
-**W3-F (2026-05-18) threading model.** `cue_create`, `cue_create_batch`,
-and `cue_delete` are *worker-thread handlers* (the only such actions
-in the surface; everything else stays on the main-thread-wrapped path).
-The handler runs on the TCP-listener thread and marshals each Live
-touch through `context.run_on_main(fn)` individually. Between bouts it
-`time.sleep`s on the worker thread — leaving the main thread free to
-pump the propagation event that updates the mirror. The pre-W3-F
-implementation ran the whole handler (including the sleep loop) on
-the main thread; this deadlocked the very thread that needed to pump
-the propagation, surfaced empirically as every first-call `cue_create`
-timing out at 3.0s with a stale `last_observed`.
-
-**For multi-cue pushes, use `cue_create_batch`** — one TCP round trip,
-acquires `live_state_lock` once for the whole batch. Per-cue end-to-end
-latency is the same as serial `cue_create` calls; the savings are
-in TCP round-trip overhead, not Live's per-cue settle cost.
-
-**Parallel `cue_create` calls effectively serialize.** The bridge
-holds a per-Live mutex (`live_state_lock`) around the cue
-seek+settle+toggle window so concurrent callers don't observe each
-other's playhead writes. Firing 7 parallel `cue_create` calls
-completes in ~7× the per-cue cost wall-clock — they wait their turn
-on the lock.
-
-`seek` and `cue_delete` take the same lock; they don't race against
-in-flight cue creates either.
-
-## "Needs Live" errors
-
-### `<tool>('<action>') requires the Remote Script side to execute (no Live context available)`
-The MCP server validated your call but Live isn't reachable. Open Ableton
-Live, then in Preferences → Link, Tempo & MIDI select 'Hallucinote' as a
-Control Surface. Re-run the call.
-
-### `live connection failed for <tool>(<action>): ...`
-The server tried to forward but the TCP connection to the Remote Script
-failed. Live may not be running, or the Remote Script may not be installed.
-The `/ableton-mcp-install` Claude Code skill walks through fresh install.
+- **`<tool>('<action>') requires the Remote Script side to execute (no Live
+  context available)`** — open Live and select 'Hallucinote' as a Control
+  Surface (Preferences → Link, Tempo & MIDI).
+- **`live connection failed for <tool>(<action>): ...`** — Live not running,
+  or Remote Script not installed. Run `/ableton-mcp-install`.
 
 ## Version-handshake errors
 
-The MCP bridge has two halves running in different Python processes: the
-**MCP server** (the `hallucinote-mcp` pip package, spawned by Claude Code
-when you connect) and the **Remote Script** (the vendored copy in Live's
-User Library, loaded by Live when it boots). They must agree on
-`hallucinote_mcp.__version__`. On every call, the server side stamps its
-version into the request; the Live side checks before dispatch.
+If you see `Hallucinote MCP version handshake missing` or `version mismatch`,
+the pip package and the vendored Remote Script disagree. Run
+`/ableton-mcp-install`, then fully quit + reopen Live (Live caches Control
+Surface modules at startup; `/mcp` alone is not enough). `hallucinote-mcp
+preflight` reports both versions without restarting.
 
-Two failure modes — recovery differs:
+## Gap-blocked actions
 
-### `Hallucinote MCP version handshake missing: ...`
-The MCP server side didn't send a `server_version` field at all. It's old
-enough to predate the handshake — i.e., the pip-installed `hallucinote-mcp`
-is older than what's currently in Live's Remote Scripts folder.
-
-**Fix:** upgrade the pip package, then respawn the MCP server.
-1. `pip install -U hallucinote-mcp` (in the environment Claude Code uses)
-2. In Claude Code: `/mcp` — this respawns the server process, which now
-   ships the version on every request.
-
-A full Claude Code restart works too, but `/mcp` alone is sufficient
-because it relaunches the MCP server subprocess.
-
-### `Hallucinote MCP version mismatch: MCP server side reports X, Remote Script side is Y`
-Both halves are speaking the handshake, but they disagree. Versions are
-of the form `0.1.0+<12-hex-fingerprint>` — the base segment is the pip
-package's semver, the suffix is a content hash over the files that
-define the wire surface (actions, handlers, dispatcher, schema, wire,
-remote_script). Drift in EITHER side flips the fingerprint, so
-"different versions" doesn't tell you which side is older — just
-that the two source trees diverge.
-
-**The recovery is almost always the same path: refresh the Remote
-Script side**, because the MCP server side updates more freely (every
-pip install / editable-install reload) while the Remote Script side
-only updates when explicitly reinstalled:
-
-1. `/ableton-mcp-install` — re-runs the install, refreshing the vendored
-   copy in Live's User Library.
-2. Fully quit Live (⌘Q / Alt+F4) and reopen it. **Live caches Control
-   Surface modules at startup**, so a restart is required — `/mcp` alone
-   does nothing for this branch, because the staleness is inside Live.
-
-**If the MCP server side is the one that's behind** (rare — happens
-when the Remote Script was installed from a newer working tree than
-the pip-installed package):
-1. `pip install -U hallucinote-mcp` (or reinstall from source).
-2. `/mcp` in Claude Code to respawn the server.
-
-The error message names both versions so you can copy them into a bug
-report if the symptom persists after reinstall + restart.
-
-**Diagnose before reinstalling (W12-D):** the preflight CLI now reports
-the vendored Remote Script's version per-User-Library candidate, so you
-can see exactly which side is stale without restarting anything:
-
-```bash
-hallucinote-mcp preflight
-```
-
-Compare `package.version` (the server side, what's pip-installed) against
-each `remote_script.candidates[*].version` (the vendored copy in that
-candidate's `Remote Scripts/Hallucinote/`). The `matches_mcp_server`
-field on each candidate is the same boolean the runtime handshake would
-produce; `installed: false` means there's no vendored copy at that
-candidate location (so the handshake won't even reach that path).
-
-## Gap-blocked actions (intentional)
-
-### `ableton_note operations are blocked by MCP gap #4 — ...`
-Per-note operations (list, add, update, delete) require stable note IDs
-that Live's API doesn't yet expose. To REPLACE all notes on a clip,
-use `ableton_clip(action='replace_notes', ...)` — that's the working
-path today. See `ableton://guides/gaps`.
-
-### `ableton_automation read operations (list, get_envelope) are blocked...`
-The MCP envelope read surface isn't yet implemented. Use
-`action='write_envelope'` to push; envelope reads come in a future
-chunk.
-
-### `target_kind=... requires clip_index + location on Live 12.4...`
-Live 12.4's LOM only addresses envelopes through a containing clip —
-there's no `Track.create_automation_envelope`. Pass `location`
-(`'arrangement'` or `'session'`) and `clip_index` pointing at the
-clip that should hold the envelope. Same applies to `action='clear'`
-on the mixer / pan / send / device_parameter target_kinds. See
-`ableton://guides/gaps` for the "track-level / clip-less" entry.
-
-### `clear with target_kind='note_expression' is not exposed by Live 12.4's LOM...`
-Live exposes `Clip.envelope_for_note(pitch, start, axis)` to fetch /
-create the per-axis envelope but no symmetric `clear_note_envelope`.
-Use `action='clear_all'` on the containing clip to wipe every
-envelope (including note expression), then re-write what you want to
-keep.
+See `ableton://guides/gaps` for the full list of API gaps and their
+workarounds. The teaching errors will point you at that doc too.
 
 ## Schema-bug errors
 
-### `<tool>('<action>') executor referenced unknown param 'X'; this is a schema bug`
-The action's executor (handler or declarative_op) tried to read a param
-that isn't in the schema. This is a server-side bug — report it.
+- **`<tool>('<action>') executor referenced unknown param 'X'; this is a
+  schema bug`** — server-side bug; report it.
 
 ## Don't retry silently
 
-If a call fails with a teaching error, READ the message and fix the
-input. Retrying the same call with the same params will fail the same
-way. The structured error fields (`valid_actions`, `required`, `optional`,
-`example`, `hint`) tell you exactly what to change.
+If a call fails with a teaching error, the structured response tells you
+what to change. Same params → same failure.

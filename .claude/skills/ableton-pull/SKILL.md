@@ -6,145 +6,127 @@ allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__h
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
-You are the Ableton pull orchestrator. Your job: read what the user wants pulled from Ableton, run the right MCP probes, hand the results to the DB layer, and report what changed.
+You are the Ableton pull orchestrator. Read what the user wants pulled, run the right MCP probes, hand the results to the DB layer, and report what changed.
 
 $ARGUMENTS
 
 ## Conflict policy
 
-**Ableton wins, always (V1).** Any field that differs between DB and Ableton is overwritten with Ableton's value. Mutations are emitted with `actor='sync'` and `reason="pull from session <session_id>"`. Three-way merge is deferred (see `docs/VISION.md`).
+**Ableton wins, always (V1).** Any field that differs is overwritten with Ableton's value. Mutations carry `actor='sync'` and `reason="pull from session <session_id>"`. Three-way merge is deferred (see `docs/VISION.md`).
 
-## Available domains and MCP-blocked domains
+## Available domains
 
-Map the user's request — domain token OR natural language — onto one of these.
+- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Also ingests global tempo + signature (free ride-along).
+- `score-globals` — global tempo + signature ONLY (bar-1 rows). Cheaper than `mix-state` if that's all you've changed.
+- `cue-points` — arrangement cue positions + names. Name diffs are informational warnings (DB-side names are user-authoritative).
+- `devices` — top-level device chain on each linked track + return: positional `(kind, display_name)` diff. Nested chains live in `nested-rack-chains`; per-device parameter VALUES live in `device-parameters`.
+- `nested-rack-chains` — one level of nested chains under each rack device. Run after `devices`. Recursively nested racks deferred.
+- `device-parameters` — per-device parameter values on every device. Diff by parameter name. `value_normalized` computed from raw value vs min/max; enum + constant-range params store NULL. The keystone for V1 round-trip parity. Run after `devices`.
+- `arrangement-clips` — per-track arrangement placements (start_bar / end_bar). Positional diff. Live exposes no stable per-clip identity, so V1 takes no action on Ableton-only positions (doesn't auto-create clips, doesn't infer moves) — mirror the change DB-side and re-run.
+- `session-clips` — per-track session-view slot contents (slot, name, length). Matched slots update for name/length drift, cleared slots delete the DB clip, Ableton-only populated slots warn.
+- `clip-notes` — per-clip notes. Content-diffs by `(pitch, start_time, duration)` within 1/1000 of a beat. Velocity / mute drift updates DB notes in place (UUID preserved); pitch/start/duration moves surface as delete + insert (UUID rotates — documented V1 limitation).
+- `envelopes` — per-envelope automation. Round-trip mode only — pulls envelopes already in the DB; discovering Live-authored envelopes is a separate backlog item. Skip-symmetric with push.
 
-**Available now (run these):**
-- `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Free side-effect: also ingests global tempo + signature (they ride along in the same `ableton_session(action='info')` probe).
-- `score-globals` — global tempo + global time signature ONLY (bar-1 rows in each map). Cheaper than `mix-state` if all you've changed is tempo or meter.
-- `cue-points` — arrangement cue point positions + names. Gap #13 (legacy fork's numeric-only names) is resolved in the greenfield server; apply still treats name diffs as informational warnings since DB-side cue names are user-authoritative.
-- `devices` — top-level device chain on each linked track + return: positional diff of `(kind, display_name)` slots. Nested rack chains are pulled by the sibling `nested-rack-chains` domain (run it after `devices` so the rack rows exist). Per-device parameter VALUES are pulled by the sibling `device-parameters` domain. `is_active` is not modeled in the DB yet.
-- `nested-rack-chains` — one level of nested chains under each rack device the previous `devices` pull recorded (W7-B). Emits one `ableton_device(action='get_device_chains')` per DB rack device (Arc 4 / D4 convention: `kind` = `Drum Rack` / `Instrument Rack` / `Audio Effect Rack`). Diff: positional, mirroring `devices` — matched `(kind, display_name)` slots no-op, replacements + removals happen at the chain_index/position pair. Recursively nested racks (rack-in-rack) are deferred — only one level. Per-nested-device parameters are NOT pulled here; run `device-parameters` afterwards to close that gap when the schema grows nested-parameter support.
-- `device-parameters` — per-device parameter values on every device the previous `devices` pull recorded. Diff by parameter name within device; `value_normalized` is computed from Live's raw `value` against `min`/`max`; enum and constant-range params store `value_normalized=NULL`. Float jitter within `_FLOAT_EPS` is not a diff. Adds present-in-Live-only params; removes present-in-DB-only params. The keystone for V1 round-trip parity: parameter-dialed native instruments (Operator, Wavetable, etc.) round-trip with sound when this domain runs after `devices`. Tracked in backlog as the W5-D close.
-- `arrangement-clips` — per-track arrangement-clip placements (start_bar / end_bar). Positional diff: matched pairs no-op, DB-only positions are removed, Ableton-only positions warn. Positional matching cannot distinguish a *moved* placement from a *new* one (Live exposes no stable per-clip identity), so V1 takes no action on Ableton-only positions either way: it does not auto-create `clips` rows, and it does not infer moves. Mirror the change in DB (re-add the moved placement, or create the new clip + placement) and re-run pull. Clip-name renames are NOT detected here (the `arrangement_clips` table has no `name` column; names live on `clips.name` and round-trip via `session-clips` below).
-- `session-clips` — per-track session-view clip-slot contents (slot, name, length). Slot-positional diff: matched slots no-op (or `update_clip` if name/length drifted), Ableton-empty slots delete the DB clip at that slot, Ableton-only populated slots warn (same V1 limit as `arrangement-clips`: can't auto-create a clip from name + length alone). Note content drift is NOT detected here — use `clip-notes` for that.
-- `clip-notes` — per-clip note pull (gap #4 PARTIAL: read-with-stable-IDs works, surgical Ableton-side writes still blocked). Emits one `ableton_note(action='list')` per linked clip — returns notes with Live's stable per-note IDs. Content-diffs against DB notes by `(pitch, start_time, duration)` within 1/1000 of a beat: velocity / mute drift updates DB notes in place (UUID preserved); new notes insert (UUID assigned); missing notes delete. A note whose pitch/start/duration moves surfaces as delete + insert (UUID rotates — documented V1 limitation; edit by UUID DB-side if preservation matters). Duplicate-key collisions warn + first-row-wins, mirroring `arrangement-clips`.
-- `envelopes` — per-envelope automation pull (W7-A — closes the round-trip gap left by W5-E's warn-only push). Emits one `ableton_automation(action='read_envelope', target_kind=…)` per DB envelope, mirroring push's per-envelope addressing (note_expression by note pitch+start; device_parameter via covering session-clip + device; mixer/send via covering session-clip on the target track). Skip-symmetric with push: clip_cc / clip_pitch_bend skipped (LOM gap), unlinked targets / clips / devices skipped, no-covering-placement skipped (Live 12.4 requires session-clip routing for mixer/send/device_parameter), nested-rack and return-side device_parameter skipped (gap-blocked). Apply: `exists=False` deletes the DB envelope; differing breakpoints atomically replace; matched breakpoints preserve DB curve_kind (`linear`/`fast`/`slow` curves recorded in DB survive the pull even though Live returns every breakpoint as `hold` — only `'hold'` round-trips losslessly through `insert_step`).
+**MCP-gap-blocked:**
+- Surgical Ableton-side note writes (`ableton_note(add / update / delete)`) — gap #4. Use `ableton_clip(action='replace_notes')` for whole-clip writes.
+- Master-strip devices — separate planner; the `devices` domain skips master.
+- Per-arrangement tempo / signature changes — only the bar-1 values are exposed.
+- Audio — out of scope.
 
-**MCP-gap-blocked (do NOT attempt — surface the gap and offer the closest available alternative):**
-- Surgical Ableton-side note writes — the `ableton_note(add / update / delete)` write surface remains gap-#4-blocked. The `clip-notes` pull above closes the READ half. Whole-clip writes via `ableton_clip(action='replace_notes')` preserve all V1 compose-time capability.
-- ~~Automation envelopes — blocked by no MCP read surface for envelopes.~~ Resolved by W7-A — use the `envelopes` domain. Only envelopes already in the DB are pulled (round-trip mode); discovering envelopes authored only in Live is a separate backlog item.
-- ~~Device parameter values — sync-layer not yet built.~~ Resolved by W5-D — use the `device-parameters` domain. Run it AFTER `devices` so the parameter pull sees the current chain.
-- ~~Nested rack chains — blocked by MCP nested-chain probe gap.~~ Resolved by W6-I/J (MCP) + W7-B (sync) — use the `nested-rack-chains` domain. Recursively nested racks (rack-in-rack) remain deferred.
-- Master-strip devices — separate planner (master is reached via `ableton_session`, not `ableton_track`); the `devices` domain skips master rows. Tracked as a backlog item.
-- Per-arrangement (multi-point) tempo / signature changes — MCP read gap; only the global (bar-1) values are exposed via `ableton_session(action='info')`.
-- Audio — out of scope; the schema doesn't model audio clips yet.
+## Natural-language mapping
 
-**Natural-language mapping examples:**
-- "fader moves" / "mix tweaks" / "volume + pan" → `mix-state`
-- "send levels" / "reverb amounts" → `mix-state`
-- "mute / solo / arm changes" → `mix-state`
-- "tempo change" / "BPM" / "meter" / "time signature" → `score-globals` (or `mix-state` if you want master fader too)
-- "cue points" / "locators" / "arrangement markers" → `cue-points`
-- "device chain edits" / "added/removed a plugin" / "moved the compressor" / "swapped the EQ" → `devices` (and `nested-rack-chains` afterwards if a rack's internal chain changed — e.g. "I added a hat to chain 3 of the Drum Rack" / "I swapped the kick sample").
-- "rack chain changes" / "edited the Drum Rack internals" / "added a chain to the instrument rack" → `nested-rack-chains` (run `devices` first if the rack itself is new).
-- "arrangement edits" / "moved a clip in the arrangement" / "deleted a clip from the timeline" / "rearranged the song" → `arrangement-clips`
-- "session-view edits" / "renamed a clip in Session View" / "cleared a slot" / "shortened a session clip" → `session-clips`
-- "midi notes" / "note edits" / "I changed the velocities" / "added some notes" / "pulled out the wrong note" → `clip-notes`
-- "humanize back / fix what I just played in" → `clip-notes` to pull, then DB-side humanize via mutators, then push.
-- "device settings" / "compressor params" / "what's the threshold set to" / "I dialed in an Operator patch" → `device-parameters` (run `devices` first if the chain itself may have changed).
-- "automation" / "envelope edits" / "I changed the filter sweep" / "I redrew the volume curve" / "the sidechain envelope" → `envelopes` (only pulls envelopes already in the DB — author new automation DB-side and re-push).
-- "everything" → run every available domain in order: `mix-state`, then `cue-points`, then `devices`, then `nested-rack-chains`, then `device-parameters`, then `arrangement-clips`, then `session-clips`, then `clip-notes`, then `envelopes`. (`score-globals` is a subset of `mix-state`'s probes; skip it.)
+Map verbs to domains:
+- Mixer / sends / mute / solo / arm / color → `mix-state`
+- Tempo / BPM / meter → `score-globals` (or `mix-state` if you want master fader too)
+- Cue points / locators / markers → `cue-points`
+- Device chain edits (added / removed / swapped a device) → `devices` (then `nested-rack-chains` if a rack's internals changed)
+- Device parameter dial-ins / "what's the threshold set to" / "I dialed in an Operator patch" → `device-parameters` (run `devices` first if the chain may have changed)
+- Arrangement edits (moved / deleted clips on the timeline) → `arrangement-clips`
+- Session-view edits (renamed / cleared / shortened a session clip) → `session-clips`
+- MIDI note edits / "I changed velocities" / "humanize back" → `clip-notes`
+- Automation / envelope edits → `envelopes`
+- "everything" → run every domain in order: `mix-state` → `cue-points` → `devices` → `nested-rack-chains` → `device-parameters` → `arrangement-clips` → `session-clips` → `clip-notes` → `envelopes`. (Skip `score-globals` — `mix-state` covers it.)
 
 If the request is ambiguous, ask one targeted question rather than guessing.
 
 ## Required arguments
 
-You need THREE pieces of information from `$ARGUMENTS`:
+Three pieces from `$ARGUMENTS`:
 
-1. **The song slug** (required) — filesystem-safe identifier matching the song's directory + DB filename. The DB lives at `songs/<slug>/<slug>.db` per the project's prescriptive convention (`.prawduct/artifacts/project-preferences.md`).
-2. **The session_id** (required — never default it) — the `ableton_sessions.id` row that binds the DB to the currently-open Live set.
-3. **The domain or NL request** (required) — what to pull.
+1. **Song slug** — DB lives at `songs/<slug>/<slug>-<branch>.db` (per-branch isolation; see `docs/snapshot-schema.md`). The CLI resolves the path via `--song <slug>`.
+2. **session_id** — never default it.
+3. **Domain or NL request**.
 
-If any of the three is missing, ask the user — never invent one and never scan the filesystem to "guess" the song. The slug must be passed through to `pull_cli` via `--song <slug>` (the CLI resolves the canonical path).
+If any is missing, ask — never invent.
 
 ## Workflow
 
-For each resolved domain, do these steps in order. Run `mix-state` end-to-end before moving on to another domain.
+For each resolved domain, do the steps in order. Run `mix-state` end-to-end before moving on to another domain.
 
-**Multi-domain runs (`everything` or any multi-domain request): emit a progress line BEFORE Step 1 of each domain** — `pulling domain <N>/<M>: <domain-name>`, with M = total domains the request resolved to. A nine-domain `everything` run takes long enough that the user otherwise can't tell whether the skill is still working or hung on an MCP probe; the progress line resolves the ambiguity. Single-domain runs don't need the line.
+**Multi-domain runs (`everything` or any multi-domain request): emit a progress line BEFORE Step 1 of each domain** — `pulling domain <N>/<M>: <domain-name>`. A nine-domain `everything` run takes long enough that the user otherwise can't tell whether the skill is hung.
 
-### Step 1 — Emit the plan
+### Step 1 — Plan
 
-Run:
 ```
-python3 -m hallucinote.sync.pull_cli plan <domain> <session_id> --song <song-slug>
+python3 -m hallucinote.sync.pull_cli plan <domain> <session_id> --song <slug>
 ```
 
-This writes a JSON document to stdout with `calls: [{tool, args, key, purpose}, ...]` and `notes: [...]`. Save the full stdout to `/tmp/ableton-pull-plan.json` using Write. Display any non-empty `notes` to the user before proceeding — they often surface unlinked tracks the user should know about.
+Writes JSON to stdout: `{calls: [{tool, args, key, purpose}, ...], notes: [...]}`. Save to `/tmp/ableton-pull-plan.json` via Write. Display non-empty `notes` before proceeding — they often surface unlinked tracks.
 
 ### Step 2 — Execute each probe
 
 For each `call` in `plan.calls`:
+- Invoke `mcp__hallucinote-mcp__<call.tool>` with `**call.args`.
+- On success: `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
+- On failure: `{"key": ..., "ok": false, "tool": ..., "error": "<message>"}`.
 
-- Look at `call.tool` and `call.args`.
-- Pick the MCP namespace to invoke from based on `call.tool`:
-  - `call.tool` starts with `ableton_` → `mcp__hallucinote-mcp__<call.tool>` with `**call.args` (the args include `action`, e.g. `{"action": "info"}`). All mix-state, score-globals, AND cue-points probes route here as of Wave M-5 — `cue_list` is the third domain to fully unify.
-- Capture the response. If the MCP call raises, mark the result as `{"key": ..., "ok": false, "tool": ..., "error": "<message>"}`.
-- On success, build `{"key": call.key, "ok": true, "tool": call.tool, "result": <response>}`.
+**Result shapes follow the contract the CLI's `plan` documents.** Each domain's response normalization happens in the apply layer; pass raw MCP shapes through unless the planner's per-key documentation says otherwise. Two cases where the skill MUST normalize before adding to results:
 
-The result `result` MUST be the normalized shape `apply_pull_results` expects. Today:
+- `session_info` — convert `signature` from `{numerator, denominator}` to legacy `"<n>/<d>"` string form.
+- `track_info` — rename `kind` field to `type`.
+- `track_sends` — reshape `sends` list to `{return_name: value}` dict.
+- `cue_points_list` — unwrap the `cue_points` array (the list itself, not the wrapper).
 
-- `session_info` (from `ableton_session(action='info')`) — the raw probe returns `{"tempo": <float>, "signature": {"numerator": <int>, "denominator": <int>}, "master": {"volume": <float>, "panning": <float>}, ...}`. **Normalize** before adding to results: convert `signature` to the legacy `"<n>/<d>"` string form that the apply layer currently expects. Future apply work can accept the structured form directly; for now keep the skill responsible for the translation.
-- `returns_list` (from `ableton_return(action='list')`) — the raw probe returns `{"returns": [{"return_index": <1-based>, "name": <str>, "color": <int|null>}, ...]}`. Pass it through as the result payload — the apply layer accepts the wrapped shape natively as of Wave M-2 (and still accepts the legacy bare-list shape for backward compat). The per-return mixer state (volume, panning, mute, solo, color) is pulled separately via `ableton_return(action='info', return_index=...)` probes — see `return_info` below.
-- `return_info:<id>` (from `ableton_return(action='info', return_index=N)`) — the raw probe returns `{"return_index": <int>, "name": <str>, "color": <int|null>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>}`. Pass it through unchanged. The apply layer (`_apply_return_info`) diffs each field against the DB row and emits the union of changes through `update_return`.
-- `track_info:<id>` (from `ableton_track(action='info', track_index=N)`) — the raw probe returns `{"track_index": <int>, "name": <str>, "kind": <"midi"|"audio"|"group">, "color": <int|null>, "volume": <float>, "panning": <float>, "mute": <bool>, "solo": <bool>, "arm": <bool>}`. The apply layer's keys are slightly different: it wants `type` (not `kind`). Rename `kind` → `type` before adding to results; everything else passes through.
-- `track_sends:<id>` (from `ableton_track(action='get_sends', track_index=N)`) — the raw probe returns `{"track_index": <int>, "sends": [{"return_index": <int>, "return_name": <str>, "value": <float>}, ...]}`. The apply layer wants `{"<return_name>": <float>, ...}`. Reshape: `{s["return_name"]: s["value"] for s in result["sends"]}`.
-- `cue_points_list` (from `ableton_arrangement(action='cue_list')`) — the raw probe returns `{"cue_points": [{"cue_index": <int>, "position_beats": <float>, "name": <str>}, ...]}`. **Normalize** before adding to results: unwrap the `cue_points` list. The apply layer accepts three position shapes (`{position_beats}`, `{position_bar}`, `{bar, beat}`); the new beats-based shape converts via the song's time-signature map to `position_bar` for DB storage. Names round-trip cleanly in M-5+; name diffs surface as informational warnings without overwriting DB names.
-- `track_devices:<id>` and `return_devices:<id>` (from `ableton_device(action='list', track_index=N)` or `(return_index=N)`) — the raw probe returns `{"parent_kind": "track"|"return", "track_index"|"return_index": <int>, "devices": [{"device_index": <1-based>, "name": <str>, "class_name": <str>, "is_active": <bool>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_devices_for_parent`) reads `devices[*].class_name` as the DB's `kind` and `devices[*].name` as `display_name`, diffs positionally against the top-level chain, and ignores `is_active` until the schema grows the column. Nested rack chains are NOT traversed by this probe — run the sibling `nested-rack-chains` domain after `devices` to walk one level into rack devices.
-- `nested_rack_chains:<rack_device_id>` (from `ableton_device(action='get_device_chains', track_index=N, device_index=M)` — or `return_index` for return-side racks) — the raw probe returns `{"device_index": <int>, "class_name": <str>, "chain_count": <int>, "chains": [{"chain_index": <1-based>, "name": <str>, "device_count": <int>, "devices": [{"position": <1-based>, "name": <str>, "class_name": <str>, "parameter_count": <int>, "is_active": <bool>}, ...], "is_muted": <bool>, "is_soloed": <bool>}, ...], "parent_kind": ..., "track_index"|"return_index": <int>}`. Pass it through unchanged — the apply layer (`_apply_nested_rack_chains_for_device`) maps `chain_index → device_chains.position` (1-based for nested, 0 for top-level), normalizes each nested device's `position` field to the shared diff helper's `device_index`, and diffs positionally against `device_chains` rows hung off the rack device. Chains in DB that Ableton omits are deleted (cascade). Recursively nested racks (rack-in-rack) are NOT walked — deferred.
-- `device_parameters:<device_id>` (from `ableton_device(action='get_parameters', detail='full')`) — the raw probe returns `{"device_index": <int>, "parent_kind": "track"|"return", "track_index"|"return_index": <int>, "parameters": [{"name": <str>, "value": <float>, "value_display": <str>, "min": <float>, "max": <float>, "is_enum": <bool>, "value_items"?: [<str>, ...]}, ...]}`. Pass it through unchanged — the apply layer (`_apply_device_parameters_for_device`) computes `value_normalized = (value - min) / (max - min)` clamped into [0, 1]; enum and constant-range (`min == max`) params store `value_normalized=NULL`; enum `value_items` (when present) persist to `device_parameters.value_items_json` so the compose-time helper (`M.create_enum_envelope`) can resolve enum-name breakpoints. Diff is by parameter name + items: in both / in DB only / in Live only / value-differs / items-differ each handled distinctly.
-- `track_arrangement_clips:<id>` (from `ableton_clip(action='list', location='arrangement', track_index=N)`) — the raw probe returns `{"track_index": <int>, "location": "arrangement", "clips": [{"arrangement_clip_index": <1-based>, "name": <str>, "start_beats": <float>, "length": <float>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_arrangement_clips_for_track`) converts each `start_beats` and `start_beats + length` to fractional bar positions via the song's time-signature map and diffs positionally by `(start_bar, end_bar)`. DB-only placements are removed; Ableton-only placements warn (V1 cannot auto-create a `clips` row from a manually-drawn arrangement clip). Name diffs are NOT detected here (the `arrangement_clips` table has no `name` column; names round-trip via `track_session_clips` below).
-- `track_session_clips:<id>` (from `ableton_clip(action='list', location='session', track_index=N)`) — the raw probe returns `{"track_index": <int>, "location": "session", "clips": [{"clip_index": <1-based slot>, "empty": <bool>, "name": <str, populated only>, "length": <float, populated only>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_session_clips_for_track`) diffs by `clips.slot` and emits `update_clip` for name/length drift, `delete_clip` for slots Ableton has cleared, and warns on Ableton-only populated slots (same V1 limit as arrangement-clips: can't auto-create the clip from name + length alone).
-- `clip_notes:<id>` (from `ableton_note(action='list', track_index=N, location='session', clip_index=M)`) — the raw probe returns `{"track_index": <int>, "location": "session", "clip_index": <int>, "notes": [{"note_id": <int>, "pitch": <int>, "start_time": <float>, "duration": <float>, "velocity": <int>, "mute": <bool>}, ...]}`. Pass it through unchanged — the apply layer (`_apply_notes_for_clip`) content-diffs by `(pitch, start_time, duration)` within 1/1000 of a beat; velocity / mute drift updates DB notes in place (UUID preserved), Ableton-only notes insert, DB-only notes delete. Live's `note_id` field is used only for debug/dedup within a single pull pass — never store it (it expires on any note-write).
-
-If the MCP response shape doesn't match (e.g. `ableton_session(action='info')` returns nested data differently), normalize before adding to the results array. Do NOT pass raw MCP shapes through unmodified — the apply layer's contract is the normalized shape above.
+All other probes (`returns_list`, `return_info`, `track_devices`, `nested_rack_chains`, `device_parameters`, `track_arrangement_clips`, `track_session_clips`, `clip_notes`) pass through unchanged.
 
 Write the results array to `/tmp/ableton-pull-results.json`.
 
 ### Step 3 — Apply
 
-Run:
 ```
-python3 -m hallucinote.sync.pull_cli apply <session_id> --song <song-slug> --plan /tmp/ableton-pull-plan.json --results /tmp/ableton-pull-results.json
+python3 -m hallucinote.sync.pull_cli apply <session_id> --song <slug> \
+  --plan /tmp/ableton-pull-plan.json \
+  --results /tmp/ableton-pull-results.json
 ```
 
-This writes a JSON summary to stdout: `{mutations, no_ops, skipped_unlinked, warnings, details}`.
+Writes JSON summary to stdout: `{mutations, no_ops, skipped_unlinked, warnings, details}`.
 
 ### Step 4 — Report
 
 Show the user:
 
-- The total counts (`<N> mutations applied, <M> no-ops, <K> skipped (unlinked)`).
-- Each line from `details` (these are the human-readable diffs — e.g. `track 'Drums' volume: 0.6 -> 0.75`).
-- Any warnings. For the `clip-notes` "look moved" warning, add one sentence of plain-English context: "If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. Annotations or events keyed to the prior UUID won't follow the move. If that matters, undo in Ableton and edit DB-side by the original UUID instead."
+- Total counts (`<N> mutations applied, <M> no-ops, <K> skipped (unlinked)`).
+- Each line from `details` (human-readable diffs — `track 'Drums' volume: 0.6 -> 0.75`).
+- Warnings. For the `clip-notes` "look moved" warning, add: *"If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. If annotations/events keyed to the prior UUID matter, undo in Ableton and edit DB-side by the original UUID instead."*
 
-If `mutations == 0` and there are no warnings, say "DB already matches Ableton — no changes needed" and stop.
+If `mutations == 0` with no warnings, say "DB already matches Ableton — no changes needed."
 
 ## Failure modes
 
-- **`plan` exits non-zero** — show stderr to the user; usually means the session_id or db path is wrong.
-- **A probe MCP call fails** — record it in the results with `ok=false` and proceed. `apply` will surface the failure as a warning but won't crash.
-- **`apply` exits non-zero** — show stderr; usually means an unknown key kind (planner / apply contract drift) or a malformed results file.
+- **`plan` exits non-zero**: usually session_id / db path wrong. Show stderr.
+- **A probe MCP call fails**: record with `ok=false` and proceed. `apply` surfaces it as a warning.
+- **`apply` exits non-zero**: usually unknown key kind or malformed results. Show stderr.
+- **Connection errors**: see `ableton://guides/error-recovery`.
 
-Do not retry MCP calls automatically — Ableton transient failures are rare and silent retries can mask real issues.
+Do not retry MCP calls automatically — transient failures are rare; silent retries mask real issues.
 
 ## What NOT to do
 
-- Do not try to "improve" the diff before calling `apply`. The DB is the source of truth for the diff logic; your job is to faithfully ship the Ableton snapshot.
-- Do not skip the `plan` step ("I already know what to probe"). The planner walks `ableton_links` to pick the right linked tracks; you don't have that context.
-- Do not change `actor` or invent new domains. If the user asks for something not in the table above, surface it as a gap and stop.
-- Do not "be helpful" by also pushing afterward. Pull is one direction; if the user wants a round-trip, they will say so.
+- Do not "improve" the diff before calling `apply`. The DB is the source of truth for diff logic.
+- Do not skip `plan` — the planner walks `ableton_links` to pick the right tracks.
+- Do not invent new domains. Gaps stop the run.
+- Do not push afterward. Pull is one direction.
 
 ## Provenance
 
-Every `pull_cli apply` invocation opens one `requests` row with `kind='pull'`, threads its id through the mutators (so every event the apply layer emits is attributed), and closes it with `outcome='ok'` (or `'failed'` if apply raises). Future sessions answer "what was the last pull" via `Q.get_latest_request_for_song(conn, song_id, kind='pull')` and drill into "what did it touch" via `Q.get_events_for_request(conn, rid)`. The CLI does this automatically — no skill-side ceremony.
+Every `pull_cli apply` opens a `requests` row (`kind='pull'`), threads its id through every mutator, and closes it with `outcome='ok'` (or `'failed'`). Query via `Q.get_latest_request_for_song(...)` / `Q.get_events_for_request(...)`.

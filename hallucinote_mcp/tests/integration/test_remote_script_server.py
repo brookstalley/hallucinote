@@ -143,7 +143,7 @@ def test_client_send_raises_when_no_server_listening():
 
     port = _free_port()  # nothing listening
     with pytest.raises(LiveConnectionError, match="could not reach"):
-        client_send(Request(tool="ableton_session", action="help"), port=port, timeout=1.0)
+        client_send(Request(tool="ableton_session", action="help"), port=port, connect_timeout=1.0)
 
 
 def test_end_to_end_version_mismatch_returns_structured_error(running_server):

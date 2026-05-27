@@ -1,8 +1,7 @@
 """Schema CHECK constraints enforcing the 1-based bar convention.
 
-The convention is documented in `src/hallucinote/db/schema.sql` and
-`docs/mcp-requirements.md`. Before J-6 it was unenforced; this suite is the
-regression gate for the four score-half tables.
+The convention is documented in `src/hallucinote/db/schema.sql`. This suite
+is the regression gate for the four score-half tables.
 """
 from __future__ import annotations
 

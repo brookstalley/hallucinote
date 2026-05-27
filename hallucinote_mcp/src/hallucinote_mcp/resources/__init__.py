@@ -304,10 +304,9 @@ def register_resources(mcp: Any) -> None:
         "ableton://guides/gaps",
         name="guide_gaps",
         description=(
-            "Known gaps — what NOT to attempt today (gap #4 note ops, "
+            "Known gaps — what NOT to attempt today (note ops, "
             "envelope reads, arrangement tempo automation, nested racks). "
-            "Mirrors docs/mcp-requirements.md with current resolution "
-            "status."
+            "Canonical home for current API blockers + workarounds."
         ),
         mime_type="text/markdown",
     )

@@ -362,9 +362,19 @@ def recv_message(sock: _socket.socket, timeout: float | None = None) -> dict[str
     A ``socket.timeout`` during read is translated to ``FrameError`` so
     callers can handle "no message arrived" with the same exception class
     as other framing issues. Other ``OSError`` subclasses propagate.
+
+    ``timeout`` semantics:
+      - A float — bound the read; ``socket.timeout`` translates to
+        ``FrameError`` with the elapsed budget.
+      - ``None`` — explicitly clear any prior socket timeout and block
+        indefinitely. The caller is asserting "this read may take as
+        long as the handler needs" (e.g. ``ableton_render(render)``
+        plays the full arrangement before responding — minutes for a
+        long song). Without the explicit clear, ``socket.create_connection``'s
+        connect timeout would carry over and bound the read at 15 s
+        even when the caller intends to wait.
     """
-    if timeout is not None:
-        sock.settimeout(timeout)
+    sock.settimeout(timeout)
     try:
         header = _recv_exact(sock, _LENGTH_PREFIX_BYTES)
         (length,) = struct.unpack(">I", header)

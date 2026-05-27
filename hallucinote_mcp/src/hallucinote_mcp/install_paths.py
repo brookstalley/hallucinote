@@ -33,6 +33,13 @@ REMOTE_SCRIPT_EXCLUDE_DIRS_ANY: tuple[str, ...] = (
     "cli",              # console-script entry; pulls in serve.py which imports server.py
     "tests",            # outside the package proper, but covered for safety
     "__pycache__",      # bytecode caches; never relevant on install
+    "m4l",              # M4L device source — installed separately into
+                        # `Presets/Audio Effects/Max Audio Effect/` via the
+                        # install skill's analyzer-copy step. If included
+                        # here, Live's browser indexes BOTH locations and
+                        # shows the device twice, leading to "which one am
+                        # I editing?" confusion (audio-analysis MVP Chunk 2
+                        # sub-chunk 2B hit this — see learnings.md).
 )
 
 # File globs to exclude wherever they appear.
@@ -202,6 +209,85 @@ def remote_script_install_dir(user_library: pathlib.Path | str) -> pathlib.Path:
     paths into ``python -c`` invocations, so strings come in naturally.
     """
     return pathlib.Path(user_library) / "Remote Scripts" / "Hallucinote"
+
+
+ANALYZER_AMXD_FILENAME = "HallucinoteAnalyzer.amxd"
+"""The M4L device file shipped under `hallucinote_mcp/m4l/`. Filename
+(minus extension) surfaces in Live as ``device.name`` on freshly-loaded
+instances; `analyzer.setup.ensure_analyzers_loaded` detects existing
+instances by requiring both ``device.class_display_name == "Max Audio
+Effect"`` AND ``device.name`` matching this filename's stem."""
+
+
+def analyzer_amxd_source_path() -> pathlib.Path:
+    """Source location of the bundled ``HallucinoteAnalyzer.amxd``.
+
+    The install skill copies from this path into the User Library's
+    Max Audio Effect Presets directory. Keeping the path computation
+    here (testable) so the skill body stays declarative.
+    """
+    return package_root() / "m4l" / ANALYZER_AMXD_FILENAME
+
+
+def analyzer_install_dir(user_library: pathlib.Path | str) -> pathlib.Path:
+    """Where Live looks for user-installed Max Audio Effect devices.
+
+    ``<User Library>/Presets/Audio Effects/Max Audio Effect/`` — devices
+    in this directory appear in Live's browser under
+    ``Audio Effects > Max Audio Effect`` and can be loaded by
+    ``browser.load_item`` from anywhere in the LOM tree.
+    """
+    return (
+        pathlib.Path(user_library)
+        / "Presets"
+        / "Audio Effects"
+        / "Max Audio Effect"
+    )
+
+
+def analyzer_install_target(user_library: pathlib.Path | str) -> pathlib.Path:
+    """Full filesystem destination for the installed ``HallucinoteAnalyzer.amxd``."""
+    return analyzer_install_dir(user_library) / ANALYZER_AMXD_FILENAME
+
+
+def installed_analyzer_amxd(
+    user_library: pathlib.Path | str,
+) -> pathlib.Path | None:
+    """Path to the installed analyzer if present in this User Library, else None.
+
+    Used by the install skill to detect drift (vendored vs installed
+    file size / modification time mismatch) and by the uninstall
+    skill to know what to remove.
+    """
+    target = analyzer_install_target(user_library)
+    return target if target.is_file() else None
+
+
+def max_for_live_available(live_version: str | None = None) -> bool | None:
+    """Best-effort probe for whether Max for Live (M4L) is available.
+
+    The HallucinoteAnalyzer is an M4L device; without an M4L runtime
+    Live can't load it. M4L ships only with Live Suite — the install
+    skill warns / refuses if Live isn't Suite.
+
+    Returns:
+      - ``True``  — strong evidence M4L is installed (Live Suite preference
+        file present, or platform-specific Max install detected).
+      - ``False`` — strong evidence M4L is NOT installed (Live edition
+        is detected and isn't Suite).
+      - ``None``  — can't tell. Surface as "ask the user" in the skill;
+        many setups (custom installs, Wine, etc.) defeat the heuristics.
+
+    Today we return ``None`` unconditionally — the heuristics that
+    distinguish Suite from Standard from Lite aren't reliable across
+    Live versions, and a wrong ``False`` would refuse a valid install.
+    The install skill prompts the user. This signature lets the skill
+    body assume the contract for future tightening without re-wiring.
+    """
+    # `live_version` is reserved for future per-version probes (e.g.,
+    # Live 12 surfaces edition info in a different file than Live 11).
+    _ = live_version
+    return None
 
 
 def installed_remote_script_version(user_library: pathlib.Path | str) -> str | None:
@@ -520,20 +606,26 @@ def malformed_mcp_config_files(cwd: pathlib.Path | None = None) -> list[pathlib.
 
 
 __all__ = [
+    "ANALYZER_AMXD_FILENAME",
     "MCPConfigEntry",
     "REMOTE_SCRIPT_EXCLUDE_DIRS_ANY",
     "REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY",
     "REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES",
+    "analyzer_amxd_source_path",
+    "analyzer_install_dir",
+    "analyzer_install_target",
     "candidate_user_libraries",
     "default_user_library",
     "describe_install_layout",
     "existing_mcp_config_files",
     "hallucinote_mcp_command",
+    "installed_analyzer_amxd",
     "installed_live_versions",
     "installed_remote_script_version",
     "live_is_running",
     "live_log_path",
     "malformed_mcp_config_files",
+    "max_for_live_available",
     "mcp_config_global_path",
     "mcp_config_local_path",
     "package_root",

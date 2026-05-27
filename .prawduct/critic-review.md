@@ -2,6 +2,9 @@
 
 <!-- Role: Independent quality reviewer for product builds.
      Tools: Read, Glob, Grep, git, wc, Write, Agent. NO test execution, NO builds.
+     The Critic skill's allowed-tools includes explicit `!Bash(...pytest...)` deny
+     patterns (v1.5.1) — pytest invocation is structurally blocked by the Bash
+     sandbox, not just by this prose. Read .prawduct/.test-evidence.json instead.
      Independence: You have NOT seen the builder's reasoning. That is structural. -->
 
 You are an independent reviewer. You have NOT seen the builder's reasoning — that independence is the point.
@@ -40,7 +43,7 @@ The Critic runs in one of four modes, selected by the caller via `$ARGUMENTS` (t
 
 **`verify-resolutions`** — delta re-review against prior findings, after the builder fixes a BLOCKING/WARNING round. Target: 1-2 minutes.
 - **Goals run:** 1 (Nothing Is Broken), 2 (Nothing Is Missing), 3 (Nothing Is Unintended) — same as `chunk` mode, narrower surface.
-- **Scope:** read the prior `.prawduct/.critic-findings.json`; scope is (prior `files_reviewed`) ∪ (files changed since prior `commit_reviewed`, via `git diff --name-only <commit_reviewed>` + `git ls-files --others --exclude-standard`). The canonical implementation is `_compute_verify_resolutions_scope` in `tools/product-hook`.
+- **Scope:** don't reimplement — call `python3 tools/product-hook compute-verify-resolutions-scope` (v1.5.1 Chunk 03). stdout lists the files; stderr carries the reason. Exit 0 = use the files. Exit 1 = cannot compute (no prior findings, no `commit_reviewed`, no actionable findings, unresolved commit, git failure) — fall back to `/critic chunk` or `/critic final` and record `mode_chosen_by: "fallback-no-prior-findings"`. Exit 2 = scope widened past `len(delta) > 2 * len(prior) + 5` — fall back to `/critic final` and record `mode_chosen_by: "fallback-scope-widened"`. The underlying formula (canonical helper `_compute_verify_resolutions_scope` in `tools/product-hook`): (prior `files_reviewed`) ∪ (files changed since `commit_reviewed` — `git diff --name-only <commit_reviewed>` + `git ls-files --others --exclude-standard`, metadata-paths excluded).
 - **Execution:** always single-pass.
 - **Use when:** the prior review flagged 1-2 BLOCKING/WARNING findings, the builder fixed them, and re-running `chunk`/`final` would re-walk the full diff at full latency for a localized change.
 - **Demotion (fall through to `chunk`/`final`):** missing prior findings, `commit_reviewed` absent / null / unresolvable in current repo, no prior BLOCKING/WARNING findings (nothing to verify), or scope widens past `len(files_since_commit) > 2 * len(prior_files_reviewed) + 5`. Fail-closed throughout.

@@ -4,6 +4,271 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
+
+<!-- chunks=2 status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Chunk 2 — Capture pipeline — closed. Multi-analyzer simultaneous capture
+verified end-to-end on reggae-metal song in Live 12.4 at 180 BPM:
+`ableton_render(action='render', song_slug='reggae-metal',
+start_at_beat=8, stop_at_beat=24)` produced 9 WAVs (5 tracks + 3 returns
++ master, each ~1.9 MB FLOAT/stereo/44.1k matching the 16-beat window at
+180 BPM) + `manifest.json` in `songs/reggae-metal/captures/<utc-ts>/`.
+Cross-correlation of track-01 Drums vs master.wav: peak lag = 0 samples
+(sample-accurate). The transport-position-driven recording design
+(Chunk 2 architecture decision) is structurally PDC-correct.
+
+**Five fix sets landed in this close-out session:**
+
+1. **Four integration-layer fixes from the prior session's afternoon
+   triage backlog** (each with dedicated regression tests pinning the
+   structural property that prevents recurrence):
+   - (a) `ensure_analyzers_loaded` marshals each Live touch through
+     `context.run_on_main` with a 50ms inter-surface yield. Was packing
+     9-surfaces × 3-ops into one Remote-Script request-thread call, which
+     deadlocked Live's main thread on the M4L runtime.
+   - (b) `render_handler` splits seek/play and stop/disarm into separate
+     `context.run_on_main` bouts with a worker-thread yield between.
+     Fixes Live's "Changes cannot be triggered by notifications" error
+     when one bout writes a state-change that triggers a listener
+     cascade then synchronously enters another mutation.
+   - (c) `server.handle_tool_call` absolutizes `ableton_render(render)`'s
+     `output_dir` against the MCP server's cwd before forwarding to the
+     Remote Script. Live's process cwd is `/` on macOS (read-only); the
+     handler's pre-existing relative default raised `OSError [Errno 30]`.
+   - (d) Port range shifted 11000 → 11020 (track base), 11100 → 11120
+     (return base), 11200 → 11220 (master), 11201 → 11221 (sidecar
+     emit). Clears AbletonOSC, the most common community Remote Script,
+     which binds 11000 + 11001.
+
+2. **Pre-roll seek fix** in render_handler: seeks to
+   `max(0, start_at_beat - pre_roll_beats)` instead of directly to
+   `start_at_beat`. Without the pre-roll, the patch's transport-cross
+   detector (`$f2 < $i3 && $f1 >= $i3`) lands its first observer fire
+   AT the threshold and misses the edge. Default `pre_roll_beats=4`
+   (one bar at 4/4), symmetric to `post_roll_beats`.
+
+3. **Wire/client `read_timeout` split**: `client.send`'s single 15s
+   `timeout` split into `connect_timeout` (default 15s, bounds socket-
+   accept) and `read_timeout` (default 15s, may be `None` for indefinite-
+   block). `server.handle_tool_call` passes `read_timeout=None` for
+   `ableton_render(render)` since the handler plays the full arrangement
+   (minutes for long songs). `wire.recv_message(timeout=None)` now
+   explicitly clears any inherited socket timeout.
+
+4. **MAJOR ROOT-CAUSE PATCH FIX**: in-Live verification revealed that
+   the `.amxd`'s `[value hallucinote_path]` storage was a GLOBAL shared
+   variable across all M4L instances (M4L's `[value <name>]` is global-
+   by-name). When N analyzers received `/path` in sequence, only the
+   LAST path survived globally; all N `sfrecord~` instances raced to
+   open the SAME file at cross-detect time, only one wins. Deterministic
+   and order-dependent: OSC to track 1 then track 2 → only track 2
+   records; reverse order → only track 1 records. Patch rewired so
+   `OSC-route /path → prepend open → sfrecord~` directly (per-instance
+   file handle on `/path` arrival), removing the value-storage
+   indirection. Plus a `[sel 0 1]` outlet 1 → `[-1.]` wire for arm-
+   rising-edge prev-pos reset (handles `start_at_beat=0` case under
+   repeated renders). New learning landed: "M4L `[value <name>]` is
+   GLOBAL-by-name across all device instances — never use for per-
+   instance state."
+
+5. **Critic-round-2 cleanups** (from `/critic chunk` second pass):
+   deleted duplicate `_default_captures_dir` helper from handlers/
+   render.py (server.py's `_absolutize_render_output_dir` is the single
+   source of truth for default-resolution + absolutization); handler
+   now refuses missing `output_dir` to make the contract explicit.
+   Removed obsolete `_PER_INSTANCE_OSC_YIELD_S` constant + the
+   `time.sleep` call — the patch fix makes per-instance OSC arrival
+   truly independent (each udpreceive owns its own bound port), so the
+   prior 50ms defensive yield is no longer load-bearing. Fixed
+   `shared_sidecar` test to monkey-patch the default port (was failing
+   when MCP server's sidecar was already running on 11221).
+
+**Tests:** 2114/2114 pass (+10 since chunk start, all regression-pinning
+the structural fixes above). Critic `chunk` mode after the Critic-round-2
+cleanups: 0 blocking, 0 warnings, 0 notes.
+
+**Cumulative session learnings (4 new entries to `.prawduct/learnings.md`
+during this close-out):** the global-by-name `[value]` rule; the
+`[sel 0 1]` outlet-2-vs-outlet-1 disambiguation around `[-1.]`. Plus
+struck-through deprecation marker on the pre-existing "`[value]`
+doesn't emit on cold write — bang to emit" rule (subsumed by the new
+"always GLOBAL" warning).
+
+**Out of scope for Chunk 2, deferred to Chunk 3 or later:** the
+`[value track_id_retained]` global-by-name bug (used in /signature
+query reply target routing) — same shape as the hallucinote_path bug
+but lower-priority since /signature isn't called in the multi-analyzer
+render path. Backlog candidate when /signature becomes load-bearing
+for sidecar version-discovery.
+
+## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2B partial — in-Live recording-path verification
+
+<!-- chunks=2b-partial status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Sub-chunk 2B's recording-path half shipped. The HallucinoteAnalyzer
+`.amxd` was extended in Max's GUI to the Chunk 2 contract, and the
+transport-position-sync render was verified end-to-end against Live's
+transport on a Hallucinote song.
+
+**GO criterion met:** render window [4, 12] beats at 180 BPM produced
+`/tmp/chunk2_dtest.wav` as FLOAT/stereo/44.1 kHz with duration
+2.6703s vs expected 2.6667s — **+3.6ms / +0.31 audio buffer drift**,
+far inside the spec's ±4 buffer tolerance. Peak -8.19 dBFS, clean
+audio content from the source track's instrument. Transport-position-
+sync delivered the architectural win pinned at Chunk 1 close: no more
+MCP-latency padding around the recording window.
+
+**M4L surface authored:** widened `Port` Live param to 11000-11400
+(via Float + Unit Style = Int — Live's Int parameter cap is 256),
+added `EmitPort` + `Emit` Live params, added four new OSC routes
+(`/track_id` symbol retainer, `/start_at_beat` int, `/stop_at_beat`
+int, `/signature/query` with explicit reply-args), built the
+canonical `live.thisdevice → live.path live_set → live.observer`
+transport observer with `property current_song_time` sent as
+runtime message, replaced all `[value]` cold-inlet storage with
+`[i]`/`[f]` (the `[value]` non-emit issue), wired `[t b b]` →
+open + 1 → sfrecord cascade, gated via `has_path` flag, added
+prev_beat reset on Arm rising edge.
+
+**Five durable M4L learnings landed in learnings.md** — each was a
+multi-hour in-Live discovery, codified so the next M4L author starts
+from a better baseline:
+
+- `[value]` doesn't emit on write — use `[i]` / `[f]` for cold-inlet
+  storage. The `[value]` object stores writes silently; only banged
+  reads emit. Trade-off: lose named-shared semantics for emit-on-write
+  reliability.
+- `live.toggle` emits int 0/1 directly — no `[== on]` shim needed
+  (and adding it INVERTS the value because `==` coerces the symbol
+  arg `on` to int 0).
+- `live.observer` needs runtime `property <name>` message; the
+  `@property` constructor attribute silently fails AND can poison
+  the patcher's loadbang sequence. Outputs bare value (no
+  `<prop> <val>` prefix), so `[route <prop>]` filters out everything
+  if added downstream.
+- M4L patcher editor and Live runtime conflict over `udpreceive` —
+  close the patcher window (Cmd-W, not Cmd-Q) before runtime
+  testing. Keep `Window → Max Console` open separately.
+
+Plus the install bug fix at e388242 (which prevented this whole
+debugging session from being even longer): the install skill was
+copying the `m4l/` subdir into Remote Scripts in addition to the
+proper Presets/Audio Effects/Max Audio Effect/ location, so Live's
+browser indexed the analyzer twice and the user kept dragging the
+stale Chunk 1 copy onto tracks while editing the Chunk 2 copy. Fix
+landed in `install_paths.py` (added `m4l` to `REMOTE_SCRIPT_EXCLUDE_DIRS_ANY`)
++ install skill body update.
+
+The authoring guide `AUTHORING-CHUNK-2B.md` was rewritten through
+Section D (observer chain), Section E.2 (live.toggle directly; no
+`[== on]`), new Section E.4 (prev_beat reset on Arm rising edge),
+Section G preamble (close-the-editor workflow rule), and the
+appendix traps table (six new rows for each discovered gotcha).
+
+Python-side: 2103/2103 tests still passing, no regressions.
+
+**Remaining for full Chunk 2 close:** Section F feature emitter
+(audio tap → K-weighted LUFS + sample peak + low-mid band → 30 Hz
+OSC frames to sidecar), in-Live master-strip analyzer load
+(`master=True` path; Python side ready), multi-analyzer simultaneous
+capture verification, PDC cross-correlation between track and master
+WAVs, `/critic chunk`. The recording-path verification alone is the
+hardest architectural piece — the rest is incremental in-Live
+authoring + verification work.
+
+## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
+
+<!-- chunks=2a status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Sub-chunk 2A of Chunk 2 closed with the full Python-side surface for
+the audio-capture pipeline. M4L authoring + in-Live verification (sub-
+chunk 2B) is the next deliverable; the split mirrors Chunk 1's per the
+"Human-authoring boundaries split the chunk" learning.
+
+What landed:
+
+- **Master-strip device push** — `plan_push_devices`
+  (`src/hallucinote/sync/push.py`) now walks `kind='master'` tracks and
+  emits load + set-parameter ToolCalls addressed via `master=True`
+  instead of `track_index`. The `ableton_device` action schema +
+  `_resolve_parent` accept the new addressing uniformly across every
+  device action. **Closes the P0 backlog entry "Master-strip device
+  chains"** (open since 2026-05-17).
+- **`hallucinote_mcp.analyzer` package** — `setup.ensure_analyzers_loaded`
+  (idempotent silent sweep over audio tracks + returns + master,
+  deterministic per-instance OSC port assignment, writes Port + EmitPort
+  Live params on load), `osc.AnalyzerOSC` (OSC 1.0 string/int packer
+  for `/path`, `/track_id`, `/start_at_beat`, `/stop_at_beat`),
+  `sidecar.OSCSidecar` (lazy-spawned UDP receiver with per-`track_id`
+  ring buffers, lenient frame parsing — malformed frames drop without
+  killing the receiver).
+- **`ableton_render` MCP tool** with two actions:
+  `ensure_loaded` (silent sweep, returns layout) and `render`
+  (orchestrates ensure-load → OSC delivery → batch arm → seek + play →
+  poll transport → batch disarm → manifest write). Render handler is
+  fully unit-tested via injected seams; status='ok' on clean exit,
+  'incomplete' on transport timeout.
+- **Install skill extension** — copies
+  `HallucinoteAnalyzer.amxd` from the package into Live's
+  `Presets/Audio Effects/Max Audio Effect/` during install, probes
+  M4L runtime (returns `None` for MVP — Live edition isn't reliably
+  detectable; skill asks the user).
+- **Auto-load postlude** wired into `/song-new`,
+  `/track-new-with-instrument`, and `/return-new` skill bodies so
+  structural mutations keep analyzer placement in sync.
+- **Spec extension** in `m4l/HallucinoteAnalyzer.amxd.spec.md`: full
+  Chunk 2 surface documented (OSC feature emitter shape, transport-
+  position observer behavior contract, signature OSC query rationale,
+  widened `Port` range to 11000-11400 for the deterministic per-
+  surface port allocation).
+- **`.gitignore`** updates for `songs/*/captures/`, `.hallucinote/stems/`,
+  `*.amxd~`.
+
+Test impact: +66 unit tests across `analyzer/*`, `actions_render`,
+`actions_device` (master-strip), `push_devices` (master-strip planner),
+`install_paths` (analyzer copy + M4L probe), `install_skill_consistency`
+(structural-skill postlude wiring). 2033 → 2099 passing.
+
+## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
+
+<!-- chunks=1 status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Chunk 1 of the audio-analysis MVP closed with track-only proof-of-life
+verified in Live: `HallucinoteAnalyzer.amxd` (Max for Live audio effect)
+records a clean WAV under Remote Script control. The full Chunk 1 arc
+landed in two passes: the Python-side deliverables (numpy/scipy/soundfile
+deps, synthetic-stem fixtures, PDC alignment unit test, spec, throwaway
+harness) landed 2026-05-23, and the binary `.amxd` authoring + in-Live
+verification + close-out landed 2026-05-26.
+
+In-Live verification surfaced three M4L-authoring traps now codified in
+spec + learnings.md as durable rules:
+
+1. **Live parameters are float/int/enum only** — strings need an
+   out-of-band OSC channel. `output_path` cannot be a Live parameter;
+   delivered via `/path` to `[udpreceive]`.
+2. **Remote Script API uses short names** — `Parameter.name` returns the
+   `parameter_shortname`, not the long name. Harness addresses `Arm` /
+   `Port`, not `Record Arm` / `OSC Port`.
+3. **`sfrecord~` uses bare integers** — `1` (start) / `0` (stop AND
+   finalize). NOT `record 1` (= "record 1 ms" — produced 44-frame
+   captures), NOT `stop` / `close` (rejected with "doesn't understand").
+
+The MCP-latency-bounded recording window observed in Chunk 1 (~2 s wider
+than transport play window due to ~700 ms per `set_parameter` round-trip)
+pinned the **transport-position-driven, beat-based** recording boundary
+design for Chunk 2. The patch will read Live's transport at signal rate
+and start/stop `sfrecord~` at requested beat positions; arm parameter
+becomes a gate, not a boundary definer. Sample-accurate, tempo-change-
+immune, multi-analyzer-aligned for free.
+
+Chunk 1 GO criteria explicitly tightened to track-only proof-of-life
+scope (clean WAV, header finalized, format correct, signal reaches
+`sfrecord~`). Strict-duration and track-vs-master PDC alignment deferred
+to Chunk 2 (both require master-strip MCP support, a known Chunk 2
+deliverable). Full test suite green: 2033 passed in 18.42 s.
+
 ## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
 
 <!-- chunks=hygiene status=shipped release=unreleased scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->

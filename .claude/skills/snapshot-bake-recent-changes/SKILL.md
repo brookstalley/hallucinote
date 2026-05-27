@@ -31,9 +31,9 @@ Then verify the bridge is live:
 
 > *call `ableton_session` with action=info*
 
-If it errors, stop. Tell the user to open Live with the right set loaded and confirm Hallucinote is the active Control Surface.
+On connection errors: see `ableton://guides/error-recovery`.
 
-Resolve the song's session_id. If the user gave one, use it; otherwise list the song's sessions:
+Resolve the song's session_id. If the user gave one, use it; otherwise list the song's sessions. Always resolve the DB path via `resolve_db_path()` (per-branch convention: `songs/<slug>/<slug>-<branch>.db`; see `docs/snapshot-schema.md`):
 
 ```bash
 DB_PATH=$(python3 -c "from hallucinote.db.connection import resolve_db_path; print(resolve_db_path('<slug>'))")
@@ -41,12 +41,7 @@ sqlite3 "$DB_PATH" \
   "SELECT id, name FROM ableton_sessions WHERE song_id IN (SELECT id FROM songs WHERE name = '<slug>') ORDER BY rowid DESC LIMIT 5"
 ```
 
-The per-branch DB convention (`resolve_db_path()`) produces
-`songs/<slug>/<slug>-<branch>.db` inside any git repo, so a bare
-`songs/<slug>/<slug>.db` only exists outside a worktree. Always
-resolve via the helper.
-
-Pick the most recent one or ask the user to confirm which. If none exist, refuse — they need to `push_cli probe-and-link --auto-session` first.
+Pick the most recent one or ask the user to confirm. If none exist, refuse — they need `push_cli probe-and-link --auto-session` first.
 
 ## Step 1 — Preview the diff (`--dry-run`)
 

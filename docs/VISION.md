@@ -38,7 +38,7 @@ Two bets, both unproven, both load-bearing:
 
 - **Plan-based Ableton sync.** `sync/push.py` returns a plan of MCP tool calls; the agent executes; results flow back via `apply_push_results`. Pure, testable, reorder-safe.
 
-- **Bidirectional sync.** Edits made in Ableton come back into the DB. Requires note-level addressing in MCP — see `docs/mcp-requirements.md`. Without stable note IDs, sync-back is destructive; with them, it is diff-and-apply.
+- **Bidirectional sync.** Edits made in Ableton come back into the DB. Requires note-level addressing in MCP — see `ableton://guides/gaps`. Without stable note IDs, sync-back is destructive; with them, it is diff-and-apply.
 
 - **Full LLM access via MCP.** Every read, every write, every generator parameter. Nothing hidden behind a UI the model cannot see.
 
@@ -60,7 +60,7 @@ Naming the hard parts so they do not surprise us:
 
 - **Microtonal and polytempic music is real work.** The DB models it cleanly; getting Ableton to render it requires Max for Live, per-voice pitch routing, or 1/64-grid event positioning. Doable. Not free.
 
-- **Bidirectional sync needs MCP changes.** Note-level addressing (PR A in `docs/mcp-requirements.md`) is the gate. Until it lands, Ableton → DB is destructive — we push, we do not pull safely.
+- **Bidirectional sync needs MCP changes.** Note-level addressing is the gate (see `ableton://guides/gaps`). Until it lands, Ableton → DB is destructive — we push, we do not pull safely.
 
 - **The DB is the contract.** Schema changes have to migrate carefully. The mutator-plus-event discipline is the only thing that makes a future event-store flip cheap rather than a rewrite. Drift here is expensive.
 

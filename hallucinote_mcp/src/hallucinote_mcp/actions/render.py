@@ -44,10 +44,12 @@ register(
         name="ensure_loaded",
         description=(
             "Idempotent silent sweep — place a HallucinoteAnalyzer on every "
-            "audio track + return + master where it's missing. Detection is "
-            "by class_display_name=HallucinoteAnalyzer; existing instances "
-            "are recorded but not duplicated. Returns the per-surface "
-            "layout (track_id + OSC port + device_index)."
+            "audio track + return + master where it's missing. Detection "
+            "requires both class_display_name='Max Audio Effect' (every "
+            "M4L audio-effect shares this class) AND name='HallucinoteAnalyzer' "
+            "(our specific .amxd identity); existing instances are recorded "
+            "but not duplicated. Returns the per-surface layout "
+            "(track_id + OSC port + device_index)."
         ),
         handler=render_handlers.ensure_loaded_handler,
         runs_on_worker=True,

@@ -217,9 +217,14 @@ def render_handler(
 
     Inputs:
       - ``song_slug``: the Hallucinote song slug. Drives the default
-        ``output_dir`` (``songs/<slug>/captures/<iso-ts>/``). Required.
-      - ``output_dir`` (optional): absolute or relative path. Created
-        if missing. Overrides the slug-derived default.
+        ``output_dir`` (server-side ``_absolutize_render_output_dir``
+        resolves it to ``<repo>/songs/<slug>/captures/<utc-ts>/``).
+        Required.
+      - ``output_dir`` (REQUIRED by this handler — the MCP server
+        resolves it for forwarded calls): absolute path on disk.
+        Live's process cwd is ``/`` on macOS (read-only), so the
+        handler refuses missing/relative values; the server-side
+        preprocessor owns default + absolutize logic.
       - ``post_roll_beats``: extra beats to let transport run past
         ``stop_at_beat`` before stopping. Default 4 (one bar in 4/4).
       - ``pre_roll_beats``: how many beats BEFORE ``start_at_beat`` to
@@ -233,11 +238,12 @@ def render_handler(
         ``stop_at_beat=None`` (default) uses the arrangement's full
         length (``song.last_event_time``).
 
-    Returns a dict suitable for direct MCP response::
+    Returns a dict suitable for direct MCP response. Paths are
+    absolute post-server-side absolutize::
 
         {
-          "captures_dir": "songs/<slug>/captures/<ts>/",
-          "manifest_path": "songs/<slug>/captures/<ts>/manifest.json",
+          "captures_dir": "/Users/.../songs/<slug>/captures/<ts>/",
+          "manifest_path": "/Users/.../songs/<slug>/captures/<ts>/manifest.json",
           "manifest": {...},
           "status": "ok" | "incomplete",
         }

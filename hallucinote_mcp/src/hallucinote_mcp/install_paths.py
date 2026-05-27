@@ -213,10 +213,10 @@ def remote_script_install_dir(user_library: pathlib.Path | str) -> pathlib.Path:
 
 ANALYZER_AMXD_FILENAME = "HallucinoteAnalyzer.amxd"
 """The M4L device file shipped under `hallucinote_mcp/m4l/`. Filename
-doubles as the device's ``class_display_name`` in Live (Live derives
-the display name from the .amxd filename minus extension), so the
-analyzer setup (`analyzer.setup.ensure_analyzers_loaded`) detects
-existing instances by matching this string."""
+(minus extension) surfaces in Live as ``device.name`` on freshly-loaded
+instances; `analyzer.setup.ensure_analyzers_loaded` detects existing
+instances by requiring both ``device.class_display_name == "Max Audio
+Effect"`` AND ``device.name`` matching this filename's stem."""
 
 
 def analyzer_amxd_source_path() -> pathlib.Path:

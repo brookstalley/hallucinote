@@ -21,12 +21,13 @@ render targets. The 2A/2B split owns this gap per the
 
 Idempotency is the load-bearing property. Two consecutive sweeps on
 the same session must produce identical layouts (no duplicate
-analyzer instances, no port re-shuffles). The detection key is the
-device's ``class_display_name`` — for M4L devices Live surfaces this
-as the ``.amxd`` filename (without extension), so a present analyzer
-shows up as ``HallucinoteAnalyzer``. The OSC `/signature?` query is
-the second-level check for distinguishing patch versions; the MVP
-trusts the name match.
+analyzer instances, no port re-shuffles). Detection requires BOTH
+``device.class_display_name == "Max Audio Effect"`` (proves it's any
+M4L audio-effect device — every .amxd shares this class) AND
+``device.name == "HallucinoteAnalyzer"`` (proves it's our specific
+.amxd). The OSC `/signature/query` round-trip is the second-level
+check for distinguishing patch versions; the MVP trusts the
+two-attribute name match.
 
 Port assignment is deterministic per surface kind + index so the next
 sweep recovers the same layout without inspecting prior state:
@@ -61,8 +62,10 @@ from ..handlers import device as device_handlers
 
 ANALYZER_DEVICE_NAME = "HallucinoteAnalyzer"
 """The M4L device file (without extension). Live surfaces this as
-``device.class_display_name`` for M4L devices, so a present analyzer
-matches by exact string."""
+``device.name`` for freshly-loaded M4L devices; detection pairs it
+with ``device.class_display_name == "Max Audio Effect"`` (every M4L
+audio-effect device shares that class — the .amxd-specific identity
+is in ``name``)."""
 
 ANALYZER_BROWSER_PATH_PREFIX = ("Presets", "Audio Effects", "Max Audio Effect")
 """Browser path under the ``user_library`` root where the install
@@ -457,32 +460,21 @@ def _find_analyzer_index(devices: list[Any]) -> int | None:
 
 
 def _track_carries_audio(track: Any) -> bool:
-    """Skip MIDI-only tracks (no audio inlet) and Group tracks.
+    """Return True if the track produces audio that's worth capturing.
 
-    Live exposes ``has_audio_output`` on every track. Group tracks
-    return True but they're routing aggregations of their members —
-    capturing the group AND each member would double-count audio.
-    For MVP we capture only leaf audio tracks; Chunk 3+ can revisit
-    group-aware bus capture if needed.
+    Two filters:
+      - ``has_audio_output``: Live sets this False on tracks with no
+        audible signal at chain end (empty MIDI tracks without an
+        instrument, muted-stub tracks, etc.). Captures the instrumented
+        case for MIDI (the instrument's audio output sets it True).
+      - ``is_foldable``: True on Group tracks. Groups are routing
+        aggregations of their members; capturing the group AND each
+        member would double-count. MVP captures only leaf tracks.
     """
     if not getattr(track, "has_audio_output", True):
         return False
     if getattr(track, "is_foldable", False):
-        # is_foldable is Live's "this is a group / has a fold open/close
-        # affordance" flag — True for groups, False for plain audio /
-        # MIDI / return / master.
         return False
-    # MIDI tracks: has_midi_input=True AND has_audio_input=False (the
-    # instrument generates audio internally but the inlet is MIDI). Even
-    # so, MIDI-with-instrument DOES emit audio at the device chain's
-    # tail — and the analyzer at chain-end will catch it. So include MIDI
-    # tracks that have an instrument loaded; skip the ones that don't.
-    has_midi = getattr(track, "has_midi_input", False)
-    if has_midi:
-        # Loaded instrument = at least one device producing audio. Check
-        # `has_audio_output` (above already True) is sufficient — Live
-        # sets it False on tracks with no instrument loaded.
-        return True
     return True
 
 

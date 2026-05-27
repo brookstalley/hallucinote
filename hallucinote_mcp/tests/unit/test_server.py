@@ -239,6 +239,113 @@ def test_handle_tool_call_translates_connection_error(isolated_registry):
 
 
 # ---------------------------------------------------------------------------
+# Server-side path resolution for ableton_render(render).
+#
+# The render handler runs inside Live's process (cwd = "/" on macOS,
+# read-only). A relative output_dir like "songs/<slug>/captures/<ts>"
+# resolves against Live's cwd and the mkdir raises OSError [Errno 30].
+# handle_tool_call must absolutize the path BEFORE forwarding so the
+# Remote Script sees only absolute paths.
+# ---------------------------------------------------------------------------
+
+
+def test_render_call_absolutizes_relative_output_dir_before_forward(
+    tmp_path, monkeypatch,
+):
+    """A relative output_dir gets absolutized against the MCP server's
+    cwd (the agent's repo root). The wire request the Remote Script
+    receives carries the absolute path."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render",
+            "render",
+            {"song_slug": "demo", "output_dir": "songs/demo/captures/x"},
+        )
+    forwarded_request = send.call_args.args[0]
+    output_dir = forwarded_request.params["output_dir"]
+    # Absolute and rooted in the server's cwd (tmp_path). Real and
+    # resolved tmp_path can differ on macOS (/var ↔ /private/var) — use
+    # resolve() to compare canonical paths.
+    import pathlib
+    resolved_tmp = pathlib.Path(tmp_path).resolve()
+    assert pathlib.Path(output_dir).is_absolute()
+    assert pathlib.Path(output_dir).is_relative_to(resolved_tmp), (
+        f"expected output_dir to be under {resolved_tmp}, got {output_dir}"
+    )
+    assert output_dir.endswith("songs/demo/captures/x")
+
+
+def test_render_call_computes_default_output_dir_when_missing(
+    tmp_path, monkeypatch,
+):
+    """When output_dir is omitted, the server fills in
+    ``<cwd>/songs/<slug>/captures/<utc-ts>/`` so the Remote Script
+    never sees a relative path."""
+    import re
+    import pathlib
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "render", {"song_slug": "demo"})
+    forwarded_request = send.call_args.args[0]
+    output_dir = forwarded_request.params.get("output_dir")
+    assert output_dir is not None, (
+        "server must populate output_dir before forwarding so the "
+        "Remote Script doesn't resolve relative paths against Live's "
+        "read-only cwd"
+    )
+    resolved_tmp = pathlib.Path(tmp_path).resolve()
+    assert pathlib.Path(output_dir).is_relative_to(resolved_tmp)
+    # Shape: <cwd>/songs/demo/captures/YYYYMMDDTHHMMSSZ
+    assert re.search(r"/songs/demo/captures/\d{8}T\d{6}Z$", output_dir), (
+        f"unexpected default shape: {output_dir}"
+    )
+
+
+def test_render_call_passes_through_absolute_output_dir(
+    tmp_path, monkeypatch,
+):
+    """An already-absolute output_dir is passed through unchanged."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+    absolute_dir = str(tmp_path / "custom" / "captures")
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": absolute_dir},
+        )
+    forwarded_request = send.call_args.args[0]
+    assert forwarded_request.params["output_dir"] == absolute_dir
+
+
+def test_render_ensure_loaded_call_does_not_touch_output_dir(
+    tmp_path, monkeypatch,
+):
+    """``ensure_loaded`` (the no-capture sweep) has no output_dir param,
+    so the absolutize hook must not invent one."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+
+    forwarded = Response(ok=True, result={"loaded_count": 0})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "ensure_loaded", {})
+    forwarded_request = send.call_args.args[0]
+    assert "output_dir" not in forwarded_request.params
+
+
+# ---------------------------------------------------------------------------
 # Wire-shape regression: every tool's inputSchema must expose action params
 # as top-level kwargs (not nested under ``params``).
 #

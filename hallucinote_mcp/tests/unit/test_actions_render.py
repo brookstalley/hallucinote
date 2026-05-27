@@ -35,8 +35,8 @@ def _analyzer_params() -> list[_FakeParam]:
     return [
         _FakeParam("Device On", 1.0),
         _FakeParam("Arm", 0.0),
-        _FakeParam("Port", 11000.0, min=11000.0, max=11400.0),
-        _FakeParam("EmitPort", 11201.0, min=11000.0, max=11400.0),
+        _FakeParam("Port", 11020.0, min=11000.0, max=11400.0),
+        _FakeParam("EmitPort", 11221.0, min=11000.0, max=11400.0),
         _FakeParam("Emit", 1.0),
     ]
 
@@ -191,6 +191,15 @@ class _FakeCtx:
         self._song = song
         self._application = _FakeApplication(song)
         self._live_state_lock = threading.RLock()
+        # Records each main-thread bout so tests can assert that the
+        # seek + play split lands in SEPARATE bouts (regression guard
+        # for the notification-deferral bug — see render_handler).
+        self.run_on_main_calls = 0
+        # Per-bout snapshot of the song's transport mutations: each
+        # entry is (bout_id, current_song_time, start_playing_calls,
+        # stop_playing_calls). Tests inspect this to assert that seek
+        # and start_playing didn't share a bout.
+        self.bout_log: list[tuple[int, float, int, int]] = []
 
     @property
     def song(self):
@@ -205,7 +214,25 @@ class _FakeCtx:
         return self._live_state_lock
 
     def run_on_main(self, fn):
-        return fn()
+        self.run_on_main_calls += 1
+        bout_id = self.run_on_main_calls
+        time_before = self._song.current_song_time
+        plays_before = self._song.start_playing_calls
+        stops_before = self._song.stop_playing_calls
+        result = fn()
+        # Only log bouts that mutated transport state.
+        if (
+            self._song.current_song_time != time_before
+            or self._song.start_playing_calls != plays_before
+            or self._song.stop_playing_calls != stops_before
+        ):
+            self.bout_log.append((
+                bout_id,
+                self._song.current_song_time,
+                self._song.start_playing_calls,
+                self._song.stop_playing_calls,
+            ))
+        return result
 
 
 # --- recording OSC factory + minimal sidecar substitute -------------
@@ -228,7 +255,7 @@ class _StubSidecar:
     .frames_received. Standalone (doesn't bind a socket) so tests don't
     contend with the shared sidecar's port."""
 
-    def __init__(self, port: int = 11201):
+    def __init__(self, port: int = 11221):
         self.port = port
         self.frames_received = 0
 
@@ -369,8 +396,9 @@ def test_render_sends_path_track_id_and_beat_window_via_osc(
     for port, addr, _args in osc_sink:
         by_port.setdefault(port, []).append(addr)
     # 4 analyzers → 4 ports (deterministic, stride 1).
-    # Tracks: 11000 (T1), 11001 (T2). Return 1: 11100. Master: 11200.
-    expected_ports = {11000, 11001, 11100, 11200}
+    # Tracks: 11020 (T1), 11021 (T2). Return 1: 11120. Master: 11220.
+    # Base 11020 (not 11000) clears AbletonOSC; see analyzer/setup.py.
+    expected_ports = {11020, 11021, 11120, 11220}
     assert set(by_port.keys()) == expected_ports
     # Each port saw exactly the four expected addresses in order.
     for port in expected_ports:
@@ -459,21 +487,24 @@ def test_render_marks_status_incomplete_on_timeout(
     assert manifest["status"] == "incomplete"
 
 
-def test_render_default_output_dir_uses_song_slug(
-    tmp_path, monkeypatch, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+def test_render_handler_refuses_missing_output_dir(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
 ):
-    """No explicit output_dir → write under songs/<slug>/captures/<ts>/."""
-    monkeypatch.chdir(tmp_path)
-    result = render_handlers.render_handler(
-        ctx_two_tracks_one_return,
-        song_slug="my-song",
-        _osc_factory=osc_factory,
-        _sidecar=stub_sidecar,
-        _clock_source=lambda: 999.0,
-    )
-    captures_dir = Path(result["captures_dir"])
-    # Path is relative, resolves under tmp_path.
-    assert captures_dir.parts[:3] == ("songs", "my-song", "captures")
+    """The handler refuses to invent a default output_dir — the server
+    side (`_absolutize_render_output_dir` in server.py) is the source of
+    truth for default-resolution + absolutization. A handler that
+    invented a relative default would silently write to Live's cwd (``/``
+    on macOS, read-only) when called from inside the Remote Script.
+    See `test_render_call_computes_default_output_dir_when_missing` in
+    test_server.py for the server-side default coverage."""
+    with pytest.raises(ValueError, match="output_dir is required"):
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="my-song",
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
 
 
 def test_render_rejects_inverted_beat_window(
@@ -520,3 +551,150 @@ def test_render_per_surface_wav_filenames_are_deterministic(
     names_a = sorted(t["filename"] for t in a["manifest"]["tracks"])
     names_b = sorted(t["filename"] for t in b["manifest"]["tracks"])
     assert names_a == names_b
+
+
+# --- notification-deferral regression guard --------------------------
+#
+# Regression guard for the 2026-05-27 bug: writing current_song_time
+# AND calling start_playing inside a single run_on_main bout triggers
+# Live's "Changes cannot be triggered by notifications" error — the
+# first write kicks off a notification cascade, and the synchronous
+# second call lands while a listener is still flushing. Fix splits
+# the two into separate bouts with a worker-thread yield between.
+
+
+def test_render_seeks_and_plays_in_separate_bouts(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The seek (current_song_time write) and play (start_playing call)
+    MUST happen in different main-thread bouts. Doing both in one bout
+    raises Live's notification-deferral error against real Live.
+
+    The seek lands at start_at_beat - pre_roll_beats (not start_at_beat
+    itself) so the patch's transport-cross detector sees an edge — see
+    ``_DEFAULT_PRE_ROLL_BEATS`` in handlers/render.py for the empirical
+    motivation."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        start_at_beat=8,  # → seek lands at 8 - pre_roll = 4
+        pre_roll_beats=4.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    expected_seek_time = 4.0  # 8 - 4 pre-roll
+    # Find the bouts that mutated transport. We need: ONE bout that
+    # changed current_song_time to 4.0 with start_playing_calls
+    # unchanged, then a LATER bout where start_playing_calls increments.
+    seek_bout = None
+    play_bout = None
+    prev_plays = 0
+    for bout_id, song_time, plays, _stops in ctx_two_tracks_one_return.bout_log:
+        if seek_bout is None and song_time == expected_seek_time and plays == prev_plays:
+            seek_bout = bout_id
+        elif seek_bout is not None and play_bout is None and plays > prev_plays:
+            play_bout = bout_id
+        prev_plays = plays
+    assert seek_bout is not None, (
+        f"no bout wrote current_song_time={expected_seek_time}; "
+        f"bout_log={ctx_two_tracks_one_return.bout_log}"
+    )
+    assert play_bout is not None, (
+        f"no bout called start_playing after the seek; "
+        f"bout_log={ctx_two_tracks_one_return.bout_log}"
+    )
+    assert seek_bout != play_bout, (
+        f"seek and play landed in the same bout ({seek_bout}); Live "
+        "rejects this with the notification-deferral error"
+    )
+
+
+def test_render_seek_includes_pre_roll(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Render must seek to start_at_beat - pre_roll_beats, not directly
+    to start_at_beat. Without the pre-roll, the patch's cross-detector
+    misses the edge and sfrecord~ never starts. Regression guard against
+    re-introducing the direct-seek bug."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        start_at_beat=16,
+        pre_roll_beats=4.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    # The first transport mutation should be the seek to (16 - 4) = 12.
+    first_seek = next(
+        (song_time for _bid, song_time, _p, _s in ctx_two_tracks_one_return.bout_log),
+        None,
+    )
+    assert first_seek == 12.0, (
+        f"render must seek to start_at_beat - pre_roll = 12.0, got {first_seek}"
+    )
+
+
+def test_render_pre_roll_clamped_at_zero(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """When start_at_beat - pre_roll would go negative, seek is clamped
+    at 0 (transport can't go before the arrangement start)."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        start_at_beat=2,
+        pre_roll_beats=4.0,  # 2 - 4 = -2 → should clamp to 0
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    first_seek = next(
+        (song_time for _bid, song_time, _p, _s in ctx_two_tracks_one_return.bout_log),
+        None,
+    )
+    assert first_seek == 0.0, (
+        f"pre-roll seek should clamp at 0 when start_at_beat - pre_roll "
+        f"is negative; got {first_seek}"
+    )
+
+
+def test_render_stops_and_disarms_in_separate_bouts(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Symmetric guard: stop_playing must not share a bout with the
+    follow-up Arm-off writes. The Arm writes are themselves split per
+    surface via _set_arm_on_all (see analyzer/setup parity)."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    # The stop bout is the one where stop_playing_calls went 0 → 1
+    # without another transport mutation in the same bout.
+    stop_bout = None
+    prev_stops = 0
+    for bout_id, _song_time, _plays, stops in ctx_two_tracks_one_return.bout_log:
+        if stop_bout is None and stops > prev_stops:
+            stop_bout = bout_id
+            break
+        prev_stops = stops
+    assert stop_bout is not None
+    # The disarm writes happen AFTER the stop bout (per render_handler
+    # ordering). The Arm parameters now read 0.0 on every analyzer.
+    for t in (
+        ctx_two_tracks_one_return.song.tracks[0],
+        ctx_two_tracks_one_return.song.tracks[1],
+        ctx_two_tracks_one_return.song.return_tracks[0],
+        ctx_two_tracks_one_return.song.master_track,
+    ):
+        analyzer = next(d for d in t.devices if d.name == "HallucinoteAnalyzer")
+        arm = next(p for p in analyzer.parameters if p.name == "Arm")
+        assert arm.value == 0.0

@@ -121,7 +121,7 @@ new one — adding a new box would create a duplicate parameter that
 Live renames to `OSC Port[1]` / `Port[1]`):
 
 ```
-live.numbox @parameter_enable 1 @parameter_longname "OSC Port" @parameter_shortname Port @_parameter_range 11000. 11400. @_parameter_initial 11000. @_parameter_unitstyle 5
+live.numbox @parameter_enable 1 @parameter_longname "OSC Port" @parameter_shortname Port @_parameter_range 11000. 11400. @_parameter_initial 11020. @_parameter_unitstyle 5
 ```
 
 (`@_parameter_unitstyle 5` is "Int" — see the Max docs for the full
@@ -142,7 +142,7 @@ is a whole number even though the underlying Type is Float.
 Drag in a new object box, type:
 
 ```
-live.numbox @_parameter_range 11000. 11400. @_parameter_initial 11201. @parameter_enable 1 @parameter_longname "OSC Emit Port" @parameter_shortname EmitPort @parameter_modulation_mode 0
+live.numbox @_parameter_range 11000. 11400. @_parameter_initial 11221. @parameter_enable 1 @parameter_longname "OSC Emit Port" @parameter_shortname EmitPort @parameter_modulation_mode 0
 ```
 
 Then open Inspector and confirm these (some are not reliably
@@ -218,7 +218,7 @@ print({p["name"] for p in r.result["parameters"]})
 The Chunk 1 patch already has:
 
 ```
-[udpreceive 11000]
+[udpreceive 11020]
     │ (single outlet — matched OSC messages from any client; no
     │  sender-metadata sidechannel)
     └──> [OSC-route /path]  ──[outlet 0]──> [prepend open] ──> [sfrecord~]
@@ -912,10 +912,10 @@ def osc(addr, *args):
     body = b''.join(s(a) if isinstance(a, str) else i(a) for a in args)
     return s(addr) + s(types) + body
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.sendto(osc('/path', '/tmp/test_chunk2b.wav'), ('127.0.0.1', 11000))
-sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
-sk.sendto(osc('/start_at_beat', 8), ('127.0.0.1', 11000))
-sk.sendto(osc('/stop_at_beat', 24), ('127.0.0.1', 11000))
+sk.sendto(osc('/path', '/tmp/test_chunk2b.wav'), ('127.0.0.1', 11020))
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11020))
+sk.sendto(osc('/start_at_beat', 8), ('127.0.0.1', 11020))
+sk.sendto(osc('/stop_at_beat', 24), ('127.0.0.1', 11020))
 ```
 
 Then in Live: position playhead at bar 1, set Arm=1, press play.
@@ -1600,10 +1600,10 @@ either condition isn't met:
         │ control inlet 0: driven by [receive has_track_id] (F.6)
         │ message inlet 1: the frame list
         ▼
-   [udpsend 127.0.0.1 11201]                ← single inlet — frame data, also config msgs (F.10)
+   [udpsend 127.0.0.1 11221]                ← single inlet — frame data, also config msgs (F.10)
 ```
 
-Box text: `gate`, `gate`, `udpsend 127.0.0.1 11201`.
+Box text: `gate`, `gate`, `udpsend 127.0.0.1 11221`.
 
 > **Max `[gate]` semantics.** A `[gate]` (or `[gate 1 0]` —
 > 1 outlet, initially closed) has TWO inlets:
@@ -1639,7 +1639,7 @@ mirrors Section C.3's signature-reply `[udpsend]` retarget:
    [prepend port]                          ← emits list: "port <N>"
         │
         ▼
-   (to [udpsend 127.0.0.1 11201] inlet 0 — same single inlet as the frame data)
+   (to [udpsend 127.0.0.1 11221] inlet 0 — same single inlet as the frame data)
 ```
 
 Box text: `i`, `prepend port`.
@@ -1651,7 +1651,7 @@ Box text: `i`, `prepend port`.
 > the network. See learnings "udpsend has one inlet, retarget via
 > host/port messages".
 >
-> **Constructor args 127.0.0.1 11201 are placeholders** — they get
+> **Constructor args 127.0.0.1 11221 are placeholders** — they get
 > overwritten by the `port <N>` message at first
 > `[live.numbox (EmitPort)]` emission (which fires at loadbang via
 > Inspector's "Initial Enable: Yes" — see Section B.1). The
@@ -1787,7 +1787,7 @@ Box text:
                                   [gate]  ← control inlet 0 (left): [receive has_track_id]
                                        │
                                        ▼
-                          [udpsend 127.0.0.1 11201]
+                          [udpsend 127.0.0.1 11221]
                                        ▲
                                        │ (config msg path)
                           [prepend port]
@@ -1962,9 +1962,9 @@ def osc(addr, *args):
     return s(addr) + s(types) + body
 
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
-sk.sendto(osc('/start_at_beat', 16), ('127.0.0.1', 11000))
-sk.sendto(osc('/stop_at_beat', 32), ('127.0.0.1', 11000))
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11020))
+sk.sendto(osc('/start_at_beat', 16), ('127.0.0.1', 11020))
+sk.sendto(osc('/stop_at_beat', 32), ('127.0.0.1', 11020))
 ```
 
 Max console should print:
@@ -2000,7 +2000,7 @@ sk.settimeout(2.0)
 # Send the query with reply destination as OSC args (,si: host symbol, port int)
 sk.sendto(
     osc("/signature/query", "127.0.0.1", listen_port),
-    ("127.0.0.1", 11000),
+    ("127.0.0.1", 11020),
 )
 
 data, addr = sk.recvfrom(4096)
@@ -2027,13 +2027,13 @@ If timeout: check (in order)
 
 ### G.4. Feature emitter rate
 
-Bind a listener on 11201 (the default `EmitPort`):
+Bind a listener on 11221 (the default `EmitPort`):
 
 ```python
 import socket, struct, time
 
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.bind(("127.0.0.1", 11201))
+sk.bind(("127.0.0.1", 11221))
 sk.settimeout(2.0)
 
 # Run audio through the track. Then:
@@ -2071,10 +2071,10 @@ Send a full render setup and play transport:
 # (osc() function as above)
 import socket
 sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sk.sendto(osc('/path', '/tmp/chunk2b_smoketest.wav'), ('127.0.0.1', 11000))
-sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11000))
-sk.sendto(osc('/start_at_beat', 4), ('127.0.0.1', 11000))
-sk.sendto(osc('/stop_at_beat', 12), ('127.0.0.1', 11000))
+sk.sendto(osc('/path', '/tmp/chunk2b_smoketest.wav'), ('127.0.0.1', 11020))
+sk.sendto(osc('/track_id', 'test:1'), ('127.0.0.1', 11020))
+sk.sendto(osc('/start_at_beat', 4), ('127.0.0.1', 11020))
+sk.sendto(osc('/stop_at_beat', 12), ('127.0.0.1', 11020))
 ```
 
 In Live: set Arm = 1, position playhead at bar 1, press space.

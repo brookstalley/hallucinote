@@ -116,8 +116,8 @@ path.
 | Scripting name    | Long name        | Short name (what `set_parameter` uses) | Type | Range / values | Default |
 |---|---|---|---|---|---|
 | `record_arm`      | `Record Arm`     | `Arm`        | bool toggle (`live.toggle` w/ `@parameter_visible 1 @parameter_modulation_mode 0`) | 0 / 1         | 0     |
-| `osc_port`        | `OSC Port`       | `Port`       | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11000 |
-| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11201 |
+| `osc_port`        | `OSC Port`       | `Port`       | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11020 |
+| `osc_emit_port`   | `OSC Emit Port`  | `EmitPort`   | int-displayed float (`live.numbox` w/ `Type = Float`, `Unit Style = Int`, `@parameter_visible 1`) | 11000 – 11400 | 11221 |
 | `emit_enabled`    | `Emit Features`  | `Emit`       | bool toggle (`live.toggle`)                                                        | 0 / 1         | 1     |
 
 **Why Type=Float with Unit Style=Int for the port parameters?** Live
@@ -136,15 +136,26 @@ float and coerces with `[i]` where an int is needed.
 per-instance `Port` deterministically by surface address, so the next
 sweep recovers the same layout without inspecting prior state.
 
-- Tracks: `11000 + (track_index - 1)` (stride 1). Supports 100 audio tracks.
-- Returns: `11100 + (return_index - 1)`. Supports 100 returns.
-- Master: `11200`.
-- Emit port (shared sidecar): `11201` (default; overridable per-run).
+- Tracks: `11020 + (track_index - 1)` (stride 1). Supports 100 audio tracks.
+- Returns: `11120 + (return_index - 1)`. Supports 100 returns.
+- Master: `11220`.
+- Emit port (shared sidecar): `11221` (default; overridable per-run).
 
-Total span 11000-11201 = 202 ports. Range 11000-11400 leaves headroom
-for future expansion. Accidental port collisions surface as
+Total span 11020-11221 = 202 ports. Range 11000-11400 (the .amxd's
+declared `Port` range) leaves headroom for future expansion above AND
+below the active range. Accidental port collisions surface as
 `[udpreceive]` bind failures at patch load — the patch can't silently
 double-bind.
+
+**Why base 11020, not 11000?** AbletonOSC — the most common community
+Remote Script for Live — binds ports 11000 + 11001 by convention. A
+Hallucinote installation alongside AbletonOSC would have track 1 + 2
+analyzers fail to bind their assigned ports. Shifting the base up 20
+ports clears the collision and leaves room (11002-11019) for other
+community Remote Scripts following similar low-port conventions. The
+default `Port` value baked into the .amxd is therefore `11020`, not
+`11000` — every freshly-loaded analyzer (before the sweep configures
+it) targets a port that doesn't collide with AbletonOSC.
 
 **Note:** Live's Remote Script API surfaces parameters by their **short name**
 — `ableton_device(action='get_parameters', ...)` returns `{name: "Arm", ...}`
@@ -160,8 +171,8 @@ Implementation hints (informative, not contractual):
 - `osc_port` drives the *inbound* `udpreceive`'s listen port. `osc_emit_port`
   drives the *outbound* `udpsend` destination port. They are deliberately
   separate Live parameters so every analyzer can emit features to one
-  shared sidecar port (11201) while listening on per-instance inbound
-  ports (11000, 11001, 11002 …). On `osc_port` change, send
+  shared sidecar port (11221) while listening on per-instance inbound
+  ports (11020, 11021, 11022 …). On `osc_port` change, send
   `[prepend port]` → `[udpreceive]` so the bind updates without a patch
   reload. On `osc_emit_port` change, send `[prepend port]` →
   `[udpsend]`'s single inlet (symmetric to udpreceive's
@@ -199,7 +210,7 @@ via OSC instead of via a parameter write.
   "no path set" error condition.
 - The Python harness MUST send `/path` **before** writing `record_arm=1`.
   See the rising-edge contract for the race-window guard.
-- For Chunk 1's single-instance test, default `osc_port=11000` is fine.
+- For Chunk 1's single-instance test, default `osc_port=11020` is fine.
   Chunk 2's `ensure_analyzers_loaded` assigns per-instance ports so
   multiple analyzers on different tracks don't collide.
 
@@ -541,8 +552,8 @@ will surface the trade-off.
 
 **Destination:** `127.0.0.1:<osc_emit_port>` via `[udpsend]`. The
 emit port is per-instance (Live parameter), but `ensure_analyzers_loaded`
-configures every analyzer to emit to the same port (default 11201,
-sitting just past the master analyzer's inbound port at 11200) so
+configures every analyzer to emit to the same port (default 11221,
+sitting just past the master analyzer's inbound port at 11220) so
 the sidecar opens one socket. Multiple analyzers writing to one UDP
 socket is fine — UDP delivery is best-effort and the sidecar's ring
 buffers are keyed by `track_id` (extracted from the address), so

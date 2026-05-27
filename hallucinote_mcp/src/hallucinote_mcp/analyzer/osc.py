@@ -80,7 +80,7 @@ class AnalyzerOSC:
     """
 
     host: str = _DEFAULT_HOST
-    port: int = 11000
+    port: int = 11020
 
     # --- transport-position-driven recording (Chunk 2) ----------------
 

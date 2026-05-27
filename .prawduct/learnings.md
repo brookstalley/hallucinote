@@ -161,8 +161,20 @@ This rule applies to any future Max for Live device the project authors with Int
 
 **How to apply:**
 1. When wiring a storage box whose outlet must trigger downstream on receive, prefer `[i]` / `[f]` over `[value]`.
-2. Reserve `[value <name>]` for read-only public state that other parts of the patcher will explicitly bang for retrieval — e.g., `[value hallucinote_path]` (read via `[t b b]` outlet) is fine because the consumer explicitly bangs it.
+2. ~~Reserve `[value <name>]` for read-only public state that other parts of the patcher will explicitly bang for retrieval~~ — see next learning. `[value]` is unsafe even with explicit bang-to-emit when multiple device instances coexist.
 3. If you inherit a patch with `[value]` boxes in trigger chains, swap them as a one-line fix.
+
+## M4L `[value <name>]` is GLOBAL-by-name across all device instances — never use for per-instance state
+
+**`[value <name>]` in M4L's bundled Max is a GLOBAL SHARED VARIABLE keyed by `<name>` across the entire Live session. Every `[value foo]` box in every device instance reads/writes the SAME underlying global. Storing per-instance state in `[value <name>]` causes silent cross-instance clobbering: the LAST writer wins; all OTHER instances see that last write when they bang their local `[value]` box. Fix: feed the value DIRECTLY to its consumer at receipt time (no intermediate storage), or use `[zl reg]` / `[coll]` / a `[message]` box scoped to the patcher.**
+
+**Why:** audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-27) — with N analyzer instances loaded across tracks + returns + master, `ableton_render(action='render')` produced only ONE WAV per render, always for whichever analyzer received its `/path` LAST. The patch design: `OSC-route /path → value hallucinote_path` for storage; transport-cross detector → `[t b b] → bang value → emits stored path → prepend open → sfrecord~`. Worked in single-instance verification (G.5, Chunk 1). Failed silently for multi-instance because all N `[value hallucinote_path]` boxes shared one global; the LAST `/path` write overwrote everyone's stored path; at cross-detect time, all N sfrecord~ instances raced to open the SAME file path (only one wins the file-open race). Deterministic and order-dependent: OSC to track 1 then track 2 → only track 2 records; reverse order → only track 1 records. Same bug present in `[value track_id_retained]` (used for `/signature` reply target host:port).
+
+**How to apply:**
+1. Audit `[value <name>]` boxes in any patch intended to load as multiple instances in the same Live set. Replace per-instance ones with direct wiring (path → consumer at receipt time) or `[zl reg]` / `[message]`.
+2. Specifically for the Hallucinote analyzer: wire `OSC-route /path` outlet 0 → `prepend open` inlet 0 directly so each instance's sfrecord~ opens its own file immediately on `/path` arrival. Remove the `[t b b]` outlet → `[value]` bang patchline (no longer needed — sfrecord~ already has the per-instance file handle).
+3. Pre-MVP check: any new `[value <name>]` box on a multi-instance device should be flagged in code review with "is this state PER-INSTANCE or GLOBAL?" If per-instance, do not use `[value]`.
+4. Other M4L per-patcher storage options worth knowing: `[zl reg]` (per-instance list storage, banged for emit), `[message]` (set with `set <value>`, banged to emit), `[pattr <name> @bindto ...]` (per-patcher attribute storage with optional Live param binding).
 
 ## M4L `live.toggle` outlet emits int (0/1) directly — no `[== on]` shim needed
 

@@ -2,8 +2,8 @@
 
 The analyzer's outbound emitter sends ~30 Hz frames of
 ``/hallucinote/track/<track_id>/features [beat_position, lufs_m, peak_dbfs, low_mid_power]``
-to ``127.0.0.1:11001`` (configurable per-instance via the analyzer's
-``EmitPort`` Live parameter; default is shared 11001 so one sidecar
+to ``127.0.0.1:11221`` (configurable per-instance via the analyzer's
+``EmitPort`` Live parameter; default is shared 11221 so one sidecar
 collects everyone's frames).
 
 **Wire-format convention (load-bearing).** ``payload[0]`` is always
@@ -47,7 +47,10 @@ from typing import Iterable
 
 
 _DEFAULT_LISTEN_HOST = "127.0.0.1"
-_DEFAULT_LISTEN_PORT = 11001
+_DEFAULT_LISTEN_PORT = 11221
+# Matches analyzer.setup.DEFAULT_EMIT_PORT — every analyzer emits to
+# this port by default so one shared UDP socket receives all feature
+# frames. Sits just past the master analyzer's inbound port (11220).
 # 30 Hz * 30 seconds; trimmed to keep memory bounded under e.g. a 50-track
 # session. ~12 KB/track at this depth — 600 KB for 50 tracks is fine.
 _DEFAULT_BUFFER_DEPTH = 900
@@ -298,11 +301,17 @@ def shared_sidecar() -> OSCSidecar:
     `ableton_render` calls this in its preamble. Subsequent calls return
     the same instance — stopping + restarting is intentionally not
     supported through this surface (tests construct their own).
+
+    Port is read from the module-level ``_DEFAULT_LISTEN_PORT`` at
+    call time (rather than via ``OSCSidecar()``'s default arg, captured
+    at def time) so tests can monkey-patch the constant for a hermetic
+    bind on a free port — the test singleton-identity assertion is
+    about object reuse, not the canonical 11221 binding.
     """
     global _shared_sidecar  # noqa: PLW0603 — module-level singleton
     with _shared_lock:
         if _shared_sidecar is None:
-            sidecar = OSCSidecar()
+            sidecar = OSCSidecar(port=_DEFAULT_LISTEN_PORT)
             sidecar.start()
             _shared_sidecar = sidecar
         return _shared_sidecar

@@ -29,7 +29,8 @@ def send(
     *,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    timeout: float = 15.0,
+    connect_timeout: float = 15.0,
+    read_timeout: float | None = 15.0,
 ) -> Response:
     """Send a request to the Remote Script; return the parsed response.
 
@@ -42,12 +43,27 @@ def send(
     Raises ``LiveConnectionError`` if the socket can't be opened. Wire-level
     framing errors (``wire.FrameError``) propagate — those are protocol bugs,
     not connection bugs, and should not be silently translated.
+
+    Two timeouts because the failure modes are different:
+
+      - ``connect_timeout`` bounds how long we wait for Live's TCP listener
+        to accept. The Remote Script is either up or it isn't; if it can't
+        accept within 15 s it's not coming back this call.
+      - ``read_timeout`` bounds how long we wait for the response after the
+        request lands on the wire. Long-running handlers (``ableton_render``
+        plays the entire arrangement before responding — minutes for a full
+        song) require a generous ceiling. ``None`` means "block forever";
+        the server-side dispatcher (``server.handle_tool_call``) passes
+        ``None`` for ``ableton_render(render)`` since the handler is
+        synchronous-on-completion. Default 15s matches every other action's
+        contract — those that don't block on transport should respond
+        within Live's main-thread budget.
     """
     if not request.server_version:
         request = dataclasses.replace(request, server_version=__version__)
 
     try:
-        sock = socket.create_connection((host, port), timeout=timeout)
+        sock = socket.create_connection((host, port), timeout=connect_timeout)
     except OSError as exc:
         raise LiveConnectionError(
             f"could not reach Hallucinote Remote Script at {host}:{port}: {exc}. "
@@ -56,7 +72,7 @@ def send(
 
     try:
         wire.send_message(sock, request)
-        reply = wire.recv_message(sock, timeout=timeout)
+        reply = wire.recv_message(sock, timeout=read_timeout)
     finally:
         try:
             sock.close()

@@ -93,7 +93,7 @@ but in practice we're playing the arrangement anyway to capture features.
 Ableton Live
 ├── Remote Script (existing) ──TCP──> MCP server ──> LLM agent
 ├── HallucinoteAnalyzer.amxd on every track + returns + master
-│         ├── OSC features over UDP:11001 ──> Python sidecar (realtime)
+│         ├── OSC features over UDP:11221 ──> Python sidecar (realtime)
 │         └── sfrecord~ writes WAV ──> captures/<timestamp>/<track>.wav
 │
 └── (nothing else needed — no virtual driver, no UI automation)

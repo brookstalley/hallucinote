@@ -126,6 +126,21 @@ register(
                     "Default 4 (one bar at 4/4)."
                 ),
             ),
+            ParamSpec(
+                name="pre_roll_beats",
+                type="float",
+                required=False,
+                minimum=0.0,
+                description=(
+                    "Beats BEFORE start_at_beat to seek-then-play from, "
+                    "so the patch's transport-cross detector sees a real "
+                    "edge (prev < threshold then curr >= threshold) "
+                    "instead of starting at the threshold. The pre-roll "
+                    "audio is NOT in the captured WAV — sfrecord~ only "
+                    "starts when transport crosses start_at_beat. "
+                    "Default 4 (one bar at 4/4), symmetric to post_roll."
+                ),
+            ),
         ),
         handler=render_handlers.render_handler,
         runs_on_worker=True,

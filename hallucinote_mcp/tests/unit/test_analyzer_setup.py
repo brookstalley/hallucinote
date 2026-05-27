@@ -37,8 +37,8 @@ def _analyzer_params() -> list[_FakeParam]:
     return [
         _FakeParam("Device On", 1.0),
         _FakeParam("Arm", 0.0),
-        _FakeParam("Port", 11000.0, min=11000.0, max=11400.0),
-        _FakeParam("EmitPort", 11201.0, min=11000.0, max=11400.0),
+        _FakeParam("Port", 11020.0, min=11000.0, max=11400.0),
+        _FakeParam("EmitPort", 11221.0, min=11000.0, max=11400.0),
         _FakeParam("Emit", 1.0),
     ]
 
@@ -212,6 +212,9 @@ class _FakeCtx:
         self._song = song
         self._application = _FakeApplication(song)
         self._live_state_lock = threading.RLock()
+        # Counts each run_on_main bout. Tests assert that each Live touch
+        # gets its own bout — the deadlock fix's load-bearing invariant.
+        self.run_on_main_calls = 0
 
     @property
     def song(self) -> _FakeSong:
@@ -226,6 +229,7 @@ class _FakeCtx:
         return self._live_state_lock
 
     def run_on_main(self, fn):
+        self.run_on_main_calls += 1
         return fn()
 
 
@@ -345,18 +349,18 @@ def test_port_assignment_is_deterministic_per_surface():
     ))
     layout = ensure_analyzers_loaded(ctx)
     by_tid = layout.by_track_id()
-    # Tracks: 11000, 11001, 11002 (stride 1).
-    assert by_tid["track:1"].osc_port == 11000
-    assert by_tid["track:2"].osc_port == 11001
-    assert by_tid["track:3"].osc_port == 11002
-    # Returns: 11100, 11101.
-    assert by_tid["return:1"].osc_port == 11100
-    assert by_tid["return:2"].osc_port == 11101
-    # Master: 11200.
-    assert by_tid["master"].osc_port == 11200
-    # All share the same emit port by default (11201 — past master).
+    # Tracks: 11020, 11021, 11022 (stride 1, base 11020 clears AbletonOSC).
+    assert by_tid["track:1"].osc_port == 11020
+    assert by_tid["track:2"].osc_port == 11021
+    assert by_tid["track:3"].osc_port == 11022
+    # Returns: 11120, 11121.
+    assert by_tid["return:1"].osc_port == 11120
+    assert by_tid["return:2"].osc_port == 11121
+    # Master: 11220.
+    assert by_tid["master"].osc_port == 11220
+    # All share the same emit port by default (11221 — past master).
     emit_ports = {inst.osc_emit_port for inst in layout.instances}
-    assert emit_ports == {11201}
+    assert emit_ports == {11221}
 
 
 def test_sweep_writes_per_instance_port_via_live_param():
@@ -376,21 +380,20 @@ def test_sweep_writes_per_instance_port_via_live_param():
         )
         return next(p for p in analyzer.parameters if p.name == pname).value
 
-    # Track 1 → 11000, Track 2 → 11001 (stride 1).
-    assert _param_value(ctx.song.tracks[0], "Port") == 11000.0
-    assert _param_value(ctx.song.tracks[1], "Port") == 11001.0
+    # Track 1 → 11020, Track 2 → 11021 (stride 1; base 11020 clears AbletonOSC).
+    assert _param_value(ctx.song.tracks[0], "Port") == 11020.0
+    assert _param_value(ctx.song.tracks[1], "Port") == 11021.0
     # Both share the default emit port.
-    assert _param_value(ctx.song.tracks[0], "EmitPort") == 11201.0
-    assert _param_value(ctx.song.tracks[1], "EmitPort") == 11201.0
-    # Master at 11200.
-    assert _param_value(ctx.song.master_track, "Port") == 11200.0
+    assert _param_value(ctx.song.tracks[0], "EmitPort") == 11221.0
+    assert _param_value(ctx.song.tracks[1], "EmitPort") == 11221.0
+    # Master at 11220.
+    assert _param_value(ctx.song.master_track, "Port") == 11220.0
 
 
 def test_sweep_custom_emit_port_propagates():
     ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("T1")]))
-    # Stay within the patch's documented Port range (11000-11400 in the
-    # test fake; the real spec uses 11000-11100, but that's a config
-    # decision per Live install — see HallucinoteAnalyzer.amxd.spec.md).
+    # Stay within the patch's documented Port range (11000-11400 — see
+    # HallucinoteAnalyzer.amxd.spec.md). The active band is 11020-11221.
     layout = ensure_analyzers_loaded(ctx, emit_port=11250)
     for inst in layout.instances:
         assert inst.osc_emit_port == 11250
@@ -438,3 +441,57 @@ def test_layout_helpers_round_trip_instances():
     assert by_tid["return:1"] is by_surface[("return", 1)]
     assert by_tid["master"] is by_surface[("master", 0)]
     assert layout.loaded_count + layout.existing_count == len(layout.instances)
+
+
+# --- worker-thread marshaling discipline -----------------------------
+#
+# Regression guard for the 2026-05-27 deadlock: ``ensure_analyzers_loaded``
+# is invoked from a runs_on_worker action, so each Live touch must
+# marshal through ``context.run_on_main`` individually. Calling the
+# device handlers synchronously from the worker thread (the pre-fix
+# shape) packed N surfaces × 3 ops into one Remote-Script request-
+# thread call → Live's main thread deadlocked on the M4L runtime. The
+# fix is structural: every load + every set_parameter is its own
+# main-thread bout. This test asserts that structure so regression
+# can't reintroduce the worker-side bundling.
+
+
+def test_sweep_marshals_each_live_touch_through_run_on_main():
+    """Each per-surface bout = 1 surface plan + 1 detect + 1 load + 2 set_param
+    = 5 run_on_main calls (when the surface needs a load). Plus one
+    initial run_on_main for the surface-list snapshot. With 2 tracks +
+    1 return + master = 4 surfaces, all loaded fresh:
+        1 (plan) + 4 surfaces * (1 detect + 1 load + 2 set_param)
+        = 1 + 4 * 4 = 17 run_on_main bouts.
+
+    The exact count matters less than the discipline: more than one bout
+    per Live touch means the worker thread is yielding control between
+    touches, which is what frees Live's main thread to pump the
+    notification cascade from the previous touch.
+    """
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],
+        returns=[_FakeTrack("A-Reverb")],
+    ))
+    ensure_analyzers_loaded(ctx)
+    # Detect + load + 2 set_param per surface, plus a single initial
+    # surface-list snapshot bout. The lower bound (>= 3 per surface +
+    # 1) is what guards against re-introducing the worker-side bundling
+    # — if the regression collapses everything into one run_on_main,
+    # the count drops to 1.
+    assert ctx.run_on_main_calls >= 4 * 4 + 1
+
+
+def test_sweep_when_analyzer_already_present_still_bounces_per_touch():
+    """Existing-analyzer path still uses run_on_main for: surface plan +
+    per-surface detect + 2 set_param writes. Even with nothing to load,
+    each Live access is its own bout."""
+    existing = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+    ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("T1", devices=[existing])]))
+    before = ctx.run_on_main_calls
+    ensure_analyzers_loaded(ctx)
+    # 1 plan + (1 detect + 2 set_param) per surface × 2 surfaces (T1 + master)
+    # = 1 + 6 = 7. T1 skips the load bout (analyzer is already there);
+    # master does the load bout (+1).
+    delta = ctx.run_on_main_calls - before
+    assert delta >= 7

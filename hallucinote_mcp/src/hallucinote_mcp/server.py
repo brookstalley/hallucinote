@@ -17,8 +17,12 @@ wrapper.
 """
 from __future__ import annotations
 
+import dataclasses
+import datetime as _dt
 import inspect
 import logging
+import os
+import pathlib
 from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -194,9 +198,26 @@ def handle_tool_call(
     if not server_response.needs_remote:
         return server_response.to_dict()
 
-    # Forward to the Remote Script.
+    # Server-side path resolution for ableton_render(render). The render
+    # handler runs inside Live's process whose cwd is ``/`` (read-only on
+    # macOS), so relative paths like ``songs/<slug>/captures/<ts>`` fail
+    # with OSError. The MCP server's cwd IS the agent's repo root, so
+    # resolve the default + any relative output_dir to absolute HERE
+    # before forwarding.
+    if request.tool == "ableton_render" and request.action == "render":
+        request = _absolutize_render_output_dir(request)
+
+    # Forward to the Remote Script. ableton_render(render) drives full-
+    # arrangement playback before responding (minutes for a long song),
+    # so disable the default 15s read timeout for that path. Every other
+    # action returns within Live's main-thread budget — keep the bounded
+    # default so a stalled handler surfaces as a structured timeout
+    # error instead of hanging the MCP transport.
+    read_timeout: float | None = 15.0
+    if request.tool == "ableton_render" and request.action == "render":
+        read_timeout = None
     try:
-        remote_response = client.send(request)
+        remote_response = client.send(request, read_timeout=read_timeout)
     except client.LiveConnectionError as exc:
         from .wire import error as wire_error
 
@@ -212,6 +233,41 @@ def handle_tool_call(
         ).to_dict()
 
     return remote_response.to_dict()
+
+
+def _absolutize_render_output_dir(request: Request) -> Request:
+    """Resolve ``ableton_render(render)`` 's ``output_dir`` to an absolute
+    path, computing the slug-derived default when missing.
+
+    Why: the render handler runs on the Remote Script side (inside Live),
+    whose cwd is ``/`` on macOS — a read-only filesystem. The handler's
+    pre-existing default ``Path("songs") / slug / "captures" / ts`` is
+    relative; resolved against Live's cwd it becomes ``/songs/...`` and
+    ``mkdir(parents=True)`` raises ``OSError [Errno 30]``. The MCP server
+    process IS in the agent's repo root, so we resolve here.
+
+    Picking the timestamp here (rather than letting the handler do it)
+    avoids time-of-check / time-of-use drift between the directory the
+    server announces and the directory the handler creates.
+    """
+    params = dict(request.params)
+    raw = params.get("output_dir")
+    if isinstance(raw, str) and raw:
+        resolved = pathlib.Path(raw)
+        if not resolved.is_absolute():
+            resolved = (pathlib.Path(os.getcwd()) / resolved).resolve()
+        params["output_dir"] = str(resolved)
+        return dataclasses.replace(request, params=params)
+    # No explicit output_dir → compute the slug-derived default here,
+    # absolute. song_slug is a required param; let the handler raise if
+    # it's missing.
+    song_slug = params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return request  # let the handler emit its own teaching error
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    default = pathlib.Path(os.getcwd()) / "songs" / song_slug / "captures" / ts
+    params["output_dir"] = str(default.resolve())
+    return dataclasses.replace(request, params=params)
 
 
 def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:

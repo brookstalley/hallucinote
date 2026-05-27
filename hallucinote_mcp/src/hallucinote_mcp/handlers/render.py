@@ -55,10 +55,34 @@ logger = logging.getLogger("hallucinote_mcp.render")
 # scheduler tick lands just before the boundary. One bar at 4/4 is plenty.
 _DEFAULT_POST_ROLL_BEATS = 4.0
 
+# How many beats before `start_at_beat` to seek BEFORE pressing play, so
+# the patch's transport-cross detector sees a true less-than-threshold-
+# then-at-or-above transition. The detector's expr is
+# ``($f2 < $i3) && ($f1 >= $i3) && ($i4 == 1)`` where $f2 is the prior
+# song-time (via [deferlow] → [f]) and $f1 is the current song-time. If
+# we seek directly TO start_at_beat, the first observer fire lands at
+# $f1 = start_at_beat AND deferlow has often already updated $f2 to that
+# same value — the cross "edge" is missed and recording never starts.
+# Seeking pre-roll-beats EARLIER guarantees a clean less-than initial
+# state; transport then crosses the threshold during play. Symmetric to
+# `_DEFAULT_POST_ROLL_BEATS` — one bar at 4/4 is plenty.
+_DEFAULT_PRE_ROLL_BEATS = 4.0
+
 # Worker-thread poll cadence for "has transport crossed stop_at_beat yet?".
 # Matches the arrangement-cue-settle cadence already used elsewhere; fine
 # for beat-granularity end detection.
 _POLL_INTERVAL_S = 0.05
+
+# Wall-clock pause between successive Live mutations (seek → play; arm
+# writes across many surfaces). Lets Live's main thread drain the
+# notification cascade triggered by each mutation before the next one
+# enters Live's API; without it, the second mutation can land while
+# Live is still inside the first's listener callbacks and Live raises
+# "Changes cannot be triggered by notifications. You will need to defer
+# your response." Same shape as the inter-surface yield in
+# analyzer.setup.ensure_analyzers_loaded.
+_INTER_MUTATION_YIELD_S = 0.05
+
 
 # Worst-case wait. Equals (arrangement length in seconds) + a fat margin.
 # At 60 BPM, 256 beats = 256 s; 5x margin = ~21 minutes. Live's transport
@@ -91,11 +115,6 @@ class RenderResult:
 
 def _utc_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-
-def _default_captures_dir(song_slug: str) -> Path:
-    """`songs/<slug>/captures/<iso-timestamp>/` per the agreed layout."""
-    return Path("songs") / song_slug / "captures" / _utc_timestamp()
 
 
 def _wav_filename(inst: AnalyzerInstance) -> str:
@@ -186,6 +205,7 @@ def render_handler(
     song_slug: str,
     output_dir: str | None = None,
     post_roll_beats: float = _DEFAULT_POST_ROLL_BEATS,
+    pre_roll_beats: float = _DEFAULT_PRE_ROLL_BEATS,
     start_at_beat: int = 0,
     stop_at_beat: int | None = None,
     _osc_factory: Callable[[int], AnalyzerOSC] | None = None,
@@ -202,6 +222,13 @@ def render_handler(
         if missing. Overrides the slug-derived default.
       - ``post_roll_beats``: extra beats to let transport run past
         ``stop_at_beat`` before stopping. Default 4 (one bar in 4/4).
+      - ``pre_roll_beats``: how many beats BEFORE ``start_at_beat`` to
+        seek before pressing play. Required so the patch's transport-
+        cross detector sees an actual edge (less-than-threshold then
+        at-or-above) instead of starting at the threshold. Default 4
+        (one bar in 4/4), symmetric to post_roll. The pre-roll audio
+        is not part of the captured WAV — the patch's sfrecord~ only
+        starts when transport crosses start_at_beat.
       - ``start_at_beat`` / ``stop_at_beat``: render window in beats.
         ``stop_at_beat=None`` (default) uses the arrangement's full
         length (``song.last_event_time``).
@@ -218,9 +245,20 @@ def render_handler(
     sidecar = _sidecar if _sidecar is not None else shared_sidecar()
     layout = ensure_analyzers_loaded(context, emit_port=sidecar.port)
 
-    captures_dir = (
-        Path(output_dir) if output_dir else _default_captures_dir(song_slug)
-    )
+    # Production path: ``server._absolutize_render_output_dir`` always
+    # resolves ``output_dir`` to an absolute path before forwarding the
+    # request to the Remote Script. Direct in-process callers (tests)
+    # must supply ``output_dir`` explicitly — the handler refuses to
+    # invent a relative default because Live's process cwd is ``/`` on
+    # macOS (read-only) and the slug-derived path would never be
+    # writable. The server side owns the default + absolutize logic.
+    if not output_dir:
+        raise ValueError(
+            "render: output_dir is required. The MCP server's "
+            "_absolutize_render_output_dir resolves it for forwarded "
+            "calls; direct in-process callers must supply it explicitly."
+        )
+    captures_dir = Path(output_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
 
     # Compute window. `song.last_event_time` is Live's arrangement length;
@@ -240,6 +278,11 @@ def render_handler(
         )
 
     # Per-analyzer setup: deliver path, track_id, beat window via OSC.
+    # Per-instance arrival is independent — each udpreceive owns its own
+    # bound port and routes /path → prepend open → its sfrecord~ on
+    # arrival. No inter-instance pacing required (the prior 50ms yield
+    # was a misdirected timing hypothesis before the [value] global root
+    # cause was identified).
     osc_factory = _osc_factory if _osc_factory is not None else (
         lambda port: AnalyzerOSC(port=port)
     )
@@ -258,24 +301,41 @@ def render_handler(
     # window).
     frames_before = sidecar.frames_received
 
-    # Arm everyone in one pass. Live's set_parameter is synchronous so
-    # the arms happen in handler call order; the patch's beat observer
-    # waits for transport, not for arm-write timing, so per-Live-message
-    # latency between arms doesn't matter (the architectural win — see
-    # spec §"Why arm-as-gate").
+    # Arm everyone. Each arm write is its own main-thread bout with a
+    # wall-clock yield between (see _set_arm_on_all). Live's beat
+    # observer (inside the patch) defines the recording boundary, not
+    # the arm-write timing, so per-arm latency is irrelevant — the
+    # iteration cost just buys notification-cascade safety.
     _set_arm_on_all(context, layout, arm=True)
 
-    # Seek to start beat (1-based bar/beat addressing) then play.
-    def _seek_and_play_on_main() -> None:
-        context.song.current_song_time = float(start_at_beat)
+    # Seek then play. SPLIT into two main-thread bouts with a worker-
+    # thread yield between: setting current_song_time triggers Live's
+    # transport-state notification cascade, and start_playing() called
+    # synchronously from inside that same scope can land while Live is
+    # still inside a listener callback — yielding Live's classic
+    # "Changes cannot be triggered by notifications" error. One bout
+    # per Live touch.
+    #
+    # The seek lands at start_at_beat - pre_roll_beats (clamped at 0)
+    # so the patch's transport-cross detector sees a clean less-than-
+    # then-at-or-above transition. See ``_DEFAULT_PRE_ROLL_BEATS`` for
+    # the empirical motivation — without the pre-roll, seeking AT the
+    # threshold lands the observer's first fire on the boundary and the
+    # detector misses the edge.
+    seek_to = max(0.0, float(start_at_beat) - float(pre_roll_beats))
+    def _seek_on_main() -> None:
+        context.song.current_song_time = seek_to
+    context.run_on_main(_seek_on_main)
+    time.sleep(_INTER_MUTATION_YIELD_S)
+    def _play_on_main() -> None:
         context.song.start_playing()
-    context.run_on_main(_seek_and_play_on_main)
+    context.run_on_main(_play_on_main)
 
     # Wait for transport to cross stop+post_roll.
     target_beat = float(end_beat) + float(post_roll_beats)
     max_wait_s = max(
         _MIN_WAIT_S,
-        (target_beat - start_at_beat) * _MAX_WAIT_MULTIPLIER,
+        (target_beat - seek_to) * _MAX_WAIT_MULTIPLIER,
     )
     crossed = _wait_for_beat_crossing(
         context, target_beat,
@@ -283,10 +343,13 @@ def render_handler(
         clock_source=_clock_source,
     )
 
-    # Stop transport, disarm.
+    # Stop transport, then disarm. Same split as seek+play: stop_playing
+    # triggers its own notification cascade; the arm-writes that follow
+    # must each be their own bout.
     def _stop_on_main() -> None:
         context.song.stop_playing()
     context.run_on_main(_stop_on_main)
+    time.sleep(_INTER_MUTATION_YIELD_S)
     _set_arm_on_all(context, layout, arm=False)
 
     status = "ok" if crossed else "incomplete"
@@ -350,20 +413,29 @@ def _set_arm_on_all(
     *,
     arm: bool,
 ) -> None:
-    """Write `Arm` Live param on every analyzer. Sequential; the patch's
-    beat observer (not the Arm-write latency) defines the recording
-    boundary."""
+    """Write `Arm` Live param on every analyzer.
+
+    Each write is its own ``context.run_on_main`` bout with a worker-
+    thread yield between. Sequential because the patch's beat observer
+    (not the Arm-write latency) defines the recording boundary — the
+    per-Live-message latency between arms doesn't affect sample-accurate
+    capture timing. The yield lets Live's parameter-listener cascade
+    drain between writes; without it Live can reject the next write
+    with "Changes cannot be triggered by notifications" when an
+    analyzer's M4L Arm listener is still flushing.
+    """
     value = "1.0" if arm else "0.0"
     for inst in layout.instances:
         addr = _surface_address(inst)
-        device_handlers.set_parameter_handler(
+        context.run_on_main(lambda inst=inst, addr=addr: device_handlers.set_parameter_handler(
             context,
             device_index=inst.device_index,
             parameter_name="Arm",
             value=value,
             value_type="continuous",
             **addr,
-        )
+        ))
+        time.sleep(_INTER_MUTATION_YIELD_S)
 
 
 def _surface_address(inst: AnalyzerInstance) -> dict[str, Any]:

@@ -261,9 +261,19 @@ def test_sidecar_stop_is_idempotent():
     sidecar.stop()  # second stop must be a no-op
 
 
-def test_shared_sidecar_singleton():
+def test_shared_sidecar_singleton(monkeypatch):
     """``shared_sidecar()`` returns the same instance across calls; the
-    test reset helper cleans it up for hermetic test runs."""
+    test reset helper cleans it up for hermetic test runs.
+
+    Monkey-patches the default port so the test is hermetic against an
+    already-running sidecar bound to ``_DEFAULT_LISTEN_PORT`` — which
+    happens whenever pytest runs in the same shell session as an MCP
+    server that has driven an ``ableton_render(render)`` call (the
+    server's process-wide sidecar holds 11221 until the MCP subprocess
+    is respawned). Using a free port keeps the singleton-identity
+    assertion focused on the property it actually checks."""
+    import hallucinote_mcp.analyzer.sidecar as sidecar_mod
+    monkeypatch.setattr(sidecar_mod, "_DEFAULT_LISTEN_PORT", _free_udp_port())
     reset_shared_sidecar_for_tests()
     try:
         first = shared_sidecar()

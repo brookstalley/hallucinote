@@ -212,9 +212,14 @@ can't be a Live parameter.
 
 - Inbound OSC address: `/track_id <symbol>` on `osc_port`.
 - Filtered by `[OSC-route /track_id]` and retained in the patch via
-  `[value $track_id]` (or equivalent). The outbound feature emitter
-  reads this retained value when composing the address; if no track_id
-  has been received since patch load, the emitter holds frames (does
+  `[value track_id_retained]` (read-by-bang storage — `[value]`
+  doesn't emit on cold-inlet write per learnings "M4L `[value]`
+  doesn't emit on write", so the feature emitter explicitly bangs
+  the `[value]` once per metro tick to fetch the current symbol).
+- A separate `has_track_id` int flag (plumbed via `[send]`/`[receive]`,
+  NOT `[value]` — see the "Gating" section below for the contract)
+  controls whether the emitter actually fires. If no track_id has
+  been received since patch load, the emitter holds frames (does
   NOT emit a placeholder address — empty / "unknown" identities would
   poison the sidecar's ring buffer).
 - `track_id` strings are opaque to the patch. The Python side chooses
@@ -433,10 +438,57 @@ whenever Live's audio thread is running — independent of `Arm` /
 mix-coaching" surface (post-MVP) sees data even when nothing is being
 recorded. `emit_enabled` (Live parameter) is the kill switch.
 
+**Sample-rate dependency (MVP constraint).** The K-weighting biquad
+coefficients (LUFS-M pre-filter) and the 200–500 Hz bandpass biquad
+coefficients are hardcoded for **48 kHz session sample rate** — the
+ITU-R BS.1770-4 reference rate. Running the patch at a different SR
+shifts the filter cutoffs by `(48000 / actual_Fs)`. The MVP-tolerance
+envelope:
+
+- **48 kHz session:** 0.0 LU drift, low-mid band delivered as 200–500 Hz
+  (spec design). GO.
+- **44.1 kHz session:** ~0.1–0.3 LU drift (content-dependent), low-mid
+  band ~218–544 Hz. At the edge of the spec's ±0.2 LU tolerance — GO
+  for MVP, but expect occasional out-of-tolerance readings on bass-heavy
+  content.
+- **88.2 kHz / 96 kHz session:** ~0.2–0.5+ LU drift, low-mid band shifted
+  to ~100–250 Hz (wrong band). NO-GO for the MVP — file an MCP-side
+  pre-flight check that refuses `ableton_render` when session SR > 48 kHz
+  until SR-adaptive coefficients land (post-MVP backlog).
+
+Sample-window sizes for `[average~]` (LUFS-M 400 ms, low-mid 100 ms) ARE
+SR-adaptive — computed at patch load from `[adstatus sr]`. So those
+remain correct at any SR. Only the filter coefficients are SR-pinned.
+
+**SR-mismatch contract (load-time warning).** The patch prints a
+Max-console warning at load (and on driver SR change) if the session SR
+isn't 48 kHz. Format:
+
+```
+HallucinoteAnalyzer: WARNING — LUFS coefficients tuned for 48 kHz; session SR differs ...
+```
+
+The MCP-side `ableton_render` action SHOULD probe Live's session SR
+before triggering a render and surface a warning in the manifest's
+`status` field (`'ok' | 'incomplete' | 'sr_mismatch'`) so the analysis
+pipeline (Chunk 3) can apply an SR-correction calibration if available
+or refuse to produce a `MixReport` if not. (Chunk-3 scope; not Chunk 2.)
+
 **Frame shape:**
 
 - OSC address: `/hallucinote/track/<track_id>/features`
-- Payload: three 32-bit floats, in this order:
+- Type tag: `,ffff` (four 32-bit floats; grows to `,fffff` etc.
+  as features are added — see "Growth convention" below)
+- Payload, in this fixed positional order:
+  0. `beat_position` — Live transport position in beats at the
+     moment the frame was sampled. Source: `[live.observer]` on
+     `current_song_time` (the same observer Section D's
+     transport-crossing logic uses; the feature emitter forks the
+     outlet via `[t f f]` and latches via `[f beat_pos_latched]`).
+     Units: beats (float). During transport stop, holds the
+     last-played position. **Always payload[0], always present, even
+     as additional features are added** — this is the wire-protocol
+     anchor for cross-analyzer reconciliation.
   1. `lufs_m` — momentary loudness per ITU-R BS.1770-4, K-weighted,
      400 ms integration window. Units: LUFS (LU above silence).
      Patch implementation: K-weighting filter (high-shelf at 1.5 kHz
@@ -447,7 +499,7 @@ recorded. `emit_enabled` (Live parameter) is the kill switch.
      coefficients aren't documented.
   2. `peak_dbfs` — sample-peak (NOT true-peak; true-peak requires
      4× oversampling, deferred to Chunk 3's offline analysis). Read
-     via `[peakamp~]` polled at the emit rate. Units: dBFS.
+     via `[peakamp~ 33]` self-clocked at 33 ms (~30 Hz). Units: dBFS.
   3. `low_mid_power` — RMS power in the 200–500 Hz band. Patch
      implementation: 200 Hz high-pass → 500 Hz low-pass (both 4th-
      order Linkwitz-Riley or equivalent, ~24 dB/oct so the band is
@@ -456,6 +508,31 @@ recorded. `emit_enabled` (Live parameter) is the kill switch.
      contribution attribution wants this band specifically because
      it's where kick + bass interact (the "is the mix muddy" /
      "what's clipping the master" diagnostic).
+
+**Growth convention (load-bearing for sidecar parser stability).**
+When new feature measurements are added in future analyzer
+versions, they **append** to the end of the payload — they never
+displace `beat_position` (which stays at payload[0]) or the
+existing feature ordering. Sidecars parse positionally:
+`payload[0]` is always the sample timestamp; `payload[1:]` is the
+feature vector. An older sidecar parsing a newer frame reads the
+known floats and ignores trailing extras (no error). A newer
+sidecar reading an older frame sees a shorter `payload[1:]` and
+treats the missing features as unavailable. The analyzer's
+`/signature` reply (`hallucinote-analyzer-v1` → `v2` →...) lets
+sidecars discover feature-vector length when strict
+shape-checking is needed.
+
+**Why `beat_position` first, not in the OSC address?** OSC
+addresses are symbol routes (topic dispatch); putting a float in
+the address (`/hallucinote/track/<id>/at/<beat>`) breaks address
+pattern-matching for clients that dispatch by symbol, inflates
+the per-frame byte count (longer symbol vs a 4-byte float arg),
+and balloons as more metadata accrues. The "address as topic,
+payload as measurements" idiom matches AbletonOSC + TouchOSC. By
+fixing `beat_position` at `payload[0]` rather than threading it
+through the address, the wire format stays growable without
+re-versioning the route.
 
 **Emit rate:** ~30 Hz (every 33 ms). Driven by a `[metro 33]` →
 `[snapshot~]`-on-each-extractor chain. Rate is intentionally not
@@ -475,15 +552,28 @@ interleaving is the expected shape.
 
 - `emit_enabled=0`: no frames. The extractors keep running (no audio-
   thread cost difference) but the `[udpsend]` is gated by a `[gate]`
-  upstream of the address-prepend.
+  whose control inlet is wired directly to the `Emit` `[live.toggle]`'s
+  outlet (which emits int 0/1 directly — no symbol-to-int shim — see
+  learnings "M4L `[live.toggle]` outlet emits int (0/1) directly").
 - `track_id` unset (no `/track_id <symbol>` received since patch
-  load): no frames. The frame builder gates on a non-empty
-  `[value $track_id]`, refusing to emit a placeholder address.
+  load): no frames. A second `[gate]` in series consumes a
+  `has_track_id` int flag. The flag is set to 0 by `[loadbang]` and
+  to 1 by the `/track_id` OSC route, broadcast via `[send has_track_id]`
+  / `[receive has_track_id]`. **The flag MUST be plumbed via
+  `[send]`/`[receive]`, not `[value]`** — `[value]` doesn't emit on
+  cold-inlet write (learnings "M4L `[value]` doesn't emit on write"),
+  so a `[value has_track_id]` would leave the gate stuck at its
+  loadbang value forever. The patcher contract:
+  - `/track_id` OSC route → `[t b]` → `[1]` → `[send has_track_id]`
+  - `[loadbang]` → `[0]` → `[send has_track_id]`
+  - `[receive has_track_id]` → second `[gate]`'s control inlet 0
 - Audio thread idle (Live's audio engine off): no frames as a
   side effect — `[metro]` runs but the extractors return -inf / 0
   and the patch emits the literal zeros. Sidecar consumers must
-  tolerate this; the ring buffer treats -inf LUFS as "silent",
-  not as "broken".
+  tolerate this; the ring buffer treats -120 LUFS as "silent",
+  not as "broken". The sidecar's `-inf`/`-120 LUFS` distinction is
+  semantic, not numeric — `-120` is the patch's canonical "log of
+  silence" sentinel.
 
 **What the patch does NOT compute (deferred to offline analysis):**
 

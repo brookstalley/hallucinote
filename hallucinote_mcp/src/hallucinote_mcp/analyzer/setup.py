@@ -57,6 +57,16 @@ ANALYZER_DEVICE_NAME = "HallucinoteAnalyzer"
 ``device.class_display_name`` for M4L devices, so a present analyzer
 matches by exact string."""
 
+ANALYZER_BROWSER_PATH_PREFIX = ("Presets", "Audio Effects", "Max Audio Effect")
+"""Browser path under the ``user_library`` root where the install
+skill places the .amxd. Used by the analyzer-load ``preset_query`` —
+narrowing to this exact location prevents a user-saved preset named
+``HallucinoteAnalyzer`` elsewhere in their library from shadowing the
+canonical device. Match: ``user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer``.
+
+This MUST stay in sync with ``install_paths.analyzer_install_target`` —
+that's where the install skill writes the file."""
+
 ANALYZER_SIGNATURE = "hallucinote-analyzer-v1"
 """Version-tagged identity reported by the patch in reply to OSC
 `/signature/query`. The MVP doesn't query — name matching is enough —
@@ -242,15 +252,27 @@ def _ensure_on_surface(
     track_id = track_id_for_surface(surface_kind, surface_index)
     existing_idx = _find_analyzer_index(existing_devices)
     if existing_idx is None:
-        # Load. The analyzer's `kind` (browser display name) matches the
-        # .amxd filename — Live's browser exposes M4L files under
-        # `Max Audio Effect` rooted at the User Library; the load
-        # handler's name-matching walk finds it by display name. The
-        # install skill places the .amxd in User Library; if absent,
-        # this load raises a teaching error from the browser-walk path.
+        # Load via preset_query, NOT kind=. The .amxd is placed under
+        # ``user_library/Presets/Audio Effects/Max Audio Effect/`` by
+        # the install skill, but ``kind=`` triggers a walk that only
+        # covers the built-in browser roots (instruments / audio_effects
+        # / midi_effects / drums per ``_BROWSER_LOAD_ROOTS``). The
+        # User Library is reachable via ``preset_uri`` or ``preset_query``
+        # — we use ``preset_query`` because the URI is per-machine
+        # (Live's FileId varies). The ``path_prefix`` pins the exact
+        # location so a user-saved preset named "HallucinoteAnalyzer"
+        # elsewhere in their library can't shadow the canonical device.
+        # If the .amxd is absent, ``_resolve_preset_query`` raises a
+        # teaching error ("preset_query found no loadable matches").
         result = device_handlers.load_handler(
             context,
-            kind=ANALYZER_DEVICE_NAME,
+            kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
+            preset_query={
+                "root": "user_library",
+                "pattern": ANALYZER_DEVICE_NAME,
+                "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
+                "mode": "substring",
+            },
             **track_address,
         )
         device_index = int(result.get("device_index", 0))
@@ -302,18 +324,48 @@ def _ensure_on_surface(
     )
 
 
+_M4L_AUDIO_EFFECT_CLASS = "Max Audio Effect"
+"""Live's ``device.class_display_name`` for any M4L audio-effect device.
+Every .amxd of type ``amxd~ audioeffect`` surfaces under this single
+class. The .amxd filename (sans extension) is in ``device.name``."""
+
+
 def _find_analyzer_index(devices: list[Any]) -> int | None:
     """1-based device_index of the first HallucinoteAnalyzer in the chain.
 
-    Match by ``class_display_name == ANALYZER_DEVICE_NAME``. For M4L
-    devices Live surfaces the .amxd filename here. If multiple are
-    present (a user-side duplicate from a prior buggy sweep), we
-    return the FIRST one — subsequent ones are unreachable by name
-    addressing and a later cleanup pass can prune; idempotency of
-    this function trumps duplicate removal.
+    M4L identity surface in Live's device-object API:
+      - ``class_display_name`` is ``"Max Audio Effect"`` for every
+        M4L audio effect — does NOT distinguish individual .amxd files.
+      - ``name`` is the .amxd filename without extension
+        (``"HallucinoteAnalyzer"`` for our device), though it's
+        user-renameable in Live's session.
+
+    Strategy: require BOTH ``class_display_name == "Max Audio Effect"``
+    (proves it's an M4L device, not a similarly-named user preset)
+    AND ``name == ANALYZER_DEVICE_NAME`` (proves it's specifically our
+    .amxd). The combination is robust against name collisions with
+    user-saved non-M4L presets, and a user who renames the analyzer
+    in their session will get a duplicate on the next sweep — that's
+    a known limitation; for canonical identity the spec defines the
+    OSC ``/signature/query`` round-trip, but that's heavier and not
+    needed for the MVP idempotency surface.
+
+    Earlier versions of this function compared only against
+    ``class_display_name``, which is permanently ``"Max Audio Effect"``
+    for any M4L device — so detection was always False and
+    ``ensure_loaded`` added a duplicate on every call.
+
+    If multiple analyzers are present (user-side duplicate from a
+    prior buggy sweep), we return the FIRST one — subsequent ones
+    are unreachable by name addressing and a later cleanup pass
+    can prune; idempotency of this function trumps duplicate
+    removal.
     """
     for i, dev in enumerate(devices, start=1):
-        if getattr(dev, "class_display_name", None) == ANALYZER_DEVICE_NAME:
+        if (
+            getattr(dev, "class_display_name", None) == _M4L_AUDIO_EFFECT_CLASS
+            and getattr(dev, "name", None) == ANALYZER_DEVICE_NAME
+        ):
             return i
     return None
 

@@ -233,36 +233,61 @@ The Chunk 1 patch already has:
 
 You'll add three more inbound routes plus a query/reply path.
 
-### C.1. `/track_id <symbol>` — retained track identity
+### C.1. `/track_id <symbol>` — retained identity + has_track_id flag
 
-Build this chain to the left of (or below) the existing `[OSC-route /path]`:
+Build this chain to the left of (or below) the existing `[OSC-route /path]`.
+Two parallel responsibilities: (a) store the symbol for read-by-bang in
+Section F.8, and (b) set the `has_track_id` gate-control flag that
+Section F.9 consumes.
 
 ```
 [OSC-route /track_id]
         │ outlet 0 (matched symbol)
-        ▼
-   [value track_id_retained]            ← stores the symbol; emits on read
+        ├──→ [value track_id_retained]                  ← (a) symbol storage; read-by-bang from F.8
         │
-        (no downstream — the feature emitter pulls via [value track_id_retained] elsewhere)
+        └──→ [t b] → [1] → [send has_track_id]          ← (b) flag set; broadcast to F.9
 ```
 
-The `[value]` object's box text:
+Initialize the flag at patch load (anywhere in the patch — convention is to
+group all loadbang init chains together):
 
 ```
-value track_id_retained
+[loadbang] → [0] → [send has_track_id]                  ← flag init: gate closed at load
 ```
 
-It implicitly has `@triggers 1` by default — on EVERY incoming symbol
-write, it emits the symbol downstream. That's the behavior we want
-here: when the harness re-sends `/track_id` before a render, the
-feature emitter's `[sprintf]` (Section F.5) rebuilds the destination
-address with the new id.
+Box text:
+- `value track_id_retained` — the symbol storage (read by F.8's bang)
+- `t b` — converts the incoming symbol to a bang on its outlet. **Don't use
+  `[t s]`** here: that would forward the path symbol to `[1]`, which can't
+  coerce → "doesn't understand <symbol>" in the Max console. See learnings
+  "has_path / has_track_id flag chains need `[t b]`, not `[t s]`".
+- `1` — the integer 1 (the flag's "set" value)
+- `send has_track_id` — broadcast to every `[receive has_track_id]` in the
+  patch (Section F.9's gate is the only consumer in MVP)
 
-**Connect:** `[OSC-route /track_id]` outlet 0 → `[value track_id_retained]` inlet 0.
+**Connect:**
+- `[OSC-route /track_id]` outlet 0 → `[value track_id_retained]` inlet 0
+- `[OSC-route /track_id]` outlet 0 → `[t b]` → `[1]` → `[send has_track_id]`
+- `[loadbang]` → `[0]` → `[send has_track_id]`
+
+> **Why `[value]` for the symbol, but `[send]`/`[receive]` for the flag?**
+> `[value]` only emits when banged, not on cold-inlet write (learnings.md
+> "M4L `[value]` doesn't emit on write"). For the symbol, that's what we
+> want — Section F.8 explicitly bangs it once per metro tick to fetch the
+> current stored symbol. For the flag, the gate consumer in F.9 needs to
+> see the value change AT THE MOMENT `/track_id` arrives, not wait for an
+> explicit bang. `[send]` / `[receive]` always emits on broadcast — the
+> gate updates immediately.
+>
+> A `[value has_track_id]` connected to a gate's control inlet would stay
+> stuck at its `[loadbang]` value forever, blocking all frames even after
+> `/track_id` arrived. Section F.A.3 documents this rejected alternative.
 
 > **Note on initialization.** At patch load, `[value track_id_retained]`
-> is empty (symbol `<empty>`). The feature emitter (Section F.6)
-> gates on non-empty so frames don't go out with `/hallucinote/track//features`.
+> is empty (symbol `<empty>`) and `has_track_id == 0`. Section F.9's gate
+> #2 is therefore closed at load — frames are NOT emitted until
+> `/track_id` arrives. This prevents `/hallucinote/track//features` (with
+> empty `%s`) from poisoning the sidecar's ring buffer.
 
 ### C.2. `/start_at_beat <int>` and `/stop_at_beat <int>`
 
@@ -285,9 +310,16 @@ value start_at_beat
 value stop_at_beat
 ```
 
-Default `@triggers 1` — the state machine in Section D needs to know
-when these change so it can re-evaluate (e.g., the harness updates
-the window between renders).
+> **`[value]` is read-by-bang, not push.** `[value]` only emits when banged,
+> not on cold-inlet write (learnings.md "M4L `[value]` doesn't emit on
+> write"). Section D's state machine reads these by explicitly banging
+> the `[value]` boxes from its observer chain — not by relying on a
+> downstream-side-effect of the cold-inlet write here.
+>
+> If you find yourself wanting a downstream chain to react the moment
+> `/start_at_beat` or `/stop_at_beat` arrives (rather than on the next
+> observer tick), use `[f]` (float) or `[i]` (int) storage instead — both
+> emit on every cold-inlet write. Section D doesn't need that for the MVP.
 
 **Connect:**
 - `[OSC-route /start_at_beat]` outlet 0 → `[i]` inlet 0 → `[value start_at_beat]` inlet 0
@@ -431,7 +463,7 @@ Wire (single inlet):
 > (same `host <sym>` / `port <int>` config-message convention).
 
 > **One udpsend or two?** The signature-reply `[udpsend]` (this one)
-> is distinct from the feature-emitter `[udpsend]` in Section F.6.
+> is distinct from the feature-emitter `[udpsend]` in Section F.9.
 > Two reasons: different lifecycles (signature-reply destination
 > changes per query; feature-emitter destination changes only when
 > `EmitPort` is rewritten); and a single `[udpsend]` whose
@@ -894,610 +926,982 @@ After verifying, remove the `[print]` debug objects.
 
 ## Section F — Feature extraction branch
 
-A parallel audio tap (NOT in series — don't break Chunk 1's
-pass-through signal) that runs three feature extractors and emits
-30 Hz OSC frames.
+The feature extractor adds three parallel audio analyzers (LUFS-M,
+sample peak, low-mid band power), packs their outputs into one OSC
+frame per metro tick, and emits to the sidecar via `[udpsend]`. The
+branch is a **tap** — it does not modify the audio path.
+
+This section is dense because three trap classes converge here:
+
+1. **Biquad coefficients are sample-rate-dependent.** A 48 kHz
+   filter computed once and run at 44.1 kHz is the wrong filter. The
+   MVP ships 48 kHz coefficients (the BS.1770-4 reference rate) and
+   a runtime SR-mismatch warning probe (F.11). Backlog: SR-adaptive
+   coefficient computation post-MVP.
+2. **`[value]` doesn't emit on cold-inlet write** (see learnings
+   "M4L `[value]` doesn't emit on write"). A `has_track_id` gate
+   driven by `[value]` would stay stuck at its `[loadbang]` value.
+   We use `[send]` / `[receive]` for the flag and reserve `[value]`
+   for read-by-bang storage of the symbol itself.
+3. **`[pack]` cold-inlet latch ordering.** `[pack]` fires only on
+   hot inlet (inlet 0); cold inlets latch values for later. The
+   three feature snapshots MUST hit the cold inlets BEFORE the
+   address hits the hot inlet, or the emitted frame contains stale
+   features. The metro's `[t b b b]` enforces this with
+   right-to-left fire order.
+
+Read F.0 in full before touching the patch. The traps documented
+here cost hours in Chunk 2B verification; the goal of this rewrite
+is to bake them into the build path.
+
+---
+
+### F.0. Sample-rate assumption + design assumptions
+
+**The patch is tuned for 48 kHz session SR.** The K-weighting
+biquad coefficients (F.3) and the low-mid bandpass coefficients
+(F.5) are the canonical BS.1770-4 / Butterworth values pre-warped
+for `Fs = 48000`. Running the patch at a different SR shifts the
+filter cutoffs by `(48000 / actual_Fs)`, so:
+
+| Session SR | LUFS-M drift | Low-mid band actually delivered |
+|---|---|---|
+| 48 kHz | 0.0 LU (reference) | 200–500 Hz (design) |
+| 44.1 kHz | ~0.1–0.3 LU (content-dependent) | ~218–544 Hz |
+| 96 kHz | ~0.2–0.5 LU | ~100–250 Hz (wrong band) |
+
+The 44.1 kHz drift is at the edge of the MVP tolerance (spec
+§"Verifying the build" → ±0.2 LU vs Live's meters). 96 kHz is out
+of spec and will return wrong-band power. F.11 adds a console
+warning at load time if the session SR isn't 48 kHz so the failure
+mode is visible.
+
+**SR-dependent values that ARE made adaptive at runtime** (because
+sample-window sizes are cheap to compute from SR; F.3 and F.5 use
+`[adstatus sr]` + `[expr $f1 * 0.4]` / `[expr $f1 * 0.1]` to set
+window-in-samples):
+
+- LUFS-M integration window: 400 ms → 19200 samples at 48 kHz,
+  17640 at 44.1 kHz
+- Low-mid power smoothing window: 100 ms → 4800 samples at 48 kHz,
+  4410 at 44.1 kHz
+
+Filter coefficients themselves remain hardcoded for 48 kHz — see
+F.11 for the mismatch warning.
+
+> **Backlog (post-MVP):** make biquad coefficients SR-adaptive at
+> load time. Options: (a) precomputed coefficient tables for
+> 44.1k / 48k / 88.2k / 96k with a `[sel]` switch on `[adstatus sr]`,
+> or (b) bilinear-transform formula in `[js]` driven by `[adstatus sr]`.
+> Either lifts the 48-kHz-only constraint. Out of scope for Chunk 2.
+
+---
 
 ### F.1. Tap the audio inlet
 
-In the existing patch, the audio inlet routes via `[plugin~]` (or
-equivalent — check the Chunk 1 patch). Add a parallel tap:
+The feature branch is a parallel TAP off the same signal Chunk 1's
+`sfrecord~` records — NOT in series with the pass-through. Adding
+to the existing wiring (`[plugin~]` outlet → `[plugout~]` +
+`[sfrecord~]`):
 
 ```
-[plugin~] outlet 0 ──┬──> [plugout~] (existing — sonic pass-through)
-                     ├──> [sfrecord~] inlet 1 (existing — left channel record)
-                     └──> [send~ tap_L]    ← NEW
+[plugin~] outlet 0 ──┬──> [plugout~]                    (existing — pass-through)
+                     ├──> [sfrecord~] inlet 1           (existing — left record)
+                     └──> [send~ tap_L]                 ← NEW
 
-[plugin~] outlet 1 ──┬──> [plugout~] outlet 1 (existing)
-                     ├──> [sfrecord~] inlet 2 (existing — right channel record)
-                     └──> [send~ tap_R]    ← NEW
+[plugin~] outlet 1 ──┬──> [plugout~] outlet 1           (existing)
+                     ├──> [sfrecord~] inlet 2           (existing — right record)
+                     └──> [send~ tap_R]                 ← NEW
 ```
 
-Box text: `send~ tap_L` and `send~ tap_R`.
+Box text: `send~ tap_L`, `send~ tap_R`.
 
-Then receive in the feature-extraction region:
-
-```
-[receive~ tap_L]   [receive~ tap_R]
-```
-
-> **Why send~/receive~ rather than direct patchcords?** Visual
-> clarity — the feature region lives at the bottom of the patch;
-> direct cords across the whole patch get messy. `send~`/`receive~`
-> add zero sample delay.
-
-### F.2. K-weighted LUFS-M (momentary)
-
-ITU-R BS.1770-4: two cascaded biquads (high-shelf + high-pass), then
-mean-square over 400 ms, then dB conversion with the -0.691 offset.
-
-**Mix to mono** (L+R)/2 — momentary loudness is mono-summed:
+Receive in the feature-extraction region (visually at the bottom of
+the patch):
 
 ```
 [receive~ tap_L]   [receive~ tap_R]
-        │                │
-        ▼                ▼
-       [+~]                       ← signal add
-        │
-        ▼
-       [*~ 0.5]                   ← halve to keep -3 dB headroom on mono sum
-        │ outlet 0
-        ▼
-    (mono signal, feed both K-weight cascade and band-power cascade)
 ```
 
-Box text: `+~`, `*~ 0.5`.
+> **Why `[send~]`/`[receive~]`?** Visual clarity — direct patchcords
+> across the whole patch get messy. `send~`/`receive~` add zero
+> sample delay.
 
-**Stage 1 — high-shelf biquad** (BS.1770-4 reference, 48 kHz):
+---
+
+### F.2. Mono signal builder (shared by LUFS-M and low-mid)
+
+Both LUFS-M and the low-mid extractor consume a mono signal (the
+true peak extractor uses the mono sum as well, since BS.1770-4
+inter-channel sum is appropriate for our peak proxy). Build it once:
+
+```
+[receive~ tap_L]   [receive~ tap_R]
+        │                  │
+        └──── [+~] ───┐
+                       │
+                       ▼
+                   [*~ 0.5]                  ← halve to avoid +6 dB on sum
+                       │
+                       ▼
+                   [send~ mono]              ← broadcast to extractors
+```
+
+Box text: `+~`, `*~ 0.5`, `send~ mono`.
+
+> **Why halve?** Summing L+R doubles correlated content; halving
+> normalizes the energy back. BS.1770-4 actually channel-sums
+> *squared* values weighted by channel — for mono content, that
+> reduces to summing-then-halving the squared sum, which is what
+> our downstream `[*~]` self-square + `[average~]` chain produces.
+
+Receivers in F.3, F.4, F.5: `[receive~ mono]`.
+
+---
+
+### F.3. K-weighted LUFS-M extractor
+
+BS.1770-4 K-weighting: two cascaded biquads (high-shelf pre-filter
++ high-pass RLB), then mean-square over 400 ms, then `10·log10()`
+with the -0.691 offset.
+
+**Filter coefficients (48 kHz — see F.0 for SR caveat):**
 
 ```
 biquad~ 1.53512485958697 -2.69169618940638 1.19839281085285 -1.69065929318241 0.73248077421585
 ```
 
-The args are `a0 a1 a2 b1 b2` (Max's biquad~ convention — feedforward
-then feedback). The values above are BS.1770-4's pre-filter at 48 kHz.
-
-**Stage 2 — high-pass biquad** (BS.1770-4 reference, 48 kHz):
-
 ```
 biquad~ 1.0 -2.0 1.0 -1.99004745483398 0.99007225036621
 ```
 
-Chain:
+Args are `a0 a1 a2 b1 b2` (Max's `biquad~` convention: feedforward
+then feedback). Source: ITU-R BS.1770-4 §2.1.2.1, pre-warped at
+48 kHz. Verifiable against `pyloudnorm.Meter`'s internal
+`_filter_stages` for `rate=48000`.
+
+**The chain:**
 
 ```
-mono signal → [biquad~ <stage 1 coefs>] → [biquad~ <stage 2 coefs>] → (K-weighted signal)
-```
-
-**Square the K-weighted signal** (for mean-of-squares):
-
-```
-K-weighted signal ──┬──→ [*~] inlet 0
-                    └──→ [*~] inlet 1     ← self-multiply: x²
-                                │
-                                ▼
-                          (x² signal)
-```
-
-Box text: `*~` (no args — both inlets used).
-
-**Mean-square over 400 ms** using `[average~]`:
-
-```
-x² signal → [average~ 19200 bipolar] → (mean square at audio rate)
-```
-
-Box text: `average~ 19200 bipolar`
-
-The "bipolar" mode computes the simple mean of the signal (without
-absolute-value or sqrt). Since x² is non-negative, this gives
-mean-of-squares. 19200 samples at 48 kHz = 400 ms. At 44.1 kHz this
-becomes ~436 ms — close enough for MVP.
-
-**Convert to LUFS** (sample at metro rate, then compute in
-control-rate land):
-
-```
-mean square at audio rate
+[receive~ mono]
         │
         ▼
-   [snapshot~]              ← banged by [metro 33] (Section F.5)
-        │ outlet 0 (float)
-        ▼
-   [if $f1 > 0 then (10 * log10($f1)) - 0.691 else -inf]
-        (express as: [expr ($f1 > 0.) ? (10. * log10($f1)) - 0.691 : -120.]
-         where -120 stands in for "silent" — log of zero is -inf,
-         the sidecar treats -120 dBFS as "effectively silent")
-```
-
-Box text: `snapshot~`, then:
-
-```
-expr ($f1 > 0.) ? (10. * log10($f1)) - 0.691 : -120.
-```
-
-Output: LUFS-M as a float, on each metro tick.
-
-### F.3. Sample peak
-
-Simpler — `[peakamp~]` accumulates the peak between bangs, output is
-linear 0-1.
-
-```
-mono signal → [peakamp~] inlet 0      ← signal input
-
-(metro 33's bang) → [peakamp~] inlet 0 (also)    ← bang resets + outputs
-                                       ↑
-                                  send bangs here
-
-[peakamp~] outlet 0 (float, linear 0-1 peak since last bang)
+[biquad~ <stage 1 coefs above>]                ← high shelf, +4 dB at ~1.5 kHz
         │
         ▼
-   [expr ($f1 > 0.) ? 20. * log10($f1) : -120.]
-        │ outlet 0 (float, peak in dBFS)
+[biquad~ <stage 2 coefs above>]                ← high pass at ~38 Hz
+        │
+        ▼   (K-weighted signal)
+        │
+        ├──→ [*~] inlet 0
+        └──→ [*~] inlet 1                      ← self-multiply: x²
+                 │
+                 ▼
+            [average~ 19200 bipolar]           ← 400 ms at 48 kHz — REPLACED at load (see SR adapter below)
+                 │
+                 ▼
+            [snapshot~]                        ← banged by metro (F.7)
+                 │
+                 ▼
+            [clip 1e-12 1e10]                  ← clamp floor: log10(1e-12)·10 = -120 LU
+                 │                               (ceiling 1e10 is a safety net — real audio
+                 ▼                                mean-square stays well below)
+            [expr 10. * log10($f1) - 0.691]
+                 │
+                 ▼
+            [send lufs_m_value]                ← float, LUFS units (LU above silence)
 ```
 
-Box text: `peakamp~`, then the expr as shown.
+Box text in order: `biquad~ <stage 1 coefs>`, `biquad~ <stage 2 coefs>`,
+`*~` (no args; both inlets used for self-square), `average~ 19200 bipolar`,
+`snapshot~`, `clip 1e-12 1e10`, `expr 10. * log10($f1) - 0.691`,
+`send lufs_m_value`.
 
-> `[peakamp~]` takes the signal on inlet 0 AND bangs on inlet 0 —
-> they share the inlet. The bang triggers output AND resets the
-> internal peak accumulator.
+> **Why `[clip <floor> <ceiling>]` upstream, not a conditional / function inside `[expr]`?**
+> M4L's bundled `[expr]` has neither `if(cond, then, else)` (returns
+> "function if not found") nor `max(a, b)` (also "function max not
+> found") nor reliable ternary `? :` parsing. The function vocabulary
+> is limited to `abs / ceil / floor / int / float / exp / log / log10 /
+> fact / ln / pow / sqrt / rand / random` plus the trig family — no
+> conditionals or min/max. (Some Max docs list `max()` but it's
+> empirically absent in M4L's runtime — confirmed during Chunk 2B
+> verification.)
+>
+> `[clip <floor> <ceiling>]` is a standard Max control-rate object —
+> space-separated args (no comma escape headaches), single inlet/outlet,
+> clamps each incoming number to `[<floor>, <ceiling>]`. Floor selection
+> below picks the value so silence maps to the sidecar's -120 dB
+> sentinel; the ceiling is a far-from-real-audio safety net that
+> exists just to satisfy `[clip]`'s two-arg signature.
+>
+> | Extractor | Input domain | `[clip <floor> <ceil>]` | Output at floor |
+> |---|---|---|---|
+> | LUFS-M (mean-square) | non-negative power | `clip 1e-12 1e10` | `10·log10(1e-12) - 0.691 = -120.69` |
+> | Peak (linear amplitude 0-1) | non-negative amplitude | `clip 1e-6 1.0` | `20·log10(1e-6) = -120.0` |
+> | Low-mid (mean-square) | non-negative power | `clip 1e-12 1e10` | `10·log10(1e-12) = -120.0` |
+>
+> Same `[clip]` pattern in F.4 (peak) and F.5 (low-mid). `[clip]` also
+> kills any rare-but-possible negative outputs from `[average~]` due
+> to floating-point error near zero (which would make `log10` return
+> NaN). The expr stays simple — just the actual log10 math.
+>
+> **Why not `[expr~]` (signal-rate)?** `[snapshot~]` (and `[peakamp~]`)
+> intentionally convert from signal-rate to control-rate. Going back
+> to signal-rate for the log10 would require an extra `[snapshot~]`
+> on the way back to feed `[pack]`. The "int16 limit" hinted at in
+> some Max docs doesn't apply to `[expr]`'s float math — `$f<N>`
+> variables operate in 32-bit float, and our values (mean-square
+> ~1e-12 to ~1e0, log results -120 to 0) are well within range.
 
-### F.4. Low-mid (200-500 Hz) band power
+> **Why `bipolar` on `[average~]`?** It computes the simple mean of
+> the signal (no abs, no sqrt). Since x² is non-negative, the result
+> is mean-of-squares — exactly what BS.1770 §2.1.3 requires.
+>
+> **The -0.691 offset** is the BS.1770 calibration constant for
+> single-channel loudness — see the standard for derivation.
+>
+> **`-120.` as the silence floor** stands in for log(0) = -∞. The
+> sidecar's ring buffer treats -120 dBFS / LUFS as "effectively
+> silent." Don't lower this — `-120.` is a sentinel value the
+> sidecar can distinguish from real-but-quiet content.
+
+**SR-adaptive window size** (sets `[average~]` window correctly even
+when session SR isn't 48 kHz):
+
+```
+[loadbang]
+        │
+        ▼
+[adstatus sr]
+        │ outlet 0 (current SR, float)
+        ▼
+[expr $f1 * 0.4]                                ← 400 ms expressed in samples = SR * 0.4
+        │
+        ▼
+[i]                                             ← coerce to int (samples must be int)
+        │
+        ▼
+(connect to [average~ ... bipolar] LEFT INLET — same inlet as the audio signal)
+```
+
+Box text: `adstatus sr`, `expr $f1 * 0.4`, `i`.
+
+> **`[average~]` has only one inlet.** It shares that inlet between
+> the audio signal (left audio connection via `~`) and control
+> messages (a number message sets the window size in samples).
+> Same single-inlet multiplexing pattern as `[peakamp~]` (which
+> takes the signal on its left inlet and accepts a runtime int
+> message on the same inlet to change its reporting interval).
+> Max disambiguates by message type — the `~` connection carries
+> signal; the non-`~` connection from `[i]` carries the int window
+> message. They don't collide.
+>
+> The constructor arg (`19200`) is the default until a runtime
+> message updates it. Loadbang-then-`[adstatus sr]` recomputes and
+> updates the window before the first metro tick.
+
+---
+
+### F.4. Sample-peak extractor
+
+`[peakamp~]` is **self-clocked** via its constructor arg (reporting
+interval in ms). It accumulates the peak over each interval and
+auto-emits + resets at the boundary. No bang from the metro fan-out
+is needed — `[peakamp~]` runs on its own ~30 Hz clock and feeds
+`[pack]`'s cold inlet whenever it has a fresh value.
+
+```
+[receive~ mono]
+        │
+        ▼
+   [peakamp~ 33]                                 ← auto-emit every 33 ms (~30 Hz, matches metro rate)
+        │ outlet 0 (linear peak since last emission)
+        ▼
+   [clip 1e-6 1.0]                               ← clamp: silence → -120 dBFS
+        │
+        ▼
+   [expr 20. * log10($f1)]
+        │ outlet 0 (peak in dBFS)
+        ▼
+   [send peak_dbfs_value]
+```
+
+Box text: `peakamp~ 33`, `clip 1e-6 1.0`, `expr 20. * log10($f1)`,
+`send peak_dbfs_value`.
+
+> **Why `[peakamp~ 33]` self-clocked instead of metro-banged?** In
+> M4L's bundled Max, `[peakamp~]` with no argument doesn't reliably
+> emit on bang to the left inlet — the canonical control surface is
+> the integer-interval constructor arg (or right-inlet int message).
+> Configured with `33`, it auto-emits every 33 ms, which matches
+> the metro's ~30 Hz cadence well enough that `[pack]`'s cold inlet
+> 2 always holds a peak value at most ~33 ms old when the metro
+> fires.
+>
+> **Why `20·log10`** (not `10·log10`)? Sample peak is an amplitude,
+> not a power. dBFS for amplitude is `20·log10`.
+>
+> **Phase note.** `[peakamp~ 33]` and `[metro 33]` run on independent
+> clocks — they're not phase-aligned. The peak value latched in
+> `[pack]`'s cold inlet 2 at metro tick time is between 0 and 33 ms
+> old. For MVP-grade peak reporting at 30 Hz this is fine; the peak
+> still captures any transients in the most recent ~33 ms window.
+> If precise phase alignment is ever needed (Chunk 3 offline analysis
+> doesn't care — it reads peaks from the WAV directly), use a
+> shorter `[peakamp~]` interval like `10`, accepting more frequent
+> stale-window-bounded reporting.
+
+---
+
+### F.5. Low-mid (200–500 Hz) band-power extractor
 
 Two cascaded biquads (HP at 200 Hz, LP at 500 Hz), square, average
 over 100 ms, snapshot, log.
 
-**HP at 200 Hz** (Butterworth 2-pole, 48 kHz, approximate):
+**Filter coefficients (48 kHz — see F.0 for SR caveat):**
 
+HP at 200 Hz (Butterworth 2-pole):
 ```
 biquad~ 0.97803 -1.95606 0.97803 -1.95558 0.95654
 ```
 
-**LP at 500 Hz** (Butterworth 2-pole, 48 kHz, approximate):
-
+LP at 500 Hz (Butterworth 2-pole):
 ```
 biquad~ 0.00102 0.00205 0.00102 -1.95558 0.95968
 ```
 
-Chain:
+Source: scipy `signal.butter(2, [200, 500], btype='bandpass', fs=48000)`,
+factored into separate HP + LP biquads for clarity (cascade-equivalent
+to a single 2nd-order bandpass).
+
+**The chain:**
 
 ```
-mono signal → [biquad~ HP coefs] → [biquad~ LP coefs] → (band-passed signal)
+[receive~ mono]
+        │
+        ▼
+[biquad~ <HP coefs above>]
+        │
+        ▼
+[biquad~ <LP coefs above>]                      ← band-passed signal
+        │
+        ├──→ [*~] inlet 0
+        └──→ [*~] inlet 1                       ← self-square
+                 │
+                 ▼
+            [average~ 4800 bipolar]             ← 100 ms at 48 kHz — REPLACED at load
+                 │
+                 ▼
+            [snapshot~]                         ← banged by metro
+                 │
+                 ▼
+            [clip 1e-12 1e10]                   ← clamp: silence → -120 dB
+                 │
+                 ▼
+            [expr 10. * log10($f1)]
+                 │
+                 ▼
+            [send low_mid_power_value]          ← float, dB relative to full scale
 ```
 
-**Square, average, snapshot:**
+Box text: same pattern as F.3; biquads with the LP/HP coefs above;
+`average~ 4800 bipolar`; `snapshot~`; the expr; `send low_mid_power_value`.
+
+**SR-adaptive window** (parallels F.3's adapter — same single-inlet
+multiplexing of signal + window-size message):
 
 ```
-band-passed signal ──┬──→ [*~] inlet 0
-                     └──→ [*~] inlet 1                        ← self-square
-                              │
-                              ▼
-                     [average~ 4800 bipolar]              ← 100 ms at 48 kHz
-                              │
-                              ▼
-                     [snapshot~]                          ← banged by metro
-                              │
-                              ▼
-                     [expr ($f1 > 0.) ? 10. * log10($f1) : -120.]
-                              │ outlet 0
-                            (low_mid_power in dB)
+[loadbang] → [adstatus sr] → [expr $f1 * 0.1] → [i]
+                                                  │
+                                                  ▼
+                              (connect to [average~ ... bipolar] LEFT INLET — same inlet as the audio signal)
 ```
 
-Same `snapshot~` / expr / box text pattern as F.2.
+> **Why `10·log10`** (not `20·log10`)? Power, not amplitude. dB for
+> power is `10·log10`.
 
-### F.5. Pack and emit at 30 Hz
+> **Same `[adstatus sr]` object as F.3?** No — drop a SECOND
+> `[adstatus sr]` for the low-mid window. (Or share one and fan its
+> outlet to both `[expr]` adapters; either works. Two boxes is
+> simpler to wire.)
 
-The pack-and-emit chain:
+---
+
+### F.6. `has_track_id` gate control — driven by `[send]` / `[receive]`
+
+The feature emitter must NOT emit frames with an empty `<track_id>`
+in the address (sidecar's ring buffers are keyed by track_id; an
+empty key would poison every subsequent lookup). A `[gate]` in F.9
+controlled by `has_track_id` is the kill switch.
+
+The flag is set by Section C.1's `/track_id` route (which see — C.1
+needs the amendment shown below) and read by F.9's gate.
+
+**Section C.1 amendment** — wire alongside the existing
+`[value track_id_retained]` storage:
+
+```
+[OSC-route /track_id]
+        │ outlet 0 (the symbol)
+        ├──→ [value track_id_retained]              (existing — symbol storage, read by F.8)
+        └──→ [t b] → [1] → [send has_track_id]      ← NEW
+```
+
+Box text on the new chain:
+- `t b` — converts the incoming symbol into a bang on its outlet, so
+  the downstream `[1]` int box receives a bang (not the symbol).
+  Using `[t s]` would forward the symbol; `[1]` would then refuse with
+  `"doesn't understand <symbol>"` in the Max console.
+- `1` — the integer 1 (the flag's "set" value)
+- `send has_track_id` — broadcasts to every `[receive has_track_id]`
+  in the patch
+
+**Initialize the flag at patch load** (also in Section C.1):
+
+```
+[loadbang] → [0] → [send has_track_id]
+```
+
+**Read in F.9** (the gate consumer):
+
+```
+[receive has_track_id]                  ← emits 0 at load, 1 once /track_id received
+        │ outlet 0 (int)
+        ▼
+   (drives the second [gate]'s control inlet 0 — F.9)
+```
+
+> **Why `[send]` / `[receive]`, not `[value has_track_id]`?**
+> `[value]` only emits when banged, not on cold-inlet write
+> (learnings.md "M4L `[value]` doesn't emit on write"). A
+> `[value has_track_id]` connected to a gate's control inlet would
+> never update the gate — the gate would stay at whatever value
+> reached it during init, blocking all frames forever even after
+> `/track_id` arrived. `[send]` / `[receive]` always emit on
+> broadcast, so the gate's control updates on the rising edge of
+> `/track_id`.
+
+> **Why not `[i has_track_id]`?** Max's `[i]` (alias for `[int]`)
+> can't be named the way `[value]` can — there's no shared-state
+> binding by name across patcher regions. `[send]` / `[receive]`
+> is the canonical named-broadcast in Max.
+
+---
+
+### F.7. Beat-position latch + metro fan-out
+
+#### F.7.1. Beat-position latch (consumed by `[pack]` cold inlet 1)
+
+Each OSC frame carries the transport beat position at which it
+was sampled (see Spec "OSC feature emitter → Frame shape" — `beat_position`
+is payload[0], the convention being "first float is always the
+sample timestamp; remaining floats are features in documented
+order"). This lets the sidecar reconcile frames across analyzers
+that aren't phase-aligned and across UDP delivery skew.
+
+Reuse Section D's existing `[live.observer current_song_time]`
+without re-instantiating an observer. Fork the observer's outlet
+via `[t f f]` so:
+- One branch continues into Section D's existing transport-crossing
+  logic (unchanged).
+- The new branch updates `[f beat_pos_latched]` — a control-rate
+  float storage that holds the most recent beat position.
+
+```
+(Section D's [live.observer] outlet — current_song_time, bare float)
+        │
+        ▼
+   [t f f]                          ← fork: forward float to two destinations
+   ├── outlet 1 (right, fires FIRST) → (existing Section D chain — change/deferlow/expr crossing)
+   └── outlet 0 (left, fires SECOND) → [f beat_pos_latched] (right inlet — cold-stores the float)
+```
+
+Box text: `t f f`, `f beat_pos_latched`.
+
+The metro tick (F.7.2 below) bangs `[f beat_pos_latched]` from its
+new outlet 1, causing the stored float to emit into `[pack]`'s
+cold inlet 1.
+
+> **Why `[f]` and not `[value]`?** Per the M4L `[value]`-doesn't-emit
+> learning, `[value beat_pos_latched]` would silently fail to emit
+> when the metro bangs it. `[f]` (float) emits on every bang AND on
+> every cold-inlet write. Same fix shape as has_path and
+> prev_beat from earlier sections.
+>
+> **Why `[t f f]` not direct multi-cord?** Two fans on the
+> observer's outlet would still work (Max allows multiple cords
+> from one outlet), but `[t f f]` makes the ordering explicit:
+> outlet 1 (right, fires first) into the existing D-section state
+> machine, outlet 0 (left, fires second) into the new latch. That
+> matters if you ever add downstream logic that depends on
+> "Section D evaluated this beat first, then F latched it."
+>
+> **Semantics during transport stop.** `[live.observer]` holds its
+> last value when transport stops, so frames during silence carry
+> the last play-position. Sidecar contract: "beat_position is
+> song-time-in-beats at the moment of emission; identical values
+> across frames indicate transport stopped between them; differing
+> values across tracks at 'the same' wall-clock moment quantify
+> inter-analyzer skew."
+
+#### F.7.2. Metro and ordered fan-out
+
+The metro fires at ~30 Hz. Each tick must:
+
+1. Bang the two `[snapshot~]` extractors (LUFS-M, low-mid) so their
+   `[expr]` outputs latch cold inlets 2 and 4 of
+   `[pack s f f f f]` (F.8). `[peakamp~ 33]` is self-clocked (F.4)
+   and emits into cold inlet 3 on its own schedule — no metro bang.
+2. Bang `[f beat_pos_latched]` (F.7.1) so it emits the stored beat
+   into `[pack]`'s cold inlet 1.
+3. THEN bang `[value track_id_retained]` so it emits the symbol
+   into `[sprintf]` (F.8), which then hits `[pack s f f f f]`'s
+   hot inlet 0 — firing the pack with all five values latched.
+
+**Ordering matters.** `[pack]` fires only when its HOT (leftmost,
+inlet 0) inlet receives a value. Cold inlets latch silently. If
+the address hits inlet 0 BEFORE the snapshots / beat-latch have
+updated their cold inlets, the emitted list contains stale values
+from the previous tick. (Peak's cold inlet 3 is always
+"current within ~33 ms" since `[peakamp~]` runs continuously —
+no ordering concern there.)
+
+`[t b b b b]` fires its outlets **right-to-left**. So outlet 3
+(rightmost) fires FIRST, outlet 0 (leftmost) fires LAST. Wire the
+address chain to outlet 0 so it fires after all three cold-inlet
+sources have updated.
 
 ```
 [loadbang]
     │
     ▼
-[1]                        ← start the metro on patch load
+[1]                                     ← turn the metro on at load
     │
     ▼
-[metro 33]                 ← every 33 ms = ~30 Hz
+[metro 33]                              ← 33 ms ≈ 30.3 Hz
     │ outlet 0 (bang)
+    ▼
+[t b b b b]
+    ├── outlet 3 (rightmost — fires FIRST)
+    │      ▼
+    │   bang [snapshot~] inlet 0 (low-mid, F.5)  → updates pack cold inlet 4
     │
-    ├──→ [snapshot~] (LUFS-M chain, Section F.2) inlet 0 (bang for snapshot)
-    ├──→ [peakamp~]  (Section F.3)               inlet 0 (bang for read + reset)
-    ├──→ [snapshot~] (low-mid chain, Section F.4) inlet 0 (bang for snapshot)
-    └──→ (no need to bang track_id — [value]s don't need a bang on read in [sprintf])
+    ├── outlet 2
+    │      ▼
+    │   bang [snapshot~] inlet 0 (LUFS-M, F.3)   → updates pack cold inlet 2
+    │
+    ├── outlet 1
+    │      ▼
+    │   bang [f beat_pos_latched] (F.7.1)        → updates pack cold inlet 1
+    │
+    └── outlet 0 (leftmost — fires LAST)
+           ▼
+       (to F.8's address chain — see next section)
 ```
 
-Box text: `metro 33`, `loadbang`, `1`.
+Box text: `1`, `metro 33`, `t b b b b`.
 
-Each of the three feature exprs (F.2, F.3, F.4) outputs a float once
-per metro tick. Collect them into a 3-element list:
-
-```
-LUFS-M expr     ──→ [pack f f f] inlet 0   (hot — triggers list output)
-peak expr       ──→ [pack f f f] inlet 1   (cold — latched)
-low-mid expr    ──→ [pack f f f] inlet 2   (cold — latched)
-```
-
-Box text: `pack f f f`.
-
-> The inlet that fires must be the LAST one to be updated on each
-> tick, otherwise we'd emit a list with a stale value. Since metro
-> fires all three feature snapshots SIMULTANEOUSLY (well, in sequence
-> within the same scheduler tick), pick whichever you wire to inlet 0;
-> in practice connecting LUFS-M to inlet 0 works because the other
-> two are updated within the same tick before the `[pack]` evaluates.
+> **Why depth-first ordering matters here.** Max scheduling runs
+> each `[t]` outlet's downstream cascade to completion before the
+> next outlet of `[t]` fires. So outlet 3's bang propagates through
+> `[snapshot~]` (low-mid) → `[expr]` → `[send low_mid_power_value]`
+> → `[receive low_mid_power_value]` → `[pack]` inlet 4 (cold latch)
+> completely BEFORE outlet 2 fires. Same for the LUFS-M chain on
+> outlet 2 and the beat-latch on outlet 1. When outlet 0 finally
+> fires, all three cold-inlet destinations from the metro tick
+> hold fresh values from THIS tick.
 >
-> If you see stale values in the OSC frames, swap the wiring so the
-> LAST-to-update feature goes to inlet 0.
+> If any extractor included a `[deferlow]` or async element, this
+> guarantee would break. The two snapshot extractors and the
+> beat-latch are all synchronous — no deferral.
+>
+> `[peakamp~ 33]` (F.4) is asynchronous to this chain — it pushes
+> into `[pack]` cold inlet 3 on its own ~30 Hz clock, independent
+> of the metro. That's fine because cold-inlet writes always
+> succeed (they just latch), and the pack only fires when the
+> HOT inlet hits — which happens here, after the three
+> synchronous-to-metro inlets have propagated.
 
-**Build the dynamic OSC address:**
+> **Why `[1]` from loadbang to `[metro 33]`?** Metro's left inlet
+> takes 0/1 to stop/start. We want it always-on from patch load.
+> An alternative is `[metro 33 @active 1]` (loadbang start built
+> in), but the explicit `[1] → [metro]` pattern is more visible to
+> a future patcher reader.
+
+---
+
+### F.8. Address builder and `[pack]`
+
+The metro's outlet 0 (F.7.2) bangs the address chain:
 
 ```
-[value track_id_retained]   (Section C.1)
+(metro's [t b b b b] outlet 0)
+        │
+        ▼
+   [value track_id_retained]            ← banged → emits the stored symbol
         │ outlet 0 (symbol)
         ▼
    [sprintf /hallucinote/track/%s/features]
         │ outlet 0 (symbol — the full OSC address)
         ▼
-   (latches into the message-construction step below)
+   (to [pack s f f f f] inlet 0 — hot, fires the pack)
 ```
 
 Box text: `sprintf /hallucinote/track/%s/features`.
 
-**Construct the outbound OSC message:**
+Pack cold-inlet layout (5 inlets total: 1 hot symbol + 4 cold floats):
 
-`[udpsend host port]` accepts a list whose first element is the
-address (a symbol) followed by args. So:
+| Inlet | Type | Source | Latched by |
+|---|---|---|---|
+| 0 (HOT) | symbol | `[sprintf]` outlet | metro outlet 0 — fires the pack |
+| 1 (cold) | float | `[f beat_pos_latched]` outlet (F.7.1) | metro outlet 1 bangs the [f] |
+| 2 (cold) | float | `[receive lufs_m_value]` outlet | metro outlet 2 bangs LUFS-M's [snapshot~] |
+| 3 (cold) | float | `[receive peak_dbfs_value]` outlet | `[peakamp~ 33]` self-clocked emission (F.4) |
+| 4 (cold) | float | `[receive low_mid_power_value]` outlet | metro outlet 3 bangs low-mid's [snapshot~] |
 
-```
-[sprintf ...] outlet ──→ [pak s f f f] inlet 0   (cold — latches address)
+Box text: `pack s f f f f`.
 
-(metro tick) → trigger the feature snapshots → [pack f f f] outlet emits list
-                                                      │
-                                                      ▼
-                                          (need to combine address + 3 floats)
-```
+> **Why `[pack]` not `[pak]`?** `[pack]`'s hot inlet is leftmost,
+> cold inlets are right. `[pak]` fires on ANY inlet change (hot
+> on every inlet) — each fire emits with whatever is currently
+> latched, producing N near-identical packets per tick with
+> partial updates. `[pack]` is the right primitive for
+> "fire-once-per-tick with all-fresh cold-latched values."
+>
+> **Why `s f f f f` (5 inlets) — not separate prepend / pak?**
+> `[pack s f f f f]` declares the type signature: a symbol followed
+> by four floats. The outlet emits a flat list
+> `<symbol> <f> <f> <f> <f>` which `[udpsend]` packs as an OSC
+> message with address (the symbol) and `,ffff` type-tagged
+> payload. To add more features later, widen the pack to
+> `s f f f f f` and append the new `[receive]` to the new cold
+> inlet — `beat_position` stays pinned at index [0] of the float
+> args.
 
-Actually, `[pack f f f]` outputs a 3-element float list. We need to
-prepend the address as a symbol. Easiest:
+`[pack s f f f f]` outlet emits the complete frame:
+`<address> <beat_pos> <lufs> <peak> <low_mid>`.
 
-```
-[pack f f f] outlet 0 (list: f f f)
-        │
-        ▼
-   [prepend dummy]              ← we'll replace 'dummy' with the dynamic address
-        │ outlet 0 (list: <dummy> f f f)
-```
+---
 
-But `[prepend]` takes a STATIC prefix. To make it dynamic, use
-`[prepend set]` pattern OR use `[pak]` to bundle address + floats:
+### F.9. Output gates and `[udpsend]`
 
-```
-[pack f f f] outlet     ──→ [pak s f f f] inlet 1   (cold — receives the 3 floats packed... wait this doesn't work)
-```
-
-Hmm. The cleanest pattern in Max for "dynamically prefix a symbol to
-a list" is via `[sprintf]` or `[message]`:
-
-Approach via `[message]`:
-
-```
-[message $1 $2 $3 $4]                 ← takes 4 args via inlet, outputs as list
-
-   address (symbol)  ──→ [message]'s SECOND inlet (sets $1)        
-   feature_LUFS    ──→ [message]'s THIRD inlet (sets $2)
-   feature_peak    ──→ [message]'s FOURTH inlet (sets $3)
-   feature_lowmid  ──→ [message]'s FIFTH inlet (sets $4)
-   
-   (any bang to inlet 0 fires the message with current $1..$4)
-```
-
-Wait — `[message]` in Max only has TWO inlets: inlet 0 (fires on
-incoming message or bang), inlet 1 (sets the message contents). It
-doesn't have $-arg inlets. To pre-set $1..$N you SEND a list to
-inlet 1: the list elements become $1, $2, ... and then inlet 0 fires.
-
-So:
-
-```
-(metro tick) →
-        │
-        ▼
-   [pak s f f f]                ← pack address (symbol) + 3 floats into a list
-        │ inlet 0 (cold-stash) — connect address (sprintf outlet) here  
-        │ inlet 1 (cold) — connect LUFS-M expr here
-        │ inlet 2 (cold) — connect peak expr here
-        │ inlet 3 (cold) — connect low-mid expr here
-        │ 
-        │ (hot inlet must fire last — bang from metro post-feature-snapshot)
-        │
-        ▼
-   outlet (list: <address> <lufs> <peak> <lowmid>)
-        │
-        ▼
-   [udpsend 127.0.0.1 11201]        ← left inlet 0 — message
-```
-
-But `[pak]` fires on ANY inlet change, so it fires three times per
-tick (or four if address also changes). Each fire emits the current
-latched values. For OSC, getting THREE near-identical packets per
-tick (each with one feature updated and the others stale) is
-basically as bad as the stale-value problem.
-
-The clean solution: use `[pack s f f f]` (capital P? no — Max uses
-lowercase. `pack` fires only on LEFTMOST inlet change, holds others
-latched).
-
-Box text: `pack s f f f`.
-
-Wiring:
-
-```
-address (sprintf outlet)  ──→ [pack s f f f] inlet 0   (HOT — triggers emission)
-LUFS-M expr               ──→ [pack s f f f] inlet 1   (cold — latched)
-peak expr                 ──→ [pack s f f f] inlet 2   (cold)
-low-mid expr              ──→ [pack s f f f] inlet 3   (cold)
-```
-
-But now address has to be the LAST thing to update per metro tick.
-Re-arrange the metro fan-out:
-
-```
-[metro 33]
-    │ outlet 0 (bang)
-    │
-    ├──→ [snapshot~] (peak)                inlet 0
-    ├──→ [snapshot~] (low-mid)             inlet 0  (actually peakamp~ shares inlet 0 for signal+bang)
-    ├──→ [snapshot~] (LUFS-M)              inlet 0
-    │
-    │  (now the three feature exprs have emitted their floats; pack's
-    │   inlets 1, 2, 3 are latched with fresh values)
-    │
-    └──→ (bang the address chain LAST)
-            │
-            ▼
-       [value track_id_retained] (re-emits the symbol via its outlet, into [sprintf])
-            │
-            ▼
-       [sprintf /hallucinote/track/%s/features]
-            │
-            ▼
-       [pack s f f f] inlet 0 (HOT — fires the pack with current latched floats)
-            │
-            ▼
-       outlet (list: <address> <lufs> <peak> <lowmid>)
-```
-
-To make the metro fire the address chain LAST, use `[t b b b b]`
-right-to-left ordering:
-
-```
-[metro 33]
-    │
-    ▼
-[t b b b b]
-   │ outlet 3 (rightmost — fires FIRST)  →  [peakamp~] (read)
-   │ outlet 2                            →  [snapshot~] (low-mid) inlet 0
-   │ outlet 1                            →  [snapshot~] (LUFS-M) inlet 0
-   │ outlet 0 (leftmost — fires LAST)    →  bang the address chain
-```
-
-(`[peakamp~]`'s inlet 0 takes both signal and bang; the bang
-triggers a read+reset.)
-
-> **Why bang `[snapshot~]` instead of letting it run continuously?**
-> `[snapshot~]` is silent until banged — banging samples the signal
-> NOW. This is exactly the "sample audio-rate signal at control-rate"
-> behavior we want.
-
-Box text: `t b b b b`.
-
-**Gate by `Emit` (the emit_enabled toggle):**
+Two `[gate]`s in series — kill switches that block the frame if
+either condition isn't met:
 
 ```
 [pack s f f f] outlet
         │
         ▼
-   [gate]                       ← gate's outlet emits only when control inlet is 1
-        │
-        ▼ (gated outbound message)
-
-[live.toggle (Emit)] outlet 0 ──→ [gate]'s inlet 0 (control)
-```
-
-Box text: `gate`.
-
-**Gate by non-empty track_id** (defensive):
-
-```
-[value track_id_retained] outlet → [length] → [> 0]
-                                                │ outlet 0 (1 if non-empty)
-                                                ▼
-                                           [gate]'s control inlet
-                                           (... actually we already have one gate above;
-                                            chain a second gate OR AND the two flags)
-```
-
-Simpler: AND the two conditions:
-
-```
-[live.toggle (Emit)] outlet → [pak 0 0] inlet 0
-[value track_id_retained] outlet → [length] → [> 0] → [pak 0 0] inlet 1
-                                                              │
-                                                              ▼
-                                                         outlet (list: emit, has_id)
-                                                              │
-                                                              ▼
-                                                         [expr $i1 && $i2]    ← AND
-                                                              │
-                                                              ▼
-                                                         [gate]'s control inlet
-```
-
-Hmm this is getting hairy. Simpler: TWO `[gate]`s in series, one
-controlled by each flag:
-
-```
-[pack s f f f] outlet
-        │
+   [gate]                                   ← gate #1: controlled by Emit param
+        │ control inlet 0 (left): driven by [live.toggle (Emit)] outlet
+        │ message inlet 1 (right): the frame list
         ▼
-   [gate]  control: Emit
-        │
+   [gate]                                   ← gate #2: controlled by has_track_id flag
+        │ control inlet 0: driven by [receive has_track_id] (F.6)
+        │ message inlet 1: the frame list
         ▼
-   [gate]  control: has_track_id   (1 if [value track_id_retained] length > 0)
-        │
-        ▼
-   [udpsend 127.0.0.1 11201]
+   [udpsend 127.0.0.1 11201]                ← single inlet — frame data, also config msgs (F.10)
 ```
 
-For the has_track_id flag, drive it from any update to
-`[value track_id_retained]`:
+Box text: `gate`, `gate`, `udpsend 127.0.0.1 11201`.
 
-```
-[value track_id_retained]
-        │ outlet 0 (symbol; emits on every write)
-        ▼
-   [length]         ← emits the symbol's length (int)
-        │
-        ▼
-   [> 0]            ← 1 if non-empty, 0 otherwise
-        │
-        ▼
-   (drives the second [gate]'s control inlet)
-```
-
-Box text: `length`, `> 0`.
-
-> But `[length]` doesn't take a symbol — it takes a list and returns
-> the list length. For a symbol's CHARACTER count, use `[regexp]` or
-> `[strcmp]` against the empty symbol `<empty>`. Actually:
+> **Max `[gate]` semantics.** A `[gate]` (or `[gate 1 0]` —
+> 1 outlet, initially closed) has TWO inlets:
+> - **Left inlet (inlet 0): control.** Receives 0 (close) or 1
+>   (open). Stored internally.
+> - **Right inlet (inlet 1): message.** Receives the data flow.
+>   Forwarded to the outlet ONLY when control == 1.
 >
-> ```
-> [== <empty>]      ← returns 1 if symbol is the empty symbol
-> ```
->
-> Then NOT it:
->
-> ```
-> [value track_id_retained]
->         │
->         ▼
->    [== <empty>]   ← outputs 1 if empty, 0 if non-empty
->         │
->         ▼
->    [== 0]         ← invert: 1 if NON-empty
->         │
->         ▼
->    (drives gate)
-> ```
->
-> Slight kludge, but clean enough. Alternative: store a separate
-> `[value has_track_id]` that gets set to 1 by the `/track_id`
-> route and never decays — simpler.
+> Wire the data IN on the RIGHT inlet, the control on the LEFT.
+> Reversing them is a silent failure mode.
 
-Pragmatic choice: set a `[value has_track_id]` flag in Section C.1's
-chain:
+> **`[live.toggle]` outlet emits int 0/1 directly** (learnings.md
+> "M4L `[live.toggle]` outlet emits int (0/1) directly"). Wire it
+> DIRECTLY to gate #1's control inlet — no `[== on]` or `[sel on]`
+> shim. The shim inverts the value because Max coerces the symbol
+> arg `on` to int 0.
 
-```
-[OSC-route /track_id]
-        │ outlet 0
-        ├──→ [value track_id_retained]
-        └──→ [t b]                            ← convert symbol to bang (NOT `t s` — see Section E.3 note)
-                │
-                ▼
-            [1]                               ← set flag to 1
-                │
-                ▼
-            [value has_track_id]
-```
+---
 
-Then use that `[value has_track_id]` to drive the gate (no string
-arithmetic needed). Add to the patch's `[loadbang]` chain:
+### F.10. `EmitPort` retarget chain
 
-```
-[loadbang] ──→ [0] ──→ [value has_track_id]     ← initialize to "no track_id yet"
-```
-
-### F.6. The outbound `[udpsend]`
-
-Box text: `udpsend 127.0.0.1 11201`
-
-(Default destination; configurable via `EmitPort` parameter as below.)
-
-**Re-target on EmitPort change:**
+`[live.numbox (EmitPort)]` writes propagate to the `[udpsend]` so a
+runtime port change re-targets the destination. The pattern
+mirrors Section C.3's signature-reply `[udpsend]` retarget:
 
 ```
 [live.numbox (EmitPort)] outlet 0
-        │ (float — Type=Float, Unit Style=Int)
+        │ (float — Type=Float, Unit Style=Int per Section B.1)
         ▼
-   [i]                      ← coerce float→int (prepend port expects int)
+   [i]                                     ← coerce float→int
         │
         ▼
-   [prepend port]           ← emits "port <N>" config message
-        │ outlet 0
+   [prepend port]                          ← emits list: "port <N>"
+        │
         ▼
-   [udpsend 127.0.0.1 11201] inlet 0   ← single inlet absorbs config OR data
+   (to [udpsend 127.0.0.1 11201] inlet 0 — same single inlet as the frame data)
 ```
 
 Box text: `i`, `prepend port`.
 
-Wire the metro-driven message chain (Section F.5) to the same single
-`[udpsend]` inlet — Max distinguishes the `port <N>` config message
-from feature-frame data messages by the leading symbol.
+> **`[udpsend]` has ONE inlet.** Frame data AND config messages
+> (`host <sym>`, `port <int>`) all enter through inlet 0.
+> `[udpsend]` disambiguates internally by the leading symbol —
+> `port` and `host` are config; anything else is data forwarded to
+> the network. See learnings "udpsend has one inlet, retarget via
+> host/port messages".
+>
+> **Constructor args 127.0.0.1 11201 are placeholders** — they get
+> overwritten by the `port <N>` message at first
+> `[live.numbox (EmitPort)]` emission (which fires at loadbang via
+> Inspector's "Initial Enable: Yes" — see Section B.1). The
+> placeholder values prevent the object from rendering
+> red/unresolved in Max. See learnings "udpsend needs host+port
+> constructor args even when overridden dynamically".
 
-> **No host retarget needed** for the feature emitter — the sidecar
-> always listens on 127.0.0.1, baked into the `[udpsend]` constructor
-> args. If the design ever needs cross-machine emission, add a
-> sibling `[prepend host]` chain analogous to Section C.3.a.
+**No host retarget needed** — the sidecar is always on 127.0.0.1
+for the MVP. If the design ever needs cross-machine emission, add
+a sibling `[prepend host]` chain analogous to C.3.a.
 
-`[live.numbox]`'s stored value auto-emits at patch load if Initial
-Enable is Yes (which Section B.1 requires). Verify by adding a
-temporary `[print EmitPort_init]` after `[live.numbox]`'s outlet —
-should print `11201` (or whatever the stored value is) right after
-Live loads the patch.
+---
 
-### F.7. Full F-section assembly diagram (sanity-check yourself)
+### F.11. SR-mismatch warning probe
+
+Print a Max-console warning at patch load (and on driver SR change)
+if the session SR isn't 48 kHz:
 
 ```
-                          [receive~ tap_L]   [receive~ tap_R]
-                                  │                   │
-                                  └─── [+~] ──── [*~ 0.5] ─── (mono signal)
-                                                       │
-            ┌─────────── (mono) ──────────┬──────── (mono) ────────────┐
-            │                             │                            │
-            ▼                             ▼                            ▼
-  [biquad~ HS coefs]                  [peakamp~]              [biquad~ HP-200 coefs]
-            │                             │                            │
-            ▼                       (bang inlet0                        ▼
-  [biquad~ HP coefs]                from metro)                [biquad~ LP-500 coefs]
-            │                             │                            │
-            ▼                             │                            ▼
-       [*~] self                          │                       [*~] self
-            │                             │                            │
-            ▼                             │                            ▼
-  [average~ 19200 bipolar]                │                  [average~ 4800 bipolar]
-            │                             │                            │
-            ▼                             │                            ▼
-       [snapshot~]                        │                       [snapshot~]
-            │                             │                            │
-            ▼                             ▼                            ▼
-[expr (LUFS conversion)]    [expr (peak conversion)]    [expr (low-mid conversion)]
-            │                             │                            │
-            └────────── (3 floats) ───────┴────────────────────────────┘
-                                          │
-                                          ▼
-                              [pack s f f f]      ← address into inlet 0 (hot)
-                                          │      floats into inlets 1/2/3 (cold)
-                                          ▼
-                                       [gate]  control: Emit
-                                          │
-                                          ▼
-                                       [gate]  control: has_track_id
-                                          │
-                                          ▼
-                              [udpsend 127.0.0.1 11201]  ← single inlet; EmitPort sends `port <N>` config msgs here
+[loadbang]
+    │
+    ▼
+[adstatus sr]                                       ← also re-emits on driver SR change
+    │ outlet 0 (current SR, float)
+    ▼
+[== 48000.]
+    │ outlet 0 (1 if 48k, 0 if not)
+    ▼
+[sel 0]                                             ← match: SR != 48k
+    │ outlet 0 (bang on mismatch)
+    ▼
+[message HallucinoteAnalyzer: WARNING — LUFS coefficients tuned for 48 kHz; session SR differs (see F.0 in AUTHORING-CHUNK-2B.md). LUFS readings will drift ~0.1-0.3 LU at 44.1 kHz.]
+    │
+    ▼
+[print HallucinoteAnalyzer]
+```
+
+Box text:
+- `adstatus sr`
+- `== 48000.`
+- `sel 0`
+- `message ...` (a message box containing the warning text shown above)
+- `print HallucinoteAnalyzer`
+
+> **Why `48000.` (float)?** `[adstatus sr]` emits a float. `[== 48000]`
+> with an int arg compares int-to-float, which works in Max but is
+> less robust than float-to-float. The `.` is cheap insurance.
+
+> **Re-emit on SR change.** `[adstatus sr]` re-emits whenever Live's
+> audio driver SR changes (the user toggles Live's Audio preferences
+> mid-session, say). The mismatch warning will re-print, which is
+> the desired behavior.
+
+---
+
+### F.12. Full assembly diagram (sanity check)
+
+```
+[receive~ tap_L]   [receive~ tap_R]
+       │                  │
+       └─── [+~] ── [*~ 0.5] ── [send~ mono]
+                                       │
+       ┌───────────────────────────────┼─────────────────────────────┐
+       │                               │                             │
+       ▼                               ▼                             ▼
+[receive~ mono]                 [receive~ mono]               [receive~ mono]
+       │                               │                             │
+       ▼                               ▼                             ▼
+[biquad~ HS K-weight]           [peakamp~ 33]                 [biquad~ HP 200]
+       │                          (self-clocked,                     │
+       ▼                           auto-emits ~30 Hz)                ▼
+[biquad~ HP RLB]                       │                       [biquad~ LP 500]
+       │                               │                             │
+       ▼                               ▼                             ▼
+[*~ self-square]               [clip 1e-6 1.0]                 [*~ self-square]
+       │                               │                             │
+       ▼                               ▼                             ▼
+[average~ <19200> bipolar]    [expr 20·log10($f1)]            [average~ <4800> bipolar]
+   (window set by [adstatus sr]        │                          (window set by [adstatus sr]
+    × 0.4 at load — same                ▼                           × 0.1 at load — same
+    inlet as the signal)         [send peak_dbfs_value]             inlet as the signal)
+       │                                                             │
+       ▼                                                             ▼
+[snapshot~]                                                    [snapshot~]
+       │                                                             │
+       ▼                                                             ▼
+[clip 1e-12 1e10]                                              [clip 1e-12 1e10]
+       │                                                             │
+       ▼                                                             ▼
+[expr 10·log10($f1) - 0.691]                                  [expr 10·log10($f1)]
+       │                                                             │
+       ▼                                                             ▼
+[send lufs_m_value]                                           [send low_mid_power_value]
+
+
+(Section D's [live.observer] outlet — current_song_time)
+                  │
+                  ▼
+              [t f f]
+              ├── outlet 1 (FIRST) → existing Section D crossing-detection chain
+              └── outlet 0 (SECOND) → [f beat_pos_latched] (cold-stores the float)
+                                              │
+                                              │ (banged by metro outlet 1)
+                                              ▼
+
+[metro 33] → [t b b b b]
+                  │
+                  ├── outlet 3 (FIRST)  → bang [snapshot~ low-mid]
+                  ├── outlet 2          → bang [snapshot~ LUFS-M]
+                  ├── outlet 1          → bang [f beat_pos_latched]
+                  └── outlet 0 (LAST)   → bang [value track_id_retained]
+                                              │
+                                              ▼
+                                        [sprintf /hallucinote/track/%s/features]
+                                              │
+                                              ▼ (hot — inlet 0)
+
+[f beat_pos_latched] outlet      ────────────────┐
+[receive lufs_m_value]           ────────────────┤
+[receive peak_dbfs_value]        ────────────────┤
+[receive low_mid_power_value]    ────────────────┤
+                                                 ▼
+                                [pack s f f f f]    ← address into in0 (hot)
+                                       │            beat into in1 (cold)
+                                                    lufs into in2 (cold)
+                                                    peak into in3 (cold)
+                                                    low_mid into in4 (cold)
+                                       │
+                                       ▼  (right inlet — message)
+                                  [gate]  ← control inlet 0 (left): [live.toggle Emit]
+                                       │
+                                       ▼  (right inlet — message)
+                                  [gate]  ← control inlet 0 (left): [receive has_track_id]
+                                       │
+                                       ▼
+                          [udpsend 127.0.0.1 11201]
+                                       ▲
+                                       │ (config msg path)
+                          [prepend port]
+                                       ▲
+                          [i]
+                                       ▲
+                          [live.numbox (EmitPort)] outlet
+```
+
+Section C.1 amendment (separately):
+```
+[OSC-route /track_id]
+       ├──→ [value track_id_retained]                  (existing)
+       └──→ [t b] → [1] → [send has_track_id]          (NEW — F.6 consumer)
+[loadbang] → [0] → [send has_track_id]                 (NEW — init flag closed)
+```
+
+SR-mismatch warning probe (separately):
+```
+[loadbang] → [adstatus sr] → [== 48000.] → [sel 0] → [message WARNING ...] → [print HallucinoteAnalyzer]
 ```
 
 ---
+
+### F.13. Pre-save probe checklist
+
+Add these temporary `[print]` boxes BEFORE saving. Verify each
+prints what's expected, then DELETE the prints before `Cmd-S`.
+
+| What to probe | Where to add `[print]` | Expected on transport play with audio |
+|---|---|---|
+| Tap signal alive | between `[+~]` and `[*~ 0.5]` — add `[snapshot~] → [print TAP_SUM]` banged by a temp `[metro 100]` | non-zero floats when audio is playing |
+| K-weighted signal | after second `biquad~` (HP RLB) — add `[snapshot~] → [print K_OUT]` banged by same temp metro | floats; values smaller in magnitude than TAP_SUM for low-freq-heavy content |
+| LUFS-M raw mean-square | between `[average~]` and `[snapshot~]` — temp `[snapshot~ T] → [print LUFS_RAW]` | small positive floats (e.g., 1e-3 to 1e-1 for typical music). Silence: tiny values approaching 0 — the `max($f1, 1e-12)` inside the expr clamps these so log10 never sees zero |
+| LUFS-M output | on outlet of LUFS expr — `[print LUFS_M]` | typical music: -28 to -10 LUFS. Silence: -120. |
+| Peak output | on outlet of peak expr — `[print PEAK]` | typical music: -20 to -1 dBFS. Silence: -120. |
+| Low-mid output | on outlet of low-mid expr — `[print LOWMID]` | typical music: -40 to -10 dB. Silence: -120. |
+| Metro firing | between `[metro 33]` and `[t b b b]` — `[print METRO]` | `METRO: bang` printing ~30×/sec |
+| Peakamp self-clocking | between `[peakamp~ 33]` outlet and `[max 1e-6]` — `[print PEAK_RAW]` | `PEAK_RAW: <linear-amplitude-float>` printing ~30×/sec even without metro running (peakamp~ has its own clock) |
+| Beat-position latch | on outlet of `[f beat_pos_latched]` — `[print BEAT]` | float that increases during transport play, holds steady during stop. Same value Section D's expr boxes see |
+| Pack output | between `[pack s f f f f]` outlet and gate #1 — `[print FRAME]` | one list per metro tick: `FRAME: /hallucinote/track/<id>/features 18.250 -23.4 -8.1 -32.7` — note 4 floats now (beat first) |
+| Gate #1 control (Emit) | on `[live.toggle (Emit)]` outlet — `[print EMIT_TOGGLE]` | `EMIT_TOGGLE: 1` when Live UI shows Emit on |
+| Gate #2 control (has_track_id) | on `[receive has_track_id]` outlet — `[print HAS_TID]` | `HAS_TID: 0` at load; `HAS_TID: 1` after `/track_id` arrives |
+| EmitPort value path | between `[i]` and `[prepend port]` — `[print EMITPORT_INT]` | initial value once at load, then on every Live UI change |
+| SR mismatch | the F.11 warning's `[print HallucinoteAnalyzer]` | nothing if session is 48 kHz; warning line if not |
+
+**Workflow per probe:** add the probe, `Cmd-S`, **`Cmd-W` to close
+the patcher window** (Max editor and Live runtime fight over
+udpreceive — see Section G.0 / learnings "M4L patcher editor and
+Live runtime fight over udpreceive"), test, re-open patcher to
+delete probe and add next one. Re-opening Max console (separate
+window: `Window → Max Console`) is fine — that's the print sink,
+not the patcher.
+
+End-state: NO `[print]` objects in the patch. Section G's broader
+tests then run against the clean patch.
+
+---
+
+### F.A. Appendix — Rejected designs
+
+Documented so future readers don't re-derive these from scratch.
+
+**A.1. `[pak s f f f]` instead of `[pack s f f f]`** — rejected
+because `[pak]` fires on ANY inlet change, emitting multiple
+near-identical packets per metro tick (one per snapshot update,
+each with the other features stale from the previous tick).
+`[pack]` fires only on hot-inlet (leftmost), making the address
+chain the explicit "tick boundary."
+
+**A.2. `[message $1 $2 $3 $4]` for address-plus-floats list
+construction** — rejected because Max's `[message]` only has TWO
+inlets (inlet 0 fires the message, inlet 1 sets the message
+contents via a list). It does NOT have per-`$N` inlets.
+`[pack s f f f]` is the canonical primitive for typed list
+construction.
+
+**A.3. `[value has_track_id]`** (instead of `[send]` / `[receive]`)
+— rejected per learnings.md "M4L `[value]` doesn't emit on write":
+the gate's control inlet would never update from a cold-inlet
+write to `[value]`. `[send]` / `[receive]` always emits on
+broadcast. (Section C.1 still uses `[value track_id_retained]` for
+the SYMBOL storage because F.8 explicitly bangs it via the
+`[t b b b b]` leftmost outlet — read-by-bang is `[value]`'s
+documented use case.)
+
+**A.4. `[length] → [> 0]` to test "is `[value track_id_retained]`
+empty?"** — rejected because Max's `[length]` measures *list*
+length, not *symbol* character count. A symbol arriving at
+`[length]`'s inlet returns 1 (a single-element list of one
+symbol), which makes `[> 0]` always true — defeating the gate.
+The `[send has_track_id]` flag avoids string introspection
+entirely.
+
+**A.5. SR-adaptive biquad coefficients via `[js]` or
+`[filtergraph~]`** — rejected for MVP because (a) `[js]`
+introduces a runtime JavaScript dependency that's brittle across
+Max versions, (b) `[filtergraph~]`'s coefficient outputs are
+intended for `[cascade~]` / `[biquad~]` runtime configuration but
+add visual-editor complexity. The 48 kHz coefs + F.11 mismatch
+warning is the MVP-grade trade-off; backlog will replace with
+runtime-SR-adaptive coefficients (likely via precomputed tables
+per SR with `[sel 44100 48000 88200 96000]` switching).
+
+**A.6. Per-channel BS.1770 weighted sum (channel weights 1.0 + 1.0
+for stereo)** — rejected as overkill for MVP. The mono-sum
+approximation (F.2) is within the spec's ±0.2 LU tolerance for
+typical stereo content. Full per-channel BS.1770 (squared-energies
+summed with channel weights, then K-weight applied per channel)
+becomes warranted if PSR or multichannel content (5.1, immersive)
+is ever in scope — out of scope here.
+
+---
+
 
 ## Section G — In-Max sanity tests (before saving)
 
@@ -1648,7 +2052,11 @@ Targets:
 - `~60 frames` per 2 seconds (30 Hz). ±10% tolerance.
 - Each frame address starts with `/hallucinote/track/test:1/features`
   (assuming you sent `/track_id test:1` first).
-- Payload type tag `,fff` followed by 12 bytes (3 floats).
+- Payload type tag `,ffff` followed by 16 bytes (4 floats):
+  `[beat_position, lufs_m, peak_dbfs, low_mid_power]`. With
+  transport playing, `beat_position` advances frame-over-frame.
+  With transport stopped, it holds the last play-position
+  unchanged.
 
 If 0 frames: check `[live.toggle (Emit)]` is on (1), `has_track_id`
 flag is 1 (because you sent `/track_id` first), and the metro is
@@ -1792,40 +2200,40 @@ Every Max object referenced in this guide, alphabetical:
 
 | Object | Purpose | Where used |
 |---|---|---|
-| `average~ <samples> bipolar` | sliding mean of signal | F.2, F.4 |
-| `biquad~ a0 a1 a2 b1 b2` | 2-pole filter section | F.2 (K-weighting), F.4 (band-pass) |
+| `adstatus sr` | current session sample rate (re-emits on driver change) | F.3, F.5, F.11 |
+| `average~ <samples> bipolar` | sliding mean of signal | F.3, F.5 |
+| `biquad~ a0 a1 a2 b1 b2` | 2-pole filter section | F.3 (K-weighting), F.5 (band-pass) |
 | `change` | emit only on value change | E.2 |
-| `delay 100` | delay in milliseconds | F.6 (init order) |
+| `clip <floor> <ceiling>` | clamp control-rate value to range; single inlet/outlet, space-separated args | F.3 (`1e-12 1e10`), F.4 (`1e-6 1.0`), F.5 (`1e-12 1e10`) |
 | `deferlow` | push to low-priority queue | D.5 |
-| `expr <expression>` | evaluate arithmetic / boolean | D.3, F.2, F.3, F.4 |
-| `gate` | gate a signal/message by control | F.5, F.6 |
-| `i` | int truncator | C.2 |
-| `length` | list/symbol length | F.5 (alternative approach) |
-| `live.numbox` | Live parameter (numeric) | A, B.1 |
+| `expr <expression>` | evaluate arithmetic; function vocabulary in M4L: `abs / ceil / floor / int / float / exp / log / log10 / fact / ln / pow / sqrt / rand / random` + trig. **No conditionals, no `max` / `min`** — use upstream `[clip]` / `[gate]` instead | D.3, F.3, F.4, F.5 |
+| `gate` | gate a signal/message by control | E.3, F.9 |
+| `i` | int truncator / storage with emit-on-write | C.2, F.3, F.5, F.10 |
+| `live.numbox` | Live parameter (numeric) | A, B.1, F.10 |
 | `live.observer` | Live LOM property observer | D.1 |
 | `live.thisdevice` | self-reference (id, sample rate, etc.) | G.1 |
-| `live.toggle` | Live parameter (boolean) | B.2 |
-| `loadbang` | bang on patch load | F.5, F.6 |
-| `message <text>` | static or dynamic message | C.3 |
-| `metro 33` | bang every 33 ms | F.5 |
+| `live.toggle` | Live parameter (boolean) | B.2, F.9 |
+| `loadbang` | bang on patch load | C.1, F.3, F.5, F.7, F.11 |
+| `message <text>` | static or dynamic message | C.3, F.11 |
+| `metro 33` | bang every 33 ms | F.7 |
 | `OSC-route /path/literal` | route OSC by address | C |
-| `pack <typespec>` | pack into list (fires on left inlet) | F.5 |
-| `pak <typespec>` | pack into list (fires on any inlet) | C.3, F.6 |
-| `peakamp~` | sample-peak accumulator | F.3 |
-| `pipe N` | delay messages by N ms | (not used; alternative to deferlow) |
+| `pack <typespec>` | pack into list (fires on left/hot inlet only) | F.8 |
+| `peakamp~ <interval_ms>` | sample-peak accumulator, **self-clocked** — auto-emits + resets every `<interval_ms>` ms (no bang needed) | F.4 (`33`) |
 | `plugin~` / `plugout~` | M4L audio in/out | F.1 |
-| `prepend <prefix>` | prepend static prefix to list | (alternative for F.5) |
-| `print <label>` | log to Max console | sanity tests throughout |
-| `receive~ <name>` | named audio receiver | F.1 |
-| `send~ <name>` | named audio sender | F.1 |
-| `sel <value>` | bang when input matches | D.4, E.2 |
+| `prepend <prefix>` | prepend static prefix to list | C.3, F.10 |
+| `print <label>` | log to Max console | F.11, F.13, sanity tests throughout |
+| `receive <name>` | named message receiver | F.6 (`has_track_id`), F.8 (feature values) |
+| `receive~ <name>` | named audio receiver | F.1, F.2 |
+| `sel <value>` | bang when input matches | D.4, E.2, F.11 |
+| `send <name>` | named message broadcaster | C.1 (`has_track_id`), F.3/F.4/F.5 (feature values) |
+| `send~ <name>` | named audio sender | F.1, F.2 |
 | `sfrecord~` | audio file writer | E.3, E.4 (unchanged from Chunk 1) |
-| `snapshot~` | sample audio signal at control rate | F.2, F.4 |
-| `sprintf <format>` | format string with %s/%d | F.5 |
-| `t <typespec>` | trigger (right-to-left fire order) | C.3, D, E.3, F.5 |
+| `snapshot~` | sample audio signal at control rate | F.3, F.5 |
+| `sprintf <format>` | format string with %s/%d | F.8 |
+| `t <typespec>` | trigger (right-to-left fire order) | C.1, C.3, D, E.3, F.7 |
 | `udpreceive <port>` | UDP message receiver | C (unchanged base from Chunk 1) |
-| `udpsend [host port]` | UDP message sender | C.3 (reply), F.6 (emitter) |
-| `value <varname>` | named state cell | C, D, E |
+| `udpsend <host> <port>` | UDP message sender (single inlet; constructor args required) | C.3 (reply), F.9 (emitter) |
+| `value <varname>` | named state cell — read-by-bang only (does NOT emit on write) | C (path, track_id, beats), D (state machine) |
 
 ---
 
@@ -1846,7 +2254,7 @@ Every Max object referenced in this guide, alphabetical:
 | Assumed `[udpsend]` has a right inlet for `host port` config | It doesn't — single inlet, retarget via `host <sym>` / `port <int>` MESSAGES (same convention as `[udpreceive]` `port <N>`) | Send config as separate prepended messages to the same inlet (Sections C.3, F.6) |
 | Downstream sees `host s` / `port 0` instead of real values | `[t l b]` outlet types reversed in wiring expectations — outlet 0 is `l` (list), outlet 1 is `b` (bang); wiring unpack to outlet 1 feeds bangs (not the list), so unpack emits defaults | Use `[t b l]` instead: `b` on outlet 0 (left), `l` on outlet 1 (right) — fires right-to-left, so list fires first then bang, which is the destination-then-reply order |
 | `[expr]` box turns red with `$f0` / `$i0` | Max's `[expr]` uses **1-indexed** inlet variables — leftmost inlet is `$f1` / `$i1` / `$s1`, NOT `$f0` / `$i0` | Shift all variable numbers up by 1: inlet 0 → `$f1`, inlet 1 → `$f2`, etc. |
-| Trying to check "is this symbol empty?" with `[if ... <empty>]` or `[length]` | `<empty>` isn't a Max literal in `[if]`; `[length]` measures LIST length, not symbol-character count — always returns 1 for a single symbol | Use a separate `[value has_X]` int flag, set to 1 by the message that populates the symbol; gate downstream actions with `[gate]` controlled by the flag (Sections E.3, F.5) |
+| Trying to check "is this symbol empty?" with `[if ... <empty>]` or `[length]` | `<empty>` isn't a Max literal in `[if]`; `[length]` measures LIST length, not symbol-character count — always returns 1 for a single symbol | Use a separate `has_X` int flag plumbed via `[send]` / `[receive]` (NOT `[value]` — see the next row): set the flag to 1 from the OSC route that populates the symbol; gate downstream actions with `[gate]` controlled by `[receive has_X]` (Sections C.1, F.6, F.9) |
 | `[value]` stores writes but downstream never sees them — connected `[print]` silent, exprs see stale values | Max for Live's `[value]` in current versions doesn't emit on write — only on bang. Cold inlets fed via `[value]` outlets stay at their default | Use `[i]` (int) or `[f]` (float) instead of `[value]` for storage. Both emit on every write. Trade-off: lose named-shared-variable semantics, but for local-only use that doesn't matter |
 | `live.toggle` outlet appears to be inverted — Arm=1 in Live makes downstream see 0 | A `[== on]` symbol-to-int shim was added between live.toggle and downstream. In current Max versions, live.toggle outputs **int 0/1 directly**. `[== on]` then compares int input to the symbol arg `on`, which Max coerces to int 0 — so `0==0→1` and `1==0→0`, inverting the value | Remove `[== on]`. Wire `[live.toggle]` outlet directly to downstream `[i]` storage |
 | `live.observer @path live_set @property current_song_time` never fires — observer outlet silent during transport play | The `@property` attribute on `[live.observer]` isn't honored at load in current Max versions. AND a misconfigured live.observer can silently poison the patcher's loadbang sequence, breaking other init prints | Use the canonical chain: `[live.thisdevice]` → `[live.path live_set]` → `[live.observer]` (no @property arg). At loadbang, ALSO send a `property current_song_time` message to `[live.observer]`'s inlet 0 (via a separate `[message]` box driven off live.thisdevice through a `[t b b]`). Section D.1 walks through this |
@@ -1855,7 +2263,12 @@ Every Max object referenced in this guide, alphabetical:
 | Max patcher editor open + Live runtime instance simultaneously — OSC routes silently wrong | Both Max-editor and Live-runtime have their own instance of the patcher. They fight over the udpreceive socket; one binds, the other can't, and `live.observer` may not fire in either or both. Symptom: signature reply works erratically; transport observer silent | Always Cmd-S to save, then Cmd-W to close the patcher editor window before runtime testing. Keep `Window → Max Console` open separately (it persists after the patcher closes) |
 | `[udpsend]` shows red / no visible inlet | Instantiated without host+port constructor args | Re-create as `udpsend 127.0.0.1 0`. Fallback if the object's missing entirely: `mxj net.udp.send 127.0.0.1 0` |
 | Feature frames arrive with one stale float | `[pack]` fires on wrong inlet first | Re-wire so address (inlet 0) fires LAST |
-| Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.5 `has_track_id` gate |
+| Feature frames have empty track_id in address | `[value track_id_retained]` not set | Section F.9 `has_track_id` gate (driven by `[receive has_track_id]`, sourced from C.1) — verify by adding `[print HAS_TID]` per F.13 |
+| LUFS readings drift ~0.3 LU from `pyloudnorm` reference at the same SR | Session SR isn't 48 kHz; K-weighting biquad coefs are SR-pinned for MVP | F.11 warning probe prints to Max console at load when SR mismatches. Resolve by switching Live's session to 48 kHz, or wait for post-MVP SR-adaptive coefs (backlog) |
+| Feature frame `[pack]` doesn't fire at all on metro tick | Address chain (hot inlet 0) not reaching `[pack]` — e.g., `[t b b b b]` outlet 0 not wired to `[value track_id_retained]`, or sprintf outlet not wired to pack inlet 0 | Trace per F.13's probe ladder: METRO → LUFS_M/PEAK/LOWMID → FRAME |
+| Tried to wire SR-adapter (`[i]` outlet) to `[average~]`'s right inlet — "average~ only has a left input" | `[average~]` has ONLY one inlet, shared between the audio signal (left audio connection) and the window-size int message (control-rate connection). Same single-inlet multiplexing as `[peakamp~]` | Wire `[i]`'s outlet to `[average~]`'s LEFT inlet (the same one the signal enters from). Max disambiguates by message type — `~` carries signal, non-`~` carries the int |
+| `[expr]` rejects ternary `? :` or returns "function if not found" / "function max not found" for `if(...)` / `max(...)` | M4L's bundled `[expr]` function vocabulary is limited to `abs / ceil / floor / int / float / exp / log / log10 / fact / ln / pow / sqrt / rand / random` + the trig family — no conditionals, no `max` / `min`. Some Max docs list `max(a, b)` but it's absent in M4L's runtime | For "log of X with silence sentinel" conversions, do the floor clamp UPSTREAM with `[clip <floor> <ceiling>]` (a Max control-rate object, space-separated args). Then the expr is plain math: `expr 10. * log10($f1) - 0.691`. See F.3 floor/ceiling table |
+| Box `max 1e-12` resolves red / not found — Max's object lookup only shows `[maximum]` (list-max) and `[maximum~]` (signal-rate) | The plain `[max]` scalar object exists in Max but auto-complete or quick-lookup may not surface it in some Max versions | Use `[clip <floor> <ceiling>]` instead — same semantics for our floor-clamp need (single inlet, clamps to range), and the two-arg form is space-separated so there's no comma-escape ambiguity. `[clip]` is unambiguous in Max's object lookup |
 | Live rejects device with `createdevice error 6` | Patch saved via non-GUI path or hand-edited binary | Restore from `.chunk1.bak.amxd`; only ever save via Max GUI |
 | Live's main thread freezes during render | `[average~]` window size or `[metro]` running on audio thread | Verify `[average~]` is at control rate, not signal |
 | LUFS-M values off by ~0.3 LU vs Live's meters | 48 kHz biquad coefficients running at 44.1 kHz | Document; SR-adaptive coefficient math is post-MVP |

@@ -230,3 +230,81 @@ Then `[live.observer]` outlet emits the bare float every time the property chang
 2. If you must keep the editor open (e.g., to watch a `[print]` while testing), accept that observed behavior may not match what end-users will see.
 3. The Max console window (Window → Max Console) is independent of the patcher editor window — close patcher, keep console.
 4. For complex M4L debugging cycles, the close-patcher / open-patcher dance is part of the workflow, not optional.
+
+## M4L device identity is in `device.name`, not `device.class_display_name`
+
+**Every M4L audio-effect device in Live has `device.class_display_name = "Max Audio Effect"` — that's the device CLASS, not the specific .amxd identity. The .amxd filename (sans extension) lives in `device.name`. Code that detects "is this analyzer/device a HallucinoteAnalyzer instance?" by comparing against `class_display_name` will be permanently False for every real M4L device, with no error — just silent always-add behavior. The correct check is `device.name == "<.amxd filename>"` (with `class_display_name == "Max Audio Effect"` as a secondary anchor proving it's an M4L device, not a similarly-named user preset).**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B end-to-end verification (2026-05-27), `ableton_render(ensure_loaded)` hung Live's main thread when called on a session with 5 tracks + 3 returns + master. The trace showed `_find_analyzer_index` returning None on EVERY pre-existing analyzer, so `ensure_loaded` was triggering a fresh load on every surface every call — including surfaces that already had one. Live MCP probe of a loaded analyzer revealed the actual attribute shape: `{"name": "HallucinoteAnalyzer", "class_name": "MxDeviceAudioEffect", "class_display_name": "Max Audio Effect"}` — confirming `class_display_name` is the device class ("Max Audio Effect"), not the .amxd identity. The earlier docstring claim ("Live surfaces the .amxd filename as `class_display_name`") was wrong, and the test fakes mirrored the buggy claim — so all 11 analyzer-setup tests passed while production was permanently broken against real Live.
+
+**How to apply:**
+1. For M4L device identity comparisons (detection, deduplication, "is this analyzer mine?"), compare BOTH `device.class_display_name == "Max Audio Effect"` (proves M4L audio-effect class) AND `device.name == "<filename>"` (proves the specific .amxd). Either alone is insufficient: just-class-display-name matches every M4L; just-name could match a user-renamed device of any class.
+2. The combined check has one edge: if a user renames the device in their session, `name` no longer matches and detection breaks. For truly canonical identity, use the OSC `/signature/query` round-trip the analyzer spec defines — heavier but rename-proof. Pick the simpler `class+name` check unless you have evidence renames are common.
+3. **Test fakes MUST mirror real Live's attribute shape, not the production code's (possibly buggy) assumptions.** When constructing a fake M4L device, set `class_display_name="Max Audio Effect"` and `name=<filename>` — NOT `class_display_name=<filename>`. A fake that defaults `name = class_display_name` (the easy mistake) will pass tests that fail against real Live.
+4. The same trap structure (production code asserting one attribute shape; test fake conforming to the buggy assertion; both pass tests; real Live disagrees) is a general M4L authoring pitfall — when adopting any new Live device API surface, probe a real instance via `ableton_device(action='info', ...)` BEFORE writing the production check, and seed the test fake from the probe output.
+
+## M4L devices installed under User Library require `preset_query`, not `kind=`, in `ableton_device(action='load')`
+
+**When the device-load handler is given just `kind='<DeviceName>'`, it walks ONLY the built-in `_BROWSER_LOAD_ROOTS = (instruments, audio_effects, midi_effects, drums)` — it does NOT walk `user_library`, `plugins`, `samples`, or `packs`. M4L devices installed via the project's own install skill (e.g. HallucinoteAnalyzer.amxd → `User Library/Presets/Audio Effects/Max Audio Effect/`) live under `user_library` and are therefore invisible to `kind=`-based lookup. The fix is to pass `preset_query={'root': 'user_library', 'pattern': '<DeviceName>', 'path_prefix': [<exact install path segments>]}` instead. `kind` must STILL be passed (it's required by the handler signature) but `preset_query` takes precedence and selects the actual item.**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B close-out (2026-05-27), `ableton_render(action='ensure_loaded')` failed on a fresh Live session with `"no loadable browser item found for kind='HallucinoteAnalyzer'"` despite the `.amxd` being correctly placed at `~/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd` (verified via `installed_analyzer_amxd()` and via `ableton_browser(action='search', root='user_library', pattern='hallucinote')` returning `is_loadable: True`). Root cause: `analyzer/setup.py::_ensure_on_surface` passed `kind=ANALYZER_DEVICE_NAME` to `device_handlers.load_handler`, which walks only `_BROWSER_LOAD_ROOTS`. The fix narrowed the lookup to the exact User Library subpath via `preset_query`, including a `path_prefix` to prevent shadowing by user-saved presets with the same display name elsewhere in their library.
+
+**How to apply:**
+1. When the project's install skill places an .amxd under User Library, the analyzer-load chain MUST use `preset_query` (not `kind=`) with `root='user_library'` and `path_prefix` pinning the install location.
+2. The `path_prefix` value should mirror the install path exactly — codify it as a module-level constant (e.g. `ANALYZER_BROWSER_PATH_PREFIX = ("Presets", "Audio Effects", "Max Audio Effect")`) and reference both the install skill and the loader from it. Drift between install location and loader location is silent (the device just won't be found).
+3. Test fakes (e.g. `_FakeBrowser` in `tests/unit/test_analyzer_setup.py`) must mirror the real install layout — populate `user_library` with the nested `Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer` subtree, NOT a top-level `audio_effects` child. A fake that puts the analyzer in the "wrong" root will pass tests that the production code fails.
+4. If you DO want to extend `kind=` lookup to walk User Library, modify `_BROWSER_LOAD_ROOTS` cautiously — it adds search cost on every device-load and risks name collisions with user-saved presets. The narrow built-in set was an explicit design choice. For user-library-installed devices, `preset_query` is the proper surface.
+5. The same logic applies to any future M4L device the project ships: the install skill places it under `user_library/<something>`; the loader must use `preset_query` with that path_prefix.
+
+## M4L `[peakamp~]` is self-clocked via a reporting-interval arg, not banged
+
+**Max's `[peakamp~]` object does NOT reliably emit on bang to its left inlet in M4L's bundled Max runtime, despite some documentation suggesting it should. The canonical control surface is its constructor argument (an int in milliseconds): `[peakamp~ <interval>]` auto-emits the peak + resets every `<interval>` ms. With no constructor arg, the object may default to a state where it doesn't emit at all.**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-26), the feature emitter's sample-peak extractor was initially designed to be metro-banged at 30 Hz (`[t b b b b]` → bang to `[peakamp~]` inlet 0). In M4L, `[peakamp~]` ignored the bangs entirely — no output reached downstream `[expr]` / `[send]` / `[receive]` / `[pack]` chains. Switching to `[peakamp~ 33]` (auto-emit every 33 ms) made peak values flow continuously into `[pack]`'s cold inlet. The metro fan-out simplified from `[t b b b b]` (4 outlets — three extractor bangs + address) to `[t b b b]` (3 outlets — two snapshot bangs + address), since peak no longer needs a metro tick.
+
+**How to apply:**
+1. For `[peakamp~]`, use the constructor-arg interval form (e.g., `[peakamp~ 33]` for ~30 Hz). Don't try to bang it.
+2. The interval should match the consumer's polling rate so the latched value is at most `<interval>` ms old when read. For a 30 Hz consumer, 33 ms is a good match.
+3. Self-clocked extractors are asynchronous to a metro-driven `[pack]` fire path. That's fine — cold-inlet writes always succeed (they latch); `[pack]` only fires when the hot inlet hits. The latched value is at most one interval stale at fire time.
+4. If precise phase alignment matters (it usually doesn't for peak reporting), use a shorter interval — `[peakamp~ 10]` updates at 100 Hz, so the metro-tick read is at most 10 ms stale. Trade off CPU for freshness.
+5. The same self-clocking pattern shows up in other Max audio-rate "report periodically" objects (e.g., `[meter~]`, `[snapshot~]` with `[metro]` upstream). When an object provides an "interval" or "rate" arg, prefer it over bang-driven polling — the docs may say bang works, but in M4L it often doesn't.
+
+## M4L `[average~]` has one inlet, not two — window-size message shares the signal inlet
+
+**`[average~]` exposes a single inlet that multiplexes the audio signal (entered via `~` connection) with control messages (entered via non-`~` connection). The window size in samples is set by sending an int message to that SAME inlet — there is no separate right inlet for window configuration despite what some Max object references imply. Max disambiguates by message type: `~` carries signal flow; non-`~` carries control messages, and the two coexist in the same inlet without colliding.**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-26), the SR-adaptive `[average~]` window-update chain (`[adstatus sr] → [expr $f1 * 0.4] → [i] → [average~]`) was first designed to feed the int into `[average~]`'s "right inlet 1" — but `[average~]` only shows one inlet in the patcher editor. The correct topology wires the int message to the same LEFT inlet that the audio signal enters. Same single-inlet multiplexing as `[peakamp~]` (which shares its inlet for signal + bang).
+
+**How to apply:**
+1. When wiring a control-rate parameter update to a `~` audio object, check whether the object has a separate parameter inlet OR multiplexes on the signal inlet. `[average~]` and `[peakamp~]` multiplex; `[*~]` (in some configurations) has a separate right inlet for the multiplier signal. The patcher editor shows the truth — count inlets in the GUI.
+2. When the same inlet accepts both signal and control messages, wire both connections to it. Max's scheduler keeps them separate.
+3. If you find yourself thinking "the docs say there's a right inlet for X" and the editor disagrees, trust the editor. Max docs sometimes describe an idealized object that doesn't quite match the runtime.
+4. Companion pattern: `[peakamp~]` shares inlet 0 for signal + bang. The bang triggers read+reset; the signal flows continuously. Same multiplex shape.
+
+## M4L `[expr]` function vocabulary is narrow — no conditionals, no min/max; use `[clip <floor> <ceiling>]` upstream for log-of-zero protection
+
+**Max's `[expr]` object in M4L's bundled runtime has a NARROW function vocabulary: `abs, ceil, floor, int, float, exp, log, log10, fact, ln, pow, sqrt, rand, random` + the trig family. It does NOT have `if(cond, then, else)` (returns `function if not found`), does NOT have `max(a, b)` or `min(a, b)` (also `function max not found`), and the C-style ternary `? :` is unreliable. Some Max documentation lists `max()` as an `[expr]` function but it's empirically absent in M4L's bundled Max — do not trust the docs over the runtime. For "compute `log10(x)` but produce a sentinel when x is zero" conversions, clamp the input UPSTREAM with `[clip <floor> <ceiling>]` (a Max control-rate object, space-separated args, single inlet/outlet) and keep the expr as plain arithmetic.**
+
+**Why:** during audio-analysis MVP Chunk 2 sub-chunk 2B (2026-05-26 → 2026-05-27), the LUFS-M / peak / low-mid extractors all needed a "log of mean-square, with -120 dB sentinel for silence" conversion. Four failed attempts established the function-vocabulary boundary empirically:
+1. C-style ternary `($f1 > 0.) ? (10. * log10($f1)) - 0.691 : -120.` — Max rejected with a syntax error.
+2. `if($f1 > 0., 10. * log10($f1) - 0.691, -120.)` — Max rejected with `expr: function if not found`.
+3. Wiring a separate `[max 1e-12]` clamp box upstream — Max's object lookup in the user's version didn't resolve `[max]`, only `[maximum]` (list-max — wrong semantics) and `[maximum~]` (signal-rate).
+4. `expr 10. * log10(max($f1, 1e-12)) - 0.691` (using `max()` as a function inside the expr) — Max rejected with `expr: function max not found`.
+
+The successful pattern uses `[clip <floor> <ceiling>]` upstream: `[snapshot~] → [clip 1e-12 1e10] → [expr 10. * log10($f1) - 0.691]`. `[clip]` is a standard Max control-rate object (space-separated args, no comma-escape headaches), single inlet/outlet, exactly the floor-clamp semantics needed. `log10` is safe because `[clip]` guarantees the input is at least the floor; the output at the floor (`10·log10(1e-12) - 0.691 = -120.69`) is the sidecar's "effectively silent" sentinel.
+
+**How to apply:**
+1. For "log-of-X with silence sentinel" conversions in `[expr]`, clamp the input UPSTREAM with `[clip <floor> <ceiling>]`. Pick `<floor>` so `log10(<floor>) * <gain>` equals your silence sentinel:
+   - Mean-square inputs (power) with `10·log10`: `[clip 1e-12 1e10]` → silence floor = -120 dB
+   - Linear amplitude inputs (0–1) with `20·log10`: `[clip 1e-6 1.0]` → silence floor = -120 dB
+   The ceiling is a far-from-real-audio safety net needed because `[clip]` requires two args; pick something well above any real-world input.
+2. Keep the expr as plain arithmetic: `expr 10. * log10($f1) - 0.691`. No conditionals; no `max()` / `min()` calls inside.
+3. Reliable `[expr]` functions in M4L: `abs, ceil, floor, int, float, exp, log, log10, fact, ln, pow, sqrt, rand, random` + the trig family (`sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh`). Anything else (`if`, `max`, `min`, `clip` as a function, ternary `? :`) — assume absent and reach for a separate Max object.
+4. The conditional-via-separate-object catalog:
+   - **`[clip <low> <high>]`** — range clamp (this learning's primary fix)
+   - **`[gate]`** — conditional pass-through (used in F.9 for emit + has_track_id gates)
+   - **`[sel <values>]`** — bang when input matches any listed value (used in F.11 for SR mismatch detection)
+   - **`[<= N]` / `[>= N]`** — boolean comparison (outputs 0/1)
+5. The `[clip]` upstream pattern doubles as a safety net for floating-point edge cases — `[average~]`'s output can rarely be slightly negative due to FP roundoff, which would make `log10` return NaN. `[clip <positive_floor> ...]` upstream catches that too.
+
+**Earlier-learning correction:** an earlier version of this entry claimed `max(a, b)` was in `[expr]`'s function vocabulary. That was wrong — it was cited from standard Max docs without verifying against M4L's runtime. M4L's bundled `[expr]` does not have `max()`. The lesson: when documenting M4L objects, trust empirical results from the user's Max console over docs that claim object behavior. M4L's bundled runtime is a subset of standalone Max, and the subset boundaries aren't always documented.

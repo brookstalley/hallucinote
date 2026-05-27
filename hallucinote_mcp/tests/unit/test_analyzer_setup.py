@@ -44,10 +44,24 @@ def _analyzer_params() -> list[_FakeParam]:
 
 
 class _FakeDevice:
-    """A Live device. ``class_display_name`` is what M4L surfaces as the
-    .amxd filename; a HallucinoteAnalyzer instance has class_display_name
-    equal to ``HallucinoteAnalyzer``. Other devices set it to their
-    actual Live class display (Compressor, Reverb, etc.)."""
+    """A Live device.
+
+    Mirrors Live's actual attribute shape:
+      - ``class_display_name`` is the device CLASS as Live exposes it.
+        For M4L audio-effect devices this is ALWAYS ``"Max Audio Effect"``
+        (every .amxd of type audioeffect shares this class). For built-in
+        Live devices it's the device's display name (``"Compressor"``,
+        ``"Reverb"``, etc.).
+      - ``name`` is the user-visible label. For freshly-loaded M4L
+        devices Live initializes ``name`` to the .amxd filename without
+        extension (e.g. ``"HallucinoteAnalyzer"``), though the user can
+        rename it in the session.
+
+    Earlier versions of this fake set ``class_display_name`` to the
+    .amxd filename, which never happens in real Live — caused
+    `_find_analyzer_index` (which compared on class_display_name) to
+    return True in tests but always False against real M4L devices.
+    """
 
     def __init__(
         self,
@@ -59,8 +73,15 @@ class _FakeDevice:
     ):
         self.class_display_name = class_display_name
         self.class_name = class_name or class_display_name
+        # Auto-detect: an M4L audio-effect device loaded by the analyzer
+        # setup will have class_display_name="Max Audio Effect" and name
+        # defaulting to "HallucinoteAnalyzer". Tests that construct a
+        # _FakeDevice for the analyzer chain MUST set name accordingly
+        # — defaulting name to class_display_name (the prior behavior)
+        # would produce a device that looks like a non-M4L "Max Audio
+        # Effect" device with no specific .amxd identity.
         self.name = name or class_display_name
-        if parameters is None and class_display_name == "HallucinoteAnalyzer":
+        if parameters is None and self.name == "HallucinoteAnalyzer":
             parameters = _analyzer_params()
         self.parameters = parameters or []
 
@@ -113,29 +134,52 @@ class _FakeBrowser:
     """Tracks each load_item call and appends a fresh device to whatever
     track is selected. The selected track is the parent surface
     that ``load_handler`` is targeting (which calls
-    ``song.view.selected_track = parent`` before ``browser.load_item``)."""
+    ``song.view.selected_track = parent`` before ``browser.load_item``).
+
+    Mirrors the real install layout: the analyzer .amxd lives at
+    ``user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer``
+    (where the install skill writes it). ``ensure_analyzers_loaded``
+    locates it via ``preset_query`` with that exact path_prefix — a
+    ``kind=`` lookup would miss it because the built-in
+    ``_BROWSER_LOAD_ROOTS`` (instruments / audio_effects / midi_effects /
+    drums) doesn't include ``user_library``.
+    """
 
     def __init__(self, song: "_FakeSong", *, item_name: str = ANALYZER_DEVICE_NAME):
         self._song = song
-        self.audio_effects = _FakeBrowserRoot("Audio Effects")
-        # Pre-populate with the analyzer item so load_handler's name-walk
-        # finds it.
+        # Build the user_library subtree that mirrors the install layout.
+        self.user_library = _FakeBrowserRoot("User Library")
+        presets = _FakeBrowserRoot("Presets")
+        audio_effects_folder = _FakeBrowserRoot("Audio Effects")
+        max_audio_effect = _FakeBrowserRoot("Max Audio Effect")
         self._item = _FakeBrowserItem(item_name)
-        self.audio_effects.children.append(self._item)
-        # Other roots load_handler walks in `_BROWSER_URI_ROOTS`.
+        max_audio_effect.children.append(self._item)
+        audio_effects_folder.children.append(max_audio_effect)
+        presets.children.append(audio_effects_folder)
+        self.user_library.children.append(presets)
+        # Other roots are present but empty — the load_handler walks
+        # them for kind / preset_uri lookups, but the analyzer
+        # specifically lives under user_library.
+        self.audio_effects = _FakeBrowserRoot("Audio Effects")
         self.instruments = _FakeBrowserRoot("Instruments")
         self.midi_effects = _FakeBrowserRoot("MIDI Effects")
         self.drums = _FakeBrowserRoot("Drums")
         self.plugins = _FakeBrowserRoot("Plug-Ins")
         self.samples = _FakeBrowserRoot("Samples")
-        self.user_library = _FakeBrowserRoot("User Library")
         self.packs = _FakeBrowserRoot("Packs")
         self.load_calls: list[_FakeBrowserItem] = []
 
     def load_item(self, item: _FakeBrowserItem) -> None:
         self.load_calls.append(item)
         target = self._song.view.selected_track
-        new_dev = _FakeDevice(class_display_name=item.name)
+        # Mirror Live's actual attribute shape: a freshly-loaded M4L
+        # audio effect has class_display_name="Max Audio Effect" (the
+        # device class) and name=<.amxd filename>. The browser item's
+        # name in this fake is the .amxd filename.
+        new_dev = _FakeDevice(
+            class_display_name="Max Audio Effect",
+            name=item.name,
+        )
         target.devices.append(new_dev)
 
 
@@ -235,7 +279,7 @@ def test_sweep_is_idempotent_no_duplicates():
 
     # All four surfaces should now have exactly one analyzer each.
     chain_counts_after_first = [
-        len([d for d in t.devices if d.class_display_name == ANALYZER_DEVICE_NAME])
+        len([d for d in t.devices if d.name == ANALYZER_DEVICE_NAME])
         for t in (
             ctx.song.tracks[0], ctx.song.tracks[1],
             ctx.song.return_tracks[0], ctx.song.master_track,
@@ -248,7 +292,7 @@ def test_sweep_is_idempotent_no_duplicates():
     assert second.existing_count == 4
 
     chain_counts_after_second = [
-        len([d for d in t.devices if d.class_display_name == ANALYZER_DEVICE_NAME])
+        len([d for d in t.devices if d.name == ANALYZER_DEVICE_NAME])
         for t in (
             ctx.song.tracks[0], ctx.song.tracks[1],
             ctx.song.return_tracks[0], ctx.song.master_track,
@@ -266,7 +310,10 @@ def test_sweep_is_idempotent_no_duplicates():
 def test_sweep_detects_existing_analyzer_does_not_reload():
     """If the analyzer is already present on a surface, the sweep
     records its existing index and does NOT re-load."""
-    existing = _FakeDevice(class_display_name=ANALYZER_DEVICE_NAME)
+    # Mirror real Live: M4L analyzer has class_display_name="Max Audio Effect",
+    # name=<.amxd filename>. EQ Eight has class_display_name="EQ Eight",
+    # name="EQ Eight" (Live's built-in devices have name==class_display_name).
+    existing = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
     eq = _FakeDevice(class_display_name="EQ Eight")
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums", devices=[eq, existing])],
@@ -325,7 +372,7 @@ def test_sweep_writes_per_instance_port_via_live_param():
     def _param_value(track, pname):
         analyzer = next(
             d for d in track.devices
-            if d.class_display_name == ANALYZER_DEVICE_NAME
+            if d.name == ANALYZER_DEVICE_NAME
         )
         return next(p for p in analyzer.parameters if p.name == pname).value
 

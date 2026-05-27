@@ -52,8 +52,14 @@ class _FakeDevice:
     ):
         self.class_display_name = class_display_name
         self.class_name = class_name or class_display_name
+        # Mirror Live's real shape: an M4L audio-effect has
+        # class_display_name="Max Audio Effect" and name=<.amxd filename>.
+        # Tests instantiating analyzer fakes should pass name=
+        # "HallucinoteAnalyzer" explicitly; defaulting name to
+        # class_display_name (prior behavior) made the fake look like
+        # an unbranded "Max Audio Effect" with no specific .amxd.
         self.name = name or class_display_name
-        if parameters is None and class_display_name == "HallucinoteAnalyzer":
+        if parameters is None and self.name == "HallucinoteAnalyzer":
             parameters = _analyzer_params()
         self.parameters = parameters or []
 
@@ -103,23 +109,43 @@ class _FakeBrowserRoot:
 
 
 class _FakeBrowser:
+    """Mirrors the real install layout: HallucinoteAnalyzer lives at
+    ``user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer``
+    (the install skill writes the .amxd there). ``ensure_analyzers_loaded``
+    locates it via ``preset_query`` with that exact path_prefix —
+    ``kind=`` lookups miss it because ``_BROWSER_LOAD_ROOTS`` doesn't
+    include user_library."""
+
     def __init__(self, song):
         self._song = song
+        # Build the user_library subtree.
+        self.user_library = _FakeBrowserRoot("User Library")
+        presets = _FakeBrowserRoot("Presets")
+        audio_effects_folder = _FakeBrowserRoot("Audio Effects")
+        max_audio_effect = _FakeBrowserRoot("Max Audio Effect")
+        max_audio_effect.children.append(_FakeBrowserItem("HallucinoteAnalyzer"))
+        audio_effects_folder.children.append(max_audio_effect)
+        presets.children.append(audio_effects_folder)
+        self.user_library.children.append(presets)
+        # Other roots present but empty.
         self.audio_effects = _FakeBrowserRoot("Audio Effects")
-        self.audio_effects.children.append(_FakeBrowserItem("HallucinoteAnalyzer"))
         self.instruments = _FakeBrowserRoot("Instruments")
         self.midi_effects = _FakeBrowserRoot("MIDI Effects")
         self.drums = _FakeBrowserRoot("Drums")
         self.plugins = _FakeBrowserRoot("Plug-Ins")
         self.samples = _FakeBrowserRoot("Samples")
-        self.user_library = _FakeBrowserRoot("User Library")
         self.packs = _FakeBrowserRoot("Packs")
         self.load_calls: list[_FakeBrowserItem] = []
 
     def load_item(self, item):
         self.load_calls.append(item)
         target = self._song.view.selected_track
-        target.devices.append(_FakeDevice(class_display_name=item.name))
+        # Mirror Live's real shape for M4L: class_display_name=
+        # "Max Audio Effect", name=<.amxd filename>.
+        target.devices.append(_FakeDevice(
+            class_display_name="Max Audio Effect",
+            name=item.name,
+        ))
 
 
 class _FakeApplication:
@@ -270,7 +296,7 @@ def test_ensure_loaded_idempotent_across_action_dispatches(ctx_two_tracks_one_re
     assert second.result["existing_count"] == 4
     # No duplicates on any surface.
     counts = [
-        sum(1 for d in t.devices if d.class_display_name == "HallucinoteAnalyzer")
+        sum(1 for d in t.devices if d.name == "HallucinoteAnalyzer")
         for t in (
             ctx_two_tracks_one_return.song.tracks[0],
             ctx_two_tracks_one_return.song.tracks[1],
@@ -374,7 +400,7 @@ def test_render_arms_then_disarms_all_analyzers(
         ctx_two_tracks_one_return.song.master_track,
     ):
         analyzer = next(
-            d for d in t.devices if d.class_display_name == "HallucinoteAnalyzer"
+            d for d in t.devices if d.name == "HallucinoteAnalyzer"
         )
         arm = next(p for p in analyzer.parameters if p.name == "Arm")
         assert arm.value == 0.0

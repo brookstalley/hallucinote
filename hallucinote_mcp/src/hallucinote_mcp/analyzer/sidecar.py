@@ -1,15 +1,24 @@
 """UDP feature-frame sidecar.
 
 The analyzer's outbound emitter sends ~30 Hz frames of
-``/hallucinote/track/<track_id>/features [lufs_m, peak_dbfs, low_mid_power]``
+``/hallucinote/track/<track_id>/features [beat_position, lufs_m, peak_dbfs, low_mid_power]``
 to ``127.0.0.1:11001`` (configurable per-instance via the analyzer's
 ``EmitPort`` Live parameter; default is shared 11001 so one sidecar
 collects everyone's frames).
 
+**Wire-format convention (load-bearing).** ``payload[0]`` is always
+``beat_position`` — Live transport beat at the moment the frame was
+sampled. ``payload[1:]`` is the feature vector. New features
+append to the end; ``beat_position`` and the existing features
+keep their positional indices stable across analyzer versions.
+The analyzer ``/signature`` reply (``hallucinote-analyzer-v1`` →
+``v2`` → …) lets sidecars discover the feature-vector length when
+strict shape-checking is needed.
+
 The sidecar:
 
 - binds a single UDP socket;
-- decodes incoming OSC frames (3-float payload at a documented address shape);
+- decodes incoming OSC frames (4-float payload at a documented address shape);
 - routes by ``track_id`` to a per-track ring buffer holding the last
   N frames (default N = ~900 ≈ 30 s at 30 Hz);
 - exposes ``read(track_id)`` / ``read_all()`` for in-process consumers.
@@ -44,7 +53,7 @@ _DEFAULT_LISTEN_PORT = 11001
 _DEFAULT_BUFFER_DEPTH = 900
 _OSC_ADDRESS_PREFIX = "/hallucinote/track/"
 _OSC_ADDRESS_SUFFIX = "/features"
-_EXPECTED_TYPE_TAG = ",fff"
+_EXPECTED_TYPE_TAG = ",ffff"
 
 
 def _osc_unpack_string(buf: bytes, offset: int) -> tuple[str, int]:
@@ -67,12 +76,14 @@ class FeatureFrame:
     """One decoded feature frame.
 
     Fields mirror the wire shape documented in the analyzer spec:
+      - ``beat_position`` — Live transport beat at sample time (payload[0])
       - ``lufs_m`` — momentary loudness (LUFS, K-weighted, 400 ms integration)
       - ``peak_dbfs`` — sample-peak in dBFS (NOT true-peak)
       - ``low_mid_power`` — 200–500 Hz band power, dB relative to full scale
     """
 
     track_id: str
+    beat_position: float
     lufs_m: float
     peak_dbfs: float
     low_mid_power: float
@@ -83,7 +94,7 @@ def _parse_feature_frame(packet: bytes) -> FeatureFrame | None:
 
     Lenient by design — feature streams are best-effort UDP, and a
     malformed frame should never take the sidecar down. Returns
-    ``None`` for any packet that doesn't parse as a 3-float frame at
+    ``None`` for any packet that doesn't parse as a 4-float frame at
     the documented address; the caller treats that as "dropped frame".
     """
     try:
@@ -103,14 +114,15 @@ def _parse_feature_frame(packet: bytes) -> FeatureFrame | None:
         return None
     if type_tag != _EXPECTED_TYPE_TAG:
         return None
-    # Three big-endian 32-bit floats.
-    if len(packet) - offset < 12:
+    # Four big-endian 32-bit floats: beat_position, lufs_m, peak_dbfs, low_mid_power.
+    if len(packet) - offset < 16:
         return None
-    lufs_m, peak_dbfs, low_mid_power = struct.unpack(
-        ">fff", packet[offset:offset + 12],
+    beat_position, lufs_m, peak_dbfs, low_mid_power = struct.unpack(
+        ">ffff", packet[offset:offset + 16],
     )
     return FeatureFrame(
         track_id=track_id,
+        beat_position=float(beat_position),
         lufs_m=float(lufs_m),
         peak_dbfs=float(peak_dbfs),
         low_mid_power=float(low_mid_power),

@@ -1,61 +1,16 @@
-# hallucinote-mcp — Getting Started
+# Getting started
 
-Welcome. This MCP server exposes Ableton Live as a unified 12-tool surface
-designed for low-context-cost agent interaction.
+## First moves
+- For a quick exploration: `ableton_session(action='info')` reads tempo / track-count / master in one shot.
+- For new song scaffolding: `/song-new <prompt>` (see also `/song-pick-instruments`).
+- For pushing an existing song into Live: `/ableton-push <slug>` from its directory.
 
-## The shape
+## Per-song composer notes
+`hallucinote://song/<slug>/annotations` returns the song's structural-fact +
+intent annotations. Read this before non-trivial composition work — it's the
+composer's notes, not derivable from the DB schema.
 
-12 tools, each with an `action` parameter:
-
-```
-ableton_session     — global state, master, transport, view, tempo, signature, snapshot
-ableton_track       — tracks: lifecycle, mixer state, sends
-ableton_return      — return tracks
-ableton_clip        — session + arrangement clips (lifecycle, set_property, replace_notes)
-ableton_note        — within-clip note operations (gap #4 blocked)
-ableton_device      — devices on tracks/returns
-ableton_automation  — envelopes across seven target families
-ableton_arrangement — arrangement layout + cue points
-ableton_scene       — session-view scenes (rows of clip slots + tempo + signature)
-ableton_browser     — instruments, effects, plugins
-ableton_annotation  — composer-intent annotations on a song's DB (W8-C surface)
-ableton_render      — HallucinoteAnalyzer auto-load + WAV capture pass (audio analysis pipeline)
-```
-
-**Discoverability**: every tool has `action='help'` that returns the full
-action menu with required/optional params, examples, and tips. Call it
-when you're unsure.
-
-## First moves for any task
-
-1. `ableton_session(action='info')` to see global state (tempo, signature,
-   transport, master mixer, track/return/scene counts).
-2. `ableton_track(action='list')` to see what tracks exist.
-3. `ableton_<tool>(action='help')` if the action you want isn't obvious.
-
-## Resources vs tools
-
-This server also exposes **resources** (URIs read via `resources/read`)
-for slow-changing reads:
-
-- `ableton://session/snapshot` — current session state in one read
-- `ableton://browser/{instruments,effects,drums}` — content library trees
-- `ableton://plugins/installed` — VST/AU list
-- `ableton://reference/{scales,device-params}` — static lookups
-- `ableton://guides/{getting-started,conventions,error-recovery,gaps}` —
-  this file and three others
-- `hallucinote://song/<slug>/annotations` — composer-intent annotations
-  for the song identified by `<slug>` (zero-turn-cost mirror of
-  `ableton_annotation(action='list', song_slug=<slug>)`). Read this
-  before non-trivial composition so prior decisions + structural facts
-  are in the working set.
-
-Prefer resources over tool calls when the data is slow-changing — they
-load implicitly without consuming a turn.
-
-## Read these next
-
-- `ableton://guides/conventions` — addressing, value ranges, beats vs bars
-- `ableton://guides/error-recovery` — common errors and the right fix
-- `ableton://guides/gaps` — what NOT to attempt (gap-#4 note operations,
-  arrangement-level tempo automation, envelope reads)
+## Also read
+- `ableton://guides/conventions` — indexing, time semantics, value-range gotchas.
+- `ableton://guides/gaps` — what's still blocked at the API level + the canonical workaround.
+- `ableton://guides/error-recovery` — structured-error recipes for the common stalls.

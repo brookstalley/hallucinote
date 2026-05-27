@@ -58,7 +58,7 @@ BPM range, swing/groove pocket, energy level. Often inferable from genre but wor
 
 ### 7. Time signature / meter
 
-4/4 default; flag and confirm anything else. Critical when the song wants meter changes — neon-feedback's 5/8 bridge-twist exposed Hallucinote's meter-ratchet refusal path. **The agent needs to know early whether to attempt non-4/4** (W14-B generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
+4/4 default; flag and confirm anything else. Critical when the song wants meter changes — neon-feedback's 5/8 bridge-twist exposed Hallucinote's meter-ratchet refusal path. **The agent needs to know early whether to attempt non-4/4** (generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
 
 ### 8. Harmonic strategy
 
@@ -99,7 +99,7 @@ Sparse vs busy. Layer count at each moment. Affects how the agent picks generato
 Once the must-haves are settled (or confidently inferred + confirmed):
 
 1. **Scaffold** with `/song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
-2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via Sweep B's `preset_query` (composer-time, portable) or via load-then-recapture.
+2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via `preset_query` (composer-time, portable) or via load-then-recapture.
 3. **Push the scaffold to a fresh Live set** so the device chains materialize.
 4. **Recapture** with `tools/capture_cli.py` so device URIs / params land in `captured_session.json`.
 5. **Compose** — open `build.py`'s `=== Compose-half ===` and author clips/notes/arrangement against the now-realistic snapshot.

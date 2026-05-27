@@ -1,7 +1,8 @@
 """Shape assertions for solo-piano-ambient build.
 
-Canary Wave 0 song — verifies the build produces the structure described in
-`docs/canary-songs/solo-piano-ambient.md`.
+Canary test song — verifies the build produces the structure declared by
+the song's own build.py (original brief at
+`docs/archive/canary-songs/solo-piano-ambient.md`).
 """
 from __future__ import annotations
 

@@ -16,8 +16,7 @@ tools work standalone.
 Empirical research (Anthropic, Speakeasy, Copilot) shows model effectiveness degrades
 sharply past ~25 MCP tools and collapses past ~50. Most narrow setters can be
 consolidated: `ableton_track(action='set_property', property='volume', value=0.7)`
-replaces a separate `set_track_volume` tool. The architectural rationale lives in
-the parent repo at [`docs/mcp-tool-design.md`](../docs/mcp-tool-design.md).
+replaces a separate `set_track_volume` tool.
 
 ## Install
 

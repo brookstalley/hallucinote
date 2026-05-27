@@ -7,8 +7,8 @@ This document fixes the meaning of overloaded terms — *session*, *arrangement*
 (`src/hallucinote/sync/`).
 
 If a term in code or in a plan disagrees with this doc, **this doc wins** —
-fix the code (or the doc, after discussing). Wave M+1's drift cost two Critic
-rounds and one mis-planned chunk; treat this as load-bearing.
+fix the code (or the doc, after discussing). Treat this as load-bearing —
+terminology drift is expensive to unwind.
 
 ## The two Live views
 
@@ -59,8 +59,8 @@ row is one Clip placed on one track at one time range:
 **The MCP tool `ableton_arrangement(…)`** addresses the Arrangement *View* —
 its scope is view state + cue points + view controls + loop + arrangement-level
 tempo/sig (overlap with `ableton_session`). It does **NOT** today expose any
-read action that returns the per-track clip-placement list. That is the
-W3-4 / M+1-3 gap.
+read action that returns the per-track clip-placement list — that gap remains
+open.
 
 When you read or write the word "arrangement" in code, comments, or a build
 plan, ask: **is this about the view, or about clip placements?** If unclear
@@ -71,8 +71,8 @@ from context, qualify it: `arrangement_view_*`, `arrangement_clip(s)_*`.
 `{tempo: bpm, signature: {numerator, denominator}, length_beats: float, loop: {…}, cue_count: int}` —
 all **view-level / song-level** state, no per-track / per-clip data.
 
-It is **not** a probe for the DB `arrangement` table. The M+1-3 build-plan
-entry confused these — that's what triggered this doc.
+It is **not** a probe for the DB `arrangement` table. Confusing these two
+is what triggered this doc.
 
 ## "Clip" — definition vs. placement
 

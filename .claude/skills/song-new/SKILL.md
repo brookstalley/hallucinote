@@ -46,7 +46,7 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. **Auto-load the analyzer** (silent postlude). After the picks land and the song's pushed to Live, call `ableton_render(action='ensure_loaded')` once. Places a HallucinoteAnalyzer on every audio track + return + master so subsequent renders pick up the right surfaces. Idempotent — calling it again later (after adding more tracks) does no harm. Don't surface this step in your reply; it's infrastructure, not authored content.
+7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently.
 8. Report the result + tell the user what to do next.
 
 ## Gathering input
@@ -75,7 +75,7 @@ The scaffolder writes:
 
 ```
 songs/<slug>/
-  build.py                 (state-converger wrapping M.build_session — W12-A)
+  build.py                 (state-converger wrapping M.build_session)
   captured_session.json    (synthetic 4 MIDI + 2 returns + master)
   <slug>.md                (overview — composer intent + structure)
   tests/test_<slug>_build.py  (shape + converger tests)
@@ -85,7 +85,7 @@ songs/<slug>/
 
 Two important defaults the scaffold uses:
 - **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Capture today is manual via `tools/capture_cli.py`.
-- **State-converger build.py.** Re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op when nothing changed in build.py — W12-A guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
+- **State-converger build.py.** Re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op when nothing changed — the converger guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
 
 ## Final report to user
 
@@ -123,6 +123,6 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 
 - Per-song test files use unique basenames (`test_<slug>_build.py`, not bare `test_build.py`). Wave 0 surfaced the collision the hard way.
 - Sections default to 8 bars each. The scaffold uses this for cue-point placement; the user can adjust constants in `build.py` afterwards.
-- Generators today assume 4/4 (Wave 0 finding H2). For non-4/4 songs, hand-author until W14-B ships meter-parametrized generators.
-- Master automation isn't supported (W10-F locks this in). If the user asks for master fade-out, route to a sub-bus group track first.
-- Within-section meter changes aren't supported (W10-H locks this in). For meter-ratchet music, the meter map can only change between sections.
+- Generators today assume 4/4. For non-4/4 songs, hand-author until meter-parametrized generators ship.
+- Master automation isn't supported. If the user asks for master fade-out, route to a sub-bus group track first.
+- Within-section meter changes aren't supported. The meter map can only change between sections.

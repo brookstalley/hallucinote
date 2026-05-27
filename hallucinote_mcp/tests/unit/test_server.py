@@ -86,10 +86,13 @@ def test_mcp_readme_tool_count_matches_actual_registry():
     )
 
 
-def test_getting_started_guide_tool_count_matches_actual_registry():
-    """Sibling guard for resources/guides/getting-started.md — the
-    guide is shipped as an MCP resource, so its headline is part of
-    the visible surface."""
+def _deleted_test_getting_started_guide_tool_count_matches_actual_registry():
+    """REMOVED 2026-05-27 during doc scrub. The PRIMER (in server.py) is
+    now the canonical home for the tool count headline; getting-started.md
+    no longer restates it because the PRIMER reaches every agent on
+    `initialize` before any guide read. See
+    `test_primer_tool_count_matches_actual_registry` for the live guard.
+    """
     import re
     from pathlib import Path
 

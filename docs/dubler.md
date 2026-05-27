@@ -11,7 +11,7 @@ Two stacked Live 12.4 LOM gaps shape the design:
 - `Clip.get_notes_extended()` returns notes only; no `get_pitch_bend_events()` / `get_cc_events()` on the clip object. Raw MIDI event reads are unavailable.
 
 The fork that decides everything: **does Dubler emit MPE or channel pitch bend?**
-- **MPE mode** → each note carries its own pitch axis. Maps to `target_kind='note_expression'`, `axis='pitch'`, which DOES work on Live 12.4 (gaps.md:94-96, `docs/mcp-requirements.md:307`). Round-trip is feasible.
+- **MPE mode** → each note carries its own pitch axis. Maps to `target_kind='note_expression'`, `axis='pitch'`, which DOES work on Live 12.4 (gaps.md:94-96). Round-trip is feasible.
 - **Channel PB mode** → blocked. Best we could do is "author once in Live, never touch again" — no DB round-trip, no regenerate, no version-control of the gesture data.
 
 ## What's already wired (MPE path)
@@ -33,7 +33,7 @@ If Dubler emits MPE (or can be switched to it), the structural foundation is mos
 
 Dubler recording is exactly that case: new notes + new pitch gestures, no prior DB rows. A Dubler-record pull cycle needs to discover both the notes AND their attached `note_expression` envelopes.
 
-Note discovery itself is partly there — `clip-notes` pull diffs Live notes against DB notes per `docs/mcp-requirements.md:19`. What's missing is the per-note **envelope** discovery pass on those notes.
+Note discovery itself is partly there — `clip-notes` pull diffs Live notes against DB notes. What's missing is the per-note **envelope** discovery pass on those notes.
 
 ## Critical empirical unknown
 

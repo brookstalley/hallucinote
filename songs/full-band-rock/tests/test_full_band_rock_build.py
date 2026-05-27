@@ -1,7 +1,8 @@
 """Shape assertions for full-band-rock build.
 
-Canary Wave 0 song (run #2). Verifies the build produces the structure
-described in `docs/canary-songs/full-band-rock.md`.
+Canary test song — verifies the build produces the structure declared by
+the song's own build.py (original brief at
+`docs/archive/canary-songs/full-band-rock.md`).
 """
 from __future__ import annotations
 

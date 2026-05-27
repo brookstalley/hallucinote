@@ -40,7 +40,7 @@ Each result row carries a `source` tag (`'request'` or `'annotation'`) so the fo
 
 $ARGUMENTS
 
-**Step 1 — Identify the active song.** Look at the caller's recent file activity / CWD. If a single song folder is in play (any file in `songs/<name>/` touched recently), use that song's DB: `songs/<name>/<name>.db`. If unclear, ask which song.
+**Step 1 — Identify the active song.** See `/song-context` Step 1 for the preflight rule. Use the song's DB at `songs/<name>/<name>.db`.
 
 **Step 2 — Run the query.** Invoke `tools/decisions_cli.py` via Bash:
 

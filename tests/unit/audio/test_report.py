@@ -17,6 +17,7 @@ from hallucinote.audio.report import (
     MasterOvershoot,
     MixReport,
     ReverbVerification,
+    SectionMetrics,
     StemMetrics,
 )
 
@@ -103,6 +104,56 @@ def test_to_json_dict_round_trips_through_json():
     assert deserialized["reverb_verifications"][0]["within_tolerance"] is True
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
     assert deserialized["compare_to"] is None  # reserved skeleton
+
+
+def test_per_section_serializes_with_scoped_surfaces():
+    """per_section mirrors the top-level master/stems/returns shape, scoped
+    to a named beat window — round-trips through JSON as nested dicts."""
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[_make_stem("track:1")],
+        master=_make_stem("master"),
+        per_section=[
+            SectionMetrics(
+                section_name="chorus1",
+                start_beat=32.0,
+                end_beat=48.0,
+                master=StemMetrics(
+                    track_id="master",
+                    surface_kind="master",
+                    surface_name="Main",
+                    loudness=_make_loudness(),
+                ),
+                stems=[_make_stem("track:1")],
+                returns=[_make_stem("return:1")],
+            )
+        ],
+    )
+    out = report.to_json_dict()
+    serialized = json.loads(json.dumps(out))
+    section = serialized["per_section"][0]
+    assert section["section_name"] == "chorus1"
+    assert section["start_beat"] == 32.0
+    assert section["end_beat"] == 48.0
+    assert section["master"]["surface_kind"] == "master"
+    assert section["stems"][0]["track_id"] == "track:1"
+    assert section["returns"][0]["track_id"] == "return:1"
+
+
+def test_per_section_defaults_empty():
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[],
+        master=_make_stem("master"),
+    )
+    assert report.per_section == []
+    assert report.to_json_dict()["per_section"] == []
 
 
 def test_compare_to_field_is_reserved_skeleton():

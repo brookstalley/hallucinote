@@ -31,7 +31,7 @@ LOUDNESS_TOLERANCE_LU = 0.2
 
 # pyloudnorm's default block size is 400 ms; signals shorter than that
 # produce a NaN integrated value silently. Pre-check and teach.
-_MIN_DURATION_S_DEFAULT_BLOCK = 0.4
+MIN_LOUDNESS_DURATION_S = 0.4
 
 # Short-term measurement per EBU R 128 — 3-second sliding window.
 _SHORT_TERM_BLOCK_S = 3.0
@@ -64,10 +64,10 @@ def measure_loudness(audio: np.ndarray, *, sr: int) -> LoudnessMetrics:
         )
     n_samples = audio.shape[0]
     duration_s = n_samples / sr
-    if duration_s < _MIN_DURATION_S_DEFAULT_BLOCK:
+    if duration_s < MIN_LOUDNESS_DURATION_S:
         raise ValueError(
             f"audio is too short for LUFS measurement: duration={duration_s:.3f}s, "
-            f"minimum={_MIN_DURATION_S_DEFAULT_BLOCK}s "
+            f"minimum={MIN_LOUDNESS_DURATION_S}s "
             f"(pyloudnorm's BS.1770 block size is 400 ms; shorter signals "
             f"would silently return NaN)"
         )
@@ -185,5 +185,6 @@ def _true_peak_dbtp(audio: np.ndarray) -> float:
 
 __all__ = [
     "LOUDNESS_TOLERANCE_LU",
+    "MIN_LOUDNESS_DURATION_S",
     "measure_loudness",
 ]

@@ -103,6 +103,33 @@ class ReverbVerification:
 
 
 @dataclass(frozen=True)
+class SectionMetrics:
+    """Per-surface loudness scoped to one named section window.
+
+    Mirrors the top-level report's ``master`` / ``stems`` / ``returns``
+    shape, but every loudness number is measured over only the audio that
+    falls inside ``[start_beat, end_beat)`` — the half-open beat-domain
+    window the handler derived from the song's ``sections`` table (named
+    half-open ``[start_bar, end_bar)`` spans, not ``cue_points`` which are
+    point markers). This is the read-side answer to "is the chorus
+    actually louder than the verse?" — the LLM compares ``master.loudness``
+    across sections without re-parsing bars.
+
+    ``start_beat`` / ``end_beat`` are song-absolute beats (bar 1's downbeat
+    == beat 0.0), the same domain as ``MasterOvershoot.start_beat`` and the
+    capture's transport window. Windows are clamped to the captured extent;
+    a section that falls entirely outside the capture is recorded in
+    ``MixReport.skipped_analyses`` rather than emitted with empty metrics.
+    """
+    section_name: str
+    start_beat: float
+    end_beat: float
+    master: StemMetrics
+    stems: list[StemMetrics] = field(default_factory=list)
+    returns: list[StemMetrics] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Finding:
     """Structured intent-keyed observation from the analysis pass.
 
@@ -145,6 +172,7 @@ class MixReport:
     returns: list[StemMetrics] = field(default_factory=list)
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
+    per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
     compare_to: dict[str, Any] | None = None
@@ -172,6 +200,7 @@ class MixReport:
             "reverb_verifications": [
                 _reverb_to_dict(r) for r in self.reverb_verifications
             ],
+            "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
             "compare_to": self.compare_to,
@@ -189,6 +218,17 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
             "lufs_m_peak": s.loudness.lufs_m_peak,
             "true_peak_dbtp": s.loudness.true_peak_dbtp,
         },
+    }
+
+
+def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
+    return {
+        "section_name": s.section_name,
+        "start_beat": s.start_beat,
+        "end_beat": s.end_beat,
+        "master": _stem_to_dict(s.master),
+        "stems": [_stem_to_dict(stem) for stem in s.stems],
+        "returns": [_stem_to_dict(r) for r in s.returns],
     }
 
 

@@ -31,16 +31,23 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # import is only exercised on the MCP server side (where this handler
 # actually runs, gated by runs_server_side=True).
 try:
-    from hallucinote.audio import DeclaredReverbSend, analyze_mix
+    from hallucinote.audio import DeclaredReverbSend, SectionWindow, analyze_mix
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
+    # Reuse the canonical bar→beat converter the push planner uses — it walks
+    # the song's time_signature_map so meter changes accumulate exactly. The
+    # only constant-tempo assumption in section windowing is the downstream
+    # beat→sample step (in `analyze._measure_sections`), not this conversion.
+    from hallucinote.sync.push import _position_bar_to_beats
     _HAS_HALLUCINOTE = True
 except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
+    SectionWindow = None  # type: ignore[assignment]
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
+    _position_bar_to_beats = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
 
 # `track_id_for_surface` is the canonical DB-UUID → capture-surface-ID
@@ -171,6 +178,48 @@ def _collect_declared_sends(song_slug: str) -> list["DeclaredReverbSend"]:
     ]
 
 
+def _collect_sections(song_slug: str) -> list["SectionWindow"]:
+    """Read the song's ``sections`` table and lift it into beat-domain
+    ``SectionWindow`` records for ``analyze_mix``.
+
+    Sections are stored as named half-open ``[start_bar, end_bar)`` spans
+    (``sections`` table); the capture's transport window and the analysis
+    pipeline work in song-absolute beats. This is the boundary: convert
+    each bar bound to beats via ``_position_bar_to_beats`` (which walks the
+    song's ``time_signature_map`` so meter changes accumulate exactly),
+    then hand beat windows to ``analyze_mix`` — which slices audio by beat
+    and stays DB-agnostic.
+
+    ``cue_points`` are deliberately NOT used: they're point markers with no
+    spans, so they can't scope a loudness window. Named sectional structure
+    lives in ``sections``.
+
+    Empty list when the song declares no sections — ``analyze_mix`` emits
+    its own ``skipped_analyses`` entry teaching the caller to declare them
+    via ``create_section``.
+    """
+    db_path = resolve_db_path(song_slug)
+    conn = init_db(db_path)
+    try:
+        song = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (song_slug,)
+        ).fetchone()
+        if song is None:
+            return []
+        section_rows = Q.get_sections_for_song(conn, song["id"])
+        ts_points = Q.get_time_signature_map(conn, song["id"])
+    finally:
+        conn.close()
+    return [
+        SectionWindow(
+            name=row["name"],
+            start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
+            end_beat=_position_bar_to_beats(row["end_bar"], ts_points),
+        )
+        for row in section_rows
+    ]
+
+
 def analyze_handler(
     _context: LiveContext,
     *,
@@ -207,7 +256,12 @@ def analyze_handler(
         )
 
     declared_sends = _collect_declared_sends(song_slug)
-    report = analyze_mix(captures_path, declared_reverb_sends=declared_sends)
+    sections = _collect_sections(song_slug)
+    report = analyze_mix(
+        captures_path,
+        declared_reverb_sends=declared_sends,
+        sections=sections,
+    )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -226,6 +280,7 @@ def analyze_handler(
         "master_true_peak_dbtp": report_dict["master"]["loudness"]["true_peak_dbtp"],
         "overshoot_count": len(report_dict["overshoots"]),
         "reverb_out_of_tolerance_count": len(out_of_tolerance),
+        "section_count": len(report_dict["per_section"]),
         "skipped_analyses_count": len(report_dict["skipped_analyses"]),
     }
     return {

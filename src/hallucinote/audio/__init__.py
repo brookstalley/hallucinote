@@ -15,6 +15,8 @@ Module layout:
                      contribution attribution.
   ``reverb``       — Wiener-deconvolved IR + RT60 measurement vs. declared
                      intent.
+  ``section``      — slice captured audio into named section windows so
+                     loudness can be scoped to verse / chorus / bridge.
 
 The MCP wrapper that exposes this as a tool lives in
 ``hallucinote_mcp/src/hallucinote_mcp/{actions,handlers}/analysis.py``;
@@ -31,8 +33,10 @@ from .report import (
     MasterOvershoot,
     MixReport,
     ReverbVerification,
+    SectionMetrics,
     StemMetrics,
 )
+from .section import SectionWindow
 
 __all__ = [
     "DeclaredReverbSend",
@@ -41,6 +45,8 @@ __all__ = [
     "MasterOvershoot",
     "MixReport",
     "ReverbVerification",
+    "SectionMetrics",
+    "SectionWindow",
     "StemMetrics",
     "analyze_mix",
 ]

@@ -365,6 +365,71 @@ def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path
     assert skips == []
 
 
+def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
+    """The handler walks the ``sections`` table, converts each named
+    half-open ``[start_bar, end_bar)`` span to song-absolute beats via the
+    time_signature_map, and hands the beat windows to ``analyze_mix``. The
+    resulting MixReport carries one ``per_section`` entry per declared
+    section, keyed by name, with master + per-stem loudness scoped to the
+    window.
+
+    The 8-beat capture (4/4 default → 2 bars) is split into two named
+    sections; both fall inside the captured window.
+    """
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        # 4/4 default: bar 1 -> beat 0, bar 2 -> beat 4, bar 3 -> beat 8.
+        M.create_section(conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0)
+        M.create_section(conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0)
+        conn.commit()
+    finally:
+        conn.close()
+
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    assert result["summary"]["section_count"] == 2
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    names = [s["section_name"] for s in report["per_section"]]
+    assert names == ["verse", "chorus"]
+    verse = report["per_section"][0]
+    assert verse["start_beat"] == 0.0
+    assert verse["end_beat"] == 4.0
+    assert verse["master"]["track_id"] == "master"
+    assert len(verse["stems"]) == 2
+    # Declared sections → no section_windowed skip record.
+    assert not any(
+        s["kind"] == "section_windowed" for s in report["skipped_analyses"]
+    )
+
+
+def test_analyze_handler_emits_skip_when_no_db_sections(synthetic_song: Path):
+    """A song with no ``sections`` rows → per_section empty + a teaching
+    skip naming ``create_section``."""
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures),
+    )
+    assert result["summary"]["section_count"] == 0
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    section_skips = [s for s in report["skipped_analyses"]
+                     if s["kind"] == "section_windowed"]
+    assert len(section_skips) == 1
+    assert "create_section" in section_skips[0]["reason"]
+
+
 def test_analyze_handler_emits_skip_when_no_db_intent(synthetic_song: Path):
     """When the song has no ``intended_rt60_s`` rows, the report still
     teaches the caller how to declare them — same shape as the

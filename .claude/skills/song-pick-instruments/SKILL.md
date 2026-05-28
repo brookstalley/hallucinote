@@ -26,7 +26,9 @@ Reject unknown modes with a teaching error listing the valid choices.
 
 ## Steps
 
-1. **Read the catalogue.** Open the resources for the chosen mode. Each node has `{name, uri, is_loadable, is_folder?, children?}` — `name` is Live's browser display name (`Operator`, `Drum Rack`, `Meld`, `EQ Eight`); `uri` is the `query:...` or `plugins:...` string for `ableton_device(action='load', preset_uri=...)`. Filter to `is_loadable=true`. Read `ableton://browser/effects` too — that's where post-instrument processing comes from. Do NOT read a `class_name` field; it doesn't exist on browser nodes.
+1. **Read the catalogue.** First decide live vs offline (see "Live vs offline" below).
+   - **Live connected** — open the resources for the chosen mode. Each node has `{name, uri, is_loadable, is_folder?, children?}` — `name` is Live's browser display name (`Operator`, `Drum Rack`, `Meld`, `EQ Eight`); `uri` is the `query:...` or `plugins:...` string for `ableton_device(action='load', preset_uri=...)`. Filter to `is_loadable=true`. Read `ableton://browser/effects` too — that's where post-instrument processing comes from. Do NOT read a `class_name` field; it doesn't exist on browser nodes. **Then warm the offline cache** (see below) so future offline picks work.
+   - **Offline** — read the machine inventory cache instead and author `preset_query` selectors. See "Live vs offline".
 
 2. **Propose a chain per track.** Build ONE chain per track with rationale:
    - **`track`** — track name.
@@ -77,6 +79,51 @@ Reject unknown modes with a teaching error listing the valid choices.
    Do NOT delegate to `/song-snapshot` — that skill refreshes existing snapshots from probes and can't see `resolved_path` (Live doesn't track per-device browser origin after load). Only the just-loaded flow has these values in hand.
 
 7. **For unrestricted mode:** tell the user explicitly the song is not strict-portable.
+
+## Live vs offline
+
+This skill works whether or not Ableton Live is running. Picking by name without
+Live is what kills the old push-then-recapture loop. There are exactly four
+states — handle each, never silently guess:
+
+1. **Live connected.** Use the live browser resources (Step 1). After loading,
+   **warm the cache** so the offline path stays usable:
+   ```bash
+   python -m hallucinote.inventory refresh
+   ```
+   Run this whenever you have Live up — it's cheap insurance for the next
+   offline session. (It walks the installed library one root at a time;
+   `samples` is excluded by default.)
+
+2. **Live not running, cache fresh.** Read the cache and pick by name:
+   ```python
+   from hallucinote import inventory
+   cache = inventory.read_cache()              # None if it has never been built
+   age = inventory.cache_age_days(cache)       # advisory only
+   entry = inventory.find(cache, "Drums/Kit-Core 909")  # or a {root, pattern, ...} dict
+   ```
+   `find()` resolves with the SAME strict single-match semantics as push, so a
+   pick that resolves here resolves identically when you push with Live open.
+   Author the chain with **`preset_query` only** (root + pattern) — never a
+   per-machine `uri`/FileId. This is inherently portability-**strict**;
+   third-party plugins (relaxed/unrestricted) are per-machine and can't be
+   picked offline — tell the user and defer those picks to a live session.
+
+3. **Live not running, cache stale.** Same as (2), but tell the user the cache
+   is N days old and offer to refresh it next time Live is up. Staleness is
+   **advisory, never blocking** — proceed with the pick. If a chosen preset was
+   uninstalled since the last refresh, the `preset_query` fails *loudly at push*
+   (in Live, where it can be confirmed), never as a silent wrong load.
+
+4. **Live not running, no cache** (`read_cache()` returns `None`). You cannot
+   pick built-in content by name offline yet. Tell the user to open Live once
+   and run `python -m hallucinote.inventory refresh`, or proceed live now. Do
+   not invent `preset_query` patterns blind — an unverified guess becomes a
+   push-time failure.
+
+When a query targets a root the cache marks `roots_partial` or `roots_excluded`
+(e.g. `samples`), `find()` says so explicitly — that's a coverage gap, not
+"not installed"; resolve those live at push.
 
 ## Style hint
 

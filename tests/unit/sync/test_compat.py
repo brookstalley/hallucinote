@@ -603,6 +603,50 @@ def test_valid_browser_roots_lock_matches_mcp_side():
     )
 
 
+def test_name_matches_matches_mcp_side():
+    """The offline matcher (hallucinote.preset_query.name_matches) must agree
+    with the MCP push-time matcher (hallucinote_mcp.handlers.browser.
+    _name_matches) on every case. They are mirror implementations across the
+    Remote-Script package boundary (the MCP side can't import the domain
+    package, so they can't share one function); divergence would let an
+    offline-authored preset_query resolve differently than push does.
+    """
+    from hallucinote_mcp.handlers.browser import _name_matches as mcp_match
+    from hallucinote.preset_query import name_matches as domain_match
+
+    cases = [
+        ("Kit-Core 909", "909", "substring", False),
+        ("Kit-Core 909", "CORE", "substring", False),
+        ("Kit-Core 909", "core", "substring", True),
+        ("Kit-Core 909", "808", "substring", False),
+        ("Hot Rod Kit", "Hot*Kit", "glob", False),
+        ("Hot Rod Kit", "hot*kit", "glob", True),
+        ("Kit-Core 909", r"\d{3}", "regex", False),
+        ("Kit-Core", r"\d{3}", "regex", False),
+        ("EQ Eight", "eq", "substring", False),
+    ]
+    for name, pattern, mode, cs in cases:
+        assert domain_match(name, pattern, mode, cs) == mcp_match(
+            name, pattern, mode, cs
+        ), f"matcher drift on {(name, pattern, mode, cs)!r}"
+
+
+def test_browser_walk_depth_matches_mcp_side():
+    """An offline inventory cache MUST be walked at least as deep as the MCP
+    push-time resolver walks the live browser, or offline resolution can miss
+    a loadable that push would find. preset_query.MIN_WALK_DEPTH is the
+    contract the cache writer honors; pin it >= the MCP depth.
+    """
+    from hallucinote_mcp.handlers.device import _BROWSER_WALK_DEPTH
+    from hallucinote.preset_query import MIN_WALK_DEPTH
+    assert MIN_WALK_DEPTH >= _BROWSER_WALK_DEPTH, (
+        f"preset_query.MIN_WALK_DEPTH ({MIN_WALK_DEPTH}) is shallower than the "
+        f"MCP resolver's _BROWSER_WALK_DEPTH ({_BROWSER_WALK_DEPTH}); an "
+        "inventory cache walked to MIN_WALK_DEPTH would miss loadables push "
+        "can still reach. Raise MIN_WALK_DEPTH to match."
+    )
+
+
 def test_classify_preset_query_accepts_valid_structure():
     """root in enum + pattern str + path_prefix list → return None (no
     structural error; caller proceeds to dry-run)."""

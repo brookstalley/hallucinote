@@ -1,12 +1,14 @@
 """``ableton_browser`` action schema.
 
-Five actions covering Live's content browser:
+Six actions covering Live's content browser:
 
   - **tree**: bounded-depth walk from a named root
   - **at_path**: navigate to a specific node by path
   - **search**: pattern-match leaves under a root (agent-facing — lets the
     agent NOT have to know exact names)
   - **plugins_list**: flat list of installed VST/AU plugins
+  - **inventory**: full flattened loadable list for one root — the data
+    source for the machine-local offline inventory cache (NOT agent-facing)
   - **help**: dispatcher-special
 
 M-5 ships these as actions for callability. M-6 (Resources) considers
@@ -192,6 +194,53 @@ register(
             "truncated=true means you hit the limit — narrow the pattern "
             "or set a higher limit. depth_exhausted=true means leaves at "
             "deeper levels weren't reached — increase depth.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_browser",
+        name="inventory",
+        description=(
+            "Full flattened loadable inventory for ONE root (optionally "
+            "narrowed by path_prefix). The data source for the machine-local "
+            "offline inventory cache — NOT for per-turn use; use 'search' to "
+            "find content interactively. Walks to the push-time resolver's "
+            "depth with its exact recursion rule so an offline-authored "
+            "preset_query resolves identically at push. Returns scope, "
+            "walk_depth, entries [{root, path, name, uri, is_loadable}], "
+            "count, and truncated (True if the breadth cap was hit — "
+            "subdivide via path_prefix; never silently truncates)."
+        ),
+        params=(
+            ParamSpec(
+                name="root", type="str", required=True, enum=_ROOTS,
+                description="Browser root to enumerate. Required.",
+            ),
+            ParamSpec(
+                name="path_prefix", type="list", required=False,
+                description=(
+                    "Optional name segments under root to narrow the walk — "
+                    "used to subdivide a root too large for one call."
+                ),
+            ),
+            ParamSpec(
+                name="max_entries", type="int", required=False, minimum=1,
+                description=(
+                    "Breadth cap on loadables returned (default 20000). Keeps "
+                    "one response under the 16 MiB wire cap and bounds the "
+                    "main-thread walk. truncated=True when hit."
+                ),
+            ),
+        ),
+        handler=browser_handlers.inventory_handler,
+        example="ableton_browser(action='inventory', root='drums')",
+        tips=(
+            "Built for `python -m hallucinote.inventory refresh`, which calls "
+            "this per root and writes ~/.hallucinote/inventory. Pass a higher "
+            "read_timeout — a large root walk can exceed the 15s default.",
         ),
     )
 )

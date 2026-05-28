@@ -152,6 +152,27 @@ def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):
     assert report["master"]["track_id"] == "master"
 
 
+def test_analyze_handler_opens_db_once(synthetic_song: Path, monkeypatch):
+    """Regression: analyze_handler used to open the DB three times (verify +
+    each collector). It must open exactly once per invocation now."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    real_init_db = analysis_handlers.init_db
+    calls = {"n": 0}
+
+    def _counting_init_db(path):
+        calls["n"] += 1
+        return real_init_db(path)
+
+    monkeypatch.setattr(analysis_handlers, "init_db", _counting_init_db)
+    analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures_dir),
+    )
+    assert calls["n"] == 1
+
+
 def test_analyze_handler_defaults_to_latest_captures_dir(synthetic_song: Path):
     _write_captures(
         synthetic_song / "captures" / "20260528T120000Z",

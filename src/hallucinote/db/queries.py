@@ -260,13 +260,42 @@ def get_sends_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.R
     """Return every send in the song. Joined with track + return identity so the
     caller has the full (from, to, level) matrix without N+1 lookups."""
     return conn.execute(
-        """SELECT s.from_track_id, s.to_return_id, s.level,
+        """SELECT s.from_track_id, s.to_return_id, s.level, s.intended_rt60_s,
                   t.track_index AS from_track_index, t.name AS from_track_name,
                   r.position AS return_position, r.name AS return_name
            FROM sends s
            JOIN tracks  t ON t.id = s.from_track_id
            JOIN returns r ON r.id = s.to_return_id
            WHERE t.song_id = ?
+           ORDER BY t.track_index, r.position""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_reverb_send_intents_for_song(
+    conn: sqlite3.Connection, song_id: str
+) -> list[sqlite3.Row]:
+    """Return sends carrying a non-NULL ``intended_rt60_s`` declaration.
+
+    Used by the audio-analysis handler to assemble ``DeclaredReverbSend``
+    records from DB intent without forcing the MCP caller to enumerate
+    them. NULL-intent sends are filtered server-side — callers get an
+    already-pruned list.
+
+    The projection includes ``track_index`` + ``return_position`` because
+    the analysis handler translates DB UUIDs into capture-side surface
+    IDs (``track:N`` / ``return:N`` — see
+    ``analyzer.setup.track_id_for_surface``) before passing
+    ``DeclaredReverbSend`` records to ``analyze_mix``.
+    """
+    return conn.execute(
+        """SELECT s.from_track_id, s.to_return_id, s.intended_rt60_s,
+                  t.track_index AS from_track_index, t.name AS from_track_name,
+                  r.position AS return_position, r.name AS return_name
+           FROM sends s
+           JOIN tracks  t ON t.id = s.from_track_id
+           JOIN returns r ON r.id = s.to_return_id
+           WHERE t.song_id = ? AND s.intended_rt60_s IS NOT NULL
            ORDER BY t.track_index, r.position""",
         (song_id,),
     ).fetchall()

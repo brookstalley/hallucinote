@@ -10,12 +10,14 @@ wrapper that resolves the song DB connection, calls this function,
 serializes the report to JSON at
 ``songs/<slug>/analysis/<iso-ts>.json``, and returns the path.
 
-Intent extraction is intentionally narrow in MVP: the DB does not yet
-carry declared RT60s per send (a future schema addition — backlog will
-absorb that work). When no intent is declared, the reverb-verification
-section is emitted as a structured ``skipped_analyses`` entry rather
-than silently absent — per CLAUDE.md "Never silently drop a
-requirement."
+Intent extraction is narrow: DB-declared RT60s flow in via the
+``sends.intended_rt60_s`` column (see ``set_send_intended_rt60`` +
+``get_reverb_send_intents_for_song``). The MCP handler reads them and
+passes ``declared_reverb_sends=...`` here; this module is DB-agnostic
+and does the work on the list it's given. When no intent is declared,
+the reverb-verification section is emitted as a structured
+``skipped_analyses`` entry rather than silently absent — per CLAUDE.md
+"Never silently drop a requirement."
 """
 from __future__ import annotations
 
@@ -44,9 +46,9 @@ from .reverb import verify_reverb_send
 class DeclaredReverbSend:
     """One declared dry→wet send with target RT60.
 
-    Today this is supplied by the caller (or empty for MVP). Once the
-    song DB grows a ``reverb_send_intent`` table, ``analyze_mix`` will
-    populate this list from the DB rather than requiring the caller to.
+    The MCP handler builds these from ``sends.intended_rt60_s`` rows
+    (``get_reverb_send_intents_for_song``). Callers invoking ``analyze_mix``
+    directly can construct them by hand for synthetic-fixture work.
     """
     dry_track_id: str
     wet_return_track_id: str
@@ -70,13 +72,10 @@ def analyze_mix(
          RT60, compare to declared. If none declared, emit a
          ``skipped_analyses`` entry.
 
-    DB-driven intent lookup (e.g. populating ``declared_reverb_sends``
-    from a future ``reverb_send_intent`` table) is deferred — see the
-    backlog entry "DB schema for declared reverb_send_intent". When
-    that lands, this function will grow either a ``conn`` parameter or
-    a ``slug + resolver`` pair, depending on what the schema decides;
-    the placeholder isn't plumbed today because committing to a shape
-    pre-schema would constrain that decision.
+    DB intent extraction is the handler's job: it walks
+    ``sends.intended_rt60_s`` rows and passes a populated
+    ``declared_reverb_sends`` list. This function stays DB-agnostic so
+    synthetic-fixture tests can drive it without a song DB.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
@@ -167,18 +166,18 @@ def _run_reverb_verifications(
 ) -> tuple[list[ReverbVerification], list[dict]]:
     """Run one verification per declared send; record skips otherwise.
 
-    DB-driven intent extraction is a future schema addition (the MVP DB
-    has no ``reverb_send_intent`` table). When ``declared_sends`` is
-    empty AND no DB intent surfaces, emit a structured skip record so
-    the report explains *why* the section is empty.
+    Empty ``declared_sends`` produces a structured skip record so the
+    report explains *why* the section is empty (rather than ambiguously
+    "no reverbs verified — analyzed OK or no intent declared?").
     """
     if not declared_sends:
         skipped = [{
             "kind": "reverb_verification",
             "reason": (
-                "no declared RT60 sends — pass them via "
-                "analyze_mix(declared_reverb_sends=...) or wait for the "
-                "DB schema to grow a reverb_send_intent table"
+                "no declared RT60 sends — call "
+                "set_send_intended_rt60(from_track_id, to_return_id, "
+                "intended_rt60_s=<seconds>) on each reverb-bus send to "
+                "declare composer intent the analyzer can verify"
             ),
         }]
         return [], skipped

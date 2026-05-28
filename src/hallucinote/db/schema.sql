@@ -208,10 +208,15 @@ CREATE INDEX IF NOT EXISTS idx_returns_song ON returns(song_id, position);
 -- they belong to the same song. Raw-SQL inserts that bypass mutators would
 -- silently corrupt the model — keep the mutator discipline tight.
 
+-- `intended_rt60_s` carries the composer's RT60 intent for a send whose target
+-- return is reverb-shaped. NULL when the send isn't reverb-intent (delays,
+-- parallel-comp, post-FX bus, undeclared). Audio-analysis `verify_reverb_send`
+-- reads non-NULL rows to build the comparison set. Positive when set.
 CREATE TABLE IF NOT EXISTS sends (
     from_track_id   TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     to_return_id    TEXT NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
     level           REAL NOT NULL CHECK (level >= 0.0 AND level <= 1.0),
+    intended_rt60_s REAL CHECK (intended_rt60_s IS NULL OR intended_rt60_s > 0.0),
     PRIMARY KEY (from_track_id, to_return_id)
 );
 

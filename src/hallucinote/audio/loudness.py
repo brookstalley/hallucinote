@@ -17,8 +17,6 @@ Per spike §3 — "True peak NOT in pyloudnorm — 15 lines: 4×
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
 from .report import LoudnessMetrics
@@ -45,11 +43,6 @@ _MOMENTARY_BLOCK_S = 0.4
 
 # True-peak oversampling factor. BS.1770 §A.2 prescribes ≥4×.
 _TRUE_PEAK_OVERSAMPLE = 4
-
-
-@dataclass(frozen=True)
-class _ShortTermResult:
-    median: float
 
 
 def measure_loudness(audio: np.ndarray, *, sr: int) -> LoudnessMetrics:
@@ -85,12 +78,12 @@ def measure_loudness(audio: np.ndarray, *, sr: int) -> LoudnessMetrics:
 
     lufs_i = _integrated_loudness(work, sr)
     lufs_m_peak = _momentary_peak(work, sr)
-    short_term = _short_term(work, sr, duration_s)
+    lufs_s_median = _short_term_median(work, sr, duration_s)
     true_peak_dbtp = _true_peak_dbtp(audio)
 
     return LoudnessMetrics(
         lufs_i=lufs_i,
-        lufs_s_median=short_term.median,
+        lufs_s_median=lufs_s_median,
         lufs_m_peak=lufs_m_peak,
         true_peak_dbtp=true_peak_dbtp,
     )
@@ -114,51 +107,52 @@ def _momentary_peak(audio_f64: np.ndarray, sr: int) -> float:
     gated integrated measurement smooths over.
 
     pyloudnorm's default block size (400 ms) IS the momentary block.
-    After ``integrated_loudness`` runs, ``meter.blockwise_loudness`` holds
-    the per-block values; take the max for the peak.
     """
-    import pyloudnorm
-
-    meter = pyloudnorm.Meter(sr, block_size=_MOMENTARY_BLOCK_S)
-    meter.integrated_loudness(audio_f64.copy())
-    blocks = [b for b in meter.blockwise_loudness if np.isfinite(b)]
+    blocks = _blockwise_loudness(audio_f64, sr, _MOMENTARY_BLOCK_S)
     if not blocks:
         return float("-inf")
     return float(max(blocks))
 
 
-def _short_term(audio_f64: np.ndarray, sr: int, duration_s: float) -> _ShortTermResult:
-    """LUFS-S — 3-second blocks per EBU R 128.
+def _short_term_median(
+    audio_f64: np.ndarray, sr: int, duration_s: float
+) -> float:
+    """LUFS-S median — 3-second blocks per EBU R 128.
 
-    For clips shorter than the short-term block, fall back to using the
-    momentary block values as the short-term proxy (better than NaN, and
-    flagged in the MVP scope: section-windowed analysis is P1 backlog).
+    For clips shorter than the short-term block, fall back to 400 ms
+    momentary blocks. Median of momentary blocks is a defensible
+    degraded value rather than NaN (and far cheaper than refusing to
+    measure short clips at all — section-windowed analysis is a P1
+    backlog item, but partial-section MVP captures still need a finite
+    short-term value).
+    """
+    block_size = (
+        _SHORT_TERM_BLOCK_S
+        if duration_s >= _SHORT_TERM_BLOCK_S
+        else _MOMENTARY_BLOCK_S
+    )
+    blocks = _blockwise_loudness(audio_f64, sr, block_size)
+    if not blocks:
+        return float("-inf")
+    return float(np.median(blocks))
+
+
+def _blockwise_loudness(
+    audio_f64: np.ndarray, sr: int, block_size_s: float
+) -> list[float]:
+    """Run a pyloudnorm Meter at ``block_size_s`` and return the finite
+    per-block loudness values.
+
+    ``Meter.blockwise_loudness`` is populated as a side-effect of
+    ``integrated_loudness()`` — we ignore the integrated return value
+    and read the per-block array. Pyloudnorm mutates its input via
+    ``filter.apply_filter`` so we pass a copy.
     """
     import pyloudnorm
 
-    if duration_s < _SHORT_TERM_BLOCK_S:
-        # Shorter than 3s — use the momentary blocks as a proxy. Median
-        # of momentary blocks is a defensible degraded value rather than
-        # NaN.
-        return _short_term_from_momentary(audio_f64, sr)
-
-    meter = pyloudnorm.Meter(sr, block_size=_SHORT_TERM_BLOCK_S)
+    meter = pyloudnorm.Meter(sr, block_size=block_size_s)
     meter.integrated_loudness(audio_f64.copy())
-    blocks = [b for b in meter.blockwise_loudness if np.isfinite(b)]
-    if not blocks:
-        return _ShortTermResult(median=float("-inf"))
-    return _ShortTermResult(median=float(np.median(blocks)))
-
-
-def _short_term_from_momentary(audio_f64: np.ndarray, sr: int) -> _ShortTermResult:
-    import pyloudnorm
-
-    meter = pyloudnorm.Meter(sr, block_size=_MOMENTARY_BLOCK_S)
-    meter.integrated_loudness(audio_f64.copy())
-    blocks = [b for b in meter.blockwise_loudness if np.isfinite(b)]
-    if not blocks:
-        return _ShortTermResult(median=float("-inf"))
-    return _ShortTermResult(median=float(np.median(blocks)))
+    return [b for b in meter.blockwise_loudness if np.isfinite(b)]
 
 
 def _true_peak_dbtp(audio: np.ndarray) -> float:

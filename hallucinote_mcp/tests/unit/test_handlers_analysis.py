@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
 from hallucinote_mcp.handlers import analysis as analysis_handlers
 
@@ -235,3 +236,148 @@ def test_get_latest_report_teaches_when_no_reports(synthetic_song: Path):
         analysis_handlers.get_latest_report_handler(
             None, song_slug="test-song",
         )
+
+
+def _write_captures_with_return(
+    captures_dir: Path,
+    *,
+    song_slug: str,
+    track_surface_index: int = 1,
+    return_surface_index: int = 1,
+    duration_s: float = 2.0,
+) -> Path:
+    """Variant of ``_write_captures`` that adds one return entry — used to
+    exercise the DB-declared reverb-send path.
+
+    Track IDs follow the production manifest convention written by
+    ``analyzer.setup.track_id_for_surface`` (``"track:N"`` /
+    ``"return:N"``) so ``_collect_declared_sends`` can translate DB
+    UUIDs into matching capture-side keys via the same helper.
+    """
+    captures_dir.mkdir(parents=True)
+    dry_audio = _sine(80.0, duration_s, 0.4)
+    wet_audio = _sine(80.0, duration_s, 0.05)  # quieter return sim
+    master_audio = dry_audio + wet_audio
+    sf.write(str(captures_dir / "master.wav"), master_audio,
+             SAMPLE_RATE, subtype="FLOAT")
+    sf.write(str(captures_dir / "track-01.wav"), dry_audio,
+             SAMPLE_RATE, subtype="FLOAT")
+    sf.write(str(captures_dir / "return-01.wav"), wet_audio,
+             SAMPLE_RATE, subtype="FLOAT")
+    manifest = {
+        "schema_version": "1",
+        "captured_at": captures_dir.name,
+        "song_slug": song_slug,
+        "start_at_beat": 0,
+        "stop_at_beat": 8,
+        "post_roll_beats": 4.0,
+        "status": "ok",
+        "frames_received": 200,
+        "analyzer_signature": "hallucinote-analyzer-v1",
+        "tracks": [{
+            "track_id": f"track:{track_surface_index}",
+            "surface_name": "01 Drums",
+            "surface_index": track_surface_index,
+            "device_index": 1,
+            "osc_port": 11020,
+            "filename": "track-01.wav",
+            "absolute_path": str(captures_dir / "track-01.wav"),
+        }],
+        "returns": [{
+            "track_id": f"return:{return_surface_index}",
+            "surface_name": "A-Reverb",
+            "surface_index": return_surface_index,
+            "device_index": 1,
+            "osc_port": 11120,
+            "filename": "return-01.wav",
+            "absolute_path": str(captures_dir / "return-01.wav"),
+        }],
+        "master": {
+            "track_id": "master",
+            "surface_name": "Main",
+            "surface_index": 0,
+            "device_index": 1,
+            "osc_port": 11220,
+            "filename": "master.wav",
+            "absolute_path": str(captures_dir / "master.wav"),
+        },
+    }
+    (captures_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return captures_dir
+
+
+def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path):
+    """The handler walks ``sends.intended_rt60_s`` and lifts each row into
+    a ``DeclaredReverbSend``, translating DB UUIDs into the capture
+    manifest's ``track:N`` / ``return:N`` surface-ID convention. The
+    resulting MixReport carries one ``reverb_verifications`` entry per
+    declared send rather than the no-intent ``skipped_analyses`` record.
+    """
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    track_surface_index = 1
+    return_surface_index = 1
+    conn = init_db(db_path)
+    try:
+        song_row = conn.execute("SELECT id FROM songs WHERE name = ?", (slug,)).fetchone()
+        song_id = song_row["id"]
+        track_id = M.create_track(
+            conn, song_id=song_id, track_index=track_surface_index, name="Drums",
+        )
+        return_id = M.create_return(
+            conn, song_id=song_id, name="A-Reverb", position=return_surface_index,
+        )
+        M.set_send_level(
+            conn, from_track_id=track_id, to_return_id=return_id, level=0.3
+        )
+        M.set_send_intended_rt60(
+            conn,
+            from_track_id=track_id,
+            to_return_id=return_id,
+            intended_rt60_s=0.8,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    captures = _write_captures_with_return(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug=slug,
+        track_surface_index=track_surface_index,
+        return_surface_index=return_surface_index,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert len(report["reverb_verifications"]) == 1
+    rv = report["reverb_verifications"][0]
+    # Verification dry/wet IDs are the capture-side surface IDs, not the
+    # DB UUIDs — that's the boundary `_collect_declared_sends` crosses.
+    assert rv["dry_track_id"] == f"track:{track_surface_index}"
+    assert rv["wet_return_track_id"] == f"return:{return_surface_index}"
+    assert rv["declared_rt60_s"] == pytest.approx(0.8)
+    # No DB intent → skip; intent present → no skip record.
+    skips = [s for s in report["skipped_analyses"]
+             if s["kind"] == "reverb_verification"]
+    assert skips == []
+
+
+def test_analyze_handler_emits_skip_when_no_db_intent(synthetic_song: Path):
+    """When the song has no ``intended_rt60_s`` rows, the report still
+    teaches the caller how to declare them — same shape as the
+    pre-schema MVP behaviour, but the message now names the mutator."""
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    reverb_skips = [s for s in report["skipped_analyses"]
+                    if s["kind"] == "reverb_verification"]
+    assert len(reverb_skips) == 1
+    assert "set_send_intended_rt60" in reverb_skips[0]["reason"]

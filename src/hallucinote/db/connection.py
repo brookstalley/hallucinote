@@ -106,6 +106,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # across browser-tree depths (third-party plugins, Live packs, suite
     # instruments all carry vendor / pack at different depths).
     ("devices", "browser_path_json", "TEXT"),
+    # Audio-analysis MVP follow-on: sends gains a per-send composer-declared
+    # RT60 intent. NULL on non-reverb sends (delays, parallel comp, undeclared).
+    # `verify_reverb_send()` reads non-NULL rows. CHECK matches schema.sql.
+    (
+        "sends",
+        "intended_rt60_s",
+        "REAL CHECK (intended_rt60_s IS NULL OR intended_rt60_s > 0.0)",
+    ),
 )
 
 

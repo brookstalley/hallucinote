@@ -26,6 +26,7 @@ RETURN_UPDATED = "return_updated"
 RETURN_DELETED = "return_deleted"
 SEND_SET = "send_set"
 SEND_REMOVED = "send_removed"
+SEND_INTENT_SET = "send_intent_set"
 
 # Mix: device chains, devices, parameters
 DEVICE_CHAIN_CREATED = "device_chain_created"

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from hallucinote.audio import DeclaredReverbSend, analyze_mix
+from hallucinote.audio import DeclaredReverbSend, SectionWindow, analyze_mix
 from hallucinote.audio.report import SCHEMA_VERSION
 
 from .fixtures import (
@@ -207,3 +207,107 @@ def test_analyze_mix_records_skip_when_declared_track_not_in_capture(tmp_path: P
         "track:99" in s.get("reason", "")
         for s in report.skipped_analyses
     )
+
+
+# ---------- per-section windowing ----------
+
+
+def test_analyze_mix_skips_section_pass_when_none_declared(tmp_path: Path):
+    """No declared sections → per_section empty + a teaching skip entry,
+    symmetric with the reverb-verification skip."""
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+    )
+    report = analyze_mix(captures_dir)
+    assert report.per_section == []
+    assert any(s.get("kind") == "section_windowed" for s in report.skipped_analyses)
+
+
+def test_analyze_mix_populates_per_section_loudness(tmp_path: Path):
+    """Two sections spanning the capture → one SectionMetrics each, keyed by
+    name, with master + per-stem loudness scoped to the window. The loud
+    half should read louder than the quiet half on the master."""
+    duration_s = 4.0
+    # Quiet first half, hot second half, on both the stem and the master.
+    quiet = calibrated_pink_noise(-30.0, duration_s / 2)
+    loud = calibrated_pink_noise(-14.0, duration_s / 2)
+    stem = np.concatenate([quiet, loud], axis=0)
+    master = stem.copy()
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Synth", stem)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+    report = analyze_mix(captures_dir, sections=sections)
+
+    assert [s.section_name for s in report.per_section] == ["verse", "chorus"]
+    verse, chorus = report.per_section
+    assert verse.master.surface_kind == "master"
+    assert len(verse.stems) == 1
+    assert verse.stems[0].track_id == "track:1"
+    # Chorus (hot second half) is louder than verse (quiet first half).
+    assert chorus.master.loudness.lufs_i > verse.master.loudness.lufs_i + 5.0
+    # No section skip when sections were actually declared and covered.
+    assert not any(
+        s.get("kind") == "section_windowed" for s in report.skipped_analyses
+    )
+
+
+def test_analyze_mix_records_skip_for_section_outside_capture(tmp_path: Path):
+    """A section beyond the captured transport window → recorded as a skip
+    with a teaching reason, not emitted with empty metrics."""
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+    sections = [
+        SectionWindow(name="intro", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="bridge", start_beat=16.0, end_beat=24.0),  # not captured
+    ]
+    report = analyze_mix(captures_dir, sections=sections)
+    assert [s.section_name for s in report.per_section] == ["intro"]
+    assert any(
+        s.get("kind") == "section_windowed" and "bridge" in s.get("reason", "")
+        for s in report.skipped_analyses
+    )
+
+
+def test_analyze_mix_tags_overshoot_finding_with_section(tmp_path: Path):
+    """A master overshoot inside a declared section → the finding's
+    db_reference names that section."""
+    duration_s = 2.0
+    silence_audio = silence(duration_s)
+    hot_start = int(0.5 * SAMPLE_RATE)
+    hot_end = int(1.5 * SAMPLE_RATE)
+    hot_win = (hot_end - hot_start) / SAMPLE_RATE
+    kick = silence_audio.copy()
+    kick[hot_start:hot_end] = sine(60.0, hot_win, amplitude=0.6)
+    master = kick * 1.8
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Kick", kick)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+    # The hot window maps to beats ~2..6; a section covering 0..8 contains it.
+    sections = [SectionWindow(name="chorus1", start_beat=0.0, end_beat=8.0)]
+    report = analyze_mix(captures_dir, sections=sections)
+
+    overshoot_findings = [f for f in report.findings if f.kind == "master_overshoot"]
+    assert overshoot_findings
+    assert all("section:chorus1" in f.db_reference for f in overshoot_findings)

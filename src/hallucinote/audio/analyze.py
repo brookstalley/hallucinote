@@ -1,9 +1,9 @@
 """``analyze_mix`` — the audio-analysis MVP's single entry point.
 
-Reads a captures directory + a song's DB intent, runs the three MVP
-analyses (per-stem loudness, master-bus contribution attribution,
-declared-send reverb verification), and returns a populated
-``MixReport``.
+Reads a captures directory + a song's DB intent, runs the analyses
+(per-stem loudness, master-bus contribution attribution, declared-send
+reverb verification, and per-section loudness windowing) and returns a
+populated ``MixReport``.
 
 The MCP handler (``hallucinote_mcp.handlers.analysis``) is a thin
 wrapper that resolves the song DB connection, calls this function,
@@ -30,16 +30,18 @@ from .attribution import (
     find_master_overshoots,
     master_bus_attribution,
 )
-from .io import CaptureSet, load_capture
+from .io import CaptureSet, Surface, load_capture
 from .loudness import measure_loudness
 from .report import (
     Finding,
     MasterOvershoot,
     MixReport,
     ReverbVerification,
+    SectionMetrics,
     StemMetrics,
 )
 from .reverb import verify_reverb_send
+from .section import SectionWindow, WindowSlice, intersect_window, slice_audio
 
 
 @dataclass(frozen=True)
@@ -59,23 +61,27 @@ def analyze_mix(
     captures_dir: Path | str,
     *,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
+    sections: Sequence[SectionWindow] = (),
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
-    Three passes:
+    Four passes:
 
       1. Per-surface loudness — master, every stem, every return.
       2. Master-bus overshoot detection + per-stem contribution
          attribution.
-
       3. For each declared dry→wet send: Wiener-deconvolve IR, measure
          RT60, compare to declared. If none declared, emit a
          ``skipped_analyses`` entry.
+      4. Per-section loudness — the pass-1 metrics scoped to each named
+         section window. If no sections are declared, emit a
+         ``skipped_analyses`` entry.
 
     DB intent extraction is the handler's job: it walks
-    ``sends.intended_rt60_s`` rows and passes a populated
-    ``declared_reverb_sends`` list. This function stays DB-agnostic so
-    synthetic-fixture tests can drive it without a song DB.
+    ``sends.intended_rt60_s`` rows (for ``declared_reverb_sends``) and the
+    ``sections`` table converted to beats (for ``sections``), then passes
+    populated lists. This function stays DB-agnostic so synthetic-fixture
+    tests can drive it without a song DB.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
@@ -102,11 +108,18 @@ def analyze_mix(
         declared_sends=declared_reverb_sends,
     )
 
+    per_section, section_skips = _measure_sections(
+        capture=capture,
+        sections=sections,
+    )
+    skipped.extend(section_skips)
+
     findings = _derive_findings(
         master=master_metrics,
         stems=stem_metrics,
         overshoots=overshoots,
         reverbs=reverb_verifications,
+        sections=sections,
     )
 
     return MixReport(
@@ -119,6 +132,7 @@ def analyze_mix(
         returns=return_metrics,
         overshoots=overshoots,
         reverb_verifications=reverb_verifications,
+        per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
     )
@@ -140,7 +154,8 @@ def _rebeat_overshoot(o: MasterOvershoot, capture: CaptureSet) -> MasterOvershoo
 
     Beats-per-second is derived from (stop_at_beat - start_at_beat) /
     audio_duration_s — assumes constant tempo across the captured window.
-    Section-windowed analysis with variable tempo is a P1 backlog item.
+    Section windowing (``_measure_sections``) shares this linear beat↔sample
+    map; variable-tempo-accurate windowing remains a backlog follow-on.
     """
     duration_s = capture.master.audio.shape[0] / capture.sample_rate
     span_beats = capture.stop_at_beat - capture.start_at_beat
@@ -211,12 +226,103 @@ def _run_reverb_verifications(
     return verifications, skipped
 
 
+def _measure_sections(
+    *,
+    capture: CaptureSet,
+    sections: Sequence[SectionWindow],
+) -> tuple[list[SectionMetrics], list[dict]]:
+    """Measure per-surface loudness scoped to each named section window.
+
+    Each section's beat window is intersected with the captured transport
+    span and measured over only the overlapping audio. A section that
+    falls entirely outside the captured window is recorded as a skip
+    (rather than emitted with empty/−inf metrics) so the report explains
+    *why* it's absent — per CLAUDE.md "Never silently drop a requirement."
+
+    Empty ``sections`` produces one structured skip teaching the caller to
+    declare sectional structure via ``create_section`` — symmetric with the
+    reverb-verification skip.
+    """
+    if not sections:
+        return [], [{
+            "kind": "section_windowed",
+            "reason": (
+                "no sections declared — call create_section(name, "
+                "start_bar, end_bar) on the song to define verse / chorus "
+                "/ bridge spans the analyzer can scope loudness to"
+            ),
+        }]
+
+    n_samples = capture.master.audio.shape[0]
+    per_section: list[SectionMetrics] = []
+    skipped: list[dict] = []
+
+    for window in sections:
+        sl = intersect_window(
+            window,
+            n_samples=n_samples,
+            capture_start_beat=capture.start_at_beat,
+            capture_stop_beat=capture.stop_at_beat,
+        )
+        if not sl.covered:
+            skipped.append({
+                "kind": "section_windowed",
+                "reason": (
+                    f"section {window.name!r} "
+                    f"(beats {window.start_beat:.2f}..{window.end_beat:.2f}) "
+                    f"falls outside the captured window "
+                    f"(beats {capture.start_at_beat:.2f}.."
+                    f"{capture.stop_at_beat:.2f}) — render the arrangement "
+                    f"span that includes this section to analyze it"
+                ),
+            })
+            continue
+        per_section.append(SectionMetrics(
+            section_name=window.name,
+            start_beat=window.start_beat,
+            end_beat=window.end_beat,
+            master=_measure_window(capture.master, sl),
+            stems=[_measure_window(s, sl) for s in capture.stems],
+            returns=[_measure_window(r, sl) for r in capture.returns],
+        ))
+
+    return per_section, skipped
+
+
+def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
+    """Loudness of one surface over a clamped section window."""
+    sliced = slice_audio(surface.audio, window_slice)
+    loudness = measure_loudness(sliced, sr=surface.sample_rate)
+    return StemMetrics(
+        track_id=surface.track_id,
+        surface_kind=surface.surface_kind,
+        surface_name=surface.surface_name,
+        loudness=loudness,
+    )
+
+
+def _section_name_for_beat(
+    beat: float,
+    sections: Sequence[SectionWindow],
+) -> str | None:
+    """The name of the section whose half-open window contains ``beat``.
+
+    First match wins (sections shouldn't overlap, but if they do the
+    earliest-starting one in iteration order is reported). ``None`` when
+    no section covers the beat or none were declared."""
+    for window in sections:
+        if window.start_beat <= beat < window.end_beat:
+            return window.name
+    return None
+
+
 def _derive_findings(
     *,
     master: StemMetrics,
     stems: list[StemMetrics],
     overshoots: list[MasterOvershoot],
     reverbs: list[ReverbVerification],
+    sections: Sequence[SectionWindow] = (),
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -229,6 +335,12 @@ def _derive_findings(
       - ``master_clipping_risk`` (info) — when master true-peak ≥ -0.1 dBTP
         but no overshoots crossed 0.
 
+    When ``sections`` are declared, each ``master_overshoot`` finding's
+    ``db_reference`` names the section the overshoot lands in
+    (``"section:chorus1 (beat:...)"``) — the read-side tie between the
+    headline attribution and the song's sectional structure. Falls back to
+    the bare beat range when no section covers the overshoot.
+
     Findings are intentionally narrow in MVP — the LLM ranks/filters by
     ``kind`` + ``severity`` rather than parsing prose. Candidate
     mutation proposals (the "fix" side) are P2 backlog.
@@ -236,6 +348,13 @@ def _derive_findings(
     findings: list[Finding] = []
 
     for o in overshoots:
+        section_name = _section_name_for_beat(o.start_beat, sections)
+        beat_ref = f"beat:{o.start_beat:.2f}-{o.end_beat:.2f}"
+        db_reference = (
+            f"section:{section_name} ({beat_ref})"
+            if section_name is not None
+            else beat_ref
+        )
         findings.append(Finding(
             kind="master_overshoot",
             severity="warning",
@@ -243,7 +362,7 @@ def _derive_findings(
             metric="peak_dbtp",
             observed=o.peak_dbtp,
             expected=0.0,
-            db_reference=f"bar:{o.start_beat:.2f}-{o.end_beat:.2f}",
+            db_reference=db_reference,
         ))
 
     if not overshoots and master.loudness.true_peak_dbtp >= -0.1:
@@ -274,5 +393,6 @@ def _derive_findings(
 
 __all__ = [
     "DeclaredReverbSend",
+    "SectionWindow",
     "analyze_mix",
 ]

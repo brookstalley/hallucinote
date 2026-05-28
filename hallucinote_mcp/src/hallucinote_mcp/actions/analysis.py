@@ -7,9 +7,10 @@ Companion to ``ableton_render``. ``ableton_render`` produces the
 
 Two surfaces:
 
-  - ``analyze`` — read a captures dir, run the three MVP analyses
-    (per-stem loudness, master-bus contribution attribution, declared-
-    send reverb verification), write a MixReport JSON, return its path.
+  - ``analyze`` — read a captures dir, run the analyses (per-stem
+    loudness, master-bus contribution attribution, declared-send reverb
+    verification, per-section loudness windowing), write a MixReport
+    JSON, return its path.
   - ``get_latest_report`` — return the most recent MixReport JSON
     contents for a song (and its path) without re-running the analysis.
 
@@ -44,8 +45,10 @@ register(
             "Reads captures/<ts>/manifest.json + WAVs produced by "
             "ableton_render(render), measures per-stem loudness (LUFS-I/S/M "
             "+ true peak), detects master-bus overshoots and attributes "
-            "each to top contributors per band, and runs reverb verification "
-            "for any declared dry->wet sends. Writes the MixReport to "
+            "each to top contributors per band, runs reverb verification "
+            "for any declared dry->wet sends, and scopes per-stem loudness "
+            "to each named section (verse / chorus / bridge) declared via "
+            "create_section. Writes the MixReport to "
             "songs/<slug>/analysis/<ts>.json and returns the path + summary."
         ),
         params=(
@@ -79,13 +82,16 @@ register(
         tips=(
             "Returns {report_path, schema_version, finding_count, "
             "summary}. The summary names the master peak true-peak, the "
-            "overshoot count, and any out-of-tolerance reverb sends — "
-            "enough for the LLM to decide whether to read the full "
-            "JSON.",
-            "The MVP DB has no schema for declared RT60 sends yet; the "
-            "report's reverb_verifications list will be empty and "
-            "skipped_analyses will explain why. Section-windowed "
-            "analysis + compare_to baseline diffs are post-MVP backlog.",
+            "overshoot count, the per-section count, and any "
+            "out-of-tolerance reverb sends — enough for the LLM to decide "
+            "whether to read the full JSON.",
+            "Declared intent drives two passes: set_send_intended_rt60 "
+            "feeds reverb verification, create_section feeds per-section "
+            "loudness (report.per_section, keyed by section name; a "
+            "master_overshoot finding's db_reference names the section it "
+            "lands in). When either is undeclared, skipped_analyses "
+            "explains how to declare it. compare_to baseline diffs and "
+            "per-section contribution attribution are post-MVP backlog.",
         ),
     )
 )

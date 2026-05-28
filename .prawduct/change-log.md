@@ -4,6 +4,59 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
+
+<!-- chunks=section-windowing status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+First post-MVP item off the audio-analysis roadmap (spike §9 deferred
+#1). The same loudness metrics, scoped to each named section instead of
+only the full-song aggregate — answers "is the chorus actually louder
+than the verse?" and "did the bass-cut help in the section it was
+supposed to?"
+
+**Windowing source: the `sections` table, not `cue_points`.** The
+backlog said "cue_points," but the named sectional structure with
+half-open `[start_bar, end_bar)` spans lives in the `sections` table
+(populated via `M.create_section`); `cue_points` are point markers with
+no spans and can't scope a window. Decision recorded here.
+
+- New module `src/hallucinote/audio/section.py`: `SectionWindow`
+  (name + half-open beat window) and pure geometry —
+  `intersect_window` maps a beat window onto clamped sample bounds via
+  the capture's constant-tempo linear beat→sample map; `slice_audio`
+  returns the overlapping slice. No-overlap / degenerate-span /
+  empty-audio all yield `covered=False` (no divide-by-zero).
+- `analyze_mix(..., sections=...)` runs a fourth pass producing
+  `MixReport.per_section: list[SectionMetrics]` — per-surface loudness
+  (master + stems + returns) scoped to each window, mirroring the
+  top-level report shape. A section entirely outside the captured
+  transport window is recorded in `skipped_analyses` (kind
+  `section_windowed`) rather than emitted with empty metrics; no
+  sections declared → one teaching skip naming `create_section`.
+- `master_overshoot` findings now tag their `db_reference` with the
+  section the overshoot lands in (`"section:chorus1 (beat:...)"`) — the
+  read-side tie between headline attribution and sectional structure.
+  (Also fixed the long-standing `bar:` mislabel — the value was always
+  in beats.)
+- Handler `_collect_sections` reads the `sections` table + the
+  `time_signature_map` and converts each bar bound to song-absolute
+  beats via the canonical `push._position_bar_to_beats` (walks the meter
+  map exactly — the only constant-tempo assumption is the downstream
+  beat→sample step). `analyze_mix` stays DB-agnostic, same pattern as
+  `declared_reverb_sends`. Summary gains `section_count`.
+- Stale `ableton_analysis` action tips fixed: the "MVP DB has no schema
+  for declared RT60 sends yet" line was stale since PR #99.
+
+Tests +17 (2168 → 2185): `test_section.py` (windowing geometry + edge
+clamping), `test_analyze.py` (per-section populated, loud>quiet, skip
+for out-of-capture section, overshoot section-tagging), `test_report.py`
+(SectionMetrics serialization), handler tests (DB sections → per_section,
+no-sections skip).
+
+Backlog: section-windowed *loudness* shipped; per-section contribution
+attribution, section-scoped masking (the iZotope differentiator), and
+variable-tempo-accurate windowing carried forward as a P1 follow-on.
+
 ## 2026-05-28 — Audio Analysis MVP follow-on: `sends.intended_rt60_s` schema + loudness helper unification
 
 <!-- chunks=3-followup status=shipped release=unreleased scope=audio-analysis-mvp -->

@@ -4,6 +4,57 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-28 — Audio Analysis MVP follow-on: `sends.intended_rt60_s` schema + loudness helper unification
+
+<!-- chunks=3-followup status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Two small bundled chunks against `develop` after the Chunk 3 squash-merge
+(d4d2387 on develop).
+
+**A. DB schema for declared reverb-send intent (P2 backlog → closed).**
+Closes the teaching-error gap shipped in Chunk 3: real-song `analyze_mix`
+invocations no longer fall through to the no-intent skip record when the
+composer has declared RT60s on reverb sends.
+
+- `sends.intended_rt60_s REAL` column (CHECK > 0 or NULL) — schema.sql
+  + `_ADDED_COLUMNS` migration entry. Existing songs pick it up on next
+  `init_db` open.
+- New mutator `M.set_send_intended_rt60(from_track_id, to_return_id,
+  intended_rt60_s)` — requires existing send row, accepts None to clear,
+  emits `SEND_INTENT_SET` event, idempotent on no-change.
+- New query `Q.get_reverb_send_intents_for_song(song_id)` — returns sends
+  with non-NULL intent. `get_sends_for_song` also gains the column in
+  its projection.
+- `analyze_handler` walks the DB intents and lifts each row into a
+  `DeclaredReverbSend` before calling `analyze_mix`. `analyze_mix` stays
+  DB-agnostic — the lift happens in the MCP layer, not in
+  `src/hallucinote/audio/`. The empty-intent skip record now names the
+  mutator (`set_send_intended_rt60(...)`) rather than the old
+  "wait for the DB schema" placeholder.
+- P2 backlog entry deleted (close-in-the-same-PR discipline).
+
+**C. Loudness helper unification (Critic note #3).** `_short_term` and
+`_short_term_from_momentary` collapsed into one `_short_term_median`
+backed by a shared `_blockwise_loudness(audio, sr, block_size)` helper.
+`_ShortTermResult` dataclass removed — the function returns a float
+directly. Behavior unchanged; net -25 LoC. New regression test pins the
+sub-3s fallback path with calibrated pink noise (was untested).
+
+**Tests:** 2159 → 2168 (+9). Full suite passes in ~41s parallel.
+- +6 in `tests/unit/sync/test_mix.py` — intent mutator (lifecycle,
+  validation, idempotence, event emission), query filtering NULLs,
+  schema CHECK at the raw-SQL boundary.
+- +1 in `tests/unit/audio/test_loudness.py` — short-clip fallback path
+  produces a finite LUFS-S via momentary blocks.
+- +2 in `hallucinote_mcp/tests/unit/test_handlers_analysis.py` —
+  handler picks up DB intent and produces `reverb_verifications`
+  populated; absent intent re-asserts the teaching-message contents.
+
+**Cross-boundary check.** Boundary crossed: DB schema → handler DB read.
+`set_send_level` callers unchanged (the new column is additive + NULL-
+default). `get_sends_for_song` callers see the new column appended; sync
+push/pull don't touch it (intent is composer authorship, not Live state).
+
 ## 2026-05-28 — Audio Analysis MVP, Chunk 3 (3-A + 3-B + 3-C) — analysis pipeline + `ableton_analysis` MCP tool
 
 <!-- chunks=3 status=shipped release=unreleased scope=audio-analysis-mvp -->

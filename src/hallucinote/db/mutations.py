@@ -2249,6 +2249,70 @@ def set_send_level(
     _touch_song(conn, track_row["song_id"])
 
 
+def set_send_intended_rt60(
+    conn: sqlite3.Connection,
+    *,
+    from_track_id: str,
+    to_return_id: str,
+    intended_rt60_s: float | None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Set composer-declared RT60 intent on an existing send.
+
+    ``intended_rt60_s=None`` clears the intent (the send remains, with NULL
+    intent). Positive when set — the schema CHECK enforces this, but raising
+    early gives the caller a clear message rather than a SQLite IntegrityError.
+
+    Requires the send row to exist — there's no useful "intent without a
+    level" state (a 0-level send isn't audible anyway, and the audio-analysis
+    handler walks the sends table to find candidates). Pair with
+    ``set_send_level`` to land both atomically.
+
+    Idempotent: skips emission when the stored value already matches.
+    """
+    if intended_rt60_s is not None and not (intended_rt60_s > 0.0):
+        raise ValueError(
+            f"intended_rt60_s {intended_rt60_s} must be > 0.0 (NULL is the "
+            f"'no intent declared' state)"
+        )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    row = conn.execute(
+        """SELECT t.song_id, s.intended_rt60_s
+           FROM sends s JOIN tracks t ON t.id = s.from_track_id
+           WHERE s.from_track_id = ? AND s.to_return_id = ?""",
+        (from_track_id, to_return_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"no send exists for (from_track={from_track_id!r}, "
+            f"to_return={to_return_id!r}); call set_send_level first to "
+            f"establish the send before declaring RT60 intent"
+        )
+    if row["intended_rt60_s"] == intended_rt60_s:
+        return
+    conn.execute(
+        """UPDATE sends SET intended_rt60_s = ?
+           WHERE from_track_id = ? AND to_return_id = ?""",
+        (intended_rt60_s, from_track_id, to_return_id),
+    )
+    _emit(
+        conn,
+        E.SEND_INTENT_SET,
+        {
+            "from_track_id": from_track_id,
+            "to_return_id": to_return_id,
+            "intended_rt60_s": intended_rt60_s,
+        },
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
 def remove_send(
     conn: sqlite3.Connection,
     *,

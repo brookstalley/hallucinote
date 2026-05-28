@@ -241,3 +241,108 @@ def test_get_sends_for_song_returns_matrix(conn, song):
     assert (rows[0]["from_track_name"], rows[0]["return_name"]) == ("Drums", "Reverb")
     assert (rows[1]["from_track_name"], rows[1]["return_name"]) == ("Drums", "Delay")
     assert (rows[2]["from_track_name"], rows[2]["return_name"]) == ("Pad", "Reverb")
+    # New `intended_rt60_s` column surfaces through the matrix query;
+    # never set yet, so all NULL here.
+    assert all(r["intended_rt60_s"] is None for r in rows)
+
+
+# ---------- reverb send intent (audio-analysis MVP follow-on) ----------
+
+
+def test_set_send_intended_rt60_requires_existing_send(conn, song):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    with pytest.raises(ValueError, match="no send exists"):
+        M.set_send_intended_rt60(
+            conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.5
+        )
+
+
+def test_set_send_intended_rt60_writes_and_clears(conn, song):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.3)
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.2
+    )
+    row = conn.execute(
+        "SELECT intended_rt60_s FROM sends WHERE from_track_id=? AND to_return_id=?",
+        (tid, rid),
+    ).fetchone()
+    assert row["intended_rt60_s"] == pytest.approx(1.2)
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=None
+    )
+    row = conn.execute(
+        "SELECT intended_rt60_s FROM sends WHERE from_track_id=? AND to_return_id=?",
+        (tid, rid),
+    ).fetchone()
+    assert row["intended_rt60_s"] is None
+
+
+def test_set_send_intended_rt60_rejects_non_positive(conn, song):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.3)
+    with pytest.raises(ValueError, match="must be > 0.0"):
+        M.set_send_intended_rt60(
+            conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=0.0
+        )
+    with pytest.raises(ValueError, match="must be > 0.0"):
+        M.set_send_intended_rt60(
+            conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=-0.5
+        )
+
+
+def test_set_send_intended_rt60_emits_event_per_change(conn, song):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.3)
+    before = len([e for e in _events(conn) if e["kind"] == E.SEND_INTENT_SET])
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.2
+    )
+    # Idempotent: same value re-set emits nothing.
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.2
+    )
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.8
+    )
+    after = len([e for e in _events(conn) if e["kind"] == E.SEND_INTENT_SET])
+    assert after - before == 2
+
+
+def test_get_reverb_send_intents_filters_nulls(conn, song):
+    t1 = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    t2 = M.create_track(conn, song_id=song, track_index=2, name="Pad")
+    rev = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    delay = M.create_return(conn, song_id=song, name="B-Delay", position=2)
+    M.set_send_level(conn, from_track_id=t1, to_return_id=rev, level=0.3)
+    M.set_send_level(conn, from_track_id=t1, to_return_id=delay, level=0.2)
+    M.set_send_level(conn, from_track_id=t2, to_return_id=rev, level=0.4)
+    # Only the two reverb sends carry intent. The delay send + the
+    # un-declared rev->Pad would have NULL intent.
+    M.set_send_intended_rt60(
+        conn, from_track_id=t1, to_return_id=rev, intended_rt60_s=1.2
+    )
+    M.set_send_intended_rt60(
+        conn, from_track_id=t2, to_return_id=rev, intended_rt60_s=1.8
+    )
+    rows = Q.get_reverb_send_intents_for_song(conn, song)
+    assert len(rows) == 2
+    rt60s = sorted(float(r["intended_rt60_s"]) for r in rows)
+    assert rt60s == pytest.approx([1.2, 1.8])
+
+
+def test_send_intent_check_constraint_at_schema_level(conn, song):
+    """Raw SQL bypassing the mutator still hits the schema CHECK."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.3)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """UPDATE sends SET intended_rt60_s = -1.0
+               WHERE from_track_id = ? AND to_return_id = ?""",
+            (tid, rid),
+        )

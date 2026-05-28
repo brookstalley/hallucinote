@@ -78,6 +78,22 @@ def test_short_clip_raises_teaching_error():
         measure_loudness(audio, sr=SAMPLE_RATE)
 
 
+def test_lufs_s_median_falls_back_to_momentary_on_sub_three_second_clip():
+    """Clips between 0.4 s and 3 s can't fill a 3 s short-term block.
+    Rather than NaN, the wrapper falls back to 400 ms momentary blocks
+    so the MixReport carries a finite degraded value (relevant for
+    section-windowed analysis, P1 backlog)."""
+    audio = calibrated_pink_noise(-23.0, duration_s=1.5)
+    metrics = measure_loudness(audio, sr=SAMPLE_RATE)
+    assert np.isfinite(metrics.lufs_s_median), (
+        f"fallback path returned non-finite value {metrics.lufs_s_median}"
+    )
+    # Stationary signal: momentary-block median should agree with
+    # integrated within a couple LU (looser than the 8 s case above
+    # because there are fewer momentary blocks to median over).
+    assert abs(metrics.lufs_s_median - metrics.lufs_i) < 2.0
+
+
 def test_silent_clip_lufs_i_is_finite_or_explicitly_minus_infinity():
     """BS.1770's gating returns -inf on pure silence (all blocks below
     -70 LUFS gate). Our wrapper should surface that as the canonical

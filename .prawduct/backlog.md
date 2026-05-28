@@ -62,7 +62,7 @@ bands as the codebase + product shape evolves.
 
 ## P0 — Highest leverage (small effort, real benefit, ready to ship)
 
-- **`.amxd` `[value track_id_retained]` is GLOBAL-by-name; multi-analyzer /signature reply routing is unsafe.** Same shape as the `[value hallucinote_path]` bug closed in Chunk 2 — `[value <name>]` in M4L is a global shared variable across all device instances. `track_id_retained` is currently only read inside the OSC feature-emit path (banged by metro 33 to prefix the address), where the last-OSC'd analyzer wins; this is fine when /signature isn't called. As soon as the sidecar starts using /signature for version discovery, concurrent multi-analyzer queries clobber each other. **Fix:** rewire to remove the storage indirection (mirrors the path fix): on `/track_id <symbol>` arrival, set up a per-instance `[message]`-box (or `[zl reg]`) storage that emits-on-bang without global namespace, and bang it from the metro chain inline rather than via `[value]`. **Files:** `m4l/HallucinoteAnalyzer.amxd` (Max GUI), `m4l/HallucinoteAnalyzer.amxd.spec.md`, `learnings.md` (cross-reference the existing global-by-name learning). **Verifiable signal:** no `[value <name>]` boxes remain in the .amxd JSON. **Sized:** small — single GUI edit + Live restart. (Chunk 2 close-out reflection, 2026-05-27)
+_(no items)_
 
 ## P1 — Strong benefit, moderate effort
 

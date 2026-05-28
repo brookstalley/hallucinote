@@ -34,7 +34,7 @@ audio inlet  R  ──┤
                   │           │
                   │  [udpreceive <osc_port>]                inbound OSC
                   │       ├──> [OSC-route /path]          → [prepend open] → [sfrecord~] inlet 0
-                  │       ├──> [OSC-route /track_id]      → [value track_id_retained]
+                  │       ├──> [OSC-route /track_id]      → [prepend set] → [message] (per-instance storage; banged by metro)
                   │       ├──> [OSC-route /start_at_beat] → [int] → start-beat storage ([i])
                   │       ├──> [OSC-route /stop_at_beat]  → [int] → stop-beat storage ([i])
                   │       └──> [OSC-route /signature/query] → unpack reply host+port → reply via [udpsend]
@@ -111,9 +111,13 @@ The outbound feature frame needs an identity prefix
 to the right ring buffer. Track-id is a string and can't be a Live parameter.
 
 - Inbound OSC address: `/track_id <symbol>` on `osc_port`.
-- Stored in `[value track_id_retained]` (read-by-bang storage; the emitter
-  bangs it once per metro tick). (See `learnings.md` "M4L `[value]` doesn't
-  emit on write".)
+- Stored in a `[message]` box fed by `[prepend set]` (right inlet stores
+  without emitting); the metro chain bangs the message's left inlet once
+  per tick to emit the current track_id into the address sprintf. The
+  message box is per-patcher (no global namespace), so each analyzer
+  instance has its own storage — see `learnings.md` "M4L `[value <name>]`
+  is GLOBAL-by-name across all device instances" for the trap this
+  pattern avoids.
 - A separate `has_track_id` int flag (plumbed via `[send]` / `[receive]`,
   NOT `[value]`) gates the emitter. If no track_id has been received since
   patch load, frames are held (no placeholder address — empty identities
@@ -193,16 +197,6 @@ start-crossing fires.
 
 `sfrecord~` is instantiated `2 @nchans 2`; `samptype float32` is sent at
 `[loadbang]` so every subsequent `open` writes float32.
-
-### Known multi-instance caveat
-
-`[value track_id_retained]` is a globally-named cell — all device
-instances share it (M4L `[value <name>]` is global by name). The
-SYMBOL retention is read-by-bang once per metro tick, which keeps the
-per-instance address chain mostly correct, but under concurrent
-multi-analyzer signature queries the `/signature` reply routing may
-land on the wrong host:port. Tracked for chunk-3 cleanup; lower
-priority than the path retainer (which has been removed).
 
 ## OSC feature emitter
 
@@ -334,7 +328,7 @@ SR-adaptation is post-MVP backlog.
                   ├── outlet 3 (FIRST)  → bang [snapshot~ low-mid]
                   ├── outlet 2          → bang [snapshot~ LUFS-M]
                   ├── outlet 1          → bang [f beat_pos_latched]
-                  └── outlet 0 (LAST)   → bang [value track_id_retained]
+                  └── outlet 0 (LAST)   → bang [message] (track_id storage; per-patcher)
                                               │
                                               ▼
                                         [sprintf /hallucinote/track/%s/features]

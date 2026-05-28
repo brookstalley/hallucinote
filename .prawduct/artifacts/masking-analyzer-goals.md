@@ -130,6 +130,84 @@ language:
   industry consensus is unanimous that auto-applying produces "generic,
   formulaic" mixes and tempts "mixing with your eyes over your ears."
 
+## Intent taxonomy & applicability boundaries (stress-tested across styles)
+
+The default framing above — *protect the focal element's clarity* — is **one
+intent among several.** Run real music through it and it's clear the tool must
+model intent explicitly or it will confidently fight the art. The axes below are
+derived from mentally applying this doc to a deliberately wide set of works. We
+aim to be exhaustive about **intent**, not genre.
+
+**Element-level intent (per part, per section):**
+
+1. **Focal** — must be intelligible / must win. Flag anything masking it.
+   *Rap (the lyric is the form), a Beatles lead vocal, the AC/DC vocal over the
+   riff, a Depeche Mode hook, the verse vocal in early Bowie.* This is the
+   highest-value, least-ambiguous case — and the largest swath of music.
+2. **Support / bed** — present, in its lane, below focal (rhythm parts, pads,
+   kick/bass foundation). Masking *among* the bed is usually fine; the bed
+   masking the focal is not.
+3. **Blend group** — two-plus parts *meant to fuse into one composite timbre*,
+   where separation would be **wrong**. Intra-group masking *is the instrument*
+   — never flag it; treat the group as a single element for inter-group
+   analysis. *Ravel's Boléro (the climactic horn+celesta+piccolo parallel-
+   harmony doubling that fakes an organ/“new instrument”), AC/DC's doubled
+   rhythm guitars as one wall, a gospel/Tallis choir, Philip Glass's interlocking
+   arpeggios, an octave-doubled synth lead.* Without a blend-group concept the
+   tool screams "guitar L masks guitar R" — exactly the false positive engineers
+   hate.
+4. **Textural / submerged** — deliberately buried as atmosphere; intelligibility
+   knowingly traded for mood. Don't flag *its* being masked. Instead **invert**:
+   verify the one element meant to *pierce* the wall still pierces, and flag a
+   submerged part only if it's unintentionally burying the focal. *My Bloody
+   Valentine's Loveless (guitars + vocal as a glorious wash), Skinny Puppy's
+   Too Dark Park — "Tormentor"/"Grave Wisdom" (vocals as menace-texture in the
+   murk by design), late Bowie's Blackstar unease, Phil Spector's Wall of Sound.*
+
+**Section/song-level intent:**
+
+- **Clarity-intended** (default) — full analysis as written.
+- **Density / wash-intended** — don't chase separation; analysis collapses to
+  "does the intended-to-pierce element pierce, where one is declared?"
+- **Diffuse / no single focal** — ambient & evolving-texture music has no hook to
+  protect; the masking-of-focal question is weak and the tool should soften to
+  "is the intended space/texture-contrast present?" *Aphex Twin's Selected
+  Ambient Works 85–92 (warm, spacious — the consensus "best," though his drill-
+  'n'-bass like Drukqs is the opposite: intended chaos where density IS the
+  aesthetic and nothing should be "separated").*
+- **Saturation / no discrete elements** — **decline.** The model has no purchase:
+  no focal, no roles, no separation goal. *Merzbow (harsh noise — the wall of
+  spectral saturation IS the work).* The tool should *detect* this (near-flat
+  inter-stem separability / one-or-no-stems / extreme broadband density) and say
+  so — offer a loudness/spectral description if anything, never a list of
+  masking "problems." This is the clearest "not our tool, and we know it."
+
+**The blind spot we must state honestly — spectral ≠ perceptual masking.** The
+DSP measures *spectral overlap*. The ear *also* separates sources by **pitch
+streaming, common onset, and timbral familiarity** — cues the spectral model
+doesn't see. So **same-timbre material over-reports**: a cappella (every part is
+"voice," from a solo to Tallis's 40-part *Spem in Alium*), unison string
+sections, Glass's same-patch interlock. The masked-tile ratio will read high
+while the listener separates the lines effortlessly by pitch and melody.
+Mitigation: when parts share an instrument class / register, weight by
+melodic-line role rather than frequency band, and caveat (or down-rank) the
+finding. We do not auto-flag a choir as "muddy."
+
+**Out of scope — performance/acoustic balance.** Where the "mix" is orchestration
++ room + mic placement and there are no clean stems (a live orchestra playing
+Boléro, a bleeding jazz combo), balance is a performance/arrangement act we don't
+observe per-stem. Boléro is *in* scope only as an in-DAW stemmed mockup — which
+is exactly how Hallucinote would build it; the acoustic recording is not.
+
+**Validation read:** the home turf (focal/clarity — rap, Beatles, AC/DC, early
+Bowie/DM, most song-based music) is enormous and high-value, and on already-clean
+material (AC/DC, Beatles) the tool's *correct* behavior is to stay nearly silent.
+The boundary cases tell us the required intent inputs are richer than "track
+role": we need **blend-group** membership, a per-element **submerged/textural**
+flag, a section/song **density-vs-clarity** intent, and a **decline detector**.
+These come from the composer's declared intent (DB roles + `ableton_annotation`)
+— which is precisely the score-awareness no meter has.
+
 ## The one-line thesis
 
 > Commercial meters answer *"where do frequencies collide?"* Hallucinote should

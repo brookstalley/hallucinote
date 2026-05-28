@@ -19,7 +19,6 @@ requirement."
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -57,7 +56,6 @@ class DeclaredReverbSend:
 def analyze_mix(
     captures_dir: Path | str,
     *,
-    song_db_conn: sqlite3.Connection | None = None,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
@@ -67,13 +65,18 @@ def analyze_mix(
       1. Per-surface loudness — master, every stem, every return.
       2. Master-bus overshoot detection + per-stem contribution
          attribution.
+
       3. For each declared dry→wet send: Wiener-deconvolve IR, measure
          RT60, compare to declared. If none declared, emit a
          ``skipped_analyses`` entry.
 
-    ``song_db_conn`` is accepted for future intent lookup; the MVP
-    doesn't yet query it (no schema for declared decay times) but the
-    parameter is plumbed so callers don't churn when the lookup lands.
+    DB-driven intent lookup (e.g. populating ``declared_reverb_sends``
+    from a future ``reverb_send_intent`` table) is deferred — see the
+    backlog entry "DB schema for declared reverb_send_intent". When
+    that lands, this function will grow either a ``conn`` parameter or
+    a ``slug + resolver`` pair, depending on what the schema decides;
+    the placeholder isn't plumbed today because committing to a shape
+    pre-schema would constrain that decision.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
@@ -98,7 +101,6 @@ def analyze_mix(
     reverb_verifications, skipped = _run_reverb_verifications(
         capture=capture,
         declared_sends=declared_reverb_sends,
-        song_db_conn=song_db_conn,
     )
 
     findings = _derive_findings(
@@ -162,7 +164,6 @@ def _run_reverb_verifications(
     *,
     capture: CaptureSet,
     declared_sends: Sequence[DeclaredReverbSend],
-    song_db_conn: sqlite3.Connection | None,
 ) -> tuple[list[ReverbVerification], list[dict]]:
     """Run one verification per declared send; record skips otherwise.
 

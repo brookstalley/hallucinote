@@ -48,11 +48,6 @@ def _sine(freq: float, duration_s: float, amplitude: float = 0.3) -> np.ndarray:
     return np.stack([mono, mono], axis=1).astype(np.float32)
 
 
-def _silence(duration_s: float) -> np.ndarray:
-    n = int(round(duration_s * SAMPLE_RATE))
-    return np.zeros((n, 2), dtype=np.float32)
-
-
 def _write_captures(
     captures_dir: Path,
     *,

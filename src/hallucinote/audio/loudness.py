@@ -50,7 +50,6 @@ _TRUE_PEAK_OVERSAMPLE = 4
 @dataclass(frozen=True)
 class _ShortTermResult:
     median: float
-    peak: float
 
 
 def measure_loudness(audio: np.ndarray, *, sr: int) -> LoudnessMetrics:
@@ -147,11 +146,8 @@ def _short_term(audio_f64: np.ndarray, sr: int, duration_s: float) -> _ShortTerm
     meter.integrated_loudness(audio_f64.copy())
     blocks = [b for b in meter.blockwise_loudness if np.isfinite(b)]
     if not blocks:
-        return _ShortTermResult(median=float("-inf"), peak=float("-inf"))
-    return _ShortTermResult(
-        median=float(np.median(blocks)),
-        peak=float(max(blocks)),
-    )
+        return _ShortTermResult(median=float("-inf"))
+    return _ShortTermResult(median=float(np.median(blocks)))
 
 
 def _short_term_from_momentary(audio_f64: np.ndarray, sr: int) -> _ShortTermResult:
@@ -161,11 +157,8 @@ def _short_term_from_momentary(audio_f64: np.ndarray, sr: int) -> _ShortTermResu
     meter.integrated_loudness(audio_f64.copy())
     blocks = [b for b in meter.blockwise_loudness if np.isfinite(b)]
     if not blocks:
-        return _ShortTermResult(median=float("-inf"), peak=float("-inf"))
-    return _ShortTermResult(
-        median=float(np.median(blocks)),
-        peak=float(max(blocks)),
-    )
+        return _ShortTermResult(median=float("-inf"))
+    return _ShortTermResult(median=float(np.median(blocks)))
 
 
 def _true_peak_dbtp(audio: np.ndarray) -> float:

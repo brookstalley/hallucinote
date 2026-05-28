@@ -135,17 +135,22 @@ declared RT60 schema in DB yet).
   populated reverb_verifications on real songs without caller-supplied
   sends — natural Chunk-3 follow-up)
 
-**Known caveat carried forward:** the M4L `[value track_id_retained]`
-global-by-name bug in the committed `.amxd` is still present (verified
-byte-identical against the installed copy in Live's User Library).
-Listed P0 in backlog. Does not affect Chunk 3 because `/signature`
-isn't called by the analysis pipeline; remains the natural next M4L
-pass for the user.
-
-**Remaining for chunk close:** Critic review on the cumulative diff
-+ user-initiated PR. Branch left at `feature/audio-analysis-chunk3`
-per project preference `PR creation: wait_for_user` + the in-flight
-framework-sync work on `develop`.
+**Bundled M4L bugfix (commit `c46288a`):** the P0 backlog entry "`.amxd`
+`[value track_id_retained]` is GLOBAL-by-name; multi-analyzer
+/signature reply routing is unsafe" closed in this branch. The Max
+patch was rewired to use a per-patcher `[message]` box for track_id
+storage instead of `[value <name>]` — same shape as the
+`[value hallucinote_path]` fix that closed Chunk 2 sub-chunk 2B,
+applied to the OSC-feature-emit side. `.amxd` re-exported from Max
+(487308 → 487801 bytes; verified byte-identical against the User
+Library install); spec.md updated to reflect the new wiring and remove
+the "Known multi-instance caveat" section that documented the bug;
+P0 backlog entry deleted (Verifiable signal "no `[value <name>]` boxes
+remain in the .amxd JSON" is satisfied). Not strictly required for
+the Chunk 3 analysis pipeline (the analyzer's `/signature` reply
+routing isn't on the analyze hot path), but bundling it here closes
+the only known structural M4L bug ahead of the next sidecar work that
+would have triggered it.
 
 ## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
 

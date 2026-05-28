@@ -1,6 +1,6 @@
 """MixReport — the audio analysis pipeline's wire format.
 
-Produced by ``analyze_mix(captures_dir, song_db_conn)`` and serialized to
+Produced by ``analyze_mix(captures_dir)`` and serialized to
 ``songs/<slug>/analysis/<iso-ts>.json``. The MCP handler
 (``ableton_analysis(action='analyze')``) is a thin wrapper that calls
 ``analyze_mix`` and writes this report.

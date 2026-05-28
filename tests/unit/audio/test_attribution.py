@@ -13,6 +13,7 @@ import pytest
 
 from hallucinote.audio.attribution import (
     BANDS,
+    band_attribution,
     find_master_overshoots,
     master_bus_attribution,
 )
@@ -144,3 +145,59 @@ def test_attribution_skips_silent_stems():
     by_track = dict(attributed[0].attribution)
     assert by_track.get("track:silent", 0.0) < 0.01
     assert by_track.get("track:1", 0.0) > 0.95
+
+
+# ---------- band_attribution (steady-state per-section dominance) ----------
+
+
+def test_band_attribution_ranks_stems_per_band():
+    """A low-frequency stem owns the low band; a high-frequency stem owns the
+    air band — the 'kick + bass dominate the chorus low end' question."""
+    dur = 1.0
+    kick = sine(100.0, dur, amplitude=0.8)   # low_60_200
+    hat = sine(9000.0, dur, amplitude=0.8)   # air_6k_plus
+    bands = {b.band: b for b in band_attribution(
+        [("kick", kick), ("hat", hat)], SAMPLE_RATE
+    )}
+    low = bands["low_60_200"]
+    assert low.contributors[0][0] == "kick"
+    assert low.contributors[0][1] > 0.8
+    air = bands["air_6k_plus"]
+    assert air.contributors[0][0] == "hat"
+    assert air.contributors[0][1] > 0.8
+
+
+def test_band_attribution_emits_every_band_in_order():
+    bands = band_attribution([("a", sine(100.0, 0.5))], SAMPLE_RATE)
+    assert [b.band for b in bands] == [name for name, _, _ in BANDS]
+
+
+def test_band_attribution_empty_contributors_when_silent():
+    silent = _stereo_zeros(0.5)
+    bands = band_attribution([("a", silent), ("b", silent)], SAMPLE_RATE)
+    assert all(b.contributors == [] for b in bands)
+
+
+def test_band_attribution_top_n_limits_contributors():
+    dur = 0.5
+    stems = [(f"s{i}", sine(100.0, dur, amplitude=0.4)) for i in range(8)]
+    bands = {b.band: b for b in band_attribution(stems, SAMPLE_RATE, top_n=3)}
+    assert len(bands["low_60_200"].contributors) == 3
+
+
+def test_band_attribution_accepts_mono_audio():
+    mono = sine(100.0, 0.5)[:, 0]  # (n,) mono
+    bands = {b.band: b for b in band_attribution([("m", mono)], SAMPLE_RATE)}
+    assert bands["low_60_200"].contributors[0][0] == "m"
+
+
+def test_band_attribution_fractions_are_shares_of_band_total():
+    dur = 1.0
+    # Two stems with energy in the same band; fractions should sum to ~1.0.
+    a = sine(120.0, dur, amplitude=0.6)
+    b = sine(150.0, dur, amplitude=0.3)
+    low = {bc.band: bc for bc in band_attribution(
+        [("a", a), ("b", b)], SAMPLE_RATE
+    )}["low_60_200"]
+    assert sum(frac for _, frac in low.contributors) == pytest.approx(1.0, abs=1e-6)
+    assert low.contributors[0][0] == "a"  # louder one ranks first

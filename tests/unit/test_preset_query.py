@@ -12,8 +12,10 @@ import pytest
 
 from hallucinote.preset_query import (
     BROWSER_ROOTS,
+    name_matches,
     normalize,
     parse_path_shape,
+    resolve_query,
 )
 
 
@@ -254,3 +256,123 @@ def test_create_device_normalized_preset_query_is_idempotent(db_conn, song_chain
     # Same device_id, second call detected as unchanged.
     assert str(sid_1) == str(sid_2)
     assert sid_2.kind == "unchanged"
+
+
+# --- name_matches -----------------------------------------------------------
+# The matcher shared (by mirror + lock-test) with the MCP push-time resolver.
+# Cross-implementation agreement is pinned in tests/unit/sync/test_compat.py;
+# these tests pin the behavior itself.
+
+
+def test_name_matches_substring_case_insensitive():
+    assert name_matches("Kit-Core 909", "909")
+    assert name_matches("Kit-Core 909", "core")  # default case-insensitive
+    assert not name_matches("Kit-Core 909", "808")
+
+
+def test_name_matches_case_sensitive():
+    assert name_matches("Kit-Core 909", "Core", case_sensitive=True)
+    assert not name_matches("Kit-Core 909", "core", case_sensitive=True)
+
+
+def test_name_matches_glob():
+    assert name_matches("Hot Rod Kit", "Hot*Kit", mode="glob")
+    assert not name_matches("Hot Rod Kit", "Cold*Kit", mode="glob")
+
+
+def test_name_matches_regex():
+    assert name_matches("Kit-Core 909", r"\d{3}", mode="regex")
+    assert not name_matches("Kit-Core", r"\d{3}", mode="regex")
+
+
+def test_name_matches_unknown_mode_raises():
+    with pytest.raises(ValueError, match="unknown search mode"):
+        name_matches("x", "x", mode="fuzzy")
+
+
+# --- resolve_query (offline) ------------------------------------------------
+# Mirrors the strict single-match semantics of the MCP push-time resolver
+# (_resolve_preset_query) against a flat inventory entry list.
+
+
+def _entry(root, *segments, loadable=True, uri="query:Root#FileId_1"):
+    """A flattened inventory entry; path includes root key + leaf name."""
+    return {
+        "root": root,
+        "path": [root, *segments],
+        "name": segments[-1],
+        "uri": uri,
+        "is_loadable": loadable,
+    }
+
+
+def test_resolve_query_single_match_returns_entry():
+    entries = [
+        _entry("drums", "Kit-Core 909"),
+        _entry("drums", "Kit-Core 808"),
+    ]
+    out = resolve_query({"root": "drums", "pattern": "909"}, entries)
+    assert out["name"] == "Kit-Core 909"
+    assert out["path"] == ["drums", "Kit-Core 909"]
+
+
+def test_resolve_query_zero_match_raises_teaching_error():
+    entries = [_entry("drums", "Kit-Core 909")]
+    with pytest.raises(ValueError, match="no loadable matches"):
+        resolve_query({"root": "drums", "pattern": "808"}, entries)
+
+
+def test_resolve_query_ambiguous_raises_with_paths():
+    entries = [
+        _entry("drums", "Kit-Core 909"),
+        _entry("drums", "Live 909"),
+    ]
+    with pytest.raises(ValueError, match="ambiguous"):
+        resolve_query({"root": "drums", "pattern": "909"}, entries)
+
+
+def test_resolve_query_non_loadable_excluded():
+    """A folder (is_loadable=False) named like the pattern is not a match."""
+    entries = [
+        _entry("drums", "909 Kits", loadable=False),  # folder
+        _entry("drums", "909 Kits", "Kit-Core 909"),
+    ]
+    out = resolve_query({"root": "drums", "pattern": "Kit-Core 909"}, entries)
+    assert out["name"] == "Kit-Core 909"
+
+
+def test_resolve_query_path_prefix_scopes_match():
+    entries = [
+        _entry("instruments", "Operator", "Bass", "Sub"),
+        _entry("instruments", "Wavetable", "Bass", "Sub"),
+    ]
+    out = resolve_query(
+        {"root": "instruments", "pattern": "Sub", "path_prefix": ["Operator"]},
+        entries,
+    )
+    assert out["path"] == ["instruments", "Operator", "Bass", "Sub"]
+
+
+def test_resolve_query_path_prefix_absent_raises():
+    entries = [_entry("instruments", "Operator", "Bass", "Sub")]
+    with pytest.raises(ValueError, match="path_prefix"):
+        resolve_query(
+            {"root": "instruments", "pattern": "Sub", "path_prefix": ["Meld"]},
+            entries,
+        )
+
+
+def test_resolve_query_root_absent_in_cache_raises():
+    entries = [_entry("drums", "Kit-Core 909")]
+    with pytest.raises(ValueError, match="not present in the inventory cache"):
+        resolve_query({"root": "samples", "pattern": "x"}, entries)
+
+
+def test_resolve_query_rejects_empty_pattern():
+    with pytest.raises(ValueError, match="non-empty string"):
+        resolve_query({"root": "drums", "pattern": ""}, [])
+
+
+def test_resolve_query_rejects_unknown_root():
+    with pytest.raises(ValueError, match="valid roots"):
+        resolve_query({"root": "bogus", "pattern": "x"}, [])

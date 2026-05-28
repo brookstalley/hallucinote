@@ -5,6 +5,7 @@ import json
 import sqlite3
 
 import pytest
+from hypothesis import given, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.db import events as E
@@ -225,6 +226,33 @@ def test_remove_send_silent_when_missing(conn, song):
     assert len(_events(conn)) == before
 
 
+def test_remove_send_records_discarded_rt60_intent(conn, song):
+    """Removing a send that carried an RT60 intent discards the intent with
+    it (same row) and records the discard in the SEND_REMOVED payload so the
+    audit log shows the intent was dropped, not just the send."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
+    M.set_send_intended_rt60(
+        conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=1.7
+    )
+    M.remove_send(conn, from_track_id=tid, to_return_id=rid)
+    removed = [e for e in _events(conn) if e["kind"] == E.SEND_REMOVED][-1]
+    payload = json.loads(removed["payload_json"])
+    assert payload["discarded_intended_rt60_s"] == pytest.approx(1.7)
+
+
+def test_remove_send_omits_rt60_key_when_no_intent(conn, song):
+    """No intent declared → no discarded_intended_rt60_s key (it's only there
+    when something was actually dropped)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    rid = M.create_return(conn, song_id=song, name="A", position=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.4)
+    M.remove_send(conn, from_track_id=tid, to_return_id=rid)
+    removed = [e for e in _events(conn) if e["kind"] == E.SEND_REMOVED][-1]
+    assert "discarded_intended_rt60_s" not in json.loads(removed["payload_json"])
+
+
 def test_get_sends_for_song_returns_matrix(conn, song):
     t1 = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     t2 = M.create_track(conn, song_id=song, track_index=2, name="Pad")
@@ -292,6 +320,44 @@ def test_set_send_intended_rt60_rejects_non_positive(conn, song):
         M.set_send_intended_rt60(
             conn, from_track_id=tid, to_return_id=rid, intended_rt60_s=-0.5
         )
+
+
+@given(value=st.one_of(
+    st.none(),
+    st.floats(allow_nan=False, allow_infinity=False),
+))
+def test_set_send_intended_rt60_validator_contract(tmp_path_factory, value):
+    """Property: the validator accepts None and any positive float, and
+    rejects any non-positive value — hardening the contract beyond the
+    hand-picked boundary cases above. A fresh DB per example (via the
+    session-scoped tmp_path_factory) keeps hypothesis off function-scoped
+    fixtures."""
+    c = init_db(tmp_path_factory.mktemp("rt60") / "m.db")
+    try:
+        s = M.create_song(c, name="t", key="Dm")
+        tid = M.create_track(c, song_id=s, track_index=1, name="Drums")
+        rid = M.create_return(c, song_id=s, name="A-Reverb", position=1)
+        M.set_send_level(c, from_track_id=tid, to_return_id=rid, level=0.3)
+        if value is None or value > 0.0:
+            M.set_send_intended_rt60(
+                c, from_track_id=tid, to_return_id=rid, intended_rt60_s=value
+            )
+            row = c.execute(
+                "SELECT intended_rt60_s FROM sends "
+                "WHERE from_track_id=? AND to_return_id=?",
+                (tid, rid),
+            ).fetchone()
+            if value is None:
+                assert row["intended_rt60_s"] is None
+            else:
+                assert row["intended_rt60_s"] == pytest.approx(value)
+        else:
+            with pytest.raises(ValueError, match="must be > 0.0"):
+                M.set_send_intended_rt60(
+                    c, from_track_id=tid, to_return_id=rid, intended_rt60_s=value
+                )
+    finally:
+        c.close()
 
 
 def test_set_send_intended_rt60_emits_event_per_change(conn, song):

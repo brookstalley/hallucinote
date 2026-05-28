@@ -4,6 +4,149 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-28 — Audio Analysis MVP, Chunk 3 (3-A + 3-B + 3-C) — analysis pipeline + `ableton_analysis` MCP tool
+
+<!-- chunks=3 status=shipped release=unreleased scope=audio-analysis-mvp -->
+
+Chunk 3 sub-chunks 3-A, 3-B, and 3-C closed. The analysis half of the
+audio-analysis MVP is now built: captures dirs produced by
+`ableton_render` are now consumable through a new MCP tool that
+produces a `MixReport` JSON keyed to the song's DB-recorded intent.
+
+3-D (Critic + final commit/PR) is the last remaining step — the
+pipeline is feature-complete and real-data verified, but the formal
+Critic pass + change-log polish is the in-flight close work.
+
+**Worktree:** branch `feature/audio-analysis-chunk3` off
+`origin/develop@f0d0a46`. Local `develop` was 1 ahead / 1 behind origin
+at the start of this session; the user is doing framework-sync work
+separately so a worktree was the lowest-disruption path to ship Chunk 3
+without entangling with the framework drift on `develop`.
+
+**What landed (3-A — foundation + loudness):**
+
+1. `src/hallucinote/audio/` is a new sibling of `db/`, `generators/`,
+   `sync/` per the project's "layer folders inside src/hallucinote"
+   convention. Pure-Python computation against WAVs + DB; never imports
+   MCP.
+2. `report.py` — `MixReport` dataclass + sub-dataclasses
+   (`StemMetrics`, `LoudnessMetrics`, `MasterOvershoot`,
+   `ReverbVerification`, `Finding`). Schema version pinned at `"1"` in
+   the report itself (matches the capture-manifest pattern).
+   `compare_to` field reserved as a skeleton for the P2 baseline-diff
+   backlog. `skipped_analyses` field is the structural "Never silently
+   drop a requirement" surface.
+3. `io.py` — `load_capture(manifest_path) -> CaptureSet`. Reads
+   `manifest.json` + per-surface WAVs via `soundfile`; refuses
+   non-float32 / non-stereo / sample-rate-mismatch with teaching
+   errors (analysis math depends on the exact format `sfrecord~` writes
+   per the analyzer spec).
+4. `loudness.py` — BS.1770-4 LUFS-I / LUFS-S median / LUFS-M peak via
+   `pyloudnorm.Meter`, plus 4×-oversampled true peak in dBTP via
+   `scipy.signal.resample_poly` (the 15-LoC spike §3 sketch). Short-clip
+   guard raises rather than silently returning NaN.
+
+**What landed (3-B — attribution + reverb):**
+
+5. `attribution.py` — `find_master_overshoots` (4×-oversampled detection
+   with gap-merge + min-window thresholds) + `master_bus_attribution`
+   (per-overshoot dominant-band detection via per-band RMS, then
+   per-stem RMS contribution ranking in that band). Six named bands per
+   spike §3 (sub_20_60 through air_6k_plus); names are stable wire
+   format. Beat conversion happens at the `analyze_mix` boundary, not
+   in this module — keeps attribution tempo-agnostic.
+6. `reverb.py` — `deconvolve_ir` (Wiener-regularized spectral
+   deconvolution with ε floor for stability) + `verify_reverb_send`
+   (deconvolves IR, trims to onset, runs
+   `pyroomacoustics.experimental.rt60.measure_rt60`, compares to
+   declared). Stable on noisy dry signals (regularization works) but
+   only accurate on clean dry — the spike §7 "honest gap" is pinned in
+   a stability-only regression test, not a fake accuracy claim.
+
+**What landed (3-C — `ableton_analysis` MCP tool):**
+
+7. `analyze.py` — `analyze_mix(captures_dir, song_db_conn=None,
+   declared_reverb_sends=())` orchestrator. Reads the capture set,
+   measures per-surface loudness, finds + attributes master
+   overshoots, runs reverb verification for any declared sends,
+   derives structured `Finding`s, returns a populated `MixReport`.
+   DB conn parameter is plumbed for future intent extraction (MVP DB
+   has no `reverb_send_intent` schema yet — when declared sends are
+   empty, `skipped_analyses` carries a teaching explanation).
+8. `hallucinote_mcp.schema.TOOLS` extended with `"ableton_analysis"`
+   (12 → 13 unified tools). `hallucinote_mcp.actions.analysis` exposes
+   three actions: `help`, `analyze(song_slug, captures_dir?)`,
+   `get_latest_report(song_slug)`. Both real actions are
+   `runs_server_side=True` — mirrors `ableton_annotation`'s pattern.
+9. `hallucinote_mcp.handlers.analysis` — `analyze_handler` opens song
+   DB to validate slug, defaults `captures_dir` to the latest
+   ISO-8601-named dir under `songs/<slug>/captures/`, calls
+   `analyze_mix`, writes the report to
+   `songs/<slug>/analysis/<iso-ts>.json`, returns
+   `{report_path, schema_version, finding_count, summary}`.
+   `get_latest_report_handler` returns the most recent MixReport JSON
+   contents + path.
+10. Tree-wide doc sweep for the tool-count drift: server.py PRIMER,
+    server.py module docstring, `create_server()` docstring (12 → 13),
+    `hallucinote_mcp/README.md` headline + tool table (added two new
+    rows for render + analysis — the table had been one behind through
+    Chunk 2), root `README.md` project-layout block.
+
+**Dependencies added** (`pyproject.toml`):
+`pyloudnorm>=0.2`, `librosa>=0.10`, `pyroomacoustics>=0.7`. All
+MIT/BSD/ISC. Comment in pyproject explaining what each does and why
+they belong as main deps (per Chunk 1's precedent: audio foundation
+belongs alongside the rest of the platform, not behind extras).
+
+**Tests:** +46 (2113 → 2159). Distribution:
+- `tests/unit/audio/`: 6 report, 7 loudness, 7 io, 5 attribution,
+  4 reverb, 4 analyze-orchestrator = 33
+- `hallucinote_mcp/tests/unit/`: 6 actions_analysis, 7 handlers_analysis
+  = 13
+Full suite: 2159 passed in 16.6 s parallel (`-n auto --dist loadgroup`).
+
+**Three measurable success criteria pass on synthetic fixtures:**
+- #3 — per-stem LUFS-I within ±0.2 LU on calibrated -23 LUFS pink noise
+- #4 — top-2 stems >60% attribution in the 60-200 Hz band on a
+  deliberately-overdriven kick+bass+rhythm fixture
+- #5 — measured RT60 within ±0.15 s of declared 1.2 s on a synthetic
+  dry impulse + known-IR convolution
+
+**Real-data sanity check** (informational; not gated on user verification):
+`analyze_mix('/Users/brookstalley/source/hallucinote/songs/reggae-metal/captures/20260527T200614Z')`
+produced a structurally-correct report: master at -16.48 LUFS-I,
+-2.03 dBTP (no overshoots — render not hot enough to overshoot);
+5 stems all in plausible mix-bus territory (-16 to -22 LUFS-I, drums
+peaking at -0.63 dBTP); A-Plate return shows real reverb tail
+(-57 LUFS-I) while B-Room + C-DubDelay are silent (no sends were active
+during that render — informational, not a bug). Reverb verification
+section correctly skipped with the structured teaching reason (no
+declared RT60 schema in DB yet).
+
+**Out of scope for Chunk 3, deferred to backlog:**
+- Section-windowed analysis (P1 — chorus / verse / bridge scoping)
+- `compare_to` baseline diffs (P2 — field reserved in schema)
+- Masking analyzer (P2 — custom DSP)
+- Candidate mutation proposals (P2 — the "fix" side of §6)
+- Reference corpus + full realtime feature set + take retention +
+  `AUDIO_CAPTURED` event (P3 cluster)
+- Source-separation fallback (P4)
+- DB schema for `reverb_send_intent` (the missing piece that unblocks
+  populated reverb_verifications on real songs without caller-supplied
+  sends — natural Chunk-3 follow-up)
+
+**Known caveat carried forward:** the M4L `[value track_id_retained]`
+global-by-name bug in the committed `.amxd` is still present (verified
+byte-identical against the installed copy in Live's User Library).
+Listed P0 in backlog. Does not affect Chunk 3 because `/signature`
+isn't called by the analysis pipeline; remains the natural next M4L
+pass for the user.
+
+**Remaining for chunk close:** Critic review on the cumulative diff
++ user-initiated PR. Branch left at `feature/audio-analysis-chunk3`
+per project preference `PR creation: wait_for_user` + the in-flight
+framework-sync work on `develop`.
+
 ## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
 
 <!-- chunks=2 status=shipped release=unreleased scope=audio-analysis-mvp -->

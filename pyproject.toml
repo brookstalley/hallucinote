@@ -8,14 +8,19 @@ version = "0.9.0"
 description = "DB-backed MIDI authoring with Ableton sync via MCP"
 requires-python = ">=3.10"
 dependencies = [
-    # Audio-analysis foundation (Chunk 1 of the audio-analysis MVP). numpy +
-    # scipy underpin every analysis to come (FFT, cross-correlation, true-peak
-    # oversample); soundfile is the canonical WAV IO (scipy.io.wavfile is
-    # broken on float32 edges per the spike's library notes). Heavier audio
-    # libs (pyloudnorm, librosa, pyroomacoustics) land with Chunk 3.
+    # Audio-analysis foundation. numpy + scipy underpin every analysis (FFT,
+    # cross-correlation, true-peak oversample); soundfile is the canonical
+    # WAV IO (scipy.io.wavfile is broken on float32 edges per the spike's
+    # library notes). pyloudnorm = BS.1770-4 integrated/short-term loudness.
+    # librosa = STFT for per-band energy attribution. pyroomacoustics gives us
+    # exactly one function from .experimental.rt60 — measure_rt60 — for
+    # reverb-send verification. All MIT/BSD/ISC.
     "numpy>=1.26",
     "scipy>=1.11",
     "soundfile>=0.12",
+    "pyloudnorm>=0.2",
+    "librosa>=0.10",
+    "pyroomacoustics>=0.7",
 ]
 
 [project.optional-dependencies]

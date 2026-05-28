@@ -37,7 +37,7 @@ from .report import (
     SectionMetrics,
     StemMetrics,
 )
-from .section import SectionWindow
+from .section import SectionWindow, TempoSegment
 
 __all__ = [
     "BandContribution",
@@ -50,5 +50,6 @@ __all__ = [
     "SectionMetrics",
     "SectionWindow",
     "StemMetrics",
+    "TempoSegment",
     "analyze_mix",
 ]

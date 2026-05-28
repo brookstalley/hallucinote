@@ -138,7 +138,7 @@ def analyze_handler(
     where summary names the master peak, overshoot count, and any
     out-of-tolerance reverb sends.
     """
-    if not _HAS_HALLUCINOTE:
+    if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
         raise _AnalysisError(
             "ableton_analysis requires the hallucinote package — this "
             "handler must run server-side, not from Live's Remote Script "
@@ -201,7 +201,7 @@ def get_latest_report_handler(
     JSON dict. Raises ``_AnalysisError`` if the song has no analyses on
     disk yet.
     """
-    if not _HAS_HALLUCINOTE:
+    if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
         raise _AnalysisError(
             "ableton_analysis requires the hallucinote package — "
             "see analyze_handler for the same diagnosis."

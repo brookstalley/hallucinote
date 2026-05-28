@@ -121,6 +121,76 @@ def delayed_copy(audio: np.ndarray, *, delay_samples: int) -> np.ndarray:
     return out
 
 
+def calibrated_pink_noise(
+    target_lufs: float,
+    duration_s: float,
+    *,
+    sr: int = SAMPLE_RATE,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Pink noise scaled to hit ``target_lufs`` LUFS-I exactly.
+
+    One-shot calibration: generate raw pink, measure LUFS-I, scale by
+    ``10^((target - measured) / 20)`` (amplitude domain, hence /20 not /10).
+    The BS.1770 algorithm is power-summing inside its filters, so an
+    amplitude scale by k shifts LUFS by 20*log10(k) = (target - measured).
+
+    Used by ``test_loudness.py`` to pin success criterion #3
+    (per-stem LUFS-I within ±0.2 LU on a known-loudness reference stem).
+    """
+    import pyloudnorm  # local import — fixtures stay light
+
+    raw = pink_noise(duration_s, amplitude=1.0, sr=sr, rng=rng)
+    meter = pyloudnorm.Meter(sr)
+    measured = meter.integrated_loudness(raw.astype(np.float64))
+    scale = 10.0 ** ((target_lufs - measured) / 20.0)
+    return (raw * scale).astype(np.float32)
+
+
+def synthetic_ir(
+    rt60_s: float,
+    *,
+    duration_s: float = 2.0,
+    sr: int = SAMPLE_RATE,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Synthetic impulse response with target RT60.
+
+    Exponentially-decaying gaussian noise — the textbook approximation of
+    an idealized room response. RT60 = decay time to -60 dB. Stereo float32
+    so it lives in the same shape as the rest of the fixtures, but reverb
+    verification works on mono IRs so callers typically take ``ir[:, 0]``.
+    """
+    rng = rng if rng is not None else np.random.default_rng(seed=7)
+    n = int(round(duration_s * sr))
+    t = np.arange(n, dtype=np.float64) / sr
+    # Decay envelope: amplitude e^(-3*ln(10) * t / RT60) gives -60dB at t=RT60.
+    decay = np.exp(-3.0 * np.log(10.0) * t / max(rt60_s, 1e-6))
+    noise = rng.standard_normal(n)
+    mono = (decay * noise).astype(np.float32)
+    # Sharp onset — IR starts with the direct response, not noise from t=0.
+    mono[0] = 1.0
+    return _to_stereo(mono)
+
+
+def convolve(dry: np.ndarray, ir: np.ndarray) -> np.ndarray:
+    """FFT convolution of stereo dry stem with stereo IR.
+
+    Channel-wise; returns length-of-dry stereo float32. Models the
+    dry→reverb-return signal path for reverb verification testing.
+    """
+    from scipy.signal import fftconvolve
+
+    if dry.shape[1] != 2 or ir.shape[1] != 2:
+        raise ValueError("dry and ir must both be stereo (n, 2)")
+    n_out = dry.shape[0]
+    out = np.zeros((n_out, 2), dtype=np.float32)
+    for ch in range(2):
+        full = fftconvolve(dry[:, ch], ir[:, ch], mode="full")
+        out[:, ch] = full[:n_out].astype(np.float32)
+    return out
+
+
 __all__ = [
     "SAMPLE_RATE",
     "silence",
@@ -128,4 +198,7 @@ __all__ = [
     "kick_onset",
     "pink_noise",
     "delayed_copy",
+    "calibrated_pink_noise",
+    "synthetic_ir",
+    "convolve",
 ]

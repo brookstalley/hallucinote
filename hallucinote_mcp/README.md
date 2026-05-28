@@ -1,15 +1,16 @@
 # hallucinote-mcp
 
-Ableton Live MCP server with **12 unified tools** and action dispatch — designed for
+Ableton Live MCP server with **13 unified tools** and action dispatch — designed for
 agents that need broad Ableton control without paying the context cost of a 50-tool
 surface.
 
 This package ships as part of the [Hallucinote](https://github.com/brookstalley/hallucinote)
 composition environment but can also be used standalone by any MCP-capable agent
 that wants structured access to a running Ableton Live set. Note: the
-`ableton_annotation` tool requires the parent `hallucinote` package on the
-server-side Python path (it reads/writes a per-song SQLite DB). The other ten
-tools work standalone.
+`ableton_annotation` and `ableton_analysis` tools require the parent `hallucinote`
+package on the server-side Python path (annotation reads/writes a per-song SQLite
+DB; analysis reads it for declared intent and writes MixReport JSON). The other
+eleven tools work standalone.
 
 ## Why so few tools?
 
@@ -56,6 +57,8 @@ Live's Control Surface slot.
 | `ableton_scene` | Session-view scenes |
 | `ableton_browser` | Instruments, effects, plugins |
 | `ableton_annotation` | Composer-intent annotations (per-song DB; requires `hallucinote`) |
+| `ableton_render` | Audio capture: HallucinoteAnalyzer auto-load + WAV capture pass (per-track + returns + master) |
+| `ableton_analysis` | MixReport from a captures dir: loudness, master-bus contribution attribution, reverb verification (requires `hallucinote`) |
 
 Every tool answers `action='help'` with a structured menu — required / optional
 params, examples, tips — generated from the shared schema. Errors carry recovery

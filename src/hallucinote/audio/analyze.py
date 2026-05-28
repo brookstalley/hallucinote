@@ -31,7 +31,7 @@ from .attribution import (
     master_bus_attribution,
 )
 from .io import CaptureSet, Surface, load_capture
-from .loudness import measure_loudness
+from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
 from .report import (
     Finding,
     MasterOvershoot,
@@ -274,6 +274,24 @@ def _measure_sections(
                     f"(beats {capture.start_at_beat:.2f}.."
                     f"{capture.stop_at_beat:.2f}) — render the arrangement "
                     f"span that includes this section to analyze it"
+                ),
+            })
+            continue
+        # A covered-but-tiny overlap (a section overhanging the capture by a
+        # few hundred samples, or a genuinely short section at fast tempo)
+        # would make measure_loudness raise — which would discard the whole
+        # report. Record a skip instead, same discipline as the no-overlap
+        # case. The threshold is loudness.py's BS.1770 400 ms block minimum.
+        overlap_s = (sl.end_sample - sl.start_sample) / capture.sample_rate
+        if overlap_s < MIN_LOUDNESS_DURATION_S:
+            skipped.append({
+                "kind": "section_windowed",
+                "reason": (
+                    f"section {window.name!r} overlaps the captured window "
+                    f"by only {overlap_s * 1000:.0f} ms — shorter than the "
+                    f"{MIN_LOUDNESS_DURATION_S * 1000:.0f} ms BS.1770 block "
+                    f"minimum, so LUFS can't be measured for it. Capture the "
+                    f"full section span or merge it with an adjacent section"
                 ),
             })
             continue

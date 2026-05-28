@@ -30,9 +30,11 @@ no spans and can't scope a window. Decision recorded here.
   `MixReport.per_section: list[SectionMetrics]` — per-surface loudness
   (master + stems + returns) scoped to each window, mirroring the
   top-level report shape. A section entirely outside the captured
-  transport window is recorded in `skipped_analyses` (kind
-  `section_windowed`) rather than emitted with empty metrics; no
-  sections declared → one teaching skip naming `create_section`.
+  transport window — or overlapping it by less than the 400 ms BS.1770
+  block minimum — is recorded in `skipped_analyses` (kind
+  `section_windowed`) rather than crashing `measure_loudness` or emitting
+  empty metrics; no sections declared → one teaching skip naming
+  `create_section`.
 - `master_overshoot` findings now tag their `db_reference` with the
   section the overshoot lands in (`"section:chorus1 (beat:...)"`) — the
   read-side tie between headline attribution and sectional structure.
@@ -47,11 +49,11 @@ no spans and can't scope a window. Decision recorded here.
 - Stale `ableton_analysis` action tips fixed: the "MVP DB has no schema
   for declared RT60 sends yet" line was stale since PR #99.
 
-Tests +17 (2168 → 2185): `test_section.py` (windowing geometry + edge
+Tests +18 (2168 → 2186): `test_section.py` (windowing geometry + edge
 clamping), `test_analyze.py` (per-section populated, loud>quiet, skip
-for out-of-capture section, overshoot section-tagging), `test_report.py`
-(SectionMetrics serialization), handler tests (DB sections → per_section,
-no-sections skip).
+for out-of-capture section, skip for sub-400 ms overlap, overshoot
+section-tagging), `test_report.py` (SectionMetrics serialization),
+handler tests (DB sections → per_section, no-sections skip).
 
 Backlog: section-windowed *loudness* shipped; per-section contribution
 attribution, section-scoped masking (the iZotope differentiator), and

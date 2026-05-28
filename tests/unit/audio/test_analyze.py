@@ -285,6 +285,34 @@ def test_analyze_mix_records_skip_for_section_outside_capture(tmp_path: Path):
     )
 
 
+def test_analyze_mix_skips_section_with_tiny_overlap(tmp_path: Path):
+    """A section overlapping the capture by less than the 400 ms BS.1770
+    block minimum is recorded as a skip — measuring it would raise and
+    discard the whole report."""
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+    # 8 beats over 2 s → 4 beats/s. A 0.1-beat window ≈ 25 ms, well under
+    # the 400 ms floor, but it does overlap the capture (covered=True).
+    sections = [
+        SectionWindow(name="full", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="sliver", start_beat=4.0, end_beat=4.1),
+    ]
+    report = analyze_mix(captures_dir, sections=sections)
+    assert [s.section_name for s in report.per_section] == ["full"]
+    assert any(
+        s.get("kind") == "section_windowed"
+        and "sliver" in s.get("reason", "")
+        and "ms" in s.get("reason", "")
+        for s in report.skipped_analyses
+    )
+
+
 def test_analyze_mix_tags_overshoot_finding_with_section(tmp_path: Path):
     """A master overshoot inside a declared section → the finding's
     db_reference names that section."""

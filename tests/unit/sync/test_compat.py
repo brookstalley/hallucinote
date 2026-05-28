@@ -631,6 +631,89 @@ def test_name_matches_matches_mcp_side():
         ), f"matcher drift on {(name, pattern, mode, cs)!r}"
 
 
+def test_resolve_query_matches_mcp_resolver_over_shared_fixture():
+    """The offline resolver (preset_query.resolve_query, over flattened cache
+    entries) must reach the SAME verdict as the push-time resolver
+    (hallucinote_mcp.handlers.device._resolve_preset_query, over a live browser
+    tree) for every query — single-match, 0-match, 2+-ambiguity, and
+    path_prefix hit/miss. They are hand-maintained mirrors across the
+    Remote-Script package boundary; this drives both over ONE shared fixture
+    (a fake browser tree + its flattened-inventory equivalent) and asserts
+    agreement, so drift in either resolver's ambiguity/prefix semantics fails
+    here. Complements the name_matches + walk-depth locks above.
+    """
+    import types
+
+    from hallucinote_mcp.handlers.device import _resolve_preset_query
+    from hallucinote.preset_query import resolve_query
+
+    def N(name, *, loadable=False, uri=None, children=()):
+        return types.SimpleNamespace(
+            name=name, uri=uri, is_loadable=loadable,
+            is_folder=not loadable, children=list(children),
+        )
+
+    browser = types.SimpleNamespace(
+        drums=N("Drums", children=[
+            N("Kit-Core 909", loadable=True, uri="q909"),
+            N("Kit-Core 808", loadable=True, uri="q808"),
+            N("Acoustic", children=[N("Brush Kit", loadable=True, uri="qbrush")]),
+        ]),
+        instruments=N("Instruments", children=[
+            N("Operator", loadable=True, uri="qop", children=[
+                N("Bass", children=[N("Sub", loadable=True, uri="qsub")]),
+            ]),
+            N("Wavetable", loadable=True, uri="qwt", children=[
+                N("Bass", children=[N("Sub", loadable=True, uri="qwtsub")]),
+            ]),
+        ]),
+    )
+
+    # Flatten the SAME tree the way the inventory walk does: recurse past
+    # loadables, full path rooted at the root KEY.
+    entries: list[dict] = []
+
+    def _flatten(node, path):
+        if node.is_loadable:
+            entries.append({
+                "root": path[0], "path": list(path), "name": node.name,
+                "uri": node.uri, "is_loadable": True,
+            })
+        for c in node.children:
+            _flatten(c, path + [c.name])
+
+    _flatten(browser.drums, ["drums"])
+    _flatten(browser.instruments, ["instruments"])
+
+    def _mcp(q):
+        try:
+            item, path = _resolve_preset_query(browser, q)
+            return ("ok", str(item.name), tuple(path))
+        except ValueError:
+            return ("error",)
+
+    def _offline(q):
+        try:
+            e = resolve_query(q, entries)
+            return ("ok", e["name"], tuple(e["path"]))
+        except ValueError:
+            return ("error",)
+
+    queries = [
+        {"root": "drums", "pattern": "909"},                       # single
+        {"root": "drums", "pattern": "Kit-Core"},                  # 2+ ambiguous
+        {"root": "drums", "pattern": "nonexistent-xyz"},           # 0 match
+        {"root": "drums", "pattern": "Brush"},                     # single, nested
+        {"root": "instruments", "pattern": "Sub"},                 # 2+ (Operator+Wavetable)
+        {"root": "instruments", "pattern": "Sub",
+         "path_prefix": ["Operator", "Bass"]},                     # single via prefix
+        {"root": "instruments", "pattern": "Sub",
+         "path_prefix": ["Meld"]},                                 # prefix missing
+    ]
+    for q in queries:
+        assert _mcp(q) == _offline(q), f"resolver disagreement on {q!r}"
+
+
 def test_browser_walk_depth_matches_mcp_side():
     """An offline inventory cache MUST be walked at least as deep as the MCP
     push-time resolver walks the live browser, or offline resolution can miss

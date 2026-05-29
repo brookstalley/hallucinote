@@ -232,29 +232,64 @@ If the target is in `mcp_configs.malformed`, stop.
 
 Write to `<config>.tmp`, then rename (`os.replace` / `mv` / `Move-Item -Force`). Don't write directly — a crash mid-write corrupts `~/.claude.json` and loses the user's project history.
 
-## Step 5 — Tell the user the Ableton click + hand off
+## Step 5 — Hand off (the MCP connection is the gotcha)
 
-Print verbatim:
+The hand-off differs depending on whether this was a **fresh install** or an
+**update**, and the update case has a trap that's easy to get wrong. Classify
+from the preflight report you already have:
 
-```
-hallucinote-mcp install complete!
+- **Update / reinstall** — `mcp_configs.containing_entry` already listed
+  `hallucinote-mcp` for the chosen scope (Step 4 left it unchanged) **and/or** a
+  Remote Script was already installed (`remote_script.candidates[*].installed ==
+  true`). The config didn't change; only the server **code** changed.
+- **Fresh install** — neither was true before this run (you wrote the
+  `.mcp.json` entry in Step 4; no prior Remote Script). Claude Code has never
+  loaded this server.
 
-One last step in Ableton Live:
-  1. Open Live.
-  2. Preferences → Link, Tempo & MIDI.
-  3. In any free "Control Surface" slot, select "Hallucinote".
-  4. Leave "Input" and "Output" as "None".
+> **Critical, update case:** if *you (the agent)* ran this skill through the
+> live `hallucinote-mcp` connection, you just replaced the code that connection
+> runs. **Your current bridge is now stale** — it holds the pre-update server in
+> memory and keeps behaving like the old version until the subprocess is
+> respawned. You cannot do this yourself; the user must reconnect. **Do not
+> report the install as working until they have.** The completion gate is a
+> `/mcp` reconnect, not a vibe.
 
-Then restart Claude Code in this project so it picks up the new MCP entry.
+Print the checklist for the matching case **as Markdown, NOT inside a code
+fence** — the checkboxes and strikethrough only render outside a fence. Mark
+each line:
 
-Once you're back in Claude Code, try one of these to get going:
-  • "load falling-walking"          — push the bundled example song into Live
-  • "start a new song"              — scaffold a fresh song from a prompt
-  • "/ableton-pull <slug> <id> everything"
-                                   — pull current Live state into the DB
+- something you (the agent) already did → `- [x] ~~**Me** — …~~` (checked + struck through)
+- something the user still must do → `- [ ] **You** — …` (unchecked)
 
-If something looks broken, /ableton-mcp-uninstall reverses every step.
-```
+Fill from what you actually did (don't claim a step you skipped) and interpolate
+real version strings from preflight.
+
+**Update / reinstall** — render as:
+
+- [x] ~~**Me** — Remote Script re-vendored in the User Library (old copy removed first)~~
+- [x] ~~**Me** — version handshake will match (server `<package.version>` == vendored, same)~~
+- [x] ~~**Me** — `.mcp.json` entry already present, unchanged~~
+- [ ] **You** — Reopen Ableton Live so it loads the refreshed Control Surface (the *Hallucinote* slot is almost certainly still assigned — just reopen; re-check Preferences only if not)
+- [ ] **You** — Run `/mcp` → `hallucinote-mcp` → reconnect *(required to finish)*
+
+Then, as plain prose: the reconnect is REQUIRED and only the user can do it —
+the Claude Code session that ran this install is still talking to the
+PRE-UPDATE server, and reconnecting respawns it on the new code (a full Claude
+Code restart also works, but `/mcp` reconnect is enough since the `.mcp.json`
+entry didn't change). If a version-mismatch shows up after reconnect, the user
+should fully quit Live and reopen — Live caches Control Surface modules at
+startup, so a stale module can linger.
+
+**Fresh install** — render as:
+
+- [x] ~~**Me** — Remote Script installed in the User Library~~
+- [x] ~~**Me** — `.mcp.json` entry written (`hallucinote-mcp`)~~
+- [ ] **You** — In Ableton Live: Preferences → Link, Tempo & MIDI → select *Hallucinote* in any free Control Surface slot (Input/Output = None)
+- [ ] **You** — Load the new server in Claude Code: run `/mcp` (or restart Claude Code) so it picks up the new `.mcp.json` entry
+
+Then point them at a first action — *"load falling-walking"* (push the bundled
+example song into Live) or *"start a new song"* (scaffold from a prompt) — and
+note that `/ableton-mcp-uninstall` reverses every step if something looks wrong.
 
 ## Edge cases
 

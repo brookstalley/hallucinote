@@ -40,6 +40,46 @@ This buys:
 
 ---
 
+## Authoring API — the helper surface
+
+Notes are **authored as code, never as data**. You write the smallest correct generator *expression* in `build.py`; the build expands it to notes and persists through mutators (`M.replace_clip_notes` → one `CLIP_NOTES_REPLACED` event → one batched `clip.set_notes()` on the wire). The note array never leaves the process — it doesn't enter the agent's context, and `build.py` is the song's single authored home. This is the surface the `/compose-part` loop authors against (author → `build.py` → scoped `push-notes`); see that skill for the loop.
+
+Generators are **pure functions** under `hallucinote.generators.*` — they take parameters and return notes, never touch the DB. Most take `feel=` (microtiming, see below) and `tags` (semantic labels for later bulk ops). **Full signatures live in the source** (`src/hallucinote/generators/`); read it before calling. This index is the discovery entry point — *what exists and where to import it*, not the parameter list.
+
+```python
+from hallucinote.generators import drums, bass, harmony, primitives
+```
+
+**`drums`** (`src/hallucinote/generators/drums.py`)
+- `drums.trip_hop_drum_pattern` — Standard verse-style trip-hop drums for `bars` bars.
+- `drums.kick_stumble` — Trip-hop kick: downbeat + alternating late-2.75 / early-2 kick.
+- `drums.lazy_snare` — Laid-back 2 & 4. Tagged "snare" + "backbeat".
+- `drums.trip_hop_hats` — 8th-note closed hats with deep ghost on the off-beats.
+- `drums.tresillo_hats` — Tresillo cell on closed hats (chorus / calypso feel).
+- `drums.bossa_shaker` — 16th-note shaker, accent every 4th 16th; bars fade in via velocity.
+- `drums.ghost_kicks` — Sparse low-velocity kicks; garnish over `kick_stumble`.
+- `drums.ghost_snares` — Sparse low-velocity snares for texture.
+- `drums.open_hat_lifts` — Open-hat lifts as drummer flourishes (mini-fill marks).
+
+**`bass`** (`src/hallucinote/generators/bass.py`)
+- `bass.tresillo_bass` — Plain tresillo on the chord root.
+- `bass.walking_bass_to_next_chord` — Walk through pitches across bars at beats [0, 1.5, 2, 3.5].
+- `bass.chord_tone_embellishment` — One bar of root + 3rd + octave + walk note.
+
+**`harmony`** (`src/hallucinote/generators/harmony.py`)
+- `harmony.chord_pad` — Sustained chord; each pitch one long note.
+- `harmony.chord_stab` — Short rhythmic chord hit.
+- `harmony.tresillo_pluck` — Calypso-style pluck cycling a voicing on tresillo hits.
+- `harmony.sparse_bell_top` — Bell hits on the chord top: one long arrival + one mid answer.
+
+**`primitives`** (`src/hallucinote/generators/primitives.py`) — building blocks shared across the above
+- `primitives.chord_tones` — Build a chord from root + interval list (semitones).
+- `primitives.apply_feel` — Apply a within-bar feel shift (generators call this internally).
+
+For a shape no helper covers, author the note list directly in `build.py` (still as code, still through `M.replace_clip_notes`) — never inline a note array into an MCP tool call. The named patterns the retired `/pattern-compose` skill offered (tresillo / bossa / trip-hop / …) all live here as importable helpers.
+
+---
+
 ## Sound design is authorship
 
 A finished song has the sound it's supposed to have *as part of being finished*, not pending in a "post-push mix pass." Device chains (the instrument plus its post-instrument processing — saturator, EQ, glue compressor — plus the sends that put it in the right space) ship in `captured_session.json` alongside the instrument pick. `/song-pick-instruments` picks chains, not bare devices.

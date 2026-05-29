@@ -17,6 +17,14 @@ Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`ac
 
 The agent-facing surfaces (action descriptions, skill markdown, conventions guides) are read at every session start. Stale recommendations there are higher-impact than test-fixture drift, because they shape what the next agent tries first.
 
+## When a doc or duplicated contract IS the deliverable, lock it with a drift/parity test
+
+**A discoverable doc index or a value duplicated across surfaces only stays true if a test exercises it. When the deliverable IS documentation or a mirrored contract, the test is its teeth: a drift guard (doc ↔ source, both directions) or a parity lock (every duplicate emits the identical thing).**
+
+The "Pattern sweeps are tree-wide" learning names the disease (agent-facing surfaces aren't exercised by tests, so drift ships). This is the structural cure for the case where the surface is itself the thing being built. Two instances in the bulk-note-authoring work: B2's `/compose-part` "Authoring API" doc index is the discoverable surface, so a bidirectional test asserts every documented `module.func` is importable AND every public generator fn is documented (`test_authoring_api_surface.py`); B4's inline-notes warning is emitted by two MCP actions, so a parity lock asserts both emit the identical text at the same threshold (`test_actions_clip.py`). Both turn "I hope this stays in sync" into a gate.
+
+**How to apply.** (1) If you wrote a doc that catalogs a code surface, write a test that parses the doc and resolves each reference — and fails when the code grows a member the doc doesn't list (the reverse direction catches *undiscoverable* additions, which a one-directional test misses). (2) If a constant/message/shape is duplicated across N call sites, route them through one shared helper and lock parity with a test that compares all N outputs — and leave a comment at the helper telling the next author "new call site? route it here and add it to the parity test." (3) Prefer the threshold/source-of-truth as a single named constant the test imports, so the doc can reference it qualitatively (~32) without brittle numeric coupling.
+
 ## DSP with a detection front-end: calibrate against real cases, don't assert from intuition
 
 **For any analyzer whose input is *detected* (onset detection, pitch tracking, beat tracking) rather than given, run real/representative cases through the actual pipeline and read the numbers BEFORE writing test assertions. The detection stage has latency and failure modes that abstract reasoning misses, and a fixture chosen for convenience can hide them.**

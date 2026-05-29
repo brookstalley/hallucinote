@@ -17,6 +17,14 @@ Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`ac
 
 The agent-facing surfaces (action descriptions, skill markdown, conventions guides) are read at every session start. Stale recommendations there are higher-impact than test-fixture drift, because they shape what the next agent tries first.
 
+## DB-UUID → capture-surface-ID lifts must key by surface ID, and be tested with distinct IDs
+
+**When an analysis handler lifts DB rows into something the capture/analysis layer consumes, key the result by the capture SURFACE ID (`track:N` via `track_id_for_surface(track_index)`), never the DB UUID (`row['id']`). Test with UUIDs deliberately distinct from the index so a wrong-key no-op fails loudly.**
+
+The audio captures are keyed by structurally-stable surface IDs (`track:N`/`return:N`); the DB is keyed by UUID. `analyze_mix` and `apply_stem_gains` look up by the capture key. C3's `_collect_stem_gains` keyed the gains dict by `row['id']` (UUID), so `apply_stem_gains` never matched → the F1 level correction was a **silent no-op on every real song**, and CI stayed green because the unit tests used self-consistent IDs on both sides and the integration test relied on the empty-map no-op path. The cumulative Critic caught it; the sibling `_collect_declared_sends` already did the lift correctly via `track_id_for_surface`. The regression test seeds UUIDs ≠ `track_index` and asserts `track:N` keys — it would have failed against the old keying.
+
+**How to apply.** (1) Any `_collect_*` helper feeding the capture/analysis boundary lifts via `track_id_for_surface(kind, index)`. (2) Its test uses UUIDs distinct from indices so a no-op keying can't pass. (3) A "validation" that runs the real pipeline but prints the *gains dict* (UUID-keyed) isn't proof the gains *applied* — assert the corrected output differs from the uncorrected one.
+
 ## Sync planner discipline
 
 **When emitting a `ToolCall` for an MCP tool that has no `ALIASES_TODAY` entry, verify the actual MCP signature against the planner's args before considering the planner complete.**

@@ -4,6 +4,14 @@ Covers ``hallucinote_mcp.provenance.auto_request`` — the context manager
 that wraps server-side, DB-writing handler calls in an
 ``M.request(kind='mutate', ...)`` so every emitted event ties back to the
 MCP call that produced it.
+
+The tool name + params below are representative fixtures: ``auto_request``
+records whatever it is handed and does not validate against the registry.
+No production action currently sets ``db_writes=True`` (the annotation
+surface that first exercised this path was retired); the mechanism stays
+wired in the dispatcher for the next DB-writing tool — ``ableton_analysis``
+is the documented candidate (it flips on ``db_writes`` when it emits
+``AUDIO_ANALYZED``).
 """
 from __future__ import annotations
 
@@ -40,7 +48,7 @@ def _route_resolver(song_db, monkeypatch):
 def test_auto_request_yields_request_id_when_song_exists(song_db):
     _db, song_id, slug = song_db
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params={"song_slug": slug, "kind": "intent", "body": "foo"},
     ) as rid:
@@ -55,7 +63,7 @@ def test_auto_request_yields_request_id_when_song_exists(song_db):
         assert row["actor"] == "llm"
         assert row["song_id"] == song_id
         assert row["outcome"] == "ok"
-        assert row["intent"] == "ableton_annotation('add')"
+        assert row["intent"] == "ableton_analysis('add')"
     finally:
         conn.close()
 
@@ -69,7 +77,7 @@ def test_auto_request_records_failed_outcome_on_exception(song_db):
 
     with pytest.raises(_BoomError):
         with provenance.auto_request(
-            tool="ableton_annotation",
+            tool="ableton_analysis",
             action_name="add",
             params={"song_slug": slug, "kind": "intent", "body": "foo"},
         ) as rid:
@@ -88,7 +96,7 @@ def test_auto_request_records_failed_outcome_on_exception(song_db):
 
 def test_auto_request_yields_none_when_song_slug_missing():
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params={"kind": "intent", "body": "foo"},
     ) as rid:
@@ -102,7 +110,7 @@ def test_auto_request_yields_none_when_db_missing(tmp_path, monkeypatch):
         lambda _slug: tmp_path / "definitely-not-here.db",
     )
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params={"song_slug": "missing", "kind": "intent", "body": "foo"},
     ) as rid:
@@ -115,7 +123,7 @@ def test_auto_request_yields_none_when_resolver_raises(monkeypatch):
 
     monkeypatch.setattr(provenance, "_resolve_song_db_path", _explode)
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params={"song_slug": "fake-slug", "kind": "intent", "body": "foo"},
     ) as rid:
@@ -124,7 +132,7 @@ def test_auto_request_yields_none_when_resolver_raises(monkeypatch):
 
 def test_auto_request_yields_none_when_slug_not_a_string():
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params={"song_slug": 42, "kind": "intent", "body": "foo"},
     ) as rid:
@@ -135,7 +143,7 @@ def test_auto_request_records_payload_and_metadata(song_db):
     _db, _song_id, slug = song_db
     params = {"song_slug": slug, "kind": "intent", "body": "weight getting worse"}
     with provenance.auto_request(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         action_name="add",
         params=params,
     ) as rid:

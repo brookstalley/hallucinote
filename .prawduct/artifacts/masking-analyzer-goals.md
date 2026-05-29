@@ -205,8 +205,10 @@ material (AC/DC, Beatles) the tool's *correct* behavior is to stay nearly silent
 The boundary cases tell us the required intent inputs are richer than "track
 role": we need **blend-group** membership, a per-element **submerged/textural**
 flag, a section/song **density-vs-clarity** intent, and a **decline detector**.
-These come from the composer's declared intent (DB roles + `ableton_annotation`)
-— which is precisely the score-awareness no meter has.
+These come from the composer's declared intent — authored in the git-tracked
+markdown corpus (mix-intent tags + `songs/<slug>/annotations/`, surfaced via
+`/song-context`; see `intent-architecture.md`) — which is precisely the
+score-awareness no meter has.
 
 ## The one-line thesis
 
@@ -222,8 +224,9 @@ not the product. It feeds an **intent layer** that the spec must now add:
 
 1. **Inputs gain intent.** Beyond stems + sections, the analyzer needs each
    track's **role** (lead/pad/rhythm/foundation/fills) and the **focal element
-   per section** — read from DB track roles + composer annotations
-   (`ableton_annotation`). Masked-fraction alone is necessary, not sufficient.
+   per section** — read from the markdown intent corpus (mix-intent tags +
+   `songs/<slug>/annotations/`; see `intent-architecture.md`). Masked-fraction
+   alone is necessary, not sufficient.
 2. **Output is a `MaskingFinding`, not a raw `MaskingPair`** — carrying the
    musical region label, the role-relationship, an intent-graded severity, and a
    ranked fix list (arrangement-first). The raw masked-fraction stays as

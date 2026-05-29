@@ -1,4 +1,4 @@
-"""FastMCP server — 13 unified tools + 12 resources (11 static + 1 templated) as MCP entry points.
+"""FastMCP server — 12 unified tools + 11 resources (all static) as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -78,7 +78,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 13 unified tools + 12 resources (11 static + 1 per-song template) for Ableton Live,
+hallucinote-mcp — 12 unified tools + 11 resources (all static) for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -92,7 +92,6 @@ Tools (call action='help' on any tool for its action menu):
   ableton_arrangement   arrangement layout + cue points (beats not bars)
   ableton_scene         session-view scenes + per-scene tempo/signature
   ableton_browser       instruments, effects, plugins
-  ableton_annotation    composer-intent annotations on a song's DB (W8-C surface)
   ableton_render        audio capture: HallucinoteAnalyzer auto-load + WAV capture pass
   ableton_analysis      MixReport from a captures dir (loudness, master attribution, reverb verification)
 
@@ -118,7 +117,7 @@ Hard constraints:
 
 
 def create_server(name: str = "hallucinote-mcp") -> FastMCP:
-    """Construct the FastMCP server with all 13 tools registered.
+    """Construct the FastMCP server with all 12 tools registered.
 
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
@@ -154,7 +153,6 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
-    _register_tool(mcp, "ableton_annotation", "Composer-intent annotations (W8-C): song/time/track-scoped composing notes attached to a song's DB. Distinct from the markdown decisions/annotations corpus surfaced via /song-context.")
     _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return + master (idempotent); render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
     _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, and declared dry->wet reverb verification (Wiener-deconvolved IR + RT60 vs intent). Writes a MixReport JSON to songs/<slug>/analysis/.")
 

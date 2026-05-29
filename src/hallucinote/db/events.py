@@ -86,11 +86,6 @@ ABLETON_LINK_SET = "ableton_link_set"
 # ableton_index no longer matches a Live entity in the fresh probe.
 ABLETON_LINK_REMOVED = "ableton_link_removed"
 
-# W23-B: structured song annotations (composer intent, stylistic notes)
-ANNOTATION_ADDED = "annotation_added"
-ANNOTATION_UPDATED = "annotation_updated"
-ANNOTATION_REMOVED = "annotation_removed"
-
 # Valid actor values for events.actor / requests.actor.
 # 'build' marks rows created/updated by a song's build.py running under
 # M.build_session (W12-A). The build-session uses this actor to discriminate

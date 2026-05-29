@@ -6,10 +6,9 @@ the song's DB-recorded intent and writes a ``MixReport`` JSON at
 ``songs/<slug>/analysis/<ts>.json``.
 
 Both actions are server-side — analysis touches disk + the song DB
-only, never Live. The handler shape mirrors
-``handlers/ableton_annotation.py`` (DB resolution via
-``hallucinote.db.connection.resolve_db_path``; teaching error when the
-song dir or DB row is missing).
+only, never Live. The handler follows the standard server-side DB
+shape: DB resolution via ``hallucinote.db.connection.resolve_db_path``
+and a teaching error when the song dir or DB row is missing.
 
 Why not declare ``db_writes=True``? The MVP doesn't emit events — the
 MixReport is a pure read-side artifact. When ``AUDIO_ANALYZED`` becomes
@@ -27,9 +26,9 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 
 # Guarded import: the `hallucinote` package is NOT vendored into Live's
 # User Library, so a module-level import would crash the Remote Script
-# load. Same pattern as `handlers/ableton_annotation.py:62-73` — the
-# import is only exercised on the MCP server side (where this handler
-# actually runs, gated by runs_server_side=True).
+# load. The standard server-side-handler pattern — the import is only
+# exercised on the MCP server side (where this handler actually runs,
+# gated by runs_server_side=True).
 try:
     from hallucinote.audio import (
         DeclaredReverbSend,

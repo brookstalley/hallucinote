@@ -15,7 +15,7 @@ Two surfaces:
     contents for a song (and its path) without re-running the analysis.
 
 Both are ``runs_server_side=True`` — analysis touches disk + the song
-DB only, never the Live API. Mirrors ``ableton_annotation``'s shape.
+DB only, never the Live API.
 """
 from __future__ import annotations
 

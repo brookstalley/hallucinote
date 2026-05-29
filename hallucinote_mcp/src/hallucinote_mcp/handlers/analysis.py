@@ -327,8 +327,8 @@ def analyze_handler(
         # Masking is per-section evidence; enable it whenever the song declares
         # sections (the handler already gated section work on that). It is
         # neutral measurement — the holistic interpreter grades it vs intent.
-        # NOTE (F1): captured stems are pre-fader, so real-song masking is
-        # provisional until level reconstruction (build-plan C3) lands.
+        # F1 (pre-fader capture) is handled: stem_gains below reconstructs
+        # mix-level before the masking pass.
         analyze_masking=bool(sections),
         # Per-part onset-vs-grid feel (push/drag/swing) — the read-side
         # counterpart to the `feel` generator. Per-section like masking; gated

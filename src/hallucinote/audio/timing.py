@@ -55,6 +55,13 @@ from typing import Sequence
 
 import numpy as np
 
+from .onsets import (
+    DEFAULT_HOP as _DEFAULT_HOP,
+    DEFAULT_MIN_ONSET_SEPARATION_BEATS as _DEFAULT_MIN_ONSET_SEPARATION_BEATS,
+    dedup_onsets as _dedup_onsets,
+    detect_onset_samples as _detect_onset_samples,
+    to_mono as _to_mono,
+)
 from .report import PartTiming
 
 # Grid resolution for drift snapping (beats). 0.25 = 16th note in 4/4 — the
@@ -79,15 +86,9 @@ _DEFAULT_MIN_OFFBEAT_ONSETS = 3
 # ~0.08 beat ≈ 40 ms @ 120 bpm: well past tight, into genuinely-loose territory.
 _STDEV_CONFIDENCE_SCALE_BEATS = 0.08
 
-# Onsets closer than this are merged (one musical event → one onset). A hair
-# under a 16th's eighth so it kills double-triggers (a kick's pitch sweep, a
-# flam) without merging real adjacent subdivisions.
-_DEFAULT_MIN_ONSET_SEPARATION_BEATS = 0.06
-
-# librosa STFT hop for the onset envelope. 128 @ 48k ≈ 2.7 ms frames; with
-# backtrack this sets onset-time resolution, which is load-bearing for timing
-# (a coarse hop quantizes onsets and corrupts the drift/swing measurement).
-_DEFAULT_HOP = 128
+# The shared onset front-end (`_detect_onset_samples`, `_dedup_onsets`,
+# `_to_mono`) and its hop / separation constants live in `onsets.py` so the
+# timing and cross-rhythm analyzers measure from byte-identical onsets.
 
 
 @dataclass(frozen=True)
@@ -220,60 +221,6 @@ def _swing_ratio(onset_beats: np.ndarray, min_offbeat_onsets: int) -> float | No
     # a musically sane band so a stray near-downbeat onset can't explode it.
     p = min(max(p, 0.05), 0.95)
     return p / (1.0 - p)
-
-
-def _dedup_onsets(onset_beats: np.ndarray, min_separation_beats: float) -> np.ndarray:
-    """Drop onsets within ``min_separation_beats`` of the previous kept one.
-
-    ``onset_beats`` arrives sorted ascending (librosa returns onsets in time
-    order). Greedy left-to-right keep: the earliest onset of each tight cluster
-    survives, later near-duplicates are dropped. One musical event → one onset.
-    """
-    if onset_beats.size <= 1 or min_separation_beats <= 0:
-        return onset_beats
-    kept = [float(onset_beats[0])]
-    for b in onset_beats[1:]:
-        if float(b) - kept[-1] >= min_separation_beats:
-            kept.append(float(b))
-    return np.asarray(kept, dtype=np.float64)
-
-
-def _detect_onset_samples(
-    mono: np.ndarray, sample_rate: int, hop_length: int,
-) -> np.ndarray:
-    """Onset sample indices via librosa spectral-flux + backtracked peak pick.
-
-    Backtracking snaps each detected peak back to the preceding local energy
-    minimum, giving sample-accurate onset *times* (not hop-quantized frame
-    centres) — load-bearing for timing measurement. Returns an empty array for
-    audio too short to frame.
-    """
-    import librosa
-
-    if mono.shape[0] < hop_length * 2:
-        return np.asarray([], dtype=np.int64)
-    onset_env = librosa.onset.onset_strength(
-        y=mono.astype(np.float32), sr=sample_rate, hop_length=hop_length,
-    )
-    if not np.any(onset_env > 0.0):
-        return np.asarray([], dtype=np.int64)
-    return librosa.onset.onset_detect(
-        onset_envelope=onset_env,
-        sr=sample_rate,
-        hop_length=hop_length,
-        backtrack=True,
-        units="samples",
-    )
-
-
-# --------------------------------------------------------------------------- #
-# helpers
-# --------------------------------------------------------------------------- #
-
-def _to_mono(audio: np.ndarray) -> np.ndarray:
-    if audio.ndim == 2:
-        return 0.5 * (audio[:, 0] + audio[:, 1])
-    return audio
 
 
 __all__ = [

@@ -57,6 +57,31 @@ the pip package and the vendored Remote Script disagree. Run
 Surface modules at startup; `/mcp` alone is not enough). `hallucinote-mcp
 preflight` reports both versions without restarting.
 
+## Render capture errors (recorder won't arm)
+
+`ableton_render` can return **`render: the HallucinoteAnalyzer received 0
+frames after transport reached beat N`**. The transport played but the M4L
+analyzer's `sfrecord~` never captured, so no WAVs were written. This is almost
+always a stale Control-Surface/server subprocess or an **open analyzer M4L
+device-editor window** — either one steals the `udpreceive` port the analyzer
+listens on for its OSC path/arm messages.
+
+**Preconditions — set these up BEFORE a render so the fix is never needed:**
+
+1. **No analyzer device-editor window open in Live.** If you've been editing
+   the HallucinoteAnalyzer `.amxd`, close its editor — the patcher editor and
+   the Live runtime fight over `udpreceive`.
+2. **A fresh server subprocess.** After any pip/Remote-Script change, run
+   `/mcp` to respawn the server. (Live caches Control Surface modules at
+   startup, so Live-side changes additionally need a full quit + reopen — same
+   as the version-handshake fix above.)
+
+**Recovery when the 0-frame error fires:** (1) quit and reopen Live, (2) close
+any open HallucinoteAnalyzer editor window, (3) run `/mcp` to respawn the
+server, then retry. The render **fails fast** (seconds, once transport passes
+the checkpoint) rather than blocking the full render window waiting for frames
+that never arrive — so a retry is cheap.
+
 ## Gap-blocked actions
 
 See `ableton://guides/gaps` for the full list of API gaps and their

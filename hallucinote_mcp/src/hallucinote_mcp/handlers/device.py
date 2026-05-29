@@ -342,9 +342,10 @@ def _resolve_preset_query(
     mode = query.get("mode", "substring")
     case_sensitive = bool(query.get("case_sensitive", False))
     path_prefix = query.get("path_prefix")
-    if mode not in {"substring", "glob", "regex"}:
+    if mode not in {"substring", "exact", "glob", "regex"}:
         raise ValueError(
-            f"preset_query.mode={mode!r}; expected 'substring', 'glob', or 'regex'"
+            f"preset_query.mode={mode!r}; expected 'substring', 'exact', "
+            "'glob', or 'regex'"
         )
 
     root_node = getattr(browser, root, None)
@@ -823,6 +824,28 @@ def load_handler(
     result.update(_parent_address(parent_kind, parent_idx))
     if preset_uri is not None:
         result["preset_uri"] = preset_uri
+
+    # Warn on a rack kind/class mismatch. When `kind` names one of Live's four
+    # RACK display names it equals the loaded device's class_display_name on a
+    # correct load, so a divergence means Live resolved a *different* class —
+    # the classic "a user preset named 'Drum Rack' in the instruments root
+    # shadowed the canonical empty Drum Rack" trap (W7-0), which otherwise only
+    # surfaces later when a Drum-Rack-only op (pad_info) fails. Surfacing it here
+    # saves the delete+reload round-trip. Scoped to rack kinds because for
+    # built-in classes and preset_query/uri loads `kind` may legitimately differ
+    # from the resolved class — only rack display names are a reliable identity.
+    if (
+        device_names.browser_root_for_rack_kind(kind) is not None
+        and loaded_class_name
+        and loaded_class_name != kind
+    ):
+        result["warning"] = (
+            f"requested kind={kind!r} but Live loaded a {loaded_class_name!r} — "
+            f"a user-saved preset named like a built-in rack can shadow it in "
+            f"the browser walk. If you need an actual {kind}, delete this device "
+            f"and load by preset_uri (from ableton_browser(action='at_path')) "
+            f"for an unambiguous resolution."
+        )
     return result
 
 

@@ -335,6 +335,12 @@ def analyze_handler(
         # on declared sections. Level-blind (gain doesn't move onsets), so it
         # needs no stem_gains. Neutral measurement — the interpreter grades it.
         analyze_timing=bool(sections),
+        # Per-part cross-rhythm / subdivision naming (3:2, quintuplets, ...) —
+        # names what grid a part is on when it fights the straight grid timing
+        # measures against (the question C7 leaves open). Per-section, gated on
+        # declared sections; level-blind. Composes with timing: the timing
+        # pass's swing read feeds cross-rhythm's swing-deference internally.
+        analyze_cross_rhythm=bool(sections),
         # Mix-level reconstruction (F1): scale each pre-fader stem by its
         # static fader gain so masking sees mix balance, not source level.
         # Fader curve is Live-12-calibrated (see audio/levels.py).

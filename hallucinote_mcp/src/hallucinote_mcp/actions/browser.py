@@ -143,11 +143,13 @@ register(
             ),
             ParamSpec(
                 name="mode", type="str", required=False,
-                enum=("substring", "glob", "regex"),
+                enum=("substring", "exact", "glob", "regex"),
                 description=(
                     "Match mode. 'substring' (default): in-string match. "
-                    "'glob': fnmatch syntax (* ? [abc]). 'regex': full "
-                    "Python re. All modes are case-insensitive unless "
+                    "'exact': whole-name equality (anchored — 'Saturated "
+                    "Bass' won't match 'Basic Saturated Bass'). 'glob': "
+                    "fnmatch syntax (* ? [abc]). 'regex': full Python re. "
+                    "All modes are case-insensitive unless "
                     "case_sensitive=true is passed."
                 ),
             ),

@@ -283,3 +283,61 @@ def test_connection_loss_aborts_and_records_partial_fingerprints(
     state = json.loads((state_dir / push_notes.NOTES_PUSH_STATE).read_text())
     assert linked_song["clip_a"] in state["fingerprints"]
     assert linked_song["clip_b"] not in state["fingerprints"]
+
+
+# ---------------------------------------------------------------------------
+# B1b — clip-prune planner (pure)
+# ---------------------------------------------------------------------------
+
+from hallucinote.sync import push  # noqa: E402
+
+
+def test_prune_planner_flags_orphan_keeps_db_backed():
+    plan = push.plan_clip_prune([{
+        "track_index": 1, "track_name": "Drums",
+        "db_slots": {1},
+        "live_clips": [{"clip_index": 1, "name": "keep"},
+                       {"clip_index": 2, "name": "orphan"}],
+    }])
+    assert [(t.track_index, t.clip_index, t.name) for t in plan.prunable] == [(1, 2, "orphan")]
+    assert plan.refusals == []
+
+
+def test_prune_planner_never_prunes_db_backed_slot():
+    plan = push.plan_clip_prune([{
+        "track_index": 1, "track_name": "Bass", "db_slots": {1, 2, 3},
+        "live_clips": [{"clip_index": 1, "name": "a"}, {"clip_index": 2, "name": "b"}],
+    }])
+    assert plan.prunable == []
+
+
+def test_prune_planner_refuses_whole_track_orphan():
+    plan = push.plan_clip_prune([{
+        "track_index": 4, "track_name": "Stray", "db_slots": None,
+        "live_clips": [{"clip_index": 1, "name": "x"}],
+    }])
+    assert plan.prunable == []
+    assert len(plan.refusals) == 1
+    assert plan.refusals[0]["kind"] == "no_db_track_linked"
+    assert plan.refusals[0]["track_index"] == 4
+
+
+def test_prune_planner_unlinked_empty_track_is_silent():
+    plan = push.plan_clip_prune([{
+        "track_index": 4, "track_name": "Empty", "db_slots": None, "live_clips": [],
+    }])
+    assert plan.prunable == []
+    assert plan.refusals == []
+
+
+def test_prune_planner_to_dict_shape():
+    plan = push.plan_clip_prune([{
+        "track_index": 1, "track_name": "T", "db_slots": set(),
+        "live_clips": [{"clip_index": 5, "name": "z"}],
+    }])
+    # db_slots is an empty set (linked track, zero DB clips) -> every live clip
+    # is an orphan and prunable (distinct from db_slots=None / unlinked).
+    d = plan.to_dict()
+    assert d["prunable"] == [{"track_index": 1, "track_name": "T",
+                              "clip_index": 5, "name": "z"}]
+    assert d["refusals"] == []

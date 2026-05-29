@@ -166,6 +166,38 @@ def _probe_live_devices_via_mcp(
     return by_parent
 
 
+def _probe_live_session_clips_via_mcp(
+    *,
+    live_tracks: list[dict],
+    send_fn=None,
+) -> dict[int, list[dict]]:
+    """Probe ``ableton_clip(action='list', location='session')`` per Live track.
+
+    Returns a dict keyed by ``track_index`` with the POPULATED session clips
+    (``{clip_index, name, ...}`` — empty slots dropped) for clip-prune (B1b) to
+    reconcile against the DB. A per-track probe failure falls back to "no clips
+    known" for that track (it simply won't surface orphans there) rather than
+    aborting the whole prune.
+    """
+    if send_fn is None:
+        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+        send_fn = _client.send
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    by_track: dict[int, list[dict]] = {}
+    for t in live_tracks:
+        idx = t["track_index"]
+        resp = send_fn(Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": idx, "location": "session"},
+        ))
+        if getattr(resp, "ok", False):
+            payload = getattr(resp, "result", None) or {}
+            clips = payload.get("clips") or []
+            by_track[idx] = [c for c in clips if not c.get("empty")]
+    return by_track
+
+
 def _resolve_db_path(args: argparse.Namespace) -> Path:
     """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
 
@@ -590,6 +622,85 @@ def _cmd_push_notes(args: argparse.Namespace) -> int:
     return push_execute.EXIT_OK
 
 
+def _cmd_prune(args: argparse.Namespace) -> int:
+    """B1b: opt-in structural deletion of orphan Live session clips.
+
+    Dry-run by DEFAULT — lists Live clips whose slot has no matching DB clip on
+    the linked track, without deleting. Pass ``--apply`` to actually delete
+    them via ``ableton_clip(action='delete', location='session')`` (session
+    deletes clear the slot without shifting indices, so order is irrelevant).
+
+    NEVER deletes a DB-backed clip, and refuses (per-track) to gut a Live track
+    that no DB track is linked to — that's a track-level concern for
+    ``cleanup-default-scaffold`` or explicit removal. Scope is session clips,
+    matching the scoped-push compose loop; arrangement prune is out of scope.
+    """
+    conn = connect(_resolve_db_path(args))
+    song_id = _resolve_song_id(conn, args.session_id)
+    send_fn = _resolve_send_fn()
+
+    live_tracks, _ = _probe_live_via_mcp(send_fn=send_fn)
+    clips_by_track = _probe_live_session_clips_via_mcp(
+        live_tracks=live_tracks, send_fn=send_fn,
+    )
+
+    tracks_input: list[dict[str, Any]] = []
+    for lt in live_tracks:
+        ti = lt["track_index"]
+        db_track_id = Q.get_db_id_by_ableton_index(
+            conn, session_id=args.session_id, db_kind="track", ableton_index=ti,
+        )
+        db_slots = None
+        if db_track_id is not None:
+            db_slots = {c["slot"] for c in Q.get_clips_for_track(conn, db_track_id)}
+        tracks_input.append({
+            "track_index": ti,
+            "track_name": lt.get("name", ""),
+            "db_slots": db_slots,
+            "live_clips": clips_by_track.get(ti, []),
+        })
+
+    plan = push.plan_clip_prune(tracks_input)
+
+    out: dict[str, Any] = {
+        "dry_run": not args.apply,
+        "session_id": args.session_id,
+        "song_id": song_id,
+        **plan.to_dict(),
+    }
+
+    if not args.apply:
+        out["note"] = (
+            f"dry-run: {len(plan.prunable)} clip(s) would be deleted. "
+            "Pass --apply to delete them."
+        )
+        json.dump(out, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+    deleted: list[dict[str, Any]] = []
+    for tgt in plan.prunable:
+        resp = send_fn(Request(
+            tool="ableton_clip", action="delete",
+            params={"track_index": tgt.track_index, "location": "session",
+                    "clip_index": tgt.clip_index},
+        ))
+        if not getattr(resp, "ok", False):
+            sys.stderr.write(
+                f"push_cli prune: delete failed at track_index={tgt.track_index} "
+                f"clip_index={tgt.clip_index} ({tgt.name!r}) — "
+                f"{getattr(resp, 'error', 'unknown error')}\n"
+            )
+            return 2
+        deleted.append({"track_index": tgt.track_index, "clip_index": tgt.clip_index,
+                        "name": tgt.name})
+    out["deleted"] = deleted
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
     """R-1.2: single-command cleanup of Live's brand-new-set defaults.
 
@@ -880,6 +991,20 @@ def main(argv: list[str] | None = None) -> int:
     p_pn.add_argument("--reason", default=None,
                       help="optional reason annotation for emitted events")
     p_pn.set_defaults(func=_cmd_push_notes)
+
+    p_prune = sub.add_parser(
+        "prune",
+        help="B1b: opt-in deletion of orphan Live session clips (in Live, not "
+             "in the DB). Dry-run by default; --apply to delete.",
+    )
+    p_prune.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_prune)
+    p_prune.add_argument("--apply", action="store_true",
+                         help="actually delete the listed orphan clips "
+                              "(default: dry-run — list only)")
+    p_prune.add_argument("--reason", default=None,
+                         help="optional reason annotation")
+    p_prune.set_defaults(func=_cmd_prune)
 
     p_cc = sub.add_parser(
         "check-coherence",

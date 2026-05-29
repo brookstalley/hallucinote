@@ -50,10 +50,12 @@ def test_parse_leading_number_non_numeric(text: str) -> None:
         ("inf", float("inf")),
         ("+inf dB", float("inf")),
         ("-INF dB", float("-inf")),
+        ("inf : 1", float("inf")),  # Ratio max — leading inf beats trailing "1"
     ],
 )
 def test_parse_leading_number_infinity(text: str, expected: float) -> None:
-    # Live renders an unbounded dB endpoint as "-inf dB"; parse it, don't reject.
+    # Live renders unbounded endpoints with inf ("-inf dB", "inf : 1"); parse the
+    # LEFTMOST token so a trailing number doesn't shadow a leading inf.
     assert parse_leading_number(text) == expected
 
 
@@ -79,6 +81,24 @@ def ratio_display(raw: float) -> str:
 def output_db(raw: float) -> str:
     """Value already in dB (min -36, max 36); identity display."""
     return f"{raw:.2f} dB"
+
+
+def ratio_display_inf_max(raw: float) -> str:
+    """Faithful Compressor Ratio: 'N : 1' with 'inf : 1' at the maximum — the
+    leading N is the meaningful number AND there's a trailing '1'. Live's real
+    shape; the synthetic `ratio_display` never hit inf, hiding the parse bug the
+    live test caught."""
+    if raw >= 1.0:
+        return "inf : 1"
+    return f"{1.0 / (1.0 - raw):.2f} : 1"
+
+
+def freq_hz_khz(raw: float) -> str:
+    """Frequency that scales Hz -> kHz across the range (real EQ-freq shape).
+    The leading number is a non-monotonic proxy across the unit boundary, so
+    value_display must refuse rather than resolve to the wrong magnitude."""
+    hz = 20.0 * (1100.0 ** raw)  # 20 Hz .. 22 kHz (distinct endpoint numbers)
+    return f"{hz / 1000.0:.2f} kHz" if hz >= 1000.0 else f"{hz:.1f} Hz"
 
 
 def threshold_db_inf_floor(raw: float) -> str:
@@ -108,6 +128,17 @@ def test_threshold_to_minus_18_db() -> None:
     assert threshold_db(raw) == "-18.00 dB"
     # -18 dB on the -70..0 curve is at raw = (-18+70)/70.
     assert raw == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-4)
+
+
+def test_ratio_with_inf_max_resolves_interior_target() -> None:
+    # Regression for the second live-caught bug: an "inf : 1" maximum (leading
+    # inf + trailing "1") must not be mis-read as a constant leading number.
+    raw = solve_raw_for_display(
+        "3:1", p_min=0.0, p_max=1.0, str_for_value=ratio_display_inf_max
+    )
+    assert ratio_display_inf_max(raw) == "3.00 : 1"
+    # 1/(1-raw) = 3  ->  raw = 2/3.
+    assert raw == pytest.approx(2.0 / 3.0, rel=1e-3)
 
 
 def test_threshold_with_inf_floor_resolves_interior_target() -> None:
@@ -170,12 +201,23 @@ def test_refuses_out_of_displayable_range() -> None:
         )
 
 
-def test_refuses_constant_leading_number_trap() -> None:
-    # Expansion Ratio "1 : x" — leading float is always 1.0, so value_display
-    # cannot address it. Must refuse, not mis-converge.
-    with pytest.raises(DisplayValueError, match="constant leading number"):
+def test_refuses_constant_display_trap() -> None:
+    # Expansion Ratio "1 : x" — leading number is always 1.0, so it doesn't vary
+    # and value_display can't address it. Caught by the monotonicity check
+    # (doesn't-vary branch), not a format special-case.
+    with pytest.raises(DisplayValueError, match="doesn't vary"):
         solve_raw_for_display(
             "1.5", p_min=1.0, p_max=2.0, str_for_value=expansion_ratio_trap
+        )
+
+
+def test_refuses_non_monotonic_unit_scaling() -> None:
+    # Hz -> kHz: the leading number reverses (999 -> 1.0) at the unit boundary,
+    # so the monotonicity check refuses rather than resolve to a wrong magnitude.
+    # No unit-parsing code — non-monotonicity is the general signal.
+    with pytest.raises(DisplayValueError, match="monotonic"):
+        solve_raw_for_display(
+            "5 kHz", p_min=0.0, p_max=1.0, str_for_value=freq_hz_khz
         )
 
 

@@ -35,12 +35,12 @@ from typing import Callable
 # "30.0 ms" -> 30.0, "3:1" -> 3, ".71" -> 0.71.
 _LEADING_FLOAT_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
 
-# Real Live renders the bottom of a dB parameter's range as "-inf dB" (verified
-# on a Compressor Threshold at its minimum). That's a legitimate, monotonic
-# endpoint — parse it as ±infinity rather than rejecting the parameter, so a
-# target well inside the range (e.g. "-18 dB") still resolves by bisecting the
-# finite interior. Checked only when the float match fails, so "-inf" doesn't
-# shadow a leading number like "1.5 (inf)".
+# Real Live renders unbounded endpoints with "inf": a Compressor Threshold's
+# minimum is "-inf dB", and a Ratio's maximum is "inf : 1". Both are legitimate,
+# monotonic endpoints — parse the inf token as ±infinity rather than rejecting
+# the parameter. Position matters: "inf : 1" has a trailing "1" that the float
+# regex would otherwise grab, so parse_leading_number takes whichever of the
+# float/inf tokens is LEFTMOST.
 _INF_RE = re.compile(r"([-+]?)inf\b", re.IGNORECASE)
 
 # Bisection terminates when the raw interval is this fraction of the full
@@ -49,26 +49,38 @@ _INF_RE = re.compile(r"([-+]?)inf\b", re.IGNORECASE)
 _RAW_TOL_FRACTION = 1e-7
 _MAX_ITER = 60
 
+# Intervals sampled across [min, max] to validate the leading number is a
+# monotonic proxy before bisecting. Dense enough to catch a unit-scale reversal
+# (e.g. a single Hz->kHz jump shows up as a large drop between adjacent samples);
+# the cost is one str_for_value call per sample, all in-process on the Live side.
+_MONOTONIC_SAMPLES = 64
+
 
 class DisplayValueError(ValueError):
     """The display value could not be resolved to a raw parameter value."""
 
 
 def parse_leading_number(text: str) -> float | None:
-    """Return the first signed number in ``text``, or ``None`` if there is none.
+    """Return the leading signed number in ``text``, or ``None`` if there is none.
 
-    Recognizes a leading signed float and, failing that, an ``inf`` / ``-inf``
-    token (Live's rendering of an unbounded dB endpoint) as ±infinity.
+    Reads one number from a Live display string — a signed float, or an
+    ``inf`` / ``-inf`` token (Live's rendering of an unbounded endpoint). When
+    both a float and an inf token are present, the LEFTMOST wins, so "inf : 1"
+    (a Ratio maximum) reads as +inf rather than the trailing "1".
+
+    This is deliberately just "read the number"; whether that number is a
+    *usable* proxy for the raw value is decided by the monotonicity check in
+    :func:`solve_raw_for_display`, not by special-casing display formats here.
     """
-    match = _LEADING_FLOAT_RE.search(text)
-    if match is not None:
+    float_m = _LEADING_FLOAT_RE.search(text)
+    inf_m = _INF_RE.search(text)
+    if float_m is not None and (inf_m is None or float_m.start() <= inf_m.start()):
         try:
-            return float(match.group())
+            return float(float_m.group())
         except ValueError:  # pragma: no cover - regex guarantees a float token
             pass
-    inf_match = _INF_RE.search(text)
-    if inf_match is not None:
-        return float("-inf") if inf_match.group(1) == "-" else float("inf")
+    if inf_m is not None:
+        return float("-inf") if inf_m.group(1) == "-" else float("inf")
     return None
 
 
@@ -80,13 +92,25 @@ def solve_raw_for_display(
     str_for_value: Callable[[float], str],
     parameter_name: str = "parameter",
 ) -> float:
-    """Bisect ``str_for_value`` to the raw value whose display matches ``target_display``.
+    """Resolve a display string ("-18 dB", "3:1") to the raw value whose display
+    matches it, by bisecting ``str_for_value`` on the leading number.
 
-    ``target_display`` is the caller's desired display value as a string; only
-    its leading signed float is used ("3:1" -> 3, "-18 dB" -> -18). Raises
-    :class:`DisplayValueError` when the target is non-numeric, the parameter's
-    display is non-numeric or has a non-varying leading number, or the target
-    falls outside the parameter's displayable range.
+    Bisection is only valid when the leading number is a *faithful monotonic
+    proxy* for the raw value. Rather than special-casing display formats, we
+    sample the curve across ``[p_min, p_max]`` and verify that — refusing
+    (:class:`DisplayValueError`) when it isn't. That single check covers, with
+    no format-specific code:
+
+    * **constant** displays (Expansion Ratio "1 : x" — leading number never
+      varies), and
+    * **non-monotonic** displays where the leading number reverses, which is how
+      a unit that scales across the range shows up ("999 Hz" -> "1.00 kHz"
+      reads as 999 -> 1.0). The magnitude would otherwise resolve silently
+      wrong; refusing and pointing at the normalized ``value`` is the honest
+      answer.
+
+    Also refuses a non-numeric target or display, and a target outside the
+    parameter's displayable range.
     """
     target = parse_leading_number(target_display)
     if target is None:
@@ -95,35 +119,54 @@ def solve_raw_for_display(
             "numeric value to resolve"
         )
 
-    lo_display = parse_leading_number(str_for_value(p_min))
-    hi_display = parse_leading_number(str_for_value(p_max))
-    if lo_display is None or hi_display is None:
+    # Sample the display curve and read the leading number at each point.
+    xs = [
+        p_min + (p_max - p_min) * (i / _MONOTONIC_SAMPLES)
+        for i in range(_MONOTONIC_SAMPLES + 1)
+    ]
+    ys = [parse_leading_number(str_for_value(x)) for x in xs]
+    if any(y is None for y in ys):
         raise DisplayValueError(
             f"parameter {parameter_name!r} has a non-numeric display "
             f"({str_for_value(p_min)!r}..{str_for_value(p_max)!r}); set it via "
             "the normalized `value` instead of `value_display`"
         )
-    if lo_display == hi_display:
+
+    # Classify the sampled sequence. NaN diffs (e.g. inf - inf) compare False on
+    # both sides, so they neither establish nor break monotonicity.
+    diffs = [b - a for a, b in zip(ys, ys[1:])]
+    rises = any(d > 0 for d in diffs)
+    falls = any(d < 0 for d in diffs)
+    if rises and falls:
+        raise DisplayValueError(
+            f"parameter {parameter_name!r} display isn't monotonic across its "
+            f"range ({str_for_value(p_min)!r}..{str_for_value(p_max)!r}) — its "
+            "leading number reverses (typically a unit that scales, e.g. "
+            "Hz->kHz), so `value_display` can't address it; use the normalized "
+            "`value`"
+        )
+    if not rises and not falls:
         raise DisplayValueError(
             f"parameter {parameter_name!r} display ({str_for_value(p_min)!r}.."
-            f"{str_for_value(p_max)!r}) has a constant leading number, so "
-            "`value_display` cannot address it; set it via the normalized `value`"
+            f"{str_for_value(p_max)!r}) doesn't vary numerically, so "
+            "`value_display` can't address it; use the normalized `value`"
         )
 
-    lo_bound, hi_bound = sorted((lo_display, hi_display))
+    increasing = rises
+    lo_bound, hi_bound = sorted((ys[0], ys[-1]))
     if not (lo_bound <= target <= hi_bound):
         raise DisplayValueError(
             f"value_display {target_display!r} is outside {parameter_name!r}'s "
             f"displayable range [{lo_bound:g}, {hi_bound:g}]"
         )
 
-    increasing = hi_display > lo_display
+    # Monotonicity verified — bisect raw [min, max] on the leading number.
     lo, hi = p_min, p_max
     raw_tol = abs(p_max - p_min) * _RAW_TOL_FRACTION
     for _ in range(_MAX_ITER):
         mid = (lo + hi) / 2.0
         probe = parse_leading_number(str_for_value(mid))
-        if probe is None:  # pragma: no cover - endpoints already proved numeric
+        if probe is None:  # pragma: no cover - sampling already proved numeric
             raise DisplayValueError(
                 f"parameter {parameter_name!r} produced a non-numeric display "
                 f"mid-search ({str_for_value(mid)!r})"

@@ -43,6 +43,25 @@ def test_parse_leading_number_non_numeric(text: str) -> None:
     assert parse_leading_number(text) is None
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("-inf dB", float("-inf")),
+        ("inf", float("inf")),
+        ("+inf dB", float("inf")),
+        ("-INF dB", float("-inf")),
+    ],
+)
+def test_parse_leading_number_infinity(text: str, expected: float) -> None:
+    # Live renders an unbounded dB endpoint as "-inf dB"; parse it, don't reject.
+    assert parse_leading_number(text) == expected
+
+
+def test_parse_leading_float_wins_over_inf_substring() -> None:
+    # A real leading number takes precedence; inf is only the fallback.
+    assert parse_leading_number("1.5 (was inf)") == pytest.approx(1.5)
+
+
 # ---------- synthetic curves mirroring real Compressor params ----------
 
 def threshold_db(raw: float) -> str:
@@ -62,6 +81,16 @@ def output_db(raw: float) -> str:
     return f"{raw:.2f} dB"
 
 
+def threshold_db_inf_floor(raw: float) -> str:
+    """Faithful Compressor Threshold: logarithmic dB that is genuinely "-inf dB"
+    at the minimum (raw 0), finite above. This is what real Live returns — the
+    earlier linear `threshold_db` fake hid the -inf endpoint and gave false
+    confidence (the live verification caught it)."""
+    if raw <= 0.0:
+        return "-inf dB"
+    return f"{6.0 + 20.0 * math.log10(raw):.2f} dB"
+
+
 def decreasing_display(raw: float) -> str:
     """Leading number falls as raw rises (direction-detection coverage)."""
     return f"{100.0 - raw * 100.0:.1f} ms"
@@ -79,6 +108,17 @@ def test_threshold_to_minus_18_db() -> None:
     assert threshold_db(raw) == "-18.00 dB"
     # -18 dB on the -70..0 curve is at raw = (-18+70)/70.
     assert raw == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-4)
+
+
+def test_threshold_with_inf_floor_resolves_interior_target() -> None:
+    # Regression for the live-caught bug: a "-inf dB" minimum endpoint must NOT
+    # disqualify the parameter — a target inside the finite range still resolves.
+    raw = solve_raw_for_display(
+        "-18 dB", p_min=0.0, p_max=1.0, str_for_value=threshold_db_inf_floor
+    )
+    assert threshold_db_inf_floor(raw) == "-18.00 dB"
+    # 6 + 20*log10(raw) = -18  ->  raw = 10**(-24/20).
+    assert raw == pytest.approx(10.0 ** (-24.0 / 20.0), rel=1e-3)
 
 
 def test_ratio_three_to_one_nonlinear() -> None:

@@ -35,6 +35,14 @@ from typing import Callable
 # "30.0 ms" -> 30.0, "3:1" -> 3, ".71" -> 0.71.
 _LEADING_FLOAT_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
 
+# Real Live renders the bottom of a dB parameter's range as "-inf dB" (verified
+# on a Compressor Threshold at its minimum). That's a legitimate, monotonic
+# endpoint — parse it as ±infinity rather than rejecting the parameter, so a
+# target well inside the range (e.g. "-18 dB") still resolves by bisecting the
+# finite interior. Checked only when the float match fails, so "-inf" doesn't
+# shadow a leading number like "1.5 (inf)".
+_INF_RE = re.compile(r"([-+]?)inf\b", re.IGNORECASE)
+
 # Bisection terminates when the raw interval is this fraction of the full
 # range — ~2^-40 with the iteration cap, far below any parameter's display
 # resolution.
@@ -47,14 +55,21 @@ class DisplayValueError(ValueError):
 
 
 def parse_leading_number(text: str) -> float | None:
-    """Return the first signed float in ``text``, or ``None`` if there is none."""
+    """Return the first signed number in ``text``, or ``None`` if there is none.
+
+    Recognizes a leading signed float and, failing that, an ``inf`` / ``-inf``
+    token (Live's rendering of an unbounded dB endpoint) as ±infinity.
+    """
     match = _LEADING_FLOAT_RE.search(text)
-    if match is None:
-        return None
-    try:
-        return float(match.group())
-    except ValueError:  # pragma: no cover - regex guarantees a float-parseable token
-        return None
+    if match is not None:
+        try:
+            return float(match.group())
+        except ValueError:  # pragma: no cover - regex guarantees a float token
+            pass
+    inf_match = _INF_RE.search(text)
+    if inf_match is not None:
+        return float("-inf") if inf_match.group(1) == "-" else float("inf")
+    return None
 
 
 def solve_raw_for_display(

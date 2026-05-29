@@ -1,12 +1,14 @@
 # Polyrhythm & cross-rhythm detection — design
 
-Status: **C8a (single-part cross-rhythm) + C8b (two-part phasing) SHIPPED**
-(`audio/cross_rhythm.py`, `audio/onsets.py`, `PartCrossRhythm`/`Phasing` on
-`SectionMetrics`, `/mix-review` consumer). C8c (polymeter cycle-length +
-additive grouping) is **deferred** — a probe showed it needs an accent /
-onset-strength feature the current front-end doesn't carry; the design fork is
-recorded in `.prawduct/backlog.md`. Masking chunk **C8**, the read-side sibling
-of the timing analyzer (`audio/timing.py`, C7).
+Status: **C8a (single-part cross-rhythm) + C8b (two-part phasing) + C8c
+(additive grouping + polymeter) SHIPPED** (`audio/cross_rhythm.py`,
+`audio/onsets.py`, `PartCrossRhythm`/`Phasing`/`Polymeter` on `SectionMetrics`,
+`/mix-review` consumer). C8c added the accent dimension the deferral identified
+as missing: a per-onset peak-amplitude **accent strength** in `onsets.py`
+(`detect_onsets_with_strength`), an additive-grouping decoder (IOI rational-GCD
+→ tiling cell → accent-anchored rotation), and a two-part polymeter detector
+(per-part accent autocorrelation → cell length → lcm realign). Masking chunk
+**C8**, the read-side sibling of the timing analyzer (`audio/timing.py`, C7).
 
 This document records what we built to validate the design (a throwaway harness
 over a synthetic genre corpus), the approach that won and why, what it's great
@@ -32,7 +34,7 @@ way naive designs fail. We keep them separate:
 |---|---|---|
 | **Cross-rhythm / tuplet** | one part subdivides the beat against the meter (3:2, 4:3, 5:4, quintuplets) | **C8** (this doc) |
 | **Phasing** | two identical parts at fractionally different tempi, drifting (Reich) | **C8** two-part pass |
-| **Polymeter** | parts loop different cycle lengths (4 vs 3 bars) and realign periodically | **C8** (partial — see limits) |
+| **Polymeter** | parts loop different cycle lengths (4 vs 3 bars) and realign periodically | **C8c** (accent-cycle two-part pass) |
 | **Displacement** | a straight pattern shifted off the beat by a constant offset | **C7** (it's a drift, period unchanged) |
 | **Swing** | triplet-feel long-short 8ths | **C7** (`swing_ratio`) |
 | **Rubato / accel** | the *tempo itself* moves | neither — **detected and excluded** as a confound |
@@ -115,10 +117,17 @@ Per part, per section — pure DSP, DB-agnostic, neutral measurement (exactly li
   in that offset = phasing. In the prototype, Reich-style "B 3% faster" produced
   a clean march (−0.02 → −0.06 → … → −0.21 beat) while each part stayed
   individually steady (cv ≈ 0.003).
-- **Polymeter** (partial): each part's **repeat-cycle length** (long-lag
-  self-similarity) — a 4-beat cell against a 3-beat cell realigns every 12 beats.
-  The concept validated directionally but cycle-length detection needs more work
-  than sub-beat period detection; shipping it is a v2 of C8 (see limits).
+- **Polymeter** (C8c): each part's **cell length** via **accent
+  autocorrelation** — fold the per-onset accents onto the base-pulse grid,
+  zero-mean, and take the fundamental autocorrelation lag (the smallest
+  near-maximal lag, which rejects 2×/3× harmonics). A 4-beat cell against a
+  3-beat cell reads distinct cells realigning every lcm = 12 beats. Crucially
+  this uses the ACCENT series, not the onset train: §2 rejected onset-train
+  autocorrelation because a regular train is self-similar at every multiple,
+  but an accent series is NOT (a 3+3+2 accent peaks at its full cycle, not at
+  sub-multiples), so the harmonic problem dissolves. Equal-velocity parts carry
+  no accent and surface no cell — correctly, the relationship is then unknowable
+  from audio.
 
 ---
 
@@ -142,8 +151,8 @@ right** and **degrades honestly** on the hard ones:
     bizarre ratio. ✓
   - **Buzz rolls / tremolo** → density floor → "roll, low-confidence," not a
     degenerate ratio. ✓
-  - **Additive grouping** (3+3+2; Stravinsky 2+2+3 = 7/8) → **low-confidence**,
-    honestly (it has no single clean pulse). ✓
+  - **Additive grouping** (3+3+2; Stravinsky 2+2+3 = 7/8) → **decoded** to a
+    `grouping` cell (C8c); accent-anchored to the downbeat when dynamics allow. ✓
 
 It **names** the relationship in musician's terms ("4-against-3"), which is what
 makes `/mix-review` able to ask the right question.
@@ -152,14 +161,23 @@ makes `/mix-review` able to ask the right question.
 
 ## 5. Limitations (honest, like masking's F-notes)
 
-1. **Additive / grouping meters are not decoded.** 3+3+2, Stravinsky's shifting
-   cells, Balkan aksak — these have no single repeating IOI, so C8 reports
-   *low-confidence* rather than "2+2+3." Decoding them needs **accent/meter
-   analysis** (onset *strength* patterns, bar-level structure), a separate effort.
-2. **Polymeter is only partially handled.** Sub-beat cross-rhythm is solid;
-   bar-level cycle mismatch (Tool/Meshuggah "different parts, different bar
-   lengths") needs robust cycle-length detection (long-lag self-similarity),
-   which is a v2.
+1. **Additive / grouping meters are decoded (C8c), with an accent caveat.**
+   3+3+2, Stravinsky's shifting cells, Balkan aksak are decoded to a `grouping`
+   cell + `cycle_length_beats` (`additive` verdict). The cell is recovered from
+   the IOI structure (rational-GCD sub-unit → tiling cycle); when the part has
+   an audible accent the cell is rotated to start at the loud downbeat, so 2+2+3
+   and 3+2+2 read distinctly. With **equal-velocity** onsets the bar downbeat is
+   unknowable, so the cell collapses to its canonical (lex-max) rotation —
+   honest, not wrong. (A part that sounds *every* sub-unit with grouping only in
+   dynamics — not just the group starts — is detected by the polymeter accent
+   path, not this IOI path.)
+2. **Polymeter is decoded (C8c) via accent autocorrelation.** Two parts looping
+   different cell lengths (Tool/Meshuggah) read as a `Polymeter` pair with each
+   cell + the lcm realign. It reads the ACCENT pattern, so it needs an audible
+   accent — equal-velocity parts surface nothing (the cell genuinely isn't in
+   the audio). Cell detection inherits onset-detection's transient-richness
+   dependence (#6): a slow-attack or evenly-struck part may not resolve a cell,
+   surfacing honestly as no pair rather than a wrong one.
 3. **Rubato within a section degrades the constant-period assumption.** We
    *detect and flag* accel/rit (so it's never silently mislabeled), but C8 does
    not track a moving tempo within a window. Chopin-style rubato → "rubato,
@@ -210,7 +228,8 @@ C7's "calibrate against detection accuracy" learning). Result summary:
 | displaced 16ths (+0.1) | C7 drift | on-grid 16ths | ✓ |
 | rubato (accel) | tempo moving | rubato flagged (trend −1.0) | ✓ |
 | buzz roll | density | roll, low-confidence | ✓ |
-| additive 3+3+2 / 2+2+3 (7/8) | grouping | low-confidence | ✓ (honest) |
+| additive 3+3+2 / 2+2+3 (7/8) | grouping | additive, grouping (3,3,2)/(2,2,3) | ✓ (C8c) |
+| polymeter 4-cell vs 3-cell (accented) | different cells | cells 4 & 3, realign 12 | ✓ (C8c) |
 | straight 8ths in 7/8 | odd meter, binary | on-grid 2/beat | ✓ |
 | Reich phasing (B 3% faster) | phasing | drifting offset detected | ✓ |
 
@@ -221,11 +240,12 @@ C7's "calibrate against detection accuracy" learning). Result summary:
 - **Romantic tuplets** (quintuplet/septuplet runs) → tuplet subdivision. ✓
 - **Minimalism — Reich** ("Piano Phase", "Clapping Music") → phasing (two-part
   drift, ✓) and displacement ("Clapping Music" is a *displaced* pattern → reads
-  as drift, correct). **Glass additive** → low-confidence (grouping, limit #1).
+  as drift, correct). **Glass additive** → `grouping` decode (C8c).
 - **Prog rock** (Rush 7/8, Tool 5/4) → odd-meter binary subdivision works; *Tool
-  polymeter* (alternating cells) → limit #2.
-- **Math rock** (Don Caballero, Battles — mixed groupings) → mostly limit #1
-  (additive), with embedded clean tuplets detected where present.
+  polymeter* (alternating cells) → decoded as a `Polymeter` pair (C8c) when the
+  parts are accented.
+- **Math rock** (Don Caballero, Battles — mixed groupings) → additive `grouping`
+  decode (C8c) for the odd cells, with embedded clean tuplets named where present.
 - **Primus** (Claypool syncopation, Alexander's polyrhythms) → syncopation reads
   as low-confidence (no single pulse); displaced figures → C7 drift; genuine
   3-over-4 drum/bass cross-rhythms → named.
@@ -236,10 +256,13 @@ C7's "calibrate against detection accuracy" learning). Result summary:
   level); **flams/drags** are merged by the dedup window (we lose the ornament —
   a known trade-off; ornament detection is a separate fine-timing feature);
   **buzz rolls** → density floor.
-- **Stravinsky / neoclassical** (additive, shifting meter) → limit #1.
+- **Stravinsky / neoclassical** (additive, shifting meter) → `grouping` decode
+  (C8c) per repeating cell; genuinely shifting (non-repeating) cells still read
+  low-confidence (no fixed cell to tile).
 - **Afro-Cuban / West African** (clave, bell patterns, 12/8-vs-4/4) → the 12/8
   vs 4/4 relationship is exactly a 3:2 family cross-rhythm and is named; the
-  *clave pattern itself* (a specific syncopated cell) is grouping, limit #1.
+  *clave pattern itself* (a specific syncopated cell) is an additive `grouping`
+  decode (C8c) when it repeats cleanly.
 
 ---
 
@@ -291,8 +314,9 @@ masking/timing.
 - **C8a** — single-part cross-rhythm core (mode-IOI → ratio → grid-fit + guards)
   + corpus. The bulk of the value; fully validated here.
 - **C8b** — two-part phasing pass + corpus.
-- **C8c** *(optional, later)* — polymeter cycle-length detection (limit #2) and
-  accent-based additive/grouping decoding (limit #1), if the songs need it.
+- **C8c** *(shipped)* — the accent dimension: a per-onset peak-amplitude accent
+  in `onsets.py`, accent-based additive/grouping decoding (limit #1), and
+  polymeter cell detection via accent autocorrelation (limit #2).
 
 ---
 

@@ -35,6 +35,8 @@ from pathlib import Path
 
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
+from hallucinote.generators import bass as BG, drums as DG, harmony as HG
+from hallucinote.generators.kit import Kit
 
 # W12-A: per-branch DB filename.
 DB_PATH = resolve_db_path("sun-zone-done", root=Path(__file__).parent.parent)
@@ -68,16 +70,15 @@ SECTIONS = [
 # 0=Clean, 1=Boost, 2=Blues, 3=Rock, 4=Lead, 5=Heavy, 6=Bass
 AMP_TYPE_VALUE_ITEMS = ["Clean", "Boost", "Blues", "Rock", "Lead", "Heavy", "Bass"]
 
-# Drum Rack pad mapping (Hot Rod Kit — General-MIDI-style).
-KICK   = 36
-SNARE  = 38
-HAT_C  = 42  # closed hat
-HAT_O  = 46  # open hat
-CRASH  = 49
+# Drum pads come from the loaded kit (Kit.from_device), NOT hardcoded MIDI
+# notes — Hot Rod Kit's pad 51 is cowbell, not ride, the cautionary tale that
+# motivated kit-probing (see generators/kit.py). With the current synthetic
+# snapshot the kit has no probed pads and falls through to GM defaults
+# (kick 36 / snare 38 / hat 42·46 / crash 49); once the song is snapshotted
+# from a real Live set, the same call picks up that kit's actual pads.
 
 # Pitch constants — only the notes we actually use.
 E2  = 40   # bass root (reggae + metal)
-B2  = 47   # bass fifth (reggae walking)
 E3  = 52   # guitar power-chord root + organ bottom + lead floor
 G3  = 55   # gtr Em7 chord tone + organ
 B3  = 59   # gtr Em7 chord tone + organ
@@ -115,129 +116,61 @@ def _note(pitch: int, start: float, dur: float, vel: int) -> dict:
             "duration_beats": dur, "velocity": vel}
 
 
-# ---------------------------------------------------------------------------
-# Reggae patterns (per-section)
-# ---------------------------------------------------------------------------
+def _kit_for_drums(conn, drum_track_id: str) -> Kit:
+    """Load the Drum Rack's kit so generators author the RIGHT pad per kit.
 
-
-def _reggae_drums(start_beats: float, length_beats: float,
-                  *, lazy: float = 0.04) -> list[dict]:
-    """Reggae one-drop: snare on beat 3, sparse kick, closed hat on offbeats.
-    Snare lays behind the click by `lazy` beats.
-    """
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        if bar % 2 == 0:
-            notes.append(_note(KICK,  b0 + 0.00, 0.5, 95))
-        notes.append(_note(SNARE, b0 + 2.0 + lazy, 0.5, 88))
-        for off in (0.5, 1.5, 2.5, 3.5):
-            notes.append(_note(HAT_C, b0 + off + lazy * 0.5,
-                               0.25, 55 + (4 if off == 1.5 else 0)))
-        if (bar + 1) % 4 == 0:
-            notes.append(_note(HAT_O, b0 + 3.5 + lazy, 0.5, 65))
-    return notes
-
-
-def _reggae_bass(start_beats: float, length_beats: float,
-                 *, root: int = E2, fifth_up: int = B2) -> list[dict]:
-    """Reggae walking bass on the offbeats."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    octave = root + 12
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        notes.append(_note(root,      b0 + 0.00 + 0.02, 1.4, 80))
-        notes.append(_note(fifth_up,  b0 + 1.50 + 0.02, 0.4, 72))
-        notes.append(_note(octave,    b0 + 2.00 + 0.02, 1.4, 82))
-        notes.append(_note(fifth_up,  b0 + 3.50 + 0.02, 0.4, 70))
-    return notes
-
-
-def _reggae_skank(start_beats: float, length_beats: float,
-                  *, chord_pitches: list[int]) -> list[dict]:
-    """Off-beat skanks on the 'and' of 2 and 4 — the iconic lazy chuck."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        for off in (1.5, 3.5):
-            for p in chord_pitches:
-                notes.append(_note(p, b0 + off + 0.06, 0.30, 78))
-    return notes
-
-
-def _reggae_organ_bubble(start_beats: float, length_beats: float,
-                          *, chord_pitches: list[int]) -> list[dict]:
-    """Hammond bubble on every offbeat."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        for off in (0.5, 1.5, 2.5, 3.5):
-            for p in chord_pitches:
-                notes.append(_note(p, b0 + off + 0.04, 0.20, 58))
-    return notes
+    With the synthetic snapshot (no probed pad mappings) this falls through
+    to GM defaults; once the song is snapshotted from a real Live set the
+    same call picks up that kit's actual pad layout. Never hardcode pads."""
+    devices = Q.get_devices_for_track(conn, drum_track_id)
+    rack = next((d for d in devices if d["kind"] == "Drum Rack"), None)
+    if rack is None:
+        raise RuntimeError(
+            f"Expected a 'Drum Rack' on the drums track; "
+            f"found {[d['kind'] for d in devices]}"
+        )
+    return Kit.from_device(conn, rack["id"], name="Hot Rod Kit")
 
 
 # ---------------------------------------------------------------------------
-# Metal patterns (per-section)
+# Genre grooves — thin wrappers over hallucinote.generators
 # ---------------------------------------------------------------------------
+# The reggae/metal idioms were promoted into the shared generators package
+# (drums.reggae_one_drop / metal_gallop, bass.reggae_offbeat_bass /
+# metal_pedal_16ths, harmony.reggae_skank / organ_bubble /
+# palm_mute_power_chords) so other songs can reuse them. This song now
+# AUTHORS AGAINST that surface. Section-relative helpers below adapt the
+# generator API (bars + start_beat) to this build's (length_beats) call sites.
+
+EM7 = [E3, G3, B3, D4]                 # rhythm-gtr reggae skank voicing
+EM_TRIAD_UPPER = [G3, B3, E4]          # organ bubble voicing
 
 
-def _metal_drums(start_beats: float, length_beats: float) -> list[dict]:
-    """Metal: kick gallop on 16ths, snare on 2 and 4, hi-hat on 16ths."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        for off in (0.0, 0.25, 0.5, 0.75, 1.5, 1.75, 2.5, 2.75, 3.0, 3.25, 3.75):
-            notes.append(_note(KICK, b0 + off, 0.15, 108))
-        notes.append(_note(SNARE, b0 + 1.0, 0.25, 115))
-        notes.append(_note(SNARE, b0 + 3.0, 0.25, 115))
-        for off in range(16):
-            notes.append(_note(HAT_C, b0 + off * 0.25, 0.10,
-                                70 + (15 if off % 4 == 0 else 0)))
-        if bar == 0:
-            notes.append(_note(CRASH, b0 + 0.0, 1.0, 118))
-    return notes
+def _bars(length_beats: float) -> int:
+    return int(length_beats // 4)
 
 
-def _metal_bass(start_beats: float, length_beats: float,
-                *, root: int = E2) -> list[dict]:
-    """Metal palm-mute root pedaling on 16ths."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        for off in range(16):
-            t = b0 + off * 0.25
-            # Slight push (-0.01) on every 16th EXCEPT the very first note of
-            # the clip — Live's MIDI clip has no negative-beat region.
-            push = -0.01 if t > 0.0 else 0.0
-            notes.append(_note(root, t + push, 0.18, 105))
-    return notes
+def _reggae_drums(kit: Kit, length_beats: float) -> list[dict]:
+    return DG.reggae_one_drop(_bars(length_beats), kit=kit)
 
 
-def _metal_gtr(start_beats: float, length_beats: float,
-                *, power_chord_root: int = E3) -> list[dict]:
-    """Metal palm-mute power chords on 16ths (root + 5th + octave)."""
-    notes: list[dict] = []
-    bars = int(length_beats // 4)
-    fifth = power_chord_root + 7
-    octave = power_chord_root + 12
-    for bar in range(bars):
-        b0 = start_beats + bar * 4
-        for off in (0.0, 0.25, 0.5, 0.75, 1.5, 1.75, 2.5, 2.75, 3.0, 3.25, 3.75):
-            notes.append(_note(power_chord_root, b0 + off, 0.18, 108))
-            notes.append(_note(fifth,             b0 + off, 0.18, 100))
-            notes.append(_note(octave,            b0 + off, 0.18, 95))
-    return notes
+def _metal_drums(kit: Kit, length_beats: float) -> list[dict]:
+    return DG.metal_gallop(_bars(length_beats), kit=kit)
+
+
+def _reggae_bass(length_beats: float) -> list[dict]:
+    return BG.reggae_offbeat_bass(E2, bars=_bars(length_beats))
+
+
+def _metal_bass(length_beats: float) -> list[dict]:
+    return BG.metal_pedal_16ths(E2, bars=_bars(length_beats))
 
 
 # ---------------------------------------------------------------------------
-# Lead (placeholder vocal melody)
+# Lead (placeholder vocal melody) — song-specific content, stays local.
+# These are the actual vocal hooks ("chillin in the sun zone" / "NO TIME FOR
+# THAT"), not reusable genre idioms, so they belong to the song, not the
+# shared generators package.
 # ---------------------------------------------------------------------------
 
 
@@ -289,13 +222,14 @@ def _metal_lead_no_time(start_beats: float, length_beats: float) -> list[dict]:
 def _compose_sections(conn, song_id: str, tracks: dict[str, str]) -> None:
     """Author per-section session clips for drums / bass / organ / lead.
     Rhythm gtr is handled separately (one long clip — see _compose_rhythm_gtr)."""
+    kit = _kit_for_drums(conn, tracks["01 Drums"])
     for section_idx, (name, start_bar, end_bar, genre) in enumerate(SECTIONS):
         length_beats = (end_bar - start_bar) * 4.0
         slot = section_idx + 1
 
         # --- Drums ---
-        drum_notes = (_reggae_drums(0.0, length_beats) if genre == "reggae"
-                       else _metal_drums(0.0, length_beats))
+        drum_notes = (_reggae_drums(kit, length_beats) if genre == "reggae"
+                       else _metal_drums(kit, length_beats))
         drum_clip = M.create_clip(
             conn, track_id=tracks["01 Drums"], slot=slot,
             name=f"{name.capitalize()} Drums",
@@ -307,8 +241,8 @@ def _compose_sections(conn, song_id: str, tracks: dict[str, str]) -> None:
                               actor="build", reason="initial composition")
 
         # --- Bass ---
-        bass_notes = (_reggae_bass(0.0, length_beats) if genre == "reggae"
-                       else _metal_bass(0.0, length_beats))
+        bass_notes = (_reggae_bass(length_beats) if genre == "reggae"
+                       else _metal_bass(length_beats))
         bass_clip = M.create_clip(
             conn, track_id=tracks["02 Bass"], slot=slot,
             name=f"{name.capitalize()} Bass",
@@ -321,9 +255,7 @@ def _compose_sections(conn, song_id: str, tracks: dict[str, str]) -> None:
 
         # --- Organ (reggae-only) ---
         if genre == "reggae":
-            em_triad_upper = [G3, B3, E4]
-            organ_notes = _reggae_organ_bubble(0.0, length_beats,
-                                                chord_pitches=em_triad_upper)
+            organ_notes = HG.organ_bubble(EM_TRIAD_UPPER, bars=_bars(length_beats))
             organ_clip = M.create_clip(
                 conn, track_id=tracks["04 Organ"], slot=slot,
                 name=f"{name.capitalize()} Organ",
@@ -367,19 +299,16 @@ def _compose_rhythm_gtr(conn, song_id: str, tracks: dict[str, str]) -> None:
 
     # Build the concatenated note list — each section starts at its absolute
     # beat position within the song.
-    em7 = [E3, G3, B3, D4]
     all_notes: list[dict] = []
     for name, start_bar, end_bar, genre in SECTIONS:
         section_start_beats = (start_bar - INTRO_BAR) * 4.0
-        section_length_beats = (end_bar - start_bar) * 4.0
+        section_bars = _bars((end_bar - start_bar) * 4.0)
         if genre == "reggae":
-            section_notes = _reggae_skank(section_start_beats,
-                                           section_length_beats,
-                                           chord_pitches=em7)
+            section_notes = HG.reggae_skank(
+                EM7, bars=section_bars, start_beat=section_start_beats)
         else:
-            section_notes = _metal_gtr(section_start_beats,
-                                        section_length_beats,
-                                        power_chord_root=E3)
+            section_notes = HG.palm_mute_power_chords(
+                E3, bars=section_bars, start_beat=section_start_beats)
         all_notes.extend(section_notes)
 
     gtr_clip = M.create_clip(

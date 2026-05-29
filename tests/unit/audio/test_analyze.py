@@ -26,6 +26,7 @@ from .fixtures import (
     SAMPLE_RATE,
     calibrated_pink_noise,
     convolve,
+    onsets_at_beats,
     silence,
     sine,
     synthetic_ir,
@@ -333,6 +334,53 @@ def test_analyze_mix_populates_section_masking_when_enabled(tmp_path: Path):
     assert sec_json["masking"][0]["masker_track_id"] == "track:1"
     assert isinstance(sec_json["masking"][0]["masked_fraction"], float)
     assert "bed_masking" in sec_json
+
+
+def test_analyze_mix_populates_section_timing_when_enabled(tmp_path: Path):
+    """With ``analyze_timing=True``, a covered section carries per-part
+    onset-vs-grid feel: a tight on-grid stem reads tight + on-grid, a swung
+    stem reads a swing ratio, and it serializes under ``per_section[].timing``.
+
+    The capture is 16 beats over 8 s → effective 120 bpm, which the analyzer
+    derives from the shared BeatSampleMap (no tempo passed in)."""
+    bpm = 120.0
+    tight = onsets_at_beats(list(range(16)), bpm=bpm, total_beats=16.0)
+    swung = onsets_at_beats(
+        [v for b in range(16) for v in (b, b + 0.6667)], bpm=bpm, total_beats=16.0,
+    )
+    master = tight + swung
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tight", tight), ("track:2", "Swung", swung)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    # Off by default — no timing computed.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].timing == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_timing=True)
+    sec = on.per_section[0]
+    by_id = {t.track_id: t for t in sec.timing}
+    assert "track:1" in by_id and "track:2" in by_id
+
+    assert abs(by_id["track:1"].mean_drift_beats) < 0.03   # tight, on grid
+    assert by_id["track:1"].drift_stdev_beats < 0.02
+    assert by_id["track:2"].swing_ratio is not None
+    assert by_id["track:2"].swing_ratio > 1.7              # triplet swing
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "timing" in sec_json
+    j = {t["track_id"]: t for t in sec_json["timing"]}
+    assert isinstance(j["track:1"]["mean_drift_beats"], float)
+    assert isinstance(j["track:1"]["onset_count"], int)
+    # swing_ratio is JSON null when unmeasurable, a float otherwise.
+    assert j["track:2"]["swing_ratio"] is None or isinstance(
+        j["track:2"]["swing_ratio"], float
+    )
 
 
 def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):

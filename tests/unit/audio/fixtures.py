@@ -128,6 +128,63 @@ def concat(*segments: np.ndarray) -> np.ndarray:
     return np.concatenate(segments, axis=0).astype(np.float32, copy=False)
 
 
+def click(
+    *,
+    duration_s: float = 0.02,
+    decay_s: float = 0.004,
+    amplitude: float = 0.9,
+    sr: int = SAMPLE_RATE,
+    seed: int = 0,
+) -> np.ndarray:
+    """A sharp broadband click — instant attack, fast decay.
+
+    Unlike ``kick_onset`` (whose slow low-frequency attack makes onset
+    detection lag tens of milliseconds and multi-trigger), this starts at full
+    amplitude on sample 0, so spectral-flux onset detection lands on the true
+    onset. It is the timing corpus's transient of choice precisely because the
+    timing analyzer's correctness is *defined* against accurately-placed onsets;
+    onset-detection latency on slow-attack real instruments is a documented
+    caveat of the analyzer, not something the corpus should bake in.
+    """
+    n = int(round(duration_s * sr))
+    rng = np.random.default_rng(seed)
+    env = np.exp(-np.arange(n, dtype=np.float64) / max(decay_s * sr, 1.0))
+    mono = (rng.standard_normal(n) * env).astype(np.float64)
+    mono[0] = 1.0  # guarantee a hard transient on the first sample
+    mono = (mono / (np.max(np.abs(mono)) + 1e-12) * amplitude)
+    return _to_stereo(mono.astype(np.float32))
+
+
+def onsets_at_beats(
+    beat_positions: "list[float]",
+    *,
+    bpm: float,
+    total_beats: float,
+    onset: "np.ndarray | None" = None,
+    sr: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Place a transient at each beat position in a silent buffer.
+
+    Beat→sample at constant ``bpm`` (``sr * 60 / bpm`` samples per beat). The
+    default transient is a sharp ``click`` (instant attack → sample-accurate
+    onset target). The buffer is ``total_beats`` long. This is the timing-
+    analysis corpus primitive: build on-grid / pushed / dragged / swung parts by
+    choosing where the onsets land, then assert what the analyzer recovers.
+    """
+    onset = onset if onset is not None else click(sr=sr)
+    samples_per_beat = sr * 60.0 / bpm
+    total_n = int(round(total_beats * samples_per_beat))
+    buf = np.zeros((total_n, 2), dtype=np.float32)
+    olen = onset.shape[0]
+    for b in beat_positions:
+        start = int(round(b * samples_per_beat))
+        if start < 0 or start >= total_n:
+            continue
+        end = min(start + olen, total_n)
+        buf[start:end] += onset[: end - start]
+    return buf
+
+
 def calibrated_pink_noise(
     target_lufs: float,
     duration_s: float,
@@ -203,6 +260,8 @@ __all__ = [
     "silence",
     "sine",
     "kick_onset",
+    "click",
+    "onsets_at_beats",
     "pink_noise",
     "concat",
     "delayed_copy",

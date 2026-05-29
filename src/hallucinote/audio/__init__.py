@@ -17,6 +17,10 @@ Module layout:
                      intent.
   ``section``      — slice captured audio into named section windows so
                      loudness can be scoped to verse / chorus / bridge.
+  ``masking``      — inter-stem spectral masking (which stems mask which,
+                     per section) — neutral evidence for the interpreter.
+  ``timing``       — per-part onset-vs-grid feel (push/drag/swing), the
+                     read-side counterpart to the ``feel`` generator.
 
 The MCP wrapper that exposes this as a tool lives in
 ``hallucinote_mcp/src/hallucinote_mcp/{actions,handlers}/analysis.py``;

@@ -1,6 +1,6 @@
 ---
 name: mix-review
-description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "review the chorus", etc.
+description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc.
 argument-hint: <song-slug> [section] [--focus masking|loudness|reverb|all]
 user-invocable: true
 disable-model-invocation: false
@@ -59,8 +59,22 @@ first — see "Refreshing the analysis"). For each section, you have:
 - `bed_masking` — each maskee vs the **summed** bed. This catches *distributed*
   buildup a single pair misses ("Organ buried 0.98 in mud" = it's clear against
   any one part but drowned by everything together — the classic mud problem).
+- `timing` — per-part onset-vs-grid feel (the read-side counterpart to the
+  `feel` generator). `mean_drift_beats` (< 0 pushed/ahead, > 0 dragged/behind),
+  `drift_stdev_beats` (tightness — lower = machine-tight, higher = loose/human),
+  `swing_ratio` (1.0 straight, ~2.0 triplet swing; `null` when unmeasurable),
+  `confidence` (0–1 — **gate on this**: low confidence means few onsets or a
+  loose/cross-rhythm part, so don't read drift/swing as gospel). "Snare drags
+  +18 ms in the chorus" or "bass and kick are 30 ms apart in the lows."
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
   band), `overshoots`, `reverb_verifications`.
+
+Timing caveats to carry (don't over-claim): drift is measured against a
+constant-tempo grid and a swung part reads as small drift on the fine grid
+(swing and micro-timing interact — `swing_ratio` is the disambiguator); a
+cross-rhythm (e.g. 3:2) reads as low `confidence`, not as a tidy drift; absolute
+drift carries a small onset-detection offset, so RELATIVE reads (part-vs-part,
+section-vs-section, vs declared intent) are stronger than absolute.
 
 Reason **across** metrics, per section — that holistic read is the point. e.g.
 "the chorus opens up (loudness up, full spectrum) but the organ is buried 0.98

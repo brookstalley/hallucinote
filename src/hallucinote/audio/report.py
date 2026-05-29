@@ -163,6 +163,47 @@ class BedMasking:
 
 
 @dataclass(frozen=True)
+class PartTiming:
+    """One part's onset-vs-grid timing measurement within a section window.
+
+    The read-side counterpart to the ``feel`` pattern generator (which BAKES
+    push/pull/swing into note timing at compose time): this RECOVERS the feel
+    actually present in the captured audio, so the interpreter can ask "is this
+    part's groove what the composer intended for this section?".
+
+    All deviations are in **beats** (quarter = 1.0 in 4/4). Sign convention:
+    ``mean_drift_beats`` < 0 means the part sits *ahead* of the grid
+    (pushed / rushed); > 0 means *behind* (laid-back / dragged).
+    ``drift_stdev_beats`` is the spread of those deviations — timing tightness
+    (lower = more machine-tight; higher = looser/human). ``swing_ratio`` is the
+    long:short ratio of off-beat 8th placement (1.0 = straight; ~1.5 light
+    swing; ~2.0 triplet/hard swing); it is ``None`` when there are too few
+    off-beat 8th onsets to measure. ``confidence`` (0..1) is low for parts with
+    few onsets or loose, scattered timing (sustained pads with no clear
+    transients, or a part on a cross-rhythm rather than the grid) — read it as
+    "how much to trust these numbers".
+
+    NEUTRAL MEASUREMENT, not a judgement — there is no "right" feel. A dragged
+    snare may be a deliberate laid-back chorus or a sloppy take; only per-section
+    composer intent distinguishes them, which the holistic interpreter grades
+    against recalled markdown intent (see ``intent-architecture.md``). Parallel
+    to masking's DSP↔intent split.
+
+    Caveats carried into the interpreter (not corrected in the DSP): drift is
+    measured against a constant-tempo grid within the window, and a heavily
+    swung part reads as drift on a fine grid (swing and micro-timing interact);
+    onset detection is reliable only on transient-rich parts (low ``confidence``
+    flags the rest).
+    """
+    track_id: str
+    onset_count: int
+    mean_drift_beats: float
+    drift_stdev_beats: float
+    swing_ratio: float | None
+    confidence: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -196,6 +237,11 @@ class SectionMetrics:
     # bed. Neutral evidence — the interpreter grades it against intent.
     masking: list[MaskingPair] = field(default_factory=list)
     bed_masking: list[BedMasking] = field(default_factory=list)
+    # Per-part onset-vs-grid timing feel (one entry per transient-rich stem
+    # above the confidence floor), populated only when timing analysis is
+    # enabled. The read-side counterpart to the `feel` generator. Neutral
+    # measurement — the interpreter grades it against intent.
+    timing: list[PartTiming] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -307,6 +353,18 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         ],
         "masking": [_masking_pair_to_dict(m) for m in s.masking],
         "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
+        "timing": [_part_timing_to_dict(t) for t in s.timing],
+    }
+
+
+def _part_timing_to_dict(t: PartTiming) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "onset_count": t.onset_count,
+        "mean_drift_beats": t.mean_drift_beats,
+        "drift_stdev_beats": t.drift_stdev_beats,
+        "swing_ratio": t.swing_ratio,
+        "confidence": t.confidence,
     }
 
 

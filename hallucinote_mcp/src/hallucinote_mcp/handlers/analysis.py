@@ -330,6 +330,11 @@ def analyze_handler(
         # NOTE (F1): captured stems are pre-fader, so real-song masking is
         # provisional until level reconstruction (build-plan C3) lands.
         analyze_masking=bool(sections),
+        # Per-part onset-vs-grid feel (push/drag/swing) — the read-side
+        # counterpart to the `feel` generator. Per-section like masking; gated
+        # on declared sections. Level-blind (gain doesn't move onsets), so it
+        # needs no stem_gains. Neutral measurement — the interpreter grades it.
+        analyze_timing=bool(sections),
         # Mix-level reconstruction (F1): scale each pre-fader stem by its
         # static fader gain so masking sees mix balance, not source level.
         # Fader curve is Live-12-calibrated (see audio/levels.py).

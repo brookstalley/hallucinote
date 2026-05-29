@@ -60,7 +60,7 @@ from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
-from hallucinote.sync import push, push_execute
+from hallucinote.sync import push, push_execute, push_notes
 
 
 def _resolve_send_fn():
@@ -554,6 +554,42 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def _cmd_push_notes(args: argparse.Namespace) -> int:
+    """Scoped note push (build-plan B1) — the incremental compose loop's
+    materialize step. Pushes only the targeted (``--clip``) or content-changed
+    (``--changed``) clips' notes to Live, in-process, so the notes never enter
+    the agent's tool-use channel. Prints a counts-only summary; writes
+    ``.last-notes-push.json`` (per-clip content fingerprints).
+
+    No coherence gate (unlike ``execute``): this path only touches notes on
+    already-linked clips, and ``plan_push_clip`` returns a teaching error per
+    clip whose track isn't linked yet (run a full ``execute`` first).
+    """
+    db_path = _resolve_db_path(args)
+    conn = connect(db_path)
+    song_id = _resolve_song_id(conn, args.session_id)
+
+    state_dir = Path(args.state_dir) if args.state_dir else db_path.parent
+
+    result = push_notes.push_notes(
+        conn,
+        song_id=song_id,
+        session_id=args.session_id,
+        state_dir=state_dir,
+        clip_ids=args.clip or None,
+        changed_only=args.changed,
+        actor="sync",
+        reason=args.reason or f"push_cli push-notes (session={args.session_id})",
+    )
+    sys.stdout.write(push_notes.format_summary(result))
+
+    if result.connection_lost:
+        return push_execute.EXIT_CONNECTION_LOST
+    if result.errors:
+        return push_execute.EXIT_PARTIAL
+    return push_execute.EXIT_OK
+
+
 def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
     """R-1.2: single-command cleanup of Live's brand-new-set defaults.
 
@@ -824,6 +860,26 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
     p_exec.set_defaults(func=_cmd_execute)
+
+    p_pn = sub.add_parser(
+        "push-notes",
+        help="B1: scoped note push — materialize only targeted (--clip) or "
+             "content-changed (--changed) clips' notes to Live, in-process "
+             "(notes never enter the agent's tool-use channel)",
+    )
+    p_pn.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    _add_db_args(p_pn)
+    p_pn.add_argument("--clip", action="append", default=None,
+                      help="clip id to push (repeatable); omit to consider every "
+                           "clip on the song")
+    p_pn.add_argument("--changed", action="store_true",
+                      help="push only clips whose note content changed since the "
+                           "last push-notes (content fingerprint, not event log)")
+    p_pn.add_argument("--state-dir", default=None,
+                      help="directory for .last-notes-push.json (default: DB directory)")
+    p_pn.add_argument("--reason", default=None,
+                      help="optional reason annotation for emitted events")
+    p_pn.set_defaults(func=_cmd_push_notes)
 
     p_cc = sub.add_parser(
         "check-coherence",

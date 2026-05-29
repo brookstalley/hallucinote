@@ -2022,3 +2022,59 @@ def test_cli_execute_probe_runs_coherence_check(
     ])
     assert rc == 0
     assert coherence_called["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# push-notes (B1) — CLI wiring + exit-code mapping
+# ---------------------------------------------------------------------------
+
+
+def test_cli_push_notes_wires_args_and_returns_ok(
+    conn, song, session, db_path, tmp_path, capsys, monkeypatch,
+):
+    from hallucinote.sync import push_notes as pn
+
+    captured: dict = {}
+
+    def fake_push_notes(conn_arg, *, song_id, session_id, state_dir,
+                        clip_ids, changed_only, actor, reason):
+        captured.update(
+            song_id=song_id, session_id=session_id, state_dir=str(state_dir),
+            clip_ids=clip_ids, changed_only=changed_only, actor=actor,
+        )
+        return pn.ScopedPushResult(pushed=[{"clip_id": "c1", "name": "A", "note_count": 3}])
+
+    monkeypatch.setattr(push_cli.push_notes, "push_notes", fake_push_notes)
+    rc = push_cli.main([
+        "push-notes", session, "--db", str(db_path),
+        "--clip", "c1", "--clip", "c2", "--changed",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert captured["clip_ids"] == ["c1", "c2"]
+    assert captured["changed_only"] is True
+    assert captured["session_id"] == session
+    assert captured["song_id"] == song
+    assert captured["state_dir"] == str(tmp_path)
+    assert "scoped notes push" in capsys.readouterr().out
+
+
+def test_cli_push_notes_maps_error_and_connection_exit_codes(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    from hallucinote.sync import push_notes as pn
+
+    monkeypatch.setattr(
+        push_cli.push_notes, "push_notes",
+        lambda *a, **k: pn.ScopedPushResult(errors=[{"clip_id": "x", "error": "boom"}]),
+    )
+    assert push_cli.main(["push-notes", session, "--db", str(db_path)]) == \
+        push_cli.push_execute.EXIT_PARTIAL
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        push_cli.push_notes, "push_notes",
+        lambda *a, **k: pn.ScopedPushResult(connection_lost=True),
+    )
+    assert push_cli.main(["push-notes", session, "--db", str(db_path)]) == \
+        push_cli.push_execute.EXIT_CONNECTION_LOST

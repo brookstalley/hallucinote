@@ -35,6 +35,8 @@ try:
         SectionWindow,
         TempoSegment,
         analyze_mix,
+        is_stale,
+        loaded_signature,
     )
     from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
@@ -46,6 +48,8 @@ try:
     _HAS_HALLUCINOTE = True
 except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
+    is_stale = None  # type: ignore[assignment]
+    loaded_signature = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
     TempoSegment = None  # type: ignore[assignment]
@@ -124,6 +128,18 @@ def _utc_timestamp() -> str:
     capture-dir naming convention so MixReport files sort alongside
     their source captures."""
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _analysis_code_status() -> dict[str, Any]:
+    """Loaded-vs-disk version of the analysis pipeline, for the tool response.
+
+    The MCP server caches imported analysis modules, so an edit to
+    ``hallucinote.audio`` isn't picked up until ``/mcp`` respawns the
+    subprocess. ``signature`` is the content hash of the code that produced
+    this response; ``stale`` is True when that loaded code no longer matches
+    what's on disk — the cue to respawn. See ``hallucinote.audio.codeversion``.
+    """
+    return {"signature": loaded_signature(), "stale": is_stale()}
 
 
 def _existing_db_path(song_slug: str) -> Path:
@@ -372,6 +388,7 @@ def analyze_handler(
         "schema_version": report_dict["schema_version"],
         "finding_count": len(report_dict["findings"]),
         "summary": summary,
+        "analysis_code": _analysis_code_status(),
     }
 
 
@@ -382,9 +399,10 @@ def get_latest_report_handler(
 ) -> dict[str, Any]:
     """Return the most recent MixReport JSON for ``song_slug``.
 
-    Returns: ``{report_path, report}`` where ``report`` is the parsed
-    JSON dict. Raises ``_AnalysisError`` if the song has no analyses on
-    disk yet.
+    Returns: ``{report_path, report, analysis_code}`` where ``report`` is
+    the parsed JSON dict and ``analysis_code`` is the loaded-vs-disk version
+    probe (see ``_analysis_code_status``). Raises ``_AnalysisError`` if the
+    song has no analyses on disk yet.
     """
     if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
         raise _AnalysisError(
@@ -403,6 +421,7 @@ def get_latest_report_handler(
     return {
         "report_path": str(report_path),
         "report": json.loads(report_path.read_text(encoding="utf-8")),
+        "analysis_code": _analysis_code_status(),
     }
 
 

@@ -5,7 +5,8 @@ Actions covering devices on tracks and return tracks:
   - **Read**: list, info, get_parameters
   - **Lifecycle**: load, delete
   - **Activation**: enable, disable
-  - **Parameters**: set_parameter (continuous + enum via ``value_type``)
+  - **Parameters**: set_parameter (continuous via raw ``value`` or display-unit
+    ``value_display``; enum via ``value_type``)
   - **Capability probing**: capabilities (W6-E-2)
   - **Routing**: set_input_routing, get_input_routing, set_sidechain,
     get_routing (W6-E-2 — replaced the prior Compressor-class whitelist
@@ -328,9 +329,13 @@ register(
         name="set_parameter",
         description=(
             "Write one device parameter by name. value_type='continuous' "
-            "(default) requires a numeric value in [param.min, param.max]. "
-            "value_type='enum' requires a string in the parameter's "
-            "value_items — resolves the legacy fork's gap #17b workaround."
+            "(default): pass EXACTLY ONE of `value` — the RAW float in "
+            "[param.min, param.max] (Live's own scale; normalized [0,1] for "
+            "many params, so '0.85' not '-3 dB') — or `value_display`, the "
+            "display units as a string ('-18 dB', '3:1', '20 ms'), which the "
+            "handler inverts to the raw value for you. value_type='enum' "
+            "requires a string `value` in the parameter's value_items. "
+            "Resolves the legacy fork's gap #17b workaround."
         ),
         params=(
             *_parent_addressing_specs(),
@@ -339,10 +344,27 @@ register(
             ParamSpec(
                 name="value",
                 type="str",
+                required=False,
                 description=(
-                    "Schema-permissive: a string on the wire so enum values "
-                    "round-trip cleanly. The handler coerces to float for "
-                    "value_type='continuous'."
+                    "Schema-permissive string on the wire (enum values "
+                    "round-trip cleanly). For value_type='continuous' it is "
+                    "the RAW value, coerced to float and range-checked against "
+                    "[param.min, param.max] — NOT display units. Use "
+                    "`value_display` for dB / ratios / ms. Omit when using "
+                    "`value_display`."
+                ),
+            ),
+            ParamSpec(
+                name="value_display",
+                type="str",
+                required=False,
+                description=(
+                    "Continuous-only: target in display units as a string "
+                    "('-18 dB', '3:1', '20 ms', '80 Hz'). Inverted to the raw "
+                    "value via the parameter's display curve. Mutually "
+                    "exclusive with `value`. Refused for enum params and for "
+                    "params whose display can't be addressed numerically "
+                    "(e.g. Expansion Ratio's '1 : 1.15')."
                 ),
             ),
             ParamSpec(
@@ -356,9 +378,13 @@ register(
         handler=device_handlers.set_parameter_handler,
         example=(
             "ableton_device(action='set_parameter', track_index=2, "
-            "device_index=1, parameter_name='Threshold', value='-12.0')"
+            "device_index=1, parameter_name='Threshold', value_display='-18 dB')"
         ),
         tips=(
+            "Continuous params: use `value_display` ('-18 dB', '3:1') to hit a "
+            "musical target without knowing the normalized mapping, or `value` "
+            "for the raw [param.min, param.max] float. The response echoes the "
+            "achieved `value_display` so you can confirm the target was hit.",
             "For enum parameters: set value_type='enum' and value to one of "
             "the parameter's value_items (use get_parameters detail='full' "
             "to inspect).",
@@ -674,11 +700,23 @@ register(
             ParamSpec(
                 name="value",
                 type="str",
+                required=False,
                 description=(
-                    "Schema-permissive: a string on the wire so enum "
-                    "values round-trip cleanly. The handler coerces to "
-                    "float for value_type='continuous' — mirrors "
-                    "set_parameter."
+                    "Schema-permissive string on the wire (enum values "
+                    "round-trip cleanly). For value_type='continuous' it is "
+                    "the RAW value (range-checked) — mirrors set_parameter. "
+                    "Omit when using `value_display`."
+                ),
+            ),
+            ParamSpec(
+                name="value_display",
+                type="str",
+                required=False,
+                description=(
+                    "Continuous-only display-units target ('-18 dB', '3:1'), "
+                    "inverted to the raw value. Mutually exclusive with "
+                    "`value`. Identical semantics to set_parameter's "
+                    "`value_display`."
                 ),
             ),
             ParamSpec(

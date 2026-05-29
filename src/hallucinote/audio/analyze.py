@@ -32,6 +32,7 @@ from .attribution import (
 )
 from .io import CaptureSet, Surface, load_capture
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .masking import analyze_masking_window
 from .report import (
     Finding,
     MasterOvershoot,
@@ -49,6 +50,13 @@ from .section import (
     intersect_window,
     slice_audio,
 )
+
+
+# Product reporting floor for masking — pairs/bed below this masked fraction are
+# noise, not signal, and are dropped from the report (the DSP itself returns the
+# raw value; this is the integration-level "don't surface trivia" gate). The
+# holistic interpreter still grades what survives against intent.
+_MASKING_REPORTING_FLOOR = 0.15
 
 
 @dataclass(frozen=True)
@@ -70,6 +78,7 @@ def analyze_mix(
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     sections: Sequence[SectionWindow] = (),
     tempo_map: Sequence[TempoSegment] = (),
+    analyze_masking: bool = False,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -130,6 +139,7 @@ def analyze_mix(
         capture=capture,
         sections=sections,
         beat_map=beat_map,
+        analyze_masking=analyze_masking,
     )
     skipped.extend(section_skips)
 
@@ -249,6 +259,7 @@ def _measure_sections(
     capture: CaptureSet,
     sections: Sequence[SectionWindow],
     beat_map: BeatSampleMap,
+    analyze_masking: bool = False,
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
 
@@ -315,6 +326,19 @@ def _measure_sections(
                 ),
             })
             continue
+        sliced_stems = [
+            (s.track_id, slice_audio(s.audio, sl)) for s in capture.stems
+        ]
+        masking_pairs = []
+        bed_masking = []
+        if analyze_masking:
+            mres = analyze_masking_window(
+                sliced_stems,
+                capture.sample_rate,
+                reporting_floor=_MASKING_REPORTING_FLOOR,
+            )
+            masking_pairs = mres.pairs
+            bed_masking = mres.bed
         per_section.append(SectionMetrics(
             section_name=window.name,
             start_beat=window.start_beat,
@@ -322,10 +346,9 @@ def _measure_sections(
             master=_measure_window(capture.master, sl),
             stems=[_measure_window(s, sl) for s in capture.stems],
             returns=[_measure_window(r, sl) for r in capture.returns],
-            attribution=band_attribution(
-                [(s.track_id, slice_audio(s.audio, sl)) for s in capture.stems],
-                capture.sample_rate,
-            ),
+            attribution=band_attribution(sliced_stems, capture.sample_rate),
+            masking=masking_pairs,
+            bed_masking=bed_masking,
         ))
 
     return per_section, skipped

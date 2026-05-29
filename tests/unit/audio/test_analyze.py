@@ -299,6 +299,42 @@ def test_analyze_mix_populates_per_section_attribution(tmp_path: Path):
     assert isinstance(low["contributors"][0][1], float)
 
 
+def test_analyze_mix_populates_section_masking_when_enabled(tmp_path: Path):
+    """With ``analyze_masking=True``, a covered section carries inter-stem
+    masking evidence: a loud stem co-timed with a quiet one in the same band
+    reads as masking it, and it serializes under ``per_section[].masking``.
+    """
+    dur = 4.0
+    loud = sine(2000.0, dur, amplitude=0.8)
+    quiet = sine(2100.0, dur, amplitude=0.01)
+    master = loud + quiet
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Loud", loud), ("track:2", "Quiet", quiet)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    # Off by default — no masking computed.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].masking == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_masking=True)
+    sec = on.per_section[0]
+    assert sec.masking, "expected at least one masking pair"
+    top = sec.masking[0]
+    assert top.masker_track_id == "track:1"
+    assert top.maskee_track_id == "track:2"
+    assert top.masked_fraction > 0.5
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert sec_json["masking"][0]["masker_track_id"] == "track:1"
+    assert isinstance(sec_json["masking"][0]["masked_fraction"], float)
+    assert "bed_masking" in sec_json
+
+
 def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):
     """With a variable tempo, the beat→sample boundary shifts, so a section
     measures different audio than the constant-tempo linear map would.

@@ -66,6 +66,38 @@ Then the prose body.
 | `tags` | inline list of strings | optional | Free-form taxonomy; queryable via FTS5 |
 | `related` | inline list of paths | optional | Cross-links to other refs (path-relative-to-repo-root) |
 
+### Controlled `tags` vocabulary for mix + groove intent
+
+`tags` are free-form, but two families carry a **controlled vocabulary** that the
+analysis surfaces read (the masking analyzer and the holistic mix interpreter).
+Using these exact tags lets the interpreter recall intent reliably instead of
+guessing from prose. Markdown stays the single authored home for this intent —
+there is NO structured DB field (see `.prawduct/artifacts/intent-architecture.md`).
+
+**Mix-intent (per element / per section) — gates masking advice:**
+
+| Tag | Meaning | Analyzer behaviour |
+|---|---|---|
+| `focal` | meant to be intelligible / must win here | flag anything masking it |
+| `submerged` | deliberately buried as atmosphere | don't flag *its* being masked; instead check the element meant to pierce still pierces |
+| `blend-group` | 2+ parts meant to fuse into one timbre | never flag intra-group masking; treat as one element |
+| `density` | section is wash/density-intended | don't chase separation; only check the declared-to-pierce element |
+| `clarity` | (default, usually implicit) | full masking analysis |
+
+**Microtiming intent (groove) — recorded WHY for the `feel` offsets in `build.py`:**
+
+`feel` · `groove` · `push` · `drag` · `swing` · `syncopation`
+
+The `feel` numeric offsets are the WHAT (in `build.py`, → `notes.start_beats`);
+these tags + prose are the WHY. A *relational* groove (the tension *between*
+parts — "drums tight, guitar drags 25 ms") is **section-scoped** (`scope: time`),
+because the section is where it's true; a single-part nuance is `track-time`.
+
+**Scope guidance:** relationship/section feel → `scope: song`/`time`; per-element
+mix-intent → `scope: track` or `track-time`; precise, bar-addressable intent →
+`scope: track-time` + `bars`. Most micro-details ride as prose bullets inside the
+relevant section/track file — no one-file-per-detail explosion.
+
 ### Parser rules
 
 - Inline lists only — `[a, b, c]`. Block lists (`- a\n- b`) are NOT supported.

@@ -16,6 +16,13 @@ from typing import Mapping, Sequence
 # feel"). For string feels ("push hard", "drag eighths", "swing-8ths heavy")
 # the LLM resolves the string to a structured dict at compose time; the
 # generator API is dict-only.
+#
+# The feel dict is the WHAT (the offsets). The WHY — the groove intent it
+# implements ("intro pushes for urgency", "guitar drags against tight drums")
+# — is durable intent and belongs in the markdown corpus as an annotation
+# (tags: feel/groove/push/drag/swing; relational groove → section scope), NOT
+# ephemeral in the compose prompt. See `.prawduct/artifacts/song-conventions.md`
+# "Controlled tags vocabulary" + `intent-architecture.md` (Microtiming).
 Feel = Mapping[float, float] | None
 
 

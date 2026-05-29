@@ -119,6 +119,50 @@ class BandContribution:
 
 
 @dataclass(frozen=True)
+class MaskingPair:
+    """One ordered inter-stem masking relationship within a section window.
+
+    ``masked_fraction`` (0..1) is the share of the maskee's *energized* tiles
+    (frame × Bark-band cells where it carries non-trivial energy) in which the
+    masker's spread excitation exceeds the maskee's own band power — i.e. where
+    the masker likely renders the maskee inaudible. ``dominant_band`` is the
+    musical-region label (``sub`` / ``lows`` / ``mud`` / ``body`` / ``presence``
+    / ``brilliance`` / ``air``) carrying the most masked energy;
+    ``dominant_region_hz`` is the precise Bark-band Hz edges under it.
+
+    This is NEUTRAL EVIDENCE, not a judgement — masking is the mechanism of
+    foregrounding, not a defect. Whether a given pair is a problem depends on
+    per-section composer intent (which element is meant to win), which the
+    holistic interpreter grades against recalled markdown intent. See
+    ``.prawduct/artifacts/intent-architecture.md`` and ``masking-analyzer-goals.md``.
+
+    Pre-fader capture caveat: only valid on mix-level-reconstructed stems (the
+    M4L analyzer taps pre-fader). See ``masking-analyzer-spec.md`` §3.
+    """
+    masker_track_id: str
+    maskee_track_id: str
+    masked_fraction: float
+    dominant_band: str
+    dominant_region_hz: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class BedMasking:
+    """A maskee's masked fraction against the SUM of all other energized stems.
+
+    Pairwise :class:`MaskingPair` cannot see *distributed* buildup — a part
+    clear against every single other stem yet buried under the combined bed
+    (the most common real-world low-mid clarity killer). This measures exactly
+    that: the maskee vs the summed spread excitation of every other energized
+    stem in the window. Same evidence-not-judgement framing as ``MaskingPair``.
+    """
+    maskee_track_id: str
+    masked_fraction: float
+    dominant_band: str
+    dominant_region_hz: tuple[float, float]
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -146,6 +190,12 @@ class SectionMetrics:
     # Per-band stem-dominance over the section window (one entry per BANDS
     # band). Answers "kick + bass dominate the chorus low end" per-section.
     attribution: list[BandContribution] = field(default_factory=list)
+    # Inter-stem masking evidence (ranked top-N), populated only when masking
+    # analysis is enabled and the section has >= 2 energized stems. ``masking``
+    # is ordered pairs (A masks B); ``bed_masking`` is each maskee vs the summed
+    # bed. Neutral evidence — the interpreter grades it against intent.
+    masking: list[MaskingPair] = field(default_factory=list)
+    bed_masking: list[BedMasking] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -255,6 +305,27 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
             }
             for bc in s.attribution
         ],
+        "masking": [_masking_pair_to_dict(m) for m in s.masking],
+        "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
+    }
+
+
+def _masking_pair_to_dict(m: MaskingPair) -> dict[str, Any]:
+    return {
+        "masker_track_id": m.masker_track_id,
+        "maskee_track_id": m.maskee_track_id,
+        "masked_fraction": m.masked_fraction,
+        "dominant_band": m.dominant_band,
+        "dominant_region_hz": list(m.dominant_region_hz),
+    }
+
+
+def _bed_masking_to_dict(b: BedMasking) -> dict[str, Any]:
+    return {
+        "maskee_track_id": b.maskee_track_id,
+        "masked_fraction": b.masked_fraction,
+        "dominant_band": b.dominant_band,
+        "dominant_region_hz": list(b.dominant_region_hz),
     }
 
 

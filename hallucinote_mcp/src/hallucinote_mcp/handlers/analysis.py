@@ -297,6 +297,12 @@ def analyze_handler(
         declared_reverb_sends=declared_sends,
         sections=sections,
         tempo_map=tempo_map,
+        # Masking is per-section evidence; enable it whenever the song declares
+        # sections (the handler already gated section work on that). It is
+        # neutral measurement — the holistic interpreter grades it vs intent.
+        # NOTE (F1): captured stems are pre-fader, so real-song masking is
+        # provisional until level reconstruction (build-plan C3) lands.
+        analyze_masking=bool(sections),
     )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"

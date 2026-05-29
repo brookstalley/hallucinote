@@ -93,20 +93,41 @@ Output per section: ranked `(masker, maskee, masked_fraction, dominant_region)`
 above a reporting floor. Symmetric pairs are reported as the dominant direction
 (A masks B more than B masks A → report A→B).
 
+6. **Cumulative bed mode (F2 — required).** Pairwise A→B structurally cannot see
+   *distributed* low-mid buildup — the goals doc's #1 real-world clarity killer,
+   where a maskee is clear against any single stem but buried under the *combined*
+   bed. So in addition to ordered pairs, compute, for each maskee B, its masked
+   fraction against the **sum of all other energized stems' spread excitation** in
+   the window (`BedMasking`). This is the "is the vocal buried under everything
+   together?" measure.
+
+**Level-domain caveat (F1 — read before trusting real-song output).** Captured
+stems are **pre-fader** (the M4L analyzer is a parallel tap in the device chain;
+Live's volume/pan come after). Masking is a *relative-level* phenomenon, so the
+DSP is only valid on stems reconstructed to **mix level** (DB volume/pan +
+section automation — build-plan C3). `masking.py` is pure DSP over whatever audio
+it's handed: the synthetic corpus feeds constructed signals directly (correct by
+construction), and the handler must pass level-reconstructed stems for real
+songs. Until C3 lands, real-song masking output is provisional and must be
+labelled so.
+
 Citations to carry into the build: Zwicker & Fastl *Psychoacoustics*; Schroeder,
 Atal & Hall (1979) spreading function; MPEG-1 Audio psychoacoustic model 1
 (threshold offset / tonality). All are textbook; **the precise slope and offset
 constants are prototype-calibrated against the synthetic corpus** (Chunk 1).
 
-## 4. Data model / output schema  [pending intent-layer revision]
+## 4. Data model / output schema  (REVISED — LLM-first, evidence only)
 
-> Per the goals doc, the *product* output is a `MaskingFinding` (musical region
-> label + role-relationship + intent-graded severity + ranked arrangement-first
-> fixes), with the `MaskingPair` below as the *evidence* under it. Severity =
-> f(masked_fraction, maskee_role, is_maskee_focal_here). The raw schema below is
-> the measurement layer that finding is computed from.
+> **Decision (2026-05-28):** the masking layer emits NEUTRAL EVIDENCE only — no
+> `MaskingFinding`, no severity formula. There is no structured track-role field
+> in the DB (F6); roles are LLM-read prose. Intent-graded severity, musical
+> framing, and ranked fixes are the holistic interpreter's job (build-plan C6),
+> done in conversation against recalled markdown intent. Baking severity here
+> would require a role column that doesn't exist and would recreate the
+> "meter that says you're doing it wrong" the goals doc rejects. See
+> `intent-architecture.md`.
 
-New dataclasses in `report.py` (where `MasterOvershoot` / `SectionMetrics`
+New frozen dataclasses in `report.py` (where `MasterOvershoot` / `SectionMetrics`
 live — keeps `masking.py` able to import them without a cycle):
 
 ```
@@ -114,14 +135,25 @@ MaskingPair(frozen):
     masker_track_id: str
     maskee_track_id: str
     masked_fraction: float        # 0..1, share of B's energized tiles A masks
-    dominant_band: str            # Bark-region label, e.g. "bark_3_5 (60-150 Hz)"
+    dominant_band: str            # musical-region label, e.g. "presence (2-5 kHz)"
+    dominant_region_hz: tuple[float, float]   # precise Bark-band edges (evidence)
+
+BedMasking(frozen):               # cumulative: B vs sum of all other stems
+    maskee_track_id: str
+    masked_fraction: float
+    dominant_band: str
     dominant_region_hz: tuple[float, float]
 ```
 
-`SectionMetrics` gains `masking: list[MaskingPair]` (ranked, top-N, like
-`attribution`). Serialized in `_section_to_dict`. Empty list when a section has
-< 2 energized stems. New `Finding` kind `section_masking` (severity from the
-masked fraction) so the LLM can act without parsing the pair list.
+`dominant_band` speaks the engineer's region language (sub / lows / mud / body /
+presence / brilliance / air) per the goals doc; `dominant_region_hz` carries the
+precise Hz under the hood.
+
+`SectionMetrics` gains `masking: list[MaskingPair]` and
+`bed_masking: list[BedMasking]` (both ranked, top-N, like `attribution`).
+Serialized in `_section_to_dict`. Empty lists when a section has < 2 energized
+stems. **No new `Finding` kind** — masking is evidence the interpreter reads, not
+a pre-judged finding.
 
 `SCHEMA_VERSION` stays "1" while the audio schema is unreleased (consistent with
 how `per_section` / `attribution` were added) — confirm at build time.
@@ -133,9 +165,10 @@ how `per_section` / `attribution` were added) — confirm at build time.
   `capture.stems` sliced to each `SectionWindow` via the shipped
   `intersect_window(..., beat_map=...)`.
 - **`masking.py`** (new): `analyze_masking_window(stem_segments, sample_rate, *,
-  top_n) -> list[MaskingPair]` — pure DSP, window-agnostic, synthetic-testable
+  top_n) -> MaskingWindowResult` (carrying `pairs: list[MaskingPair]` +
+  `bed: list[BedMasking]`) — pure DSP, window-agnostic, synthetic-testable
   (mirrors `attribution.band_attribution`'s shape). `analyze_mix` calls it per
-  covered section.
+  covered section. Operates on whatever audio it's handed (see §3 level caveat).
 - **MCP handler**: no new DB read required for correctness — energized-stem
   detection comes from the audio. **Optional optimization**: prune pairs that
   the DB clip schedule says never co-play in a section (avoids O(stems²) work on

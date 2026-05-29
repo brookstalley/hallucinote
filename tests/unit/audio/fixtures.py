@@ -121,6 +121,13 @@ def delayed_copy(audio: np.ndarray, *, delay_samples: int) -> np.ndarray:
     return out
 
 
+def concat(*segments: np.ndarray) -> np.ndarray:
+    """Concatenate stereo segments along time — for time-sequenced fixtures
+    (e.g. stem A in the first half, B in the second half, to test no-time-
+    overlap masking)."""
+    return np.concatenate(segments, axis=0).astype(np.float32, copy=False)
+
+
 def calibrated_pink_noise(
     target_lufs: float,
     duration_s: float,
@@ -197,6 +204,7 @@ __all__ = [
     "sine",
     "kick_onset",
     "pink_noise",
+    "concat",
     "delayed_copy",
     "calibrated_pink_noise",
     "synthetic_ir",

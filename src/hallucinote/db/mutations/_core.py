@@ -176,6 +176,23 @@ def _touch_song(conn: sqlite3.Connection, song_id: str) -> None:
     )
 
 
+def _require_bar_floor(field: str, value: float) -> None:
+    """Reject a bar position below the 1-based floor with a teaching error.
+
+    Bars are 1-based throughout (bar 1 is the song's first bar); ``start_bar``
+    columns on ``sections`` / ``tempo_map`` / ``time_signature_map`` carry a
+    ``CHECK (start_bar >= 1.0)`` and ``_position_bar_to_beats`` raises on a
+    sub-1.0 position. Validating here, at the only sanctioned write path, fails
+    fast at the source with an explanation instead of surfacing a cryptic
+    ``IntegrityError`` (CHECK-backed tables) or a far-away ``ValueError`` at
+    push/analysis time (``arrangement_clips``, which has no such CHECK)."""
+    if value < 1.0:
+        raise ValueError(
+            f"{field} must be >= 1.0 per the 1-based bar convention "
+            f"(bar 1 is the first bar; got {value!r})"
+        )
+
+
 __all__ = [
     "Any",
     "E",
@@ -186,6 +203,7 @@ __all__ = [
     "_current_build_session",
     "_emit",
     "_record_touch_if_session",
+    "_require_bar_floor",
     "_resolve_actor_and_request",
     "_touch_clip",
     "_touch_song",

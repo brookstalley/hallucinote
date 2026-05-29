@@ -181,6 +181,74 @@ def test_beat_sample_map_round_trips():
         assert m.sample_to_beat(s) == pytest.approx(beat, abs=1e-3)
 
 
+def test_beat_sample_map_explicit_hold_matches_default():
+    """An explicit ramp='hold' is identical to the default — both are steps."""
+    default = BeatSampleMap(0.0, 8.0, 60_000, [
+        TempoSegment(0.0, 60.0), TempoSegment(4.0, 120.0)])
+    explicit = BeatSampleMap(0.0, 8.0, 60_000, [
+        TempoSegment(0.0, 60.0, "hold"), TempoSegment(4.0, 120.0, "hold")])
+    for beat in (0.0, 2.0, 4.0, 6.0, 8.0):
+        assert explicit.beat_to_sample(beat) == default.beat_to_sample(beat)
+
+
+def test_beat_sample_map_linear_ramp_integrates_the_glide():
+    """A 60→120 bpm linear ramp over beats [0, 8] is the log integral, not a
+    step. Early beats run slow (≈60 bpm) and so eat MORE wall-clock, pushing
+    beat 4 PAST the halfway sample a step model would give.
+
+    raw(β) = (60/slope)·ln(bpm(β)/bpm0) with slope = (120-60)/8 = 7.5, so the
+    beat-4 fraction is ln(90/60)/ln(120/60) = ln(1.5)/ln(2).
+    """
+    import math
+    n = 100_000
+    segs = [TempoSegment(0.0, 60.0, "linear"), TempoSegment(8.0, 120.0)]
+    m = BeatSampleMap(0.0, 8.0, n, segs)
+    expected = n * math.log(1.5) / math.log(2.0)
+    assert m.beat_to_sample(4.0) == pytest.approx(expected, abs=2)
+    # A step model (hold) would put beat 4 at the halfway sample — the ramp
+    # lands strictly later.
+    step = BeatSampleMap(0.0, 8.0, n, [
+        TempoSegment(0.0, 60.0), TempoSegment(8.0, 120.0)])
+    assert m.beat_to_sample(4.0) > step.beat_to_sample(4.0)
+    assert step.beat_to_sample(4.0) == pytest.approx(n / 2, abs=2)
+
+
+def test_beat_sample_map_linear_ramp_round_trips():
+    """beat → sample → beat survives the closed-form inverse across a ramp."""
+    segs = [TempoSegment(0.0, 80.0, "linear"), TempoSegment(12.0, 160.0)]
+    m = BeatSampleMap(0.0, 12.0, 50_000, segs)
+    for beat in (0.0, 2.5, 6.0, 9.5, 12.0):
+        assert m.sample_to_beat(m.beat_to_sample(beat)) == pytest.approx(beat, abs=1e-3)
+
+
+def test_beat_sample_map_linear_ramp_is_monotonic():
+    """Sample breakpoints strictly increase across a ramp — the map stays
+    invertible (positive bpm → strictly increasing cumulative seconds)."""
+    segs = [TempoSegment(0.0, 60.0, "linear"), TempoSegment(16.0, 140.0)]
+    m = BeatSampleMap(0.0, 16.0, 64_000, segs)
+    samples = [m.beat_to_sample(b) for b in range(0, 17)]
+    assert samples == sorted(samples)
+    assert all(b < a for b, a in zip(samples, samples[1:]))
+
+
+def test_beat_sample_map_linear_ramp_boundary_inside_window():
+    """A linear ramp whose target point falls strictly inside the captured
+    window splits into two intervals — the constant tail after the ramp's end
+    is still a step, and the ramp portion is integrated."""
+    # Ramp 90→90? No — ramp to the bar-8 point at 100 bpm, then hold to 16.
+    segs = [
+        TempoSegment(0.0, 90.0, "linear"),
+        TempoSegment(8.0, 100.0, "hold"),
+    ]
+    m = BeatSampleMap(0.0, 16.0, 80_000, segs)
+    # Interior breakpoint at beat 8 exists; both halves map monotonically and
+    # the whole window covers [0, n].
+    assert m.beat_to_sample(0.0) == 0
+    assert m.beat_to_sample(16.0) == 80_000
+    assert 0 < m.beat_to_sample(8.0) < 80_000
+    assert m.sample_to_beat(m.beat_to_sample(8.0)) == pytest.approx(8.0, abs=1e-3)
+
+
 def test_beat_sample_map_degenerate_span():
     m = BeatSampleMap(8.0, 8.0, 48_000)  # zero-length span
     assert m.degenerate

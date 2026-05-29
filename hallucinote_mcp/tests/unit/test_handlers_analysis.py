@@ -534,6 +534,28 @@ def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
     assert [(s.start_beat, s.bpm) for s in segs] == [(0.0, 120.0), (8.0, 90.0)]
 
 
+def test_collect_tempo_map_carries_ramp_kind(synthetic_song: Path):
+    """The DB row's ``ramp`` rides onto the TempoSegment so BeatSampleMap can
+    integrate a linear glide instead of stepping it."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        M.add_tempo_point(
+            conn, song_id=song_id, start_bar=1.0, tempo_bpm=90.0, ramp="linear",
+        )
+        M.add_tempo_point(conn, song_id=song_id, start_bar=5.0, tempo_bpm=140.0)
+        conn.commit()
+        segs = analysis_handlers._collect_tempo_map(conn, song_id)
+    finally:
+        conn.close()
+
+    assert [s.ramp for s in segs] == ["linear", "hold"]
+
+
 def test_analyze_handler_emits_skip_when_no_db_sections(synthetic_song: Path):
     """A song with no ``sections`` rows → per_section empty + a teaching
     skip naming ``create_section``."""

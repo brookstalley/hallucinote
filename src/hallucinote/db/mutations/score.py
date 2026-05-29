@@ -9,6 +9,7 @@ from ._core import (
     MutatorResult,
     _emit,
     _record_touch_if_session,
+    _require_bar_floor,
     _resolve_actor_and_request,
     _touch_song,
     _uuid,
@@ -35,6 +36,7 @@ def create_section(
 ) -> str:
     """Mark a named span of bars (verse, chorus, bridge, ...). DB-only metadata
     unless Live exposes section markers; surfaces in event log either way."""
+    _require_bar_floor("start_bar", start_bar)
     if end_bar <= start_bar:
         raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
     actor, request_id = _resolve_actor_and_request(actor, request_id)
@@ -189,6 +191,7 @@ def add_tempo_point(
         )
     if tempo_bpm <= 0:
         raise ValueError(f"tempo_bpm must be positive, got {tempo_bpm}")
+    _require_bar_floor("start_bar", start_bar)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
         """SELECT id, tempo_bpm, ramp FROM tempo_map
@@ -331,6 +334,7 @@ def add_time_signature_point(
         raise ValueError(
             f"numerator/denominator must be positive, got {numerator}/{denominator}"
         )
+    _require_bar_floor("start_bar", start_bar)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     # W10-H: refuse to author meter changes after bar 1. Live 12.4's MCP
     # has no `song_signature` automation target_kind, so within-song meter
@@ -342,8 +346,9 @@ def add_time_signature_point(
     # upsert path below returns "unchanged" silently (no new state).
     # Guard fires only for start_bar > 1.0 — the policy is "no within-song
     # ratchet"; bar-1 is the global meter (always allowed) and start_bar < 1.0
-    # falls through to the schema CHECK (also rejected, with a different
-    # error). The W12-A idempotency contract is preserved: if a row at
+    # is already rejected above by _require_bar_floor with a teaching error
+    # (the schema CHECK is the redundant backstop). The W12-A idempotency
+    # contract is preserved: if a row at
     # this position already exists with matching values, we still fall
     # through to the upsert path which returns "unchanged".
     if start_bar > 1.0:

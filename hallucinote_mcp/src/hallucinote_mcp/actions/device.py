@@ -213,11 +213,14 @@ register(
                 description=(
                     "Compose-time portable preset selection. Dict with "
                     "{root, pattern, mode?, path_prefix?, case_sensitive?} "
-                    "resolved at load time via the search primitive. The "
-                    "composer expresses 'a 909 kit' or 'the Late Nite drum "
-                    "rack'; the installed library on each machine decides "
-                    "the actual URI. Strict — refuses if 0 or 2+ matches. "
-                    "Mutually exclusive with preset_uri."
+                    "resolved at load time via the search primitive. mode "
+                    "defaults to 'substring'; use mode='exact' for an "
+                    "anchored whole-name match when a precise preset name "
+                    "is a substring of another ('Saturated Bass' vs 'Basic "
+                    "Saturated Bass'). The composer expresses 'a 909 kit' "
+                    "or 'the Late Nite drum rack'; the installed library on "
+                    "each machine decides the actual URI. Strict — refuses "
+                    "if 0 or 2+ matches. Mutually exclusive with preset_uri."
                 ),
             ),
             ParamSpec(

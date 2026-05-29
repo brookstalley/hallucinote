@@ -1440,6 +1440,104 @@ def test_load_preset_query_path_prefix_unknown_segment_lists_available(loaded_ac
     assert "available" in (resp.error or "")
 
 
+def test_load_preset_query_exact_mode_resolves_substring_collision(loaded_actions):
+    """A precise preset name that is a substring of another resolves uniquely
+    in exact mode. substring would match both → ambiguous; exact anchors to the
+    whole leaf name. (The 'Saturated Bass' vs 'Basic Saturated Bass' friction.)"""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Saturated Bass", uri="query:Drums#exact"),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Basic Saturated Bass", uri="query:Drums#super"),
+    )
+    # substring matches BOTH → strict mode refuses.
+    sub = _load_with_query(ctx, root="drums", pattern="Saturated Bass")
+    assert sub.ok is False
+    assert "ambiguous" in (sub.error or "")
+    # exact matches only the whole-name node → unambiguous load.
+    ex = _load_with_query(
+        ctx, root="drums", pattern="Saturated Bass", mode="exact",
+    )
+    assert ex.ok is True, ex.error
+    assert ctx.application.browser.load_calls[-1].uri == "query:Drums#exact"
+
+
+def test_load_rack_kind_class_mismatch_emits_warning(loaded_actions):
+    """kind='Drum Rack' resolving to an Instrument Rack (a user preset shadowed
+    the canonical rack in the browser walk) returns a `warning` naming the
+    mismatch — instead of silently succeeding until a Drum-Rack-only op fails."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    # Shadow trap: the walk matched a 'Drum Rack' node but Live instantiated an
+    # Instrument Rack (class_display_name = "Instrument Rack").
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(
+            FakeDevice(name="Acuff Kit", class_name="Instrument Rack"),
+        )
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["loaded_class_name"] == "Instrument Rack"
+    assert "warning" in resp.result
+    assert "Drum Rack" in resp.result["warning"]
+    assert "Instrument Rack" in resp.result["warning"]
+
+
+def test_load_rack_kind_class_match_has_no_warning(loaded_actions):
+    """A correctly-resolved rack (loaded class == requested rack kind) carries
+    no warning — the mismatch field only appears on a real divergence."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    # Default load_item appends a device named like the matched item ("Drum
+    # Rack"), so class_display_name == kind.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["loaded_class_name"] == "Drum Rack"
+    assert "warning" not in resp.result
+
+
+def test_load_non_rack_kind_class_difference_does_not_warn(loaded_actions):
+    """A non-rack kind whose loaded class differs (e.g. a preset whose device
+    class isn't the kind label) must NOT warn — only the four rack display
+    names are a reliable kind==class identity, so the warning is scoped to them
+    to avoid false positives on built-in classes / preset loads."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Sub Bass", uri="query:SubBass")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(
+            FakeDevice(name="Sub Bass", class_name="Instrument Rack"),
+        )
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Sub Bass"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert "warning" not in resp.result
+
+
 def test_load_preset_query_and_preset_uri_mutually_exclusive(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     resp = dispatch(

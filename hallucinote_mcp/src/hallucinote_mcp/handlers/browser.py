@@ -342,7 +342,7 @@ def inventory_handler(
 # search — agent-facing pattern match over the browser tree
 # ---------------------------------------------------------------------------
 
-_SEARCH_MODES = ("substring", "glob", "regex")
+_SEARCH_MODES = ("substring", "exact", "glob", "regex")
 
 # Match limit cap — generous; agents usually want 5-20. Tests against scale
 # (large library walks past this number stop early).
@@ -370,6 +370,12 @@ def _name_matches(name: str, pattern: str, mode: str, case_sensitive: bool) -> b
         pattern_cmp = pattern
     if mode == "substring":
         return pattern_cmp in name_cmp
+    if mode == "exact":
+        # Whole-leaf-name equality. A node's `name` IS the final path
+        # segment, so an exact preset name resolves uniquely even when it's
+        # a substring of another ("Saturated Bass" no longer matches "Basic
+        # Saturated Bass"). The anchored alternative to `substring`.
+        return name_cmp == pattern_cmp
     if mode == "glob":
         return fnmatch.fnmatchcase(name_cmp, pattern_cmp)
     if mode == "regex":

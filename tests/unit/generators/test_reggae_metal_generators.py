@@ -187,16 +187,33 @@ def test_guitar_gallop_locks_with_drum_gallop():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("call", [
-    lambda: drums.reggae_one_drop(2, kit=_KIT, feel={2.0: 0.1}),
-    lambda: drums.metal_gallop(2, kit=_KIT, feel={0.0: 0.1}),
-    lambda: bass.reggae_offbeat_bass(40, bars=2, feel={0.0: 0.1}),
-    lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0, feel={0.5: 0.1}),
-    lambda: harmony.reggae_skank([52, 59], bars=2, feel={1.5: 0.1}),
-    lambda: harmony.organ_bubble([52, 59], bars=2, feel={0.5: 0.1}),
-    lambda: harmony.palm_mute_power_chords(52, bars=2, feel={0.0: 0.1}),
+@pytest.mark.parametrize("base, shifted, pos, delta", [
+    (lambda: drums.reggae_one_drop(2, kit=_KIT),
+     lambda: drums.reggae_one_drop(2, kit=_KIT, feel={2.0: 0.1}), 2.0, 0.1),
+    (lambda: drums.metal_gallop(2, kit=_KIT),
+     lambda: drums.metal_gallop(2, kit=_KIT, feel={0.0: 0.1}), 0.0, 0.1),
+    (lambda: bass.reggae_offbeat_bass(40, bars=2),
+     lambda: bass.reggae_offbeat_bass(40, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
+    (lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0),
+     lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0, feel={0.5: 0.1}), 0.5, 0.1),
+    (lambda: harmony.reggae_skank([52, 59], bars=2),
+     lambda: harmony.reggae_skank([52, 59], bars=2, feel={1.5: 0.1}), 1.5, 0.1),
+    (lambda: harmony.organ_bubble([52, 59], bars=2),
+     lambda: harmony.organ_bubble([52, 59], bars=2, feel={0.5: 0.1}), 0.5, 0.1),
+    (lambda: harmony.palm_mute_power_chords(52, bars=2),
+     lambda: harmony.palm_mute_power_chords(52, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
 ])
-def test_feel_is_accepted_and_shifts(call):
-    """Every promoted idiom accepts a feel dict (microtiming is authorship)."""
-    notes = call()
-    assert notes and all(_well_formed(n) for n in notes)
+def test_feel_actually_shifts_the_targeted_onsets(base, shifted, pos, delta):
+    """Every promoted idiom accepts a feel dict AND applies it: the notes whose
+    within-bar position is `pos` move by exactly `delta`, and no others move
+    (microtiming is authorship — the knob must bite)."""
+    base_notes, shifted_notes = base(), shifted()
+    assert all(_well_formed(n) for n in shifted_notes)
+    assert len(base_notes) == len(shifted_notes)
+    # Pair notes by identity (same pitch+velocity+duration order) and diff onset.
+    moved = [s["start_beats"] - b["start_beats"]
+             for b, s in zip(base_notes, shifted_notes)]
+    # At least one note sat at `pos` within its bar and moved by `delta`.
+    assert any(d == pytest.approx(delta) for d in moved), moved
+    # Every note either moved by `delta` (it was at `pos`) or didn't move.
+    assert all(d == pytest.approx(0.0) or d == pytest.approx(delta) for d in moved), moved

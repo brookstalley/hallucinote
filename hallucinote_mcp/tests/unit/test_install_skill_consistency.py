@@ -262,3 +262,76 @@ def test_sanity_check_lists_specific_disallowed_paths(skill_text):
     assert "FastMCP" in section, (
         "skill must explain why server.py is excluded (FastMCP-dependent)"
     )
+
+
+# --- Chunk 2: HallucinoteAnalyzer.amxd copy step ---------------------
+
+
+def test_skill_includes_analyzer_copy_step(skill_text):
+    """The install skill must document the .amxd copy. Without this step
+    the audio-analysis MVP's `ableton_render` can't load the analyzer
+    via Live's browser."""
+    assert "HallucinoteAnalyzer.amxd" in skill_text, (
+        "install SKILL.md must reference the analyzer .amxd filename"
+    )
+    assert "Max Audio Effect" in skill_text, (
+        "skill must name the target Live directory (Presets/Audio Effects/Max Audio Effect)"
+    )
+
+
+def test_skill_uses_analyzer_install_helpers(skill_text):
+    """The skill must invoke the testable Python helpers (not hard-code
+    paths). Drift here would mean a SKILL.md change that bypasses the
+    canonical path computation in install_paths.py."""
+    assert "analyzer_amxd_source_path" in skill_text, (
+        "skill must invoke install_paths.analyzer_amxd_source_path to "
+        "locate the source .amxd (path computation lives in Python)"
+    )
+    assert "analyzer_install_target" in skill_text, (
+        "skill must invoke install_paths.analyzer_install_target to "
+        "locate the destination .amxd path"
+    )
+    assert "installed_analyzer_amxd" in skill_text, (
+        "skill must invoke install_paths.installed_analyzer_amxd to "
+        "verify the copy landed"
+    )
+
+
+def test_skill_probes_max_for_live_runtime(skill_text):
+    """Per build-plan Chunk 2: probe M4L; fail loud if missing."""
+    assert "max_for_live_available" in skill_text, (
+        "skill must probe Max for Live availability via the "
+        "max_for_live_available helper"
+    )
+    assert "Live Suite" in skill_text, (
+        "skill must explain that M4L requires Live Suite"
+    )
+
+
+# --- Chunk 2: analyzer auto-load wired into structural skills --------
+
+
+_SKILLS_WITH_AUTOLOAD_POSTLUDE = (
+    "track-new-with-instrument",
+    "return-new",
+    "song-new",
+)
+
+
+@pytest.mark.parametrize("skill_name", _SKILLS_WITH_AUTOLOAD_POSTLUDE)
+def test_structural_skill_has_analyzer_autoload_postlude(skill_name):
+    """Every skill that mutates structural surfaces (creates tracks /
+    returns / songs) must end with ``ableton_render(action='ensure_loaded')``
+    so the analyzer placement keeps up with the mutation. Without this,
+    a fresh track/return/song gets no analyzer until the user explicitly
+    re-runs the sweep."""
+    path = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / ".claude" / "skills" / skill_name / "SKILL.md"
+    )
+    assert path.exists(), f"missing SKILL.md at {path}"
+    text = path.read_text(encoding="utf-8")
+    assert "ableton_render(action='ensure_loaded')" in text, (
+        f"{skill_name} SKILL.md must invoke ableton_render(action='ensure_loaded') "
+        "as its postlude — see audio-analysis MVP Chunk 2 spec"
+    )

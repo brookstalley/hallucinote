@@ -24,7 +24,8 @@ TOOLS: tuple[str, ...] = (
     "ableton_arrangement",
     "ableton_scene",
     "ableton_browser",
-    "ableton_annotation",
+    "ableton_render",
+    "ableton_analysis",
 )
 
 

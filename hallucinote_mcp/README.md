@@ -1,23 +1,22 @@
 # hallucinote-mcp
 
-Ableton Live MCP server with **11 unified tools** and action dispatch — designed for
+Ableton Live MCP server with **12 unified tools** and action dispatch — designed for
 agents that need broad Ableton control without paying the context cost of a 50-tool
 surface.
 
 This package ships as part of the [Hallucinote](https://github.com/brookstalley/hallucinote)
 composition environment but can also be used standalone by any MCP-capable agent
 that wants structured access to a running Ableton Live set. Note: the
-`ableton_annotation` tool requires the parent `hallucinote` package on the
-server-side Python path (it reads/writes a per-song SQLite DB). The other ten
-tools work standalone.
+`ableton_analysis` tool requires the parent `hallucinote` package on the
+server-side Python path (it reads the per-song SQLite DB for declared intent
+and writes MixReport JSON). The other eleven tools work standalone.
 
 ## Why so few tools?
 
 Empirical research (Anthropic, Speakeasy, Copilot) shows model effectiveness degrades
 sharply past ~25 MCP tools and collapses past ~50. Most narrow setters can be
 consolidated: `ableton_track(action='set_property', property='volume', value=0.7)`
-replaces a separate `set_track_volume` tool. The architectural rationale lives in
-the parent repo at [`docs/mcp-tool-design.md`](../docs/mcp-tool-design.md).
+replaces a separate `set_track_volume` tool.
 
 ## Install
 
@@ -56,16 +55,17 @@ Live's Control Surface slot.
 | `ableton_arrangement` | Arrangement layout + cue points |
 | `ableton_scene` | Session-view scenes |
 | `ableton_browser` | Instruments, effects, plugins |
-| `ableton_annotation` | Composer-intent annotations (per-song DB; requires `hallucinote`) |
+| `ableton_render` | Audio capture: HallucinoteAnalyzer auto-load + WAV capture pass (per-track + returns + master) |
+| `ableton_analysis` | MixReport from a captures dir: loudness, master-bus contribution attribution, reverb verification (requires `hallucinote`) |
 
 Every tool answers `action='help'` with a structured menu — required / optional
 params, examples, tips — generated from the shared schema. Errors carry recovery
 hints: valid action list, missing-param list, an example, a `hint` string.
 
-In addition to the tools, the server exposes **12 resources** (11 static + 1
-templated) for low-context-cost reads (`ableton://session/snapshot`,
+In addition to the tools, the server exposes **11 resources** (all static)
+for low-context-cost reads (`ableton://session/snapshot`,
 `ableton://browser/*`, `ableton://plugins/installed`, `ableton://reference/*`,
-`ableton://guides/*`, plus the templated `hallucinote://song/{slug}/annotations`). Multi-step workflows live as Claude
+`ableton://guides/*`). Multi-step workflows live as Claude
 Code skills (`.claude/skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
 `/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,
 `/pattern-compose` — so they're assistant-callable, not just user-facing slash commands.

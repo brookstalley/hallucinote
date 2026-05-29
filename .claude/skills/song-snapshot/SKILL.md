@@ -34,7 +34,7 @@ Verify the bridge:
 
 > *call `ableton_session` with action=info*
 
-If it errors, stop. The user needs to open Live, load the song's set, and verify Hallucinote is selected as Control Surface (see README troubleshooting).
+On connection errors: see `ableton://guides/error-recovery`.
 
 ## Step 1 — Run the capture probes
 
@@ -52,11 +52,11 @@ Assemble the results into the three buckets `compile_snapshot` wants:
 - `returns` — list of return-track dicts (each with `index`, `name`, `volume`, `panning`, optionally `devices`)
 - `tracks` — list of track dicts (each with `index`, `name`, `type`, `volume`, `panning`, optional `mute`/`solo`/`arm`/`color`, optional `sends` map, optional `devices`)
 
-For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — Arc 4 / D4 display-name convention; pre-D4 these were class names `DrumGroupDevice` / `InstrumentGroupDevice` / `AudioEffectGroupDevice`), attach the nested `chains` array as the device's `chains` field. Walk one level only.
+For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names; see `ableton://guides/conventions`), attach the nested `chains` array as the device's `chains` field. Walk one level only.
 
 ## Step 2 — Write the fresh capture to a side-by-side file
 
-Compile the dict and write it to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Capture probes don't expose `browser_path` (Live doesn't track each loaded device's browser origin), so the refresh would silently lose the W13-A v1.0 fallback identity for every device — `preserve_browser_paths` carries the old paths forward where device identity (parent index + position + class) still matches:
+Compile the dict and write it to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). Capture probes don't expose `browser_path`, so `preserve_browser_paths` carries the old paths forward where device identity (parent index + position + class) still matches:
 
 ```python
 from hallucinote.capture import compile_snapshot, preserve_browser_paths
@@ -70,10 +70,6 @@ new = compile_snapshot(
     returns=<list>,
     tracks=<list>,
 )
-# E3 (W13-A v1.0): carry browser_path forward for devices whose identity
-# (parent index + position + class) still matches. Devices the user
-# swapped/moved drop their old path silently — it's stale for the new
-# device at that slot.
 preserve_browser_paths(old, new)
 
 pathlib.Path("songs/<slug>/captured_session.refresh.json").write_text(
@@ -97,7 +93,7 @@ python tools/capture_cli.py diff \
 
 Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes / no / show full diff)"*
 
-- **yes** → merge first, then move. The merge preserves sticky device fields (`browser_path` — captured at load time, not surfaced by list-time probes) so a refresh doesn't wipe the W13-A v1.0 cross-machine fallback identity:
+- **yes** → merge first, then move. The merge preserves sticky device fields (`browser_path` — captured at load time, not surfaced by list-time probes) so a refresh doesn't wipe the cross-machine fallback identity:
   ```bash
   python tools/capture_cli.py merge \
     songs/<slug>/captured_session.json \

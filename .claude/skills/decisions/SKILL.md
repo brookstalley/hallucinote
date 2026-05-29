@@ -1,5 +1,5 @@
 ---
-description: Query a song's compose-time audit log (requests + annotations) for prior LLM prompts, decision rationale, and structured composer notes. Complementary to /song-context.
+description: Query a song's compose-time audit log (requests) for prior LLM prompts and decision rationale. Complementary to /song-context.
 argument-hint: "[topic keywords] [--limit N] [--song SLUG]"
 user-invocable: true
 disable-model-invocation: false
@@ -7,14 +7,14 @@ context: fork
 allowed-tools: Bash, Read
 ---
 
-You are retrieving prior compose-time decisions from a song's audit log + annotations. This keeps the caller's context clean by returning only matching rows.
+You are retrieving prior compose-time decisions from a song's audit log. This keeps the caller's context clean by returning only matching rows.
 
 ## When to invoke
 
 Run `/decisions` proactively before any non-trivial composition or arrangement work, in addition to `/song-context`. The two are complementary:
 
 - **`/song-context`** searches the deliberate-decision corpus: `decisions/<date>-slug.md` ADRs and `annotations/slug.md` files (markdown-primary, FTS5-indexed). Use to find "what was decided here, with rationale."
-- **`/decisions`** searches the audit log: `requests.prompt_text`, `requests.metadata_json.decision_rationale`, and the `annotations` DB table. Use to find "what prompted this state — what was the LLM asked to do, and what reasoning did it record at the time?"
+- **`/decisions`** searches the audit log: `requests.prompt_text` and `requests.metadata_json.decision_rationale`. Use to find "what prompted this state — what was the LLM asked to do, and what reasoning did it record at the time?"
 
 Concrete cases where `/decisions` is the right tool:
 
@@ -26,21 +26,20 @@ Skip retrieval for purely mechanical edits (typos, renaming a clip) where prior 
 
 ## How it works
 
-Three sources scanned in one SQL pass, song-scoped:
+Two request fields scanned in one SQL pass, song-scoped:
 
 - `requests.prompt_text` — verbatim seed prompt for compose / push / pull / mutate cycles.
 - `requests.metadata_json.decision_rationale` — the LLM's reasoning, by convention.
-- `annotations.body` — structured composer notes from `ableton_annotation(action='create', ...)`.
 
 Multi-keyword semantics: **AND** — every keyword must appear in the row. The query LIKEs against the row's searchable text.
 
-Each result row carries a `source` tag (`'request'` or `'annotation'`) so the formatter renders requests as `prompt + rationale` and annotations as `body + bar/track scope`.
+Each result row renders as a `prompt + rationale` markdown section. Durable, prose-shaped composer intent lives in the markdown corpus (`decisions/` + `annotations/`) — reach for `/song-context` for that.
 
 ## Invocation
 
 $ARGUMENTS
 
-**Step 1 — Identify the active song.** Look at the caller's recent file activity / CWD. If a single song folder is in play (any file in `songs/<name>/` touched recently), use that song's DB: `songs/<name>/<name>.db`. If unclear, ask which song.
+**Step 1 — Identify the active song.** See `/song-context` Step 1 for the preflight rule. Use the song's DB at `songs/<name>/<name>.db`.
 
 **Step 2 — Run the query.** Invoke `tools/decisions_cli.py` via Bash:
 

@@ -63,6 +63,59 @@ def test_reindex_creates_rows_for_corpus(repo):
     assert rows[1]["path"].endswith("2026-01-01-foo.md")
 
 
+def test_single_song_reindex_scopes_to_that_song(repo):
+    # Two songs on disk; a single-song reindex must index ONLY that song's
+    # corpus (recall-on-read in /song-context relies on this — it doesn't
+    # filter by song_id).
+    conn, root = repo
+    _seed_song(conn, "alpha")
+    _seed_song(conn, "beta")
+    _write(
+        root / "songs/alpha/annotations/a.md",
+        _doc("annotation", "song", body="alpha note"),
+    )
+    _write(
+        root / "songs/beta/annotations/b.md",
+        _doc("annotation", "song", body="beta note"),
+    )
+    counts = reindex_corpus(
+        conn, song_dir=root / "songs/alpha", repo_root=root
+    )
+    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0}
+    paths = [r["path"] for r in conn.execute("SELECT path FROM markdown_refs")]
+    assert paths == ["songs/alpha/annotations/a.md"]
+
+
+def test_single_song_reindex_does_not_tombstone_other_songs(repo):
+    # Full reindex first (both songs indexed), then a single-song reindex of
+    # alpha must NOT tombstone beta's rows.
+    conn, root = repo
+    _seed_song(conn, "alpha")
+    _seed_song(conn, "beta")
+    _write(root / "songs/alpha/annotations/a.md", _doc("annotation", "song", body="a"))
+    _write(root / "songs/beta/annotations/b.md", _doc("annotation", "song", body="b"))
+    reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    reindex_corpus(conn, song_dir=root / "songs/alpha", repo_root=root)
+    live = conn.execute(
+        "SELECT path FROM markdown_refs WHERE tombstoned_at IS NULL ORDER BY path"
+    ).fetchall()
+    assert [r["path"] for r in live] == [
+        "songs/alpha/annotations/a.md",
+        "songs/beta/annotations/b.md",
+    ]
+
+
+def test_reindex_requires_exactly_one_source(repo):
+    conn, root = repo
+    with pytest.raises(ValueError):
+        reindex_corpus(conn, repo_root=root)
+    with pytest.raises(ValueError):
+        reindex_corpus(
+            conn, songs_root=root / "songs", song_dir=root / "songs/x",
+            repo_root=root,
+        )
+
+
 def test_reindex_is_idempotent(repo):
     conn, root = repo
     _seed_song(conn)

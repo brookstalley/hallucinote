@@ -17,7 +17,7 @@ array; replay walks one level. Recursively nested racks
 under "nested-nested rack support". Automation envelopes (chunk 4b) are
 schema-modeled and push-plannable but the capture/replay path doesn't ingest
 them yet — MCP exposes no read surface for the seven envelope target families
-(see docs/mcp-requirements.md, chunk-4b section).
+(see `ableton://guides/gaps`).
 
 Snapshot shape (extends the existing `captured_session.json` prototype):
 

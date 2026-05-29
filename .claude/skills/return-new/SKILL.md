@@ -16,11 +16,13 @@ $ARGUMENTS
 
 1. **Create the return.** Call `ableton_return(action='create', name=<name>)`. Capture the returned `return_index`.
 
-2. **Load the effect.** Call `ableton_device(action='load', return_index=<from step 1>, kind=<browser display name>, preset_uri=<effect-uri>)`. `kind` is REQUIRED — pass the BROWSER DISPLAY NAME as shown in Live's tree (common: `Reverb`, `Delay`, `Echo`, `Compressor`, `Hybrid Reverb`). Arc 4 / D4: Live's internal class names (`Compressor2`, `HybridReverb`, etc.) no longer resolve — use the display name only.
+2. **Load the effect.** Call `ableton_device(action='load', return_index=<from step 1>, kind=<browser display name>, preset_uri=<effect-uri>)`. `kind` is REQUIRED — pass the browser display name (`Reverb`, `Delay`, `Echo`, `Compressor`, etc.; see `ableton://guides/conventions`).
 
-3. **Initialize sends** (only if the user supplied `sends-from`). For each source `track_index` in the list, call `ableton_track(action='set_send', track_index=<src>, return_index=<from step 1>, value=0.4)`. 0.4 is a moderate default — the user can tune individual sends afterward.
+3. **Initialize sends** (only if `sends-from` supplied). For each source `track_index`, call `ableton_track(action='set_send', track_index=<src>, return_index=<from step 1>, value=0.4)`.
+
+4. **Postlude:** call `ableton_render(action='ensure_loaded')` silently.
 
 ## Notes
 
 - Live re-prefixes return names with `<letter>-` on load (`A-Reverb`, `B-Delay`). The Hallucinote DB stores stripped names — see `docs/snapshot-schema.md` "Return names: stored stripped."
-- For the rare effect class that Live won't load by bare `kind` (e.g., Instrument Rack — see error-recovery guide), reach for an explicit `preset_uri` or hand off to the user.
+- For the rare effect class Live won't load by bare `kind` (e.g., Instrument Rack), see `ableton://guides/error-recovery`.

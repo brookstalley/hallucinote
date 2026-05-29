@@ -158,7 +158,7 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 
 ```
 src/hallucinote/      # composition library: db, generators, sync, capture
-hallucinote_mcp/      # in-repo MCP server (11 unified Ableton tools)
+hallucinote_mcp/      # in-repo MCP server (12 unified Ableton tools)
 songs/<slug>/         # one directory per song: build.py + snapshot + tests
 tools/                # scaffolding + maintenance scripts
 docs/                 # VISION, collaboration, MCP design + requirements

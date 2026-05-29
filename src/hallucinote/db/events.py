@@ -26,6 +26,7 @@ RETURN_UPDATED = "return_updated"
 RETURN_DELETED = "return_deleted"
 SEND_SET = "send_set"
 SEND_REMOVED = "send_removed"
+SEND_INTENT_SET = "send_intent_set"
 
 # Mix: device chains, devices, parameters
 DEVICE_CHAIN_CREATED = "device_chain_created"
@@ -84,11 +85,6 @@ ABLETON_LINK_SET = "ableton_link_set"
 # W18-B: strict link reconciliation — probe-and-link removes links whose
 # ableton_index no longer matches a Live entity in the fresh probe.
 ABLETON_LINK_REMOVED = "ableton_link_removed"
-
-# W23-B: structured song annotations (composer intent, stylistic notes)
-ANNOTATION_ADDED = "annotation_added"
-ANNOTATION_UPDATED = "annotation_updated"
-ANNOTATION_REMOVED = "annotation_removed"
 
 # Valid actor values for events.actor / requests.actor.
 # 'build' marks rows created/updated by a song's build.py running under

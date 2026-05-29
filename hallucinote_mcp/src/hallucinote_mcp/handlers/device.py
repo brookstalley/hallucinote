@@ -29,7 +29,13 @@ from .. import device_names
 from ..dispatcher import LiveContext
 
 
-_PARENT_KINDS = ("track", "return")
+_PARENT_KINDS = ("track", "return", "master")
+
+# Master-strip addressing uses index 0 as a sentinel — there is exactly one
+# master track per song, so no "which master" disambiguation is needed. The
+# index is reserved (not surfaced to callers) so downstream code that pattern-
+# matches on `parent_idx` still has a stable shape.
+_MASTER_SENTINEL_INDEX = 0
 
 
 def _resolve_parent(
@@ -37,18 +43,34 @@ def _resolve_parent(
     *,
     track_index: int | None,
     return_index: int | None,
+    master: bool | None = None,
 ) -> tuple[Any, str, int]:
-    """Return (parent_object, kind, 1-based-index). Raises if neither or both."""
-    if track_index is None and return_index is None:
+    """Return (parent_object, kind, 1-based-index). Raises if zero or >1 set.
+
+    `master=True` resolves to ``context.song.master_track`` with kind
+    ``"master"`` and sentinel index 0. Mutually exclusive with
+    ``track_index`` / ``return_index`` — devices live on exactly one
+    surface.
+    """
+    set_count = sum(
+        1
+        for v in (track_index, return_index, True if master else None)
+        if v is not None
+    )
+    if set_count == 0:
         raise ValueError(
-            "must specify exactly one of track_index or return_index "
-            "(devices live on a track or a return)"
+            "must specify exactly one of track_index, return_index, or "
+            "master=True (devices live on a track, a return, or the "
+            "master strip)"
         )
-    if track_index is not None and return_index is not None:
+    if set_count > 1:
         raise ValueError(
-            "specify exactly one of track_index or return_index, not both"
+            "specify exactly one of track_index, return_index, or master, "
+            "not more than one"
         )
     song = context.song
+    if master:
+        return song.master_track, "master", _MASTER_SENTINEL_INDEX
     if track_index is not None:
         if track_index < 1 or track_index > len(song.tracks):
             raise IndexError(
@@ -75,7 +97,14 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
 
 
 def _parent_address(kind: str, index: int) -> dict[str, Any]:
-    """Build the (kind-specific) key for return values."""
+    """Build the (kind-specific) key for return values.
+
+    Master tracks use ``{"master": True}`` since the master strip is a
+    singleton — no index needed (and ``_MASTER_SENTINEL_INDEX`` isn't a
+    surface contract).
+    """
+    if kind == "master":
+        return {"master": True}
     return {f"{kind}_index": index}
 
 
@@ -89,6 +118,7 @@ def list_handler(
     *,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Return the top-level device chain on a track or return.
 
@@ -106,7 +136,7 @@ def list_handler(
     a static translation table.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     devices_out: list[dict[str, Any]] = []
     for i, dev in enumerate(parent.devices, start=1):
@@ -128,10 +158,11 @@ def info_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Identity + activation + parameter count for one device."""
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     params = getattr(dev, "parameters", ())
@@ -157,6 +188,7 @@ def get_parameters_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     detail: str = "summary",
 ) -> dict[str, Any]:
     """Return device parameters with current values.
@@ -170,7 +202,7 @@ def get_parameters_handler(
             f"detail must be 'summary' or 'full', got {detail!r}"
         )
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     params_out: list[dict[str, Any]] = []
@@ -482,7 +514,12 @@ def _refresh_parent(
     parent reference captured before ``browser.load_item`` may point to
     a stale wrapper whose ``devices`` collection doesn't reflect the new
     chain. Re-resolving from ``song`` returns the fresh wrapper.
+
+    ``parent_kind="master"`` uses the singleton ``master_track`` accessor
+    (no index lookup; the master strip is a song-level singleton).
     """
+    if parent_kind == "master":
+        return context.song.master_track
     if parent_kind == "track":
         return context.song.tracks[parent_idx - 1]
     return context.song.return_tracks[parent_idx - 1]
@@ -546,6 +583,7 @@ def load_handler(
     browser_path: list[str] | None = None,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
 
@@ -602,7 +640,7 @@ def load_handler(
     response identifies whichever position the new device occupies.
     """
     parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
@@ -794,10 +832,11 @@ def delete_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Remove a device from a track or return chain."""
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     _ = _resolve_device(parent, device_index)  # validates range
     delete_fn = getattr(parent, "delete_device", None)
@@ -826,6 +865,7 @@ def _set_active(
     device_index: int,
     track_index: int | None,
     return_index: int | None,
+    master: bool | None,
     is_active: bool,
 ) -> dict[str, Any]:
     """Toggle a device's active/bypass state.
@@ -840,7 +880,7 @@ def _set_active(
     real Live device).
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     target_value = 1.0 if is_active else 0.0
@@ -888,12 +928,14 @@ def enable_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     return _set_active(
         context,
         device_index=device_index,
         track_index=track_index,
         return_index=return_index,
+        master=master,
         is_active=True,
     )
 
@@ -904,12 +946,14 @@ def disable_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     return _set_active(
         context,
         device_index=device_index,
         track_index=track_index,
         return_index=return_index,
+        master=master,
         is_active=False,
     )
 
@@ -926,6 +970,7 @@ def set_parameter_handler(
     value_type: str = "continuous",
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Write one device parameter.
 
@@ -945,7 +990,7 @@ def set_parameter_handler(
             f"value_type must be one of {list(_VALUE_TYPES)}, got {value_type!r}"
         )
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     target_param = None
@@ -1086,6 +1131,7 @@ def set_input_routing_handler(
     type_display_name: str,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     channel_display_name: str | None = None,
 ) -> dict[str, Any]:
     """Set a device's input routing (sidechain source) by display_name.
@@ -1105,7 +1151,7 @@ def set_input_routing_handler(
     (Pre FX / Post FX / Post Mixer); omit to leave the channel unchanged.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     available_types = getattr(dev, "available_input_routing_types", None)
@@ -1169,6 +1215,7 @@ def get_input_routing_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Read a device's input routing surface.
 
@@ -1178,7 +1225,7 @@ def get_input_routing_handler(
     device doesn't expose the API — symmetric with capability probing.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     available_types = getattr(dev, "available_input_routing_types", None)
@@ -1213,6 +1260,7 @@ def capabilities_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Structured snapshot of what a device supports.
 
@@ -1222,7 +1270,7 @@ def capabilities_handler(
     (Live natives + third-party plugins).
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
 
@@ -1266,6 +1314,7 @@ def set_sidechain_handler(
     enabled: bool,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     source_display_name: str | None = None,
     gain_db: float | None = None,
 ) -> dict[str, Any]:
@@ -1286,7 +1335,7 @@ def set_sidechain_handler(
     set_parameter directly after discovery via get_parameters.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
 
@@ -1402,6 +1451,7 @@ def get_routing_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Read a device's input routing summary.
 
@@ -1413,7 +1463,7 @@ def get_routing_handler(
     the routing surface including available enums.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     rt = getattr(dev, "input_routing_type", None)
@@ -1440,6 +1490,7 @@ def navigate_preset_handler(
     direction: str,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Step a device's preset within its browser folder.
 
@@ -1454,7 +1505,7 @@ def navigate_preset_handler(
             f"{direction!r}"
         )
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     if direction == "current":
@@ -1495,6 +1546,7 @@ def pad_info_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
 ) -> dict[str, Any]:
     """Read drum-rack pad layout: pitch → chain identity.
 
@@ -1505,7 +1557,7 @@ def pad_info_handler(
     On a non-drum-rack device this raises a teaching error.
     """
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     pads = getattr(dev, "drum_pads", None)
@@ -1603,6 +1655,7 @@ def get_device_chains_handler(
     device_index: int,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     detail: str = "summary",
 ) -> dict[str, Any]:
     """Probe a rack device's nested chains.
@@ -1619,7 +1672,7 @@ def get_device_chains_handler(
     if detail not in ("summary", "full"):
         raise ValueError(f"detail must be 'summary' or 'full', got {detail!r}")
     parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     dev = _resolve_device(parent, device_index)
     chains = _resolve_rack_chains(dev)
@@ -1685,6 +1738,7 @@ def load_in_rack_handler(
     kind: str,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     preset_uri: str | None = None,
 ) -> dict[str, Any]:
     """Load a device into a specific nested chain of a rack device.
@@ -1703,7 +1757,7 @@ def load_in_rack_handler(
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
     parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     rack = _resolve_device(parent, device_index)
     chains = _resolve_rack_chains(rack)
@@ -1853,6 +1907,7 @@ def set_parameter_in_rack_handler(
     value: str,
     track_index: int | None = None,
     return_index: int | None = None,
+    master: bool | None = None,
     value_type: str = "continuous",
 ) -> dict[str, Any]:
     """Write a parameter on a device inside a rack's nested chain.
@@ -1868,7 +1923,7 @@ def set_parameter_in_rack_handler(
             f"value_type must be 'continuous' or 'enum', got {value_type!r}"
         )
     parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index
+        context, track_index=track_index, return_index=return_index, master=master,
     )
     rack = _resolve_device(parent, device_index)
     chains = _resolve_rack_chains(rack)

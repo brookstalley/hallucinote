@@ -217,8 +217,23 @@ def discover_corpus(songs_root: Path) -> list[Path]:
     for song_dir in sorted(songs_root.iterdir()):
         if not song_dir.is_dir():
             continue
-        for sub in (_DECISIONS_GLOB, _ANNOTATIONS_GLOB):
-            paths.extend(sorted(song_dir.glob(sub)))
+        paths.extend(discover_song_corpus(song_dir))
+    return paths
+
+
+def discover_song_corpus(song_dir: Path) -> list[Path]:
+    """The decisions + annotations of a SINGLE song (`songs/<name>/`).
+
+    Returns absolute paths sorted for determinism. Used by per-song
+    reindex (recall-on-read) so one song's DB only ever indexes its own
+    corpus — ``find_markdown_refs`` in ``/song-context`` does not filter by
+    song, so a single-song DB must contain only that song's refs.
+    """
+    paths: list[Path] = []
+    if not song_dir.is_dir():
+        return paths
+    for sub in (_DECISIONS_GLOB, _ANNOTATIONS_GLOB):
+        paths.extend(sorted(song_dir.glob(sub)))
     return paths
 
 
@@ -321,19 +336,31 @@ def _serialize_markdown(fm: dict[str, Any], body: str) -> str:
 def reindex_corpus(
     conn: sqlite3.Connection,
     *,
-    songs_root: Path,
+    songs_root: Path | None = None,
     repo_root: Path,
+    song_dir: Path | None = None,
 ) -> dict[str, int]:
     """Rebuild the `markdown_refs` + `markdown_refs_fts` projection from disk.
+
+    Pass EITHER ``songs_root`` (walk every song — the whole-corpus reindex used
+    by the CLI) OR ``song_dir`` (a single ``songs/<name>/`` — the per-song
+    reindex used by recall-on-read). When ``song_dir`` is given, tombstoning is
+    scoped to that song's path prefix so reindexing one song never tombstones
+    another song's rows in a shared DB.
 
     Returns counts: {'upserted', 'tombstoned', 'unchanged'} for caller
     logging. Atomic: all writes happen in one transaction; any file-parse
     error raises before any DB state changes.
     """
-    docs = [
-        load_markdown_doc(p, repo_root=repo_root)
-        for p in discover_corpus(songs_root)
-    ]
+    if (songs_root is None) == (song_dir is None):
+        raise ValueError("pass exactly one of songs_root / song_dir")
+    if song_dir is not None:
+        corpus = discover_song_corpus(song_dir)
+        tombstone_prefix = f"{song_dir.relative_to(repo_root)}/"
+    else:
+        corpus = discover_corpus(songs_root)  # type: ignore[arg-type]
+        tombstone_prefix = None
+    docs = [load_markdown_doc(p, repo_root=repo_root) for p in corpus]
     on_disk_paths = {doc.relpath for doc in docs}
 
     existing_rows = conn.execute(
@@ -368,6 +395,11 @@ def reindex_corpus(
 
         for path, (_, tombstoned_at) in existing_by_path.items():
             if path in on_disk_paths or tombstoned_at is not None:
+                continue
+            # Single-song reindex must not tombstone other songs' rows.
+            if tombstone_prefix is not None and not path.startswith(
+                tombstone_prefix
+            ):
                 continue
             conn.execute(
                 "UPDATE markdown_refs "

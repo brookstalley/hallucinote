@@ -1,0 +1,420 @@
+"""MixReport — the audio analysis pipeline's wire format.
+
+Produced by ``analyze_mix(captures_dir)`` and serialized to
+``songs/<slug>/analysis/<iso-ts>.json``. The MCP handler
+(``ableton_analysis(action='analyze')``) is a thin wrapper that calls
+``analyze_mix`` and writes this report.
+
+Schema version is pinned in the report itself; downstream consumers
+(future ``compare_to`` differs, dashboards) discriminate by
+``schema_version`` rather than file path or git tag.
+
+The MVP carries skeleton fields that aren't yet populated:
+
+  ``compare_to``         — baseline-diff field. Reserved per spike §9
+                            (P2 backlog). Always ``None`` in MVP output.
+  ``skipped_analyses``   — explicit record when a declared analysis
+                            couldn't run (e.g. no declared decay times
+                            in the song DB for the reverb check). Keeps
+                            us honest per CLAUDE.md "Never silently drop
+                            a requirement."
+
+Per project preferences: ``@dataclass`` for in-process value objects;
+serialization is one explicit ``to_json_dict()`` boundary (not
+``dataclasses.asdict()`` — we want to control field ordering and reject
+non-JSON-safe nesting at the seam).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+SCHEMA_VERSION = "1"
+
+SurfaceKind = Literal["track", "return", "master"]
+Severity = Literal["info", "warning", "blocking"]
+
+_VALID_SURFACE_KINDS = ("track", "return", "master")
+_VALID_SEVERITIES = ("info", "warning", "blocking")
+
+
+@dataclass(frozen=True)
+class LoudnessMetrics:
+    """Per-surface loudness measurements.
+
+    All values in dB. LUFS-I follows BS.1770-4 gating; LUFS-S median is the
+    50th percentile of 3-second short-term blocks; LUFS-M peak is the max
+    400 ms momentary block. True peak is 4×-oversampled sample-peak in dBTP.
+    """
+    lufs_i: float
+    lufs_s_median: float
+    lufs_m_peak: float
+    true_peak_dbtp: float
+
+
+@dataclass(frozen=True)
+class StemMetrics:
+    """One row per captured surface (audio track / return / master)."""
+    track_id: str
+    surface_kind: SurfaceKind
+    surface_name: str
+    loudness: LoudnessMetrics
+
+    def __post_init__(self) -> None:
+        if self.surface_kind not in _VALID_SURFACE_KINDS:
+            raise ValueError(
+                f"surface_kind={self.surface_kind!r} must be one of "
+                f"{_VALID_SURFACE_KINDS}"
+            )
+
+
+@dataclass(frozen=True)
+class MasterOvershoot:
+    """A master-bus true-peak overshoot window with per-stem attribution.
+
+    ``attribution`` is ranked top-to-bottom; each entry is
+    ``(track_id, fraction)`` where ``fraction`` is the stem's share of RMS
+    energy in ``dominant_band`` during the overshoot window. Sums may not
+    reach 1.0 — only top contributors are surfaced; long-tail stems are
+    aggregated into the residual.
+    """
+    start_beat: float
+    end_beat: float
+    peak_dbtp: float
+    dominant_band: str
+    attribution: list[tuple[str, float]]
+
+
+@dataclass(frozen=True)
+class ReverbVerification:
+    """One declared dry-stem → wet-return-send verification result.
+
+    ``measured_rt60_s`` is the RT60 measured from the Wiener-deconvolved
+    IR via Schroeder backward energy integration
+    (``pyroomacoustics.experimental.rt60.measure_rt60``).
+    ``within_tolerance`` is ``abs(measured - declared) <= tolerance_s``.
+    """
+    dry_track_id: str
+    wet_return_track_id: str
+    declared_rt60_s: float
+    measured_rt60_s: float
+    within_tolerance: bool
+    tolerance_s: float
+
+
+@dataclass(frozen=True)
+class BandContribution:
+    """Per-band ranking of stem RMS contribution within a section window.
+
+    ``contributors`` is ranked top-to-bottom; each entry is
+    ``(track_id, fraction)`` where ``fraction`` is the stem's share of total
+    stem RMS energy in ``band`` over the section window. Top-N only; the
+    long tail is omitted (sums may not reach 1.0). Empty when no stem carried
+    energy in the band. This is the steady-state companion to
+    ``MasterOvershoot.attribution`` (which is tied to a peak event) — it
+    answers "which stems own the low end in the chorus?".
+    """
+    band: str
+    contributors: list[tuple[str, float]]
+
+
+@dataclass(frozen=True)
+class MaskingPair:
+    """One ordered inter-stem masking relationship within a section window.
+
+    ``masked_fraction`` (0..1) is the share of the maskee's *energized* tiles
+    (frame × Bark-band cells where it carries non-trivial energy) in which the
+    masker's spread excitation exceeds the maskee's own band power — i.e. where
+    the masker likely renders the maskee inaudible. ``dominant_band`` is the
+    musical-region label (``sub`` / ``lows`` / ``mud`` / ``body`` / ``presence``
+    / ``brilliance`` / ``air``) carrying the most masked energy;
+    ``dominant_region_hz`` is the precise Bark-band Hz edges under it.
+
+    This is NEUTRAL EVIDENCE, not a judgement — masking is the mechanism of
+    foregrounding, not a defect. Whether a given pair is a problem depends on
+    per-section composer intent (which element is meant to win), which the
+    holistic interpreter grades against recalled markdown intent. See
+    ``.prawduct/artifacts/intent-architecture.md`` and ``masking-analyzer-goals.md``.
+
+    Pre-fader capture caveat: only valid on mix-level-reconstructed stems (the
+    M4L analyzer taps pre-fader). See ``masking-analyzer-spec.md`` §3.
+    """
+    masker_track_id: str
+    maskee_track_id: str
+    masked_fraction: float
+    dominant_band: str
+    dominant_region_hz: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class BedMasking:
+    """A maskee's masked fraction against the SUM of all other energized stems.
+
+    Pairwise :class:`MaskingPair` cannot see *distributed* buildup — a part
+    clear against every single other stem yet buried under the combined bed
+    (the most common real-world low-mid clarity killer). This measures exactly
+    that: the maskee vs the summed spread excitation of every other energized
+    stem in the window. Same evidence-not-judgement framing as ``MaskingPair``.
+    """
+    maskee_track_id: str
+    masked_fraction: float
+    dominant_band: str
+    dominant_region_hz: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class PartTiming:
+    """One part's onset-vs-grid timing measurement within a section window.
+
+    The read-side counterpart to the ``feel`` pattern generator (which BAKES
+    push/pull/swing into note timing at compose time): this RECOVERS the feel
+    actually present in the captured audio, so the interpreter can ask "is this
+    part's groove what the composer intended for this section?".
+
+    All deviations are in **beats** (quarter = 1.0 in 4/4). Sign convention:
+    ``mean_drift_beats`` < 0 means the part sits *ahead* of the grid
+    (pushed / rushed); > 0 means *behind* (laid-back / dragged).
+    ``drift_stdev_beats`` is the spread of those deviations — timing tightness
+    (lower = more machine-tight; higher = looser/human). ``swing_ratio`` is the
+    long:short ratio of off-beat 8th placement (1.0 = straight; ~1.5 light
+    swing; ~2.0 triplet/hard swing); it is ``None`` when there are too few
+    off-beat 8th onsets to measure. ``confidence`` (0..1) is low for parts with
+    few onsets or loose, scattered timing (sustained pads with no clear
+    transients, or a part on a cross-rhythm rather than the grid) — read it as
+    "how much to trust these numbers".
+
+    NEUTRAL MEASUREMENT, not a judgement — there is no "right" feel. A dragged
+    snare may be a deliberate laid-back chorus or a sloppy take; only per-section
+    composer intent distinguishes them, which the holistic interpreter grades
+    against recalled markdown intent (see ``intent-architecture.md``). Parallel
+    to masking's DSP↔intent split.
+
+    Caveats carried into the interpreter (not corrected in the DSP): drift is
+    measured against a constant-tempo grid within the window, and a heavily
+    swung part reads as drift on a fine grid (swing and micro-timing interact);
+    onset detection is reliable only on transient-rich parts (low ``confidence``
+    flags the rest).
+    """
+    track_id: str
+    onset_count: int
+    mean_drift_beats: float
+    drift_stdev_beats: float
+    swing_ratio: float | None
+    confidence: float
+
+
+@dataclass(frozen=True)
+class SectionMetrics:
+    """Per-surface loudness scoped to one named section window.
+
+    Mirrors the top-level report's ``master`` / ``stems`` / ``returns``
+    shape, but every loudness number is measured over only the audio that
+    falls inside ``[start_beat, end_beat)`` — the half-open beat-domain
+    window the handler derived from the song's ``sections`` table (named
+    half-open ``[start_bar, end_bar)`` spans, not ``cue_points`` which are
+    point markers). This is the read-side answer to "is the chorus
+    actually louder than the verse?" — the LLM compares ``master.loudness``
+    across sections without re-parsing bars.
+
+    ``start_beat`` / ``end_beat`` are song-absolute beats (bar 1's downbeat
+    == beat 0.0), the same domain as ``MasterOvershoot.start_beat`` and the
+    capture's transport window. Windows are clamped to the captured extent;
+    a section that falls entirely outside the capture is recorded in
+    ``MixReport.skipped_analyses`` rather than emitted with empty metrics.
+    """
+    section_name: str
+    start_beat: float
+    end_beat: float
+    master: StemMetrics
+    stems: list[StemMetrics] = field(default_factory=list)
+    returns: list[StemMetrics] = field(default_factory=list)
+    # Per-band stem-dominance over the section window (one entry per BANDS
+    # band). Answers "kick + bass dominate the chorus low end" per-section.
+    attribution: list[BandContribution] = field(default_factory=list)
+    # Inter-stem masking evidence (ranked top-N), populated only when masking
+    # analysis is enabled and the section has >= 2 energized stems. ``masking``
+    # is ordered pairs (A masks B); ``bed_masking`` is each maskee vs the summed
+    # bed. Neutral evidence — the interpreter grades it against intent.
+    masking: list[MaskingPair] = field(default_factory=list)
+    bed_masking: list[BedMasking] = field(default_factory=list)
+    # Per-part onset-vs-grid timing feel (one entry per transient-rich stem
+    # above the confidence floor), populated only when timing analysis is
+    # enabled. The read-side counterpart to the `feel` generator. Neutral
+    # measurement — the interpreter grades it against intent.
+    timing: list[PartTiming] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Finding:
+    """Structured intent-keyed observation from the analysis pass.
+
+    The MVP populates findings keyed to DB-declared intent (track role,
+    send target, declared decay). The LLM ranks/filters by ``kind`` +
+    ``severity`` without parsing prose — per spike §6.
+
+    ``db_reference`` is a free-form pointer back into the song DB
+    (cue point, send id, track role) — purely for the LLM to cite when
+    explaining the finding.
+    """
+    kind: str
+    severity: Severity
+    subject: str
+    metric: str
+    observed: float
+    expected: float
+    db_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.severity not in _VALID_SEVERITIES:
+            raise ValueError(
+                f"severity={self.severity!r} must be one of "
+                f"{_VALID_SEVERITIES}"
+            )
+
+
+@dataclass
+class MixReport:
+    """Top-level wire format. Mutable so ``analyze_mix`` can populate
+    progressively without re-allocating; the ``to_json_dict()`` boundary
+    is where it becomes pure data."""
+
+    song_slug: str
+    captures_dir: str
+    captured_at: str
+    analyzer_signature: str
+    stems: list[StemMetrics]
+    master: StemMetrics
+    returns: list[StemMetrics] = field(default_factory=list)
+    overshoots: list[MasterOvershoot] = field(default_factory=list)
+    reverb_verifications: list[ReverbVerification] = field(default_factory=list)
+    per_section: list[SectionMetrics] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
+    compare_to: dict[str, Any] | None = None
+    schema_version: str = SCHEMA_VERSION
+
+    def to_json_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe dict.
+
+        Explicit rather than ``dataclasses.asdict`` because (a) we want a
+        stable field ORDER in the file (schema_version first, payload
+        next, optional/empty fields last), and (b) tuples serialize as
+        lists in JSON anyway — we make that explicit at the boundary so
+        round-trip equality of typed objects works.
+        """
+        return {
+            "schema_version": self.schema_version,
+            "song_slug": self.song_slug,
+            "captures_dir": self.captures_dir,
+            "captured_at": self.captured_at,
+            "analyzer_signature": self.analyzer_signature,
+            "master": _stem_to_dict(self.master),
+            "stems": [_stem_to_dict(s) for s in self.stems],
+            "returns": [_stem_to_dict(r) for r in self.returns],
+            "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],
+            "reverb_verifications": [
+                _reverb_to_dict(r) for r in self.reverb_verifications
+            ],
+            "per_section": [_section_to_dict(s) for s in self.per_section],
+            "findings": [_finding_to_dict(f) for f in self.findings],
+            "skipped_analyses": list(self.skipped_analyses),
+            "compare_to": self.compare_to,
+        }
+
+
+def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
+    return {
+        "track_id": s.track_id,
+        "surface_kind": s.surface_kind,
+        "surface_name": s.surface_name,
+        "loudness": {
+            "lufs_i": s.loudness.lufs_i,
+            "lufs_s_median": s.loudness.lufs_s_median,
+            "lufs_m_peak": s.loudness.lufs_m_peak,
+            "true_peak_dbtp": s.loudness.true_peak_dbtp,
+        },
+    }
+
+
+def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
+    return {
+        "section_name": s.section_name,
+        "start_beat": s.start_beat,
+        "end_beat": s.end_beat,
+        "master": _stem_to_dict(s.master),
+        "stems": [_stem_to_dict(stem) for stem in s.stems],
+        "returns": [_stem_to_dict(r) for r in s.returns],
+        "attribution": [
+            {
+                "band": bc.band,
+                "contributors": [list(pair) for pair in bc.contributors],
+            }
+            for bc in s.attribution
+        ],
+        "masking": [_masking_pair_to_dict(m) for m in s.masking],
+        "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
+        "timing": [_part_timing_to_dict(t) for t in s.timing],
+    }
+
+
+def _part_timing_to_dict(t: PartTiming) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "onset_count": t.onset_count,
+        "mean_drift_beats": t.mean_drift_beats,
+        "drift_stdev_beats": t.drift_stdev_beats,
+        "swing_ratio": t.swing_ratio,
+        "confidence": t.confidence,
+    }
+
+
+def _masking_pair_to_dict(m: MaskingPair) -> dict[str, Any]:
+    return {
+        "masker_track_id": m.masker_track_id,
+        "maskee_track_id": m.maskee_track_id,
+        "masked_fraction": m.masked_fraction,
+        "dominant_band": m.dominant_band,
+        "dominant_region_hz": list(m.dominant_region_hz),
+    }
+
+
+def _bed_masking_to_dict(b: BedMasking) -> dict[str, Any]:
+    return {
+        "maskee_track_id": b.maskee_track_id,
+        "masked_fraction": b.masked_fraction,
+        "dominant_band": b.dominant_band,
+        "dominant_region_hz": list(b.dominant_region_hz),
+    }
+
+
+def _overshoot_to_dict(o: MasterOvershoot) -> dict[str, Any]:
+    return {
+        "start_beat": o.start_beat,
+        "end_beat": o.end_beat,
+        "peak_dbtp": o.peak_dbtp,
+        "dominant_band": o.dominant_band,
+        "attribution": [list(pair) for pair in o.attribution],
+    }
+
+
+def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
+    return {
+        "dry_track_id": r.dry_track_id,
+        "wet_return_track_id": r.wet_return_track_id,
+        "declared_rt60_s": r.declared_rt60_s,
+        "measured_rt60_s": r.measured_rt60_s,
+        "within_tolerance": r.within_tolerance,
+        "tolerance_s": r.tolerance_s,
+    }
+
+
+def _finding_to_dict(f: Finding) -> dict[str, Any]:
+    return {
+        "kind": f.kind,
+        "severity": f.severity,
+        "subject": f.subject,
+        "metric": f.metric,
+        "observed": f.observed,
+        "expected": f.expected,
+        "db_reference": f.db_reference,
+    }

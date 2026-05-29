@@ -64,7 +64,7 @@ Translate the caller's topic + any natural-language filters into the appropriate
 - Track names → `--track "NAME"` (resolves to track_id via `tracks.name` lookup). Use `--scope track` only when you want to filter further.
 - Conceptual queries → use `topic` for fulltext + optional `--kind` / `--scope` filters.
 
-**Two retrieval orientations** (Arc 2 / B5):
+**Two retrieval orientations:**
 
 - **`--defensive`** — adds a framing header ("these items MAY CONTRADICT your plan") and flags any row whose snippet carries negation/constraint language (`don't / never / avoid / shouldn't / ...`). Use when the caller is about to compose against an element and you want them to read constraints BEFORE writing. Same query surface; the change is in how results are framed.
 - **`--generative`** — after the topic matches, runs a second pass surfacing rows that share at least one tag with the matches (under a "Related context" heading). Use when the caller is exploring connections and could benefit from related prior thinking they haven't queried for. Single additional SQL pass; semantic search (embeddings) is v1.2+.

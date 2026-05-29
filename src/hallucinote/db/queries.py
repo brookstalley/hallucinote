@@ -260,13 +260,42 @@ def get_sends_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.R
     """Return every send in the song. Joined with track + return identity so the
     caller has the full (from, to, level) matrix without N+1 lookups."""
     return conn.execute(
-        """SELECT s.from_track_id, s.to_return_id, s.level,
+        """SELECT s.from_track_id, s.to_return_id, s.level, s.intended_rt60_s,
                   t.track_index AS from_track_index, t.name AS from_track_name,
                   r.position AS return_position, r.name AS return_name
            FROM sends s
            JOIN tracks  t ON t.id = s.from_track_id
            JOIN returns r ON r.id = s.to_return_id
            WHERE t.song_id = ?
+           ORDER BY t.track_index, r.position""",
+        (song_id,),
+    ).fetchall()
+
+
+def get_reverb_send_intents_for_song(
+    conn: sqlite3.Connection, song_id: str
+) -> list[sqlite3.Row]:
+    """Return sends carrying a non-NULL ``intended_rt60_s`` declaration.
+
+    Used by the audio-analysis handler to assemble ``DeclaredReverbSend``
+    records from DB intent without forcing the MCP caller to enumerate
+    them. NULL-intent sends are filtered server-side — callers get an
+    already-pruned list.
+
+    The projection includes ``track_index`` + ``return_position`` because
+    the analysis handler translates DB UUIDs into capture-side surface
+    IDs (``track:N`` / ``return:N`` — see
+    ``analyzer.setup.track_id_for_surface``) before passing
+    ``DeclaredReverbSend`` records to ``analyze_mix``.
+    """
+    return conn.execute(
+        """SELECT s.from_track_id, s.to_return_id, s.intended_rt60_s,
+                  t.track_index AS from_track_index, t.name AS from_track_name,
+                  r.position AS return_position, r.name AS return_name
+           FROM sends s
+           JOIN tracks  t ON t.id = s.from_track_id
+           JOIN returns r ON r.id = s.to_return_id
+           WHERE t.song_id = ? AND s.intended_rt60_s IS NOT NULL
            ORDER BY t.track_index, r.position""",
         (song_id,),
     ).fetchall()
@@ -666,84 +695,6 @@ def get_events_for_request(
     ).fetchall()
 
 
-# ---------------------------------------------------------------------------
-# W23-B: song annotation reads
-# ---------------------------------------------------------------------------
-
-
-def get_annotations_for_song(
-    conn: sqlite3.Connection,
-    song_id: str,
-    *,
-    kind: str | None = None,
-) -> list[sqlite3.Row]:
-    """All annotations attached to ``song_id`` (any scope).
-
-    Order: track_id NULLs first (song-scoped / time-scoped surface
-    before track-scoped), then by start_bar (song-scoped → bar 1 →
-    bar 17 → …), then by created_at. Stable for the same agent reading
-    the same DB twice in a row.
-
-    ``kind`` filters to one of the ``ANNOTATION_KINDS`` values; None
-    returns all kinds.
-    """
-    if kind is not None:
-        return conn.execute(
-            """SELECT * FROM annotations WHERE song_id = ? AND kind = ?
-               ORDER BY track_id IS NOT NULL,
-                        COALESCE(start_bar, -1.0),
-                        created_at, id""",
-            (song_id, kind),
-        ).fetchall()
-    return conn.execute(
-        """SELECT * FROM annotations WHERE song_id = ?
-           ORDER BY track_id IS NOT NULL,
-                    COALESCE(start_bar, -1.0),
-                    created_at, id""",
-        (song_id,),
-    ).fetchall()
-
-
-def get_annotations_for_track(
-    conn: sqlite3.Connection,
-    track_id: str,
-) -> list[sqlite3.Row]:
-    """All annotations whose ``track_id`` matches. Excludes song-scoped /
-    time-scoped (which have ``track_id IS NULL``). Order: start_bar then
-    created_at."""
-    return conn.execute(
-        """SELECT * FROM annotations WHERE track_id = ?
-           ORDER BY COALESCE(start_bar, -1.0), created_at, id""",
-        (track_id,),
-    ).fetchall()
-
-
-def get_annotations_at_bar(
-    conn: sqlite3.Connection,
-    song_id: str,
-    bar: float,
-) -> list[sqlite3.Row]:
-    """All annotations on ``song_id`` active at ``bar`` (regardless of
-    track scope — caller filters by track if narrower).
-
-    Active means: song-scoped (start_bar IS NULL → always active), OR
-    a bar range containing ``bar`` as a half-open interval
-    [start_bar, end_bar). Open-ended forward ranges (end_bar IS NULL)
-    are active for all bars ≥ start_bar.
-    """
-    return conn.execute(
-        """SELECT * FROM annotations WHERE song_id = ?
-             AND (
-               start_bar IS NULL
-               OR (start_bar <= ? AND (end_bar IS NULL OR end_bar > ?))
-             )
-           ORDER BY track_id IS NOT NULL,
-                    COALESCE(start_bar, -1.0),
-                    created_at, id""",
-        (song_id, bar, bar),
-    ).fetchall()
-
-
 def get_request_event_summary(
     conn: sqlite3.Connection,
     request_id: str,
@@ -771,87 +722,57 @@ def find_related_decisions(
     keywords: list[str],
     limit: int = 20,
 ) -> list[sqlite3.Row]:
-    """Search a song's audit log + annotations for prior compose-time
-    decisions matching one or more keywords.
+    """Search a song's compose-time audit log for prior decisions matching
+    one or more keywords.
 
-    Three sources are scanned in a single UNION ALL pass, song-scoped:
+    Two request fields are scanned, song-scoped:
       - ``requests.prompt_text`` — verbatim seed prompt for compose / push /
         pull / mutate cycles.
       - ``requests.metadata_json`` — bag carrying the convention key
         ``decision_rationale`` (the LLM's reasoning at compose time).
-      - ``annotations.body`` — structured composer-intent notes from
-        ``ableton_annotation(action='create', ...)``.
 
-    Multi-keyword semantics: AND across keywords on each source — every
-    keyword must appear (case-insensitive LIKE) in the row's searchable
-    text. Single-keyword callers pass a one-element list. Empty
-    ``keywords`` returns ``[]`` (no broad-dump path; broad listing is
-    what ``list_requests_for_song`` / ``get_annotations_for_song`` are
-    for).
+    Multi-keyword semantics: AND across keywords — every keyword must appear
+    (case-insensitive LIKE) in the row's searchable text. Single-keyword
+    callers pass a one-element list. Empty ``keywords`` returns ``[]`` (no
+    broad-dump path; ``list_requests_for_song`` is the broad-listing surface).
 
-    Each row carries a synthetic ``source`` column (``'request'`` or
-    ``'annotation'``) and a synthetic ``sort_ts`` column (``requests.ts``
-    or ``annotations.created_at``) so callers can route per-source
-    rendering and rely on most-recent-first ordering across types.
+    Each row carries a synthetic ``sort_ts`` column (aliasing ``requests.ts``)
+    so callers rely on most-recent-first ordering without coupling to the
+    underlying column name.
+
+    Durable composer intent + decision rationale live as git-tracked markdown
+    (``songs/<slug>/decisions/`` + ``annotations/``), surfaced through the
+    ``markdown_refs`` corpus and ``/song-context``; this query is the
+    audit-log half — what the LLM was *asked* to do, and the reasoning it
+    recorded at the time.
 
     Out of scope: cross-song search; multi-user attribution; semantic /
-    embedding search; track / bar scope filters (callers compose with
-    ``get_annotations_for_track`` / ``get_annotations_at_bar`` if they
-    need a narrower window).
+    embedding search; track / bar scope filters.
     """
     if not keywords:
         return []
     patterns = [f"%{k}%" for k in keywords]
-    # AND-of-keywords on each side: every keyword must appear in the row's
-    # searchable text. Built as an explicit AND chain so we can reuse the
-    # patterns list across both arms of the UNION.
-    request_match_sql = " AND ".join(
+    # AND-of-keywords: every keyword must appear in the row's searchable text.
+    match_sql = " AND ".join(
         "(prompt_text LIKE ? OR metadata_json LIKE ?)" for _ in patterns
     )
-    annotation_match_sql = " AND ".join("body LIKE ?" for _ in patterns)
-    request_params: list[Any] = [song_id]
+    params: list[Any] = [song_id]
     for pat in patterns:
-        request_params.extend((pat, pat))
-    annotation_params: list[Any] = [song_id]
-    for pat in patterns:
-        annotation_params.append(pat)
-    # NULL columns on each side maintain a uniform row shape — every
-    # SELECT returns the same column list in the same order, so callers
-    # can read both source kinds without type-routing by source.
+        params.extend((pat, pat))
     sql = f"""
-        SELECT 'request' AS source,
-               id,
+        SELECT id,
                ts AS sort_ts,
                actor,
                kind,
                intent,
                prompt_text,
-               metadata_json,
-               NULL AS body,
-               NULL AS track_id,
-               NULL AS start_bar,
-               NULL AS end_bar
+               metadata_json
           FROM requests
-         WHERE song_id = ? AND {request_match_sql}
-        UNION ALL
-        SELECT 'annotation' AS source,
-               id,
-               created_at AS sort_ts,
-               NULL AS actor,
-               kind,
-               NULL AS intent,
-               NULL AS prompt_text,
-               NULL AS metadata_json,
-               body,
-               track_id,
-               start_bar,
-               end_bar
-          FROM annotations
-         WHERE song_id = ? AND {annotation_match_sql}
+         WHERE song_id = ? AND {match_sql}
         ORDER BY sort_ts DESC
         LIMIT ?
     """
-    params = request_params + annotation_params + [limit]
+    params.append(limit)
     return conn.execute(sql, params).fetchall()
 
 

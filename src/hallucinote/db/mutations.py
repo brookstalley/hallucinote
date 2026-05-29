@@ -439,170 +439,6 @@ def request(
         )
 
 
-# W23-B: structured composer-intent annotations. Distinct from the
-# markdown_refs corpus (which holds ADR-shaped decision/annotation files on
-# disk) — this surface is for short-form, bar-range-scoped, live-composing
-# observations the agent updates as composition progresses.
-ANNOTATION_KINDS = frozenset(
-    {"intent", "stylistic", "structure", "reference", "todo"}
-)
-
-
-def add_annotation(
-    conn: sqlite3.Connection,
-    *,
-    song_id: str,
-    kind: str,
-    body: str,
-    track_id: str | None = None,
-    start_bar: float | None = None,
-    end_bar: float | None = None,
-    actor: str = "llm",
-    request_id: str | None = None,
-    reason: str | None = None,
-) -> str:
-    """Create one annotations row. Returns the new annotation id.
-
-    Scoping levels (enforced by schema CHECK constraints):
-      - **Song-scoped**:  ``track_id=None``, ``start_bar=None``, ``end_bar=None``
-      - **Time-scoped**:  ``track_id=None``, ``start_bar`` set, ``end_bar``
-        optional (None = open-ended forward from start_bar)
-      - **Track-scoped**: ``track_id`` set, time optional
-
-    The agent uses this during composition for "live composing notes" —
-    distinct from durable decisions, which live as markdown files under
-    ``songs/<slug>/decisions/`` and are indexed via ``markdown_refs``.
-    """
-    if kind not in ANNOTATION_KINDS:
-        raise ValueError(
-            f"invalid annotation kind {kind!r}; expected one of "
-            f"{sorted(ANNOTATION_KINDS)}"
-        )
-    if end_bar is not None and start_bar is None:
-        raise ValueError("end_bar requires start_bar (open-ended-only ranges are not supported)")
-    if end_bar is not None and end_bar <= start_bar:
-        raise ValueError(f"end_bar ({end_bar}) must be greater than start_bar ({start_bar})")
-    aid = _uuid()
-    actor, request_id = _resolve_actor_and_request(actor, request_id)
-    conn.execute(
-        """INSERT INTO annotations
-               (id, song_id, track_id, start_bar, end_bar, kind, body)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (aid, song_id, track_id, start_bar, end_bar, kind, body),
-    )
-    _emit(
-        conn,
-        E.ANNOTATION_ADDED,
-        {
-            "annotation_id": aid,
-            "song_id": song_id,
-            "track_id": track_id,
-            "start_bar": start_bar,
-            "end_bar": end_bar,
-            "kind": kind,
-            "body": body,
-        },
-        song_id=song_id,
-        actor=actor,
-        request_id=request_id,
-        reason=reason,
-    )
-    return aid
-
-
-def update_annotation(
-    conn: sqlite3.Connection,
-    *,
-    annotation_id: str,
-    body: str | None = None,
-    kind: str | None = None,
-    start_bar: float | None = None,
-    end_bar: float | None = None,
-    actor: str = "llm",
-    request_id: str | None = None,
-    reason: str | None = None,
-) -> None:
-    """Update one annotation. Any of body/kind/start_bar/end_bar may be set;
-    None means "leave unchanged." Bumps ``updated_at``.
-
-    Use ``set_*_to_null`` semantics? Not today — clearing a bar range means
-    rewriting the row's scope, which is rare enough that delete + recreate
-    is simpler. If a callsite ever needs "clear end_bar," add an explicit
-    flag rather than overloading None.
-    """
-    row = conn.execute(
-        "SELECT * FROM annotations WHERE id = ?", (annotation_id,)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"annotation {annotation_id!r} not found")
-    if kind is not None and kind not in ANNOTATION_KINDS:
-        raise ValueError(
-            f"invalid annotation kind {kind!r}; expected one of "
-            f"{sorted(ANNOTATION_KINDS)}"
-        )
-    new_body = body if body is not None else row["body"]
-    new_kind = kind if kind is not None else row["kind"]
-    new_start = start_bar if start_bar is not None else row["start_bar"]
-    new_end = end_bar if end_bar is not None else row["end_bar"]
-    if new_end is not None and new_start is None:
-        raise ValueError("end_bar requires start_bar")
-    if new_end is not None and new_end <= new_start:
-        raise ValueError(f"end_bar ({new_end}) must be greater than start_bar ({new_start})")
-    actor, request_id = _resolve_actor_and_request(actor, request_id)
-    conn.execute(
-        """UPDATE annotations
-               SET body = ?, kind = ?, start_bar = ?, end_bar = ?,
-                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-               WHERE id = ?""",
-        (new_body, new_kind, new_start, new_end, annotation_id),
-    )
-    _emit(
-        conn,
-        E.ANNOTATION_UPDATED,
-        {
-            "annotation_id": annotation_id,
-            "song_id": row["song_id"],
-            "body": new_body,
-            "kind": new_kind,
-            "start_bar": new_start,
-            "end_bar": new_end,
-        },
-        song_id=row["song_id"],
-        actor=actor,
-        request_id=request_id,
-        reason=reason,
-    )
-
-
-def delete_annotation(
-    conn: sqlite3.Connection,
-    *,
-    annotation_id: str,
-    actor: str = "llm",
-    request_id: str | None = None,
-    reason: str | None = None,
-) -> None:
-    """Remove one annotation. No-ops cleanly if already gone (the agent
-    might race two delete prompts; emitting the event twice is worse than
-    silent absence)."""
-    row = conn.execute(
-        "SELECT song_id FROM annotations WHERE id = ?", (annotation_id,)
-    ).fetchone()
-    if row is None:
-        return
-    conn.execute("DELETE FROM annotations WHERE id = ?", (annotation_id,))
-    actor, request_id = _resolve_actor_and_request(actor, request_id)
-    _emit(
-        conn,
-        E.ANNOTATION_REMOVED,
-        {"annotation_id": annotation_id, "song_id": row["song_id"]},
-        song_id=row["song_id"],
-        actor=actor,
-        request_id=request_id,
-        reason=reason,
-    )
-
-
 def record_markdown_ref(
     conn: sqlite3.Connection,
     *,
@@ -2249,6 +2085,70 @@ def set_send_level(
     _touch_song(conn, track_row["song_id"])
 
 
+def set_send_intended_rt60(
+    conn: sqlite3.Connection,
+    *,
+    from_track_id: str,
+    to_return_id: str,
+    intended_rt60_s: float | None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Set composer-declared RT60 intent on an existing send.
+
+    ``intended_rt60_s=None`` clears the intent (the send remains, with NULL
+    intent). Positive when set — the schema CHECK enforces this, but raising
+    early gives the caller a clear message rather than a SQLite IntegrityError.
+
+    Requires the send row to exist — there's no useful "intent without a
+    level" state (a 0-level send isn't audible anyway, and the audio-analysis
+    handler walks the sends table to find candidates). Pair with
+    ``set_send_level`` to land both atomically.
+
+    Idempotent: skips emission when the stored value already matches.
+    """
+    if intended_rt60_s is not None and not (intended_rt60_s > 0.0):
+        raise ValueError(
+            f"intended_rt60_s {intended_rt60_s} must be > 0.0 (NULL is the "
+            f"'no intent declared' state)"
+        )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    row = conn.execute(
+        """SELECT t.song_id, s.intended_rt60_s
+           FROM sends s JOIN tracks t ON t.id = s.from_track_id
+           WHERE s.from_track_id = ? AND s.to_return_id = ?""",
+        (from_track_id, to_return_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"no send exists for (from_track={from_track_id!r}, "
+            f"to_return={to_return_id!r}); call set_send_level first to "
+            f"establish the send before declaring RT60 intent"
+        )
+    if row["intended_rt60_s"] == intended_rt60_s:
+        return
+    conn.execute(
+        """UPDATE sends SET intended_rt60_s = ?
+           WHERE from_track_id = ? AND to_return_id = ?""",
+        (intended_rt60_s, from_track_id, to_return_id),
+    )
+    _emit(
+        conn,
+        E.SEND_INTENT_SET,
+        {
+            "from_track_id": from_track_id,
+            "to_return_id": to_return_id,
+            "intended_rt60_s": intended_rt60_s,
+        },
+        song_id=row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    _touch_song(conn, row["song_id"])
+
+
 def remove_send(
     conn: sqlite3.Connection,
     *,
@@ -2258,27 +2158,48 @@ def remove_send(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> None:
-    track_row = conn.execute(
-        "SELECT song_id FROM tracks WHERE id = ?", (from_track_id,)
+    """Remove a send.
+
+    Decision (audio-analysis follow-on Critic note): an RT60 *intent*
+    (``sends.intended_rt60_s``) lives ON the send row, so removing the send
+    removes its intent atomically — there is no orphan to clean up and no
+    "intent without a send" state to preserve (``set_send_intended_rt60``
+    requires the send to exist for exactly this reason). The intent is
+    correctly discarded with the send. To keep that discard *auditable*
+    rather than silent, a non-null intent is recorded in the SEND_REMOVED
+    event payload — the audit log shows that an RT60 intent was dropped, not
+    just that a send was.
+    """
+    row = conn.execute(
+        """SELECT t.song_id, s.intended_rt60_s
+           FROM sends s JOIN tracks t ON t.id = s.from_track_id
+           WHERE s.from_track_id = ? AND s.to_return_id = ?""",
+        (from_track_id, to_return_id),
     ).fetchone()
-    if track_row is None:
+    if row is None:
+        # Either the track doesn't exist or there's no such send — nothing to
+        # remove. (A no-op delete must not emit an event.)
         return
-    cur = conn.execute(
+    conn.execute(
         "DELETE FROM sends WHERE from_track_id = ? AND to_return_id = ?",
         (from_track_id, to_return_id),
     )
-    if cur.rowcount == 0:
-        return
+    payload: dict[str, object] = {
+        "from_track_id": from_track_id,
+        "to_return_id": to_return_id,
+    }
+    if row["intended_rt60_s"] is not None:
+        payload["discarded_intended_rt60_s"] = row["intended_rt60_s"]
     _emit(
         conn,
         E.SEND_REMOVED,
-        {"from_track_id": from_track_id, "to_return_id": to_return_id},
-        song_id=track_row["song_id"],
+        payload,
+        song_id=row["song_id"],
         actor=actor,
         request_id=request_id,
         reason=reason,
     )
-    _touch_song(conn, track_row["song_id"])
+    _touch_song(conn, row["song_id"])
 
 
 # ---------------------------------------------------------------------------

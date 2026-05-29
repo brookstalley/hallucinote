@@ -53,7 +53,7 @@ register(
 # ---------------------------------------------------------------------------
 
 
-def _parent_addressing_specs() -> tuple[ParamSpec, ParamSpec]:
+def _parent_addressing_specs() -> tuple[ParamSpec, ParamSpec, ParamSpec]:
     return (
         ParamSpec(
             name="track_index",
@@ -61,8 +61,9 @@ def _parent_addressing_specs() -> tuple[ParamSpec, ParamSpec]:
             required=False,
             minimum=1,
             description=(
-                "1-based track index. Specify EXACTLY ONE of track_index "
-                "or return_index — devices live on either."
+                "1-based track index. Specify EXACTLY ONE of track_index, "
+                "return_index, or master=true — devices live on a track, "
+                "a return, or the master strip."
             ),
         ),
         ParamSpec(
@@ -70,7 +71,20 @@ def _parent_addressing_specs() -> tuple[ParamSpec, ParamSpec]:
             type="int",
             required=False,
             minimum=1,
-            description="1-based return index. Mutually exclusive with track_index.",
+            description=(
+                "1-based return index. Mutually exclusive with track_index "
+                "and master."
+            ),
+        ),
+        ParamSpec(
+            name="master",
+            type="bool",
+            required=False,
+            description=(
+                "Address the master strip's device chain (master limiters, "
+                "master EQs, etc.). Mutually exclusive with track_index and "
+                "return_index. Pass `true` to target master; omit otherwise."
+            ),
         ),
     )
 

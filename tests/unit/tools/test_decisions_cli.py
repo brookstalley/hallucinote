@@ -104,22 +104,6 @@ def test_request_with_decision_rationale_surfaces_rationale_section(db_with_song
     assert "claude-opus-4-7" not in out
 
 
-def test_annotation_renders_as_markdown_section(db_with_song):
-    db_path, conn, sid = db_with_song
-    aid = M.add_annotation(
-        conn, song_id=sid, kind="intent",
-        body="don't sidechain the bass on the bridge — let it bloom",
-        start_bar=33.0, end_bar=49.0,
-    )
-    conn.close()
-    rc, out, _err = _run("--db", str(db_path), "sidechain")
-    assert rc == 0
-    assert "### annotation" in out
-    assert aid in out
-    assert "sidechain" in out
-    assert "bars: 33.0" in out
-
-
 def test_keywords_flag_takes_comma_separated_list(db_with_song):
     db_path, conn, sid = db_with_song
     rid = M.create_request(

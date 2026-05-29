@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Query a song's compose-time audit log + annotations.
+"""Query a song's compose-time audit log.
 
 Used by the `/decisions` skill to retrieve prior LLM prompts + reasoning
-+ structured composer notes before non-trivial composition work. Output
-is markdown-formatted for direct LLM consumption.
+before non-trivial composition work. Output is markdown-formatted for
+direct LLM consumption.
 
-Three sources scanned in one SQL pass, song-scoped:
+Two request fields scanned in one SQL pass, song-scoped:
   - requests.prompt_text     — verbatim seed prompt for a compose / push /
                                  pull / mutate cycle
   - requests.metadata_json   — bag carrying the convention key
                                  `decision_rationale` (LLM reasoning)
-  - annotations.body         — structured composer notes from
-                                 `ableton_annotation(action='create', ...)`
 
 Multi-keyword semantics: AND. Every keyword must appear in the row.
 
@@ -21,9 +19,9 @@ Usage:
     python3 tools/decisions_cli.py --db <db> --limit 5 "sidechain"
 
 See also: `/song-context` for markdown-primary ADR retrieval
-(decisions/<date>-slug.md + annotations/slug.md). The two skills are
-complementary — `/decisions` queries the audit log; `/song-context`
-queries the deliberate-decision corpus.
+(decisions/<date>-slug.md + annotations/slug.md). The two are
+complementary — `/decisions` queries the audit log (what the LLM was
+asked + why); `/song-context` queries the durable markdown corpus.
 """
 from __future__ import annotations
 
@@ -43,36 +41,19 @@ from hallucinote.db.connection import init_db  # noqa: E402
 
 
 def _format_row(row: Any) -> str:
-    """One markdown section per row. Per-source rendering — requests carry
-    a prompt + reasoning; annotations carry a body + bar/track scope."""
-    if row["source"] == "request":
-        parts = [f"### request `{row['id']}` ({row['kind']})"]
-        meta_bits = [f"ts: {row['sort_ts']}", f"intent: {row['intent']}"]
-        if row["actor"]:
-            meta_bits.append(f"actor: {row['actor']}")
-        parts.append("  ".join(meta_bits))
-        if row["prompt_text"]:
-            parts.append("")
-            parts.append(f"**Prompt:** {row['prompt_text']}")
-        rationale = _extract_decision_rationale(row["metadata_json"])
-        if rationale:
-            parts.append("")
-            parts.append(f"**Rationale:** {rationale}")
-        return "\n".join(parts)
-    # annotation
-    parts = [f"### annotation `{row['id']}` ({row['kind']})"]
-    meta_bits = [f"ts: {row['sort_ts']}"]
-    if row["track_id"]:
-        meta_bits.append(f"track_id: {row['track_id']}")
-    if row["start_bar"] is not None:
-        bar_range = f"bars: {row['start_bar']}"
-        if row["end_bar"] is not None:
-            bar_range += f"–{row['end_bar']}"
-        meta_bits.append(bar_range)
+    """One markdown section per request row — a prompt + optional rationale."""
+    parts = [f"### request `{row['id']}` ({row['kind']})"]
+    meta_bits = [f"ts: {row['sort_ts']}", f"intent: {row['intent']}"]
+    if row["actor"]:
+        meta_bits.append(f"actor: {row['actor']}")
     parts.append("  ".join(meta_bits))
-    if row["body"]:
+    if row["prompt_text"]:
         parts.append("")
-        parts.append(row["body"])
+        parts.append(f"**Prompt:** {row['prompt_text']}")
+    rationale = _extract_decision_rationale(row["metadata_json"])
+    if rationale:
+        parts.append("")
+        parts.append(f"**Rationale:** {rationale}")
     return "\n".join(parts)
 
 

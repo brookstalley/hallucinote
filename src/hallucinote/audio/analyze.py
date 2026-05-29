@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .attribution import (
-    OvershootWindow,
+    band_attribution,
     find_master_overshoots,
     master_bus_attribution,
 )
@@ -41,7 +41,14 @@ from .report import (
     StemMetrics,
 )
 from .reverb import verify_reverb_send
-from .section import SectionWindow, WindowSlice, intersect_window, slice_audio
+from .section import (
+    BeatSampleMap,
+    SectionWindow,
+    TempoSegment,
+    WindowSlice,
+    intersect_window,
+    slice_audio,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,7 @@ def analyze_mix(
     *,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     sections: Sequence[SectionWindow] = (),
+    tempo_map: Sequence[TempoSegment] = (),
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -87,6 +95,16 @@ def analyze_mix(
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
 
+    # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
+    # and section windowing. Variable-tempo accurate when a tempo_map is
+    # supplied; degenerates to the constant-tempo linear map otherwise.
+    beat_map = BeatSampleMap(
+        capture.start_at_beat,
+        capture.stop_at_beat,
+        capture.master.audio.shape[0],
+        tempo_map,
+    )
+
     master_metrics = _measure_surface(capture.master)
     stem_metrics = [_measure_surface(s) for s in capture.stems]
     return_metrics = [_measure_surface(r) for r in capture.returns]
@@ -101,7 +119,7 @@ def analyze_mix(
         capture.sample_rate,
         overshoot_windows,
     )
-    overshoots = [_rebeat_overshoot(o, capture) for o in attributed]
+    overshoots = [_rebeat_overshoot(o, capture, beat_map) for o in attributed]
 
     reverb_verifications, skipped = _run_reverb_verifications(
         capture=capture,
@@ -111,6 +129,7 @@ def analyze_mix(
     per_section, section_skips = _measure_sections(
         capture=capture,
         sections=sections,
+        beat_map=beat_map,
     )
     skipped.extend(section_skips)
 
@@ -148,26 +167,25 @@ def _measure_surface(surface) -> StemMetrics:
     )
 
 
-def _rebeat_overshoot(o: MasterOvershoot, capture: CaptureSet) -> MasterOvershoot:
-    """Convert the seconds-domain start/end from ``attribution.master_bus_attribution``
-    into beats using the capture's transport window.
+def _rebeat_overshoot(
+    o: MasterOvershoot, capture: CaptureSet, beat_map: BeatSampleMap,
+) -> MasterOvershoot:
+    """Convert the seconds-domain start/end from ``master_bus_attribution``
+    into song-absolute beats via the capture's :class:`BeatSampleMap`.
 
-    Beats-per-second is derived from (stop_at_beat - start_at_beat) /
-    audio_duration_s — assumes constant tempo across the captured window.
-    Section windowing (``_measure_sections``) shares this linear beat↔sample
-    map; variable-tempo-accurate windowing remains a backlog follow-on.
+    The overshoot positions arrive in seconds (``o.start_beat`` is a seconds
+    placeholder); ``seconds * sample_rate`` gives the sample index, which the
+    map turns into a beat. Variable-tempo accurate when a tempo_map was
+    supplied; identical to the old constant-tempo linear map otherwise. A
+    degenerate capture leaves the seconds-domain values in place rather than
+    dividing by zero — the agent can detect the absurd start==end case.
     """
-    duration_s = capture.master.audio.shape[0] / capture.sample_rate
-    span_beats = capture.stop_at_beat - capture.start_at_beat
-    if duration_s <= 0 or span_beats <= 0:
-        # Degenerate capture — leave the seconds-domain values in place
-        # rather than dividing by zero. The agent reading the report can
-        # detect the absurd start_beat==end_beat case.
+    if beat_map.degenerate:
         return o
-    beats_per_second = span_beats / duration_s
+    sr = capture.sample_rate
     return MasterOvershoot(
-        start_beat=capture.start_at_beat + o.start_beat * beats_per_second,
-        end_beat=capture.start_at_beat + o.end_beat * beats_per_second,
+        start_beat=beat_map.sample_to_beat(o.start_beat * sr),
+        end_beat=beat_map.sample_to_beat(o.end_beat * sr),
         peak_dbtp=o.peak_dbtp,
         dominant_band=o.dominant_band,
         attribution=list(o.attribution),
@@ -230,6 +248,7 @@ def _measure_sections(
     *,
     capture: CaptureSet,
     sections: Sequence[SectionWindow],
+    beat_map: BeatSampleMap,
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
 
@@ -263,6 +282,7 @@ def _measure_sections(
             n_samples=n_samples,
             capture_start_beat=capture.start_at_beat,
             capture_stop_beat=capture.stop_at_beat,
+            beat_map=beat_map,
         )
         if not sl.covered:
             skipped.append({
@@ -302,6 +322,10 @@ def _measure_sections(
             master=_measure_window(capture.master, sl),
             stems=[_measure_window(s, sl) for s in capture.stems],
             returns=[_measure_window(r, sl) for r in capture.returns],
+            attribution=band_attribution(
+                [(s.track_id, slice_audio(s.audio, sl)) for s in capture.stems],
+                capture.sample_rate,
+            ),
         ))
 
     return per_section, skipped

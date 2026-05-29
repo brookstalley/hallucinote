@@ -32,7 +32,7 @@ from typing import Sequence
 import numpy as np
 
 from .io import Surface
-from .report import MasterOvershoot
+from .report import BandContribution, MasterOvershoot
 
 # Bands per spike §3. Names are stable wire-format identifiers (they
 # land in MasterOvershoot.dominant_band and the agent groups by them);
@@ -205,6 +205,54 @@ def master_bus_attribution(
     return results
 
 
+def band_attribution(
+    stem_audio: Sequence[tuple[str, np.ndarray]],
+    sample_rate: int,
+    *,
+    top_n: int = _DEFAULT_TOP_N,
+) -> list[BandContribution]:
+    """Per-band ranking of stem RMS contribution over a (pre-sliced) window.
+
+    For each band in ``BANDS``, measure every stem's RMS energy in that band
+    over the supplied audio and rank stems by their share of the band's total
+    stem energy (top-N). Returns one ``BandContribution`` per band, in BANDS
+    order; a band with no stem energy yields an empty ``contributors`` list.
+
+    Unlike :func:`master_bus_attribution` — which is tied to a master overshoot
+    event and reports a single dominant band — this is the steady-state view
+    over a whole section window: it answers "which stems own the low end in the
+    chorus?" regardless of whether the chorus overshot. The caller slices each
+    stem to the section window before passing it in (this function is
+    window-agnostic and tempo-agnostic, like the rest of this module).
+
+    ``stem_audio`` entries are ``(track_id, audio)`` where audio is mono ``(n,)``
+    or stereo ``(n, 2)``.
+    """
+    out: list[BandContribution] = []
+    monos = [
+        (tid, _to_mono(a) if a.ndim == 2 else a)
+        for tid, a in stem_audio
+    ]
+    for band_name, lo, hi in BANDS:
+        energies: list[tuple[str, float]] = []
+        for tid, mono in monos:
+            if mono.shape[0] == 0:
+                energies.append((tid, 0.0))
+                continue
+            energies.append((tid, _single_band_energy(mono, sample_rate, lo, hi)))
+        total = sum(e for _, e in energies)
+        if total <= 0:
+            ranked: list[tuple[str, float]] = []
+        else:
+            ranked = sorted(
+                ((tid, e / total) for tid, e in energies),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )[:top_n]
+        out.append(BandContribution(band=band_name, contributors=ranked))
+    return out
+
+
 def _to_mono(stereo: np.ndarray) -> np.ndarray:
     return 0.5 * (stereo[:, 0] + stereo[:, 1])
 
@@ -272,4 +320,5 @@ __all__ = [
     "OvershootWindow",
     "find_master_overshoots",
     "master_bus_attribution",
+    "band_attribution",
 ]

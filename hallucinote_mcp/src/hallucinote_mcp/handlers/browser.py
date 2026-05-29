@@ -199,6 +199,146 @@ def plugins_list_handler(context: LiveContext) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# inventory
+# ---------------------------------------------------------------------------
+
+
+# Hard ceiling on loadables returned from ONE inventory call. Keeps a single
+# response well under the 16 MiB wire cap (~250 B/entry → ~5 MiB at the cap)
+# and bounds how long the walk blocks Live's main thread. Hit at scale by
+# pack-heavy roots (samples, user_library); the caller (hallucinote.inventory
+# refresh) records such roots as partially covered rather than truncating
+# silently. A pure breadth bound — depth is still _BROWSER_WALK_DEPTH.
+_INVENTORY_MAX_ENTRIES = 20000
+
+
+def _live_version_info(context: LiveContext) -> dict[str, Any]:
+    """Best-effort Live version + edition, for the inventory cache's staleness
+    signal (upgrading Live should prompt a refresh). Reads via
+    ``context.application`` — methods, not properties (``get_version_string`` /
+    ``get_variant``), so this is the only place that can surface them. Returns
+    ``{}`` if the application isn't reachable rather than failing the walk."""
+    try:
+        app = context.application
+    except (AttributeError, RuntimeError):
+        return {}
+    out: dict[str, Any] = {}
+    for attr, key in (
+        ("get_version_string", "live_version"),
+        ("get_variant", "live_variant"),
+    ):
+        fn = getattr(app, attr, None)
+        if callable(fn):
+            try:
+                out[key] = fn()
+            except (RuntimeError, TypeError):
+                # Version surface varies across Live builds — skip the field
+                # rather than fail the whole inventory over a cosmetic stamp.
+                pass
+    return out
+
+
+def _flatten_loadables(
+    node: Any, path: list[str], depth_left: int, out: list[dict[str, Any]],
+    max_entries: int,
+) -> bool:
+    """Append every loadable leaf under ``node`` to ``out`` with its full
+    path. Recurses past loadables (a loadable rack/plugin can contain further
+    loadable presets) so the flattened set EXACTLY equals what the push-time
+    resolver (``device._resolve_preset_query._walk``) and ``_search_walk``
+    can reach. ``path`` is the path TO AND INCLUDING ``node``.
+
+    Returns ``True`` if the ``max_entries`` breadth cap was hit (caller marks
+    the scope partially covered — never a silent truncation).
+    """
+    name = str(getattr(node, "name", ""))
+    if bool(getattr(node, "is_loadable", False)):
+        if len(out) >= max_entries:
+            return True
+        out.append({
+            "root": path[0],
+            "path": list(path),
+            "name": name,
+            "uri": getattr(node, "uri", None),
+            "is_loadable": True,
+        })
+    if depth_left <= 0:
+        return False
+    for child in getattr(node, "children", ()) or ():
+        if _flatten_loadables(
+            child, path + [str(getattr(child, "name", ""))], depth_left - 1,
+            out, max_entries,
+        ):
+            return True
+    return False
+
+
+def inventory_handler(
+    context: LiveContext,
+    *,
+    root: str,
+    path_prefix: list[str] | None = None,
+    max_entries: int = _INVENTORY_MAX_ENTRIES,
+) -> dict[str, Any]:
+    """Flattened loadable inventory for ONE root (optionally narrowed to a
+    ``path_prefix`` sub-branch).
+
+    NOT agent-facing: this is the data source for the machine-local inventory
+    cache (``hallucinote.inventory``), which lets a composer pick built-in
+    content by name and author a portable ``preset_query`` WITHOUT Live
+    running. A pack-heavy library is tens of thousands of loadables, so the
+    cache is built one root (or sub-branch) at a time — a single mega-call
+    would blow the 16 MiB wire cap and freeze Live's main thread.
+
+    The walk depth is the push-time resolver's ``_BROWSER_WALK_DEPTH`` and the
+    recursion rule (recurse past loadables) matches it exactly — so an
+    inventory cache built from this resolves a ``preset_query`` IDENTICALLY to
+    push. Both invariants are pinned by lock-tests on the domain side
+    (``test_browser_walk_depth_matches_mcp_side``,
+    ``test_name_matches_matches_mcp_side``).
+
+    Returns the ``scope`` walked (``[root, *path_prefix]``), ``walk_depth``,
+    the flattened ``entries``, ``count``, and ``truncated`` — ``True`` when the
+    breadth cap was hit, telling the caller to subdivide via ``path_prefix``
+    or record the root as partially covered. Never silently truncates.
+    """
+    # Lazy import: device.py imports browser handlers at call time to avoid a
+    # load cycle; importing the constant here (rather than at module level)
+    # keeps the depth single-sourced without inverting that graph.
+    from .device import _BROWSER_WALK_DEPTH
+
+    if root not in _ROOTS:
+        raise ValueError(f"root {root!r} not in {list(_ROOTS)}")
+    if max_entries < 1:
+        raise ValueError(f"max_entries {max_entries} must be >= 1")
+    browser = _resolve_browser(context)
+    root_node = _resolve_root(browser, root)
+
+    if path_prefix:
+        if not isinstance(path_prefix, list):
+            raise ValueError("path_prefix must be a list of name segments")
+        scope_node = _navigate_path_prefix(root_node, [str(s) for s in path_prefix])
+        scope_path = [root] + [str(s) for s in path_prefix]
+    else:
+        scope_node = root_node
+        scope_path = [root]
+
+    entries: list[dict[str, Any]] = []
+    truncated = _flatten_loadables(
+        scope_node, scope_path, _BROWSER_WALK_DEPTH, entries, max_entries,
+    )
+
+    return {
+        "scope": scope_path,
+        "walk_depth": _BROWSER_WALK_DEPTH,
+        "entries": entries,
+        "count": len(entries),
+        "truncated": truncated,
+        **_live_version_info(context),
+    }
+
+
+# ---------------------------------------------------------------------------
 # search — agent-facing pattern match over the browser tree
 # ---------------------------------------------------------------------------
 
@@ -423,4 +563,5 @@ __all__ = [
     "at_path_handler",
     "plugins_list_handler",
     "search_handler",
+    "inventory_handler",
 ]

@@ -14,7 +14,12 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from hallucinote.audio import DeclaredReverbSend, SectionWindow, analyze_mix
+from hallucinote.audio import (
+    DeclaredReverbSend,
+    SectionWindow,
+    TempoSegment,
+    analyze_mix,
+)
 from hallucinote.audio.report import SCHEMA_VERSION
 
 from .fixtures import (
@@ -260,6 +265,72 @@ def test_analyze_mix_populates_per_section_loudness(tmp_path: Path):
     assert not any(
         s.get("kind") == "section_windowed" for s in report.skipped_analyses
     )
+
+
+def test_analyze_mix_populates_per_section_attribution(tmp_path: Path):
+    """Each covered section carries per-band stem-dominance: a low-frequency
+    stem owns the low band, a high-frequency stem owns the air band — the
+    'kick + bass dominate the chorus low end' question, answerable per-section.
+    """
+    dur = 4.0
+    kick = sine(100.0, dur, amplitude=0.5)   # low_60_200
+    hat = sine(9000.0, dur, amplitude=0.5)   # air_6k_plus
+    master = kick + hat
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Kick", kick), ("track:2", "Hat", hat)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+    report = analyze_mix(captures_dir, sections=sections)
+
+    sec = report.per_section[0]
+    by_band = {b.band: b for b in sec.attribution}
+    assert by_band["low_60_200"].contributors[0][0] == "track:1"
+    assert by_band["air_6k_plus"].contributors[0][0] == "track:2"
+
+    # Serialization carries it, in BANDS order, contributors as [tid, frac].
+    sec_json = report.to_json_dict()["per_section"][0]
+    assert sec_json["attribution"][0]["band"] == "sub_20_60"
+    low = next(b for b in sec_json["attribution"] if b["band"] == "low_60_200")
+    assert low["contributors"][0][0] == "track:1"
+    assert isinstance(low["contributors"][0][1], float)
+
+
+def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):
+    """With a variable tempo, the beat→sample boundary shifts, so a section
+    measures different audio than the constant-tempo linear map would.
+
+    Audio: loud first 2/3 (4s) + quiet last 1/3 (2s). Tempo: beats 0..4 @ 60
+    bpm, 4..8 @ 120 bpm → beat 4 lands at 2/3 of the samples. So section
+    'second' (beats 4..8) with the tempo map measures ONLY the quiet tail;
+    without it (linear, beat 4 = halfway) it also catches part of the loud
+    region and reads louder.
+    """
+    loud = calibrated_pink_noise(-14.0, 4.0)
+    quiet = calibrated_pink_noise(-30.0, 2.0)
+    audio = np.concatenate([loud, quiet], axis=0)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Synth", audio)],
+        master_audio=audio,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+    sections = [SectionWindow(name="second", start_beat=4.0, end_beat=8.0)]
+    tempo = [TempoSegment(start_beat=0.0, bpm=60.0),
+             TempoSegment(start_beat=4.0, bpm=120.0)]
+
+    with_tempo = analyze_mix(captures_dir, sections=sections, tempo_map=tempo)
+    without = analyze_mix(captures_dir, sections=sections)
+
+    lufs_with = with_tempo.per_section[0].master.loudness.lufs_i
+    lufs_without = without.per_section[0].master.loudness.lufs_i
+    # Tempo-aware sees only the quiet tail → measurably quieter than the
+    # linear interpretation that catches part of the loud region.
+    assert lufs_with < lufs_without - 3.0
 
 
 def test_analyze_mix_records_skip_for_section_outside_capture(tmp_path: Path):

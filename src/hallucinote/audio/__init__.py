@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from .analyze import DeclaredReverbSend, analyze_mix
 from .report import (
+    BandContribution,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
@@ -36,9 +37,10 @@ from .report import (
     SectionMetrics,
     StemMetrics,
 )
-from .section import SectionWindow
+from .section import SectionWindow, TempoSegment
 
 __all__ = [
+    "BandContribution",
     "DeclaredReverbSend",
     "Finding",
     "LoudnessMetrics",
@@ -48,5 +50,6 @@ __all__ = [
     "SectionMetrics",
     "SectionWindow",
     "StemMetrics",
+    "TempoSegment",
     "analyze_mix",
 ]

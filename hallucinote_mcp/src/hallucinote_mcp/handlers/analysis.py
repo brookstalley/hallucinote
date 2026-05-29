@@ -31,19 +31,24 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # import is only exercised on the MCP server side (where this handler
 # actually runs, gated by runs_server_side=True).
 try:
-    from hallucinote.audio import DeclaredReverbSend, SectionWindow, analyze_mix
+    from hallucinote.audio import (
+        DeclaredReverbSend,
+        SectionWindow,
+        TempoSegment,
+        analyze_mix,
+    )
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
     # Reuse the canonical bar→beat converter the push planner uses — it walks
-    # the song's time_signature_map so meter changes accumulate exactly. The
-    # only constant-tempo assumption in section windowing is the downstream
-    # beat→sample step (in `analyze._measure_sections`), not this conversion.
+    # the song's time_signature_map so meter changes accumulate exactly. Both
+    # section windows and tempo-map segments are positioned through it.
     from hallucinote.sync.push import _position_bar_to_beats
     _HAS_HALLUCINOTE = True
 except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
+    TempoSegment = None  # type: ignore[assignment]
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
@@ -121,11 +126,12 @@ def _utc_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _verify_song_db_exists(song_slug: str) -> None:
-    """Resolve the song DB to confirm the slug names a real song.
+def _existing_db_path(song_slug: str) -> Path:
+    """Resolve the song DB path, failing loud if the slug isn't a built song.
 
-    Open + close — fail loud if the slug is a typo rather than silently
-    writing a MixReport against random captures.
+    Existence check only (no open) — the handler opens the DB exactly once for
+    well-formedness validation + both collectors. Catches a typo'd slug before
+    a MixReport gets written against random captures.
     """
     db_path = resolve_db_path(song_slug)
     if not db_path.exists():
@@ -134,15 +140,14 @@ def _verify_song_db_exists(song_slug: str) -> None:
             f"a built song. `python3 songs/{song_slug}/build.py --reset` "
             f"creates it."
         )
-    # Open + close to validate the DB is well-formed; init_db runs
-    # the idempotent column-migration too.
-    conn = init_db(db_path)
-    conn.close()
+    return db_path
 
 
-def _collect_declared_sends(song_slug: str) -> list["DeclaredReverbSend"]:
-    """Read DB-declared reverb-send intents and lift them into
-    ``DeclaredReverbSend`` records for ``analyze_mix``.
+def _collect_declared_sends(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredReverbSend"]:
+    """Lift DB-declared reverb-send intents into ``DeclaredReverbSend`` records
+    for ``analyze_mix``, using an already-open connection.
 
     Translates DB UUIDs (``sends.from_track_id`` / ``sends.to_return_id``)
     into the capture manifest's ``track:N`` / ``return:N`` surface IDs
@@ -155,17 +160,7 @@ def _collect_declared_sends(song_slug: str) -> list["DeclaredReverbSend"]:
     emits its own ``skipped_analyses`` entry teaching the caller to declare
     them via ``set_send_intended_rt60``.
     """
-    db_path = resolve_db_path(song_slug)
-    conn = init_db(db_path)
-    try:
-        song = conn.execute(
-            "SELECT id FROM songs WHERE name = ?", (song_slug,)
-        ).fetchone()
-        if song is None:
-            return []
-        rows = Q.get_reverb_send_intents_for_song(conn, song["id"])
-    finally:
-        conn.close()
+    rows = Q.get_reverb_send_intents_for_song(conn, song_id)
     return [
         DeclaredReverbSend(
             dry_track_id=track_id_for_surface("track", int(row["from_track_index"])),
@@ -178,9 +173,11 @@ def _collect_declared_sends(song_slug: str) -> list["DeclaredReverbSend"]:
     ]
 
 
-def _collect_sections(song_slug: str) -> list["SectionWindow"]:
-    """Read the song's ``sections`` table and lift it into beat-domain
-    ``SectionWindow`` records for ``analyze_mix``.
+def _collect_sections(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["SectionWindow"]:
+    """Lift the song's ``sections`` table into beat-domain ``SectionWindow``
+    records for ``analyze_mix``, using an already-open connection.
 
     Sections are stored as named half-open ``[start_bar, end_bar)`` spans
     (``sections`` table); the capture's transport window and the analysis
@@ -198,18 +195,8 @@ def _collect_sections(song_slug: str) -> list["SectionWindow"]:
     its own ``skipped_analyses`` entry teaching the caller to declare them
     via ``create_section``.
     """
-    db_path = resolve_db_path(song_slug)
-    conn = init_db(db_path)
-    try:
-        song = conn.execute(
-            "SELECT id FROM songs WHERE name = ?", (song_slug,)
-        ).fetchone()
-        if song is None:
-            return []
-        section_rows = Q.get_sections_for_song(conn, song["id"])
-        ts_points = Q.get_time_signature_map(conn, song["id"])
-    finally:
-        conn.close()
+    section_rows = Q.get_sections_for_song(conn, song_id)
+    ts_points = Q.get_time_signature_map(conn, song_id)
     return [
         SectionWindow(
             name=row["name"],
@@ -217,6 +204,41 @@ def _collect_sections(song_slug: str) -> list["SectionWindow"]:
             end_beat=_position_bar_to_beats(row["end_bar"], ts_points),
         )
         for row in section_rows
+    ]
+
+
+def _collect_tempo_map(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["TempoSegment"]:
+    """Read the song's ``tempo_map`` and lift it into beat-domain
+    ``TempoSegment`` records for ``analyze_mix``, using an already-open
+    connection.
+
+    Tempo rows are keyed by ``start_bar``; each bar bound is converted to a
+    song-absolute beat via ``_position_bar_to_beats`` (the same exact meter
+    walk ``_collect_sections`` uses), giving ``analyze_mix`` the variable-tempo
+    map it needs for accurate beat→sample windowing. Empty list when the song
+    has no tempo_map rows — ``analyze_mix`` then falls back to the constant-
+    tempo linear map (calibrated to the audio duration), so this is a safe
+    no-op, not a silent drop of required data.
+
+    Caveat: this feeds the analyzer the *declared* tempo_map. It assumes the
+    render honored it. Today the push layer materializes only the bar-1 tempo
+    (the non-bar-1-tempo gap in ``.prawduct/backlog.md``), so a song that
+    declares variable tempo currently renders at one tempo — for that song the
+    declared changes aren't in the audio and ``BeatSampleMap`` documents how
+    that can be less accurate than the linear fallback. Harmless for the
+    constant-tempo songs that are all push can render today (byte-identical),
+    and correct once variable-tempo rendering lands.
+    """
+    tempo_rows = Q.get_tempo_map(conn, song_id)
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    return [
+        TempoSegment(
+            start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
+            bpm=float(row["tempo_bpm"]),
+        )
+        for row in tempo_rows
     ]
 
 
@@ -240,7 +262,7 @@ def analyze_handler(
             "action's runs_server_side flag."
         )
 
-    _verify_song_db_exists(song_slug)
+    db_path = _existing_db_path(song_slug)
 
     captures_path = (
         Path(captures_dir).resolve()
@@ -255,12 +277,26 @@ def analyze_handler(
             f"manifest.json next to the WAVs."
         )
 
-    declared_sends = _collect_declared_sends(song_slug)
-    sections = _collect_sections(song_slug)
+    # Single open: validates the DB is well-formed (init_db runs the
+    # idempotent migration) AND serves all three collectors. Previously each
+    # collector — and the existence verifier — opened its own connection
+    # (a quadruple-open per handler call once the tempo_map collector landed).
+    conn = init_db(db_path)
+    try:
+        song = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (song_slug,)
+        ).fetchone()
+        song_id = song["id"] if song is not None else None
+        declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
+        sections = _collect_sections(conn, song_id) if song_id else []
+        tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
+    finally:
+        conn.close()
     report = analyze_mix(
         captures_path,
         declared_reverb_sends=declared_sends,
         sections=sections,
+        tempo_map=tempo_map,
     )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"
@@ -307,7 +343,7 @@ def get_latest_report_handler(
             "ableton_analysis requires the hallucinote package — "
             "see analyze_handler for the same diagnosis."
         )
-    _verify_song_db_exists(song_slug)
+    _existing_db_path(song_slug)  # fail loud on a typo'd slug
     report_path = _latest_report_path(song_slug)
     if report_path is None:
         raise _AnalysisError(

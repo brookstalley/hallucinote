@@ -2322,27 +2322,48 @@ def remove_send(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> None:
-    track_row = conn.execute(
-        "SELECT song_id FROM tracks WHERE id = ?", (from_track_id,)
+    """Remove a send.
+
+    Decision (audio-analysis follow-on Critic note): an RT60 *intent*
+    (``sends.intended_rt60_s``) lives ON the send row, so removing the send
+    removes its intent atomically — there is no orphan to clean up and no
+    "intent without a send" state to preserve (``set_send_intended_rt60``
+    requires the send to exist for exactly this reason). The intent is
+    correctly discarded with the send. To keep that discard *auditable*
+    rather than silent, a non-null intent is recorded in the SEND_REMOVED
+    event payload — the audit log shows that an RT60 intent was dropped, not
+    just that a send was.
+    """
+    row = conn.execute(
+        """SELECT t.song_id, s.intended_rt60_s
+           FROM sends s JOIN tracks t ON t.id = s.from_track_id
+           WHERE s.from_track_id = ? AND s.to_return_id = ?""",
+        (from_track_id, to_return_id),
     ).fetchone()
-    if track_row is None:
+    if row is None:
+        # Either the track doesn't exist or there's no such send — nothing to
+        # remove. (A no-op delete must not emit an event.)
         return
-    cur = conn.execute(
+    conn.execute(
         "DELETE FROM sends WHERE from_track_id = ? AND to_return_id = ?",
         (from_track_id, to_return_id),
     )
-    if cur.rowcount == 0:
-        return
+    payload: dict[str, object] = {
+        "from_track_id": from_track_id,
+        "to_return_id": to_return_id,
+    }
+    if row["intended_rt60_s"] is not None:
+        payload["discarded_intended_rt60_s"] = row["intended_rt60_s"]
     _emit(
         conn,
         E.SEND_REMOVED,
-        {"from_track_id": from_track_id, "to_return_id": to_return_id},
-        song_id=track_row["song_id"],
+        payload,
+        song_id=row["song_id"],
         actor=actor,
         request_id=request_id,
         reason=reason,
     )
-    _touch_song(conn, track_row["song_id"])
+    _touch_song(conn, row["song_id"])
 
 
 # ---------------------------------------------------------------------------

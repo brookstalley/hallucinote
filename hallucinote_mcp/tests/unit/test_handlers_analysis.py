@@ -152,6 +152,27 @@ def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):
     assert report["master"]["track_id"] == "master"
 
 
+def test_analyze_handler_opens_db_once(synthetic_song: Path, monkeypatch):
+    """Regression: analyze_handler used to open the DB three times (verify +
+    each collector). It must open exactly once per invocation now."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    real_init_db = analysis_handlers.init_db
+    calls = {"n": 0}
+
+    def _counting_init_db(path):
+        calls["n"] += 1
+        return real_init_db(path)
+
+    monkeypatch.setattr(analysis_handlers, "init_db", _counting_init_db)
+    analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures_dir),
+    )
+    assert calls["n"] == 1
+
+
 def test_analyze_handler_defaults_to_latest_captures_dir(synthetic_song: Path):
     _write_captures(
         synthetic_song / "captures" / "20260528T120000Z",
@@ -217,8 +238,11 @@ def test_get_latest_report_returns_most_recent_json(synthetic_song: Path):
     # to ensure a different ISO second, or write a third manifest with a
     # later captured_at). Since two analyze calls within the same second
     # would collide, force the second's timestamp to be later by writing
-    # a sentinel report manually.
-    later_path = synthetic_song / "analysis" / "20260528T999999Z.json"
+    # a sentinel report manually. The sentinel uses a far-future timestamp
+    # so it sorts last regardless of the real wall-clock: _latest_report_path
+    # sorts by filename, and analyze_handler stamps the live UTC clock — a
+    # same-year sentinel would lose once the clock rolls past it.
+    later_path = synthetic_song / "analysis" / "99991231T235959Z.json"
     later_path.write_text(
         json.dumps({"schema_version": "1", "marker": "later"}),
         encoding="utf-8",
@@ -410,6 +434,29 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
     assert not any(
         s["kind"] == "section_windowed" for s in report["skipped_analyses"]
     )
+
+
+def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
+    """_collect_tempo_map reads the tempo_map table and converts each row's
+    start_bar to a song-absolute beat (via the 4/4-default meter walk),
+    yielding the beat-domain TempoSegments analyze_mix needs for accurate
+    windowing."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=120.0)
+        M.add_tempo_point(conn, song_id=song_id, start_bar=3.0, tempo_bpm=90.0)
+        conn.commit()
+        segs = analysis_handlers._collect_tempo_map(conn, song_id)
+    finally:
+        conn.close()
+
+    # 4/4 default: bar 1 -> beat 0, bar 3 -> beat 8.
+    assert [(s.start_beat, s.bpm) for s in segs] == [(0.0, 120.0), (8.0, 90.0)]
 
 
 def test_analyze_handler_emits_skip_when_no_db_sections(synthetic_song: Path):

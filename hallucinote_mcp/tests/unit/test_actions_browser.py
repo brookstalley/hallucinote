@@ -78,8 +78,16 @@ class FakeBrowser:
 
 
 class FakeApp:
-    def __init__(self):
+    def __init__(self, version="12.1.5", variant="Suite"):
         self.browser = FakeBrowser()
+        self._version = version
+        self._variant = variant
+
+    def get_version_string(self):
+        return self._version
+
+    def get_variant(self):
+        return self._variant
 
 
 class FakeSong:
@@ -120,10 +128,12 @@ def loaded_actions():
 # ---------- Schema sanity ----------
 
 
-_EXPECTED_BROWSER_ACTIONS = {"help", "tree", "at_path", "search", "plugins_list"}
+_EXPECTED_BROWSER_ACTIONS = {
+    "help", "tree", "at_path", "search", "plugins_list", "inventory",
+}
 
 
-def test_browser_registers_five_actions(loaded_actions):
+def test_browser_registers_six_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_browser")}
     assert names == _EXPECTED_BROWSER_ACTIONS
 
@@ -577,3 +587,94 @@ def test_search_runs_on_main_thread(loaded_actions):
         context=ctx,
     )
     assert ctx.run_on_main_calls == 1
+
+
+# ---------- inventory ----------
+
+
+def _inv(ctx, **params):
+    return dispatch(
+        Request(tool="ableton_browser", action="inventory", params=params),
+        context=ctx,
+    )
+
+
+def test_inventory_flattens_loadables_with_full_paths(loaded_actions):
+    ctx = FakeCtx()
+    resp = _inv(ctx, root="instruments")
+    assert resp.ok is True
+    by_name = {e["name"]: e for e in resp.result["entries"]}
+    # Only loadables — folders (Operator, Wavetable) are excluded.
+    assert set(by_name) == {"Bass", "Lead", "Pad"}
+    assert by_name["Bass"]["path"] == ["instruments", "Operator", "Bass"]
+    assert by_name["Bass"]["root"] == "instruments"
+    assert by_name["Bass"]["uri"] == "query:Operator/Bass"
+    assert resp.result["truncated"] is False
+    assert resp.result["scope"] == ["instruments"]
+
+
+def test_inventory_walk_depth_is_push_resolver_depth(loaded_actions):
+    from hallucinote_mcp.handlers.device import _BROWSER_WALK_DEPTH
+    ctx = FakeCtx()
+    resp = _inv(ctx, root="instruments")
+    assert resp.result["walk_depth"] == _BROWSER_WALK_DEPTH
+
+
+def test_inventory_stamps_live_version(loaded_actions):
+    ctx = FakeCtx()
+    resp = _inv(ctx, root="instruments")
+    assert resp.result["live_version"] == "12.1.5"
+    assert resp.result["live_variant"] == "Suite"
+
+
+def test_inventory_recurses_past_loadables(loaded_actions):
+    """A loadable rack can contain further loadable presets; the push-time
+    resolver walks past loadables, so inventory must too — else a nested
+    preset push can reach would be missing from the cache."""
+    rack = FakeBrowserItem(
+        "Kit Rack", uri="query:rack", is_loadable=True, is_folder=False,
+        children=[
+            FakeBrowserItem(
+                "Inner Snare", uri="query:rack/snare",
+                is_loadable=True, is_folder=False,
+            ),
+        ],
+    )
+    app = FakeApp()
+    app.browser.drums = FakeBrowserItem("Drums", children=[rack])
+    ctx = FakeCtx(application=app)
+    resp = _inv(ctx, root="drums")
+    names = {e["name"] for e in resp.result["entries"]}
+    assert names == {"Kit Rack", "Inner Snare"}
+    inner = next(e for e in resp.result["entries"] if e["name"] == "Inner Snare")
+    assert inner["path"] == ["drums", "Kit Rack", "Inner Snare"]
+
+
+def test_inventory_truncates_at_max_entries(loaded_actions):
+    ctx = FakeCtx()
+    # instruments has 3 loadables; cap at 2 → truncated.
+    resp = _inv(ctx, root="instruments", max_entries=2)
+    assert resp.ok is True
+    assert resp.result["truncated"] is True
+    assert resp.result["count"] == 2
+
+
+def test_inventory_path_prefix_narrows_scope(loaded_actions):
+    ctx = FakeCtx()
+    resp = _inv(ctx, root="instruments", path_prefix=["Operator"])
+    assert resp.ok is True
+    names = {e["name"] for e in resp.result["entries"]}
+    assert names == {"Bass", "Lead"}  # Wavetable/Pad excluded
+    assert resp.result["scope"] == ["instruments", "Operator"]
+
+
+def test_inventory_unknown_root_errors(loaded_actions):
+    ctx = FakeCtx()
+    resp = _inv(ctx, root="bogus")
+    assert resp.ok is False
+
+
+def test_inventory_requires_root(loaded_actions):
+    ctx = FakeCtx()
+    resp = _inv(ctx)
+    assert resp.ok is False

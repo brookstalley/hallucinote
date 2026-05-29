@@ -6,7 +6,7 @@
 
 ## 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
 
-<!-- chunks=masking-C1-C7 status=shipped release=unreleased scope=masking-analyzer -->
+<!-- chunks=masking-C1-C7 status=shipped release=v1.4.0 scope=masking-analyzer -->
 
 The `feature/masking-analyzer` branch: the section-scoped, intent-aware audio
 analyses no commercial meter can produce — measurement DSP that stays neutral,
@@ -51,7 +51,7 @@ Full suite 2248 → 2251.
 
 ## 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
 
-<!-- chunks=section-windowing status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=section-windowing status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 First post-MVP item off the audio-analysis roadmap (spike §9 deferred
 #1). The same loudness metrics, scoped to each named section instead of
@@ -106,7 +106,7 @@ variable-tempo-accurate windowing carried forward as a P1 follow-on.
 
 ## 2026-05-28 — Audio Analysis MVP follow-on: `sends.intended_rt60_s` schema + loudness helper unification
 
-<!-- chunks=3-followup status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=3-followup status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Two small bundled chunks against `develop` after the Chunk 3 squash-merge
 (d4d2387 on develop).
@@ -157,7 +157,7 @@ push/pull don't touch it (intent is composer authorship, not Live state).
 
 ## 2026-05-28 — Audio Analysis MVP, Chunk 3 (3-A + 3-B + 3-C) — analysis pipeline + `ableton_analysis` MCP tool
 
-<!-- chunks=3 status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=3 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Chunk 3 sub-chunks 3-A, 3-B, and 3-C closed. The analysis half of the
 audio-analysis MVP is now built: captures dirs produced by
@@ -305,7 +305,7 @@ would have triggered it.
 
 ## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
 
-<!-- chunks=2 status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=2 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Chunk 2 — Capture pipeline — closed. Multi-analyzer simultaneous capture
 verified end-to-end on reggae-metal song in Live 12.4 at 180 BPM:
@@ -403,7 +403,7 @@ for sidecar version-discovery.
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2B partial — in-Live recording-path verification
 
-<!-- chunks=2b-partial status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=2b-partial status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Sub-chunk 2B's recording-path half shipped. The HallucinoteAnalyzer
 `.amxd` was extended in Max's GUI to the Chunk 2 contract, and the
@@ -478,7 +478,7 @@ authoring + verification work.
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
 
-<!-- chunks=2a status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=2a status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Sub-chunk 2A of Chunk 2 closed with the full Python-side surface for
 the audio-capture pipeline. M4L authoring + in-Live verification (sub-
@@ -531,7 +531,7 @@ Test impact: +66 unit tests across `analyzer/*`, `actions_render`,
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
 
-<!-- chunks=1 status=shipped release=unreleased scope=audio-analysis-mvp -->
+<!-- chunks=1 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
 
 Chunk 1 of the audio-analysis MVP closed with track-only proof-of-life
 verified in Live: `HallucinoteAnalyzer.amxd` (Max for Live audio effect)
@@ -570,7 +570,7 @@ deliverable). Full test suite green: 2033 passed in 18.42 s.
 
 ## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
 
-<!-- chunks=hygiene status=shipped release=unreleased scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
+<!-- chunks=hygiene status=shipped release=v1.4.0 scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
 
 Five backlog items closed in one feature branch (fix/hygiene-wave-p0-p1-p3),
 each with tightly-scoped regression tests, accurate root-cause commit
@@ -645,7 +645,7 @@ cumulative-Critic and PR-review gates clean.
 
 ## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
 
-<!-- chunks=E1|E2|E3 status=shipped release=unreleased scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
+<!-- chunks=E1|E2|E3 status=shipped release=v1.4.0 scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
 
 Three chunks bundled per the user's "one PR for the bundle" direction,
 all empirically scoped from the 2026-05-22 Live-side probing session.
@@ -714,7 +714,7 @@ branch (parked v1.5 framework WIP per
 
 ## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
 
-<!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=unreleased scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
+<!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=v1.4.0 scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
 
 Arc 7 production-polish chunks bundled per the user's "one PR for
 several fixes" direction; P2 / P3 / P6 collapsed to documentation-only
@@ -767,7 +767,7 @@ Suite: 1904/1904 passing (+31 from the 1873 baseline at Arc 6 tail).
 
 ## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
 
-<!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=unreleased scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
+<!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=v1.4.0 scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
 
 Five small chunks closing song-author-side polish items the cumulative
 PR reviewer surfaced.
@@ -809,7 +809,7 @@ Suite: 1873/1873 passing (+3 from Arc 5 baseline, after Critic-driven fix-up tes
 
 ## 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
 
-<!-- chunks=P1|P2|P3|P4|P5|P6 status=shipped release=unreleased scope=iteration-loop-polish+backlog-discipline -->
+<!-- chunks=P1|P2|P3|P4|P5|P6 status=shipped release=v1.4.0 scope=iteration-loop-polish+backlog-discipline -->
 
 Six small chunks of polish closing iteration-loop pain points after
 Arcs 2–4 shipped, plus structural backlog-accuracy discipline added
@@ -846,7 +846,7 @@ Suite: 1870/1870 passing.
 
 ## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
 
-<!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=unreleased scope=loader-display-name-convention -->
+<!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=v1.4.0 scope=loader-display-name-convention -->
 
 D4 verification surfaced a deeper problem than the spec called for.
 Live merged Phaser+Flanger in 12.x and minted a new internal class
@@ -903,7 +903,7 @@ behavior regressions; the functions they covered no longer exist).
 
 ## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
 
-<!-- chunks=hotfix status=shipped release=unreleased scope=arc-2-live-verification-fallout -->
+<!-- chunks=hotfix status=shipped release=v1.4.0 scope=arc-2-live-verification-fallout -->
 
 Arc 2's `ableton_annotation` handler imported `sqlite3` at module
 load. Live 12.x's embedded Python ships without the `_sqlite3` C
@@ -945,7 +945,7 @@ reopen Live, then `/mcp` to respawn the MCP subprocess.
 
 ## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
 
-<!-- chunks=C1|C2|C3 status=shipped release=unreleased scope=compose-validation-r2-followons -->
+<!-- chunks=C1|C2|C3 status=shipped release=v1.4.0 scope=compose-validation-r2-followons -->
 
 R-2 (v1.0.1) shipped the pure module `compat.classify_preset_query`
 and the `browser_dry_runs` map plumbing through `check_song`, but left
@@ -1013,7 +1013,7 @@ Suite: 1876/1876 passing (was 1842 — 34 net new tests).
 
 ## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
 
-<!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=unreleased scope=provenance+annotations-mcp+dev-ergonomics -->
+<!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=v1.4.0 scope=provenance+annotations-mcp+dev-ergonomics -->
 
 After a Wave 8 audit found that B1 had already shipped wholesale and
 B3/B5 were partial, Arc 2 reduced to: Q1 (dev-loop dispatcher param)

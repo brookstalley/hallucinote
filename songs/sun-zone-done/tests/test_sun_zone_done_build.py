@@ -15,6 +15,7 @@ Validates the rebuild's structural intent:
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,46 @@ import pytest
 
 _SONG_DIR = Path(__file__).resolve().parent.parent
 _BUILD_PATH = _SONG_DIR / "build.py"
+_NOTES_BASELINE = Path(__file__).resolve().parent / "fixtures" / "notes_baseline.json"
+
+
+def extract_notes(conn, song_id: str) -> dict:
+    """Canonical, JSON-serializable snapshot of every clip's note array.
+
+    This is the *preservation contract* for the generator migration
+    (build-plan Chunk 1): the musicality lives in the note arrays, so we
+    lock them here BEFORE moving the note-generating code into the shared
+    `hallucinote.generators` package, and assert byte-equality afterward.
+
+    The contract captures only the MUSIC — pitch, onset, duration, velocity,
+    mute — keyed by (track name, slot). It deliberately EXCLUDES the DB-row
+    `id` (a fresh uuid each build) and `tags` (metadata the generators add;
+    not part of what the listener hears). Floats are rounded to 6 places to
+    avoid representation noise.
+    """
+    from hallucinote.db import queries as Q
+
+    snapshot: dict = {}
+    for track in Q.get_tracks_for_song(conn, song_id):
+        if track["name"] == "Master":
+            continue
+        clips_by_slot: dict = {}
+        for clip in Q.get_clips_for_track(conn, track["id"]):
+            notes = Q.get_notes_for_clip(conn, clip["id"])
+            rows = sorted(
+                [round(n["pitch"]), round(n["start_beats"], 6),
+                 round(n["duration_beats"], 6), round(n["velocity"]),
+                 int(n["mute"])]
+                for n in notes
+            )
+            clips_by_slot[str(clip["slot"])] = {
+                "name": clip["name"],
+                "section_role": clip["section_role"],
+                "length_beats": round(clip["length_beats"], 6),
+                "notes": rows,
+            }
+        snapshot[track["name"]] = clips_by_slot
+    return snapshot
 
 
 @pytest.fixture(scope="module")
@@ -193,3 +234,46 @@ def test_metal_lead_uses_phrygian_b2(build_module, built):
         assert 65 in pitches, sorted(pitches)
     finally:
         conn.close()
+
+
+def test_notes_match_baseline(build_module, built):
+    """PRESERVATION CONTRACT (build-plan Chunk 1).
+
+    Every clip's note array must match the locked baseline captured before
+    the generator migration. When the note-generating code moves from local
+    `_reggae_*`/`_metal_*` helpers into `hallucinote.generators` (Chunks 2-3),
+    this test proves the musicality — especially the metal parts — is
+    byte-for-byte preserved. An intentional musical change requires
+    regenerating the fixture with a written rationale, never silently.
+
+    Regenerate (only with rationale):
+        python songs/sun-zone-done/tests/regen_notes_baseline.py
+    """
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        current = extract_notes(conn, built)
+    finally:
+        conn.close()
+
+    assert _NOTES_BASELINE.exists(), (
+        f"Baseline fixture missing: {_NOTES_BASELINE}. "
+        f"Generate it with songs/sun-zone-done/tests/regen_notes_baseline.py"
+    )
+    baseline = json.loads(_NOTES_BASELINE.read_text())
+
+    # Track-set parity first (clearer failure than a deep diff).
+    assert set(current) == set(baseline), (
+        f"Track set changed: {sorted(set(current) ^ set(baseline))}"
+    )
+    for track_name in sorted(baseline):
+        cur_clips, base_clips = current[track_name], baseline[track_name]
+        assert set(cur_clips) == set(base_clips), (
+            f"{track_name}: slot set changed "
+            f"{sorted(set(cur_clips) ^ set(base_clips))}"
+        )
+        for slot in sorted(base_clips, key=int):
+            assert cur_clips[slot] == base_clips[slot], (
+                f"{track_name} slot {slot} "
+                f"({base_clips[slot]['name']}) diverged from baseline"
+            )

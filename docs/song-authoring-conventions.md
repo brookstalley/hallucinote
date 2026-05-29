@@ -60,17 +60,24 @@ from hallucinote.generators import drums, bass, harmony, primitives
 - `drums.ghost_kicks` — Sparse low-velocity kicks; garnish over `kick_stumble`.
 - `drums.ghost_snares` — Sparse low-velocity snares for texture.
 - `drums.open_hat_lifts` — Open-hat lifts as drummer flourishes (mini-fill marks).
+- `drums.reggae_one_drop` — Reggae one-drop: dropped downbeat, snare on 3, off-beat hat chucks.
+- `drums.metal_gallop` — Speed-metal: kick gallop cell, 2 & 4 snare, driving 16th hats, section crash.
 
 **`bass`** (`src/hallucinote/generators/bass.py`)
 - `bass.tresillo_bass` — Plain tresillo on the chord root.
 - `bass.walking_bass_to_next_chord` — Walk through pitches across bars at beats [0, 1.5, 2, 3.5].
 - `bass.chord_tone_embellishment` — One bar of root + 3rd + octave + walk note.
+- `bass.reggae_offbeat_bass` — Reggae bass: long root/octave + short off-beat fifths, behind the click.
+- `bass.metal_pedal_16ths` — Metal palm-mute root pedal on straight 16ths, pushed ahead.
 
 **`harmony`** (`src/hallucinote/generators/harmony.py`)
 - `harmony.chord_pad` — Sustained chord; each pitch one long note.
 - `harmony.chord_stab` — Short rhythmic chord hit.
 - `harmony.tresillo_pluck` — Calypso-style pluck cycling a voicing on tresillo hits.
 - `harmony.sparse_bell_top` — Bell hits on the chord top: one long arrival + one mid answer.
+- `harmony.reggae_skank` — Off-beat staccato chord chucks ("and" of 2 & 4), behind the click.
+- `harmony.organ_bubble` — Hammond bubble: short chord stabs on every off-beat eighth.
+- `harmony.palm_mute_power_chords` — Palm-muted root+5th+octave on the gallop cell (locks with `metal_gallop`).
 
 **`primitives`** (`src/hallucinote/generators/primitives.py`) — building blocks shared across the above
 - `primitives.chord_tones` — Build a chord from root + interval list (semitones).

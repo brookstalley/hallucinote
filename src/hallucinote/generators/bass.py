@@ -82,6 +82,78 @@ def walking_bass_to_next_chord(
     return out
 
 
+def reggae_offbeat_bass(
+    root_pitch: int,
+    *,
+    bars: int = 1,
+    fifth_offset: int = 7,
+    octave_offset: int = 12,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    root_velocity: int = 80,
+    octave_velocity: int = 82,
+    fifth_down_velocity: int = 72,
+    fifth_up_velocity: int = 70,
+    push: float = 0.02,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Reggae bass: root on 1, fifth on the "and" of 2, octave on 3, fifth on
+    the "and" of 4 — the long-short rocking motion that walks the off-beats.
+
+    Roots/octaves are long (1.4 beats), the off-beat fifths short (0.4) — the
+    bounce. Everything sits ``push`` beats behind the click (the unhurried
+    pocket). 4/4-shaped within a bar (see module docstring); ``beats_per_bar``
+    only scales the inter-bar step. ``feel`` (W17-E) shifts the canonical
+    positions {0.0, 1.5, 2.0, 3.5} on top of ``push``. Tagged "bass" + "reggae".
+    """
+    fifth = root_pitch + fifth_offset
+    octave = root_pitch + octave_offset
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        out.append(_note(root_pitch, bs + apply_feel(0.0, feel) + push, 1.4, root_velocity,
+                         ["bass", "reggae", "root"]))
+        out.append(_note(fifth, bs + apply_feel(1.5, feel) + push, 0.4, fifth_down_velocity,
+                         ["bass", "reggae", "offbeat"]))
+        out.append(_note(octave, bs + apply_feel(2.0, feel) + push, 1.4, octave_velocity,
+                         ["bass", "reggae", "octave"]))
+        out.append(_note(fifth, bs + apply_feel(3.5, feel) + push, 0.4, fifth_up_velocity,
+                         ["bass", "reggae", "offbeat"]))
+    return out
+
+
+def metal_pedal_16ths(
+    root_pitch: int,
+    *,
+    bars: int = 1,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    velocity: int = 105,
+    note_duration: float = 0.18,
+    push: float = -0.01,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Metal palm-mute root pedaling: the root machine-gunned on straight
+    16ths, the foundation under the gallop guitar.
+
+    Every 16th gets a slight ``push`` (ahead of the click) for aggression —
+    EXCEPT any note whose absolute onset would land at or before 0.0, since
+    Live's MIDI clip has no negative-beat region (the mutator boundary refuses
+    it). 4/4-shaped within a bar (see module docstring); ``beats_per_bar``
+    scales the inter-bar step. ``feel`` (W17-E) shifts each 16th on top of
+    ``push``. Tagged "bass" + "metal" + "pedal".
+    """
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        for sixteenth in range(16):
+            t = bs + apply_feel(sixteenth * 0.25, feel)
+            applied_push = push if t > 0.0 else 0.0
+            out.append(_note(root_pitch, t + applied_push, note_duration, velocity,
+                             ["bass", "metal", "pedal"]))
+    return out
+
+
 def chord_tone_embellishment(
     root_pitch: int,
     *,

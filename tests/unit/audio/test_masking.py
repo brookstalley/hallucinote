@@ -34,6 +34,17 @@ def _bed_frac(result, maskee):
     return 0.0
 
 
+def test_bark_map_has_24_bands_at_standard_rates_no_degenerate():
+    # 44.1/48 kHz: Nyquist is above the top Bark edge, so the map must be the
+    # full 24 critical bands with NO zero-width trailing band.
+    from hallucinote.audio.masking import _bark_band_map
+    for sr in (44_100, 48_000):
+        bark = _bark_band_map(sr, 2048)
+        assert bark.n_bands == 24, f"{sr}: expected 24 bands, got {bark.n_bands}"
+        widths = np.diff(bark.edges_hz)
+        assert np.all(widths > 0), f"{sr}: zero-width band {bark.edges_hz}"
+
+
 def test_clear_mask_same_band_reads_high():
     # A loud, B quiet, same Bark band (~2000-2320 Hz), co-timed → A masks B.
     a = sine(2000.0, DUR, amplitude=0.8)

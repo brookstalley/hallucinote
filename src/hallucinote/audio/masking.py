@@ -280,7 +280,11 @@ class _BarkMap:
 def _bark_band_map(sample_rate: int, n_fft: int) -> _BarkMap:
     nyq = sample_rate / 2.0
     edges = [e for e in _BARK_EDGES_HZ if e < nyq]
-    edges.append(min(_BARK_EDGES_HZ[-1], nyq))
+    # Cap the top band at Nyquist only when Nyquist falls *inside* the Bark
+    # range; when Nyquist is above the top edge (the 44.1/48 kHz case) the list
+    # already ends at the top edge, so appending would create a zero-width band.
+    if nyq < _BARK_EDGES_HZ[-1]:
+        edges.append(nyq)
     edges_arr = np.asarray(edges, dtype=np.float64)
     n_bands = len(edges_arr) - 1
 

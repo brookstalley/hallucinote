@@ -332,6 +332,43 @@ def _write_captures_with_return(
     return captures_dir
 
 
+def test_collect_stem_gains_keys_by_capture_surface_id_not_db_uuid():
+    """Regression (Critic BLOCKING): the gains dict MUST be keyed by the
+    capture surface ID (``track:N``) so ``apply_stem_gains`` matches the stems
+    from the manifest. Keying by the DB UUID silently never matches → the F1
+    level correction becomes a no-op on every real song.
+    """
+    from hallucinote.audio.levels import live_fader_gain
+    from hallucinote.db.connection import init_db as _init
+
+    conn = _init(":memory:")
+    conn.execute("INSERT INTO songs (id, name) VALUES ('s1', 'demo')")
+    # Two tracks with non-unity, NULL-distinct volumes + a UUID id distinct
+    # from the surface index.
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-aaa', 's1', 1, '01 Drums', 'midi', 0.85)"
+    )
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-bbb', 's1', 2, '02 Bass', 'midi', 0.5)"
+    )
+    conn.execute(  # NULL volume → omitted (no guess)
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-ccc', 's1', 3, '03 Pad', 'midi', NULL)"
+    )
+    conn.commit()
+
+    gains = analysis_handlers._collect_stem_gains(conn, "s1")
+    conn.close()
+
+    # Keyed by track:N, NOT the UUIDs.
+    assert set(gains) == {"track:1", "track:2"}
+    assert "uuid-aaa" not in gains
+    assert gains["track:1"] == pytest.approx(live_fader_gain(0.85))  # ~unity
+    assert gains["track:2"] == pytest.approx(live_fader_gain(0.5))   # ~-14 dB
+
+
 def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path):
     """The handler walks ``sends.intended_rt60_s`` and lifts each row into
     a ``DeclaredReverbSend``, translating DB UUIDs into the capture

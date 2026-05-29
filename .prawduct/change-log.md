@@ -4,6 +4,51 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
+
+<!-- chunks=masking-C1-C7 status=shipped release=unreleased scope=masking-analyzer -->
+
+The `feature/masking-analyzer` branch: the section-scoped, intent-aware audio
+analyses no commercial meter can produce — measurement DSP that stays neutral,
+with intent-grading pushed entirely to one holistic interpreter (`/mix-review`).
+
+- **C1 — inter-stem masking DSP** (`audio/masking.py`): STFT → Bark critical
+  bands → Schroeder spreading → per-tile masked-fraction. Pairwise
+  (`MaskingPair`) + cumulative-bed (`BedMasking`, catches distributed low-mid
+  buildup pairwise misses). Pure, DB-agnostic, scale-invariant, energy-gated.
+  No severity — neutral evidence.
+- **C3 — mix-level reconstruction** (`audio/levels.py`): captured stems are
+  pre-fader (M4L parallel tap), so masking (a relative-level measure) needs the
+  static fader gain reapplied. Fader curve **calibrated against real Live 12**
+  (swept volume, read display_value): [0.40,1.00] is exactly 40·(v−0.85),
+  sub-0.40 a measured table.
+- **C4 — mix-intent + feel/groove tag vocabulary**: controlled tags
+  (`focal`/`blend-group`/`submerged`/`density`; `feel`/`groove`/`push`/`drag`/
+  `swing`) on markdown frontmatter — no schema change.
+- **C5 — `markdown_refs` recall-on-read reindex**: `/song-context` was silently
+  empty because the corpus was only reindexed by a manual CLI; now reindexed on
+  read (single-song-scoped).
+- **C6 — `/mix-review` holistic interpreter** (the moat): recall intent →
+  read the whole `MixReport` → interpret across metrics vs declared intent →
+  two-register response (execute if directed, ask one question if volunteered)
+  → learn revealed intent back as a markdown annotation. The single read-side
+  surface over all analyses.
+- **C2 — retire the dead DB `annotations` table + `ableton_annotation` MCP
+  surface**: 0 rows across 14 DBs; the disposable DB made it a data-loss trap.
+  Intent's single authored home is the git-tracked markdown corpus. 13→12 MCP
+  tools, 12→11 resources; `/decisions` repointed to requests-only.
+- **C7 — per-part timing-deviation analyzer** (`audio/timing.py`): the read-side
+  counterpart to the `feel` generator. Recovers push/drag (signed drift),
+  tightness (drift stdev), and swing (median off-beat-8th phase) from captured
+  audio onsets per part, per section. Neutral measurement, tightness-based
+  confidence so transient-poor / cross-rhythm parts self-flag as low-trust.
+
+Architecture decision (see `intent-architecture.md`): every DSP module stays a
+pure measurement producer feeding `MixReport`; intent lives in markdown (WHAT =
+`build.py`, WHY = markdown, WHY-CHANGED = decisions); the disposable DB is never
+the authored home. Validated end-to-end on real Live audio (sun-zone-done).
+Full suite 2248 → 2251.
+
 ## 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
 
 <!-- chunks=section-windowing status=shipped release=unreleased scope=audio-analysis-mvp -->

@@ -8,12 +8,12 @@ from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
 
 
 def test_tools_exposed():
-    # The set grows over time (Arc 2 added ableton_annotation); the
-    # invariant the dispatcher relies on is "these names are present
-    # and stable," not the exact count.
+    # The set changes over time (tools added/retired); the invariant the
+    # dispatcher relies on is "these names are present and stable," not
+    # the exact count.
     assert "ableton_session" in schema.TOOLS
     assert "ableton_scene" in schema.TOOLS
-    assert "ableton_annotation" in schema.TOOLS
+    assert "ableton_render" in schema.TOOLS
     # Sanity: all tools are unique.
     assert len(set(schema.TOOLS)) == len(schema.TOOLS)
 
@@ -137,7 +137,7 @@ def test_db_writes_requires_runs_server_side(isolated_registry):
     """
     with pytest.raises(ValueError, match="db_writes=True"):
         Action(
-            tool="ableton_annotation",
+            tool="ableton_analysis",
             name="add",
             description="",
             params=(ParamSpec(name="song_slug", type="str"),),
@@ -153,7 +153,7 @@ def test_db_writes_requires_song_slug_param(isolated_registry):
     """
     with pytest.raises(ValueError, match="requires a 'song_slug' param"):
         Action(
-            tool="ableton_annotation",
+            tool="ableton_analysis",
             name="add",
             description="",
             params=(ParamSpec(name="kind", type="str"),),
@@ -165,7 +165,7 @@ def test_db_writes_requires_song_slug_param(isolated_registry):
 
 def test_db_writes_accepts_runs_server_side_with_song_slug(isolated_registry):
     action = Action(
-        tool="ableton_annotation",
+        tool="ableton_analysis",
         name="add",
         description="",
         params=(ParamSpec(name="song_slug", type="str"),),

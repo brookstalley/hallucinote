@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .attribution import (
     band_attribution,
@@ -31,11 +31,14 @@ from .attribution import (
     master_bus_attribution,
 )
 from .io import CaptureSet, Surface, load_capture
+from .levels import apply_stem_gains
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .masking import analyze_masking_window
 from .report import (
     Finding,
     MasterOvershoot,
     MixReport,
+    PartTiming,
     ReverbVerification,
     SectionMetrics,
     StemMetrics,
@@ -49,6 +52,21 @@ from .section import (
     intersect_window,
     slice_audio,
 )
+from .timing import analyze_timing_window
+
+
+# Product reporting floor for masking — pairs/bed below this masked fraction are
+# noise, not signal, and are dropped from the report (the DSP itself returns the
+# raw value; this is the integration-level "don't surface trivia" gate). The
+# holistic interpreter still grades what survives against intent.
+_MASKING_REPORTING_FLOOR = 0.15
+
+# Product reporting floor for timing — parts whose onset-vs-grid confidence is
+# below this are too transient-poor (pads, washes) to trust a feel reading on,
+# so they're dropped from the report. Same integration-level "don't surface
+# untrustworthy numbers" gate as the masking floor; the DSP returns every part
+# with onsets and the interpreter grades what survives against intent.
+_TIMING_MIN_CONFIDENCE = 0.25
 
 
 @dataclass(frozen=True)
@@ -70,6 +88,9 @@ def analyze_mix(
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     sections: Sequence[SectionWindow] = (),
     tempo_map: Sequence[TempoSegment] = (),
+    analyze_masking: bool = False,
+    analyze_timing: bool = False,
+    stem_gains: "Mapping[str, float] | None" = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -130,6 +151,9 @@ def analyze_mix(
         capture=capture,
         sections=sections,
         beat_map=beat_map,
+        analyze_masking=analyze_masking,
+        analyze_timing=analyze_timing,
+        stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
 
@@ -249,6 +273,9 @@ def _measure_sections(
     capture: CaptureSet,
     sections: Sequence[SectionWindow],
     beat_map: BeatSampleMap,
+    analyze_masking: bool = False,
+    analyze_timing: bool = False,
+    stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
 
@@ -315,6 +342,26 @@ def _measure_sections(
                 ),
             })
             continue
+        sliced_stems = [
+            (s.track_id, slice_audio(s.audio, sl)) for s in capture.stems
+        ]
+        masking_pairs = []
+        bed_masking = []
+        if analyze_masking:
+            # Reconstruct mix-level before masking (captures are pre-fader, F1).
+            # Empty stem_gains is a no-op, so synthetic fixtures are unaffected.
+            mres = analyze_masking_window(
+                apply_stem_gains(sliced_stems, stem_gains),
+                capture.sample_rate,
+                reporting_floor=_MASKING_REPORTING_FLOOR,
+            )
+            masking_pairs = mres.pairs
+            bed_masking = mres.bed
+        timing = []
+        if analyze_timing:
+            timing = _measure_window_timing(
+                sliced_stems, sl, capture, beat_map,
+            )
         per_section.append(SectionMetrics(
             section_name=window.name,
             start_beat=window.start_beat,
@@ -322,13 +369,49 @@ def _measure_sections(
             master=_measure_window(capture.master, sl),
             stems=[_measure_window(s, sl) for s in capture.stems],
             returns=[_measure_window(r, sl) for r in capture.returns],
-            attribution=band_attribution(
-                [(s.track_id, slice_audio(s.audio, sl)) for s in capture.stems],
-                capture.sample_rate,
-            ),
+            attribution=band_attribution(sliced_stems, capture.sample_rate),
+            masking=masking_pairs,
+            bed_masking=bed_masking,
+            timing=timing,
         ))
 
     return per_section, skipped
+
+
+def _measure_window_timing(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    sl: WindowSlice,
+    capture: CaptureSet,
+    beat_map: BeatSampleMap,
+) -> list[PartTiming]:
+    """Per-part onset-vs-grid timing over one section window.
+
+    Derives the window's grid geometry from the shared :class:`BeatSampleMap`:
+    the song-absolute beat at the window's first sample, and the effective
+    (constant) tempo across the window's covered samples. Onset timing is
+    level-blind — gain doesn't move onsets — so this runs on the raw pre-fader
+    slices (no ``stem_gains`` reconstruction, unlike masking). Parts below the
+    confidence floor (transient-poor pads/washes) are dropped.
+
+    A degenerate beat map (no usable tempo geometry) yields no timing rather
+    than a divide-by-zero — the section still reports its other metrics.
+    """
+    if beat_map.degenerate:
+        return []
+    start_beat = beat_map.sample_to_beat(sl.start_sample)
+    end_beat = beat_map.sample_to_beat(sl.end_sample)
+    span_beats = end_beat - start_beat
+    span_s = (sl.end_sample - sl.start_sample) / capture.sample_rate
+    if span_beats <= 0 or span_s <= 0:
+        return []
+    bpm = span_beats / span_s * 60.0
+    tres = analyze_timing_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+    )
+    return [p for p in tres.parts if p.confidence >= _TIMING_MIN_CONFIDENCE]
 
 
 def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:

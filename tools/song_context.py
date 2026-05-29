@@ -23,6 +23,7 @@ from typing import Any
 
 from hallucinote.db.connection import init_db
 from hallucinote.db import queries as Q
+from hallucinote.markdown_refs import reindex_corpus
 
 
 # Tokens that signal a constraint or avoidance — when a row mentions them,
@@ -167,6 +168,20 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = init_db(db_path)
     try:
+        # Recall-on-read: keep the markdown_refs projection fresh before
+        # querying. The DB is disposable (rebuilt from build.py) and nothing
+        # else reindexes, so without this /song-context recall is silently
+        # empty. Scoped to THIS song (db_path is songs/<slug>/<slug>.db) since
+        # find_markdown_refs below does not filter by song. Idempotent + cheap.
+        song_dir = db_path.parent
+        repo_root = song_dir.parent.parent
+        try:
+            reindex_corpus(conn, song_dir=song_dir, repo_root=repo_root)
+        except (ValueError, OSError) as exc:
+            # A malformed corpus file shouldn't block recall on the rest —
+            # reindex is atomic (no partial state), so fall back to whatever
+            # was already indexed and warn.
+            print(f"warning: corpus reindex skipped: {exc}", file=sys.stderr)
         track_id = args.track_id
         if args.track and not track_id:
             row = conn.execute(

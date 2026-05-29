@@ -6,10 +6,9 @@ the song's DB-recorded intent and writes a ``MixReport`` JSON at
 ``songs/<slug>/analysis/<ts>.json``.
 
 Both actions are server-side — analysis touches disk + the song DB
-only, never Live. The handler shape mirrors
-``handlers/ableton_annotation.py`` (DB resolution via
-``hallucinote.db.connection.resolve_db_path``; teaching error when the
-song dir or DB row is missing).
+only, never Live. The handler follows the standard server-side DB
+shape: DB resolution via ``hallucinote.db.connection.resolve_db_path``
+and a teaching error when the song dir or DB row is missing.
 
 Why not declare ``db_writes=True``? The MVP doesn't emit events — the
 MixReport is a pure read-side artifact. When ``AUDIO_ANALYZED`` becomes
@@ -27,9 +26,9 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 
 # Guarded import: the `hallucinote` package is NOT vendored into Live's
 # User Library, so a module-level import would crash the Remote Script
-# load. Same pattern as `handlers/ableton_annotation.py:62-73` — the
-# import is only exercised on the MCP server side (where this handler
-# actually runs, gated by runs_server_side=True).
+# load. The standard server-side-handler pattern — the import is only
+# exercised on the MCP server side (where this handler actually runs,
+# gated by runs_server_side=True).
 try:
     from hallucinote.audio import (
         DeclaredReverbSend,
@@ -37,6 +36,7 @@ try:
         TempoSegment,
         analyze_mix,
     )
+    from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
     # Reuse the canonical bar→beat converter the push planner uses — it walks
@@ -173,6 +173,32 @@ def _collect_declared_sends(
     ]
 
 
+def _collect_stem_gains(
+    conn: "sqlite3.Connection", song_id: str,
+) -> dict[str, float]:
+    """Per-track linear fader gain ({tracks.id: gain}) for mix-level masking.
+
+    Captured stems are pre-fader (F1); masking needs mix-level. Convert each
+    track's normalized ``volume`` to a linear gain via ``live_fader_gain`` so
+    ``analyze_mix`` can scale the masking input. A NULL volume (uncaptured)
+    defaults to unity (1.0) — no correction rather than a guess. Static gain
+    only; volume automation is a deferred refinement (see audio/levels.py).
+
+    Keyed by the **capture surface ID** (``track:N``), NOT the DB UUID — the
+    stems handed to ``apply_stem_gains`` come from the capture manifest and are
+    keyed by surface index. Same DB-UUID → surface-ID lift as
+    ``_collect_declared_sends`` (via ``track_id_for_surface``); keying by
+    ``row['id']`` would silently never match and make the correction a no-op.
+    """
+    gains: dict[str, float] = {}
+    for row in Q.get_tracks_for_song(conn, song_id):
+        vol = row["volume"]
+        if vol is not None:
+            surface_id = track_id_for_surface("track", int(row["track_index"]))
+            gains[surface_id] = live_fader_gain(float(vol))
+    return gains
+
+
 def _collect_sections(
     conn: "sqlite3.Connection", song_id: str,
 ) -> list["SectionWindow"]:
@@ -290,6 +316,7 @@ def analyze_handler(
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
+        stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
     finally:
         conn.close()
     report = analyze_mix(
@@ -297,6 +324,21 @@ def analyze_handler(
         declared_reverb_sends=declared_sends,
         sections=sections,
         tempo_map=tempo_map,
+        # Masking is per-section evidence; enable it whenever the song declares
+        # sections (the handler already gated section work on that). It is
+        # neutral measurement — the holistic interpreter grades it vs intent.
+        # F1 (pre-fader capture) is handled: stem_gains below reconstructs
+        # mix-level before the masking pass.
+        analyze_masking=bool(sections),
+        # Per-part onset-vs-grid feel (push/drag/swing) — the read-side
+        # counterpart to the `feel` generator. Per-section like masking; gated
+        # on declared sections. Level-blind (gain doesn't move onsets), so it
+        # needs no stem_gains. Neutral measurement — the interpreter grades it.
+        analyze_timing=bool(sections),
+        # Mix-level reconstruction (F1): scale each pre-fader stem by its
+        # static fader gain so masking sees mix balance, not source level.
+        # Fader curve is Live-12-calibrated (see audio/levels.py).
+        stem_gains=stem_gains,
     )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"

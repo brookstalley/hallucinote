@@ -17,6 +17,22 @@ Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`ac
 
 The agent-facing surfaces (action descriptions, skill markdown, conventions guides) are read at every session start. Stale recommendations there are higher-impact than test-fixture drift, because they shape what the next agent tries first.
 
+## DSP with a detection front-end: calibrate against real cases, don't assert from intuition
+
+**For any analyzer whose input is *detected* (onset detection, pitch tracking, beat tracking) rather than given, run real/representative cases through the actual pipeline and read the numbers BEFORE writing test assertions. The detection stage has latency and failure modes that abstract reasoning misses, and a fixture chosen for convenience can hide them.**
+
+C7 (timing analyzer) almost shipped two bugs that only a calibration pass exposed. (1) The synthetic `kick_onset` fixture — picked because it already existed — is a *terrible* onset target: its slow low-frequency attack makes librosa detect it 0.13–0.49 beat late and multi-trigger, so on-grid material read as wildly off-grid. (2) Swing read 1.35 for a triplet feel that should be ~2.0, because spurious double-onsets polluted the mean off-beat phase. Both were invisible to intuition and to a "looks reasonable" fixture; both were obvious the moment real grooves (a user's "can we be Phish / Dead / Marley?") were run through the real module and the numbers printed. Fixes followed directly: a sharp `click` fixture (accurate onset), finer hop, onset dedup, MEDIAN (not mean) swing phase, tightness-based (not grid-aligned) confidence.
+
+**How to apply.** (1) Build a tiny calibration script that runs representative inputs through the real analyzer and prints the metrics; eyeball them against what the music *is* before locking assertions. (2) Choose fixtures for *detection accuracy*, not convenience — a synthetic transient with an instant attack tests the analyzer's math; the real-world detection-accuracy limit (slow-attack instruments) becomes a documented caveat, not silent fixture bias. (3) Prefer robust statistics (median over mean) and robustness-to-constant-offset designs (measure tightness/relative timing, not absolute) when the front-end has systematic error. (4) Treat a user's "can it do X?" as a design stress-test — answer it by running X, not by reasoning about X.
+
+## DB-UUID → capture-surface-ID lifts must key by surface ID, and be tested with distinct IDs
+
+**When an analysis handler lifts DB rows into something the capture/analysis layer consumes, key the result by the capture SURFACE ID (`track:N` via `track_id_for_surface(track_index)`), never the DB UUID (`row['id']`). Test with UUIDs deliberately distinct from the index so a wrong-key no-op fails loudly.**
+
+The audio captures are keyed by structurally-stable surface IDs (`track:N`/`return:N`); the DB is keyed by UUID. `analyze_mix` and `apply_stem_gains` look up by the capture key. C3's `_collect_stem_gains` keyed the gains dict by `row['id']` (UUID), so `apply_stem_gains` never matched → the F1 level correction was a **silent no-op on every real song**, and CI stayed green because the unit tests used self-consistent IDs on both sides and the integration test relied on the empty-map no-op path. The cumulative Critic caught it; the sibling `_collect_declared_sends` already did the lift correctly via `track_id_for_surface`. The regression test seeds UUIDs ≠ `track_index` and asserts `track:N` keys — it would have failed against the old keying.
+
+**How to apply.** (1) Any `_collect_*` helper feeding the capture/analysis boundary lifts via `track_id_for_surface(kind, index)`. (2) Its test uses UUIDs distinct from indices so a no-op keying can't pass. (3) A "validation" that runs the real pipeline but prints the *gains dict* (UUID-keyed) isn't proof the gains *applied* — assert the corrected output differs from the uncorrected one.
+
 ## Sync planner discipline
 
 **When emitting a `ToolCall` for an MCP tool that has no `ALIASES_TODAY` entry, verify the actual MCP signature against the planner's args before considering the planner complete.**

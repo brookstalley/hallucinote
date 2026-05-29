@@ -475,3 +475,8 @@ scope_rollups: {}
 # to opt out.
 
 views_enabled: true
+
+# Backlog format: 2 = structured (id + metadata bar + body, three canonical
+# sections). Set by `/backlog migrate` 2026-05-29. Resolves the
+# `legacy-backlog-format` post-sync advisory.
+backlog_format_version: 2

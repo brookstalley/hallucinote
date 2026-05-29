@@ -1002,8 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
     p_prune.add_argument("--apply", action="store_true",
                          help="actually delete the listed orphan clips "
                               "(default: dry-run — list only)")
-    p_prune.add_argument("--reason", default=None,
-                         help="optional reason annotation")
+    # No --reason: prune deletes Live-only orphans with no DB event to annotate
+    # (orphans exist only in Live; nothing to emit against). See B1b NOTE.
     p_prune.set_defaults(func=_cmd_prune)
 
     p_cc = sub.add_parser(

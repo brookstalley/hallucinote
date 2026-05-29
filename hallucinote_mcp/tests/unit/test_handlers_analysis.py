@@ -238,8 +238,11 @@ def test_get_latest_report_returns_most_recent_json(synthetic_song: Path):
     # to ensure a different ISO second, or write a third manifest with a
     # later captured_at). Since two analyze calls within the same second
     # would collide, force the second's timestamp to be later by writing
-    # a sentinel report manually.
-    later_path = synthetic_song / "analysis" / "20260528T999999Z.json"
+    # a sentinel report manually. The sentinel uses a far-future timestamp
+    # so it sorts last regardless of the real wall-clock: _latest_report_path
+    # sorts by filename, and analyze_handler stamps the live UTC clock — a
+    # same-year sentinel would lose once the clock rolls past it.
+    later_path = synthetic_song / "analysis" / "99991231T235959Z.json"
     later_path.write_text(
         json.dumps({"schema_version": "1", "marker": "later"}),
         encoding="utf-8",

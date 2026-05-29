@@ -61,7 +61,7 @@ from .onsets import (
     detect_onset_samples,
     to_mono,
 )
-from .report import PartCrossRhythm
+from .report import PartCrossRhythm, Phasing
 
 # Largest denominator in the rational approximation P ≈ M/N. 8 covered every
 # musical case in the validation corpus; raising it trades naming reach for
@@ -101,6 +101,23 @@ _SWING_BAND = (1.3, 2.3)
 # Non-binary subdivisions (and any M>1 ratio) fight the straight binary grid;
 # these N values mark a cross-rhythm even when M=1 (triplet, quintuplet, ...).
 _NON_BINARY_N = frozenset({3, 5, 6, 7})
+
+# Phasing: length (beats) of one analysis cycle. The window is sliced into
+# cycles and the mean inter-part offset is sampled per cycle; the drift across
+# cycles is the phasing signal. 4 beats ≈ a bar — the natural pattern-repeat
+# unit, and what ``drift_beats_per_cycle`` is reported against.
+_PHASING_CYCLE_BEATS = 4.0
+
+# Fewest cycles with a measurable offset before a drift trend can be asserted.
+# Two points define any line; three is the minimum that can be NON-monotonic,
+# so it's the floor for trusting a monotonic-drift claim.
+_PHASING_MIN_CYCLES = 3
+
+
+@dataclass(frozen=True)
+class PhasingResult:
+    """Two-part phasing relationships for one (pre-sliced) window."""
+    pairs: list[Phasing]
 
 
 @dataclass(frozen=True)
@@ -153,6 +170,128 @@ def analyze_cross_rhythm_window(
 
     parts.sort(key=lambda p: p.confidence, reverse=True)
     return CrossRhythmResult(parts=parts)
+
+
+def analyze_phasing_window(
+    stem_segments: Sequence[tuple[str, np.ndarray]],
+    sample_rate: int,
+    *,
+    window_start_beat: float,
+    bpm: float,
+    cycle_beats: float = _PHASING_CYCLE_BEATS,
+    min_onset_separation_beats: float = DEFAULT_MIN_ONSET_SEPARATION_BEATS,
+) -> PhasingResult:
+    """Detect Reich-style phasing between every pair of parts over one window.
+
+    Phasing is two parts playing the same figure at fractionally different
+    tempi: one slides against the other so their relative alignment drifts
+    monotonically while each stays individually steady. We slice the window into
+    ``cycle_beats``-long cycles, measure the mean nearest-onset offset of B
+    relative to A per cycle, and fit the trend — a strong monotonic drift is
+    phasing (``docs/polyrhythms.md`` §3 "two-part pass").
+
+    Returns a :class:`Phasing` per unordered pair that produced enough
+    co-occurring onsets to fit a trend, with the measured drift rate and a
+    confidence from the trend's monotonicity. Locked parts read ≈ 0 drift; the
+    integration layer floors out the non-phasing pairs (mirrors masking's
+    ``reporting_floor``). Same caveat as the dataclass: nearest-onset matching
+    wraps once accumulated drift exceeds half a pulse, so this reads the onset
+    of a phase relationship, not its full trajectory.
+    """
+    if bpm <= 0 or sample_rate <= 0:
+        return PhasingResult(pairs=[])
+    beats_per_sample = bpm / 60.0 / sample_rate
+
+    # One onset pass per part, shared across all pairs.
+    onsets_by_part: list[tuple[str, np.ndarray]] = []
+    for track_id, audio in stem_segments:
+        mono = to_mono(audio)
+        onset_samples = detect_onset_samples(mono, sample_rate)
+        if onset_samples.size == 0:
+            continue
+        beats = window_start_beat + onset_samples * beats_per_sample
+        onsets_by_part.append((track_id, dedup_onsets(beats, min_onset_separation_beats)))
+
+    pairs: list[Phasing] = []
+    for i in range(len(onsets_by_part)):
+        for j in range(i + 1, len(onsets_by_part)):
+            id_a, onsets_a = onsets_by_part[i]
+            id_b, onsets_b = onsets_by_part[j]
+            ph = _phasing_for_pair(id_a, onsets_a, id_b, onsets_b, cycle_beats)
+            if ph is not None:
+                pairs.append(ph)
+
+    pairs.sort(key=lambda p: p.confidence, reverse=True)
+    return PhasingResult(pairs=pairs)
+
+
+def _phasing_for_pair(
+    id_a: str,
+    onsets_a: np.ndarray,
+    id_b: str,
+    onsets_b: np.ndarray,
+    cycle_beats: float,
+) -> Phasing | None:
+    """Fit the per-cycle inter-part offset trend; return a :class:`Phasing` or None.
+
+    For each cycle, the offset is the MEDIAN signed distance from each B onset to
+    its nearest A onset (B − A). A linear fit of offset vs cycle-centre beat
+    gives the drift rate (scaled to one cycle) and the trend strength
+    (|correlation|) → confidence. Returns ``None`` when there aren't enough
+    populated cycles to assert a trend (the caller skips the pair).
+
+    Only B onsets inside A's onset span are matched: a faster part overruns the
+    slower part's last onset, and those overhanging onsets would match back to
+    A's final onset with a large wrong-sign offset that poisons the cycle. The
+    median (over the mean) further shrugs off the odd mismatched onset.
+    """
+    if onsets_a.size == 0 or onsets_b.size == 0 or cycle_beats <= 0:
+        return None
+    a_lo, a_hi = float(onsets_a[0]), float(onsets_a[-1])
+    matchable_b = onsets_b[(onsets_b >= a_lo) & (onsets_b <= a_hi)]
+    if matchable_b.size == 0:
+        return None
+    lo = float(min(onsets_a[0], matchable_b[0]))
+    hi = float(max(onsets_a[-1], matchable_b[-1]))
+    n_cycles = int((hi - lo) // cycle_beats) + 1
+    if n_cycles < _PHASING_MIN_CYCLES:
+        return None
+
+    centres: list[float] = []
+    offsets: list[float] = []
+    for c in range(n_cycles):
+        c_lo = lo + c * cycle_beats
+        c_hi = c_lo + cycle_beats
+        b_in = matchable_b[(matchable_b >= c_lo) & (matchable_b < c_hi)]
+        if b_in.size == 0:
+            continue
+        # Nearest A onset to each B onset → signed offset (B leads = negative).
+        nearest_idx = np.abs(onsets_a[None, :] - b_in[:, None]).argmin(axis=1)
+        offset = float(np.median(b_in - onsets_a[nearest_idx]))
+        centres.append(c_lo + cycle_beats / 2.0)
+        offsets.append(offset)
+
+    if len(offsets) < _PHASING_MIN_CYCLES:
+        return None
+
+    centres_arr = np.asarray(centres, dtype=np.float64)
+    offsets_arr = np.asarray(offsets, dtype=np.float64)
+    # Slope (beats of offset per beat of time) via least squares; ×cycle_beats
+    # to report drift per cycle. A flat offset (locked parts) → slope ≈ 0.
+    slope = float(np.polyfit(centres_arr, offsets_arr, 1)[0])
+    drift_per_cycle = slope * cycle_beats
+    # Monotonicity: |corr| of offset vs time. Strong = a clean phase march;
+    # weak = noise (two unrelated rhythms, or locked parts with jitter).
+    if np.std(offsets_arr) == 0.0:
+        confidence = 0.0
+    else:
+        confidence = abs(float(np.corrcoef(centres_arr, offsets_arr)[0, 1]))
+    return Phasing(
+        track_a=id_a,
+        track_b=id_b,
+        drift_beats_per_cycle=drift_per_cycle,
+        confidence=confidence,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -362,5 +501,7 @@ def _label(m: int, denom: int) -> str:
 
 __all__ = [
     "CrossRhythmResult",
+    "PhasingResult",
     "analyze_cross_rhythm_window",
+    "analyze_phasing_window",
 ]

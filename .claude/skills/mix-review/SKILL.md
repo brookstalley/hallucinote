@@ -77,6 +77,12 @@ first — see "Refreshing the analysis"). For each section, you have:
   / `rubato` / `roll` / `swing(see-timing)` / `low-confidence`), `confidence`
   (**gate on this** too). "The clav is in 3-over-2 against the straight-8th
   drums" — surface as a question: *intended hemiola, or do you want them locked?*
+- `phasing` — two-part Reich-style drift (the cross-rhythm two-part pass). Each
+  entry is a pair (`track_a`, `track_b`) whose relative alignment marches:
+  `drift_beats_per_cycle` (rate + direction of the slide per ~4-beat cycle),
+  `confidence`. Present only when two parts genuinely drift apart (locked parts
+  never surface). "The two marimbas are phasing ~0.1 beat/bar" — intended
+  Reich-style process, or two takes that should be locked?
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
   band), `overshoots`, `reverb_verifications`.
 

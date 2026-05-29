@@ -33,7 +33,7 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
-from .cross_rhythm import analyze_cross_rhythm_window
+from .cross_rhythm import analyze_cross_rhythm_window, analyze_phasing_window
 from .masking import analyze_masking_window
 from .report import (
     Finding,
@@ -41,6 +41,7 @@ from .report import (
     MixReport,
     PartCrossRhythm,
     PartTiming,
+    Phasing,
     ReverbVerification,
     SectionMetrics,
     StemMetrics,
@@ -77,6 +78,16 @@ _TIMING_MIN_CONFIDENCE = 0.25
 # DSP's honest "I can't name this", not section-level evidence the interpreter
 # acts on, so the same don't-surface-untrustworthy-numbers gate applies.
 _CROSS_RHYTHM_MIN_CONFIDENCE = 0.25
+
+# Product reporting floors for phasing (the two-part cross-rhythm pass). A pair
+# only surfaces as phasing when its relative offset drifts both fast enough to
+# matter (``DRIFT_FLOOR``, beats/cycle — locked or constant-offset pairs sit
+# below it) AND cleanly enough to trust (``MIN_CONFIDENCE`` — a strong monotonic
+# trend, not jittered noise). Both gates are needed: a constant phase offset can
+# read a high trend correlation off detection jitter yet near-zero drift, so the
+# drift floor is what rejects locked-but-offset parts.
+_PHASING_DRIFT_FLOOR_BEATS = 0.02
+_PHASING_MIN_CONFIDENCE = 0.6
 
 
 @dataclass(frozen=True)
@@ -377,6 +388,7 @@ def _measure_sections(
         # cross-rhythm pass still gets the swing context it needs.
         timing = []
         cross_rhythm = []
+        phasing = []
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -394,6 +406,9 @@ def _measure_sections(
                     cross_rhythm = _measure_window_cross_rhythm(
                         sliced_stems, capture, start_beat, bpm, swing_ratios,
                     )
+                    phasing = _measure_window_phasing(
+                        sliced_stems, capture, start_beat, bpm,
+                    )
         per_section.append(SectionMetrics(
             section_name=window.name,
             start_beat=window.start_beat,
@@ -406,6 +421,7 @@ def _measure_sections(
             bed_masking=bed_masking,
             timing=timing,
             cross_rhythm=cross_rhythm,
+            phasing=phasing,
         ))
 
     return per_section, skipped
@@ -482,6 +498,32 @@ def _measure_window_cross_rhythm(
     )
     return [
         p for p in cres.parts if p.confidence >= _CROSS_RHYTHM_MIN_CONFIDENCE
+    ]
+
+
+def _measure_window_phasing(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+) -> list[Phasing]:
+    """Two-part phasing over one section window (the cross-rhythm two-part pass).
+
+    Level-blind like timing/cross-rhythm (gain doesn't move onsets). Surfaces
+    only pairs whose relative offset drifts both fast enough (above the drift
+    floor — locked or constant-offset pairs sit below) and cleanly enough (above
+    the confidence floor). Both gates are required; see the floor constants.
+    """
+    pres = analyze_phasing_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+    )
+    return [
+        p for p in pres.pairs
+        if abs(p.drift_beats_per_cycle) >= _PHASING_DRIFT_FLOOR_BEATS
+        and p.confidence >= _PHASING_MIN_CONFIDENCE
     ]
 
 

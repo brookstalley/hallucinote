@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from hallucinote.audio.cross_rhythm import analyze_cross_rhythm_window
+from hallucinote.audio.cross_rhythm import (
+    analyze_cross_rhythm_window,
+    analyze_phasing_window,
+)
 
 from .fixtures import SAMPLE_RATE, onsets_at_beats, silence
 
@@ -258,3 +261,75 @@ def test_parts_sorted_by_confidence_descending():
     )
     confs = [p.confidence for p in res.parts]
     assert confs == sorted(confs, reverse=True)
+
+
+# --------------------------------------------------------------------------- #
+# Two-part phasing (Reich) — the C8b pass
+# --------------------------------------------------------------------------- #
+
+def _pulse_train(period_beats, total_beats):
+    """A steady pulse at ``period_beats`` filling ``total_beats``."""
+    beats = [i * period_beats for i in range(int(total_beats / period_beats) + 1)]
+    return onsets_at_beats(
+        [b for b in beats if b < total_beats], bpm=BPM, total_beats=total_beats,
+    )
+
+
+def _phasing(parts, *, total_beats):
+    return analyze_phasing_window(
+        parts, SAMPLE_RATE, window_start_beat=0.0, bpm=BPM,
+    )
+
+
+def test_reich_phasing_detected_as_monotonic_drift():
+    """Two identical quarter-note pulses, B 3% faster: their relative offset
+    marches monotonically → a clean phasing read (the Reich case). 3% over 16
+    beats at a quarter pulse keeps the drift under half a pulse (no wrap)."""
+    a = _pulse_train(1.0, 16.0)
+    b = _pulse_train(1.0 / 1.03, 16.0)
+    res = _phasing([("A", a), ("B", b)], total_beats=16.0)
+    assert len(res.pairs) == 1
+    ph = res.pairs[0]
+    assert {ph.track_a, ph.track_b} == {"A", "B"}
+    assert abs(ph.drift_beats_per_cycle) > 0.05   # a real march, not noise
+    assert ph.confidence > 0.9                    # cleanly monotonic
+
+
+def test_locked_parts_show_no_drift():
+    """Two identical, locked pulses don't drift — confidence and drift both ≈ 0,
+    so the integration layer floors them out (no false phasing)."""
+    a = _pulse_train(1.0, 16.0)
+    b = _pulse_train(1.0, 16.0)
+    res = _phasing([("A", a), ("B", b)], total_beats=16.0)
+    assert len(res.pairs) == 1   # the DSP reports the measured pair, neutrally
+    ph = res.pairs[0]
+    assert abs(ph.drift_beats_per_cycle) < 0.02   # below the integration floor
+
+
+def test_constant_offset_is_not_phasing():
+    """A constant phase offset (B always +0.06 beat) is a fixed relationship,
+    not a drift — drift ≈ 0 even if detection jitter reads a trend, so the drift
+    floor (not confidence) is what keeps it from being mislabeled phasing."""
+    a = _pulse_train(1.0, 16.0)
+    b = onsets_at_beats(
+        [i + 0.06 for i in range(16)], bpm=BPM, total_beats=16.0,
+    )
+    res = _phasing([("A", a), ("B", b)], total_beats=16.0)
+    assert res.pairs
+    assert abs(res.pairs[0].drift_beats_per_cycle) < 0.02
+
+
+def test_phasing_needs_two_parts():
+    """A single part has no pair to phase against."""
+    a = _pulse_train(1.0, 16.0)
+    res = _phasing([("A", a)], total_beats=16.0)
+    assert res.pairs == []
+
+
+def test_phasing_zero_bpm_returns_no_pairs():
+    a = _pulse_train(1.0, 16.0)
+    b = _pulse_train(1.0 / 1.03, 16.0)
+    res = analyze_phasing_window(
+        [("A", a), ("B", b)], SAMPLE_RATE, window_start_beat=0.0, bpm=0.0,
+    )
+    assert res.pairs == []

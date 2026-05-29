@@ -434,6 +434,62 @@ def test_analyze_mix_populates_section_cross_rhythm_when_enabled(tmp_path: Path)
     assert isinstance(j["track:2"]["against_meter"], bool)
 
 
+def test_analyze_mix_populates_section_phasing_when_enabled(tmp_path: Path):
+    """With ``analyze_cross_rhythm=True``, a section with two parts drifting at
+    fractionally different tempi reads a phasing relationship under
+    ``per_section[].phasing``; two locked parts read none.
+
+    The capture is 16 beats over 8 s → effective 120 bpm."""
+    bpm = 120.0
+
+    def pulse(period):
+        beats = [i * period for i in range(64)]
+        return onsets_at_beats(
+            [b for b in beats if b < 16.0], bpm=bpm, total_beats=16.0,
+        )
+
+    drifting = pulse(1.0 / 1.03)   # 3% faster → phases against the locked pulse
+    locked = pulse(1.0)
+    master = drifting + locked
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Locked", locked), ("track:2", "Drifting", drifting)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="phase", start_beat=0.0, end_beat=16.0)]
+
+    # Off by default.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].phasing == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_cross_rhythm=True)
+    sec = on.per_section[0]
+    assert len(sec.phasing) == 1
+    ph = sec.phasing[0]
+    assert {ph.track_a, ph.track_b} == {"track:1", "track:2"}
+    assert abs(ph.drift_beats_per_cycle) > 0.05
+    assert ph.confidence > 0.9
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "phasing" in sec_json
+    assert isinstance(sec_json["phasing"][0]["drift_beats_per_cycle"], float)
+
+    # Two locked parts → no phasing surfaced.
+    locked2 = pulse(1.0)
+    master2 = locked + locked2
+    captures2 = _write_synthetic_capture(
+        tmp_path / "locked",
+        stems=[("track:1", "A", locked), ("track:2", "B", locked2)],
+        master_audio=master2,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    locked_on = analyze_mix(captures2, sections=sections, analyze_cross_rhythm=True)
+    assert locked_on.per_section[0].phasing == []
+
+
 def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):
     """With a variable tempo, the beat→sample boundary shifts, so a section
     measures different audio than the constant-tempo linear map would.

@@ -259,6 +259,38 @@ class PartCrossRhythm:
 
 
 @dataclass(frozen=True)
+class Phasing:
+    """A two-part phasing relationship within a section window (Reich-style).
+
+    The two-part counterpart to :class:`PartCrossRhythm`. Phasing is two parts
+    playing the *same* figure at fractionally different tempi, so one slowly
+    slides against the other (Steve Reich, "Piano Phase"). It is detected as a
+    **monotonic drift** in the mean nearest-onset offset of B relative to A,
+    sampled across the window — each part stays individually steady, but their
+    relative alignment marches.
+
+    ``track_a`` / ``track_b`` are the two surface IDs (B measured relative to A,
+    so the sign of the drift is B-leads-negative / B-lags-positive).
+    ``drift_beats_per_cycle`` is the rate that relative offset accumulates per
+    analysis cycle (default a 4-beat window — see ``cross_rhythm.py``); its
+    magnitude is how fast they're sliding apart, its sign which way.
+    ``confidence`` (0..1) is high when the drift is cleanly monotonic (the
+    offset-vs-time correlation is strong) — two locked parts drift ≈ 0 and never
+    surface here.
+
+    NEUTRAL MEASUREMENT — phasing is a compositional technique, not a defect;
+    the interpreter grades it against intent. Caveat (``docs/polyrhythms.md``
+    §3): nearest-onset matching wraps once the accumulated drift exceeds half a
+    pulse period, so this reads the onset of a phase relationship, not its
+    full multi-cycle trajectory.
+    """
+    track_a: str
+    track_b: str
+    drift_beats_per_cycle: float
+    confidence: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -303,6 +335,11 @@ class SectionMetrics:
     # straight grid C7 measures against (3:2, quintuplets, ...). Neutral
     # measurement — the interpreter grades it against intent.
     cross_rhythm: list[PartCrossRhythm] = field(default_factory=list)
+    # Two-part phasing relationships (Reich-style drift), populated only when
+    # cross-rhythm analysis is enabled and the section has >= 2 onset-bearing
+    # parts that drift monotonically. Empty when parts are locked. Neutral
+    # measurement — the interpreter grades it against intent.
+    phasing: list[Phasing] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -416,6 +453,16 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
         "timing": [_part_timing_to_dict(t) for t in s.timing],
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
+        "phasing": [_phasing_to_dict(p) for p in s.phasing],
+    }
+
+
+def _phasing_to_dict(p: Phasing) -> dict[str, Any]:
+    return {
+        "track_a": p.track_a,
+        "track_b": p.track_b,
+        "drift_beats_per_cycle": p.drift_beats_per_cycle,
+        "confidence": p.confidence,
     }
 
 

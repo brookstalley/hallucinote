@@ -193,7 +193,7 @@
       ]
     },
     {
-      "start_beat": 91.2982758357449,
+      "start_beat": 91.29827583574489,
       "end_beat": 91.33870481856961,
       "peak_dbtp": 0.14324588250901926,
       "dominant_band": "low_60_200",
@@ -693,6 +693,247 @@
             "true_peak_dbtp": -Infinity
           }
         }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.8287640480797703
+            ],
+            [
+              "track:2",
+              0.07348104451516325
+            ],
+            [
+              "track:4",
+              0.048223672016260884
+            ],
+            [
+              "track:5",
+              0.025793748979917083
+            ],
+            [
+              "track:3",
+              0.023737486408888363
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:2",
+              0.34838757425743355
+            ],
+            [
+              "track:1",
+              0.33333604810911804
+            ],
+            [
+              "track:5",
+              0.14126467724210043
+            ],
+            [
+              "track:3",
+              0.10519282156409326
+            ],
+            [
+              "track:4",
+              0.07181887882725466
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.4235948058966311
+            ],
+            [
+              "track:4",
+              0.26833108174760434
+            ],
+            [
+              "track:3",
+              0.1676437860851133
+            ],
+            [
+              "track:1",
+              0.12004070981100996
+            ],
+            [
+              "track:2",
+              0.02038961645964131
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4907526537192516
+            ],
+            [
+              "track:1",
+              0.34379309518704265
+            ],
+            [
+              "track:5",
+              0.11154879759811169
+            ],
+            [
+              "track:4",
+              0.04372586383955642
+            ],
+            [
+              "track:2",
+              0.010179589656037576
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6407469084899806
+            ],
+            [
+              "track:3",
+              0.35450339023750765
+            ],
+            [
+              "track:4",
+              0.002847807698403743
+            ],
+            [
+              "track:5",
+              0.0011056823843883935
+            ],
+            [
+              "track:2",
+              0.000796211189719633
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8941910826361825
+            ],
+            [
+              "track:3",
+              0.1047188425804742
+            ],
+            [
+              "track:4",
+              0.000562466240967668
+            ],
+            [
+              "track:5",
+              0.0004926244439054353
+            ],
+            [
+              "track:2",
+              3.498409847016449e-05
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3242040397124272,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.297158507360493,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.21323219553308048,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.18521054433413214,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5090722355357754,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.3183634833824148,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.31816266329540666,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.24473180076628354,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.19762408134501158,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
       ]
     },
     {
@@ -800,6 +1041,257 @@
             "lufs_m_peak": -Infinity,
             "true_peak_dbtp": -Infinity
           }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.8199850652517909
+            ],
+            [
+              "track:2",
+              0.07997873339096247
+            ],
+            [
+              "track:4",
+              0.04954683228246675
+            ],
+            [
+              "track:5",
+              0.025611924226605524
+            ],
+            [
+              "track:3",
+              0.02487744484817424
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:2",
+              0.348331264829866
+            ],
+            [
+              "track:1",
+              0.3299322801481939
+            ],
+            [
+              "track:5",
+              0.1401283232236353
+            ],
+            [
+              "track:3",
+              0.10981985128480123
+            ],
+            [
+              "track:4",
+              0.07178828051350361
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.4168696723779628
+            ],
+            [
+              "track:4",
+              0.2732300508524536
+            ],
+            [
+              "track:3",
+              0.1716896305275847
+            ],
+            [
+              "track:1",
+              0.11810504416410678
+            ],
+            [
+              "track:2",
+              0.02010560207789205
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4991976788438983
+            ],
+            [
+              "track:1",
+              0.33868922622022557
+            ],
+            [
+              "track:5",
+              0.10891715487292307
+            ],
+            [
+              "track:4",
+              0.043241843280311304
+            ],
+            [
+              "track:2",
+              0.009954096782641777
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6354973489009901
+            ],
+            [
+              "track:3",
+              0.3599480876863974
+            ],
+            [
+              "track:4",
+              0.002730080826951984
+            ],
+            [
+              "track:5",
+              0.0010606684313298118
+            ],
+            [
+              "track:2",
+              0.0007638141543306759
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8923872709675633
+            ],
+            [
+              "track:3",
+              0.10656337165042194
+            ],
+            [
+              "track:4",
+              0.000544073350945835
+            ],
+            [
+              "track:5",
+              0.00047177070026791927
+            ],
+            [
+              "track:2",
+              3.3513330801018274e-05
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.327195001644196,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.29496876027622493,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.2103734439834025,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.18908253863860572,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.16016597510373445,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5139756658993752,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.3220882753256854,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.3215767634854772,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.2569060773480663,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.20132527772364062,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
         }
       ]
     },
@@ -909,6 +1401,257 @@
             "true_peak_dbtp": -Infinity
           }
         }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7817563375522658
+            ],
+            [
+              "track:3",
+              0.10855439382945399
+            ],
+            [
+              "track:2",
+              0.0953837742680218
+            ],
+            [
+              "track:4",
+              0.011641523735508436
+            ],
+            [
+              "track:5",
+              0.0026639706147500134
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.5743264606519951
+            ],
+            [
+              "track:2",
+              0.2107641358171275
+            ],
+            [
+              "track:3",
+              0.209931993888516
+            ],
+            [
+              "track:4",
+              0.0033712389351538393
+            ],
+            [
+              "track:5",
+              0.0016061707072075797
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.48391024061913157
+            ],
+            [
+              "track:1",
+              0.2655415965779769
+            ],
+            [
+              "track:5",
+              0.22014344318402518
+            ],
+            [
+              "track:4",
+              0.020615545798326165
+            ],
+            [
+              "track:2",
+              0.009789173820540124
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.44257794478056534
+            ],
+            [
+              "track:5",
+              0.37922638403108117
+            ],
+            [
+              "track:1",
+              0.17442936139484067
+            ],
+            [
+              "track:2",
+              0.0033615191745835276
+            ],
+            [
+              "track:4",
+              0.00040479061892931365
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5618578118717867
+            ],
+            [
+              "track:3",
+              0.4369794725218172
+            ],
+            [
+              "track:5",
+              0.0007443535411696528
+            ],
+            [
+              "track:2",
+              0.0004077135080744708
+            ],
+            [
+              "track:4",
+              1.0648557151979267e-05
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9028209608813471
+            ],
+            [
+              "track:3",
+              0.09690116854444798
+            ],
+            [
+              "track:5",
+              0.00027129550927598224
+            ],
+            [
+              "track:4",
+              3.741475656120559e-06
+            ],
+            [
+              "track:2",
+              2.8335892727983687e-06
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6386706948640484,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5494505494505495,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5217522658610272,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.4616550469839345,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.46153846153846156,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6990936555891238,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.6593406593406593,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.51955137920582,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2683164540870376,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.1683851919146037,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
       ]
     },
     {
@@ -1016,6 +1759,257 @@
             "lufs_m_peak": -Infinity,
             "true_peak_dbtp": -Infinity
           }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.8182803170814862
+            ],
+            [
+              "track:2",
+              0.0728462739249132
+            ],
+            [
+              "track:4",
+              0.04588151953995442
+            ],
+            [
+              "track:5",
+              0.03679963298983984
+            ],
+            [
+              "track:3",
+              0.026192256463806393
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.35213329112923464
+            ],
+            [
+              "track:2",
+              0.33734253581972
+            ],
+            [
+              "track:5",
+              0.1353704161605582
+            ],
+            [
+              "track:3",
+              0.10560148481513865
+            ],
+            [
+              "track:4",
+              0.06955227207534853
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.4117882857478929
+            ],
+            [
+              "track:4",
+              0.2657641098728057
+            ],
+            [
+              "track:3",
+              0.18958541560198186
+            ],
+            [
+              "track:1",
+              0.11301842781471858
+            ],
+            [
+              "track:2",
+              0.01984376096260097
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.44409455695417627
+            ],
+            [
+              "track:1",
+              0.2709281949405144
+            ],
+            [
+              "track:5",
+              0.24118338431323455
+            ],
+            [
+              "track:4",
+              0.035530142673901755
+            ],
+            [
+              "track:2",
+              0.00826372111817297
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6300121595647326
+            ],
+            [
+              "track:3",
+              0.36538161150351134
+            ],
+            [
+              "track:4",
+              0.002761488269366521
+            ],
+            [
+              "track:5",
+              0.0010744281794647394
+            ],
+            [
+              "track:2",
+              0.0007703124829249149
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8919877478352751
+            ],
+            [
+              "track:3",
+              0.10694686624467652
+            ],
+            [
+              "track:4",
+              0.0005500873545488168
+            ],
+            [
+              "track:5",
+              0.0004811858658595788
+            ],
+            [
+              "track:2",
+              3.411269963993511e-05
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.31654186521443156,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.29339686861810754,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.19642130947539652,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.1865214431586113,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.16998779991866614,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5020422055820286,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.3212688084587231,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.3148238508831853,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.23779904306220095,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.20712037765538946,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
         }
       ]
     },
@@ -1125,6 +2119,257 @@
             "true_peak_dbtp": -Infinity
           }
         }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.790317389576431
+            ],
+            [
+              "track:3",
+              0.10940319891498847
+            ],
+            [
+              "track:2",
+              0.09643223619529159
+            ],
+            [
+              "track:5",
+              0.002077221479154936
+            ],
+            [
+              "track:4",
+              0.0017699538341339487
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.5768649683263465
+            ],
+            [
+              "track:2",
+              0.21103454967901975
+            ],
+            [
+              "track:3",
+              0.20993639149690901
+            ],
+            [
+              "track:5",
+              0.0015879522966882444
+            ],
+            [
+              "track:4",
+              0.0005761382010364879
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.491423735643876
+            ],
+            [
+              "track:1",
+              0.27219290125536594
+            ],
+            [
+              "track:5",
+              0.22415274579081618
+            ],
+            [
+              "track:2",
+              0.010007986308489187
+            ],
+            [
+              "track:4",
+              0.0022226310014526293
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4405839956273141
+            ],
+            [
+              "track:5",
+              0.38008095481636506
+            ],
+            [
+              "track:1",
+              0.17592529488474057
+            ],
+            [
+              "track:2",
+              0.0033527758350593182
+            ],
+            [
+              "track:4",
+              5.6978836520941474e-05
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5624935062451268
+            ],
+            [
+              "track:3",
+              0.4363371119877338
+            ],
+            [
+              "track:5",
+              0.0007609033228535162
+            ],
+            [
+              "track:2",
+              0.00040584440423419374
+            ],
+            [
+              "track:4",
+              2.6340400517053224e-06
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9024082078690636
+            ],
+            [
+              "track:3",
+              0.09731296030100928
+            ],
+            [
+              "track:5",
+              0.00027598087495132645
+            ],
+            [
+              "track:2",
+              2.79821641052396e-06
+            ],
+            [
+              "track:4",
+              5.2738565345702055e-08
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.9375,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.84375,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.75,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6505698860227954,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5317936412717457,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.7078584283143371,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.5212193664076509,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2700989094598022,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.17034213631001,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
       ]
     },
     {
@@ -1233,6 +2478,248 @@
             "true_peak_dbtp": -Infinity
           }
         }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7864099877510796
+            ],
+            [
+              "track:3",
+              0.10797357374429102
+            ],
+            [
+              "track:2",
+              0.0951407864525164
+            ],
+            [
+              "track:5",
+              0.010475652052113033
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.5784577950786945
+            ],
+            [
+              "track:2",
+              0.21079081842893135
+            ],
+            [
+              "track:3",
+              0.20859670404840522
+            ],
+            [
+              "track:5",
+              0.0021546824439689733
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.49411013321971475
+            ],
+            [
+              "track:1",
+              0.27048406218350873
+            ],
+            [
+              "track:5",
+              0.2254777451443961
+            ],
+            [
+              "track:2",
+              0.009928059452380365
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.44478828618664534
+            ],
+            [
+              "track:5",
+              0.3818427926095364
+            ],
+            [
+              "track:1",
+              0.17001142811458017
+            ],
+            [
+              "track:2",
+              0.0033574930892380514
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5359661676989496
+            ],
+            [
+              "track:3",
+              0.4628249433921935
+            ],
+            [
+              "track:5",
+              0.0007792244213104304
+            ],
+            [
+              "track:2",
+              0.0004296644875464989
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8964541192459522
+            ],
+            [
+              "track:3",
+              0.10325563282840063
+            ],
+            [
+              "track:5",
+              0.00028728238939462324
+            ],
+            [
+              "track:2",
+              2.9655362526079118e-06
+            ],
+            [
+              "track:4",
+              0.0
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.64970733903647,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5228875881734955,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.4634146341463415,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.3340402969247084,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2628727434340014,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6992345790184602,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.5137100439327374,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.27736979111553195,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.16491307805931144,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
       ]
     },
     {
@@ -1340,6 +2827,257 @@
             "lufs_m_peak": -Infinity,
             "true_peak_dbtp": -Infinity
           }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7880706139405839
+            ],
+            [
+              "track:2",
+              0.07863905299911987
+            ],
+            [
+              "track:5",
+              0.05464866507915082
+            ],
+            [
+              "track:4",
+              0.05082800576347181
+            ],
+            [
+              "track:3",
+              0.027813662217673597
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:2",
+              0.3604500544601802
+            ],
+            [
+              "track:1",
+              0.3046950865152982
+            ],
+            [
+              "track:5",
+              0.1461747596957575
+            ],
+            [
+              "track:3",
+              0.11359428885365874
+            ],
+            [
+              "track:4",
+              0.0750858104751054
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.41926527779584033
+            ],
+            [
+              "track:4",
+              0.27421194462291687
+            ],
+            [
+              "track:3",
+              0.1762918685240572
+            ],
+            [
+              "track:1",
+              0.10979992329500797
+            ],
+            [
+              "track:2",
+              0.02043098576217754
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.49043343422553937
+            ],
+            [
+              "track:1",
+              0.31560841627187436
+            ],
+            [
+              "track:5",
+              0.14183154159708813
+            ],
+            [
+              "track:4",
+              0.0423686281310536
+            ],
+            [
+              "track:2",
+              0.009757979774444547
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6369120817303261
+            ],
+            [
+              "track:3",
+              0.3584500627861953
+            ],
+            [
+              "track:4",
+              0.002795187414314543
+            ],
+            [
+              "track:5",
+              0.0010649745987558446
+            ],
+            [
+              "track:2",
+              0.0007776934704081809
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.893245828716253
+            ],
+            [
+              "track:3",
+              0.10569471136024729
+            ],
+            [
+              "track:4",
+              0.0005517001490489149
+            ],
+            [
+              "track:5",
+              0.00047354584744553786
+            ],
+            [
+              "track:2",
+              3.421392700517521e-05
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3189856523189857,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.2862862862862863,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.20198265179677818,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.19285952619285954,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.15324246179264767,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5061728395061729,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.315267101294152,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.3114415530772408,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.24241008874357778,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.21075076862045025,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
         }
       ]
     }

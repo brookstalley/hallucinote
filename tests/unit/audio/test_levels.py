@@ -1,9 +1,8 @@
 """Mix-level reconstruction (F1) — fader-curve anchors + masking correction.
 
-The fader curve itself is an unverified approximation (see audio/levels.py); the
-tests pin the anchors we're confident about and verify the *mechanism* — a
-faded-down masker stops over-reporting masking — which is the architecture that
-matters.
+The fader curve is calibrated against real Live 12 (see audio/levels.py); these
+tests pin it to the measured dB values and verify the *mechanism* — a faded-down
+masker stops over-reporting masking.
 """
 from __future__ import annotations
 

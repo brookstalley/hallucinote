@@ -184,12 +184,19 @@ def _collect_stem_gains(
     ``analyze_mix`` can scale the masking input. A NULL volume (uncaptured)
     defaults to unity (1.0) — no correction rather than a guess. Static gain
     only; volume automation is a deferred refinement (see audio/levels.py).
+
+    Keyed by the **capture surface ID** (``track:N``), NOT the DB UUID — the
+    stems handed to ``apply_stem_gains`` come from the capture manifest and are
+    keyed by surface index. Same DB-UUID → surface-ID lift as
+    ``_collect_declared_sends`` (via ``track_id_for_surface``); keying by
+    ``row['id']`` would silently never match and make the correction a no-op.
     """
     gains: dict[str, float] = {}
     for row in Q.get_tracks_for_song(conn, song_id):
         vol = row["volume"]
         if vol is not None:
-            gains[row["id"]] = live_fader_gain(float(vol))
+            surface_id = track_id_for_surface("track", int(row["track_index"]))
+            gains[surface_id] = live_fader_gain(float(vol))
     return gains
 
 
@@ -326,7 +333,7 @@ def analyze_handler(
         analyze_masking=bool(sections),
         # Mix-level reconstruction (F1): scale each pre-fader stem by its
         # static fader gain so masking sees mix balance, not source level.
-        # The fader curve is an unverified approximation (see audio/levels.py).
+        # Fader curve is Live-12-calibrated (see audio/levels.py).
         stem_gains=stem_gains,
     )
 

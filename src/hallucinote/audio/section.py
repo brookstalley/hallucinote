@@ -19,10 +19,38 @@ job); this module only turns beats into sample bounds.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
+
+# Below this per-beat bpm slope the segment is treated as constant tempo: the
+# closed-form log integral degenerates to the linear (seconds = beats·60/bpm)
+# form as the slope → 0, so we switch before the log/division loses precision.
+_EPS_BPM_SLOPE = 1e-9
+
+
+def _partial_seconds(bpm0: float, slope: float, beats: float) -> float:
+    """Wall-clock seconds to advance ``beats`` from a point where the tempo is
+    ``bpm0`` and changes by ``slope`` bpm per beat.
+
+    For a linear ramp ``∫ 60/(bpm0 + slope·x) dx`` over ``[0, beats]`` is the
+    log term ``(60/slope)·ln(bpm_end/bpm0)``; as ``slope → 0`` this limits to
+    the constant-tempo ``60·beats/bpm0``. Only ``ramp='hold'`` (slope 0) and a
+    true linear glide are representable, which is exactly the DB's ramp vocab.
+    """
+    if abs(slope) < _EPS_BPM_SLOPE:
+        return 60.0 * beats / bpm0
+    return (60.0 / slope) * math.log((bpm0 + slope * beats) / bpm0)
+
+
+def _partial_beats(bpm0: float, slope: float, seconds: float) -> float:
+    """Inverse of :func:`_partial_seconds`: beats advanced in ``seconds`` from a
+    point where the tempo is ``bpm0`` and changes by ``slope`` bpm per beat."""
+    if abs(slope) < _EPS_BPM_SLOPE:
+        return bpm0 * seconds / 60.0
+    return (bpm0 / slope) * (math.exp(slope * seconds / 60.0) - 1.0)
 
 
 @dataclass(frozen=True)
@@ -60,16 +88,27 @@ class WindowSlice:
 
 @dataclass(frozen=True)
 class TempoSegment:
-    """A constant-tempo span starting at song-absolute beat ``start_beat``.
+    """A tempo point at song-absolute beat ``start_beat``, mirroring one DB
+    ``tempo_map`` row.
 
-    ``bpm`` holds from ``start_beat`` until the next segment's start (or the
-    end of the capture). Beat-domain, like :class:`SectionWindow` — the MCP
-    handler builds these from the DB ``tempo_map`` (each row's ``start_bar``
-    converted to a beat via the meter map). Constructing them by hand is fine
-    for fixtures.
+    ``bpm`` is the tempo *at* ``start_beat``. ``ramp`` describes how it reaches
+    the next segment's bpm:
+
+    * ``'hold'`` (default) — tempo stays at ``bpm`` until the next segment's
+      start (a step). The only exact model before linear-ramp support landed.
+    * ``'linear'`` — tempo glides linearly from this ``bpm`` to the next
+      segment's ``bpm`` across ``[start_beat, next.start_beat)``. The last
+      segment has no successor, so its ``ramp`` is moot (constant to the end of
+      the capture).
+
+    Beat-domain, like :class:`SectionWindow` — the MCP handler builds these
+    from the DB ``tempo_map`` (each row's ``start_bar`` converted to a beat via
+    the meter map, carrying the row's ``ramp``). Constructing them by hand is
+    fine for fixtures.
     """
     start_beat: float
     bpm: float
+    ramp: str = "hold"
 
 
 class BeatSampleMap:
@@ -88,7 +127,13 @@ class BeatSampleMap:
     Works directly in samples (no sample-rate needed): sample breakpoints are
     ``raw_cumulative_seconds / raw_total_seconds * n_samples``.
 
-    Two modelling assumptions:
+    Both ``ramp`` kinds are modelled exactly: a ``'hold'`` segment is a constant
+    step, and a ``'linear'`` segment integrates the log-shaped beat→seconds
+    curve of a linearly-varying bpm (``∫ 60/bpm(beat) dβ``), so a section
+    boundary landing mid-ramp maps to the right sample instead of drifting off a
+    step approximation.
+
+    One modelling assumption remains:
 
     * **The render honored the supplied tempo.** The map shifts boundaries by
       the tempo *it is given*; if a song declares variable tempo but was
@@ -98,9 +143,6 @@ class BeatSampleMap:
       accurate than the constant-tempo linear fallback. The rescale cancels a
       global tempo offset but not this declared-vs-rendered divergence. Pass an
       empty ``tempo_segments`` (the default) when in doubt.
-    * **Each segment is constant tempo (step).** A DB ``tempo_map`` row's
-      ``ramp='linear'`` (tempo glides to the next point) is approximated as a
-      step at the segment's own bpm; only ``ramp='hold'`` is modelled exactly.
     """
 
     def __init__(
@@ -116,56 +158,107 @@ class BeatSampleMap:
         span = capture_stop_beat - capture_start_beat
         self.degenerate = span <= 0 or n_samples <= 0
         if self.degenerate:
-            self._beats = self._samples = None
+            self._mark_degenerate()
             return
 
         segs = sorted(
-            ((float(s.start_beat), float(s.bpm)) for s in tempo_segments if s.bpm > 0),
+            ((float(s.start_beat), float(s.bpm), str(s.ramp)) for s in tempo_segments
+             if s.bpm > 0),
             key=lambda p: p[0],
         )
         # Breakpoints: window endpoints plus any tempo change strictly inside.
+        # Each resulting interval lies within a single segment, so tempo varies
+        # at most linearly across it — exactly what the closed form integrates.
         interior = sorted({
-            sb for sb, _ in segs if capture_start_beat < sb < capture_stop_beat
+            sb for sb, _, _ in segs if capture_start_beat < sb < capture_stop_beat
         })
         beats = [capture_start_beat, *interior, capture_stop_beat]
 
-        def _bpm_at(beat: float) -> float:
-            active = 120.0  # any positive default — cancels in the rescale
-            for sb, bpm in segs:
+        def _seg_index_at(beat: float) -> int:
+            """Index of the segment active at ``beat`` (last start ≤ beat), or
+            -1 when ``beat`` precedes every segment."""
+            idx = -1
+            for i, (sb, _, _) in enumerate(segs):
                 if sb <= beat:
-                    active = bpm
+                    idx = i
                 else:
                     break
-            return active
+            return idx
+
+        def _bpm_endpoints(b0: float, b1: float) -> tuple[float, float]:
+            """bpm at the two ends of interval ``[b0, b1]`` along the underlying
+            segment's tempo line (constant for a hold/last segment, interpolated
+            for a linear ramp)."""
+            idx = _seg_index_at(0.5 * (b0 + b1))
+            if idx < 0:
+                return 120.0, 120.0  # before any segment; cancels in the rescale
+            sb, bpm, ramp = segs[idx]
+            if ramp == "linear" and idx + 1 < len(segs):
+                nsb, nbpm, _ = segs[idx + 1]
+                if nsb > sb:
+                    glide = (nbpm - bpm) / (nsb - sb)
+                    return bpm + glide * (b0 - sb), bpm + glide * (b1 - sb)
+            return bpm, bpm
 
         raw = [0.0]
+        bpm0s: list[float] = []
+        slopes: list[float] = []
         for i in range(1, len(beats)):
             b0, b1 = beats[i - 1], beats[i]
-            # Breakpoints sit on segment boundaries, so bpm is constant across
-            # [b0, b1] and equals the segment active at b0.
-            raw.append(raw[-1] + (b1 - b0) * 60.0 / _bpm_at(b0))
+            length = b1 - b0
+            bpm0, bpm1 = _bpm_endpoints(b0, b1)
+            slope = 0.0 if length <= 0 else (bpm1 - bpm0) / length
+            bpm0s.append(bpm0)
+            slopes.append(slope)
+            raw.append(raw[-1] + _partial_seconds(bpm0, slope, length))
         raw_total = raw[-1]
         if raw_total <= 0:
             self.degenerate = True
-            self._beats = self._samples = None
+            self._mark_degenerate()
             return
         self._beats = np.asarray(beats, dtype=np.float64)
-        self._samples = np.asarray(
-            [r / raw_total * n_samples for r in raw], dtype=np.float64
-        )
+        self._raw = np.asarray(raw, dtype=np.float64)
+        self._bpm0s = bpm0s
+        self._slopes = slopes
+        self._raw_total = raw_total
+
+    def _mark_degenerate(self) -> None:
+        """Null out the interpolation state for a degenerate map. The accessors
+        all short-circuit on ``self.degenerate`` before touching these, so they
+        only need to exist, but resetting them in one place keeps both
+        degenerate branches in ``__init__`` consistent."""
+        self._beats = self._raw = None
+        self._bpm0s = self._slopes = None
+        self._raw_total = 0.0
 
     def beat_to_sample(self, beat: float) -> int:
         """Song-absolute beat → clamped sample index in the capture audio."""
         if self.degenerate:
             return 0
-        s = float(np.interp(beat, self._beats, self._samples))
+        beat = min(max(beat, self.start_beat), self.stop_beat)
+        i = self._interval_for(self._beats, beat)
+        raw = self._raw[i] + _partial_seconds(
+            self._bpm0s[i], self._slopes[i], beat - self._beats[i],
+        )
+        s = raw / self._raw_total * self.n_samples
         return int(round(min(max(s, 0.0), float(self.n_samples))))
 
     def sample_to_beat(self, sample: float) -> float:
         """Sample index in the capture audio → song-absolute beat."""
         if self.degenerate:
             return self.start_beat
-        return float(np.interp(sample, self._samples, self._beats))
+        raw = min(max(sample, 0.0), float(self.n_samples)) / self.n_samples * self._raw_total
+        i = self._interval_for(self._raw, raw)
+        return float(self._beats[i] + _partial_beats(
+            self._bpm0s[i], self._slopes[i], raw - self._raw[i],
+        ))
+
+    @staticmethod
+    def _interval_for(breakpoints: np.ndarray, value: float) -> int:
+        """Index of the interval ``[breakpoints[i], breakpoints[i+1]]`` that
+        contains ``value`` (clamped to the last interval at the upper edge)."""
+        i = int(np.searchsorted(breakpoints, value, side="right")) - 1
+        return min(max(i, 0), len(breakpoints) - 2)
 
 
 def intersect_window(

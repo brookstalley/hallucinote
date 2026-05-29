@@ -98,8 +98,9 @@ CREATE TABLE IF NOT EXISTS arrangement_clips (
     song_id                     TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     track_id                    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     clip_id                     TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
-    start_bar                   REAL NOT NULL,
-    end_bar                     REAL NOT NULL
+    start_bar                   REAL NOT NULL CHECK (start_bar >= 1.0),
+    end_bar                     REAL NOT NULL,
+    CHECK (end_bar > start_bar)
 );
 
 CREATE INDEX IF NOT EXISTS idx_arrangement_clips_song ON arrangement_clips(song_id);

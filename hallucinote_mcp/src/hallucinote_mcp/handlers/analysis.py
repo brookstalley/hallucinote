@@ -279,6 +279,7 @@ def _collect_tempo_map(
         TempoSegment(
             start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
             bpm=float(row["tempo_bpm"]),
+            ramp=row["ramp"],
         )
         for row in tempo_rows
     ]

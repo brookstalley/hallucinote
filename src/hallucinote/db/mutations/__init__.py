@@ -35,6 +35,7 @@ from ._core import (
     _current_build_session,
     _emit,
     _record_touch_if_session,
+    _require_bar_floor,
     _resolve_actor_and_request,
     _touch_clip,
     _touch_song,

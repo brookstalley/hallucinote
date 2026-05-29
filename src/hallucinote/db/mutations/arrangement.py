@@ -8,6 +8,7 @@ from ._core import (
     MutatorResult,
     _emit,
     _record_touch_if_session,
+    _require_bar_floor,
     _resolve_actor_and_request,
     _touch_song,
     _uuid,
@@ -31,6 +32,12 @@ def add_arrangement_clip(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
+    # arrangement_clips is the one bar-position table without a schema CHECK,
+    # so these are its only floor/ordering guards; both feed the push layer's
+    # _position_bar_to_beats, which raises on a sub-1.0 bar.
+    _require_bar_floor("start_bar", start_bar)
+    if end_bar <= start_bar:
+        raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
         """SELECT id, end_bar FROM arrangement_clips
@@ -131,6 +138,7 @@ def add_cue_point(
     position with the same name/color is a no-op; with different name/color
     it updates the existing cue. Use `remove_cue_point` + add to move a cue.
     """
+    _require_bar_floor("position_bar", position_bar)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
         """SELECT id, name, color FROM cue_points

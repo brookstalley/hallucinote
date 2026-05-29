@@ -31,19 +31,24 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # import is only exercised on the MCP server side (where this handler
 # actually runs, gated by runs_server_side=True).
 try:
-    from hallucinote.audio import DeclaredReverbSend, SectionWindow, analyze_mix
+    from hallucinote.audio import (
+        DeclaredReverbSend,
+        SectionWindow,
+        TempoSegment,
+        analyze_mix,
+    )
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
     # Reuse the canonical bar→beat converter the push planner uses — it walks
-    # the song's time_signature_map so meter changes accumulate exactly. The
-    # only constant-tempo assumption in section windowing is the downstream
-    # beat→sample step (in `analyze._measure_sections`), not this conversion.
+    # the song's time_signature_map so meter changes accumulate exactly. Both
+    # section windows and tempo-map segments are positioned through it.
     from hallucinote.sync.push import _position_bar_to_beats
     _HAS_HALLUCINOTE = True
 except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
+    TempoSegment = None  # type: ignore[assignment]
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
@@ -202,6 +207,41 @@ def _collect_sections(
     ]
 
 
+def _collect_tempo_map(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["TempoSegment"]:
+    """Read the song's ``tempo_map`` and lift it into beat-domain
+    ``TempoSegment`` records for ``analyze_mix``, using an already-open
+    connection.
+
+    Tempo rows are keyed by ``start_bar``; each bar bound is converted to a
+    song-absolute beat via ``_position_bar_to_beats`` (the same exact meter
+    walk ``_collect_sections`` uses), giving ``analyze_mix`` the variable-tempo
+    map it needs for accurate beat→sample windowing. Empty list when the song
+    has no tempo_map rows — ``analyze_mix`` then falls back to the constant-
+    tempo linear map (calibrated to the audio duration), so this is a safe
+    no-op, not a silent drop of required data.
+
+    Caveat: this feeds the analyzer the *declared* tempo_map. It assumes the
+    render honored it. Today the push layer materializes only the bar-1 tempo
+    (the non-bar-1-tempo gap in ``.prawduct/backlog.md``), so a song that
+    declares variable tempo currently renders at one tempo — for that song the
+    declared changes aren't in the audio and ``BeatSampleMap`` documents how
+    that can be less accurate than the linear fallback. Harmless for the
+    constant-tempo songs that are all push can render today (byte-identical),
+    and correct once variable-tempo rendering lands.
+    """
+    tempo_rows = Q.get_tempo_map(conn, song_id)
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    return [
+        TempoSegment(
+            start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
+            bpm=float(row["tempo_bpm"]),
+        )
+        for row in tempo_rows
+    ]
+
+
 def analyze_handler(
     _context: LiveContext,
     *,
@@ -238,9 +278,9 @@ def analyze_handler(
         )
 
     # Single open: validates the DB is well-formed (init_db runs the
-    # idempotent migration) AND serves both collectors. Previously each
+    # idempotent migration) AND serves all three collectors. Previously each
     # collector — and the existence verifier — opened its own connection
-    # (a triple-open per handler call).
+    # (a quadruple-open per handler call once the tempo_map collector landed).
     conn = init_db(db_path)
     try:
         song = conn.execute(
@@ -249,12 +289,14 @@ def analyze_handler(
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
+        tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
     finally:
         conn.close()
     report = analyze_mix(
         captures_path,
         declared_reverb_sends=declared_sends,
         sections=sections,
+        tempo_map=tempo_map,
     )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"

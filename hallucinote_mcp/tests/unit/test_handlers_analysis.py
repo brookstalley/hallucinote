@@ -436,6 +436,29 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
     )
 
 
+def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
+    """_collect_tempo_map reads the tempo_map table and converts each row's
+    start_bar to a song-absolute beat (via the 4/4-default meter walk),
+    yielding the beat-domain TempoSegments analyze_mix needs for accurate
+    windowing."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=120.0)
+        M.add_tempo_point(conn, song_id=song_id, start_bar=3.0, tempo_bpm=90.0)
+        conn.commit()
+        segs = analysis_handlers._collect_tempo_map(conn, song_id)
+    finally:
+        conn.close()
+
+    # 4/4 default: bar 1 -> beat 0, bar 3 -> beat 8.
+    assert [(s.start_beat, s.bpm) for s in segs] == [(0.0, 120.0), (8.0, 90.0)]
+
+
 def test_analyze_handler_emits_skip_when_no_db_sections(synthetic_song: Path):
     """A song with no ``sections`` rows → per_section empty + a teaching
     skip naming ``create_section``."""

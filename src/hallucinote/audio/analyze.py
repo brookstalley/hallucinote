@@ -27,6 +27,7 @@ from typing import Sequence
 
 from .attribution import (
     OvershootWindow,
+    band_attribution,
     find_master_overshoots,
     master_bus_attribution,
 )
@@ -302,6 +303,10 @@ def _measure_sections(
             master=_measure_window(capture.master, sl),
             stems=[_measure_window(s, sl) for s in capture.stems],
             returns=[_measure_window(r, sl) for r in capture.returns],
+            attribution=band_attribution(
+                [(s.track_id, slice_audio(s.audio, sl)) for s in capture.stems],
+                capture.sample_rate,
+            ),
         ))
 
     return per_section, skipped

@@ -103,6 +103,22 @@ class ReverbVerification:
 
 
 @dataclass(frozen=True)
+class BandContribution:
+    """Per-band ranking of stem RMS contribution within a section window.
+
+    ``contributors`` is ranked top-to-bottom; each entry is
+    ``(track_id, fraction)`` where ``fraction`` is the stem's share of total
+    stem RMS energy in ``band`` over the section window. Top-N only; the
+    long tail is omitted (sums may not reach 1.0). Empty when no stem carried
+    energy in the band. This is the steady-state companion to
+    ``MasterOvershoot.attribution`` (which is tied to a peak event) — it
+    answers "which stems own the low end in the chorus?".
+    """
+    band: str
+    contributors: list[tuple[str, float]]
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -127,6 +143,9 @@ class SectionMetrics:
     master: StemMetrics
     stems: list[StemMetrics] = field(default_factory=list)
     returns: list[StemMetrics] = field(default_factory=list)
+    # Per-band stem-dominance over the section window (one entry per BANDS
+    # band). Answers "kick + bass dominate the chorus low end" per-section.
+    attribution: list[BandContribution] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -229,6 +248,13 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "master": _stem_to_dict(s.master),
         "stems": [_stem_to_dict(stem) for stem in s.stems],
         "returns": [_stem_to_dict(r) for r in s.returns],
+        "attribution": [
+            {
+                "band": bc.band,
+                "contributors": [list(pair) for pair in bc.contributors],
+            }
+            for bc in s.attribution
+        ],
     }
 
 

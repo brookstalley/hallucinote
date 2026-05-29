@@ -33,7 +33,11 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
-from .cross_rhythm import analyze_cross_rhythm_window, analyze_phasing_window
+from .cross_rhythm import (
+    analyze_cross_rhythm_window,
+    analyze_phasing_window,
+    analyze_polymeter_window,
+)
 from .masking import analyze_masking_window
 from .report import (
     Finding,
@@ -42,6 +46,7 @@ from .report import (
     PartCrossRhythm,
     PartTiming,
     Phasing,
+    Polymeter,
     ReverbVerification,
     SectionMetrics,
     StemMetrics,
@@ -88,6 +93,11 @@ _CROSS_RHYTHM_MIN_CONFIDENCE = 0.25
 # drift floor is what rejects locked-but-offset parts.
 _PHASING_DRIFT_FLOOR_BEATS = 0.02
 _PHASING_MIN_CONFIDENCE = 0.6
+
+# Product reporting floor for polymeter (two parts looping different cell
+# lengths). A pair surfaces only when both cells resolved cleanly enough to
+# trust — the confidence is the weaker part's accent-autocorrelation peak.
+_POLYMETER_MIN_CONFIDENCE = 0.5
 
 
 @dataclass(frozen=True)
@@ -389,6 +399,7 @@ def _measure_sections(
         timing = []
         cross_rhythm = []
         phasing = []
+        polymeter = []
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -409,6 +420,9 @@ def _measure_sections(
                     phasing = _measure_window_phasing(
                         sliced_stems, capture, start_beat, bpm,
                     )
+                    polymeter = _measure_window_polymeter(
+                        sliced_stems, capture, start_beat, bpm,
+                    )
         per_section.append(SectionMetrics(
             section_name=window.name,
             start_beat=window.start_beat,
@@ -422,6 +436,7 @@ def _measure_sections(
             timing=timing,
             cross_rhythm=cross_rhythm,
             phasing=phasing,
+            polymeter=polymeter,
         ))
 
     return per_section, skipped
@@ -524,6 +539,29 @@ def _measure_window_phasing(
         p for p in pres.pairs
         if abs(p.drift_beats_per_cycle) >= _PHASING_DRIFT_FLOOR_BEATS
         and p.confidence >= _PHASING_MIN_CONFIDENCE
+    ]
+
+
+def _measure_window_polymeter(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+) -> list[Polymeter]:
+    """Two-part polymeter over one section window (different cell lengths).
+
+    Level-blind like the other rhythm passes. Surfaces only pairs whose two
+    cells both resolved above the confidence floor (the weaker part's accent-
+    autocorrelation peak). Equal-velocity parts surface no cell, so no pair.
+    """
+    pres = analyze_polymeter_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+    )
+    return [
+        p for p in pres.pairs if p.confidence >= _POLYMETER_MIN_CONFIDENCE
     ]
 
 

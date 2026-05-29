@@ -490,6 +490,50 @@ def test_analyze_mix_populates_section_phasing_when_enabled(tmp_path: Path):
     assert locked_on.per_section[0].phasing == []
 
 
+def test_analyze_mix_populates_section_polymeter_when_enabled(tmp_path: Path):
+    """With ``analyze_cross_rhythm=True``, two accented steady streams looping
+    different cell lengths (4-beat vs 3-beat) read a polymeter relationship under
+    ``per_section[].polymeter`` with the lcm realign; off by default.
+
+    The capture is 24 beats over 12 s → effective 120 bpm."""
+    bpm = 120.0
+
+    def accented(cell_beats):
+        n = 48  # steady 8ths over 24 beats
+        beats = [i * 0.5 for i in range(n)]
+        amps = [2.0 if (b % cell_beats) < 1e-6 else 1.0 for b in beats]
+        return onsets_at_beats(beats, bpm=bpm, total_beats=24.0, amplitudes=amps)
+
+    cell4 = accented(4.0)
+    cell3 = accented(3.0)
+    master = cell4 + cell3
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Cell4", cell4), ("track:2", "Cell3", cell3)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=24.0,
+    )
+    sections = [SectionWindow(name="poly", start_beat=0.0, end_beat=24.0)]
+
+    # Off by default.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].polymeter == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_cross_rhythm=True)
+    sec = on.per_section[0]
+    assert len(sec.polymeter) == 1
+    pm = sec.polymeter[0]
+    assert {pm.track_a, pm.track_b} == {"track:1", "track:2"}
+    cells = sorted([pm.cycle_a_beats, pm.cycle_b_beats])
+    assert abs(cells[0] - 3.0) < 0.1 and abs(cells[1] - 4.0) < 0.1
+    assert abs(pm.realign_beats - 12.0) < 0.1
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "polymeter" in sec_json
+    assert isinstance(sec_json["polymeter"][0]["realign_beats"], float)
+
+
 def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):
     """With a variable tempo, the beat→sample boundary shifts, so a section
     measures different audio than the constant-tempo linear map would.

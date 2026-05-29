@@ -15,10 +15,14 @@ from typing import Any
 from hallucinote.return_naming import strip_return_slot_prefix
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
-
-# Live's default meter when a song has no `time_signature_map` rows.
-_DEFAULT_NUMERATOR = 4
-_DEFAULT_DENOMINATOR = 4
+from ..geometry import (
+    _DEFAULT_NUMERATOR,
+    _DEFAULT_DENOMINATOR,
+    _beats_per_bar,
+    _meter_at_bar,
+    _split_bar,
+    _position_bar_to_beats,
+)
 
 
 @dataclass
@@ -55,105 +59,6 @@ class PushPlan:
 # ---------------------------------------------------------------------------
 # Note conversion: DB -> MCP
 # ---------------------------------------------------------------------------
-
-
-def _beats_per_bar(numerator: int, denominator: int) -> float:
-    """Live counts a beat as a quarter note regardless of meter, so the beat
-    count per bar is `numerator * (4 / denominator)` (e.g., 6/8 -> 3 beats,
-    7/4 -> 7 beats, 4/4 -> 4 beats)."""
-    return numerator * (4.0 / denominator)
-
-
-def _meter_at_bar(
-    bar: float,
-    ts_points: list[sqlite3.Row],
-) -> tuple[int, int]:
-    """Return (numerator, denominator) effective at a 1-based bar position.
-
-    Empty ts_points fall back to 4/4. Bars before the first map point use the
-    first point's meter — matches Live's behavior for unmarked regions.
-    """
-    if not ts_points:
-        return (_DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR)
-    chosen = ts_points[0]
-    for p in ts_points:
-        if p["start_bar"] <= bar:
-            chosen = p
-        else:
-            break
-    return (chosen["numerator"], chosen["denominator"])
-
-
-def _split_bar(
-    bar_pos: float,
-    ts_points: list[sqlite3.Row],
-) -> tuple[int, float]:
-    """Split a 1-based fractional bar position into (bar_int, beat_within_bar).
-
-    Matches the `(bar: int 1-based, beat: float 0-based-within-bar)` shape that
-    Live's MCP tools use throughout. `bar_pos=4.5` in 4/4 -> (4, 2.0).
-    """
-    if bar_pos < 1.0:
-        raise ValueError(
-            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
-        )
-    bar_int = int(bar_pos)
-    frac = bar_pos - bar_int
-    num, den = _meter_at_bar(bar_pos, ts_points)
-    return bar_int, frac * _beats_per_bar(num, den)
-
-
-def _position_bar_to_beats(
-    bar_pos: float,
-    ts_points: list[sqlite3.Row],
-) -> float:
-    """Convert a 1-based fractional bar position to cumulative beats from song start.
-
-    Live's arrangement time is measured in BEATS (quarter notes) regardless of
-    meter — `position_beats` on every ableton_arrangement / ableton_clip
-    arrangement-side action. Inverse-ish of :func:`_split_bar`: that returns
-    ``(bar_int, beat_within_bar)``; this returns the total beats from bar 1's
-    downbeat to the requested fractional bar.
-
-    Walks the time_signature_map so meter changes accumulate correctly. Bars
-    before ``ts_points[0].start_bar`` use ``ts_points[0]``'s meter (matches
-    :func:`_meter_at_bar`'s fallback). Empty map → 4/4 throughout.
-
-    Examples (in 4/4):
-      - ``bar_pos=1.0`` -> 0.0
-      - ``bar_pos=17.0`` -> 64.0    (16 bars × 4 beats)
-      - ``bar_pos=17.5`` -> 66.0    (16 bars × 4 + half-bar = 2 beats)
-    """
-    if bar_pos < 1.0:
-        raise ValueError(
-            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
-        )
-    if not ts_points:
-        return (bar_pos - 1.0) * _beats_per_bar(
-            _DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR,
-        )
-
-    beats = 0.0
-    current_bar = 1.0
-    current_bpb = _beats_per_bar(
-        ts_points[0]["numerator"], ts_points[0]["denominator"],
-    )
-
-    for p in ts_points:
-        change_at = float(p["start_bar"])
-        if change_at <= current_bar:
-            # Already at or past this point's bar (the canonical case for
-            # ts_points[0] when its start_bar == 1.0). Adopt this point's
-            # meter; nothing to accumulate.
-            current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
-            continue
-        if bar_pos < change_at:
-            return beats + (bar_pos - current_bar) * current_bpb
-        beats += (change_at - current_bar) * current_bpb
-        current_bar = change_at
-        current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
-
-    return beats + (bar_pos - current_bar) * current_bpb
 
 
 def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:

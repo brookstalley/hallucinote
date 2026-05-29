@@ -41,13 +41,12 @@ from hallucinote.db import mutations as M, queries as Q
 
 # Cross-module address-resolution reuse: pull's per-envelope read addressing
 # mirrors push's per-envelope write addressing (covering session-clip lookup,
-# clip-local time translation). These helpers are intentionally shared rather
-# than duplicated; the W4-B backlog item to consolidate the three `_emit_*_envelope`
-# helpers will likely surface a shared `sync.envelope_routing` module that
-# absorbs them — but until then, pulling from push.py is the minimum-impact path
-# that keeps pull and push exactly symmetric on routing semantics. Any push-side
-# routing fix automatically applies to pull.
-from hallucinote.sync.push import (
+# clip-local time translation). These helpers are direction-neutral, so they
+# live in the leaf `sync.geometry` module that both push and pull import from —
+# pull no longer reaches into push for them. Any change to the covering-placement
+# geometry applies to both halves automatically, keeping pull and push exactly
+# symmetric on routing semantics.
+from ..geometry import (
     _envelope_beat_range,
     _resolve_envelope_session_clip,
 )

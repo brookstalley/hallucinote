@@ -6,9 +6,14 @@ Kept free of imports from the domain submodules (`mix`, `score`, `devices`,
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field, asdict
 from typing import Any
+
+from ..geometry import (
+    _beats_per_bar,
+    _beats_to_position_bar,
+    _join_bar_beat,
+)
 
 # Float tolerance for diff detection. 1e-3 means anything within ~0.1% of full
 # scale is a no-op — covers Live's display-rounding (e.g. 0.6249 vs 0.6250)
@@ -156,33 +161,6 @@ def _parse_signature(s: Any) -> tuple[int, int]:
     return num, den
 
 
-def _beats_per_bar(numerator: int, denominator: int) -> float:
-    """Inverse helper to `push._beats_per_bar`: Live counts a beat as a quarter
-    note regardless of meter, so beats-per-bar = numerator * (4 / denominator)."""
-    return numerator * (4.0 / denominator)
-
-
-def _join_bar_beat(
-    bar: int,
-    beat: float,
-    ts_points: list[sqlite3.Row],
-) -> float:
-    """Inverse of `push._split_bar`: combine a 1-based bar int + 0-based beat
-    float into a fractional `position_bar` using the song's time-signature
-    map. Empty `ts_points` defaults to 4/4."""
-    num, den = (4, 4)
-    if ts_points:
-        # Use the latest signature at-or-before this bar.
-        chosen = ts_points[0]
-        for p in ts_points:
-            if p["start_bar"] <= bar:
-                chosen = p
-            else:
-                break
-        num, den = (chosen["numerator"], chosen["denominator"])
-    return float(bar) + (float(beat) / _beats_per_bar(num, den))
-
-
 def _is_numeric_id_name(s: Any) -> bool:
     """MCP gap #13 (legacy fork): `get_cue_points` returned numeric strings
     ('1', '2', ...) instead of the real names. The greenfield M-5 server's
@@ -191,55 +169,6 @@ def _is_numeric_id_name(s: Any) -> bool:
     might re-introduce numeric IDs.
     """
     return isinstance(s, str) and s.isdigit()
-
-
-def _beats_to_position_bar(
-    beats: float, ts_points: list[sqlite3.Row]
-) -> float:
-    """Walk the time-signature map to convert a beats-from-song-start
-    position into a fractional bar position.
-
-    Wave M-5: the wire format for cue positions is now `position_beats`
-    (meter-agnostic, per principle 2). The DB stores `position_bar`. This
-    helper bridges. For songs with no ts_points the assumption is 4/4
-    throughout — same convention as the rest of the planner's bar math.
-    """
-    if not ts_points:
-        # 4/4 fallback: 4 beats per bar, 1-based.
-        return 1.0 + (float(beats) / 4.0)
-    # Sort ts points by start_bar to walk forward.
-    points = sorted(ts_points, key=lambda r: float(r["start_bar"]))
-    # The first ts point should be at bar 1; if not, prepend a synthetic 4/4 at bar 1.
-    if float(points[0]["start_bar"]) > 1.0 + 1e-9:
-        first_bpb = 4.0  # 4/4 default for bars before the first explicit ts
-    else:
-        first_bpb = _beats_per_bar(
-            int(points[0]["numerator"]), int(points[0]["denominator"])
-        )
-
-    cumulative_beats = 0.0
-    current_bar = 1.0
-    current_bpb = first_bpb
-
-    for i, point in enumerate(points):
-        point_bar = float(point["start_bar"])
-        # Beats consumed up to this ts boundary (in the *previous* meter)
-        bars_in_section = point_bar - current_bar
-        beats_in_section = bars_in_section * current_bpb
-        if cumulative_beats + beats_in_section > float(beats) - 1e-9:
-            # Target beat is in this section.
-            remaining = float(beats) - cumulative_beats
-            return current_bar + (remaining / current_bpb)
-        # Cross into the next section.
-        cumulative_beats += beats_in_section
-        current_bar = point_bar
-        current_bpb = _beats_per_bar(
-            int(point["numerator"]), int(point["denominator"])
-        )
-
-    # Beyond the last ts point — extrapolate in the current meter.
-    remaining = float(beats) - cumulative_beats
-    return current_bar + (remaining / current_bpb)
 
 
 __all__ = [

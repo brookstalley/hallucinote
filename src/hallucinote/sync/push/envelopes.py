@@ -25,16 +25,19 @@ enum naming. The rename happens in `_breakpoints_for_mcp`.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
 from typing import Any
 
 from hallucinote.db import queries as Q
 
+from ..geometry import (
+    _CoveringPlacement,
+    _envelope_beat_range,
+    _resolve_envelope_session_clip,
+)
 from ._core import (
     PushPlan,
     ToolCall,
     _breakpoints_for_mcp,
-    _position_bar_to_beats,
 )
 
 
@@ -235,108 +238,6 @@ def _clip_and_track_indices(
     return track_at, clip_at
 
 
-@dataclass
-class _CoveringPlacement:
-    """An arrangement_clip placement that covers an envelope's beat range.
-
-    ``clip_id`` is the source session clip; ``start_beats`` is the
-    placement's arrangement-time offset, which becomes the subtractive
-    offset for converting envelope time_beats → clip-local time_beats.
-    ``other_placement_starts`` lists the arrangement starts of OTHER
-    placements of the same source session clip — those will also receive
-    the envelope as snapshot copies after ``duplicate_to_arrangement``
-    fires (W4-A finding: duplicate is a snapshot copy, not a live link).
-
-    W4-B defensive-warn fields:
-      - ``other_covering_clip_ids``: other DISTINCT session clips on the
-        same track whose arrangement-time range also covered the envelope.
-        Non-empty means the planner had to disambiguate; the warn names
-        all overlapping clips so the author can resolve the ambiguity
-        DB-side.
-      - ``trimmed_end_beats``: when the placement's ``end_bar`` is
-        SHORTER than the source clip's natural length, this is the
-        arrangement-time end of the trimmed placement. None when the
-        placement isn't trimmed. Used to warn when ``env_max`` exceeds
-        the trimmed extent (the envelope WOULD fit the un-trimmed clip
-        but won't play past the trim point in this placement).
-    """
-    clip_id: str
-    start_beats: float
-    other_placement_starts: list[float]
-    other_covering_clip_ids: list[str] = field(default_factory=list)
-    trimmed_end_beats: float | None = None
-
-
-def _resolve_envelope_session_clip(
-    conn: sqlite3.Connection,
-    *,
-    song_id: str,
-    target_track_id: str,
-    env_min: float,
-    env_max: float,
-) -> _CoveringPlacement | None:
-    """Find an arrangement_clip placement on ``target_track_id`` whose
-    arrangement-time range covers [env_min, env_max]. Returns the source
-    session clip + arrangement offset, or None if no placement covers.
-
-    Coverage uses the SOURCE session clip's ``length_beats`` rather than
-    the placement's ``end_bar``: ``duplicate_to_arrangement`` creates an
-    arrangement clip of the source's natural length (W4-A finding), and
-    envelopes are bound to clip-local [0, length_beats]. A placement
-    whose ``end_bar`` trims the clip shorter than its source length
-    cannot host envelope breakpoints past ``end_bar``, but the source
-    clip's full length is what the session clip exposes for envelope
-    addressing.
-    """
-    rows = conn.execute(
-        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
-           FROM arrangement_clips a
-           JOIN clips c ON c.id = a.clip_id
-           WHERE a.track_id = ?
-           ORDER BY a.start_bar, a.id""",
-        (target_track_id,),
-    ).fetchall()
-    if not rows:
-        return None
-    ts_points = Q.get_time_signature_map(conn, song_id)
-    matched = None
-    matched_start = None
-    matched_trimmed_end: float | None = None
-    other_covering_clip_ids: list[str] = []
-    for r in rows:
-        start_b = _position_bar_to_beats(r["start_bar"], ts_points)
-        source_end_b = start_b + float(r["length_beats"])
-        if not (env_min >= start_b and env_max <= source_end_b):
-            continue
-        if matched is None:
-            matched = r
-            matched_start = start_b
-            placement_end_b = _position_bar_to_beats(r["end_bar"], ts_points)
-            if placement_end_b < source_end_b:
-                matched_trimmed_end = placement_end_b
-        elif r["clip_id"] != matched["clip_id"]:
-            # A DIFFERENT distinct session clip on the same track also
-            # covers the envelope's range. W4-B defensive warn — the
-            # planner picks the earliest by start_bar, but ambiguity is
-            # worth surfacing.
-            if r["clip_id"] not in other_covering_clip_ids:
-                other_covering_clip_ids.append(r["clip_id"])
-    if matched is None:
-        return None
-    others = [
-        _position_bar_to_beats(r["start_bar"], ts_points)
-        for r in rows
-        if r["clip_id"] == matched["clip_id"] and r["id"] != matched["id"]
-    ]
-    return _CoveringPlacement(
-        clip_id=matched["clip_id"],
-        start_beats=matched_start,
-        other_placement_starts=others,
-        other_covering_clip_ids=other_covering_clip_ids,
-        trimmed_end_beats=matched_trimmed_end,
-    )
-
-
 def _clip_local_breakpoints(
     breakpoints_mcp: list[dict[str, Any]],
     offset_beats: float,
@@ -347,14 +248,6 @@ def _clip_local_breakpoints(
         {**bp, "time_beats": float(bp["time_beats"]) - offset_beats}
         for bp in breakpoints_mcp
     ]
-
-
-def _envelope_beat_range(
-    breakpoints_mcp: list[dict[str, Any]],
-) -> tuple[float, float]:
-    """Return (min, max) ``time_beats`` across the breakpoints."""
-    times = [float(bp["time_beats"]) for bp in breakpoints_mcp]
-    return min(times), max(times)
 
 
 def _emit_note_expression_envelope(

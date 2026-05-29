@@ -1,7 +1,12 @@
 # Polyrhythm & cross-rhythm detection — design
 
-Status: **design, prototyped & validated** (not yet built). Proposed as masking
-chunk **C8**, the read-side sibling of the timing analyzer (`audio/timing.py`, C7).
+Status: **C8a (single-part cross-rhythm) + C8b (two-part phasing) SHIPPED**
+(`audio/cross_rhythm.py`, `audio/onsets.py`, `PartCrossRhythm`/`Phasing` on
+`SectionMetrics`, `/mix-review` consumer). C8c (polymeter cycle-length +
+additive grouping) is **deferred** — a probe showed it needs an accent /
+onset-strength feature the current front-end doesn't carry; the design fork is
+recorded in `.prawduct/backlog.md`. Masking chunk **C8**, the read-side sibling
+of the timing analyzer (`audio/timing.py`, C7).
 
 This document records what we built to validate the design (a throwaway harness
 over a synthetic genre corpus), the approach that won and why, what it's great

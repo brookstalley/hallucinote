@@ -145,7 +145,7 @@ def test_per_section_serializes_with_scoped_surfaces():
     assert section["returns"][0]["track_id"] == "return:1"
 
 
-def test_additive_grouping_and_polymeter_serialize(tmp_path=None):
+def test_additive_grouping_and_polymeter_serialize():
     """The C8c fields — an `additive` cross-rhythm's `grouping` /
     `cycle_length_beats` and a `Polymeter` pair — round-trip through JSON.
     Locks the new wire contract (the agent/mix-review read these keys)."""

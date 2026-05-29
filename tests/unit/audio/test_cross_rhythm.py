@@ -470,6 +470,31 @@ def test_additive_part_does_not_pair_as_polymeter():
     assert res.pairs == []
 
 
+def test_accent_cycle_picks_fundamental_not_harmonic():
+    """An accent every 4 beats correlates at lag 4 AND at its 8/12-beat
+    multiples (the harmonic trap §2 rejected onset-train autocorrelation for).
+    The fundamental-lag selection (smallest near-maximal lag) must return the
+    4-beat cell, NOT a 2×/3× harmonic — the load-bearing reason accent AC is
+    safe where onset-train AC isn't."""
+    from hallucinote.audio.cross_rhythm import _accent_cycle
+    from hallucinote.audio.onsets import (
+        DEFAULT_MIN_ONSET_SEPARATION_BEATS,
+        dedup_onsets_with_strength,
+        detect_onsets_with_strength,
+        to_mono,
+    )
+    # 8 four-beat cells → harmonics at 8 and 12 beats are strongly present.
+    audio = _accented_pulse(0.5, cell_beats=4.0, total_beats=32.0)
+    s, st = detect_onsets_with_strength(to_mono(audio), SAMPLE_RATE)
+    bps = BPM / 60.0 / SAMPLE_RATE
+    beats, strengths = dedup_onsets_with_strength(
+        s * bps, st, DEFAULT_MIN_ONSET_SEPARATION_BEATS
+    )
+    cell = _accent_cycle(beats, strengths)
+    assert cell is not None
+    assert cell[0] == pytest.approx(4.0, abs=0.1)  # fundamental, not 8 or 12
+
+
 def test_polymeter_needs_two_parts():
     a = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
     res = _poly([("A", a)], total_beats=24.0)

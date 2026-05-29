@@ -2403,6 +2403,86 @@ def plan_cleanup_default_scaffold(
 
 
 @dataclass
+class ClipPruneTarget:
+    """One Live session clip slated for deletion (orphan: in Live, not in DB)."""
+
+    track_index: int
+    track_name: str
+    clip_index: int  # Live session slot (1-based)
+    name: str        # Live clip's display name
+
+
+@dataclass
+class ClipPrunePlan:
+    """Outcome of :func:`plan_clip_prune` — opt-in structural deletion (B1b).
+
+    ``prunable`` lists Live session clips whose slot has no matching DB clip on
+    the linked track (the author removed/relocated the part; the Live clip
+    lingers). ``refusals`` lists tracks deliberately NOT clip-pruned, with a
+    teaching reason — currently the "whole-track orphan" case (a Live track with
+    populated clips that no DB track is linked to), which is a track-level
+    concern handled by ``cleanup-default-scaffold`` or explicit removal, never
+    by clip-prune silently gutting a track the DB doesn't manage.
+    """
+
+    prunable: list[ClipPruneTarget] = field(default_factory=list)
+    refusals: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prunable": [asdict(t) for t in self.prunable],
+            "refusals": self.refusals,
+        }
+
+
+def plan_clip_prune(tracks: list[dict[str, Any]]) -> ClipPrunePlan:
+    """Identify Live session clips to prune — orphans relative to the DB.
+
+    Each ``tracks`` entry: ``{track_index, track_name, db_slots, live_clips}``
+    where ``db_slots`` is the set of DB clip ``slot`` values for the DB track
+    linked to this Live track (or ``None`` if no DB track is linked), and
+    ``live_clips`` is the list of POPULATED Live session clips
+    (``{clip_index, name}``) — the caller drops empty slots before calling.
+
+    A populated Live slot whose ``clip_index`` is not in ``db_slots`` is an
+    orphan: prunable. A DB-backed slot is NEVER pruned (the core safety
+    property — clip-prune can't delete something the DB still wants). A Live
+    track with no linked DB track is refused (track-level concern).
+
+    Pure: no MCP calls, no DB writes. The CLI orchestrates probe + dispatch and
+    defaults to dry-run.
+    """
+    plan = ClipPrunePlan()
+    for t in tracks:
+        live_clips = t["live_clips"]
+        db_slots = t["db_slots"]
+        if db_slots is None:
+            if live_clips:
+                plan.refusals.append({
+                    "kind": "no_db_track_linked",
+                    "track_index": t["track_index"],
+                    "track_name": t["track_name"],
+                    "detail": (
+                        f"Live track {t['track_index']} ({t['track_name']!r}) has "
+                        f"{len(live_clips)} clip(s) but no DB track is linked to it — "
+                        "every clip would be an orphan. This is a track-level prune; "
+                        "remove the track explicitly or via cleanup-default-scaffold, "
+                        "not clip-prune."
+                    ),
+                })
+            continue
+        for c in live_clips:
+            if c["clip_index"] not in db_slots:
+                plan.prunable.append(ClipPruneTarget(
+                    track_index=t["track_index"],
+                    track_name=t["track_name"],
+                    clip_index=c["clip_index"],
+                    name=c.get("name", ""),
+                ))
+    return plan
+
+
+@dataclass
 class ProbeAndLinkResult:
     """Outcome of :func:`probe_and_link`. The skill displays the
     matched / unmatched lists so the user can spot rename drift

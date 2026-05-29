@@ -2022,3 +2022,139 @@ def test_cli_execute_probe_runs_coherence_check(
     ])
     assert rc == 0
     assert coherence_called["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# push-notes (B1) — CLI wiring + exit-code mapping
+# ---------------------------------------------------------------------------
+
+
+def test_cli_push_notes_wires_args_and_returns_ok(
+    conn, song, session, db_path, tmp_path, capsys, monkeypatch,
+):
+    from hallucinote.sync import push_notes as pn
+
+    captured: dict = {}
+
+    def fake_push_notes(conn_arg, *, song_id, session_id, state_dir,
+                        clip_ids, changed_only, actor, reason):
+        captured.update(
+            song_id=song_id, session_id=session_id, state_dir=str(state_dir),
+            clip_ids=clip_ids, changed_only=changed_only, actor=actor,
+        )
+        return pn.ScopedPushResult(pushed=[{"clip_id": "c1", "name": "A", "note_count": 3}])
+
+    monkeypatch.setattr(push_cli.push_notes, "push_notes", fake_push_notes)
+    rc = push_cli.main([
+        "push-notes", session, "--db", str(db_path),
+        "--clip", "c1", "--clip", "c2", "--changed",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert captured["clip_ids"] == ["c1", "c2"]
+    assert captured["changed_only"] is True
+    assert captured["session_id"] == session
+    assert captured["song_id"] == song
+    assert captured["state_dir"] == str(tmp_path)
+    assert "scoped notes push" in capsys.readouterr().out
+
+
+def test_cli_push_notes_maps_error_and_connection_exit_codes(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    from hallucinote.sync import push_notes as pn
+
+    monkeypatch.setattr(
+        push_cli.push_notes, "push_notes",
+        lambda *a, **k: pn.ScopedPushResult(errors=[{"clip_id": "x", "error": "boom"}]),
+    )
+    assert push_cli.main(["push-notes", session, "--db", str(db_path)]) == \
+        push_cli.push_execute.EXIT_PARTIAL
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        push_cli.push_notes, "push_notes",
+        lambda *a, **k: pn.ScopedPushResult(connection_lost=True),
+    )
+    assert push_cli.main(["push-notes", session, "--db", str(db_path)]) == \
+        push_cli.push_execute.EXIT_CONNECTION_LOST
+
+
+# ---------------------------------------------------------------------------
+# prune (B1b) — orphan Live session clips
+# ---------------------------------------------------------------------------
+
+
+def _make_prune_send_fn(*, live_clips):
+    """Fake send for prune: track list (1 track 'Drums'), empty return list,
+    clip list per track from ``live_clips`` (dict track_index -> [clip dicts]),
+    and records delete calls. Returns the send fn with a .deletes list.
+    """
+    from tests.unit.sync.test_push_notes import FakeResponse
+
+    deletes: list[dict] = []
+
+    def send(req):
+        if req.tool == "ableton_track" and req.action == "list":
+            return FakeResponse(ok=True, result={"tracks": [
+                {"track_index": 1, "name": "Drums", "kind": "midi"}]})
+        if req.tool == "ableton_return" and req.action == "list":
+            return FakeResponse(ok=True, result={"returns": []})
+        if req.tool == "ableton_clip" and req.action == "list":
+            ti = req.params["track_index"]
+            return FakeResponse(ok=True, result={"clips": live_clips.get(ti, [])})
+        if req.tool == "ableton_clip" and req.action == "delete":
+            deletes.append(dict(req.params))
+            return FakeResponse(ok=True, result={"deleted": True})
+        return FakeResponse(ok=False, error=f"unexpected {req.tool}:{req.action}")
+
+    send.deletes = deletes  # type: ignore[attr-defined]
+    return send
+
+
+def _linked_track_with_one_db_clip(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=tid,
+                         ableton_index=1, actor="sync")
+    M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="A")
+    return tid
+
+
+def test_cli_prune_dry_run_lists_orphan_without_deleting(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    _linked_track_with_one_db_clip(conn, song, session)
+    # Live: slot 1 (DB-backed) + slot 2 (orphan) populated, slot 3 empty.
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+        {"clip_index": 3, "empty": True},
+    ]})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: send)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["dry_run"] is True
+    assert out["prunable"] == [{"track_index": 1, "track_name": "Drums",
+                                "clip_index": 2, "name": "orphan"}]
+    assert send.deletes == []  # dry-run deletes nothing
+
+
+def test_cli_prune_apply_deletes_only_the_orphan(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    _linked_track_with_one_db_clip(conn, song, session)
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+    ]})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: send)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path), "--apply"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["dry_run"] is False
+    assert out["deleted"] == [{"track_index": 1, "clip_index": 2, "name": "orphan"}]
+    # exactly the orphan slot deleted — never the DB-backed slot 1
+    assert send.deletes == [{"track_index": 1, "location": "session", "clip_index": 2}]

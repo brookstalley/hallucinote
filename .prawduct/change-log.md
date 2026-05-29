@@ -4,6 +4,48 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-29 — Bulk note-authoring: scoped push + /compose-part + inline guardrail (B1–B4)
+
+<!-- chunks=bulk-notes-B1-B4 status=shipped release=v1.4.0 scope=bulk-note-authoring -->
+
+The `feature/bulk-note-authoring` branch. **Notes are authored as code, never as
+data-in-context**: the LLM writes the smallest correct generator expression, a
+build expands it through mutators (events fall out), and a scoped push
+materializes only what changed to Live — bytes never enter the agent's context.
+External validation: Anthropic's Nov-2025 "code execution with MCP" is exactly
+this pattern; the hard mechanism (`push_cli execute`) already existed, so the
+real work was retiring the inline paths and wrapping the loop in a usable skill.
+
+- **B1 — scoped push** (`sync/push_notes.py` + `push-notes` CLI subcommand):
+  materialize only targeted (`--clip`) or **content-changed** (`--changed`)
+  clips' notes, in-process, with a counts-only summary (notes never tokenized;
+  mirrors `_summarize_args`/`_LARGE_LIST_KEYS`). Change detection is
+  **content-fingerprint** based, not event-watermark — a whole-DB rebuild that
+  didn't alter a clip won't re-push it. Modify/delete/total-replace ride this for
+  free (the unit of change is the clip's full note array). 15 tests.
+- **B1b — opt-in clip-prune** (`push.plan_clip_prune` + `prune` CLI): structural
+  deletion of Live session slots with no matching DB clip, dry-run by default,
+  deletes only on `--apply`. Core safety: a DB-backed slot is NEVER pruned;
+  whole-track-orphan refused per-track. Pure planner kept offline-testable. 7 tests.
+- **B2 — `/compose-part` skill**: the interactive author→build→scoped-push loop
+  driven to a FINISHED audible part (creative-deliverable DoD) — read intent →
+  author notes as code in `build.py` (`hallucinote.generators`, feel baked in,
+  probe kits) → `python build.py` → `push-notes --changed`. Adds a discoverable
+  **Authoring API** index to `docs/song-authoring-conventions.md` (progressive
+  disclosure), guarded by a bidirectional drift test.
+- **B3 — `/pattern-compose` retired (supersede)**: deleted, not migrated — its
+  inline-`ableton_clip(notes=)` + direct-to-Live DB-bypass were exactly the
+  anti-patterns this work removes, and its named patterns already exist as
+  `generators` helpers. Live refs repointed to `/compose-part`.
+- **B4 — inline-notes guardrail** (`handlers/clip.py`): soft cap (32) on
+  `create` + `replace_notes`; above it, a non-blocking teaching `warning` points
+  at the author-as-code loop. Parity-locked across both actions; agent-facing
+  mirror in `ableton://guides/conventions`. Non-blocking — trivial edits stay
+  frictionless.
+
+Suite: 2319 passing (from 2289 at branch start). Per-chunk Critic review across
+B1/B1b (1 cumulative), B2/B3, and B4 — all clean at completion.
+
 ## 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
 
 <!-- chunks=masking-C1-C7 status=shipped release=v1.4.0 scope=masking-analyzer -->

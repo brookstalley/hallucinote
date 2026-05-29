@@ -158,7 +158,7 @@ class BeatSampleMap:
         span = capture_stop_beat - capture_start_beat
         self.degenerate = span <= 0 or n_samples <= 0
         if self.degenerate:
-            self._beats = self._samples = None
+            self._mark_degenerate()
             return
 
         segs = sorted(
@@ -214,15 +214,22 @@ class BeatSampleMap:
         raw_total = raw[-1]
         if raw_total <= 0:
             self.degenerate = True
-            self._beats = self._raw = None
-            self._bpm0s = self._slopes = None
-            self._raw_total = 0.0
+            self._mark_degenerate()
             return
         self._beats = np.asarray(beats, dtype=np.float64)
         self._raw = np.asarray(raw, dtype=np.float64)
         self._bpm0s = bpm0s
         self._slopes = slopes
         self._raw_total = raw_total
+
+    def _mark_degenerate(self) -> None:
+        """Null out the interpolation state for a degenerate map. The accessors
+        all short-circuit on ``self.degenerate`` before touching these, so they
+        only need to exist, but resetting them in one place keeps both
+        degenerate branches in ``__init__`` consistent."""
+        self._beats = self._raw = None
+        self._bpm0s = self._slopes = None
+        self._raw_total = 0.0
 
     def beat_to_sample(self, beat: float) -> int:
         """Song-absolute beat → clamped sample index in the capture audio."""

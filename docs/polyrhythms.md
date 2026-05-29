@@ -1,5 +1,12 @@
 # Polyrhythm & cross-rhythm detection — design
 
+> **When does this apply to me?** Read this if you're authoring a song with
+> intentional cross-rhythms or phasing (a 3-over-4 hand pattern, two parts
+> drifting in and out of phase) and want to know what `/mix-review`'s rhythm
+> analysis can and can't detect today. It's a design/status note, not a how-to —
+> most songs never need it. **Status: single-part cross-rhythm and two-part
+> phasing ship today; polymeter cycle-length decoding is deferred.**
+
 Status: **C8a (single-part cross-rhythm) + C8b (two-part phasing) SHIPPED**
 (`audio/cross_rhythm.py`, `audio/onsets.py`, `PartCrossRhythm`/`Phasing` on
 `SectionMetrics`, `/mix-review` consumer). C8c (polymeter cycle-length +

@@ -1,5 +1,12 @@
 # Dubler pitch modulation round-trip
 
+> **When does this apply to me?** Read this only if you record gestural or
+> microtonal MIDI with [Dubler](https://vochlea.com/) (or similar pitch-bend-
+> heavy input) and want that pitch modulation to survive a pull→regenerate
+> round-trip. **Status: design note for not-yet-shipped work** — it documents
+> two Live 12.4 API gaps that currently block the feature. Skip it for ordinary
+> note-based composition.
+
 Round-trip support for Dubler-recorded clips: user sings → Dubler records pitched MIDI → Hallucinote pulls the clip → Hallucinote infers musical intent or regenerates a modified take. The same path unblocks microtonal authorship.
 
 ## Background

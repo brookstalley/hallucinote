@@ -43,6 +43,16 @@ Handler validates with a teaching error if you slip.
 the clip. There is no append. `ableton_clip(action='create', ..., notes=[...])`
 accepts notes for atomic create-and-populate.
 
+## Inline note arrays: soft cap (~32 notes)
+
+The inline `notes=[...]` channel is for trivial interactive edits. Above ~32
+notes both `create` and `replace_notes` add a non-blocking `warning` to the
+result: large inline arrays cost agent context and bypass the Hallucinote DB
+(the next full push overwrites a clip authored only inline). For parts this
+size, author the notes as code in the song's `build.py`
+(`hallucinote.generators`) and materialize with `push_cli push-notes --changed`
+— the array never enters the agent's context. See the `/compose-part` skill.
+
 ## Devices append; order is fixed
 
 `ableton_device(action='load', ...)` appends to the END of the target chain.

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .attribution import (
     band_attribution,
@@ -31,6 +31,7 @@ from .attribution import (
     master_bus_attribution,
 )
 from .io import CaptureSet, Surface, load_capture
+from .levels import apply_stem_gains
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
 from .masking import analyze_masking_window
 from .report import (
@@ -79,6 +80,7 @@ def analyze_mix(
     sections: Sequence[SectionWindow] = (),
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
+    stem_gains: "Mapping[str, float] | None" = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -140,6 +142,7 @@ def analyze_mix(
         sections=sections,
         beat_map=beat_map,
         analyze_masking=analyze_masking,
+        stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
 
@@ -260,6 +263,7 @@ def _measure_sections(
     sections: Sequence[SectionWindow],
     beat_map: BeatSampleMap,
     analyze_masking: bool = False,
+    stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
 
@@ -332,8 +336,10 @@ def _measure_sections(
         masking_pairs = []
         bed_masking = []
         if analyze_masking:
+            # Reconstruct mix-level before masking (captures are pre-fader, F1).
+            # Empty stem_gains is a no-op, so synthetic fixtures are unaffected.
             mres = analyze_masking_window(
-                sliced_stems,
+                apply_stem_gains(sliced_stems, stem_gains),
                 capture.sample_rate,
                 reporting_floor=_MASKING_REPORTING_FLOOR,
             )

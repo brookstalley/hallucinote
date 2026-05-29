@@ -37,6 +37,7 @@ try:
         TempoSegment,
         analyze_mix,
     )
+    from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
     # Reuse the canonical bar→beat converter the push planner uses — it walks
@@ -173,6 +174,25 @@ def _collect_declared_sends(
     ]
 
 
+def _collect_stem_gains(
+    conn: "sqlite3.Connection", song_id: str,
+) -> dict[str, float]:
+    """Per-track linear fader gain ({tracks.id: gain}) for mix-level masking.
+
+    Captured stems are pre-fader (F1); masking needs mix-level. Convert each
+    track's normalized ``volume`` to a linear gain via ``live_fader_gain`` so
+    ``analyze_mix`` can scale the masking input. A NULL volume (uncaptured)
+    defaults to unity (1.0) — no correction rather than a guess. Static gain
+    only; volume automation is a deferred refinement (see audio/levels.py).
+    """
+    gains: dict[str, float] = {}
+    for row in Q.get_tracks_for_song(conn, song_id):
+        vol = row["volume"]
+        if vol is not None:
+            gains[row["id"]] = live_fader_gain(float(vol))
+    return gains
+
+
 def _collect_sections(
     conn: "sqlite3.Connection", song_id: str,
 ) -> list["SectionWindow"]:
@@ -290,6 +310,7 @@ def analyze_handler(
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
+        stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
     finally:
         conn.close()
     report = analyze_mix(
@@ -303,6 +324,10 @@ def analyze_handler(
         # NOTE (F1): captured stems are pre-fader, so real-song masking is
         # provisional until level reconstruction (build-plan C3) lands.
         analyze_masking=bool(sections),
+        # Mix-level reconstruction (F1): scale each pre-fader stem by its
+        # static fader gain so masking sees mix balance, not source level.
+        # The fader curve is an unverified approximation (see audio/levels.py).
+        stem_gains=stem_gains,
     )
 
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"

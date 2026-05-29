@@ -17,6 +17,16 @@ Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`ac
 
 The agent-facing surfaces (action descriptions, skill markdown, conventions guides) are read at every session start. Stale recommendations there are higher-impact than test-fixture drift, because they shape what the next agent tries first.
 
+## Inverting a black-box formatter: validate a monotonic proxy, don't enumerate formats
+
+**When you must invert an opaque value→string formatter that has no string→value API, don't special-case each output format. Parse a numeric proxy, VALIDATE it's monotonic over the domain by sampling, then bisect — and refuse when it isn't. One monotonicity check subsumes every "weird format" guard and auto-handles formats you haven't seen.**
+
+`DeviceParameter` exposes `str_for_value(raw)` but no inverse, so `set_parameter`'s `value_display` ("-18 dB", "3:1") inverts it by bisecting on the number parsed from the display. The first cut parsed a leading number and then bolted on a guard per format real Live revealed — `-inf dB` (Threshold min), `inf : 1` (Ratio max), `Hz`→`kHz` (frequency). Each live probe surfaced another → whack-a-mole on the comparison layer.
+
+Root cause: bisection only needs the parsed number to be a faithful *monotonic* proxy for the raw value. The failures were all "the proxy isn't faithful here," not distinct problems. The fix: sample `str_for_value` across `[min,max]`, verify the leading number is monotonic (varies + no reversal), bisect only then, refuse otherwise. That one check replaced the constant-leading-number and unit-scaling guards AND auto-handles unseen formats (ms→s, etc.) — a non-monotonic proxy is the general signal that display-units can't address a parameter.
+
+**How to apply.** Inverting any black-box formatter: (1) parse a proxy; (2) validate the property the algorithm needs (here monotonicity) by sampling the domain; (3) act only when valid, refuse with a teaching error otherwise. A new branch per observed bad input is the smell that you're guarding symptoms instead of validating the invariant. And calibrate against real instances: all three traps came from real-Live probes, not the synthetic corpus — the sibling rule "Unit fakes that mirror an *assumed* Live API give false confidence" applies directly.
+
 ## When a doc or duplicated contract IS the deliverable, lock it with a drift/parity test
 
 **A discoverable doc index or a value duplicated across surfaces only stays true if a test exercises it. When the deliverable IS documentation or a mirrored contract, the test is its teeth: a drift guard (doc ↔ source, both directions) or a parity lock (every duplicate emits the identical thing).**

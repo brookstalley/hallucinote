@@ -19,6 +19,7 @@ import pytest
 from hallucinote.audio.cross_rhythm import (
     analyze_cross_rhythm_window,
     analyze_phasing_window,
+    analyze_polymeter_window,
 )
 
 from .fixtures import SAMPLE_RATE, onsets_at_beats, silence
@@ -191,17 +192,81 @@ def test_buzz_roll_hits_density_floor():
     assert p.confidence < 0.3
 
 
-def test_additive_grouping_reads_low_confidence():
-    """3+3+2 (units of a half-beat) has no single repeating IOI → low-confidence
-    honestly, rather than a confident wrong ratio. Decoding grouping needs
-    accent analysis (limit #1)."""
-    beats = []
-    for c in range(4):
-        base = c * 4.0
-        beats += [base, base + 1.5, base + 3.0]
-    p = _one(sorted(set(beats)), total_beats=18.0)
-    assert p.verdict == "low-confidence"
+# --------------------------------------------------------------------------- #
+# Additive grouping — decoded (C8c, was limit #1)
+# --------------------------------------------------------------------------- #
+
+def _additive(groups, *, n=4, unit=0.5, accent=False):
+    """Build an additive part: onsets on each group start, ``unit``-beat cells.
+    With ``accent`` the bar downbeat (each cycle's first group) is 2× louder."""
+    beats, amps, pos = [], [], 0.0
+    for _ in range(n):
+        for k, g in enumerate(groups):
+            beats.append(pos)
+            amps.append(2.0 if (accent and k == 0) else 1.0)
+            pos += g * unit
+    return beats, amps
+
+
+def _one_accented(beats, amps, *, total_beats, window_start_beat=0.0):
+    """Analyze a single accented part (per-onset amplitudes)."""
+    audio = onsets_at_beats(
+        beats, bpm=BPM, total_beats=total_beats, amplitudes=amps
+    )
+    res = analyze_cross_rhythm_window(
+        [("part", audio)], SAMPLE_RATE,
+        window_start_beat=window_start_beat, bpm=BPM,
+    )
+    assert len(res.parts) == 1
+    return res.parts[0]
+
+
+def test_additive_3_3_2_decodes_grouping():
+    """3+3+2 (half-beat units) — was low-confidence (limit #1), now decoded as
+    an additive cell. Equal velocity → canonical (lex-max) rotation."""
+    beats, _ = _additive([3, 3, 2])
+    p = _one(beats, total_beats=18.0)
+    assert p.verdict == "additive"
+    assert p.grouping == (3, 3, 2)
+    assert p.cycle_length_beats == pytest.approx(4.0)
     assert p.pulse_ratio is None
+    assert p.against_meter
+    assert p.confidence > 0.8
+
+
+def test_additive_7_8_accent_anchors_rotation():
+    """An accented 2+2+3 (7/8) reads (2,2,3) — the loud downbeat anchors the
+    cell start, distinguishing it from 3+2+2 which equal-velocity cannot."""
+    beats, amps = _additive([2, 2, 3], accent=True)
+    p = _one_accented(beats, amps, total_beats=18.0)
+    assert p.verdict == "additive"
+    assert p.grouping == (2, 2, 3)
+    assert p.cycle_length_beats == pytest.approx(3.5)
+
+
+def test_additive_3_2_2_accent_distinct_from_7_8():
+    """Accented 3+2+2 reads (3,2,2) — a different rotation than the 2+2+3 above,
+    provable only because the accent locates the downbeat."""
+    beats, amps = _additive([3, 2, 2], accent=True)
+    p = _one_accented(beats, amps, total_beats=18.0)
+    assert p.verdict == "additive"
+    assert p.grouping == (3, 2, 2)
+
+
+def test_uniform_subdivision_is_not_additive():
+    """Steady 8ths have uniform IOIs → a plain subdivision, never an additive
+    grouping (the decoder must not over-fire on an even pulse)."""
+    p = _one([i * 0.5 for i in range(16)])
+    assert p.verdict == "subdivision"
+    assert p.grouping is None
+    assert p.cycle_length_beats is None
+
+
+def test_clean_cross_rhythm_carries_no_grouping():
+    """A clean 3:2 names a ratio, not a grouping — additive fields stay None."""
+    p = _one([i * (2.0 / 3.0) for i in range(13)])
+    assert p.verdict == "cross-rhythm"
+    assert p.grouping is None
 
 
 # --------------------------------------------------------------------------- #
@@ -330,6 +395,116 @@ def test_phasing_zero_bpm_returns_no_pairs():
     a = _pulse_train(1.0, 16.0)
     b = _pulse_train(1.0 / 1.03, 16.0)
     res = analyze_phasing_window(
+        [("A", a), ("B", b)], SAMPLE_RATE, window_start_beat=0.0, bpm=0.0,
+    )
+    assert res.pairs == []
+
+
+# --------------------------------------------------------------------------- #
+# Two-part polymeter (different cell lengths) — the C8c pass (was limit #2)
+# --------------------------------------------------------------------------- #
+
+def _accented_pulse(period_beats, *, cell_beats, total_beats):
+    """A steady pulse whose every onset at a ``cell_beats`` boundary is 2× loud
+    — a part looping a ``cell_beats``-long cell, marked only by its accent."""
+    n = int(total_beats / period_beats)
+    beats = [i * period_beats for i in range(n)]
+    amps = [2.0 if abs((b % cell_beats)) < 1e-6 else 1.0 for b in beats]
+    return onsets_at_beats(beats, bpm=BPM, total_beats=total_beats, amplitudes=amps)
+
+
+def _poly(parts, *, total_beats):
+    return analyze_polymeter_window(
+        parts, SAMPLE_RATE, window_start_beat=0.0, bpm=BPM,
+    )
+
+
+def test_polymeter_four_cell_vs_three_cell():
+    """A 4-beat cell against a 3-beat cell (both steady 8ths, distinguished only
+    by accent) → distinct cells + a realign of lcm(4,3)=12 beats. The verifiable
+    signal for limit #2."""
+    a = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
+    b = _accented_pulse(0.5, cell_beats=3.0, total_beats=24.0)
+    res = _poly([("A", a), ("B", b)], total_beats=24.0)
+    assert len(res.pairs) == 1
+    pm = res.pairs[0]
+    assert {pm.track_a, pm.track_b} == {"A", "B"}
+    cells = sorted([pm.cycle_a_beats, pm.cycle_b_beats])
+    assert cells[0] == pytest.approx(3.0, abs=0.1)
+    assert cells[1] == pytest.approx(4.0, abs=0.1)
+    assert pm.realign_beats == pytest.approx(12.0, abs=0.1)
+    assert pm.confidence >= 0.5
+
+
+def test_same_cell_is_not_polymeter():
+    """Two parts on the same 4-beat cell share a meter — no polymeter pair."""
+    a = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
+    b = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
+    res = _poly([("A", a), ("B", b)], total_beats=24.0)
+    assert res.pairs == []
+
+
+def test_equal_velocity_parts_surface_no_polymeter():
+    """The deferral's core case: two equal-velocity steady streams have identical
+    onset trains — no accent, no detectable cell, so honestly no polymeter (not a
+    fabricated one)."""
+    a = _pulse_train(0.5, 24.0)
+    b = _pulse_train(0.5, 24.0)
+    res = _poly([("A", a), ("B", b)], total_beats=24.0)
+    assert res.pairs == []
+
+
+def test_additive_part_does_not_pair_as_polymeter():
+    """An additive part (irregular IOIs) is described by its `grouping`, not a
+    cell — folding it onto a uniform pulse grid yields a spurious lcm-period
+    cell. The uniformity guard keeps it out of the polymeter pass, so an
+    additive part paired with a steady cell produces no polymeter pair. (This
+    case was surfaced by the real-Live validation render — see build-plan C8c-4.)
+    """
+    beats, amps = _additive([3, 3, 2], accent=True, n=8)
+    additive_part = onsets_at_beats(
+        beats, bpm=BPM, total_beats=32.0, amplitudes=amps,
+    )
+    steady = _accented_pulse(0.5, cell_beats=4.0, total_beats=32.0)
+    res = _poly([("add", additive_part), ("cell4", steady)], total_beats=32.0)
+    assert res.pairs == []
+
+
+def test_accent_cycle_picks_fundamental_not_harmonic():
+    """An accent every 4 beats correlates at lag 4 AND at its 8/12-beat
+    multiples (the harmonic trap §2 rejected onset-train autocorrelation for).
+    The fundamental-lag selection (smallest near-maximal lag) must return the
+    4-beat cell, NOT a 2×/3× harmonic — the load-bearing reason accent AC is
+    safe where onset-train AC isn't."""
+    from hallucinote.audio.cross_rhythm import _accent_cycle
+    from hallucinote.audio.onsets import (
+        DEFAULT_MIN_ONSET_SEPARATION_BEATS,
+        dedup_onsets_with_strength,
+        detect_onsets_with_strength,
+        to_mono,
+    )
+    # 8 four-beat cells → harmonics at 8 and 12 beats are strongly present.
+    audio = _accented_pulse(0.5, cell_beats=4.0, total_beats=32.0)
+    s, st = detect_onsets_with_strength(to_mono(audio), SAMPLE_RATE)
+    bps = BPM / 60.0 / SAMPLE_RATE
+    beats, strengths = dedup_onsets_with_strength(
+        s * bps, st, DEFAULT_MIN_ONSET_SEPARATION_BEATS
+    )
+    cell = _accent_cycle(beats, strengths)
+    assert cell is not None
+    assert cell[0] == pytest.approx(4.0, abs=0.1)  # fundamental, not 8 or 12
+
+
+def test_polymeter_needs_two_parts():
+    a = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
+    res = _poly([("A", a)], total_beats=24.0)
+    assert res.pairs == []
+
+
+def test_polymeter_zero_bpm_returns_no_pairs():
+    a = _accented_pulse(0.5, cell_beats=4.0, total_beats=24.0)
+    b = _accented_pulse(0.5, cell_beats=3.0, total_beats=24.0)
+    res = analyze_polymeter_window(
         [("A", a), ("B", b)], SAMPLE_RATE, window_start_beat=0.0, bpm=0.0,
     )
     assert res.pairs == []

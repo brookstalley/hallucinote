@@ -152,6 +152,44 @@ def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):
     assert report["master"]["track_id"] == "master"
 
 
+def test_analyze_handler_surfaces_analysis_code_version(synthetic_song: Path):
+    """The response carries the loaded analysis-pipeline signature + a stale
+    flag so a stale MCP subprocess is obvious without reading the report."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+
+    result = analysis_handlers.analyze_handler(
+        None,
+        song_slug="test-song",
+        captures_dir=str(captures_dir),
+    )
+
+    code = result["analysis_code"]
+    assert isinstance(code["signature"], str) and code["signature"]
+    # Un-edited tree under test: loaded code matches disk.
+    assert code["stale"] is False
+
+
+def test_get_latest_report_surfaces_analysis_code_version(synthetic_song: Path):
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures_dir)
+    )
+
+    result = analysis_handlers.get_latest_report_handler(
+        None, song_slug="test-song"
+    )
+
+    code = result["analysis_code"]
+    assert isinstance(code["signature"], str) and code["signature"]
+    assert code["stale"] is False
+
+
 def test_analyze_handler_opens_db_once(synthetic_song: Path, monkeypatch):
     """Regression: analyze_handler used to open the DB three times (verify +
     each collector). It must open exactly once per invocation now."""

@@ -74,15 +74,29 @@ first — see "Refreshing the analysis"). For each section, you have:
   `null` when no clean pulse. `against_meter` (True = fights the binary grid —
   the signal worth a producer question), `occupancy` (0–1, how filled the pulse
   is — a 3:2 that rests reads ~0.82), `verdict` (`cross-rhythm` / `subdivision`
-  / `rubato` / `roll` / `swing(see-timing)` / `low-confidence`), `confidence`
-  (**gate on this** too). "The clav is in 3-over-2 against the straight-8th
-  drums" — surface as a question: *intended hemiola, or do you want them locked?*
+  / `additive` / `rubato` / `roll` / `swing(see-timing)` / `low-confidence`),
+  `confidence` (**gate on this** too). "The clav is in 3-over-2 against the
+  straight-8th drums" — surface as a question: *intended hemiola, or locked?*
+  When `verdict` is `additive`, `grouping` is the decoded cell (e.g. `[3,3,2]`
+  for a 3+3+2 / 8-unit bar, `[2,2,3]` for 7/8) and `cycle_length_beats` its
+  length; the cell is accent-anchored when the part has dynamics, else reported
+  as the canonical rotation (so 3+3+2 vs 2+3+3 collapse — phase is unknowable
+  from equal-velocity onsets). "The bouzouki's in 3+3+2 aksak" — intended odd
+  meter, or do you want it straightened?
 - `phasing` — two-part Reich-style drift (the cross-rhythm two-part pass). Each
   entry is a pair (`track_a`, `track_b`) whose relative alignment marches:
   `drift_beats_per_cycle` (rate + direction of the slide per ~4-beat cycle),
   `confidence`. Present only when two parts genuinely drift apart (locked parts
   never surface). "The two marimbas are phasing ~0.1 beat/bar" — intended
   Reich-style process, or two takes that should be locked?
+- `polymeter` — two parts looping cells of DIFFERENT length at one tempo (a
+  4-beat riff under a 3-beat ostinato; Meshuggah/Tool). Each entry is a pair
+  (`track_a`, `track_b`) with `cycle_a_beats` / `cycle_b_beats` (the recovered
+  cell lengths) and `realign_beats` (when their downbeats next coincide —
+  lcm of the cells; 4 vs 3 → 12). Distinct from phasing (same cell, drifting
+  tempo). Needs an audible accent — equal-velocity parts surface nothing
+  (the cell lives in dynamics). "Guitar's in a 4-bar cycle, kick in 3 — they
+  realign every 12 beats" — intended polymeter, or an accident?
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
   band), `overshoots`, `reverb_verifications`.
 
@@ -94,8 +108,11 @@ cross-rhythm (e.g. 3:2) reads as low `confidence` in `timing` but is NAMED in
 verdict = "on a different grid", not "sloppy"); absolute drift carries a small
 onset-detection offset, so RELATIVE reads (part-vs-part, section-vs-section, vs
 declared intent) are stronger than absolute. Cross-rhythm caveats
-(`docs/polyrhythms.md` §5): additive grouping (3+3+2) and bar-level polymeter
-read as `low-confidence` not decoded; rubato-within-a-window is flagged not
+(`docs/polyrhythms.md` §5): additive grouping (`additive` verdict + `grouping`)
+and bar-level `polymeter` are now decoded — but both read from the ACCENT
+pattern, so they need an audible dynamic accent and inherit onset-detection's
+timbre dependence (a slow-attack or evenly-struck part may surface nothing,
+honestly, rather than a wrong cell); rubato-within-a-window is flagged not
 tracked; `swing(see-timing)` means C7's `swing_ratio` already explains it —
 don't double-report the same feel as a cross-rhythm.
 

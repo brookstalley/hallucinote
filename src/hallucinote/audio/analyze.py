@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Sequence
 
 from .attribution import (
-    OvershootWindow,
     band_attribution,
     find_master_overshoots,
     master_bus_attribution,

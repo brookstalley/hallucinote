@@ -33,6 +33,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
+from hallucinote.theory.lint import SectionLint
+from hallucinote.theory.model import Mode, Progression
+from hallucinote.theory.model import mode as _resolve_mode
+from hallucinote.theory.model import pitch_class as _resolve_pitch_class
 
 NoteDict = dict[str, Any]
 Layers = dict[str, list[NoteDict]]
@@ -64,7 +68,16 @@ class Motif:
 
 @dataclass(frozen=True)
 class PlacedSection:
-    """A section after sequential bar placement — the pure output of ``plan()``."""
+    """A section after sequential bar placement — the pure output of ``plan()``.
+
+    Carries the resolved harmonic axis alongside the energy axis: ``key_pc`` +
+    ``mode`` (the section's tonal center / modal palette) and ``progression``
+    (the authored chord timeline, already resolved — a per-section progression as
+    authored, or the song-level plan sliced to this section's span, or ``None``
+    for a section that declared no harmony). ``key_pc``/``mode`` are carried
+    INDEPENDENTLY of ``progression`` so a modal/static section with no chord
+    changes can still declare (and be linted against) a mode.
+    """
 
     name: str
     function: str
@@ -73,6 +86,9 @@ class PlacedSection:
     energy: float
     genre: str | None
     layers: Layers
+    key_pc: int | None = None
+    mode: Mode | None = None
+    progression: Progression | None = None
 
 
 @dataclass
@@ -83,6 +99,9 @@ class _SectionSpec:
     energy: float
     genre: str | None
     layers: Layers
+    key: str | None = None
+    mode: str | None = None
+    progression: Progression | str | None = None  # a Progression, "inherit", or None
 
 
 class Arrangement:
@@ -98,6 +117,7 @@ class Arrangement:
         self._specs: list[_SectionSpec] = []
         self.motifs: dict[str, Motif] = {}
         self.beats_per_bar = beats_per_bar
+        self._harmonic_plan: Progression | None = None
 
     # -- motifs (referenceable atoms) --------------------------------------
 
@@ -127,6 +147,9 @@ class Arrangement:
         layers: Mapping[str, Sequence[NoteDict]],
         energy: float = 0.5,
         genre: str | None = None,
+        key: str | None = None,
+        mode: str | None = None,
+        progression: Progression | str | None = None,
     ) -> "Arrangement":
         """Append a section. Returns self for chaining.
 
@@ -134,9 +157,24 @@ class Arrangement:
         / bridge / break / outro). ``energy`` is the authored intensity intent
         (0..1); direction across transitions is implied by the sequence of
         energies and is never auto-smoothed. ``layers`` is ``track -> notes``.
+
+        Harmony (the co-equal axis, all optional — a section that declares none
+        materializes exactly as before, the graceful degradation to the note
+        floor): ``key`` (e.g. ``"E"``) + ``mode`` (e.g. ``"Dorian"``) declare the
+        tonal center / modal palette; ``progression`` is the authored chord
+        timeline — a :class:`~hallucinote.theory.model.Progression`, or the
+        string ``"inherit"`` to slice this section's span out of a song-level
+        :meth:`harmonic_plan`. ``key``/``mode`` default from the progression when
+        present, and can be set independently for a modal section with no chord
+        changes. The composer authors the harmony; the model only carries it.
         """
         if bars <= 0:
             raise ValueError(f"section {name!r}: bars must be > 0, got {bars}")
+        if isinstance(progression, str) and progression != "inherit":
+            raise ValueError(
+                f"section {name!r}: progression string must be 'inherit', got "
+                f"{progression!r}"
+            )
         self._specs.append(
             _SectionSpec(
                 name=name,
@@ -144,18 +182,35 @@ class Arrangement:
                 bars=bars,
                 energy=energy,
                 genre=genre,
+                key=key,
+                mode=mode,
+                progression=progression,
                 layers={t: _copy_notes(ns) for t, ns in layers.items()},
             )
         )
         return self
 
+    def harmonic_plan(self, progression: Progression) -> "Arrangement":
+        """Register a SONG-LEVEL harmonic plan that sections slice into via
+        ``progression="inherit"`` (the lead-sheet mental model: changes first,
+        sections carve their span out). 0-based from the first section's
+        downbeat. Per-section progressions remain the primary path; this is the
+        opt-in alternative. Returns self for chaining."""
+        self._harmonic_plan = progression
+        return self
+
     # -- planning (pure) ---------------------------------------------------
 
     def plan(self, *, start_bar: int = 1) -> list[PlacedSection]:
-        """Assign each section its bar range sequentially. Pure — no DB."""
+        """Assign each section its bar range sequentially and resolve its
+        harmony. Pure — no DB."""
         placed: list[PlacedSection] = []
         bar = start_bar
         for s in self._specs:
+            section_len_beats = s.bars * self.beats_per_bar
+            offset_beats = (bar - start_bar) * self.beats_per_bar
+            prog = self._resolve_progression(s, offset_beats, section_len_beats)
+            key_pc, mode_obj = self._resolve_key_mode(s, prog)
             placed.append(
                 PlacedSection(
                     name=s.name,
@@ -165,10 +220,43 @@ class Arrangement:
                     energy=s.energy,
                     genre=s.genre,
                     layers=s.layers,
+                    key_pc=key_pc,
+                    mode=mode_obj,
+                    progression=prog,
                 )
             )
             bar += s.bars
         return placed
+
+    def _resolve_progression(
+        self, s: _SectionSpec, offset_beats: float, length_beats: float
+    ) -> Progression | None:
+        """Resolve a section's progression: a per-section Progression is stored
+        as authored (0-based; its ``chord_at`` is cyclic so it tiles to the
+        section); ``"inherit"`` slices the song-level plan to this section's span;
+        ``None`` is no declared harmony."""
+        p = s.progression
+        if p is None:
+            return None
+        if p == "inherit":
+            if self._harmonic_plan is None:
+                raise ValueError(
+                    f"section {s.name!r} uses progression='inherit' but no "
+                    f"harmonic_plan() was registered on the arrangement"
+                )
+            return self._harmonic_plan.slice(offset_beats, length_beats)
+        return p  # a Progression
+
+    @staticmethod
+    def _resolve_key_mode(
+        s: _SectionSpec, prog: Progression | None
+    ) -> tuple[int | None, Mode | None]:
+        """key/mode default from the progression but can be set independently
+        (a modal section with no chord changes still declares a mode)."""
+        key_pc = _resolve_pitch_class(s.key) if s.key else (
+            prog.key_pc if prog else None)
+        mode_obj = _resolve_mode(s.mode) if s.mode else (prog.mode if prog else None)
+        return key_pc, mode_obj
 
     @property
     def total_bars(self) -> int:
@@ -179,6 +267,37 @@ class Arrangement:
         """The authored (section, energy) sequence — the curve a review lens
         reads derivatives off (never stored as velocity/accel; computed)."""
         return [(s.name, s.energy) for s in self._specs]
+
+    @property
+    def harmonic_curve(self) -> list[tuple[str, int | None, str | None, int]]:
+        """The resolved (section, key_pc, mode_name, distinct_chords) sequence —
+        the harmonic axis's read-side view, parallel to ``energy_curve``. The
+        key-area arc (does the recap land home?) and the harmonic-rhythm /
+        ambition shape are read off this; never stored."""
+        return [
+            (p.name, p.key_pc, p.mode.name if p.mode else None,
+             p.progression.distinct_chords if p.progression else 0)
+            for p in self.plan()
+        ]
+
+    def section_lints(
+        self, *, harmony_layers: Sequence[str] | None = None, start_bar: int = 1
+    ) -> list[SectionLint]:
+        """Adapt the planned sections into the harmonic-conformance lens inputs
+        (the ``PlacedSection -> SectionLint`` bridge). ``harmony_layers`` names
+        the pitched, harmony-bearing tracks (exclude drums) for the stasis check.
+        Feed the result to ``theory.lint.lint_harmony``."""
+        layers_tuple = tuple(harmony_layers) if harmony_layers is not None else None
+        return [
+            SectionLint(
+                name=p.name,
+                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                progression=p.progression,
+                layers=p.layers,
+                harmony_layers=layers_tuple,
+            )
+            for p in self.plan(start_bar=start_bar)
+        ]
 
     # -- materialization (mutators) ----------------------------------------
 

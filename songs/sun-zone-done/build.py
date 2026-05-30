@@ -8,7 +8,8 @@ pivot is the joke.
 
 The arc tells a story of adapting:
 
-    intro    bars  1– 8  reggae  energy 0.25  sun coming up (sparse; C3 polyrhythm)
+    intro    bars  1– 8  reggae  energy 0.25  sun coming up: a 3:4:5:7 Em7 polyrhythm
+                                              shimmer builds to unbearable, then drops
     verse1   bars  9–16  reggae  energy 0.40  "chillin in the sun zone"
     chorus1  bars 17–24  metal   energy 0.80  "NO TIME FOR THAT" — first interruption
     verse2   bars 25–32  reggae  energy 0.45  back to chill, hasn't given up (recurrence+delta)
@@ -190,10 +191,76 @@ def _metal_lead_no_time(length_beats: float) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# The polyrhythm intro (build-plan Chunk 3) — HAND-AUTHORED, no generator.
+# The gesture IS the art (feedback_great_art_not_software): the sun coming up
+# as a 3:4:5:7 cross-rhythm shimmer that thickens until it's unbearable-but-
+# awesome, then drops into the verse one-drop. Every voice is an Em7 chord tone
+# (E / G / B / D), so the RHYTHM is polyrhythmic chaos but the HARMONY stays
+# pure — that purity is the "musically awesome". Carried on the organ: the
+# Hammond multiplying into a cloud, then settling into the plain reggae bubble
+# at verse1. The dense cell is registered as a motif so the integrating final
+# chorus (Chunk 5) can call it back (the "accepting life is both crazy and
+# mellow" payoff).
+# ---------------------------------------------------------------------------
+
+# Em7 shimmer voices: (pitch, cross-rhythm interval in beats). 1.0 = the "4"
+# ground pulse; 0.75 = 3-against-16ths; 1.25 = 5; 1.75 = 7. Coprime-ish against
+# the 16-sixteenth bar so they phase past each other and only realign slowly.
+_POLY_VOICES = [
+    (E3, 1.00),   # the steady pulse (the "4")
+    (B3, 0.75),   # the "3"  — first cross-rhythm
+    (G3, 1.25),   # the "5"  — wider cross-rhythm
+    (D4, 1.75),   # the "7"  — the outer, "unbearable" layer
+]
+_POLY_DUR = 0.20  # short organ stabs — percolating, not sustained
+
+
+def _poly_voice(pitch: int, interval: float, start_beat: float, end_beat: float,
+                *, vel_at) -> list[dict]:
+    """Place ``pitch`` every ``interval`` beats across [start, end). Pure
+    note-arithmetic (a ruler); ``vel_at(t)`` lets the composer shape the
+    crescendo. Stays local to the song — this is authored material, not a
+    reusable idiom."""
+    notes: list[dict] = []
+    t = start_beat
+    while t < end_beat - 1e-9:
+        notes.append(_note(pitch, round(t, 6), _POLY_DUR, vel_at(t)))
+        t += interval
+    return notes
+
+
+def _polyrhythm_intro(bars: int) -> list[dict]:
+    """The additive build: each cross-rhythm voice enters two bars after the
+    last, and a velocity ramp drives the whole thing from a quiet dawn to the
+    unbearable peak right before the verse drops."""
+    total = bars * BEATS_PER_BAR
+
+    def ramp(t: float) -> int:
+        # Linear crescendo across the whole intro: ~52 (dawn) -> ~86 (peak).
+        return int(round(52 + (86 - 52) * (t / total)))
+
+    notes: list[dict] = []
+    for idx, (pitch, interval) in enumerate(_POLY_VOICES):
+        entry = idx * 2 * BEATS_PER_BAR  # voices enter at bars 1, 3, 5, 7
+        notes.extend(_poly_voice(pitch, interval, entry, total, vel_at=ramp))
+    return notes
+
+
+def _polyrhythm_cell(bars: int = 2) -> list[dict]:
+    """The full 4-voice polyrhythm at steady intensity (no build) — the
+    referenceable motif the integrating final chorus calls back to."""
+    total = bars * BEATS_PER_BAR
+    notes: list[dict] = []
+    for pitch, interval in _POLY_VOICES:
+        notes.extend(_poly_voice(pitch, interval, 0.0, total, vel_at=lambda _t: 74))
+    return notes
+
+
+# ---------------------------------------------------------------------------
 # Per-section layer blueprints (drums / bass / organ / lead — NOT rhythm gtr).
 # Each returns a {track name -> notes} map, 0-based within the section. A track
-# absent from the map simply doesn't play that section (organ tacet in metal;
-# intro deliberately sparse). The Arrangement assigns bars + emits the clips.
+# absent from the map simply doesn't play that section (organ tacet in metal).
+# The Arrangement assigns bars + emits the clips.
 # ---------------------------------------------------------------------------
 
 
@@ -243,6 +310,16 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     specs = {name: (function, genre, bars, energy)
              for name, function, genre, bars, energy in ARC}
 
+    # Register the polyrhythm cloud so the integrating final chorus (Chunk 5)
+    # can call it back — the recapitulation/reference primitive.
+    arr.motif("polyrhythm-cloud", _polyrhythm_cell())
+
+    # The intro: sparse rhythm section (drums + bass + skank) under the
+    # hand-authored polyrhythm build on the organ — the sun coming up. No lead
+    # yet; the vocal hook arrives at verse1.
+    intro = _reggae_layers(kit, specs["intro"][2], sparse=True)
+    intro["04 Organ"] = _polyrhythm_intro(specs["intro"][2])
+
     # First instances (blueprints the recurrences derive from).
     verse1 = _reggae_layers(kit, specs["verse1"][2])
     chorus1 = _metal_layers(kit, specs["chorus1"][2])
@@ -254,7 +331,7 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     chorus2 = vary(chorus1, transform={"05 Lead": _octave_down})
 
     layers_by_name = {
-        "intro":       _reggae_layers(kit, specs["intro"][2], sparse=True),
+        "intro":       intro,
         "verse1":      verse1,
         "chorus1":     chorus1,
         "verse2":      verse2,

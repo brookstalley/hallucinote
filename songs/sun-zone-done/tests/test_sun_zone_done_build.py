@@ -7,9 +7,11 @@ module, and these tests lock the structural intent:
   - 5 instrument tracks + master + 3 returns
   - 9 sections / 80 bars (intro / verse1 / chorus1 / verse2 / chorus2 /
     break1 / break2 / integration / outro)
-  - intro is deliberately SPARSE (drums + bass only — no organ, no lead)
-  - organ is tacet in the metal world (clips only in the reggae sections
-    that carry it: verse1 / verse2 / break1 / outro)
+  - the intro has no lead (the vocal hasn't arrived) but carries the
+    hand-authored polyrhythm build on the organ (Chunk 3)
+  - organ is tacet in the metal world (clips only in the reggae sections:
+    intro / verse1 / verse2 / break1 / outro)
+  - the polyrhythm cloud is registered as a motif for the final-chorus callback
   - recurring sections are derived from their first instance via `vary()`:
     verse2 = verse1 + organ octave-doubled; chorus2 = chorus1 + lead
     octave-doubled-down (the cumulative-development primitive)
@@ -31,9 +33,10 @@ _SONG_DIR = Path(__file__).resolve().parent.parent
 _BUILD_PATH = _SONG_DIR / "build.py"
 _NOTES_BASELINE = Path(__file__).resolve().parent / "fixtures" / "notes_baseline.json"
 
-# Section name -> materialize slot (section index + 1), for clip lookup.
-_REGGAE_WITH_ORGAN = {"verse1", "verse2", "break1", "outro"}
-_SECTIONS_WITH_LEAD = {  # every section except the sparse intro
+# Organ plays the whole reggae world: the intro (polyrhythm build) + the four
+# reggae sections that carry the bubble. It is tacet in every metal section.
+_SECTIONS_WITH_ORGAN = {"intro", "verse1", "verse2", "break1", "outro"}
+_SECTIONS_WITH_LEAD = {  # every section except the intro (the vocal hasn't arrived)
     "verse1", "chorus1", "verse2", "chorus2",
     "break1", "break2", "integration", "outro",
 }
@@ -136,10 +139,10 @@ def test_build_produces_canonical_shape(build_module, built):
         # Drums + Bass play every section → 9 clips
         assert clip_counts["01 Drums"] == 9
         assert clip_counts["02 Bass"] == 9
-        # Lead plays every section except the sparse intro → 8 clips
+        # Lead plays every section except the intro → 8 clips
         assert clip_counts["05 Lead"] == 8
-        # Organ is reggae-world only and the intro is sparse → 4 clips
-        assert clip_counts["04 Organ"] == 4
+        # Organ plays the reggae world (intro polyrhythm + 4 bubble sections) → 5
+        assert clip_counts["04 Organ"] == 5
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
 
@@ -165,9 +168,9 @@ def test_build_produces_canonical_shape(build_module, built):
             (288.0, 0.0),   # outro:   Clean
         ], bp_pairs
 
-        # Arrangement: 31 placements (9 drums + 9 bass + 4 organ + 8 lead + 1 gtr)
+        # Arrangement: 32 placements (9 drums + 9 bass + 5 organ + 8 lead + 1 gtr)
         arr = Q.get_arrangement_for_song(conn, song_id)
-        assert len(arr) == 31, [(a["start_bar"], a["end_bar"]) for a in arr]
+        assert len(arr) == 32, [(a["start_bar"], a["end_bar"]) for a in arr]
 
         # Cue points: 9, at each section start
         cues = Q.get_cue_points(conn, song_id)
@@ -178,30 +181,66 @@ def test_build_produces_canonical_shape(build_module, built):
         conn.close()
 
 
-def test_intro_is_sparse(build_module, built):
-    """The intro is the sun coming up: drums + bass only — no organ, no lead.
-    The vocal hook and the bubble arrive at verse1."""
+def test_intro_has_polyrhythm_no_lead(build_module, built):
+    """The intro is the sun coming up: drums + bass + the hand-authored
+    polyrhythm build on the organ — but no lead yet (the vocal arrives at
+    verse1)."""
     from hallucinote.db import init_db
     conn = init_db(build_module.DB_PATH)
     try:
-        for track in ("01 Drums", "02 Bass"):
+        for track in ("01 Drums", "02 Bass", "04 Organ"):
             assert "intro" in _clips_by_role(conn, built, track), track
-        for track in ("04 Organ", "05 Lead"):
-            assert "intro" not in _clips_by_role(conn, built, track), track
+        assert "intro" not in _clips_by_role(conn, built, "05 Lead")
     finally:
         conn.close()
 
 
-def test_organ_tacet_in_metal(build_module, built):
-    """Organ lives in the reggae world only — clips exactly in the reggae
-    sections that carry it (not the sparse intro, not any metal section)."""
+def test_intro_polyrhythm_is_em7_and_builds(build_module, built):
+    """The intro organ is the 3:4:5:7 cross-rhythm: every pitch is an Em7 tone
+    (the harmony stays pure under the rhythmic chaos), the four voices enter
+    cumulatively (more distinct onsets as it thickens), and a velocity ramp
+    drives the crescendo to the unbearable peak before the verse drop."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        organ = _clips_by_role(conn, built, "04 Organ")
+        notes = Q.get_notes_for_clip(conn, organ["intro"]["id"])
+        # Em7 chord tones only: E / G / B / D pitch classes.
+        assert {n["pitch"] % 12 for n in notes} <= {4, 7, 11, 2}
+        # Additive build: the first half has fewer distinct onsets than the
+        # second half (voices keep entering).
+        first_half = {n["start_beats"] for n in notes if n["start_beats"] < 16.0}
+        second_half = {n["start_beats"] for n in notes if n["start_beats"] >= 16.0}
+        assert len(second_half) > len(first_half)
+        # Crescendo: late hits are louder than early hits.
+        early = max(n["velocity"] for n in notes if n["start_beats"] < 4.0)
+        late = max(n["velocity"] for n in notes if n["start_beats"] >= 28.0)
+        assert late > early
+    finally:
+        conn.close()
+
+
+def test_organ_plays_the_reggae_world_only(build_module, built):
+    """Organ clips appear in exactly the reggae sections (intro polyrhythm +
+    the four bubble sections) and never in a metal section."""
     from hallucinote.db import init_db
     conn = init_db(build_module.DB_PATH)
     try:
         organ_roles = set(_clips_by_role(conn, built, "04 Organ"))
-        assert organ_roles == _REGGAE_WITH_ORGAN, organ_roles
+        assert organ_roles == _SECTIONS_WITH_ORGAN, organ_roles
     finally:
         conn.close()
+
+
+def test_polyrhythm_motif_registered_for_callback(build_module):
+    """The dense polyrhythm cloud is registered as a motif so the integrating
+    final chorus (Chunk 5) can quote it — the recapitulation primitive."""
+    from hallucinote.generators.kit import Kit
+    arr = build_module._build_arrangement(Kit.gm_default())
+    assert "polyrhythm-cloud" in arr.motifs
+    cell = arr.get_motif("polyrhythm-cloud").notes
+    assert cell, "motif should not be empty"
+    assert {n["pitch"] % 12 for n in cell} <= {4, 7, 11, 2}  # Em7 tones
 
 
 def test_lead_present_except_intro(build_module, built):

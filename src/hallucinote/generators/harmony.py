@@ -17,6 +17,7 @@ from hallucinote.generators.primitives import (
     Feel,
     apply_feel,
 )
+from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
 
@@ -107,11 +108,12 @@ def sparse_bell_top(
 
 
 def reggae_skank(
-    voicing: Sequence[int],
+    chords: Progression,
     *,
     bars: int = 1,
     start_beat: float = 0.0,
     beats_per_bar: float = 4.0,
+    register: int = 3,
     duration: float = 0.30,
     velocity: int = 78,
     lazy: float = 0.06,
@@ -119,6 +121,15 @@ def reggae_skank(
 ) -> list[NoteDict]:
     """The iconic reggae skank: a clipped chord "chuck" on the "and" of 2 and
     the "and" of 4 — nothing on the downbeats, which is what makes it lift.
+
+    Chord-aware (the harmony substrate): each chuck voices the chord SOUNDING at
+    its within-section beat — ``chords.chord_at(local_beat).voicing(register)`` —
+    so an authored progression MOVES (a 2-chord ``Em7→A7`` skank now alternates
+    instead of pedalling one chord, the exact failure this fixes). The chord
+    lookup is per-hit and cyclic, so a short authored cycle tiles safely across
+    ``bars``. ``register`` chooses the octave (3 reproduces the old E3-rooted
+    voicing). The composer authors the chords; this voices them as genre
+    furniture. The rhythm/lazy/feel are unchanged from the classic chop.
 
     Each chuck lands ``lazy`` beats behind the click (the unhurried chop) and
     is short (``duration``) — staccato, not sustained. 4/4-shaped within a bar
@@ -130,7 +141,8 @@ def reggae_skank(
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
         for off in (1.5, 3.5):
-            for p in voicing:
+            local_beat = b * beats_per_bar + off
+            for p in chords.chord_at(local_beat).voicing(register):
                 out.append(_note(p, bs + apply_feel(off, feel) + lazy, duration, velocity,
                                  ["skank", "offbeat", "chuck"]))
     return out

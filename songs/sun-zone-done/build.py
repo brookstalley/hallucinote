@@ -57,6 +57,7 @@ from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_pat
 from hallucinote.generators import bass as BG, drums as DG, harmony as HG
 from hallucinote.generators import variations as V
 from hallucinote.generators.kit import Kit
+from hallucinote.theory import Progression
 
 # W12-A: per-branch DB filename.
 DB_PATH = resolve_db_path("sun-zone-done", root=Path(__file__).parent.parent)
@@ -113,6 +114,10 @@ D5  = 74   # lead high
 E5  = 76   # lead top of metal range
 
 EM7 = [E3, G3, B3, D4]                 # rhythm-gtr reggae skank voicing
+# Chunk B bridge: the chord-aware skank takes a Progression. A single-Em7
+# progression voiced at register 3 reproduces the EM7 voicing exactly; Chunk F
+# replaces this with the real per-section harmony.
+_SINGLE_EM7 = Progression.of("E", "Dorian", ["Em7"], beats_per_chord=4.0)
 EM_TRIAD_UPPER = [G3, B3, E4]          # organ bubble voicing
 
 
@@ -548,8 +553,12 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
         section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
         section_bars = sec.end_bar - sec.start_bar
         if sec.genre == "reggae":
+            # Chunk B bridge: a single-Em7 progression voiced at register 3
+            # reproduces the legacy EM7 voicing byte-for-byte. Chunk F replaces
+            # this with the section's real authored progression.
             all_notes.extend(HG.reggae_skank(
-                EM7, bars=section_bars, start_beat=section_start_beats))
+                _SINGLE_EM7, bars=section_bars, start_beat=section_start_beats,
+                register=3))
         else:
             all_notes.extend(HG.palm_mute_power_chords(
                 E3, bars=section_bars, start_beat=section_start_beats))

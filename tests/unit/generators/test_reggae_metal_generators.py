@@ -13,8 +13,14 @@ import pytest
 from hallucinote.generators import bass, drums, harmony
 from hallucinote.generators.kit import Kit
 from hallucinote.generators.primitives import METAL_GALLOP_OFFSETS
+from hallucinote.theory import Progression
 
 _KIT = Kit.gm_default()
+
+# Single-chord progressions for the chord-aware generators: voiced at register 3
+# they reproduce the legacy hardcoded voicings (Em7 -> [52,55,59,62], E5 -> [52,59]).
+_EM7 = Progression.of("E", "Dorian", ["Em7"], beats_per_chord=4.0)
+_E5 = Progression.of("E", "Dorian", ["E5"], beats_per_chord=4.0)
 
 
 def _well_formed(n):
@@ -172,12 +178,13 @@ def test_metal_pedal_count_and_pitch():
 
 
 def test_skank_chucks_offbeats_only():
-    voicing = [52, 55, 59, 62]
-    notes = harmony.reggae_skank(voicing, bars=1, lazy=0.06)
+    notes = harmony.reggae_skank(_EM7, bars=1, register=3, lazy=0.06)
     starts = sorted({n["start_beats"] for n in notes})
     # Only the "and" of 2 and the "and" of 4 — nothing on downbeats.
     assert starts == pytest.approx([1.5 + 0.06, 3.5 + 0.06])
-    assert len(notes) == len(voicing) * 2
+    # Em7 voiced at register 3 == the legacy hardcoded [52, 55, 59, 62].
+    assert {n["pitch"] for n in notes} == {52, 55, 59, 62}
+    assert len(notes) == 4 * 2  # four chord tones × two offbeats
     assert all(n["duration_beats"] == 0.30 for n in notes)
 
 
@@ -225,8 +232,8 @@ def test_guitar_gallop_locks_with_drum_gallop():
      lambda: bass.reggae_offbeat_bass(40, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
     (lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0),
      lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0, feel={0.5: 0.1}), 0.5, 0.1),
-    (lambda: harmony.reggae_skank([52, 59], bars=2),
-     lambda: harmony.reggae_skank([52, 59], bars=2, feel={1.5: 0.1}), 1.5, 0.1),
+    (lambda: harmony.reggae_skank(_E5, bars=2),
+     lambda: harmony.reggae_skank(_E5, bars=2, feel={1.5: 0.1}), 1.5, 0.1),
     (lambda: harmony.organ_bubble([52, 59], bars=2),
      lambda: harmony.organ_bubble([52, 59], bars=2, feel={0.5: 0.1}), 0.5, 0.1),
     (lambda: harmony.palm_mute_power_chords(52, bars=2),

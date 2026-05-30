@@ -21,6 +21,14 @@ from hallucinote.theory.model import (
     pc_name,
     pitch_class,
 )
+from hallucinote.theory.lint import (
+    HarmonyFinding,
+    HarmonyReport,
+    LayerHarmony,
+    SectionHarmony,
+    SectionLint,
+    lint_harmony,
+)
 
 __all__ = [
     "MODES",
@@ -32,4 +40,10 @@ __all__ = [
     "mode",
     "pc_name",
     "pitch_class",
+    "HarmonyFinding",
+    "HarmonyReport",
+    "LayerHarmony",
+    "SectionHarmony",
+    "SectionLint",
+    "lint_harmony",
 ]

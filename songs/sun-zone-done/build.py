@@ -302,17 +302,19 @@ def _reggae_layers(kit: Kit, bars: int, *, sparse: bool = False) -> dict[str, li
 
 
 def _metal_fill(kit: Kit, bar_start_beat: float) -> list[dict]:
-    """A 16th-note snare roll across beat 4, rising in velocity — the lead-out
-    that keeps a long metal stretch from going static. Kit-safe: snare is always
+    """A 16th-note snare roll across the last three 16ths of the bar, rising in
+    velocity — the lead-out that keeps a long metal stretch from going static.
+    Starts at 3.25 (AFTER the gallop's beat-3 backbeat snare) so it doesn't
+    double-trigger that hit, and stays inside the bar. Kit-safe: snare is always
     present; a low-tom accent is added only if the kit has one."""
     snare = kit.snare
     notes = [
-        _note(snare, bar_start_beat + 3.0 + i * 0.25, 0.12, 100 + i * 5)
-        for i in range(4)  # 100 / 105 / 110 / 115
+        _note(snare, bar_start_beat + 3.25 + i * 0.25, 0.12, 105 + i * 5)
+        for i in range(3)  # 3.25 / 3.5 / 3.75 — vel 105 / 110 / 115
     ]
     tom = kit.try_pitch_of("tom_lo")
     if tom is not None:
-        notes.append(_note(tom, bar_start_beat + 3.75, 0.20, 115))
+        notes.append(_note(tom, bar_start_beat + 3.75, 0.18, 115))
     return notes
 
 

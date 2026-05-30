@@ -1,5 +1,5 @@
 {
-  "_note": "HAND-AUTHORED synthetic snapshot for sun-zone-done. v2 rebuild: 5 instrument tracks + 3 returns. Reggae↔metal mashup; same instruments throughout. Amp Type on Rhythm Gtr is the genre-flip mechanism: ONE envelope with breakpoints at section boundaries, hosted by ONE monolithic 256-beat Rhythm Gtr session clip (Live 12.4 LOM requires device_parameter envelopes to be hosted by a clip covering the envelope's full beat range, and one envelope per (device, parameter) is the data-model constraint — see decisions/05-instrumentation-and-chains.md).",
+  "_note": "HAND-AUTHORED synthetic snapshot for sun-zone-done. 6 instrument tracks + 3 returns (steel pans added in the arrangement-model flagship rebuild). Reggae↔metal mashup; same instruments throughout. Amp Type on Rhythm Gtr is the genre-flip mechanism: ONE envelope with breakpoints at section boundaries, hosted by ONE monolithic 320-beat (80-bar) Rhythm Gtr session clip (Live 12.4 LOM requires device_parameter envelopes to be hosted by a clip covering the envelope's full beat range, and one envelope per (device, parameter) is the data-model constraint — see decisions/05-instrumentation-and-chains.md).",
   "_capture_status": "synthetic: scaffold for v2 rebuild; refresh via /song-snapshot once pushed and tweaked in Live",
   "song": {
     "tempo": 180.0,

@@ -1,12 +1,15 @@
 # Sun Zone / Stuff Done
 
-> **Composer intent + dated decisions** for this song live alongside this overview:
+> **Composer intent + dated decisions** for this song live alongside this overview.
+> The `decisions/*.md` records are **historical** — the original v2 design. The
+> **current** structure (the arrangement-model rebuild) is the Structure section
+> below; where they differ, this overview is authoritative.
 >
 > - `decisions/01-intent-and-theme.md` — user's original brief (the load-bearing source)
 > - `decisions/02-genre-mechanics.md` — alternation, not overlap; transition mechanics
 > - `decisions/03-key-tempo-meter.md` — E Dorian ↔ E Phrygian; 180 BPM; 4/4
-> - `decisions/04-section-structure.md` — 7 sections, 64 bars, asymmetric dramatic shape
-> - `decisions/05-instrumentation-and-chains.md` — 5 tracks + 3 returns; the Amp Type envelope
+> - `decisions/04-section-structure.md` — original 7-section/64-bar shape (superseded by the 9-section/80-bar arc below)
+> - `decisions/05-instrumentation-and-chains.md` — instrumentation + the Amp Type envelope (now 6 tracks; see below)
 > - `decisions/06-per-section-feel.md` — microtiming as authorship (reggae drag, metal straight)
 >
 > Query via `/song-context [topic]` (FTS5-indexed). See `.prawduct/artifacts/song-conventions.md`.
@@ -61,7 +64,7 @@ Every genre flip is a deliberate **energy discontinuity** — never smoothed. Re
 
 ## The Amp Type envelope
 
-The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 256 beats = whole song); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint.
+The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 320 beats = whole song / 80 bars); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint. In the **convention-break** the Amp is deliberately decoupled from the groove (break1 stays Heavy over the reggae groove; break2 goes Clean over the metal groove).
 
 Other tracks (drums / bass / organ / lead) use per-section clips for compose-time convenience.
 

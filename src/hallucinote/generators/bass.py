@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from hallucinote.generators.primitives import TRESILLO_HITS, Feel, apply_feel
+from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
 
@@ -23,6 +24,16 @@ def _note(pitch: int, start: float, dur: float, vel: int, tags: list[str]) -> No
         "velocity": vel,
         "tags": tags,
     }
+
+
+def _bass_root(chords: Progression, local_beat: float, register: int) -> int:
+    """The bass MIDI pitch at ``local_beat``: the chord's SLASH bass if present
+    (so ``Em/C#`` puts C# in the bass — the Dorian/Phrygian pivot becomes audible
+    automatically), else the chord root, voiced in ``register``
+    (MIDI = 12*(register+1)+pc, so register 2 -> E2 = 40)."""
+    ch = chords.chord_at(local_beat)
+    pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
+    return 12 * (register + 1) + pc
 
 
 def tresillo_bass(
@@ -83,9 +94,10 @@ def walking_bass_to_next_chord(
 
 
 def reggae_offbeat_bass(
-    root_pitch: int,
+    chords: Progression,
     *,
     bars: int = 1,
+    register: int = 2,
     fifth_offset: int = 7,
     octave_offset: int = 12,
     start_beat: float = 0.0,
@@ -100,32 +112,40 @@ def reggae_offbeat_bass(
     """Reggae bass: root on 1, fifth on the "and" of 2, octave on 3, fifth on
     the "and" of 4 — the long-short rocking motion that walks the off-beats.
 
-    Roots/octaves are long (1.4 beats), the off-beat fifths short (0.4) — the
-    bounce. Everything sits ``push`` beats behind the click (the unhurried
-    pocket). 4/4-shaped within a bar (see module docstring); ``beats_per_bar``
-    only scales the inter-bar step. ``feel`` (W17-E) shifts the canonical
-    positions {0.0, 1.5, 2.0, 3.5} on top of ``push``. Tagged "bass" + "reggae".
+    Chord-aware (the harmony substrate): the bass is reggae's harmonic AGENT, so
+    it reads the chord at each step and roots its rocking figure on that chord's
+    SLASH bass (or root) — an authored ``Em7→A7`` now walks instead of pedalling
+    E, and an ``Em/C#``→``Em/C`` hinge puts the pivot semitone in the bass
+    automatically. ``register`` 2 reproduces the old E2 root. Roots/octaves are
+    long (1.4 beats), the off-beat fifths short (0.4) — the bounce. Everything
+    sits ``push`` beats behind the click. 4/4-shaped within a bar (see module
+    docstring); ``beats_per_bar`` only scales the inter-bar step. ``feel``
+    (W17-E) shifts {0.0, 1.5, 2.0, 3.5} on top of ``push``. Tagged "bass"+"reggae".
     """
-    fifth = root_pitch + fifth_offset
-    octave = root_pitch + octave_offset
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
-        out.append(_note(root_pitch, bs + apply_feel(0.0, feel) + push, 1.4, root_velocity,
+        bb = b * beats_per_bar  # section-relative bar start, for the chord lookup
+        root = _bass_root(chords, bb + 0.0, register)
+        out.append(_note(root, bs + apply_feel(0.0, feel) + push, 1.4, root_velocity,
                          ["bass", "reggae", "root"]))
-        out.append(_note(fifth, bs + apply_feel(1.5, feel) + push, 0.4, fifth_down_velocity,
+        out.append(_note(_bass_root(chords, bb + 1.5, register) + fifth_offset,
+                         bs + apply_feel(1.5, feel) + push, 0.4, fifth_down_velocity,
                          ["bass", "reggae", "offbeat"]))
-        out.append(_note(octave, bs + apply_feel(2.0, feel) + push, 1.4, octave_velocity,
+        out.append(_note(_bass_root(chords, bb + 2.0, register) + octave_offset,
+                         bs + apply_feel(2.0, feel) + push, 1.4, octave_velocity,
                          ["bass", "reggae", "octave"]))
-        out.append(_note(fifth, bs + apply_feel(3.5, feel) + push, 0.4, fifth_up_velocity,
+        out.append(_note(_bass_root(chords, bb + 3.5, register) + fifth_offset,
+                         bs + apply_feel(3.5, feel) + push, 0.4, fifth_up_velocity,
                          ["bass", "reggae", "offbeat"]))
     return out
 
 
 def metal_pedal_16ths(
-    root_pitch: int,
+    chords: Progression,
     *,
     bars: int = 1,
+    register: int = 2,
     start_beat: float = 0.0,
     beats_per_bar: float = 4.0,
     velocity: int = 105,
@@ -133,23 +153,28 @@ def metal_pedal_16ths(
     push: float = -0.01,
     feel: Feel = None,
 ) -> list[NoteDict]:
-    """Metal palm-mute root pedaling: the root machine-gunned on straight
+    """Metal palm-mute root pedaling: the chord root machine-gunned on straight
     16ths, the foundation under the gallop guitar.
 
-    Every 16th gets a slight ``push`` (ahead of the click) for aggression —
-    EXCEPT any note whose absolute onset would land at or before 0.0, since
-    Live's MIDI clip has no negative-beat region (the mutator boundary refuses
-    it). 4/4-shaped within a bar (see module docstring); ``beats_per_bar``
-    scales the inter-bar step. ``feel`` (W17-E) shifts each 16th on top of
-    ``push``. Tagged "bass" + "metal" + "pedal".
+    Chord-aware: each 16th pedals the chord SOUNDING at that 16th (slash bass or
+    root), so a moving Phrygian riff (E pedal → ♭II F → …) pedals the riff
+    instead of a frozen E. ``register`` 2 reproduces the old E2 pedal. Every 16th
+    gets a slight ``push`` (ahead of the click) for aggression — EXCEPT any note
+    whose absolute onset would land at or before 0.0 (Live's MIDI clip has no
+    negative-beat region; the mutator boundary refuses it). 4/4-shaped within a
+    bar; ``beats_per_bar`` scales the inter-bar step. ``feel`` (W17-E) shifts each
+    16th on top of ``push``. Tagged "bass" + "metal" + "pedal".
     """
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
+        bb = b * beats_per_bar
         for sixteenth in range(16):
+            local = bb + sixteenth * 0.25
+            pitch = _bass_root(chords, local, register)
             t = bs + apply_feel(sixteenth * 0.25, feel)
             applied_push = push if t > 0.0 else 0.0
-            out.append(_note(root_pitch, t + applied_push, note_duration, velocity,
+            out.append(_note(pitch, t + applied_push, note_duration, velocity,
                              ["bass", "metal", "pedal"]))
     return out
 

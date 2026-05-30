@@ -289,7 +289,7 @@ def _reggae_layers(kit: Kit, bars: int, *, sparse: bool = False) -> dict[str, li
     just coming up; the hook hasn't arrived yet."""
     layers: dict[str, list[dict]] = {
         "01 Drums": DG.reggae_one_drop(bars, kit=kit),
-        "02 Bass":  BG.reggae_offbeat_bass(E2, bars=bars),
+        "02 Bass":  BG.reggae_offbeat_bass(_SINGLE_EM7, bars=bars),
     }
     if not sparse:
         layers["04 Organ"] = HG.organ_bubble(EM_TRIAD_UPPER, bars=bars)
@@ -340,7 +340,7 @@ def _metal_layers(kit: Kit, bars: int) -> dict[str, list[dict]]:
     bass + cutting Phrygian lead. Organ is tacet (it returns only in reggae)."""
     return {
         "01 Drums": _metal_drums(kit, bars),
-        "02 Bass":  BG.metal_pedal_16ths(E2, bars=bars),
+        "02 Bass":  BG.metal_pedal_16ths(_SINGLE_EM7, bars=bars),
         "05 Lead":  _metal_lead_no_time(bars * BEATS_PER_BAR),
     }
 
@@ -561,7 +561,8 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
                 register=3))
         else:
             all_notes.extend(HG.palm_mute_power_chords(
-                E3, bars=section_bars, start_beat=section_start_beats))
+                _SINGLE_EM7, bars=section_bars, start_beat=section_start_beats,
+                register=3))
 
     gtr_clip = M.create_clip(
         conn, track_id=gtr_track_id, slot=1,

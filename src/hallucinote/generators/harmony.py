@@ -179,9 +179,10 @@ def organ_bubble(
 
 
 def palm_mute_power_chords(
-    root_pitch: int,
+    chords: Progression,
     *,
     bars: int = 1,
+    register: int = 3,
     fifth_offset: int = 7,
     octave_offset: int = 12,
     start_beat: float = 0.0,
@@ -195,24 +196,28 @@ def palm_mute_power_chords(
     """Palm-muted power chords (root + 5th + octave) chugging the
     :data:`METAL_GALLOP_OFFSETS` cell — the metal rhythm-guitar engine.
 
-    Locks rhythmically with :func:`hallucinote.generators.drums.metal_gallop`
-    (same offset cell): the chunked guitar and the kick gallop hit together,
-    which is the genre's wall of attack. Short notes (``note_duration``) =
-    palm-muted chug. 4/4-shaped within a bar (see module docstring);
-    ``beats_per_bar`` scales the inter-bar step. ``feel`` (W17-E) shifts each
-    chug. Tagged "power_chord" + "palm_mute" + "gallop".
+    Chord-aware (the harmony substrate): each chug roots on the chord SOUNDING at
+    that hit, so a moving Phrygian riff (E5 → ♭II F5 → C5/D5 …) walks instead of
+    pedalling one chord. A power chord is always root + 5th + octave regardless
+    of the chord's full quality (metal omits the third), so it reads only the
+    chord ROOT — ``register`` 3 reproduces the old E3 root. Locks rhythmically
+    with :func:`hallucinote.generators.drums.metal_gallop` (same offset cell):
+    the chunked guitar and the kick gallop hit together, the genre's wall of
+    attack. Short notes (``note_duration``) = palm-muted chug. 4/4-shaped within
+    a bar; ``beats_per_bar`` scales the inter-bar step. ``feel`` (W17-E) shifts
+    each chug. Tagged "power_chord" + "palm_mute" + "gallop".
     """
-    fifth = root_pitch + fifth_offset
-    octave = root_pitch + octave_offset
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
+        bb = b * beats_per_bar
         for off in METAL_GALLOP_OFFSETS:
+            root = 12 * (register + 1) + chords.chord_at(bb + off).root_pc
             t = bs + apply_feel(off, feel)
-            out.append(_note(root_pitch, t, note_duration, root_velocity,
+            out.append(_note(root, t, note_duration, root_velocity,
                              ["power_chord", "palm_mute", "gallop"]))
-            out.append(_note(fifth, t, note_duration, fifth_velocity,
+            out.append(_note(root + fifth_offset, t, note_duration, fifth_velocity,
                              ["power_chord", "palm_mute", "gallop"]))
-            out.append(_note(octave, t, note_duration, octave_velocity,
+            out.append(_note(root + octave_offset, t, note_duration, octave_velocity,
                              ["power_chord", "palm_mute", "gallop"]))
     return out

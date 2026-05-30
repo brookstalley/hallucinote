@@ -135,7 +135,7 @@ def test_metal_gallop_snare_on_two_and_four():
 
 
 def test_reggae_bass_long_root_short_offbeat_fifths():
-    notes = bass.reggae_offbeat_bass(40, bars=1, push=0.02)
+    notes = bass.reggae_offbeat_bass(_EM7, bars=1, push=0.02)  # register 2 -> E2 root
     assert all(_well_formed(n) for n in notes)
     # root(1.4) on 1, fifth(0.4) on 2&, octave(1.4) on 3, fifth(0.4) on 4&
     durs = [n["duration_beats"] for n in notes]
@@ -154,7 +154,7 @@ def test_reggae_bass_long_root_short_offbeat_fifths():
 def test_metal_pedal_first_note_not_pushed_negative():
     """The push is -0.01, but the very first 16th at absolute 0.0 must NOT be
     pushed negative (Live has no negative-beat region; the mutator refuses it)."""
-    notes = bass.metal_pedal_16ths(40, bars=1, start_beat=0.0, push=-0.01)
+    notes = bass.metal_pedal_16ths(_EM7, bars=1, start_beat=0.0, push=-0.01)
     assert notes[0]["start_beats"] == 0.0
     assert notes[1]["start_beats"] == pytest.approx(0.25 - 0.01)
     assert all(n["start_beats"] >= 0.0 for n in notes)
@@ -162,12 +162,12 @@ def test_metal_pedal_first_note_not_pushed_negative():
 
 def test_metal_pedal_pushed_when_section_starts_later():
     """A section that doesn't start at 0 pushes every 16th, including its first."""
-    notes = bass.metal_pedal_16ths(40, bars=1, start_beat=64.0, push=-0.01)
+    notes = bass.metal_pedal_16ths(_EM7, bars=1, start_beat=64.0, push=-0.01)
     assert notes[0]["start_beats"] == pytest.approx(64.0 - 0.01)
 
 
 def test_metal_pedal_count_and_pitch():
-    notes = bass.metal_pedal_16ths(40, bars=2)
+    notes = bass.metal_pedal_16ths(_EM7, bars=2)  # register 2 -> E2 pedal
     assert len(notes) == 32
     assert {n["pitch"] for n in notes} == {40}
 
@@ -201,7 +201,7 @@ def test_organ_bubble_on_every_offbeat_eighth():
 
 
 def test_power_chords_are_root_fifth_octave():
-    notes = harmony.palm_mute_power_chords(52, bars=1)
+    notes = harmony.palm_mute_power_chords(_EM7, bars=1)  # register 3 -> E3 root
     # Three voices per hit.
     first_hit = _at(notes)[:3]
     assert sorted(n["pitch"] for n in first_hit) == [52, 59, 64]
@@ -211,7 +211,7 @@ def test_power_chords_are_root_fifth_octave():
 def test_guitar_gallop_locks_with_drum_gallop():
     """The coordination IS the genre: the palm-muted guitar and the kick
     gallop must hit on the same rhythmic cell."""
-    gtr = harmony.palm_mute_power_chords(52, bars=1)
+    gtr = harmony.palm_mute_power_chords(_EM7, bars=1)
     drm = drums.metal_gallop(1, kit=_KIT, crash_bars=())
     gtr_roots = sorted({n["start_beats"] for n in gtr})
     drm_kicks = sorted({n["start_beats"] for n in _at(drm, pitch=_KIT.kick)})
@@ -228,16 +228,16 @@ def test_guitar_gallop_locks_with_drum_gallop():
      lambda: drums.reggae_one_drop(2, kit=_KIT, feel={2.0: 0.1}), 2.0, 0.1),
     (lambda: drums.metal_gallop(2, kit=_KIT),
      lambda: drums.metal_gallop(2, kit=_KIT, feel={0.0: 0.1}), 0.0, 0.1),
-    (lambda: bass.reggae_offbeat_bass(40, bars=2),
-     lambda: bass.reggae_offbeat_bass(40, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
-    (lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0),
-     lambda: bass.metal_pedal_16ths(40, bars=2, start_beat=8.0, feel={0.5: 0.1}), 0.5, 0.1),
+    (lambda: bass.reggae_offbeat_bass(_EM7, bars=2),
+     lambda: bass.reggae_offbeat_bass(_EM7, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
+    (lambda: bass.metal_pedal_16ths(_EM7, bars=2, start_beat=8.0),
+     lambda: bass.metal_pedal_16ths(_EM7, bars=2, start_beat=8.0, feel={0.5: 0.1}), 0.5, 0.1),
     (lambda: harmony.reggae_skank(_E5, bars=2),
      lambda: harmony.reggae_skank(_E5, bars=2, feel={1.5: 0.1}), 1.5, 0.1),
     (lambda: harmony.organ_bubble([52, 59], bars=2),
      lambda: harmony.organ_bubble([52, 59], bars=2, feel={0.5: 0.1}), 0.5, 0.1),
-    (lambda: harmony.palm_mute_power_chords(52, bars=2),
-     lambda: harmony.palm_mute_power_chords(52, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
+    (lambda: harmony.palm_mute_power_chords(_EM7, bars=2),
+     lambda: harmony.palm_mute_power_chords(_EM7, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
 ])
 def test_feel_actually_shifts_the_targeted_onsets(base, shifted, pos, delta):
     """Every promoted idiom accepts a feel dict AND applies it: the notes whose
@@ -253,3 +253,37 @@ def test_feel_actually_shifts_the_targeted_onsets(base, shifted, pos, delta):
     assert any(d == pytest.approx(delta) for d in moved), moved
     # Every note either moved by `delta` (it was at `pos`) or didn't move.
     assert all(d == pytest.approx(0.0) or d == pytest.approx(delta) for d in moved), moved
+
+
+# --------------------------------------------------------------------------
+# Chord-awareness: the generators VOICE an authored progression (they move)
+# --------------------------------------------------------------------------
+
+_EM7_A7 = Progression.of("E", "Dorian", ["Em7", "A7"], beats_per_chord=4.0)
+
+
+def test_reggae_bass_walks_the_progression_root():
+    # bar 1 -> Em7 (root E2 = 40), bar 2 -> A7 (root A2 = 45). The bass MOVES.
+    notes = bass.reggae_offbeat_bass(_EM7_A7, bars=2)
+    bar1_root = notes[0]["pitch"]
+    bar2_root = notes[4]["pitch"]
+    assert bar1_root == 40        # E2
+    assert bar2_root == 45        # A2 — the bass followed the chord change
+
+
+def test_power_chords_walk_the_progression_root():
+    # E5 (root 52) for bar 1, A5 (root 57) for bar 2.
+    notes = harmony.palm_mute_power_chords(_EM7_A7, bars=2)
+    roots = {n["pitch"] for n in notes if "power_chord" in n["tags"]}
+    assert 52 in roots and 59 in roots  # E3 + its 5th (bar 1)
+    assert 57 in roots and 64 in roots  # A3 + its 5th (bar 2)
+
+
+def test_reggae_bass_puts_slash_bass_in_the_low_end():
+    # Em/C# vs Em/C — the Dorian/Phrygian pivot must show up as the bass note.
+    dorian = bass.reggae_offbeat_bass(
+        Progression.of("E", "Dorian", ["Em/C#"], beats_per_chord=4.0), bars=1)
+    phrygian = bass.reggae_offbeat_bass(
+        Progression.of("E", "Phrygian", ["Em/C"], beats_per_chord=4.0), bars=1)
+    assert dorian[0]["pitch"] == 37   # C#2 (pc 1)
+    assert phrygian[0]["pitch"] == 36  # C2 (pc 0) — one semitone, the pivot

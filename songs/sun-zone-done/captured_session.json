@@ -4,7 +4,7 @@
   "song": {
     "tempo": 180.0,
     "signature": "4/4",
-    "track_count": 5,
+    "track_count": 6,
     "return_track_count": 3,
     "master": {"volume": 0.85, "panning": 0.0}
   },
@@ -154,6 +154,23 @@
         },
         {
           "index": 3, "name": "Compressor", "class": "Compressor",
+          "kind": "audio_effect"
+        }
+      ]
+    },
+    {
+      "index": 6, "name": "06 Steel", "type": "midi",
+      "volume": 0.68, "panning": 0.18,
+      "sends": {"Plate": 0.22, "Room": 0.08, "DubDelay": 0.14},
+      "devices": [
+        {
+          "index": 1, "name": "Island Pans", "class": "Instrument Rack",
+          "kind": "instrument",
+          "preset_query": {"root": "instruments", "pattern": "Island Pans"},
+          "_note": "Steel pans for the later reggae sections (Chunk 4). Native Mallets/Instrument-Rack preset; the browser load by pattern is the one push-time item to verify. Panned slightly right + a touch of dub delay for island air."
+        },
+        {
+          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
           "kind": "audio_effect"
         }
       ]

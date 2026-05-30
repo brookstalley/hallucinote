@@ -99,10 +99,12 @@ B3  = 59   # gtr Em7 chord tone + organ
 D4  = 62   # gtr Em7 chord tone + lead
 E4  = 64   # lead top of reggae range
 F4  = 65   # phrygian b2 (metal lead)
+FS4 = 66   # E-Dorian 2nd (steel)
 G4  = 67   # lead motion
 A4  = 69   # lead motion
 B4  = 71   # lead climax
 C5  = 72   # phrygian b6 (metal lead)
+CS5 = 73   # E-Dorian natural 6th — the bright island note (steel)
 D5  = 74   # lead high
 E5  = 76   # lead top of metal range
 
@@ -278,14 +280,83 @@ def _reggae_layers(kit: Kit, bars: int, *, sparse: bool = False) -> dict[str, li
     return layers
 
 
+# ---------------------------------------------------------------------------
+# Metal energy (build-plan Chunk 4) — how great metal SUSTAINS a long section:
+# riff/crash accents at phrase tops, fills leading out of phrases, so a 16-bar
+# stretch breathes instead of looping flat. Authored as song-local composition
+# over the shared gallop idiom (the generator furniture); the musical decisions
+# (where the crashes and fills land) stay here.
+# ---------------------------------------------------------------------------
+
+
+def _metal_fill(kit: Kit, bar_start_beat: float) -> list[dict]:
+    """A 16th-note snare roll across beat 4, rising in velocity — the lead-out
+    that keeps a long metal stretch from going static. Kit-safe: snare is always
+    present; a low-tom accent is added only if the kit has one."""
+    snare = kit.snare
+    notes = [
+        _note(snare, bar_start_beat + 3.0 + i * 0.25, 0.12, 100 + i * 5)
+        for i in range(4)  # 100 / 105 / 110 / 115
+    ]
+    tom = kit.try_pitch_of("tom_lo")
+    if tom is not None:
+        notes.append(_note(tom, bar_start_beat + 3.75, 0.20, 115))
+    return notes
+
+
+def _metal_drums(kit: Kit, bars: int) -> list[dict]:
+    """Gallop drums with sustained energy: a crash on every 4-bar phrase START
+    (not just the section entrance) and a snare fill leading OUT of each 4-bar
+    phrase. Crashes mark the phrase tops, fills mark the phrase ends — the
+    call/response that lets the 16-bar integration breathe."""
+    crash_bars = tuple(range(0, bars, 4))          # crash at bars 1, 5, 9, 13…
+    notes = DG.metal_gallop(bars, kit=kit, crash_bars=crash_bars)
+    for phrase_end in range(3, bars, 4):           # fill in bars 4, 8, 12, 16…
+        notes.extend(_metal_fill(kit, phrase_end * BEATS_PER_BAR))
+    return notes
+
+
 def _metal_layers(kit: Kit, bars: int) -> dict[str, list[dict]]:
-    """A metal section: gallop drums + 16th pedal bass + cutting Phrygian lead.
-    Organ is tacet (it returns only in the reggae world)."""
+    """A metal section: energetic gallop drums (crashes + fills) + 16th pedal
+    bass + cutting Phrygian lead. Organ is tacet (it returns only in reggae)."""
     return {
-        "01 Drums": DG.metal_gallop(bars, kit=kit),
+        "01 Drums": _metal_drums(kit, bars),
         "02 Bass":  BG.metal_pedal_16ths(E2, bars=bars),
         "05 Lead":  _metal_lead_no_time(bars * BEATS_PER_BAR),
     }
+
+
+# ---------------------------------------------------------------------------
+# Steel pans (build-plan Chunk 4) — a bright E-Dorian calypso counter-melody
+# that enters in the LATER reggae sections (verse2 + outro), not the intro.
+# The natural-6th C# is the Dorian "happy" note that keeps it sunny — the
+# island paradise the protagonist sinks back into. Song-specific content, so
+# it stays local. New track "06 Steel" (Island Pans) in captured_session.json.
+# ---------------------------------------------------------------------------
+
+_STEEL_FIGURE = [  # a 2-bar offbeat island figure (onset within the 8-beat loop)
+    (B4,  0.5, 0.40, 78),
+    (E5,  1.5, 0.40, 82),
+    (CS5, 2.5, 0.40, 75),
+    (A4,  3.5, 0.40, 76),
+    (G4,  4.5, 0.40, 78),
+    (B4,  5.5, 0.40, 80),
+    (E5,  6.5, 0.50, 84),
+    (FS4, 7.5, 0.40, 74),
+]
+
+
+def _steel_island(bars: int) -> list[dict]:
+    """Bright E-Dorian steel-pan counter-melody — calypso offbeats lifting the
+    later reggae sections. Loops every 2 bars; sits up in the pan register so
+    it floats above the skank without crowding the vocal."""
+    notes: list[dict] = []
+    cycle = 2 * BEATS_PER_BAR
+    for c in range(int(bars * BEATS_PER_BAR // cycle)):
+        base = c * cycle
+        for p, t, d, v in _STEEL_FIGURE:
+            notes.append(_note(p, base + t, d, v))
+    return notes
 
 
 def _octave_up(notes: list[dict]) -> list[dict]:
@@ -325,10 +396,20 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     chorus1 = _metal_layers(kit, specs["chorus1"][2])
 
     # Recurrence deltas (the heart of the model — multi-axis, bidirectional):
-    #   verse2  = verse1  + organ octave-doubled  ("more layered, hasn't given up")
-    #   chorus2 = chorus1 + lead  octave-doubled down ("escalating, heavier")
-    verse2 = vary(verse1, transform={"04 Organ": _octave_up})
+    #   verse2  = verse1 + organ octave-doubled (transform) + steel pans ENTERING
+    #            (add) — "more layered, hasn't given up", a new instrument arriving
+    #   chorus2 = chorus1 + lead octave-doubled down (transform) — "escalating"
+    verse2 = vary(
+        verse1,
+        transform={"04 Organ": _octave_up},
+        add={"06 Steel": _steel_island(specs["verse2"][2])},
+    )
     chorus2 = vary(chorus1, transform={"05 Lead": _octave_down})
+
+    # The enlightenment outro: the full reggae world + the steel pans (island
+    # paradise). Chunk 5 adds the metal riff / double-time bursts on top.
+    outro = _reggae_layers(kit, specs["outro"][2])
+    outro["06 Steel"] = _steel_island(specs["outro"][2])
 
     layers_by_name = {
         "intro":       intro,
@@ -341,7 +422,7 @@ def _build_arrangement(kit: Kit) -> Arrangement:
         "break1":      _reggae_layers(kit, specs["break1"][2]),
         "break2":      _metal_layers(kit, specs["break2"][2]),
         "integration": _metal_layers(kit, specs["integration"][2]),
-        "outro":       _reggae_layers(kit, specs["outro"][2]),
+        "outro":       outro,
     }
 
     for name, function, genre, bars, energy in ARC:

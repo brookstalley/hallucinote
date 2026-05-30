@@ -4,13 +4,15 @@ This is the end-to-end integration proof for `hallucinote.arrangement`
 (build-plan Chunk 2): build.py authors the whole song on the arrangement
 module, and these tests lock the structural intent:
 
-  - 5 instrument tracks + master + 3 returns
+  - 6 instrument tracks + master + 3 returns (steel pans added in Chunk 4)
   - 9 sections / 80 bars (intro / verse1 / chorus1 / verse2 / chorus2 /
     break1 / break2 / integration / outro)
   - the intro has no lead (the vocal hasn't arrived) but carries the
     hand-authored polyrhythm build on the organ (Chunk 3)
   - organ is tacet in the metal world (clips only in the reggae sections:
     intro / verse1 / verse2 / break1 / outro)
+  - steel pans enter only in the later reggae sections (verse2 + outro)
+  - metal sections sustain energy: a crash per 4-bar phrase + fills (Chunk 4)
   - the polyrhythm cloud is registered as a motif for the final-chorus callback
   - recurring sections are derived from their first instance via `vary()`:
     verse2 = verse1 + organ octave-doubled; chorus2 = chorus1 + lead
@@ -40,6 +42,8 @@ _SECTIONS_WITH_LEAD = {  # every section except the intro (the vocal hasn't arri
     "verse1", "chorus1", "verse2", "chorus2",
     "break1", "break2", "integration", "outro",
 }
+_SECTIONS_WITH_STEEL = {"verse2", "outro"}  # later reggae sections only
+_METAL_SECTIONS = {"chorus1", "chorus2", "break2", "integration"}
 
 
 def extract_notes(conn, song_id: str) -> dict:
@@ -114,7 +118,7 @@ def test_build_produces_canonical_shape(build_module, built):
         track_names = sorted(t["name"] for t in tracks)
         assert track_names == sorted([
             "01 Drums", "02 Bass", "03 Rhythm Gtr", "04 Organ", "05 Lead",
-            "Master",
+            "06 Steel", "Master",
         ]), track_names
 
         # Returns: 3, named Plate / Room / DubDelay (stored stripped)
@@ -143,6 +147,8 @@ def test_build_produces_canonical_shape(build_module, built):
         assert clip_counts["05 Lead"] == 8
         # Organ plays the reggae world (intro polyrhythm + 4 bubble sections) → 5
         assert clip_counts["04 Organ"] == 5
+        # Steel pans enter only in the later reggae sections → 2 clips
+        assert clip_counts["06 Steel"] == 2
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
 
@@ -168,9 +174,10 @@ def test_build_produces_canonical_shape(build_module, built):
             (288.0, 0.0),   # outro:   Clean
         ], bp_pairs
 
-        # Arrangement: 32 placements (9 drums + 9 bass + 5 organ + 8 lead + 1 gtr)
+        # Arrangement: 34 placements (9 drums + 9 bass + 5 organ + 8 lead +
+        # 2 steel + 1 gtr)
         arr = Q.get_arrangement_for_song(conn, song_id)
-        assert len(arr) == 32, [(a["start_bar"], a["end_bar"]) for a in arr]
+        assert len(arr) == 34, [(a["start_bar"], a["end_bar"]) for a in arr]
 
         # Cue points: 9, at each section start
         cues = Q.get_cue_points(conn, song_id)
@@ -228,6 +235,58 @@ def test_organ_plays_the_reggae_world_only(build_module, built):
     try:
         organ_roles = set(_clips_by_role(conn, built, "04 Organ"))
         assert organ_roles == _SECTIONS_WITH_ORGAN, organ_roles
+    finally:
+        conn.close()
+
+
+def test_steel_pans_enter_in_later_reggae_only(build_module, built):
+    """Steel pans (Island Pans) play exactly the later reggae sections —
+    verse2 (entering as a vary() add-delta) and the enlightenment outro — and
+    nowhere else (not the intro, not any metal section)."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        steel = _clips_by_role(conn, built, "06 Steel")
+        assert set(steel) == _SECTIONS_WITH_STEEL, set(steel)
+        # E Dorian only (E F# G A B C# D = pitch classes 4 6 7 9 11 1 2).
+        notes = Q.get_notes_for_clip(conn, steel["verse2"]["id"])
+        assert {n["pitch"] % 12 for n in notes} <= {4, 6, 7, 9, 11, 1, 2}
+    finally:
+        conn.close()
+
+
+def test_verse2_add_delta_introduces_steel(build_module, built):
+    """verse2's 'more layered, hasn't given up' is literally a new instrument
+    arriving: the steel layer is present in verse2 but absent in verse1 — a
+    vary() add-delta on top of the organ transform-delta."""
+    from hallucinote.db import init_db
+    conn = init_db(build_module.DB_PATH)
+    try:
+        steel = _clips_by_role(conn, built, "06 Steel")
+        assert "verse2" in steel and "verse1" not in steel
+    finally:
+        conn.close()
+
+
+def test_metal_sections_sustain_energy(build_module, built):
+    """Metal energy (Chunk 4): every metal section gets a crash on each 4-bar
+    phrase start (so the 16-bar integration has 4, an 8-bar chorus has 2) plus
+    a snare fill leading out of each phrase — the long stretch breathes instead
+    of looping flat."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        drums = _clips_by_role(conn, built, "01 Drums")
+        for role in _METAL_SECTIONS:
+            notes = Q.get_notes_for_clip(conn, drums[role]["id"])
+            # The kit resolves the crash to the GM crash pad (49).
+            crash_hits = sorted({n["start_beats"] for n in notes if n["pitch"] == 49})
+            bars = {"chorus1": 8, "chorus2": 8, "break2": 8, "integration": 16}[role]
+            assert len(crash_hits) == bars // 4, (role, crash_hits)
+            assert crash_hits[0] == 0.0  # entrance crash
+        # The integration (the climax) carries the most crashes.
+        integ = Q.get_notes_for_clip(conn, drums["integration"]["id"])
+        assert len({n["start_beats"] for n in integ if n["pitch"] == 49}) == 4
     finally:
         conn.close()
 

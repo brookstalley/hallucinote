@@ -1,27 +1,40 @@
 """Build Sun Zone / Stuff Done into a SQLite DB.
 
-Reggae × speed-metal mashup. Alternating (not overlapping) sections at a
-constant 180 BPM. Reggae sections feel half-time (effective 90 BPM);
-metal sections inhabit 180 directly. Root: E throughout. Mode: Dorian
-on reggae, Phrygian on metal — the F#→F + C#→C pivot is the joke.
+Reggae × speed-metal mashup, authored on the `hallucinote.arrangement`
+capability. A 9-section / 80-bar narrative arc at a constant 180 BPM. Reggae
+sections feel half-time (effective 90 BPM); metal sections inhabit 180 directly.
+Root: E throughout. Mode: Dorian on reggae, Phrygian on metal — the F#→F + C#→C
+pivot is the joke.
 
-The Amp Type envelope on Rhythm Gtr (Clean ↔ Heavy) is the song's most
-audible genre-flip device. **Hosted by ONE long session clip** that
-spans the whole song (256 beats / 64 bars) — Live 12.4 LOM requires
-device_parameter envelopes to be hosted by a session clip covering
-the envelope's beat range, and one envelope per (device, parameter) is
-the data-model constraint. Other tracks (drums / bass / organ / lead)
-use per-section session clips for compose-time convenience; only the
-rhythm-gtr track is monolithic.
+The arc tells a story of adapting:
 
-Section bar layout (1-based, 4/4 throughout):
-    intro    bars  1– 8  ( 8 bars / 32 beats) — reggae, sun coming up
-    verse1   bars  9–16  ( 8 bars / 32 beats) — reggae, "chillin in the sun zone"
-    chorus1  bars 17–24  ( 8 bars / 32 beats) — metal, "NO TIME FOR THAT"
-    verse2   bars 25–32  ( 8 bars / 32 beats) — reggae, back to chill
-    chorus2  bars 33–40  ( 8 bars / 32 beats) — metal, escalating
-    bridge   bars 41–56  (16 bars / 64 beats) — metal, sustained
-    outro    bars 57–64  ( 8 bars / 32 beats) — reggae, exhausted
+    intro    bars  1– 8  reggae  energy 0.25  sun coming up (sparse; C3 polyrhythm)
+    verse1   bars  9–16  reggae  energy 0.40  "chillin in the sun zone"
+    chorus1  bars 17–24  metal   energy 0.80  "NO TIME FOR THAT" — first interruption
+    verse2   bars 25–32  reggae  energy 0.45  back to chill, hasn't given up (recurrence+delta)
+    chorus2  bars 33–40  metal   energy 0.90  second interruption, escalating (recurrence+delta)
+    break1   bars 41–48  break   energy 0.70  convention-break: reggae-time, metal timbre (C5)
+    break2   bars 49–56  break   energy 0.68  convention-break: metal-time, reggae timbre (C5)
+    integ.   bars 57–72  metal   energy 1.00  integrating final chorus — fuse both + polyrhythm (C5)
+    outro    bars 73–80  reggae  energy 0.35  enlightenment: reggae beat + metal bursts (C5)
+
+Every genre flip is a deliberate ENERGY DISCONTINUITY — never smoothed (see
+`.prawduct/artifacts/arrangement-model.md`). The break / integration / outro
+sections are authored here with restructured EXISTING material (Chunk 2 of the
+build plan); their genre-bending content lands as deltas/layers in later chunks.
+
+The per-section drums / bass / organ / lead are authored on
+`Arrangement` — one clip per (section, layer), placed automatically. Recurring
+sections (verse2, chorus2) are derived from their first instance via `vary()` +
+a `variations` op, so "same section, evolved" is one identity + a delta, never
+an independent copy.
+
+The Rhythm Gtr is the deliberate exception: it stays MONOLITHIC — one session
+clip spanning the whole song (320 beats / 80 bars) — because the Amp Type
+envelope (Clean ↔ Heavy, the song's most audible genre-flip device) must be
+hosted by one clip covering its full beat range (Live 12.4 LOM; one envelope per
+(device, parameter)). It is driven by the SAME `arr.plan()` output as the
+arrangement, so section boundaries stay in sync — single source of truth.
 
 Run:
     python songs/sun-zone-done/build.py            # state-converger
@@ -33,37 +46,37 @@ import argparse
 import json
 from pathlib import Path
 
+from hallucinote.arrangement import Arrangement, vary
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.generators import bass as BG, drums as DG, harmony as HG
+from hallucinote.generators import variations as V
 from hallucinote.generators.kit import Kit
 
 # W12-A: per-branch DB filename.
 DB_PATH = resolve_db_path("sun-zone-done", root=Path(__file__).parent.parent)
 SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
+BEATS_PER_BAR = 4.0
 
 # ---------------------------------------------------------------------------
-# Section bar boundaries (1-based)
+# The narrative arc — the authored section map (build-plan Chunk 2).
+# Each tuple: (name, function, genre, bars, energy). Bar ranges are assigned
+# sequentially by Arrangement.plan(); energy is the authored intensity intent
+# (direction across a transition is the *sequence* of energies, never smoothed —
+# the genre flips are deliberate discontinuities).
 # ---------------------------------------------------------------------------
-INTRO_BAR   = 1
-VERSE1_BAR  = 9
-CHORUS1_BAR = 17
-VERSE2_BAR  = 25
-CHORUS2_BAR = 33
-BRIDGE_BAR  = 41
-OUTRO_BAR   = 57
-END_BAR     = 65  # one past the last bar (64 bars total)
-
-SECTIONS = [
-    # (name, start_bar, end_bar, genre)
-    ("intro",   INTRO_BAR,   VERSE1_BAR,  "reggae"),
-    ("verse1",  VERSE1_BAR,  CHORUS1_BAR, "reggae"),
-    ("chorus1", CHORUS1_BAR, VERSE2_BAR,  "metal"),
-    ("verse2",  VERSE2_BAR,  CHORUS2_BAR, "reggae"),
-    ("chorus2", CHORUS2_BAR, BRIDGE_BAR,  "metal"),
-    ("bridge",  BRIDGE_BAR,  OUTRO_BAR,   "metal"),
-    ("outro",   OUTRO_BAR,   END_BAR,     "reggae"),
+ARC = [
+    # name           function  genre     bars  energy
+    ("intro",       "intro",  "reggae",   8,   0.25),
+    ("verse1",      "verse",  "reggae",   8,   0.40),
+    ("chorus1",     "chorus", "metal",    8,   0.80),
+    ("verse2",      "verse",  "reggae",   8,   0.45),
+    ("chorus2",     "chorus", "metal",    8,   0.90),
+    ("break1",      "break",  "reggae",   8,   0.70),
+    ("break2",      "break",  "metal",    8,   0.68),
+    ("integration", "chorus", "metal",   16,   1.00),
+    ("outro",       "outro",  "reggae",   8,   0.35),
 ]
 
 # Amp Type indices (Live exposes these in order):
@@ -92,6 +105,9 @@ C5  = 72   # phrygian b6 (metal lead)
 D5  = 74   # lead high
 E5  = 76   # lead top of metal range
 
+EM7 = [E3, G3, B3, D4]                 # rhythm-gtr reggae skank voicing
+EM_TRIAD_UPPER = [G3, B3, E4]          # organ bubble voicing
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,14 +117,6 @@ E5  = 76   # lead top of metal range
 def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
     """Map track name -> id for the song. Master included; returns are not."""
     return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
-
-
-def _clip_in_slot(conn, *, track_id: str, slot: int) -> dict | None:
-    """Find a session clip by (track, slot). Returns None if absent."""
-    for c in Q.get_clips_for_track(conn, track_id):
-        if c["slot"] == slot:
-            return c
-    return None
 
 
 def _note(pitch: int, start: float, dur: float, vel: int) -> dict:
@@ -133,48 +141,15 @@ def _kit_for_drums(conn, drum_track_id: str) -> Kit:
 
 
 # ---------------------------------------------------------------------------
-# Genre grooves — thin wrappers over hallucinote.generators
-# ---------------------------------------------------------------------------
-# The reggae/metal idioms were promoted into the shared generators package
-# (drums.reggae_one_drop / metal_gallop, bass.reggae_offbeat_bass /
-# metal_pedal_16ths, harmony.reggae_skank / organ_bubble /
-# palm_mute_power_chords) so other songs can reuse them. This song now
-# AUTHORS AGAINST that surface. Section-relative helpers below adapt the
-# generator API (bars + start_beat) to this build's (length_beats) call sites.
-
-EM7 = [E3, G3, B3, D4]                 # rhythm-gtr reggae skank voicing
-EM_TRIAD_UPPER = [G3, B3, E4]          # organ bubble voicing
-
-
-def _bars(length_beats: float) -> int:
-    return int(length_beats // 4)
-
-
-def _reggae_drums(kit: Kit, length_beats: float) -> list[dict]:
-    return DG.reggae_one_drop(_bars(length_beats), kit=kit)
-
-
-def _metal_drums(kit: Kit, length_beats: float) -> list[dict]:
-    return DG.metal_gallop(_bars(length_beats), kit=kit)
-
-
-def _reggae_bass(length_beats: float) -> list[dict]:
-    return BG.reggae_offbeat_bass(E2, bars=_bars(length_beats))
-
-
-def _metal_bass(length_beats: float) -> list[dict]:
-    return BG.metal_pedal_16ths(E2, bars=_bars(length_beats))
-
-
-# ---------------------------------------------------------------------------
 # Lead (placeholder vocal melody) — song-specific content, stays local.
 # These are the actual vocal hooks ("chillin in the sun zone" / "NO TIME FOR
 # THAT"), not reusable genre idioms, so they belong to the song, not the
-# shared generators package.
+# shared generators package. Authored 0-based within a section; the
+# Arrangement places the clip at the section's bar range.
 # ---------------------------------------------------------------------------
 
 
-def _reggae_lead_chillin(start_beats: float, length_beats: float) -> list[dict]:
+def _reggae_lead_chillin(length_beats: float) -> list[dict]:
     """'Chillin in the sun zone' — E Dorian melody, mid-register.
     Loops every 16 beats (4 bars)."""
     melody = [
@@ -188,13 +163,13 @@ def _reggae_lead_chillin(start_beats: float, length_beats: float) -> list[dict]:
     pattern_len = 16.0
     cycles = int(length_beats // pattern_len)
     for cycle in range(cycles):
-        offset = start_beats + cycle * pattern_len
+        offset = cycle * pattern_len
         for p, t, d, v in melody:
             notes.append(_note(p, offset + t, d, v))
     return notes
 
 
-def _metal_lead_no_time(start_beats: float, length_beats: float) -> list[dict]:
+def _metal_lead_no_time(length_beats: float) -> list[dict]:
     """'NO TIME FOR THAT' — E Phrygian stabs, upper register.
     Loops every 8 beats (2 bars)."""
     melody = [
@@ -208,108 +183,127 @@ def _metal_lead_no_time(start_beats: float, length_beats: float) -> list[dict]:
     pattern_len = 8.0
     cycles = int(length_beats // pattern_len)
     for cycle in range(cycles):
-        offset = start_beats + cycle * pattern_len
+        offset = cycle * pattern_len
         for p, t, d, v in melody:
             notes.append(_note(p, offset + t, d, v))
     return notes
 
 
 # ---------------------------------------------------------------------------
-# Per-section composition (drums, bass, organ, lead — NOT rhythm gtr)
+# Per-section layer blueprints (drums / bass / organ / lead — NOT rhythm gtr).
+# Each returns a {track name -> notes} map, 0-based within the section. A track
+# absent from the map simply doesn't play that section (organ tacet in metal;
+# intro deliberately sparse). The Arrangement assigns bars + emits the clips.
 # ---------------------------------------------------------------------------
 
 
-def _compose_sections(conn, song_id: str, tracks: dict[str, str]) -> None:
-    """Author per-section session clips for drums / bass / organ / lead.
-    Rhythm gtr is handled separately (one long clip — see _compose_rhythm_gtr)."""
-    kit = _kit_for_drums(conn, tracks["01 Drums"])
-    for section_idx, (name, start_bar, end_bar, genre) in enumerate(SECTIONS):
-        length_beats = (end_bar - start_bar) * 4.0
-        slot = section_idx + 1
+def _reggae_layers(kit: Kit, bars: int, *, sparse: bool = False) -> dict[str, list[dict]]:
+    """A full reggae section: one-drop drums + off-beat bass + organ bubble +
+    vocal hook. ``sparse=True`` (the intro) drops organ + lead — the sun is
+    just coming up; the hook hasn't arrived yet."""
+    layers: dict[str, list[dict]] = {
+        "01 Drums": DG.reggae_one_drop(bars, kit=kit),
+        "02 Bass":  BG.reggae_offbeat_bass(E2, bars=bars),
+    }
+    if not sparse:
+        layers["04 Organ"] = HG.organ_bubble(EM_TRIAD_UPPER, bars=bars)
+        layers["05 Lead"] = _reggae_lead_chillin(bars * BEATS_PER_BAR)
+    return layers
 
-        # --- Drums ---
-        drum_notes = (_reggae_drums(kit, length_beats) if genre == "reggae"
-                       else _metal_drums(kit, length_beats))
-        drum_clip = M.create_clip(
-            conn, track_id=tracks["01 Drums"], slot=slot,
-            name=f"{name.capitalize()} Drums",
-            length_beats=length_beats,
-            section_role=name,
-            actor="build", reason=f"{genre} drums",
+
+def _metal_layers(kit: Kit, bars: int) -> dict[str, list[dict]]:
+    """A metal section: gallop drums + 16th pedal bass + cutting Phrygian lead.
+    Organ is tacet (it returns only in the reggae world)."""
+    return {
+        "01 Drums": DG.metal_gallop(bars, kit=kit),
+        "02 Bass":  BG.metal_pedal_16ths(E2, bars=bars),
+        "05 Lead":  _metal_lead_no_time(bars * BEATS_PER_BAR),
+    }
+
+
+def _octave_up(notes: list[dict]) -> list[dict]:
+    """Recurrence delta: double a layer an octave higher (brighter / fuller)."""
+    return notes + V.transpose(notes, 12)
+
+
+def _octave_down(notes: list[dict]) -> list[dict]:
+    """Recurrence delta: double a layer an octave lower (heavier / escalating)."""
+    return notes + V.transpose(notes, -12)
+
+
+def _build_arrangement(kit: Kit) -> Arrangement:
+    """Author the full narrative arc on the arrangement module.
+
+    Recurring sections are derived from their first instance via ``vary`` — the
+    cumulative-development primitive. verse2 / chorus2 are NOT independent
+    copies; they are verse1 / chorus1 + a single delta, so "same section,
+    evolved" reads as one identity plus a change.
+    """
+    arr = Arrangement(beats_per_bar=BEATS_PER_BAR)
+    specs = {name: (function, genre, bars, energy)
+             for name, function, genre, bars, energy in ARC}
+
+    # First instances (blueprints the recurrences derive from).
+    verse1 = _reggae_layers(kit, specs["verse1"][2])
+    chorus1 = _metal_layers(kit, specs["chorus1"][2])
+
+    # Recurrence deltas (the heart of the model — multi-axis, bidirectional):
+    #   verse2  = verse1  + organ octave-doubled  ("more layered, hasn't given up")
+    #   chorus2 = chorus1 + lead  octave-doubled down ("escalating, heavier")
+    verse2 = vary(verse1, transform={"04 Organ": _octave_up})
+    chorus2 = vary(chorus1, transform={"05 Lead": _octave_down})
+
+    layers_by_name = {
+        "intro":       _reggae_layers(kit, specs["intro"][2], sparse=True),
+        "verse1":      verse1,
+        "chorus1":     chorus1,
+        "verse2":      verse2,
+        "chorus2":     chorus2,
+        # break / integration / outro: Chunk 2 restructures EXISTING material;
+        # the timbre/time swaps, fusion, and bursts are authored in Chunk 5.
+        "break1":      _reggae_layers(kit, specs["break1"][2]),
+        "break2":      _metal_layers(kit, specs["break2"][2]),
+        "integration": _metal_layers(kit, specs["integration"][2]),
+        "outro":       _reggae_layers(kit, specs["outro"][2]),
+    }
+
+    for name, function, genre, bars, energy in ARC:
+        arr.section(
+            name, function=function, bars=bars, genre=genre,
+            energy=energy, layers=layers_by_name[name],
         )
-        M.replace_clip_notes(conn, clip_id=drum_clip, notes=drum_notes,
-                              actor="build", reason="initial composition")
-
-        # --- Bass ---
-        bass_notes = (_reggae_bass(length_beats) if genre == "reggae"
-                       else _metal_bass(length_beats))
-        bass_clip = M.create_clip(
-            conn, track_id=tracks["02 Bass"], slot=slot,
-            name=f"{name.capitalize()} Bass",
-            length_beats=length_beats,
-            section_role=name,
-            actor="build", reason=f"{genre} bass",
-        )
-        M.replace_clip_notes(conn, clip_id=bass_clip, notes=bass_notes,
-                              actor="build", reason="initial composition")
-
-        # --- Organ (reggae-only) ---
-        if genre == "reggae":
-            organ_notes = HG.organ_bubble(EM_TRIAD_UPPER, bars=_bars(length_beats))
-            organ_clip = M.create_clip(
-                conn, track_id=tracks["04 Organ"], slot=slot,
-                name=f"{name.capitalize()} Organ",
-                length_beats=length_beats,
-                section_role=name,
-                actor="build", reason="reggae organ bubbles",
-            )
-            M.replace_clip_notes(conn, clip_id=organ_clip, notes=organ_notes,
-                                  actor="build", reason="initial composition")
-
-        # --- Lead ---
-        lead_notes = (_reggae_lead_chillin(0.0, length_beats) if genre == "reggae"
-                       else _metal_lead_no_time(0.0, length_beats))
-        lead_clip = M.create_clip(
-            conn, track_id=tracks["05 Lead"], slot=slot,
-            name=f"{name.capitalize()} Lead",
-            length_beats=length_beats,
-            section_role=name,
-            actor="build", reason=f"{genre} lead (placeholder vocal)",
-        )
-        M.replace_clip_notes(conn, clip_id=lead_clip, notes=lead_notes,
-                              actor="build", reason="initial composition")
+    return arr
 
 
 # ---------------------------------------------------------------------------
-# Rhythm gtr — ONE long session clip + ONE envelope across sections
+# Rhythm gtr — ONE long session clip + ONE envelope across sections.
+# The deliberate note-floor exception to the arrangement module: a monolithic
+# clip is required to host the Amp Type device_parameter envelope. Driven by
+# the SAME planned sections so its boundaries match the arrangement exactly.
 # ---------------------------------------------------------------------------
 
 
-def _compose_rhythm_gtr(conn, song_id: str, tracks: dict[str, str]) -> None:
-    """Rhythm gtr is monolithic. One session clip spanning the whole song
-    (256 beats / 64 bars), containing all per-section gtr notes concatenated.
-    The Amp Type envelope sits on the track's Amp device with breakpoints
-    at section boundaries — Live 12.4 LOM requires device_parameter envelopes
-    to be hosted by a clip covering the envelope's full beat range; one
-    envelope per (device, parameter) is the data-model constraint. ONE long
-    clip is the structural fix.
+def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
+    """Author the monolithic rhythm-gtr clip + the Amp Type envelope.
+
+    ``placed`` is ``Arrangement.plan()`` output — the single source of truth for
+    section bar ranges and genre, so the gtr's section-boundary note seams and
+    the Amp breakpoints line up with the per-section clips bar-for-bar.
     """
     gtr_track_id = tracks["03 Rhythm Gtr"]
-    total_beats = (END_BAR - INTRO_BAR) * 4.0  # 256 beats
+    first_bar = placed[0].start_bar
+    total_beats = (placed[-1].end_bar - first_bar) * BEATS_PER_BAR
 
-    # Build the concatenated note list — each section starts at its absolute
-    # beat position within the song.
     all_notes: list[dict] = []
-    for name, start_bar, end_bar, genre in SECTIONS:
-        section_start_beats = (start_bar - INTRO_BAR) * 4.0
-        section_bars = _bars((end_bar - start_bar) * 4.0)
-        if genre == "reggae":
-            section_notes = HG.reggae_skank(
-                EM7, bars=section_bars, start_beat=section_start_beats)
+    for sec in placed:
+        section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
+        section_bars = sec.end_bar - sec.start_bar
+        if sec.genre == "reggae":
+            all_notes.extend(HG.reggae_skank(
+                EM7, bars=section_bars, start_beat=section_start_beats))
         else:
-            section_notes = HG.palm_mute_power_chords(
-                E3, bars=section_bars, start_beat=section_start_beats)
-        all_notes.extend(section_notes)
+            all_notes.extend(HG.palm_mute_power_chords(
+                E3, bars=section_bars, start_beat=section_start_beats))
 
     gtr_clip = M.create_clip(
         conn, track_id=gtr_track_id, slot=1,
@@ -320,9 +314,15 @@ def _compose_rhythm_gtr(conn, song_id: str, tracks: dict[str, str]) -> None:
         reason="monolithic rhythm gtr clip for Amp envelope hosting",
     )
     M.replace_clip_notes(conn, clip_id=gtr_clip, notes=all_notes,
-                          actor="build", reason="initial composition")
+                         actor="build", reason="initial composition")
+    M.add_arrangement_clip(
+        conn, song_id=song_id,
+        track_id=gtr_track_id, clip_id=gtr_clip,
+        start_bar=float(first_bar), end_bar=float(placed[-1].end_bar),
+        actor="build", reason="rhythm gtr full-song placement",
+    )
 
-    # --- Amp Type envelope: section-boundary breakpoints ---
+    # --- Amp Type envelope: one breakpoint at every genre change ---
     gtr_devices = Q.get_devices_for_track(conn, gtr_track_id)
     amp_device = next((d for d in gtr_devices if d["kind"] == "Amp"), None)
     if amp_device is None:
@@ -331,19 +331,18 @@ def _compose_rhythm_gtr(conn, song_id: str, tracks: dict[str, str]) -> None:
             f"found {[d['kind'] for d in gtr_devices]}"
         )
 
-    # Build breakpoint at every genre change boundary.
     breakpoints: list[dict] = []
     last_genre: str | None = None
-    for name, start_bar, end_bar, genre in SECTIONS:
-        if genre != last_genre:
-            amp_value = "Heavy" if genre == "metal" else "Clean"
-            section_start_beats = (start_bar - INTRO_BAR) * 4.0
+    for sec in placed:
+        if sec.genre != last_genre:
+            amp_value = "Heavy" if sec.genre == "metal" else "Clean"
+            section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
             breakpoints.append({
                 "time_beats": section_start_beats,
                 "value": amp_value,
                 "curve_kind": "hold",
             })
-            last_genre = genre
+            last_genre = sec.genre
 
     M.create_enum_envelope(
         conn,
@@ -354,70 +353,6 @@ def _compose_rhythm_gtr(conn, song_id: str, tracks: dict[str, str]) -> None:
         actor="build",
         reason="genre-flip amp character at section boundaries",
     )
-
-
-# ---------------------------------------------------------------------------
-# Sections + Arrangement + Cues
-# ---------------------------------------------------------------------------
-
-
-def _author_sections(conn, song_id: str) -> None:
-    for name, start_bar, end_bar, _genre in SECTIONS:
-        M.create_section(
-            conn, song_id=song_id, name=name,
-            start_bar=float(start_bar), end_bar=float(end_bar),
-            actor="build", reason="section boundary",
-        )
-
-
-def _author_arrangement(conn, song_id: str, tracks: dict[str, str]) -> None:
-    """Place clips into the arrangement timeline.
-
-    Drums / Bass / Organ / Lead: per-section clips placed at each section's
-    bar range. Rhythm gtr: ONE clip placed at bar 1 spanning all 64 bars.
-    """
-    # Per-section tracks
-    for section_idx, (name, start_bar, end_bar, genre) in enumerate(SECTIONS):
-        slot = section_idx + 1
-        per_section_tracks = ["01 Drums", "02 Bass", "05 Lead"]
-        if genre == "reggae":
-            per_section_tracks.append("04 Organ")
-        for tname in per_section_tracks:
-            tid = tracks[tname]
-            clip = _clip_in_slot(conn, track_id=tid, slot=slot)
-            if clip is None:
-                continue
-            M.add_arrangement_clip(
-                conn, song_id=song_id,
-                track_id=tid,
-                clip_id=clip["id"],
-                start_bar=float(start_bar),
-                end_bar=float(end_bar),
-                actor="build", reason=f"{name} placement",
-            )
-
-    # Rhythm gtr: one big placement spanning the whole song
-    gtr_tid = tracks["03 Rhythm Gtr"]
-    gtr_clip = _clip_in_slot(conn, track_id=gtr_tid, slot=1)
-    if gtr_clip is not None:
-        M.add_arrangement_clip(
-            conn, song_id=song_id,
-            track_id=gtr_tid,
-            clip_id=gtr_clip["id"],
-            start_bar=float(INTRO_BAR),
-            end_bar=float(END_BAR),
-            actor="build", reason="rhythm gtr full-song placement",
-        )
-
-
-def _author_cues(conn, song_id: str) -> None:
-    for name, start_bar, _end, _genre in SECTIONS:
-        M.add_cue_point(
-            conn, song_id=song_id,
-            position_bar=float(start_bar),
-            name=name,
-            actor="build", reason=f"{name} cue",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -450,22 +385,29 @@ def build(reset: bool = False) -> str:
                 conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
             )
 
-            # Compose-half.
+            # Compose-half: author the arc on the arrangement module.
             tracks = _tracks_by_name(conn, song_id)
-            _author_sections(conn, song_id)
-            _compose_sections(conn, song_id, tracks)
-            _compose_rhythm_gtr(conn, song_id, tracks)
-            _author_arrangement(conn, song_id, tracks)
-            _author_cues(conn, song_id)
+            kit = _kit_for_drums(conn, tracks["01 Drums"])
+            arr = _build_arrangement(kit)
+            placed = arr.plan()
+            created = arr.materialize(
+                conn, song_id=song_id, tracks=tracks,
+                author_sections=True, author_cues=True, actor="build",
+            )
+            _compose_rhythm_gtr(conn, song_id, tracks, placed)
 
             # Report.
-            print(f"song_id={song_id}, tempo=180, key=Em, sections={len(SECTIONS)}")
+            print(f"song_id={song_id}, tempo=180, key=Em, "
+                  f"sections={len(ARC)}, total_bars={arr.total_bars}")
+            print(f"  arrangement-module created: {created}")
+            print(f"  energy curve: "
+                  f"{[(n, e) for n, e in arr.energy_curve]}")
             for tname in ("01 Drums", "02 Bass", "03 Rhythm Gtr",
                           "04 Organ", "05 Lead"):
                 tid = tracks[tname]
                 clips = Q.get_clips_for_track(conn, tid)
                 total_notes = sum(len(Q.get_notes_for_clip(conn, c["id"]))
-                                   for c in clips)
+                                  for c in clips)
                 print(f"  {tname:20s} clips={len(clips)} notes={total_notes}")
             envs = Q.get_envelopes_for_song(conn, song_id)
             print(f"  envelopes: {len(envs)}")
@@ -474,8 +416,8 @@ def build(reset: bool = False) -> str:
                 print(f"    target_kind={env['target_kind']:18s} "
                       f"param={env['parameter_path'] or '-':12s} "
                       f"breakpoints={len(bps)}")
-            arr = Q.get_arrangement_for_song(conn, song_id)
-            print(f"  arrangement placements: {len(arr)}")
+            arrangement = Q.get_arrangement_for_song(conn, song_id)
+            print(f"  arrangement placements: {len(arrangement)}")
             cues = Q.get_cue_points(conn, song_id)
             print(f"  cue points: {len(cues)}")
         return song_id

@@ -311,7 +311,13 @@ def reggae_one_drop(
     Tagged "kick"/"snare"/"hat" + "one_drop".
     """
     kick, snare = kit.kick, kit.snare
-    hat_c, hat_o = kit.hat_closed, kit.hat_open
+    hat_c = kit.hat_closed
+    # The open-hat "lift" every 4th bar is an OPTIONAL accent — many real kits
+    # (e.g. Ableton's Hot Rod Kit) ship closed hats only. Degrade gracefully:
+    # skip the lift if the kit has no open hat rather than crash the build. The
+    # closed hat at 3.5 still plays, so the bar is never empty there. The
+    # load-bearing pads (kick/snare/closed-hat) still raise loudly if absent.
+    hat_o = kit.try_pitch_of("hat_open")
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
@@ -324,7 +330,7 @@ def reggae_one_drop(
             out.append(_note(hat_c, bs + apply_feel(off, feel) + lazy * 0.5, 0.25,
                              hat_velocity + (4 if off == 1.5 else 0),
                              ["hat", "closed", "offbeat"]))
-        if (b + 1) % 4 == 0:
+        if hat_o is not None and (b + 1) % 4 == 0:
             out.append(_note(hat_o, bs + apply_feel(3.5, feel) + lazy, 0.5, open_hat_velocity,
                              ["hat", "open", "lift"]))
     return out
@@ -355,7 +361,11 @@ def metal_gallop(
     "kick"/"snare"/"hat"/"crash" + "gallop". Pairs rhythmically with
     :func:`hallucinote.generators.harmony.palm_mute_power_chords`.
     """
-    kick, snare, hat_c, crash = kit.kick, kit.snare, kit.hat_closed, kit.crash
+    kick, snare, hat_c = kit.kick, kit.snare, kit.hat_closed
+    # The crash is an OPTIONAL section-entrance accent — degrade gracefully on
+    # kits without one (skip the accent rather than crash the build). A caller
+    # that REQUIRES a crash should `kit.assert_has("crash")` up front.
+    crash = kit.try_pitch_of("crash")
     crash_set = set(crash_bars)
     out: list[NoteDict] = []
     for b in range(bars):
@@ -373,7 +383,7 @@ def metal_gallop(
             out.append(_note(hat_c, bs + apply_feel(t, feel), 0.10,
                              hat_velocity + (hat_accent_boost if accent else 0),
                              ["hat", "closed"] + (["accent"] if accent else [])))
-        if b in crash_set:
+        if crash is not None and b in crash_set:
             out.append(_note(crash, bs + apply_feel(0.0, feel), 1.0, crash_velocity,
                              ["crash", "accent"]))
     return out

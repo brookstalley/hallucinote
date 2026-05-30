@@ -67,6 +67,22 @@ def test_one_drop_open_hat_every_fourth_bar():
         pytest.approx([12.0 + 3.5 + 0.04, 28.0 + 3.5 + 0.04])
 
 
+def test_one_drop_degrades_gracefully_without_open_hat():
+    """Real kits (e.g. Ableton's Hot Rod Kit) often ship closed hats only.
+    The open-hat 'lift' is an optional accent — the one-drop must build
+    without it rather than crash on `kit.hat_open`. The load-bearing pads
+    (kick/snare/closed-hat) still play."""
+    closed_only = Kit.from_dict(
+        {"kick": 36, "snare": 38, "hat_closed": 42}, name="closed-only")
+    notes = drums.reggae_one_drop(8, kit=closed_only)  # must not raise
+    assert all(_well_formed(n) for n in notes)
+    assert _at(notes, tag="lift") == []          # the lift is omitted
+    assert _at(notes, tag="open") == []
+    assert _at(notes, pitch=36)                  # kick still present
+    assert _at(notes, pitch=38)                  # snare still present
+    assert _at(notes, pitch=42)                  # closed hats still present
+
+
 # --------------------------------------------------------------------------
 # Metal gallop drums
 # --------------------------------------------------------------------------
@@ -86,6 +102,19 @@ def test_metal_gallop_crash_only_on_named_bars():
     # Default is a section-entrance crash on the first bar.
     assert drums.metal_gallop(2, kit=_KIT) and \
         len(_at(drums.metal_gallop(2, kit=_KIT), tag="crash")) == 1
+
+
+def test_metal_gallop_degrades_gracefully_without_crash():
+    """The section-entrance crash is an optional accent — the gallop must
+    build on a crash-less kit rather than raise on `kit.crash`. The engine
+    (kick gallop + snare backbeat + 16th hats) still plays."""
+    crashless = Kit.from_dict(
+        {"kick": 36, "snare": 38, "hat_closed": 42}, name="crashless")
+    notes = drums.metal_gallop(4, kit=crashless, crash_bars=(0,))  # must not raise
+    assert all(_well_formed(n) for n in notes)
+    assert _at(notes, tag="crash") == []         # the crash is omitted
+    assert _at(notes, pitch=36)                  # gallop kicks still present
+    assert _at(notes, pitch=38)                  # snare backbeat still present
 
 
 def test_metal_gallop_snare_on_two_and_four():

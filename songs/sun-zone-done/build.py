@@ -14,15 +14,19 @@ The arc tells a story of adapting:
     chorus1  bars 17–24  metal   energy 0.80  "NO TIME FOR THAT" — first interruption
     verse2   bars 25–32  reggae  energy 0.45  back to chill, hasn't given up (recurrence+delta)
     chorus2  bars 33–40  metal   energy 0.90  second interruption, escalating (recurrence+delta)
-    break1   bars 41–48  break   energy 0.70  convention-break: reggae-time, metal timbre (C5)
-    break2   bars 49–56  break   energy 0.68  convention-break: metal-time, reggae timbre (C5)
-    integ.   bars 57–72  metal   energy 1.00  integrating final chorus — fuse both + polyrhythm (C5)
-    outro    bars 73–80  reggae  energy 0.35  enlightenment: reggae beat + metal bursts (C5)
+    break1   bars 41–48  break   energy 0.70  convention-break: reggae groove through a HEAVY amp
+    break2   bars 49–56  break   energy 0.68  convention-break: metal groove, CLEAN amp + organ
+    integ.   bars 57–72  metal   energy 1.00  integrating final chorus — metal engine FUSED with
+                                              the intro polyrhythm cloud (organ callback)
+    outro    bars 73–80  reggae  energy 0.35  enlightenment: reggae beat + steel + metal di-di-di bursts
 
 Every genre flip is a deliberate ENERGY DISCONTINUITY — never smoothed (see
-`.prawduct/artifacts/arrangement-model.md`). The break / integration / outro
-sections are authored here with restructured EXISTING material (Chunk 2 of the
-build plan); their genre-bending content lands as deltas/layers in later chunks.
+`.prawduct/artifacts/arrangement-model.md`). The convention-break decouples the
+Amp TIMBRE from the groove TIME-FEEL (break1 = reggae time / metal timbre;
+break2 = metal time / reggae timbre); the integration QUOTES the registered
+polyrhythm motif (recapitulation); the outro fragments + double-times the
+no-time hook into the reggae groove. The metal di-di-di bursts feed the DubDelay
+(a 1/4-note tempo-synced, scale-safe tap) via a static Lead send.
 
 The per-section drums / bass / organ / lead are authored on
 `Arrangement` — one clip per (section, layer), placed automatically. Recurring
@@ -172,22 +176,30 @@ def _reggae_lead_chillin(length_beats: float) -> list[dict]:
     return notes
 
 
+# The 'NO TIME FOR THAT' hook as one canonical 8-beat (2-bar) cycle — E Phrygian
+# stabs, upper register. Registered as a motif so later sections can quote it.
+_NO_TIME_CYCLE = [
+    (E5, 0.0, 0.5, 110), (D5, 1.0, 0.5, 108),
+    (C5, 2.0, 0.5, 110), (E5, 3.0, 0.5, 108),
+    (E4, 4.0, 0.3, 105), (F4, 4.5, 0.3, 108),
+    (G4, 5.0, 0.5, 110), (B4, 6.0, 0.5, 112),
+    (E5, 7.0, 1.0, 115),
+]
+
+
+def _no_time_motif() -> list[dict]:
+    """The 'NO TIME' hook as a single 0-based cycle — the referenceable motif."""
+    return [_note(p, t, d, v) for p, t, d, v in _NO_TIME_CYCLE]
+
+
 def _metal_lead_no_time(length_beats: float) -> list[dict]:
-    """'NO TIME FOR THAT' — E Phrygian stabs, upper register.
-    Loops every 8 beats (2 bars)."""
-    melody = [
-        (E5, 0.0, 0.5, 110), (D5, 1.0, 0.5, 108),
-        (C5, 2.0, 0.5, 110), (E5, 3.0, 0.5, 108),
-        (E4, 4.0, 0.3, 105), (F4, 4.5, 0.3, 108),
-        (G4, 5.0, 0.5, 110), (B4, 6.0, 0.5, 112),
-        (E5, 7.0, 1.0, 115),
-    ]
+    """'NO TIME FOR THAT' — the hook tiled across the section (loops every 8
+    beats / 2 bars)."""
     notes: list[dict] = []
-    pattern_len = 8.0
-    cycles = int(length_beats // pattern_len)
+    cycles = int(length_beats // 8.0)
     for cycle in range(cycles):
-        offset = cycle * pattern_len
-        for p, t, d, v in melody:
+        offset = cycle * 8.0
+        for p, t, d, v in _NO_TIME_CYCLE:
             notes.append(_note(p, offset + t, d, v))
     return notes
 
@@ -359,6 +371,68 @@ def _steel_island(bars: int) -> list[dict]:
     return notes
 
 
+# ---------------------------------------------------------------------------
+# The convention-break + integration + outro (build-plan Chunk 5).
+#
+# Convention-break: the Amp TIMBRE is decoupled from the groove's TIME-FEEL.
+# Normally Heavy=metal, Clean=reggae. The break INVERTS it — that inversion is
+# the "playing with conventions":
+#   break1 = reggae groove (one-drop + skank notes) through a HEAVY amp
+#            -> metal timbre on reggae time
+#   break2 = metal groove (gallop + power-chord notes) through a CLEAN amp,
+#            with the reggae organ bubble interleaved -> reggae timbre on metal time
+#
+# Integration: the registered polyrhythm-cloud motif is QUOTED on the organ —
+# the intro's chaos returns inside the metal climax, the two worlds fused (the
+# recapitulation primitive). The organ, tacet through the pure metal choruses,
+# comes back here.
+#
+# Outro: the registered no-time hook is fragmented + diminished (double-time) +
+# shifted into the reggae groove as brief metal bursts — the enlightened
+# protagonist's stress flashbacks, now at peace. These reference ops are
+# tiling-safe BECAUSE the motif is a single cycle (unlike the pre-tiled lists).
+# ---------------------------------------------------------------------------
+
+_AMP_OVERRIDE = {"break1": "Heavy", "break2": "Clean"}  # the convention inversion
+
+
+def _amp_for(name: str, genre: str | None) -> str:
+    """The Amp Type for a section: genre by default (Heavy=metal, Clean=reggae),
+    inverted for the convention-break sections."""
+    if name in _AMP_OVERRIDE:
+        return _AMP_OVERRIDE[name]
+    return "Heavy" if genre == "metal" else "Clean"
+
+
+def _polyrhythm_callback(motif_notes: list[dict], bars: int) -> list[dict]:
+    """Tile the registered polyrhythm cloud across the integration — the intro's
+    chaos returning inside the metal climax (the fusion)."""
+    notes: list[dict] = []
+    cell = 2 * BEATS_PER_BAR
+    for c in range(int(bars * BEATS_PER_BAR // cell)):
+        notes.extend(V.shift(motif_notes, c * cell))
+    return notes
+
+
+def _double_time_burst(motif_notes: list[dict], at_beat: float) -> list[dict]:
+    """A fast descending-Phrygian stab derived from the no-time hook: its
+    opening gesture, halved in duration (double-time), dropped in at ``at_beat``.
+    fragment -> diminish -> shift on a SINGLE-cycle motif (tiling-safe)."""
+    opening = V.fragment(motif_notes, 0.0, 4.0)   # the E5-D5-C5-E5 stabs
+    fast = V.diminish(opening, 2.0)               # double-time
+    return V.shift(fast, at_beat)
+
+
+def _outro_lead(bars: int, no_time_motif: list[dict]) -> list[dict]:
+    """The reggae 'chillin' hook with a couple of metal double-time bursts
+    flashing through — the enlightened protagonist holding both worlds."""
+    notes = _reggae_lead_chillin(bars * BEATS_PER_BAR)
+    # Bursts land in the hook's gaps (beats 13 and 29 of the two 16-beat cycles).
+    notes.extend(_double_time_burst(no_time_motif, 13.0))
+    notes.extend(_double_time_burst(no_time_motif, 29.0))
+    return notes
+
+
 def _octave_up(notes: list[dict]) -> list[dict]:
     """Recurrence delta: double a layer an octave higher (brighter / fuller)."""
     return notes + V.transpose(notes, 12)
@@ -381,9 +455,11 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     specs = {name: (function, genre, bars, energy)
              for name, function, genre, bars, energy in ARC}
 
-    # Register the polyrhythm cloud so the integrating final chorus (Chunk 5)
-    # can call it back — the recapitulation/reference primitive.
-    arr.motif("polyrhythm-cloud", _polyrhythm_cell())
+    # Register the referenceable motifs — the recapitulation/reference primitive.
+    # The polyrhythm cloud returns in the integration; the no-time hook is
+    # fragmented + double-timed into the outro bursts.
+    poly = arr.motif("polyrhythm-cloud", _polyrhythm_cell())
+    no_time = arr.motif("no-time-stab", _no_time_motif())
 
     # The intro: sparse rhythm section (drums + bass + skank) under the
     # hand-authored polyrhythm build on the organ — the sun coming up. No lead
@@ -406,10 +482,23 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     )
     chorus2 = vary(chorus1, transform={"05 Lead": _octave_down})
 
-    # The enlightenment outro: the full reggae world + the steel pans (island
-    # paradise). Chunk 5 adds the metal riff / double-time bursts on top.
+    # Convention-break, metal-time half: gallop groove + power chords (Clean amp
+    # via _amp_for) with the REGGAE organ bubble interleaved — reggae
+    # instrumentation in metal time.
+    break2 = _metal_layers(kit, specs["break2"][2])
+    break2["04 Organ"] = HG.organ_bubble(EM_TRIAD_UPPER, bars=specs["break2"][2])
+
+    # Integrating final chorus: the metal engine FUSED with the intro's
+    # polyrhythm cloud (quoted on the organ — the recapitulation callback). The
+    # organ, silent through the pure metal choruses, returns at the climax.
+    integration = _metal_layers(kit, specs["integration"][2])
+    integration["04 Organ"] = _polyrhythm_callback(poly.notes, specs["integration"][2])
+
+    # The enlightenment outro: the full reggae world + steel pans (island
+    # paradise) + brief metal double-time bursts on the lead (the stress, at peace).
     outro = _reggae_layers(kit, specs["outro"][2])
     outro["06 Steel"] = _steel_island(specs["outro"][2])
+    outro["05 Lead"] = _outro_lead(specs["outro"][2], no_time.notes)
 
     layers_by_name = {
         "intro":       intro,
@@ -420,8 +509,8 @@ def _build_arrangement(kit: Kit) -> Arrangement:
         # break / integration / outro: Chunk 2 restructures EXISTING material;
         # the timbre/time swaps, fusion, and bursts are authored in Chunk 5.
         "break1":      _reggae_layers(kit, specs["break1"][2]),
-        "break2":      _metal_layers(kit, specs["break2"][2]),
-        "integration": _metal_layers(kit, specs["integration"][2]),
+        "break2":      break2,
+        "integration": integration,
         "outro":       outro,
     }
 
@@ -489,18 +578,22 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
             f"found {[d['kind'] for d in gtr_devices]}"
         )
 
+    # The Amp Type follows _amp_for (genre by default, INVERTED in the
+    # convention-break) — decoupled from the groove NOTES above, which stay
+    # genre-driven. That decoupling is what makes break1 a distorted reggae
+    # skank and break2 a clean metal chug.
     breakpoints: list[dict] = []
-    last_genre: str | None = None
+    last_amp: str | None = None
     for sec in placed:
-        if sec.genre != last_genre:
-            amp_value = "Heavy" if sec.genre == "metal" else "Clean"
+        amp_value = _amp_for(sec.name, sec.genre)
+        if amp_value != last_amp:
             section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
             breakpoints.append({
                 "time_beats": section_start_beats,
                 "value": amp_value,
                 "curve_kind": "hold",
             })
-            last_genre = sec.genre
+            last_amp = amp_value
 
     M.create_enum_envelope(
         conn,

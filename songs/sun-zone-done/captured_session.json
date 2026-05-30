@@ -141,7 +141,7 @@
     {
       "index": 5, "name": "05 Lead", "type": "midi",
       "volume": 0.70, "panning": 0.0,
-      "sends": {"Plate": 0.25, "Room": 0.10, "DubDelay": 0.0},
+      "sends": {"Plate": 0.25, "Room": 0.10, "DubDelay": 0.12},
       "devices": [
         {
           "index": 1, "name": "Wavetable", "class": "Wavetable",

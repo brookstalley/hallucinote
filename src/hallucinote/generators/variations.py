@@ -22,7 +22,9 @@ it is unambiguously bookkeeping.
 """
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
+
+from hallucinote.theory.model import Mode, pc_name
 
 NoteDict = dict[str, Any]
 
@@ -54,7 +56,9 @@ def _sorted(notes: list[NoteDict]) -> list[NoteDict]:
 
 
 def transpose(notes: Sequence[NoteDict], semitones: int) -> list[NoteDict]:
-    """Shift every pitch by ``semitones`` (intervals preserved).
+    """Shift every pitch by ``semitones`` (intervals preserved) — CHROMATIC,
+    key-blind. Use this for raw pitch shifts; use :func:`transpose_diatonic` when
+    you want to move WITHIN a key (preserving harmonic function).
 
     Raises ``ValueError`` if any result leaves MIDI range — fail loud rather
     than silently collapse a melody against the ceiling.
@@ -63,6 +67,85 @@ def transpose(notes: Sequence[NoteDict], semitones: int) -> list[NoteDict]:
     for n in notes:
         m = _copy(n)
         m["pitch"] = _checked_pitch(n["pitch"], n["pitch"] + semitones, "transpose")
+        out.append(m)
+    return out
+
+
+def transpose_diatonic(
+    notes: Sequence[NoteDict],
+    *,
+    mode: Mode,
+    key_pc: int,
+    steps: int,
+    on_nonscale: Literal["raise", "snap", "pass"] = "raise",
+) -> list[NoteDict]:
+    """Shift every pitch by ``steps`` SCALE DEGREES within ``(key_pc, mode)``.
+
+    The key-aware sibling of :func:`transpose` (which is chromatic). Moving "up a
+    third" in E Dorian sends E→G (two degrees), not E→G# (four semitones), so the
+    transposed material stays diatonic and keeps its harmonic function — the
+    difference that matters for reharmonization and tonal answers. ``steps`` is
+    in scale degrees: +1 = next scale tone up, +7 (in a heptatonic mode) = up an
+    octave; negatives go down.
+
+    The op does the degree arithmetic; the composer decides the policy for a note
+    that is NOT in the scale (a chromatic passing tone) via ``on_nonscale``:
+      - ``"raise"`` (default) — fail loud, the same discipline as the MIDI-range
+        check (a chromatic note in a diatonic transpose is usually a mistake).
+      - ``"snap"`` — snap the note to the nearest scale tone first, then shift.
+      - ``"pass"`` — leave the chromatic note unchanged (transpose only the scale
+        tones around it — useful when the chromaticism is a fixed embellishment).
+
+    Raises ``ValueError`` if any result leaves MIDI range. A ruler: it never
+    decides whether or where to transpose, only how to move within the declared
+    scale.
+    """
+    if on_nonscale not in ("raise", "snap", "pass"):
+        raise ValueError(
+            f"transpose_diatonic: on_nonscale must be 'raise'|'snap'|'pass', "
+            f"got {on_nonscale!r}"
+        )
+    intervals = mode.intervals
+    n_degrees = len(intervals)
+
+    def degree_of(pitch: int) -> int | None:
+        """The scale degree (0..n-1) of ``pitch``, or None if it's not in scale."""
+        pc = pitch % 12
+        for d, iv in enumerate(intervals):
+            if (key_pc + iv) % 12 == pc:
+                return d
+        return None
+
+    def scale_pitch(octave: int, degree: int) -> int:
+        return 12 * octave + key_pc + intervals[degree]
+
+    def nearest_scale_pitch(pitch: int) -> int:
+        base = pitch // 12
+        cands = [scale_pitch(o, d)
+                 for o in (base - 1, base, base + 1) for d in range(n_degrees)]
+        return min(cands, key=lambda c: (abs(c - pitch), c))  # ties -> lower
+
+    out: list[NoteDict] = []
+    for note in notes:
+        p = note["pitch"]
+        d = degree_of(p)
+        if d is None:
+            if on_nonscale == "raise":
+                raise ValueError(
+                    f"transpose_diatonic: pitch {p} (pc {pc_name(p % 12)}) is not "
+                    f"in {pc_name(key_pc)} {mode.name}; pass on_nonscale='snap' or "
+                    f"'pass' to handle chromatic notes"
+                )
+            if on_nonscale == "pass":
+                out.append(_copy(note))
+                continue
+            p = nearest_scale_pitch(p)  # snap
+            d = degree_of(p)
+        octave = (p - key_pc - intervals[d]) // 12
+        new_octave, new_degree = divmod(octave * n_degrees + d + steps, n_degrees)
+        m = _copy(note)
+        m["pitch"] = _checked_pitch(
+            note["pitch"], scale_pitch(new_octave, new_degree), "transpose_diatonic")
         out.append(m)
     return out
 

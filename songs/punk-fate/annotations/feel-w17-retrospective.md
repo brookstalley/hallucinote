@@ -1,7 +1,7 @@
 ---
-scope: composition
-topic: per-part feel (W17-E)
-status: retrospective
+kind: annotation
+scope: song
+tags: [feel, w17, retrospective, per-part]
 ---
 
 # Per-part feel — what punk-fate would have used (W17-E retrospective)

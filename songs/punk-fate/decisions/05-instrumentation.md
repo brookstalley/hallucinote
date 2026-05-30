@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: user
 tags: [instrumentation, tracks, vocal-substitute]
 ---
+
+**Decided by:** user
 
 # Four tracks: drums, bass, lead guitar, staccato synth
 

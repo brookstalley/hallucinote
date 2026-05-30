@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: inferred
 tags: [key, harmony, source-material, arc]
 ---
+
+**Decided by:** inferred
 
 # Key: C minor → C major arc, mirroring the symphony
 

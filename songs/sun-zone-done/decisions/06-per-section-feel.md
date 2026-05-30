@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [feel, microtiming, groove, reggae, metal]
+---
+
 # Per-Section Feel & Microtiming
 
 **Question:** What's the groove feel for each section?

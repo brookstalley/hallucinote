@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: user
 tags: [aesthetic, production, energy, no-precious-moments]
 ---
+
+**Decided by:** user
 
 # Real punk energy — fast, raw, driving, no precious moments
 

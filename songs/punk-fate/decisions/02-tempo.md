@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: inferred
 tags: [tempo, genre]
 ---
+
+**Decided by:** inferred
 
 # Tempo: 180 BPM
 

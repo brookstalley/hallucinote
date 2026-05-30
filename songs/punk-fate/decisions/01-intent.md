@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: user
 tags: [intent, source-material, arc]
 ---
+
+**Decided by:** user
 
 # Condense Beethoven's 5th into 2 minutes of punk
 

@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: agreed-after-confirm
 tags: [instruments, portability-strict, preset-query, mix-time-followups]
 ---
+
+**Decided by:** agreed-after-confirm
 
 # Instrument picks (portability=strict)
 

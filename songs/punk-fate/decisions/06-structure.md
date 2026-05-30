@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: inferred
 tags: [structure, sections, arrangement, length]
 ---
+
+**Decided by:** inferred
 
 # Structure: intro → V → C → V → C → bridge → outro
 

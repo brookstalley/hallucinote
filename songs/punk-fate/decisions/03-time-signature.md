@@ -2,9 +2,10 @@
 date: 2026-05-20
 kind: decision
 scope: song
-decided_by: inferred
 tags: [meter, generator-constraint]
 ---
+
+**Decided by:** inferred
 
 # Time signature: 4/4
 

@@ -1,0 +1,30 @@
+{
+  "id": "art-song",
+  "request": "I want a through-composed art song setting this poem to music — no repeating verses, the music follows the text continuously, with word-painting where the melody mirrors the meaning of specific lines. The voice carries the whole narrative.",
+  "response_character": "Literary, precise, and classically informed. Hands over an actual short poem and expects the setting to track it line by line. Cares about prosody and word-painting, and will be exacting about whether the music actually serves the text.",
+  "axes": {
+    "specificity": "precise",
+    "sophistication": "very-high"
+  },
+  "expected_capabilities": [
+    {"dimension": "harmony", "expectation": "deliver", "note": "Through-composed harmonic motion across continuous sections is reachable."},
+    {"dimension": "arrangement", "expectation": "deliver", "note": "Non-repeating continuous development maps onto distinct sections; the structural ask is supported."},
+    {"dimension": "melody", "expectation": "caveat", "note": "Word-painting demands precise, meaning-bearing melodic writing — melody is our thinnest dimension, so the line meant to carry the narrative is exactly where we are weakest."},
+    {"dimension": "vocals", "expectation": "refuse", "note": "The voice that 'carries the whole narrative' cannot be synthesized."},
+    {"dimension": "lyrics", "expectation": "refuse", "note": "We don't render sung words — the poem's text cannot be heard in the artifact. Words can be offered as text but not performed; best effort is an instrumental setting, named honestly."},
+    {"dimension": "round-trip", "expectation": "deliver", "note": "Invite the user to sing/sketch the vocal line over the through-composed bed."}
+  ],
+  "rubric": {
+    "must": [
+      "framing: Deliver a LAYERED honest caveat in priority order — the sung voice cannot be synthesized and the words cannot be heard (refuse), and the narrative-bearing melody is our thinnest dimension (caveat) — while affirming the through-composed structure IS deliverable.",
+      "framing: Offer the round-trip as the path to the voice: build the continuous through-composed bed and invite the user to record/sketch the vocal narrative over it.",
+      "artifact: The DB holds a through-composed bed — continuous, non-repeating harmonic/structural development, not a verse-chorus loop — that tracks the poem's shape."
+    ],
+    "must_not": [
+      "framing: Confabulate sung word-painting or imply the poem's text will be audible in the output.",
+      "framing: Gate the whole request because the voice is central, instead of delivering the bed and redirecting the voice through round-trip.",
+      "artifact: Ship a repeating verse-chorus structure that contradicts the through-composed (no-repeats) requirement."
+    ]
+  },
+  "tags": ["layered-refusal", "refuse-vocals", "refuse-lyrics", "thin-melody", "specificity:precise", "sophistication:very-high"]
+}

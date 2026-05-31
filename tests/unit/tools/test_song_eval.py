@@ -32,7 +32,14 @@ from tools.song_eval import (
     render_request_prompt,
 )
 
-SHIPPED_WORKS = {"lofi-study"}
+SHIPPED_WORKS = {
+    "lofi-study",
+    "pop-hook",
+    "synthwave-chase",
+    "soul-ballad",
+    "reich-phase",
+    "art-song",
+}
 
 
 def _valid_brief_dict(**overrides) -> dict:
@@ -77,7 +84,7 @@ def test_parse_valid_brief_roundtrips_fields():
 def test_shipped_corpus_loads_and_validates():
     briefs = load_all_briefs()
     ids = {b.id for b in briefs}
-    assert SHIPPED_WORKS <= ids
+    assert ids == SHIPPED_WORKS  # exact corpus — a missing/extra brief is a failure
     for b in briefs:
         # Controlled vocabularies hold for every shipped brief.
         assert b.specificity in SPECIFICITY
@@ -85,6 +92,28 @@ def test_shipped_corpus_loads_and_validates():
         for c in b.expected_capabilities:
             assert c.dimension in CAPABILITY_DIMENSIONS
             assert c.expectation in EXPECTATIONS
+
+
+def test_corpus_exercises_every_expectation_kind():
+    """The suite's value is the cliffs — assert each outcome is actually tested."""
+    seen = {c.expectation for b in load_all_briefs() for c in b.expected_capabilities}
+    assert seen == set(EXPECTATIONS), f"corpus misses expectation kinds: {set(EXPECTATIONS) - seen}"
+
+
+def test_corpus_spans_the_specificity_sophistication_grid():
+    briefs = load_all_briefs()
+    assert {b.specificity for b in briefs} == set(SPECIFICITY)
+    assert {b.sophistication for b in briefs} == set(SOPHISTICATION)
+
+
+def test_known_gap_cliff_is_present_and_uses_raw_db_tier():
+    """reich-phase is the brief that proves the raw-DB artifact tier — guard it."""
+    brief = load_brief(WORKS_DIR / "reich-phase.json")
+    assert any(c.expectation == "known-gap" for c in brief.expected_capabilities)
+    # Its artifact rubric must point the judge at the raw DB extract, since the
+    # analyzers are blind to phase relationships.
+    artifact_lines = [t for k, t in brief.rubric.lines() if t.startswith("artifact:")]
+    assert any("RAW DB EXTRACT" in t for t in artifact_lines)
 
 
 def test_load_brief_reads_shipped_file():

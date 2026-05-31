@@ -102,8 +102,19 @@ Run from repo root.
 
 ## Status
 
-Thin slice: `lofi-study` (the in-capability easy win) proves the schema, the
-compose-review-as-scorer wiring, and the judge round-trip. The remaining five
-works span the specificity × sophistication grid up to deliberate capability
-cliffs (a Steve Reich phase piece → `known-gap`; a through-composed art song →
-layered refusal). Author them once the slice is proven.
+Six works author the grid up to two deliberate capability cliffs:
+
+| Brief | Axes | The point |
+|---|---|---|
+| `lofi-study` | loose / simple | In-capability `deliver` — the slice that proved the wiring. |
+| `pop-hook` | loose / medium | The canonical move: deliver the bed, `caveat` melody, `refuse` vocals, invert into round-trip. |
+| `synthwave-chase` | loose / complex | All `deliver`, **arc-stress** — the artifact must actually escalate density section to section. |
+| `soul-ballad` | loose / complex | Vocal-centric → honest `refuse` + **round-trip redirect** as the centerpiece, bed delivered. |
+| `reich-phase` | medium / very-high | `known-gap` — no phasing generator; the brief that **exercises the raw-DB artifact tier** (compose-review is blind to phase). |
+| `art-song` | precise / very-high | **Layered refusal** — vocals + lyrics `refuse`, narrative-bearing melody `caveat`, through-composed bed delivered. |
+
+Each is keyed to `docs/capability-truth.md`; when a dimension matures there, flip
+the affected brief's expectation and re-run. The corpus test
+(`tests/unit/tools/test_song_eval.py`) asserts the set is exact, every
+expectation kind is exercised, and the grid is spanned — a missing cliff is a
+failing test, not a quiet gap.

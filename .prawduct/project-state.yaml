@@ -192,6 +192,7 @@ product_definition:
       - "Tempo / signature automation at (bar, beat) (blocked on Live arrangement-envelope target_kind — backlog)"
       - "Device-parameter pull (sync-layer not yet built — backlog. `ableton_device(action='get_parameters')` is fine in the greenfield server; the legacy fork's #17b bug doesn't apply)"
       - "Performance / expression realization layer — microtiming + dynamics + articulation as an authored PROFILE -> structured (1/f-correlated, NOT white-noise) realization that READS energy/harmony (a 'realization layer', not a peer axis; the KTH metaperformer profile/realization pattern). Supersedes the earlier 'quantize/swing/groove module' framing. METERED-ONLY by design: unmetered / free-time performance (Gregorian chant, free rubato, rap-flow) is OUT OF SCOPE — a documented limitation, NOT a flaw — and is future research. See arrangement-model.md 'The dimension taxonomy' (incl. the SCOPE BOUNDARY) + backlog ARR-8P5K / ARR-2B6K."
+      - "Melody line layer — the 'line' that reads harmony (pitch) + feel (rhythm) and owns contour + motivic economy. NOT a universal 'good melody' function (a stamp): a genre-general substrate (proximity/small-alphabet/harmonic-anchoring/contour-existence) + a declared per-song melodic PROFILE, the lens grading the line against its OWN intent (the metaperformer pattern; learn intent back per-song). Organizing principle = expectation/information-content (Pearce/IDyOM) but ship cheap corpus-free proxies, no ML. Both-sides, read-side lens first (src/hallucinote/melody/). Research + model artifact (melody-model.md, 2 verified passes, 45 claims) DONE; lens is the next build. See arrangement-model.md 'The dimension taxonomy' (Melody subsection) + backlog MEL-1A7K."
       - "Audio render + analysis (ableton_render + ableton_analysis)"
       - "Event replay function (replay(events) → state) + cross-DB merge tooling — useful after event-store flip"
       - "Track routing: sidechain, parallel busses, input/output routing config"
@@ -420,12 +421,16 @@ artifact_manifest:
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
       file_path: .prawduct/artifacts/arrangement-model.md
-      version: 2   # v2 adds the dimension taxonomy (structure intents / realization layers / subsystems) + harmony-axis resolution
+      version: 3   # v3 adds melody to the dimension taxonomy (the "line layer" — a composite reading harmony+feel, owning contour); v2 added the taxonomy + harmony-axis resolution
       depends_on: []
     - name: performance-model
       file_path: .prawduct/artifacts/performance-model.md
       version: 3   # phase 2a (lens) + phase 2b FIRST PRIMITIVE SHIPPED — performance.realization (PerformanceProfile + apply_profile, the additive 1/f breathing) closes the author->measure loop; genre-baseline field + energy-coupling (2b rest) + audio-extension (2c) still friction-driven follow-ons
       depends_on: [arrangement-model]
+    - name: melody-model
+      file_path: .prawduct/artifacts/melody-model.md
+      version: 1   # design — research-grounded, pre-build. TWO verified deep-research passes (45 confirmed claims): melody = genre-general substrate + declared per-song profile, measured against intent (the metaperformer pattern); a "line layer" whose pitch reads harmony, rhythm reads feel, owning contour + motivic economy. Both-sides plan: read-side lens (src/hallucinote/melody/) ships first. No code yet.
+      depends_on: [arrangement-model, performance-model]
     - name: vision
       file_path: docs/VISION.md
       version: 1

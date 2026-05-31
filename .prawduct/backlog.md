@@ -28,7 +28,23 @@ sections only via explicit `/backlog update` calls.
 ## Open
 
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
-  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: open · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
+  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: in-progress · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
+
+  **Progress (2026-05-31): phase 1 (research + model artifact) DONE.** Two verified
+  deep-research passes (45 confirmed claims; pass 1 22/25 on expectation/contour/
+  universals/taxonomy, pass 2 23/25 on harmony-coupling + memorability; motivic/
+  phrase angle honestly returned no surviving claims — open follow-on).
+  `.prawduct/artifacts/melody-model.md` written (the verifiable signal), folded into
+  `arrangement-model.md` (taxonomy "Melody — the line layer" subsection), the
+  project-state manifest, and `scope.later`. The thesis: **no universal "good
+  melody" function** — a genre-general substrate + a declared per-song profile, the
+  lens grading the line against its OWN intent (the metaperformer pattern, learn
+  intent back per-song). Melody placed as a **"line layer"** (pitch reads harmony,
+  rhythm reads feel, owns contour + motivic economy). **Remaining (phase 2, the
+  both-sides build, read-side first):** the symbolic melody lens
+  `src/hallucinote/melody/` (contour + intervals + harmony-fit reusing `theory`),
+  wired into `/mix-review` beside the harmony + performance lenses; then the
+  declared-profile authoring surface; then tune-by-ear on sun-zone-done's two hooks.
 
   **User mandate (2026-05-31, URGENT):** *"approach melody the same way we did rhythm, polyrhythm, energy, and harmony. We need to seriously analyze and master melody."* Melody is the conspicuous gap in the dimension taxonomy (ARR-8P5K): form/recurrence, ENERGY, HARMONY (ARR-1H9C, shipped), and PERFORMANCE / rhythm-feel (read-side shipped; authoring 2b landing) all got the both-sides treatment — but **melodic content itself has no dedicated authoring intent and no analysis lens.** Today a melody is just notes at the raw floor plus the arrangement `Motif`/reference scaffold, which addresses the *recurrence* of a line, not its melodic *substance* (contour, intervallic profile, scale-degree function, phrase arc, singability, hook).
 

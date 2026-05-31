@@ -76,9 +76,65 @@ domain they can't yet articulate gets either silent guessing or a curt question.
 | **Volunteered observation** *(existing)* | Tool noticed something | Intent-gated; surface as a question, never a verdict. Stay quiet if it matches declared intent. |
 | **Directed-but-under-articulated** *(new)* | User asked for something they can't yet specify — *"make it feel like Bach"*, *"a pop song like Madonna"* | **Open the domain.** Don't execute a silent best-guess (auto-accompaniment); don't just ask one question and proceed. Propose, name the *why* in one teachable sentence, and offer a real choice that grows their understanding. |
 
-The third register is gated by **detected fluency in the relevant domain**, not by
-a global skill level. The same drummer is "directed action" on groove and
-"directed-but-under-articulated" on harmony — in the same sentence.
+The third register fires on the **request, not the requester**: it triggers when
+the ask is underspecified in some dimension (see the elicitation model below) —
+never on a judgment that the user "is a novice." The drummer's "make it feel like
+Bach" triggers it because *Bach* is unpinned, not because we decided the drummer
+can't do harmony. Opening the domain *is* the elicitation.
+
+## Read the request, not the requester — the elicitation model
+
+We form **no judgment about user expertise** — no inference, no profile, no
+novice/expert branch, no fluency detection. We assess exactly one thing: *is this
+request specified enough to build something that matches what's in their head?*
+That is a property of the **ask**, not the **asker**. An expert's "four-movement
+symphony exploring atonality in the strings, classical elsewhere" is as
+underspecified as a hobbyist's "a Madonna song" — and we treat them identically:
+elicit. This **dissolves** the fluency-detection problem rather than solving it.
+
+**Bias: elicit toward "enough to start," not "enough to finish."** The goal is a
+first *concrete pass* the user can react to — not a complete spec. A reaction to
+real music elicits more, and truer, direction than answers to abstract questions
+(see "intent discovered retrospectively"). So only the **load-bearing** unknowns
+get asked up front — the ones where a wrong guess wastes real work or is a
+creative lock-in (tonal concept, form, the central tension). Cheap-to-revise
+choices are made tastefully and *shown*; the artifact itself becomes the next
+proposal, instantly redirectable. (This is also the pacing answer: don't fork
+every elementary choice into an A/B — elicit at the expensive forks, just-do-
+and-show at the cheap ones.)
+
+**Two modes, one discipline:**
+
+1. **Open elicitation** — request underspecified, user has more in their head:
+   ask, lightly, *only* the load-bearing questions. At most one or two before
+   handing them something concrete; more than that is interrogation.
+2. **Proposal elicitation** — open questions stop yielding direction (the user
+   says "I don't know, you decide," or vagueness repeats): **stop asking, start
+   proposing.** A concrete, redirectable proposal — ideally a small set of
+   *distinct* options — surfaces direction the user couldn't generate cold.
+   Choosing between concretes is the easiest way to discover what you actually
+   wanted. *"That's all the direction I have" is a cue to propose, never a
+   license to assume.*
+
+**The one discipline across both: never assume-and-go.** Every gap is either
+elicited or *proposed and reacted to*. A proposal the user doesn't object to is
+**confirmed** direction — we surfaced it; a silent assumption is not. That line
+is the line between collaboration and auto-accompaniment.
+
+**What keeps proposal-mode honest:**
+- **Redirectable, not fait accompli** — "I'm thinking X, or it could be Y — what
+  feels right?", never "I did X." The user visibly holds the wheel.
+- **Name the why** — the proposal carries its reasoning ("atonal strings *in
+  conflict* sells the four-movement arc as a struggle"), so the user learns the
+  dimension they're now steering. **Teaching is not a separate novice branch — it
+  is what good elicitation looks like.** The expert skims the why; the novice
+  learns from it; we never decided which is which.
+
+The transition signal (open → proposal) is usually implicit — a trailing-off, a
+"whatever you think," a repeated vagueness. Read those as *propose now*, not
+*assume now*. Never force a user to answer questions they don't have answers to:
+a user who thinks by reacting is better served by a proposal than a fourth
+question.
 
 ## The five load-bearing pieces
 
@@ -148,10 +204,11 @@ option — the exact thing the North Star fights. Instead:
 
 - **Assume the user is invested and here for leverage.** Hallucinote is a helper
   that amplifies *their* work, not a service that does it instead of them.
-- **Default to collaborative, always.** When the user isn't giving direction on
-  an elementary musical choice we're about to make, **don't decide it silently
-  (that's auto-accompaniment) — propose it and invite reaction**, often with an
-  A/B:
+- **Collaborate when direction is absent — clear direction always wins.** This is
+  a fallback, not an override: when the user *has* directed, execute (the
+  directed-action register). When they haven't directed an elementary choice
+  we're about to make, **don't decide it silently (that's auto-accompaniment) —
+  propose it and invite reaction** per the elicitation model, often with an A/B:
   > "My first thought: E minor, power chords landing on the chorus, denser
   > harmony under the verses to make the chorus feel like a release. Sound right,
   > or do you hear it differently?"
@@ -255,47 +312,50 @@ unaddressed; flagged.
 - **Generalize the producer model:** add the third register to
   `intent-collaboration-model.md`.
 
-## Coherence review — honest gaps per persona
+## Coherence review — resolved and open
 
-Stress-testing the flow against the personas surfaced four real tensions.
-Recording them rather than papering over them:
+Stress-testing the flow against the personas surfaced four tensions. Two are now
+**resolved** by the "read the request, not the requester" reframe; two remain.
 
-1. **The entry gate contradicts the novice North Star.** Reaching the
-   install-tail invitation requires cloning a repo, `pip install`, Python 3.10+,
-   MCP config, and an Ableton Control Surface click. That filters out exactly the
-   no-theory hobbyist *unless they are also technical*. The teaching-for-novices
-   vision is aspirational until distribution reaches non-technical users — this
-   ties straight to the deferred packaging question. **Today the novice persona
-   is well served only if they're a *technical* novice.**
+**Resolved:**
 
-2. **Fluency detection is the linchpin and is unspecified.** Everything
-   calibrates on "detected fluency in the relevant domain" — but *how* is defined
-   nowhere. Mis-detect high → we silently auto-accompany a novice (the failure
-   we exist to avoid). Mis-detect low → we patronize an expert, wasting the
-   leverage they came for. Likely answer: infer from phrasing + react to
-   correction (cheap, no profile), but it needs real design. This is the single
-   biggest open mechanism.
+1. **Classifying users (was: "fluency detection" + "serving novices").** These
+   were the same mistake — both assumed we must judge the user's competence and
+   branch on it. We don't. We assess request-*completeness* and elicit; we never
+   profile the requester. This dissolves the patronize-vs-auto-accompany dilemma:
+   both collapse to "elicit when underspecified, propose when direction runs out,
+   never assume-and-go." The novice gets a reasonable experience not from special
+   scaffolding but from the same elicit-don't-assume behavior everyone gets.
+   *Residual, deferred by choice:* the **technical** entry gate (clone / pip /
+   MCP / Ableton click) still filters non-technical users. That's a distribution
+   problem we are explicitly choosing not to fully solve now — we ensure a
+   reasonable experience for whoever gets in, and revisit packaging later.
 
-3. **Collaborate-by-default can over-step the leverage personas.** As written,
-   "default to collaborative always" risks taxing the producer / veteran, who
-   want directed execution, not a proposal loop or a sidechaining lesson. Fix is
-   **precedence: collaborate-by-default is the fallback when direction is absent;
-   it never overrides clear direction** (the directed-action register wins).
-   Also unspecified: *pacing* — a novice offered an A/B at every elementary
-   choice gets decision paralysis. Good teaching curates one or two lessons per
-   session; it does not fork everything.
+2. **Collaborate-by-default over-stepping the leverage personas.** Fixed by
+   precedence: collaboration is the fallback when direction is *absent*; clear
+   direction always wins (directed-action register). Pacing is handled by the
+   load-bearing-vs-cheap rule in the elicitation model — elicit at expensive
+   forks, just-do-and-show at cheap ones; don't fork everything.
 
-4. **Revision has a destructive-sync hazard and a missing teaching target** —
-   see "Session shapes": the unsafe sync-back caveat must fire before Live
-   editing, and the learn-the-tool persona needs workflow-scaffolding the
-   musical model doesn't provide.
+**Open:**
 
-**Net:** the *create* flow for technically-comfortable users across the
-expertise spectrum is coherent and good. The weak seams are (a) the non-technical
-novice can't get in the door, (b) fluency detection is undefined, (c) the default
-stance must yield to clear direction, (d) revision needs the sync caveat and
-tool-teaching. None is fatal; **(1) and (2) decide whether this is genuinely good
-or only good-on-paper.**
+3. **The transition signal (open → proposal) is a read, not a flag.** Users
+   rarely say "that's all I've got"; they trail off or say "whatever you think."
+   Reading those correctly — *propose now*, not *assume now*, and not *ask a
+   fourth question* — is a judgment call we're asking the agent to make well
+   every time. No mechanism guarantees it; it's a behavioral discipline that will
+   sometimes misfire. Worth watching in practice.
+
+4. **Revision: destructive-sync hazard + missing teaching target** (unchanged) —
+   see "Session shapes": the unsafe sync-back caveat must fire *before* Live
+   editing, and the learn-the-tool persona needs workflow-scaffolding the musical
+   model doesn't provide.
+
+**Net:** the reframe made the flow markedly more coherent — it's now genuinely
+good for users *across the expertise spectrum*, because it stopped trying to tell
+them apart. The live risks are behavioral (reading the elicitation transition
+well) and technical (revision's sync hazard, the non-technical entry gate as a
+deferred distribution problem), not structural.
 
 ## Deliberately not decided here
 

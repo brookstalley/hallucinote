@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
+from hallucinote.performance.lens import SectionPerf
 from hallucinote.theory.lint import SectionLint
 from hallucinote.theory.model import Mode, Progression
 from hallucinote.theory.model import mode as _resolve_mode
@@ -295,6 +296,21 @@ class Arrangement:
                 progression=p.progression,
                 layers=p.layers,
                 harmony_layers=layers_tuple,
+            )
+            for p in self.plan(start_bar=start_bar)
+        ]
+
+    def section_perf_inputs(self, *, start_bar: int = 1) -> list[SectionPerf]:
+        """Adapt the planned sections into the symbolic-performance-lens inputs
+        (the ``PlacedSection -> SectionPerf`` bridge, parallel to
+        ``section_lints``). Every layer is carried — unlike harmony, drums are
+        primary timing carriers, so no track is excluded. Feed the result to
+        ``performance.lens.analyze_performance``."""
+        return [
+            SectionPerf(
+                name=p.name,
+                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                layers=p.layers,
             )
             for p in self.plan(start_bar=start_bar)
         ]

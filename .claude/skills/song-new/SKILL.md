@@ -34,6 +34,8 @@ Read what the user said. Infer everything you can. **State your inferences expli
 
 This is **guidance, not a script.** Freeform exploration is allowed. The point is to surface what the user would want to fix later if you guessed wrong, before you write code.
 
+**Stay capability-honest.** Read `docs/capability-truth.md` (the single source of truth for what Hallucinote can do *right now*, organized as song dimensions). Use it to (a) keep your inferences and offers truthful — never promise a capability that isn't ✓ or ◐ there, (b) generate an *accurate, dimensional* caveat when the request leans on a thin dimension (melody ◐, vocal synthesis ✗), and (c) **invert** a thin dimension into an invitation rather than gating the goal — e.g. "bring me your topline, sketch it in Ableton, and I'll build the track under it" (round-trip is fully supported). Caveat the thin dimension, then deliver the rest; never silently substitute.
+
 For each non-trivial decision (especially must-haves), **write a markdown file under `songs/<slug>/decisions/`** (you'll do this in Phase 2 after the directory exists). Format: one file per decision, with the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/song-context` so the song's intent survives `/clear`.
 
 **Phase 2 — Scaffold + first compose**:

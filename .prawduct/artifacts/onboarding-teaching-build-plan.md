@@ -11,7 +11,7 @@ distribution / the non-technical entry gate.
 ## Status
 
 - [x] C0 — Scenario-eval harness (test substrate)
-- [ ] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
+- [x] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
 - [ ] C2 — Elicitation core in `song-new`
 - [ ] C3 — Norm amendments + the third register
 - [ ] C4 — Compose-stage guided evaluation + section/song intent
@@ -23,9 +23,13 @@ under `tests/scenarios/briefs/`, a runner-procedure README, and 39 unit tests in
 `tests/unit/tools/test_scenario_eval.py`. **Suite: 2158 passed, 132 skipped
 (audio), 0 failed.** Critic (chunk): 0 blocking. Briefs are tagged by chunk
 (C1–C4) so each downstream chunk knows its gating personas (C1→maya, elena;
-C2→theo, priya, sam, dev; C4→sam, maya). **Next: C1** — Capability Truth living
-doc + rewrite `/ableton-mcp-install` Step 5 (thin vertical slice; gate = maya
-brief passes under the harness). Branch `claude/recent-commit-summary-GvY4p`.
+C2→theo, priya, sam, dev; C4→sam, maya). **C1 shipped:** `docs/capability-truth.md` (dimensional living
+doc) is read by both the rewritten `/ableton-mcp-install` Step 5b and `song-new`
+Phase 1; static command menu removed. Maya brief passed all 8 rubric lines under
+the harness (`tests/scenarios/results/maya-*.json`); Critic 0/0/0. **Next: C2** —
+elicitation core in `song-new` (retire the make-me-X / scaffold-only mode split
+for collaborate-by-default-with-precedence; gates = theo, priya, sam, dev).
+Branch `claude/recent-commit-summary-GvY4p`.
 
 Enabling work (pre-C0, prior session): container-friendly test selection (root
 `conftest.py` + `audio`/`ableton` markers; hermetic `test_resolve_db_path` fix).

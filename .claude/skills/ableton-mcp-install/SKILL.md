@@ -232,9 +232,15 @@ If the target is in `mcp_configs.malformed`, stop.
 
 Write to `<config>.tmp`, then rename (`os.replace` / `mv` / `Move-Item -Force`). Don't write directly — a crash mid-write corrupts `~/.claude.json` and loses the user's project history.
 
-## Step 5 — Tell the user the Ableton click + hand off
+## Step 5 — Tell the user the Ableton click + open the conversation
 
-Print verbatim:
+This is the user's first contact as a **music person**, not a developer of this
+project. Two parts: the one remaining Ableton click (mechanical — print
+verbatim), then a warm, capability-honest invitation that opens an intent
+conversation. **Do not** print a static command menu — that surfaces a
+vending-machine framing and teaches nothing.
+
+### 5a — The Ableton click (print verbatim)
 
 ```
 hallucinote-mcp install complete!
@@ -247,14 +253,32 @@ One last step in Ableton Live:
 
 Then restart Claude Code in this project so it picks up the new MCP entry.
 
-Once you're back in Claude Code, try one of these to get going:
-  • "load falling-walking"          — push the bundled example song into Live
-  • "start a new song"              — scaffold a fresh song from a prompt
-  • "/ableton-pull <slug> <id> everything"
-                                   — pull current Live state into the DB
-
 If something looks broken, /ableton-mcp-uninstall reverses every step.
 ```
+
+### 5b — The handoff (compose it; don't print a menu)
+
+**Read `docs/capability-truth.md`.** Then write a short, warm invitation that:
+
+- Is **capability-honest in musical/dimensional terms** — name a few things
+  Hallucinote does well (groove, harmony, arrangement, sound design, mix), drawn
+  from the Capability Truth table, as *example invitations* ("we could build a
+  beat, flesh out a chord progression, arrange a track around an idea you have").
+- **Names the thin dimensions honestly** when they're relevant, and **inverts
+  the gap into an invitation** rather than apologizing — melody is ◐ and vocal
+  synthesis is ✗, but a topline sketched in Ableton round-trips in, so the move
+  is *"bring me your melody and I'll build the track under it."*
+- **Opens an intent conversation** — invite the user to say what they want to
+  make, in their own words and references ("a song like the Stranger Things
+  theme" is a perfectly good spec). Do **not** ask them to pick a "mode"; read
+  their intent from what they say (start fresh, load an existing song, sketch a
+  part) and proceed collaboratively (see `docs/collaboration.md`).
+- **Never confabulates.** If it isn't ✓ or ◐ in the Capability Truth table,
+  don't offer it.
+
+Keep it to a few sentences — an open door, not a manual. The goal is that the
+user's next message is "I want to make…", and you continue from there (into
+`/song-new` for a new song, or a load/pull for existing material).
 
 ## Edge cases
 

@@ -424,7 +424,7 @@ artifact_manifest:
       depends_on: []
     - name: performance-model
       file_path: .prawduct/artifacts/performance-model.md
-      version: 1   # the performance realization layer — design complete, no code yet; research-backed (deep-research 2026-05-30)
+      version: 2   # phase 2a SHIPPED — the symbolic performance lens (src/hallucinote/performance/) built + merged + wired into /mix-review; authoring profile (2b) + audio-extension (2c) still proposed
       depends_on: [arrangement-model]
     - name: vision
       file_path: docs/VISION.md

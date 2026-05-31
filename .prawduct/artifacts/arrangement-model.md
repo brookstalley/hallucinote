@@ -110,7 +110,13 @@ they are played). The decision:
   `cross_rhythm.py` — already do swing/phase/structured-vs-jitter — extended with
   the 1/f metric + perceived-onset). It grades **mechanical / human / sloppy**
   against the declared profile + the energy-coupling. *A dimension authored but
-  unmeasured is half-built.*
+  unmeasured is half-built.* **MEASURE side SHIPPED (phase 2a):** the symbolic
+  lens is `src/hallucinote/performance/` (lens + correlation + dynamics + ensemble),
+  wired into `/mix-review`; see [`performance-model.md`](performance-model.md) §7.
+  The AUTHOR side (the profile) + grading against a *declared* profile are 2b — so
+  the lens currently reads what was authored, not what was declared. Until then the
+  dimension is *measured but not yet authorable* — half-built by its own rule, on
+  purpose and tracked (ARR-8P5K).
 - **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
   (it deviates *from* the grid); the metric grid it deviates from is *meter-feel*
   (a structure intent). Clean split.

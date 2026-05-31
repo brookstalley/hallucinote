@@ -97,6 +97,30 @@ first — see "Refreshing the analysis"). For each section, you have:
   tempo). Needs an audible accent — equal-velocity parts surface nothing
   (the cell lives in dynamics). "Guitar's in a 4-bar cycle, kick in 3 — they
   realign every 12 beats" — intended polymeter, or an accident?
+- `performance` (**SYMBOLIC, render-free**) — the build-time performance lens
+  (`hallucinote.performance.analyze_performance` over the song's arrangement;
+  **no audio pass needed**, so it's available even before a render, and it reads
+  the AUTHORED notes exactly — no onset-detection error). Per part:
+  `classification` (`mechanical` / `human` / `sloppy` / `insufficient-data`),
+  `timing_mean` / `timing_stdev` (push/drag + looseness, same 16th grid as the
+  audio `timing` feed), `timing_acf` (lag-1 autocorrelation — the human-vs-sloppy
+  line: correlated ≈1/f reads human, white/uncorrelated reads sloppy),
+  `timing_dfa_alpha` (the 1/f exponent, on long series only), `flat_dynamics`
+  (many notes at one velocity — the organ-at-one-velocity case),
+  `articulation` (median duration/IOI: ≈1 legato, <≈0.5 staccato), and a section
+  `ensemble` list per track-pair (`offset_mean` — a constant value is a deliberate
+  pocket — and `locked`). It REPORTS; its findings are `info` coaching questions
+  (`mechanical-timing` / `sloppy-timing` / `flat-dynamics`), never verdicts.
+
+  Read it **with** the audio feeds, not instead: the symbolic lens is the only
+  timing/dynamics feed available render-free and reads intent exactly; the audio
+  `timing` adds what symbols can't — **perceived onset** (a slow-attack pad feels
+  late though its note-on is on-grid) and proof the feel **survived to the sound**.
+  When they disagree, audio wins on "what's heard", symbolic on "what was meant".
+  Gate on intent exactly as for masking: an authored `mechanical` hat or a
+  `flat_dynamics` organ drone may be deliberate — surface as a question, learn the
+  answer back. (`sloppy` is the one worth a closer look: it's the discredited
+  white-noise humanization, distinct from a structured human groove.)
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
   band), `overshoots`, `reverb_verifications`.
 

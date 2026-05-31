@@ -16,10 +16,24 @@ distribution / the non-technical entry gate.
 - [ ] C3 — Norm amendments + the third register
 - [ ] C4 — Compose-stage guided evaluation + section/song intent
 
-**Context:** Plan written, nothing built yet. Branch
+**Context:** Plan written. **Enabling work done** (pre-C0): container-friendly
+test selection landed (root `conftest.py` + `audio`/`ableton` markers; hermetic
+fix to `test_resolve_db_path`). **Clean container baseline: 2119 passed, 132
+skipped (audio), 0 failed.** Nothing in C0–C4 built yet. Branch
 `claude/recent-commit-summary-GvY4p`. Start at C0 — every behavioral chunk
-(C1–C4) depends on it to claim "done." Baseline test suite must be green before
-C0. Persistence note: committed under the unique name
+(C1–C4) depends on it to claim "done."
+
+**Fresh-container dev-env recipe** (the `.venv` + installs do NOT survive
+container reclaim; they DO survive `/clear`):
+```
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]' -e './hallucinote_mcp[dev]'
+HALLUCINOTE_SKIP_AUDIO=1 OMP_NUM_THREADS=1 .venv/bin/python -m pytest -q
+```
+Worth promoting to a SessionStart hook (`session-start-hook` skill) so web
+sessions self-provision.
+
+Persistence note: committed under the unique name
 `onboarding-teaching-build-plan.md` (the literal `build-plan.md` is gitignored);
 a gitignored `build-plan.md` **symlink** points here so framework tooling (Critic
 mode inference, stop-hook gates) resolves the canonical name. After a fresh clone,

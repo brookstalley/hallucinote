@@ -3,10 +3,11 @@
 The symbolic feed is EXACT (it reads authored onsets, not detected ones), so the
 tests assert precise timing-deviation values, not tolerances. They cover the
 contract (dataclasses + to_dict + ok/blocking), the timing-deviation core
-(push/drag sign, looseness, the mechanical / has-deviation / insufficient-data
-split, constant-offset = still mechanical), rhythmic-event dedup (block chord vs
-spread strum), and the arrangement -> section_perf_inputs -> analyze_performance
-bridge end-to-end.
+(push/drag sign, looseness, the mechanical / has-deviation -> {human, sloppy} /
+insufficient-data split, constant-offset = still mechanical), rhythmic-event
+dedup (block chord vs spread strum), and the arrangement -> section_perf_inputs
+-> analyze_performance bridge end-to-end. (The human/sloppy split lands in P2 —
+see test_correlation.py.)
 """
 from __future__ import annotations
 
@@ -74,13 +75,16 @@ def test_push_reads_negative_mean_drag_reads_positive_mean():
     assert dragged.timing_mean > 0     # behind the beat
 
 
-def test_loose_part_reads_has_deviation():
-    # Onsets scattered well past the mechanical tightness floor.
+def test_loose_part_is_classified_human_or_sloppy_not_mechanical():
+    # Onsets scattered well past the mechanical tightness floor: real deviation,
+    # so it is split by correlation STRUCTURE (human / sloppy) — never mechanical
+    # (P2 refined the coarse P1 "has-deviation" bucket into the two).
     starts = [1.0, 1.53, 1.97, 2.55, 3.02, 3.46, 3.99]
     report = _analyze_one({"gtr": [_note(60, s) for s in starts]})
     part = report.sections[0].parts[0]
     assert part.timing_stdev > _MECHANICAL_STDEV_MAX
-    assert part.classification == "has-deviation"
+    assert part.classification in ("human", "sloppy")
+    assert part.timing_acf is not None   # computable once variance > 0
 
 
 def test_offset_invariance_a_constant_shift_moves_mean_not_stdev():

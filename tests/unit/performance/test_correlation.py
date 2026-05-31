@@ -17,7 +17,7 @@ import random
 
 from hypothesis import given, strategies as st
 
-from hallucinote.performance import SectionPerf, analyze_performance
+from hallucinote.performance import SectionPerf, analyze_performance, pink_noise
 from hallucinote.performance.correlation import (
     DFA_MIN_POINTS,
     STRUCTURED_ACF_MIN,
@@ -25,18 +25,12 @@ from hallucinote.performance.correlation import (
     lag1_autocorr,
 )
 
-
-def _voss_pink(n, *, seed, octaves=5):
-    """Voss-McCartney pink (1/f) noise — correlated across scales."""
-    rng = random.Random(seed)
-    rows = [rng.gauss(0, 1) for _ in range(octaves)]
-    out = []
-    for i in range(n):
-        for b in range(octaves):
-            if i % (1 << b) == 0:
-                rows[b] = rng.gauss(0, 1)
-        out.append(sum(rows))
-    return out
+# The Voss-McCartney pink (1/f) generator now lives in production
+# (performance.realization.pink_noise) — it IS the series the authoring layer
+# emits. Measuring the real generator here keeps the calibration constants
+# (STRUCTURED_ACF_MIN etc.) honest: they describe what apply_profile actually
+# produces, not a test-only twin that could silently drift.
+_voss_pink = pink_noise
 
 
 def _white(n, *, seed):

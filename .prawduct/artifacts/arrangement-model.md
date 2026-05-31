@@ -113,10 +113,15 @@ they are played). The decision:
   unmeasured is half-built.* **MEASURE side SHIPPED (phase 2a):** the symbolic
   lens is `src/hallucinote/performance/` (lens + correlation + dynamics + ensemble),
   wired into `/mix-review`; see [`performance-model.md`](performance-model.md) §7.
-  The AUTHOR side (the profile) + grading against a *declared* profile are 2b — so
-  the lens currently reads what was authored, not what was declared. Until then the
-  dimension is *measured but not yet authorable* — half-built by its own rule, on
-  purpose and tracked (ARR-8P5K).
+  **AUTHOR side — first primitive SHIPPED (phase 2b):** `performance.realization`
+  (`PerformanceProfile` + `apply_profile`) realizes the declared profile's additive
+  **1/f breathing**, closing the loop — a mechanical part run through it reads
+  *human* by the very lens above. So the dimension is now *both measured AND (first-
+  cut) authorable*: a composer can declare a profile and make a part human, not just
+  diagnose that it isn't. **Still half-built on purpose:** the profile's *declared
+  genre-baseline field* + the energy-coupling, and the lens grading against a
+  *declared* profile (today it reads what was authored, not what was declared) —
+  friction-driven follow-ons, tracked (ARR-8P5K (b)–(d)).
 - **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
   (it deviates *from* the grid); the metric grid it deviates from is *meter-feel*
   (a structure intent). Clean split.

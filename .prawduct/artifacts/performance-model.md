@@ -1,12 +1,17 @@
 # Performance Model — the rendition layer (microtiming · dynamics · articulation)
 
-**Status:** **phase 2a SHIPPED** — the symbolic performance lens (the read side,
-§7) is built and merged: `src/hallucinote/performance/` (`lens` + `correlation` +
-`dynamics` + `ensemble`), pure stdlib, render-free, validated on sun-zone-done
-(it reproduces the flat-organ + "feels-quantized" findings and reads the white-
-jitter drums as *sloppy*, not human). Wired into `/mix-review` as a render-free
-input. The authoring profile (2b) + audio-extension (2c) remain proposed (design
-complete, §4/§8). Foundational design artifact for the **performance realization
+**Status:** **phase 2a SHIPPED + phase 2b first primitive SHIPPED.** The symbolic
+performance lens (the read side, §7) is built and merged: `src/hallucinote/
+performance/` (`lens` + `correlation` + `dynamics` + `ensemble`), pure stdlib,
+render-free, validated on sun-zone-done (it reproduces the flat-organ + "feels-
+quantized" findings and reads the white-jitter drums as *sloppy*, not human),
+wired into `/mix-review`. The **authoring side now has its first primitive**
+(`realization`: `PerformanceProfile` + `apply_profile`) — the GERM "Random"
+channel (small, additive, **1/f-correlated** breathing) that flips a mechanical
+part to *human* through the very lens that measures it (the closed loop, §4.4,
+§7). Still deferred (friction-driven): the genre-baseline profile field, the
+energy↔performance coupling (§5), phrase-arc curves (§4.3), and the audio
+extension (2c). Foundational design artifact for the **performance realization
 layer** — the detailed, reference-backed home for what `arrangement-model.md` §
 *The dimension taxonomy* names as **the first realization layer**; read that
 section first for where this sits among the song's dimensions.
@@ -237,6 +242,16 @@ not a trained net.
 > `push` defaults are *proto-profiles* (a fixed deterministic offset per idiom). The
 > performance layer generalizes them into declared, named, magnitude-scaled profiles
 > + the additive 1/f layer + the read-side lens.
+>
+> **Shipped (phase 2b, first primitive).** `performance.realization` —
+> `PerformanceProfile(name, timing_sigma, velocity_sigma, k, seed)` +
+> `apply_profile(notes, profile, *, seed)` — realizes the **additive 1/f layer**
+> (correlated timing + velocity breathing) over a finished part, deterministically.
+> It does NOT re-author the constant lay-back (the generators keep that — one
+> source of truth); it adds the GERM "Random" channel that the deterministic
+> `feel`/`lazy`/`push` cannot. Closed-loop test: a mechanical part run through a
+> profile is read `human` by the §7 lens. The *declared genre-baseline as a profile
+> field*, the energy-coupling (§5), and phrase arcs (§4.3) remain follow-ons.
 
 ---
 
@@ -340,18 +355,22 @@ Strictly sequenced (per the user, 2026-05-30):
    from real need (the *discovered-from-friction* discipline): (a) **DONE** — the
    symbolic performance lens (read side first — quantifies the gap, needs no Live):
    `src/hallucinote/performance/` (lens + correlation + dynamics + ensemble),
-   wired into `/mix-review`; (b) the performance-profile authoring surface
-   (generalize the generators' `lazy`/`lag`/`push` proto-profiles into declared,
-   magnitude-scaled profiles + the additive 1/f layer + the energy-coupling read);
-   (c) extend `audio/timing.py` / `cross_rhythm.py` with the 1/f metric + perceived-
-   onset; (d) resolve the open questions (§3) — the Magenta representation review,
+   wired into `/mix-review`; (b) the performance-profile authoring surface —
+   **first primitive DONE** (`realization`: `PerformanceProfile` + `apply_profile`,
+   the declared magnitude-scaled profile + the additive **1/f breathing** layer,
+   closed-loop-validated against the §7 lens); **still open** — the genre-baseline
+   as a declared profile field + the energy-coupling read (§5); (c) extend
+   `audio/timing.py` / `cross_rhythm.py` with the 1/f metric + perceived-onset;
+   (d) resolve the open questions (§3) — the Magenta representation review,
    ensemble-phase representation.
 3. **Bring it to a song.** Apply to sun-zone-done (the flagship already strains it —
    the constant-offset finding + the flat organ + the rhythmic-collision work in
    `songs/sun-zone-done/decisions/07`) and tune by ear. **Partial:** the lens now
    RUNS on sun-zone-done (regression-locked in its tests — it reproduces the flat
    organ + the feels-quantized mechanical timing, and reads the white-jitter drums
-   as *sloppy*). The *tune-by-ear* fix awaits the 2b authoring profile.
+   as *sloppy*); and the 2b authoring primitive now EXISTS to fix them. The actual
+   *tune-by-ear* pass on the flagship (which `apply_profile` to which parts, at what
+   `k`) is a creative decision left for the user's ear — deliberately not auto-applied.
 
 Out of band, fed by genres rather than pre-built: **meter-feel** as a structure
 axis (the grid swing deviates from), **text/lyric/flow** as a subsystem (rap, chant),

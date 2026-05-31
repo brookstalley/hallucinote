@@ -159,8 +159,9 @@ actually do *right now* — read as **dimensions of a song**, not a skill catalo
 | Arrangement / structure (sections, energy arc, contrast) | ✓ full |
 | Sound design (instrument chains as authorship) | ✓ full |
 | Mix (intent-aware review, masking, sidechain) | ✓ full |
-| Melody (lead-line writing) | ◐ thinner than the rest — pluck/bell lines today |
-| Vocal topline (synthesis) | ✗ not yet |
+| Melody (lead-line writing) | ◐ thinner than the rest — pluck/bell lines today; *or sketch your line in Ableton and we arrange around it (round-trip)* |
+| Vocal topline (synthesis) | ✗ not yet — but a sketched vocal *melody* (MIDI) round-trips in |
+| Round-trip / sketch-input (edit in Ableton, we ingest + build around it) | ✓ full — `/ableton-pull` `clip-notes`, stable per-note IDs |
 
 The agent reads this to (a) answer "what can you do?" with broad, *true* example
 invitations, (b) generate an **accurate, dimensional** caveat when a request
@@ -179,6 +180,16 @@ Not *"I can't do Madonna (no vocals)."* The Madonna-ness lives in the dimensions
 we own; the caveat scopes the two we don't, then we build. The boundary moves as
 Melody matures — the table moves with it. *Caveat-first only works if the agent
 knows its own edges; this is that knowledge.*
+
+**The dimensional gap inverts into an invitation.** When a request leans on a
+thin dimension, don't just caveat it — offer the user's *contribution* in that
+dimension. Melody is our thinnest, but **round-trip is fully supported**
+(`/ableton-pull` `clip-notes`, stable per-note IDs): *"bring me your topline —
+sketch it in Ableton — and I'll build the whole track under it."* Caveat-first
+becomes a collaboration boundary, not an apology. This is the **standard move for
+any thin dimension**, and it rests on round-trip, which is *supported, not a
+hazard.* (Remember this generally: users can sketch any part in the sequencer and
+we ingest it.)
 
 **Home:** a living doc both the onboarding handoff and `song-new` read. Must stay
 trivially updatable so it never lags the code.
@@ -286,11 +297,14 @@ directed-action + volunteered-observation**, so the *existing*
 The teaching North Star applies less here — the user has material and intent;
 leverage dominates. Two things this flow must get right:
 
-- **Load-bearing caveat — sync-back is not safe yet.** Per `docs/VISION.md`,
-  until note-level addressing lands, Ableton→DB is destructive ("we push, we do
-  not pull safely"). A revision user who edits in Live expecting a clean
-  round-trip can lose work. This is caveat-first at its most consequential —
-  surface it *before* they start editing in Live, not after.
+- **Round-trip is supported — set the right V1 expectation (not a scare).**
+  Edits in Ableton *do* come back: `/ableton-pull` ingests mixer, devices,
+  params, arrangement, and notes (per-note diff via stable Live note IDs) through
+  the mutator + event path. The honest V1 limits are mild, *not* data-loss: pull
+  conflict policy is **"Ableton wins"** (no three-way merge yet), and note
+  pitch/time *moves* rotate the DB note's UUID (velocity/mute edits preserve it).
+  Surface *that* expectation, not a "sync is unsafe" warning — which was stale in
+  `docs/VISION.md` (now corrected).
 - **Revision still teaches by ear** — mix-review and the compose-stage guided
   evaluation apply: "the chorus you tightened now buries the vocal — hear it?"
 
@@ -395,8 +409,9 @@ not in the model; they cluster in three places below.
    thinnest dimensions. **New design move:** turn the gap into an invitation —
    "I can't write the finished hook or sing it; bring yours and I'll arrange the
    whole track under it." Caveat-first stops being an apology and becomes a
-   collaboration boundary. (Leans on melody-input + the still-unsafe sync-back —
-   note the dependency.) The conservatory composer additionally hits a *paradigm*
+   collaboration boundary. (Rests on round-trip, which is **fully supported** —
+   `clip-notes` pull, stable note IDs — solid ground, not a caveated path.) The
+   conservatory composer additionally hits a *paradigm*
    limit (notated orchestration), which only early honesty fixes.
 3. **The two behavioral judgment calls, confirmed live.** Reading the
    open→proposal transition (4, 6) and proposal *pacing* (6); plus

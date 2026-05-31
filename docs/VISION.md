@@ -38,7 +38,7 @@ Two bets, both unproven, both load-bearing:
 
 - **Plan-based Ableton sync.** `sync/push.py` returns a plan of MCP tool calls; the agent executes; results flow back via `apply_push_results`. Pure, testable, reorder-safe.
 
-- **Bidirectional sync.** Edits made in Ableton come back into the DB. Requires note-level addressing in MCP — see `ableton://guides/gaps`. Without stable note IDs, sync-back is destructive; with them, it is diff-and-apply.
+- **Bidirectional sync.** Edits made in Ableton come back into the DB — diff-and-apply through the mutator + event path. Note-level addressing landed in V1 close-out (gap #4): pull reads notes by Live's stable per-note IDs (`clip.get_notes_extended()`), so per-note edits round-trip precisely.
 
 - **Full LLM access via MCP.** Every read, every write, every generator parameter. Nothing hidden behind a UI the model cannot see.
 
@@ -60,7 +60,7 @@ Naming the hard parts so they do not surprise us:
 
 - **Microtonal and polytempic music is real work.** The DB models it cleanly; getting Ableton to render it requires Max for Live, per-voice pitch routing, or 1/64-grid event positioning. Doable. Not free.
 
-- **Bidirectional sync needs MCP changes.** Note-level addressing is the gate (see `ableton://guides/gaps`). Until it lands, Ableton → DB is destructive — we push, we do not pull safely.
+- **Bidirectional sync: round-trip lands; three-way merge doesn't (yet).** Note-level addressing closed in V1 (gap #4) — `/ableton-pull` ingests mixer, devices, params, arrangement, and per-note edits safely. The remaining cost is conflict resolution, not safety: V1 pull is **"Ableton wins"** (no three-way merge), and note pitch/time *moves* rotate the DB UUID (velocity/mute preserve it). A merge-policy ceiling, not data loss. Surgical Ableton-side note *writes* stay stubbed (use whole-clip replace).
 
 - **The DB is the contract.** Schema changes have to migrate carefully. The mutator-plus-event discipline is the only thing that makes a future event-store flip cheap rather than a rewrite. Drift here is expensive.
 

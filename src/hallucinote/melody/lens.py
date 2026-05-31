@@ -111,7 +111,7 @@ class MelodyFinding:
     """One melodic observation, intent-keyed by ``kind`` + ``severity``. Every
     finding is ``info`` — a coaching question, never a verdict (model §7)."""
 
-    kind: str            # "static-line" | "wandering-line" | "unresolved-nct"
+    kind: str            # "static-line" | "unresolved-nct"
     severity: Severity
     section: str
     detail: str
@@ -409,10 +409,12 @@ def analyze_melody(
 
     Pure symbolic measurement over the per-section note content — the build-time
     counterpart to the harmony conformance lint + performance feel lens. The
-    headline is per-line ``classification`` (``shaped`` / ``wandering`` / ``static``
-    / ``insufficient-data``) + the contour / interval / harmony-fit facts. Render-
-    free and DB-decoupled: feed it ``arrangement.Arrangement.section_melody_inputs()``
-    at build time, or synthetic ``SectionMelody`` inputs in a test.
+    headline is per-line ``classification`` (``active`` / ``static`` /
+    ``insufficient-data`` — the genre-safe read) + the contour / interval /
+    harmony-fit facts that feed the (deferred, profile-relative) shaped-vs-aimless
+    judgment. Render-free and DB-decoupled: feed it
+    ``arrangement.Arrangement.section_melody_inputs()`` at build time, or synthetic
+    ``SectionMelody`` inputs in a test.
     """
     secs = tuple(_analyze_section(s) for s in sections)
     rollup = tuple(f for s in secs for f in s.findings)

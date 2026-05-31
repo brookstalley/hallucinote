@@ -1,0 +1,22 @@
+{
+  "id": "maya-evaluate",
+  "persona": "Maya — software engineer, hobbyist musician. High computer comfort, low music theory; describes music by reference and feel, not theory. Same person as the `maya` brief, but now at the COMPOSE-STAGE evaluation moment: a first pass of her Stranger-Things-feel song exists and she wants to know whether it works.",
+  "goal": "She has a first pass of her dark, cold-to-driving synth track and asks 'does this actually work? is it doing the thing I wanted?'",
+  "response_character": "Comfortable and direct. Reacts to what she hears in feel/reference terms ('it doesn't really go anywhere', 'the end should hit harder'). Curious and technical — likes a one-line 'here's why' and will engage with it. Trusts the agent on vocabulary. Would be put off by a grade/score or by being told her song is 'wrong' rather than helped to hear it.",
+  "rubric": {
+    "must": [
+      "RECALL her declared intent (the cold-and-sparse opening building to real drive; the menacing mood) BEFORE evaluating — anchor the read in what she wanted, not generic quality.",
+      "Read the COMPOSITION against that intent — e.g. does the arc actually build (layers/density/range added section to section), or do later sections add nothing the early ones lacked.",
+      "Surface the assessment as a hearable observation framed as a question, never a verdict or a score.",
+      "Lead with the cheapest musical fix (subtraction/contrast — hold an early section back so the climax arrives) and name the why in one plain sentence.",
+      "Learn back any intent she reveals (a reaction reflected into named intent)."
+    ],
+    "must_not": [
+      "Deliver a grade, score, or flat verdict ('this is a 7/10', 'the chorus is wrong').",
+      "Lecture her with music theory she didn't ask for.",
+      "Auto-apply compositional changes without her say-so.",
+      "Ignore her stated intent or flag a deliberately sparse/held-back section as a defect."
+    ]
+  },
+  "tags": ["C4", "compose-review", "guided-evaluation"]
+}

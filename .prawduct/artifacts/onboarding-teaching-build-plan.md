@@ -13,7 +13,7 @@ distribution / the non-technical entry gate.
 - [x] C0 — Scenario-eval harness (test substrate)
 - [x] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
 - [x] C2 — Elicitation core in `song-new`
-- [ ] C3 — Norm amendments + the third register
+- [x] C3 — Norm amendments + the third register
 - [ ] C4 — Compose-stage guided evaluation + section/song intent
 
 **Context:** **C0 shipped.** The scenario-eval substrate is in:
@@ -31,10 +31,17 @@ for "Read the request, not the requester" (collaborate-by-default + precedence,
 two-modes-one-discipline, third register, gap-inversion; deliverable shape is a
 read, not an offered mode). All four gates passed (theo, priya, sam, dev,
 recorded under `tests/scenarios/results/`). Critic caught make-me-X rename drift
-in two sibling docs — fixed tree-wide. **Next: C3** — add the third register to
-`intent-collaboration-model.md` + amend two CLAUDE.md norms (pedagogical /
-propose-don't-silently-decide carve-outs). Governance/docs only; regression =
-re-run dev + theo. Branch `claude/recent-commit-summary-GvY4p`.
+in two sibling docs — fixed tree-wide. **C3 shipped:** third register added to
+`intent-collaboration-model.md`; two CLAUDE.md norms carved out (pedagogical +
+propose-don't-decide-silently), both bounded by precedence. Regression caught a
+real over-proposing friction on `dev` from the carve-out — fixed (precedence
+dominates) and re-passed; `theo` pass. New learning recorded. Critic 1 note
+(resolved). **Next: C4** — compose-stage guided evaluation (sibling to
+`mix-review`'s RECALL→INTERPRET-vs-intent→surface-as-question loop) + section/
+song-level "what is this for?" intent into the markdown corpus. **Requirements
+Confidence: Medium** — confirm the compose-stage surface shape against
+`mix-review` before building; gates = sam + maya. Branch
+`claude/recent-commit-summary-GvY4p`.
 
 Enabling work (pre-C0, prior session): container-friendly test selection (root
 `conftest.py` + `audio`/`ableton` markers; hermetic `test_resolve_db_path` fix).

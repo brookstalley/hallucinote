@@ -365,6 +365,51 @@ them apart. The live risks are behavioral (reading the elicitation transition
 well) and technical (revision's sync hazard, the non-technical entry gate as a
 deferred distribution problem), not structural.
 
+## Persona walkthrough — the write-a-song scenario
+
+Six personas spanning computer-expertise × music-expertise (incl. partial),
+walked through the create flow. *Excluded by choice:* the "wants a pretty song,
+no interest in learning" user — supported, not optimized for. **Verdict up front:
+the interaction model (read-the-request → elicit → propose → implicit teaching)
+holds for all six — it never breaks on *who* the user is.** The rough edges are
+not in the model; they cluster in three places below.
+
+| # | Persona | Comp / Music | Create-flow stress point |
+|---|---|---|---|
+| 1 | SWE hobbyist | high / low | Frictionless entry; references-as-spec ("like the Stranger Things theme") work; implicit-why delights a curious technical mind. Smoothest case. |
+| 2 | Bedroom producer (self-taught) | high / high-production | Directed-action dominates; risk = over-proposing taxes them. Precedence (clear direction wins) must hold. Wants bulk leverage the linear compose flow under-serves. |
+| 3 | Conservatory composer | low / very-high-theory | Entry gate is a real barrier. Once in: paradigm mismatch — score / orchestration vs generator / DAW; melody ◐, no notation-first path. Interaction model fine; the *capability ceiling* disappoints. Needs early, honest expectation-setting. |
+| 4 | Cross-domain drummer | mod / expert-rhythm, novice-harmony | The third register's showcase: execute the drums, open the harmony — in one sentence. Risk = under-reading the underspecification and silently auto-accompanying "make it feel like Bach." |
+| 5 | Singer-songwriter / topliner | low-mod / expert-melody + vocal | Brutal: their strength (melody, vocal) is our thinnest dimension (◐ / ✗). Best served by *inverting the gap* — "bring your melody, I'll build the track under it" — which leans on the caveated input / sync paths. |
+| 6 | Curious newcomer (wants to learn) | mod / low | The North Star persona. Heavy proposal-mode; strong genre conventions (lo-fi) let us just-build-and-show. Risk = proposal overload / paralysis if we over-fork. |
+
+**The rough edges cluster in three places — none is the interaction model:**
+
+1. **Entry gate, and an inverse correlation.** The technical on-ramp
+   (clone / pip / MCP / Ableton click) filters hardest exactly the *music-strong,
+   computer-light* personas (3, 5) — the people most able to use the musical
+   depth are the least served by the on-ramp. Deferred (distribution), but the
+   walkthrough sharpens *who* it costs.
+2. **Capability ceiling on melody / vocal — invert it into a contribution
+   boundary.** Personas whose strength is melody / voice (5, partly 3) hit our
+   thinnest dimensions. **New design move:** turn the gap into an invitation —
+   "I can't write the finished hook or sing it; bring yours and I'll arrange the
+   whole track under it." Caveat-first stops being an apology and becomes a
+   collaboration boundary. (Leans on melody-input + the still-unsafe sync-back —
+   note the dependency.) The conservatory composer additionally hits a *paradigm*
+   limit (notated orchestration), which only early honesty fixes.
+3. **The two behavioral judgment calls, confirmed live.** Reading the
+   open→proposal transition (4, 6) and proposal *pacing* (6); plus
+   collaborate-default yielding to the power producer (2). All already flagged;
+   the walkthrough shows each biting a specific persona.
+
+**Net:** reframing to "read the request, not the requester" paid off — the model
+is robust across the whole spectrum. What's left to get right is *capability
+honesty* (set the composer's and topliner's expectations early; offer the
+gap-inversion to the topliner) and *behavioral judgment* (transition + pacing).
+The entry gate remains the deferred distribution problem, now with a name for who
+it costs most.
+
 ## Deliberately not decided here
 
 - **No build plan yet.** Shape first. This artifact is the shape; chunking,

@@ -191,3 +191,11 @@ _(no items)_
 - Real-time concurrent editing / cloud DB migration. Out of foreseeable scope; mutator-discipline + storage abstraction keep the door open. (migrated)
 
 - Song tests (on-demand layer): DB consistency + mix hygiene + audio/spectral. Land per-chunk as appetite allows; not gating any chunk's completion. (migrated)
+
+## Onboarding & teaching — deferred follow-on plans (from C0–C4, merged in #117)
+The create-experience (C0–C4) shipped. The design doc (`onboarding-and-teaching-model.md`) and build plan explicitly deferred three pieces to later plans:
+- **Revision-flow polish.** Loading an existing song to revise it is mostly directed-action + volunteered-observation (the existing intent-collaboration-model fits). The honest V1 round-trip expectations (pull = "Ableton wins", pitch/time moves rotate note UUID) should be surfaced before Live editing. Largely covered by existing skills; needs a light pass + a revise-flow scenario brief.
+- **Learn-the-tool flow.** A distinct teaching target (workflow: branch a chorus variant, push/pull, semantic addressing) the musical-teaching model does NOT cover. Needs tool-scaffolding (propose→explain→show-the-difference applied to workflow moves). Currently unaddressed.
+- **Non-technical entry gate / distribution.** The clone/pip/MCP/Ableton on-ramp filters hardest exactly the music-strong, computer-light personas (elena, priya). Explicitly a distribution problem, deferred.
+
+Harness note: the C0 scenario-eval harness (`tools/scenario_eval.py` + `tests/scenarios/`) is the substrate for verifying all three — author briefs + run simulator/judge subagents per `tests/scenarios/README.md`.

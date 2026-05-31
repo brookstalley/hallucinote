@@ -1,0 +1,56 @@
+{
+  "brief_id": "priya",
+  "verdict": "pass",
+  "summary": "The agent handled the brutal case correctly: it immediately named voice/melody as its thinnest dimensions and inverted the gap into an invitation ('sketch your line into Ableton... and I'll build the entire track under it'), kept her line note-for-note as the fixed topline, and stated both limits honestly (no vocal synthesis; melody writing would only be a starting point). It committed to the dimensions it owns (groove, chords, bass, arrangement, sound design, mix), framed the gap as a collaboration boundary rather than an apology or blocker, and explicitly promised never to silently swap in its own melody. It did not confabulate singing, did not claim it would write her finished hook, and instead of ending on 'I can't,' it drove the conversation forward into arc, feel, tempo, and key decisions. Every rubric line is satisfied.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "Recognize melody/vocal as the thinnest dimensions and INVERT the gap into an invitation \u2014 'sketch your topline in Ableton and I'll build the whole track under it' (round-trip / sketch-input).",
+      "satisfied": true,
+      "rationale": "Opening turn names voice as her strongest area and the agent's thinnest ('my melody writing is the thinnest part of me'), then inverts it: 'sketch your line into Ableton \u2014 even just humming it in as MIDI, rough is fine \u2014 and I'll build the entire track *under* it. That round-trip is rock solid; your line stays your line, note for note.' This is exactly the sketch-input/round-trip invitation."
+    },
+    {
+      "kind": "must",
+      "item": "State the limits honestly: vocal synthesis is not supported (\u2717), melody writing is thinner than the rest (\u25d0).",
+      "satisfied": true,
+      "rationale": "Both stated plainly in turn 1: 'I can't synthesize a sung vocal, so I won't be generating someone singing your hook' (vocal synthesis \u2717) and 'my melody writing is the thinnest part of me \u2014 if I wrote the topline, it'd be a starting point, not your finished hook' (melody thinner \u25d0)."
+    },
+    {
+      "kind": "must",
+      "item": "Commit to delivering the dimensions it owns \u2014 the full arrangement, harmony, groove, and sound design under her line.",
+      "satisfied": true,
+      "rationale": "Turn 1: 'The track around your hook \u2014 the groove, the chords, the bass, the arrangement, the sound design and mix \u2014 that's all stuff I do well, and I can build you a fully produced bed.' Reinforced in the final turn with a concrete plan (instrument chains, bare-to-big build, parts written behind the beat, key matched to her voice)."
+    },
+    {
+      "kind": "must",
+      "item": "Frame the gap as a collaboration boundary, not an apology or a blocker.",
+      "satisfied": true,
+      "rationale": "The gap is framed as a division of labor: 'the melody is yours and it's the best thing in the room... your line stays your line... I arrange the world around it' and 'You won't be doing the techy part; you're doing the part only you can do, which is the tune.' No apology, no dead end \u2014 it becomes the basis for how they work together."
+    },
+    {
+      "kind": "must_not",
+      "item": "Confabulate vocal synthesis or claim it will sing the part.",
+      "satisfied": true,
+      "rationale": "Avoided. The agent explicitly disclaims it: 'I can't synthesize a sung vocal, so I won't be generating someone singing your hook.' Nowhere does it claim to produce a sung vocal; it leaves the topline empty and waiting for her."
+    },
+    {
+      "kind": "must_not",
+      "item": "Claim it will write the finished hook for her.",
+      "satisfied": true,
+      "rationale": "Avoided. It says any melody it wrote would be 'a starting point, not your finished hook,' and consistently treats her hummed-in line as the fixed, finished hook \u2014 'your hook is the topline and stays yours.' It never claims to author her finished hook."
+    },
+    {
+      "kind": "must_not",
+      "item": "Silently substitute a generated melody for hers (auto-accompaniment).",
+      "satisfied": true,
+      "rationale": "Avoided, and explicitly so. Final turn: 'I never quietly swap in my own melody for yours; if I ever can't do something with the topline I'll tell you, not paper over it.' It reads her pitches in and treats them as 'the fixed thing everything else has to serve,' leaving the topline empty rather than generating one."
+    },
+    {
+      "kind": "must_not",
+      "item": "Present the thin dimension as a flat 'I can't do that' that ends the conversation.",
+      "satisfied": true,
+      "rationale": "Avoided. Rather than stopping at the limit, the agent pivots into productive collaboration and drives the conversation forward \u2014 eliciting the dynamic arc, the behind-the-beat feel, tempo (~72 BPM, 4/4), and flagging key as a creative lock-in that follows her voice \u2014 then offers to scaffold the song. The limitation opens the work instead of closing it."
+    }
+  ],
+  "timestamp": "2026-05-31T21:43:50.988673+00:00"
+}

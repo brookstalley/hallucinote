@@ -63,7 +63,7 @@ A finished song has the sound it's supposed to have *as part of being finished*,
 
 The "default volumes / sends / chain-state" the song needs to *sound right* live in this file. The composer's job is to put them there as part of authoring, not to defer them to a later mix session. See `docs/snapshot-schema.md` for the schema; see `/song-pick-instruments` for the picker that writes chains.
 
-This applies most strongly to `make-me-X` mode (see `/song-new`): the deliverable is the playable song, and the song's sound is part of being playable.
+This applies most strongly to a **creative product prompt** (see `/song-new`, "Read the request"): the deliverable is the playable song, and the song's sound is part of being playable.
 
 ---
 

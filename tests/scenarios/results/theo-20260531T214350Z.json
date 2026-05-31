@@ -1,0 +1,50 @@
+{
+  "brief_id": "theo",
+  "verdict": "pass",
+  "summary": "The agent handled the cross-domain drummer correctly. It executed the precise drum spec confidently as a directed action without re-proposing it, and explicitly treated 'feel like Bach' as under-articulated by refusing to guess and instead offering two concrete, hearable harmony options (walking bass; late-resolving suspensions) each with a one-sentence plain-language why. When the user deferred ('I dunno, that's why I asked you'), the agent translated his ear-level cues ('going somewhere', 'darker') into a proposed build rather than assuming or quizzing him further, and offered a cheap reversal ('thirty-second change'). It never silently auto-generated counterpoint, never lectured theory, and asked at most one batched harmony question rather than interrogating. Every rubric line is satisfied, so the verdict is pass.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "Execute the drum direction confidently (directed action).",
+      "satisfied": true,
+      "rationale": "After the user specified kick on 1 and the and-of-2, snare on 2 and 4, tight low ghosts, dead straight no swing, the agent replied 'locking that in exactly... That's a directed choice so I'm just executing it, not re-proposing,' and later confirmed 'drums untouched from your spec' and baked the straight no-swing feel into the pattern. Confident directed execution, no needless re-litigation."
+    },
+    {
+      "kind": "must",
+      "item": "Treat 'feel like Bach' as under-articulated, not a directive.",
+      "satisfied": true,
+      "rationale": "The agent explicitly said '\"chords like Bach\" can go a couple of distinct directions and they sound really different over a break, so I'd rather play you the choice than guess,' surfacing it as ambiguous rather than executing a single 'Bach' interpretation outright."
+    },
+    {
+      "kind": "must",
+      "item": "Open harmony by proposing concrete, hearable options (walking bass under the kit, late-resolving suspensions) with the why in one plain sentence.",
+      "satisfied": true,
+      "rationale": "The agent offered exactly the two named options in plain hearable terms: walking bass ('the bass never sits still, it climbs and steps between the chords') and late suspensions ('a note that leans against the chord and only falls into place a beat later, which is what gives that aching, almost church feeling'). Each has a one-sentence why, no jargon, then 'Does either of those land?'"
+    },
+    {
+      "kind": "must",
+      "item": "When he defers, propose, don't assume.",
+      "satisfied": true,
+      "rationale": "When the user deferred ('Honestly I dunno, that's why I asked you... going somewhere... Darker'), the agent mapped his words to choices ('Going-somewhere is the walking bass... Darker I'll get by sitting it in a minor key') and proposed a concrete build to play him, with an explicit reversibility escape ('If it's too much once you hear it I pull the suspensions back out; that's a thirty-second change'). It proposed a hearable plan rather than silently assuming a finished harmonic vision."
+    },
+    {
+      "kind": "must_not",
+      "item": "Silently generate Bach-ish counterpoint and move on (auto-accompaniment \u2014 the core failure).",
+      "satisfied": true,
+      "rationale": "The agent never silently generated counterpoint. It paused to present the harmony choice ('I'd rather play you the choice than guess'), only proceeded after the user said 'Yeah. Do that,' and flagged the remaining busy-ness fork as the point where it will stop for his ear. No auto-accompaniment."
+    },
+    {
+      "kind": "must_not",
+      "item": "Lecture him with theory he didn't ask for.",
+      "satisfied": true,
+      "rationale": "Explanations stayed at ear level ('the bass never sits still', 'leans before it lands', 'darker... a minor key'). The agent avoided theory vocabulary, even saying 'let me stop quizzing you' and 'here's where I'd rather you hear the shapes than answer theory.' No harmony lecture."
+    },
+    {
+      "kind": "must_not",
+      "item": "Interrogate him with a string of harmony questions.",
+      "satisfied": true,
+      "rationale": "The agent asked a single batched harmony question ('Does either of those land?'), and when the user couldn't choose, it stopped asking entirely ('let me stop quizzing you and just build one and play it') rather than firing follow-up harmony questions. No interrogation."
+    }
+  ],
+  "timestamp": "2026-05-31T21:43:50.988160+00:00"
+}

@@ -13,16 +13,39 @@ You scaffold a new Hallucinote song from templates AND run the pre-composition e
 
 $ARGUMENTS
 
-## Mode detection (do this first)
+## Read the request, not the requester (do this first)
 
-Decide which of two modes the invocation is in **before doing anything else**, and state your read in one sentence so the user can correct it:
+Form **no judgment about the user's musical expertise** — no novice/expert branch, no fluency detection. Assess exactly one thing: *is this request specified enough to build a first concrete pass that matches what's in their head?* That is a property of the **ask**, not the **asker**. An expert's "four-movement symphony exploring atonality in the strings" is as underspecified as a hobbyist's "a Madonna song" — treat them identically: elicit toward *enough to start*, not enough to finish.
 
-- **`make-me-X` mode** — the user asked for a *finished song* ("make me a 2-minute punk song that condenses Beethoven's 5th"; "build me a lazy bossa for cocktail hour"). The implicit deliverable is the song you can press play on. Scaffold + decisions + instrument picks + push + compose + sound design + mix all happen as one continuous flow. Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them. Stop only for high-stakes decisions or must-answer questions (see CLAUDE.md "Hallucinote Behavioral Norms").
-- **`scaffold-only` mode** — the user asked for a *scaffold*, not a finished song ("set up a new song called X with these sections"; explicit args like `/song-new my-song "Title" 120 4/4 intro,verse,chorus`). Stop after Phase 2 + the instrument-pick step; produce the "Next steps" report so the user can drive composition themselves later.
+**Collaborate by default; clear direction always wins (precedence).** This replaces the old `make-me-X` / `scaffold-only` mode menu — collaboration is the stance, not one of two offered modes.
 
-Default to `make-me-X` if the user used a creative-product verb ("make / build / write me X") about a thing-to-be-experienced. Default to `scaffold-only` if the invocation looks like a structured slash-command call with explicit args, or if the user named the act of scaffolding directly ("scaffold a song," "set up a song template").
+- When the user has **directed** a choice, execute it — don't re-propose what they already decided (directed action; obedience is unconditional — their ears are the authority).
+- When they **haven't directed** an elementary choice you're about to make, **don't decide it silently** (that's auto-accompaniment) — propose it and invite reaction. A proposal the user doesn't object to is *confirmed* direction; a silent assumption is not. That line is the line between collaboration and auto-accompaniment.
 
-When ambiguous, state your inference ("Reading this as `make-me-X` — I'll drive through to a playable mix unless you stop me") and proceed.
+**Two modes, one discipline:**
+
+1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). At most one or two questions before you hand them something concrete; more is interrogation.
+2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now*, and never *ask a fourth question*.
+
+**The one discipline across both: never assume-and-go.** Every gap is either elicited or proposed-and-reacted-to.
+
+**Load-bearing only; just-do-and-show the cheap choices.** Elicit at the expensive forks; make cheap-to-revise choices tastefully and *show* them — the artifact becomes the next proposal, instantly redirectable. Don't fork every elementary choice into an A/B.
+
+**Name the why.** When you propose, carry the reasoning in *one plain collaborator's sentence* — "I held the verse back so the chorus opens up," never "this is a deceptive cadence, which in theory…". The expert skims it; the novice learns from it; you never decided which is which. The theory vocabulary only surfaces if the user reaches for it. **Never a classroom; never homework.**
+
+**The third register — directed-but-under-articulated.** When the user asks for something they can't yet specify — "make it feel like Bach," "a pop song like Madonna" — that is neither a directive to execute nor a question to fire back. **Open the domain:** propose concrete, *hearable* options (e.g. walking bass under the kit vs late-resolving suspensions), name the why in one sentence, and offer a real choice. This fires on the **request** (the dimension is unpinned), never on a judgment that the user is a novice. **Never** silently generate a best-guess and move on — that is the core failure.
+
+**Gap-inversion for thin dimensions.** Per the capability-honesty note below, when a request leans on a thin dimension (melody ◐, vocal synthesis ✗), invert the gap into an invitation — "sketch your topline in Ableton and I'll build the track under it" (round-trip is fully supported). Caveat the thin dimension, deliver the rest, never silently substitute.
+
+### Deliverable shape — a read, not an offered mode
+
+Do **not** ask the user to pick "build it all for me" vs "just scaffold it" — offering the do-it-for-you path surfaces the dependence framing. **Read** the deliverable shape from what they asked, state your read in one sentence so they can correct it, and proceed:
+
+- **Creative product prompt** ("make / build / write me a song like X" — a thing to press play on): drive end-to-end to a playable result, *collaborating on the elementary choices you'd otherwise guess at*. Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them, stopping only for high-stakes decisions, must-answer questions, or a collaborative proposal at a creative lock-in (see CLAUDE.md "Hallucinote Behavioral Norms"). "Drive end-to-end" never means "decide the elementary musical choices silently" — propose them.
+- **Scaffold request** (structured slash-command call with explicit args like `/song-new my-song "Title" 120 4/4 intro,verse,chorus`, or "set up / scaffold a song"): this *is* directed action — produce the scaffold + instrument picks + the "Next steps" report, and don't over-collaborate on choices the user deferred to a later sitting.
+- **The build-it-all-for-me path exists but is never *offered*.** A user can ask for it outright ("just make me something, I trust you") and you oblige — but never put it on the table as a menu choice.
+
+When ambiguous, state your inference ("Reading this as a finished song — I'll drive through to a playable mix, checking with you at the creative forks") and proceed.
 
 ## What you do
 
@@ -91,15 +114,15 @@ Two important defaults the scaffold uses:
 
 ## Final report to user
 
-After the build + tests succeed, your behaviour depends on the mode you detected at the start.
+After the build + tests succeed, your behaviour depends on the **deliverable shape** you read at the start.
 
-**`make-me-X` mode** — keep going. The deliverable is the playable song, not the scaffold. Don't list "next steps" as user-facing checkpoints. State briefly what you did and what you're proceeding to (instruments → push → compose → mix), then do it:
+**Creative product prompt** — keep going. The deliverable is the playable song, not the scaffold. Don't list "next steps" as user-facing checkpoints. State briefly what you did and what you're proceeding to (instruments → push → compose → mix), then do it:
 
 > Scaffolded `songs/<slug>/` with N decisions in `decisions/`. Proceeding to instrument picks (chains, not bare instruments — saturation + bus processing baked in per "sound design is composition"), then push to a fresh Live set, then compose with per-part feel, then mix. I'll stop only if I hit a real decision point.
 
 Then immediately invoke `/song-pick-instruments` and continue. Compose work happens in `build.py`; sound design (chains) ships in `captured_session.json` (see `docs/snapshot-schema.md` "Sound design is authorship"). Per-part `feel` (microtiming) is baked into generator calls, not a post-hoc humanize pass. Mix-time effects (sends, sidechain, bus glue) are part of the deliverable, not a follow-up list.
 
-**`scaffold-only` mode** — stop after the pick step. Produce the checklist the user can drive themselves:
+**Scaffold request** — stop after the pick step. Produce the checklist the user can drive themselves:
 
 > Scaffolded `songs/<slug>/` with N decisions recorded in `decisions/`. Next steps:
 >

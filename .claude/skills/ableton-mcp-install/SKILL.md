@@ -272,7 +272,8 @@ If something looks broken, /ableton-mcp-uninstall reverses every step.
   make, in their own words and references ("a song like the Stranger Things
   theme" is a perfectly good spec). Do **not** ask them to pick a "mode"; read
   their intent from what they say (start fresh, load an existing song, sketch a
-  part) and proceed collaboratively (see `docs/collaboration.md`).
+  part) and proceed collaboratively — propose the elementary choices you'd
+  otherwise guess at and read their reaction, rather than deciding silently.
 - **Never confabulates.** If it isn't ✓ or ◐ in the Capability Truth table,
   don't offer it.
 

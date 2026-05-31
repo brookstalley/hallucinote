@@ -12,7 +12,7 @@ distribution / the non-technical entry gate.
 
 - [x] C0 — Scenario-eval harness (test substrate)
 - [x] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
-- [ ] C2 — Elicitation core in `song-new`
+- [x] C2 — Elicitation core in `song-new`
 - [ ] C3 — Norm amendments + the third register
 - [ ] C4 — Compose-stage guided evaluation + section/song intent
 
@@ -26,10 +26,15 @@ under `tests/scenarios/briefs/`, a runner-procedure README, and 39 unit tests in
 C2→theo, priya, sam, dev; C4→sam, maya). **C1 shipped:** `docs/capability-truth.md` (dimensional living
 doc) is read by both the rewritten `/ableton-mcp-install` Step 5b and `song-new`
 Phase 1; static command menu removed. Maya brief passed all 8 rubric lines under
-the harness (`tests/scenarios/results/maya-*.json`); Critic 0/0/0. **Next: C2** —
-elicitation core in `song-new` (retire the make-me-X / scaffold-only mode split
-for collaborate-by-default-with-precedence; gates = theo, priya, sam, dev).
-Branch `claude/recent-commit-summary-GvY4p`.
+the harness (`tests/scenarios/results/maya-*.json`); Critic 0/0/0. **C2 shipped:** `song-new`'s mode menu retired
+for "Read the request, not the requester" (collaborate-by-default + precedence,
+two-modes-one-discipline, third register, gap-inversion; deliverable shape is a
+read, not an offered mode). All four gates passed (theo, priya, sam, dev,
+recorded under `tests/scenarios/results/`). Critic caught make-me-X rename drift
+in two sibling docs — fixed tree-wide. **Next: C3** — add the third register to
+`intent-collaboration-model.md` + amend two CLAUDE.md norms (pedagogical /
+propose-don't-silently-decide carve-outs). Governance/docs only; regression =
+re-run dev + theo. Branch `claude/recent-commit-summary-GvY4p`.
 
 Enabling work (pre-C0, prior session): container-friendly test selection (root
 `conftest.py` + `audio`/`ableton` markers; hermetic `test_resolve_db_path` fix).

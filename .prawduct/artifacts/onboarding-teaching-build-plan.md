@@ -14,7 +14,7 @@ distribution / the non-technical entry gate.
 - [x] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
 - [x] C2 — Elicitation core in `song-new`
 - [x] C3 — Norm amendments + the third register
-- [ ] C4 — Compose-stage guided evaluation + section/song intent
+- [x] C4 — Compose-stage guided evaluation + section/song intent
 
 **Context:** **C0 shipped.** The scenario-eval substrate is in:
 `tools/scenario_eval.py` (JSON brief schema + loader, persona/judge prompt
@@ -42,6 +42,15 @@ song-level "what is this for?" intent into the markdown corpus. **Requirements
 Confidence: Medium** — confirm the compose-stage surface shape against
 `mix-review` before building; gates = sam + maya. Branch
 `claude/recent-commit-summary-GvY4p`.
+
+**C4 shipped — ALL CHUNKS COMPLETE.** `/compose-review` skill (compositional
+sibling to `/mix-review`); `intent-architecture.md` gained the compose-stage loop
++ the "what is this for?" altitude (song/section/element) convention; `song-new`
+hands off to `/compose-review` after the first pass. Two new compose-stage briefs
+(maya-evaluate, sam-evaluate) gate it — both passed via independent judges. Critic
+(final) 0/0/0. The create-experience plan (C0–C4) is fully delivered and verified;
+deferred to later plans (unchanged): revision-flow polish, the learn-the-tool flow,
+the non-technical entry gate / distribution.
 
 Enabling work (pre-C0, prior session): container-friendly test selection (root
 `conftest.py` + `audio`/`ableton` markers; hermetic `test_resolve_db_path` fix).

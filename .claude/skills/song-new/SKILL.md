@@ -122,6 +122,8 @@ After the build + tests succeed, your behaviour depends on the **deliverable sha
 
 Then immediately invoke `/song-pick-instruments` and continue. Compose work happens in `build.py`; sound design (chains) ships in `captured_session.json` (see `docs/snapshot-schema.md` "Sound design is authorship"). Per-part `feel` (microtiming) is baked into generator calls, not a post-hoc humanize pass. Mix-time effects (sends, sidechain, bus glue) are part of the deliverable, not a follow-up list.
 
+**After the first compositional pass, evaluate it against intent — `/compose-review`.** Novices can generate but not yet *evaluate*; this is where the lesson consolidates. Before (and separately from) the mix, help the user hear whether the composition does what the song is trying to do — "you wanted the chorus to lift; here's whether it does; here's the one thing holding it back" — framed as a question, never a verdict. It teaches contrast and subtraction by ear, and learns section/song intent back into the corpus. Don't skip straight to mixing a composition the user hasn't been helped to hear.
+
 **Scaffold request** — stop after the pick step. Produce the checklist the user can drive themselves:
 
 > Scaffolded `songs/<slug>/` with N decisions recorded in `decisions/`. Next steps:

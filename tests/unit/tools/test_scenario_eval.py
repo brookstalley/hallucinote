@@ -29,7 +29,11 @@ from tools.scenario_eval import (
     write_result,
 )
 
-EXPECTED_PERSONAS = {"maya", "dev", "elena", "theo", "priya", "sam"}
+# The six create-flow personas (C1/C2/C3 gates) plus the compose-stage
+# evaluation briefs (C4 gates). The corpus grows as chunks add gating scenarios.
+CREATE_FLOW_PERSONAS = {"maya", "dev", "elena", "theo", "priya", "sam"}
+EVALUATE_BRIEFS = {"maya-evaluate", "sam-evaluate"}
+EXPECTED_PERSONAS = CREATE_FLOW_PERSONAS | EVALUATE_BRIEFS
 
 
 def _valid_brief_dict(**overrides) -> dict:
@@ -63,9 +67,11 @@ def _fill(skeleton: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_all_six_personas_load_and_validate():
+def test_all_personas_load_and_validate():
     briefs = load_all_briefs()
-    assert {b.id for b in briefs} == EXPECTED_PERSONAS
+    ids = {b.id for b in briefs}
+    assert CREATE_FLOW_PERSONAS <= ids, "all six create-flow personas must exist"
+    assert ids == EXPECTED_PERSONAS
 
 
 def test_every_shipped_brief_is_well_formed():

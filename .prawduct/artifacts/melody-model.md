@@ -1,16 +1,19 @@
 # Melody Model — the line layer (contour · expectation · motivic economy · harmonic fit)
 
-**Status:** **design — research-grounded, pre-build.** This artifact is the
-research-backed home for **melody** as the next dimension to receive the house
-both-sides treatment (after harmony — `theory.model`/`theory.lint` — and
-performance — `performance.lens`/`performance.realization`). It records the
-verified research foundation, the taxonomy placement, the governing thesis, and
-the planned authoring + measurement design. **No code has shipped yet** (unlike
-the harmony and performance artifacts, which were written against shipped
-modules). The phased plan (§8) starts, as performance did, with the **read-side
-lens first** — it quantifies the gap and becomes the authoring side's executable
-acceptance test. See `arrangement-model.md` § *The dimension taxonomy* for where
-melody sits among the song's dimensions; read that first.
+**Status:** **read-side lens SHIPPED (phase 2a); authoring side designed, pre-build.**
+The verified research foundation, the taxonomy placement, and the governing thesis
+are settled, and the FIRST both-sides primitive — the symbolic **melody lens**
+(`src/hallucinote/melody/`: `lens` + `contour` + `intervals` + `harmony_fit`) — is
+built: a pure-stdlib, render-free read-side analyzer that measures the genre-general
+substrate facts and classifies a line `active` / `static` / `insufficient-data`,
+validated on sun-zone-done's two hand-authored hooks (§9); 27 tests, full suite
+green. Built **read-side-first**, as performance was — it quantifies the gap and
+becomes the authoring side's executable acceptance test. Still pre-build (friction-
+driven follow-ons): the declared melodic-PROFILE authoring surface + profile-relative
+grading + learn-back (§4), the motivic-economy reading + the shaped-vs-aimless
+verdict (§7), `/mix-review` wiring, and any thin authoring rulers. See
+`arrangement-model.md` § *The dimension taxonomy* for where melody sits among the
+song's dimensions; read that first.
 
 **Sources.** TWO verified deep-research passes (2026-05-31), same adversarial
 discipline as the performance pass (3-vote, majority-refute kills). Pass 1
@@ -508,13 +511,20 @@ facts, reported as neutral measurements):
   counterpart to `theory.lint`'s vertical conformance, graded against the profile's
   declared harmonic-freedom (§5), never as a universal gate.
 
-**The classification analog to mechanical/human/sloppy** (to finalize, likely):
-**shaped** (structured contour + proximity-dominant + some motivic economy +
-harmonic anchoring) vs. **random-walk** (uniform interval distribution, no
-contour structure, no economy — the in-key-but-aimless line a machine emits) vs.
-**static/inert** (near-zero range, one-note recitation). Graded **against the
-declared profile** — a deliberately static minimalist line is not "inert," a
-deliberately angular line is not "random" — never a universal pass/fail.
+**The classification (as shipped, phase 2a) is deliberately genre-SAFE:** `static`
+(a near-monotone — tiny ambitus), `active` (a line with real melodic range), or
+`insufficient-data` (too few notes). It does **not** verdict *shaped vs aimless/
+random-walk* — that split is genre-relative (a third-based reggae hook, a chromatic
+bebop head, and a folk tune each read against their own idiom) and needs the
+**declared profile** to grade against, so it is a **phase-2b** capability. v1 instead
+REPORTS the facts that feed that judgment (step↔leap, post-skip reversal, contour
+shape, alphabet, harmony fit) without imposing a universal verdict — the same
+honesty as `performance.lens` deferring declared-profile grading (and *more*
+deferred, because melody is more genre-relative than feel). A deliberately static
+line surfaces only as a coaching QUESTION, never a fail. This was a deliberate
+build-time correction: an early `step_fraction ≥ 0.5 → shaped, else wandering`
+rule mislabeled the genuine third-based reggae hook as "wandering" — exactly the
+universal verdict the thesis (§1) forbids — so the verdict was dropped to 2b.
 
 > **Design note — why proxies, not IDyOM.** Information content (3.1) is the
 > theoretical north star for "shaped vs random," but IDyOM needs a trained corpus
@@ -541,14 +551,15 @@ Strictly sequenced, mirroring the performance layer's proven order:
 1. **Document & integrate (THIS artifact + the taxonomy update + the manifest +
    scope + backlog) — DONE when this lands** (with pass 2 folded in). The research
    is a native part of the platform's design materials, reference-backed.
-2. **Platform implementation (friction-driven), read-side FIRST.** (a) the
-   symbolic **melody lens** — `src/hallucinote/melody/` (contour + intervals +
-   harmony-fit), the `section_melody_inputs()` adapter, wired into `/mix-review`
-   beside the harmony + performance lenses; validated on sun-zone-done's two
-   hand-authored hooks (§ first demonstration). (b) the **declared melodic
-   profile** authoring surface (§4) + grading the lens against it + learn-back.
-   (c) any thin authoring rulers discovered from friction (contour→scale-degree,
-   chord-tone snap) — never a `melody()` generator.
+2. **Platform implementation (friction-driven), read-side FIRST.** (a) **DONE** —
+   the symbolic **melody lens** `src/hallucinote/melody/` (`lens` + `contour` +
+   `intervals` + `harmony_fit`) + the `Arrangement.section_melody_inputs()` adapter,
+   validated on sun-zone-done's two hand-authored hooks (§9); 27 tests. *(Still to
+   do in 2a: wire into `/mix-review` beside the harmony + performance lenses.)*
+   (b) the **declared melodic profile** authoring surface (§4) + grading the lens
+   against it + learn-back + the shaped-vs-aimless verdict. (c) any thin authoring
+   rulers discovered from friction (contour→scale-degree, chord-tone snap) — never
+   a `melody()` generator.
 3. **Bring it to a song.** Run the lens on sun-zone-done; tune by ear. Which
    profile each line declares, and any rewrite, is a creative lock-in left to the
    user's ear — deliberately not auto-applied (as the performance tune-by-ear pass

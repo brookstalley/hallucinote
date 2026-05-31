@@ -191,8 +191,11 @@ decision:
   MEASURE = a symbolic melody lens (`src/hallucinote/melody/`) beside the harmony
   conformance lint + performance lens — contour, intervallic/leap profile, range,
   motivic economy, and harmony-fit against the `Progression`. *A dimension authored
-  but unmeasured is half-built.* **Status: research + model artifact shipped; the
-  lens is the next build (read-side first, per the performance build-order lesson).**
+  but unmeasured is half-built.* **Status: research + model artifact + READ-SIDE
+  LENS shipped** (`src/hallucinote/melody/` — `lens`+`contour`+`intervals`+
+  `harmony_fit`, 27 tests, validated on sun-zone-done's two hooks; classifies
+  `active`/`static`, the shaped-vs-aimless verdict deferred to the profile-relative
+  phase 2b). Next: the declared melodic-profile authoring surface + grading.
 
 ### SCOPE BOUNDARY — melody is pitched-discrete-monophonic-line-only
 

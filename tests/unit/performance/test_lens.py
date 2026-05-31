@@ -138,14 +138,17 @@ def test_part_below_min_onsets_reads_insufficient_data():
 
 
 def test_mechanical_part_emits_an_info_finding_never_blocking():
+    # _eighths is on-grid AND one velocity, so it legitimately trips both the
+    # mechanical-timing and (P3) flat-dynamics coaching questions. Assert the
+    # mechanical-timing one specifically rather than the exact count.
     report = _analyze_one({"hat": _eighths(_CONFIDENCE_FULL_ONSETS)})
     findings = report.sections[0].findings
-    assert len(findings) == 1
-    f = findings[0]
-    assert f.kind == "mechanical-timing"
-    assert f.severity == "info"        # a question, not a verdict
-    assert f.track == "hat"
-    assert report.ok is True           # info findings never fail the song
+    mech = [f for f in findings if f.kind == "mechanical-timing"]
+    assert len(mech) == 1
+    assert mech[0].severity == "info"        # a question, not a verdict
+    assert mech[0].track == "hat"
+    assert all(f.severity == "info" for f in findings)
+    assert report.ok is True                 # info findings never fail the song
     assert report.blocking == ()
 
 

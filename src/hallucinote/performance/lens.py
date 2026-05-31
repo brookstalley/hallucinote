@@ -25,6 +25,9 @@ What it measures, per part (track) per section that has onsets:
     autocorrelation (the robust structured-vs-white discriminator) + the DFA 1/f
     exponent α when the series is long enough to trust. This is what separates a
     HUMAN groove from SLOPPY jitter.
+  * **dynamics + articulation** (``performance.dynamics``) — per-note velocity
+    mean/stdev and a ``flat_dynamics`` flag (the organ-at-one-velocity case), plus
+    an articulation character (median duration/IOI: ≈1 legato, <≈0.5 staccato).
 
 The **mechanical / human / sloppy** classification (performance-model §7): a part
 whose onsets sit on the grid with ~zero spread reads ``mechanical`` (this
@@ -52,6 +55,11 @@ from hallucinote.performance.correlation import (
     STRUCTURED_ACF_MIN,
     dfa_alpha,
     lag1_autocorr,
+)
+from hallucinote.performance.dynamics import (
+    articulation_stats,
+    is_flat_dynamics,
+    velocity_stats,
 )
 
 NoteDict = dict[str, Any]
@@ -86,6 +94,11 @@ _MECHANICAL_STDEV_MAX = 0.01
 # Onset count at which timing confidence saturates to 1.0; fewer onsets scale
 # confidence down linearly so sparse parts read low-trust, not confidently wrong.
 _CONFIDENCE_FULL_ONSETS = 8
+
+# A part must be this rhythmically active (distinct onsets) before a flat-dynamics
+# finding fires — flags the organ-at-one-velocity case while sparing a sustained
+# pad, whose single velocity is expected, not a missed dynamic opportunity.
+_FLAT_DYNAMICS_FINDING_MIN_ONSETS = 8
 
 
 @dataclass(frozen=True)
@@ -131,14 +144,28 @@ class PartPerformance:
     sloppy); ``timing_dfa_alpha`` is the DFA 1/f exponent, populated only when the
     series is long enough to trust (``correlation.DFA_MIN_POINTS``), else ``None``.
     ``onset_count`` counts distinct rhythmic events (block-chord notes collapse to
-    one). ``confidence`` (0..1) scales with onset count."""
+    one); ``note_count`` is the raw note total. ``confidence`` (0..1) scales with
+    onset count.
+
+    Dynamics (per-note) + articulation (per-onset): ``velocity_mean`` /
+    ``velocity_stdev`` over the part's note velocities; ``flat_dynamics`` is True
+    when many notes sit at essentially one level (the organ-at-one-velocity case).
+    ``articulation`` is the median duration/IOI (≈1 legato/sustained, <≈0.5
+    staccato) and ``articulation_stdev`` its consistency — reported, not yet a
+    finding source."""
 
     track_name: str
     onset_count: int
+    note_count: int
     timing_mean: float | None
     timing_stdev: float | None
     timing_acf: float | None
     timing_dfa_alpha: float | None
+    velocity_mean: float | None
+    velocity_stdev: float | None
+    flat_dynamics: bool
+    articulation: float | None
+    articulation_stdev: float | None
     classification: Classification
     confidence: float
 
@@ -146,10 +173,16 @@ class PartPerformance:
         return {
             "track_name": self.track_name,
             "onset_count": self.onset_count,
+            "note_count": self.note_count,
             "timing_mean": self.timing_mean,
             "timing_stdev": self.timing_stdev,
             "timing_acf": self.timing_acf,
             "timing_dfa_alpha": self.timing_dfa_alpha,
+            "velocity_mean": self.velocity_mean,
+            "velocity_stdev": self.velocity_stdev,
+            "flat_dynamics": self.flat_dynamics,
+            "articulation": self.articulation,
+            "articulation_stdev": self.articulation_stdev,
             "classification": self.classification,
             "confidence": self.confidence,
         }
@@ -226,15 +259,23 @@ def _grid_deviation(start_beats: float, grid: float) -> float:
     return start_beats - nearest
 
 
-def _distinct_onsets(notes: Sequence[NoteDict]) -> list[float]:
-    """Sorted, deduplicated onset times (beats). Effectively-simultaneous notes
-    (a block chord) collapse to one rhythmic event; a spread strum does not."""
-    onsets = sorted(float(n["start_beats"]) for n in notes)
-    distinct: list[float] = []
-    for o in onsets:
-        if not distinct or (o - distinct[-1]) > _ONSET_DEDUP_BEATS:
-            distinct.append(o)
-    return distinct
+def _onset_events(notes: Sequence[NoteDict]) -> list[tuple[float, float]]:
+    """Sorted distinct rhythmic onsets, each paired with its sustaining (max)
+    duration. Effectively-simultaneous notes (a block chord) collapse to one
+    event keeping the longest voice; a spread strum stays distinct. The single
+    source of de-duplicated onsets for both the timing core (uses the onsets) and
+    articulation (uses onset + duration)."""
+    pairs = sorted(
+        (float(n["start_beats"]), float(n["duration_beats"])) for n in notes
+    )
+    events: list[tuple[float, float]] = []
+    for onset, dur in pairs:
+        if events and (onset - events[-1][0]) <= _ONSET_DEDUP_BEATS:
+            prev_onset, prev_dur = events[-1]
+            events[-1] = (prev_onset, max(prev_dur, dur))
+        else:
+            events.append((onset, dur))
+    return events
 
 
 def _confidence(onset_count: int) -> float:
@@ -258,15 +299,26 @@ def _classify_timing(stdev: float | None, acf: float | None) -> Classification:
 
 
 def _part_performance(track: str, notes: Sequence[NoteDict], *, grid: float) -> PartPerformance:
-    onsets = _distinct_onsets(notes)
-    count = len(onsets)
-    if count < _MIN_ONSETS:
+    events = _onset_events(notes)
+    onset_count = len(events)
+    # Dynamics + articulation are assessed for EVERY part, independent of the
+    # timing-onset floor — a sustained pad has no recoverable feel but still has a
+    # velocity profile and an articulation character.
+    vmean, vstdev, note_count = velocity_stats(notes)
+    artic, artic_stdev = articulation_stats(events)
+    common = dict(
+        track_name=track, onset_count=onset_count, note_count=note_count,
+        velocity_mean=vmean, velocity_stdev=vstdev,
+        flat_dynamics=is_flat_dynamics(vstdev, note_count),
+        articulation=artic, articulation_stdev=artic_stdev,
+    )
+    if onset_count < _MIN_ONSETS:
         return PartPerformance(
-            track_name=track, onset_count=count, timing_mean=None,
-            timing_stdev=None, timing_acf=None, timing_dfa_alpha=None,
-            classification="insufficient-data", confidence=_confidence(count),
+            timing_mean=None, timing_stdev=None, timing_acf=None,
+            timing_dfa_alpha=None, classification="insufficient-data",
+            confidence=_confidence(onset_count), **common,
         )
-    devs = [_grid_deviation(o, grid) for o in onsets]
+    devs = [_grid_deviation(onset, grid) for onset, _dur in events]
     mean = statistics.fmean(devs)
     # Population stdev: we are describing THIS part's spread, not estimating a
     # wider population — matches audio.timing's intent.
@@ -281,9 +333,9 @@ def _part_performance(track: str, notes: Sequence[NoteDict], *, grid: float) -> 
         acf = lag1_autocorr(devs)
         dfa = dfa_alpha(devs)
     return PartPerformance(
-        track_name=track, onset_count=count, timing_mean=mean,
-        timing_stdev=stdev, timing_acf=acf, timing_dfa_alpha=dfa,
-        classification=_classify_timing(stdev, acf), confidence=_confidence(count),
+        timing_mean=mean, timing_stdev=stdev, timing_acf=acf, timing_dfa_alpha=dfa,
+        classification=_classify_timing(stdev, acf),
+        confidence=_confidence(onset_count), **common,
     )
 
 
@@ -325,6 +377,21 @@ def _analyze_section(sec: SectionPerf, *, grid: float) -> SectionPerformance:
                     f"quantize-then-randomize white jitter?"
                 ),
                 metric=p.timing_acf,
+            ))
+        # Flat dynamics is INDEPENDENT of the timing classification (a part can
+        # groove in time yet play every note at one velocity). Gated on rhythmic
+        # activity so a sustained pad's natural single velocity isn't nagged.
+        if p.flat_dynamics and p.onset_count >= _FLAT_DYNAMICS_FINDING_MIN_ONSETS:
+            findings.append(PerfFinding(
+                kind="flat-dynamics", severity="info", section=sec.name,
+                track=p.track_name,
+                detail=(
+                    f"{p.track_name} plays {p.note_count} notes at essentially one "
+                    f"velocity (mean {p.velocity_mean:.0f}, stdev "
+                    f"{p.velocity_stdev:.1f}) — intended drone/organ, or missing "
+                    f"dynamic shaping?"
+                ),
+                metric=p.velocity_stdev,
             ))
     return SectionPerformance(section=sec.name, parts=parts, findings=tuple(findings))
 

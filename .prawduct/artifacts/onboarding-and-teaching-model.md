@@ -21,9 +21,12 @@ opposite. Four values, in the user's words, are load-bearing:
 1. **A scaffold for what's in their head — not an auto-accompaniment system.**
    The machine never silently decides *for* the user in a domain they care
    about; it opens the domain up so they can choose.
-2. **Assume users want to know more than they do.** Default to revealing the
-   reasoning, not hiding it. Teaching is a first-class output, co-equal with the
-   song.
+2. **Assume users want to know more than they do** — but transfer it *implicitly*.
+   The reasoning is always present in the flow, never hidden; but it arrives as a
+   collaborator thinking out loud, not as instruction. **Never a classroom;
+   creating a song never feels like homework.** Knowledge transfers in the natural
+   flow of fleshing out what the song sounds like, or it stays implicit — the
+   vocabulary only surfaces if the user reaches for it.
 3. **Caveat first, then best effort — and the caveat is *dimensional*, never
    goal-blocking.** A song has many dimensions (harmony, groove, arrangement,
    sound design, melody, vocal topline). A stylistic goal is almost always
@@ -128,7 +131,12 @@ is the line between collaboration and auto-accompaniment.
   conflict* sells the four-movement arc as a struggle"), so the user learns the
   dimension they're now steering. **Teaching is not a separate novice branch — it
   is what good elicitation looks like.** The expert skims the why; the novice
-  learns from it; we never decided which is which.
+  learns from it; we never decided which is which. The why is **one natural
+  sentence of a collaborator's reasoning**, never a lesson — "I held the verse
+  back so the chorus opens up," not "this is a deceptive cadence, which in theory
+  means…". The concept transfers through the experience and the offhand naming;
+  the theory vocabulary only comes out if the user asks for it. Never a classroom;
+  never homework.
 
 The transition signal (open → proposal) is usually implicit — a trailing-off, a
 "whatever you think," a repeated vagueness. Read those as *propose now*, not

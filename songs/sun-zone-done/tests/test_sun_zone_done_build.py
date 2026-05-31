@@ -649,3 +649,62 @@ def test_notes_match_baseline(build_module, built):
                 f"{track_name} slot {slot} "
                 f"({base_clips[slot]['name']}) diverged from baseline"
             )
+
+
+# ---------------------------------------------------------------------------
+# Symbolic performance lens (phase 2a) — the render-free read side, run over the
+# authored arrangement. Locks the documented frictions (decisions/07) as
+# regressions: the flat organ, the "feels-quantized" mechanical timing, and the
+# white-jitter (not 1/f) drum humanization the design warns against.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def lens_report(build_module, built):
+    """The symbolic performance lens over the built arrangement (render-free)."""
+    from hallucinote.db import init_db
+    from hallucinote.performance import analyze_performance
+
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = build_module._tracks_by_name(conn, built)
+        kit = build_module._kit_for_drums(conn, tracks["01 Drums"])
+        arr = build_module._build_arrangement(kit)
+        return analyze_performance(
+            arr.section_perf_inputs(), song_slug="sun-zone-done")
+    finally:
+        conn.close()
+
+
+def test_performance_lens_reproduces_the_flat_organ(lens_report):
+    # decisions/07: the organ plays at essentially one velocity. The lens surfaces
+    # it as a flat-dynamics coaching question (info — never a verdict).
+    organ_flat = [f for f in lens_report.findings
+                  if f.kind == "flat-dynamics" and f.track == "04 Organ"]
+    assert organ_flat, "the flat organ should surface as a flat-dynamics finding"
+    assert all(f.severity == "info" for f in organ_flat)
+
+
+def test_performance_lens_flags_the_feels_quantized_mechanical_timing(lens_report):
+    # decisions/07's "feels-quantized" friction: many parts sit dead on the grid.
+    mech = [f for f in lens_report.findings if f.kind == "mechanical-timing"]
+    assert len(mech) >= 5
+
+
+def test_performance_lens_reads_white_jitter_drums_as_sloppy_not_human(lens_report):
+    # The drums are humanized with white velocity+timing jitter, NOT 1/f-correlated
+    # structure — the lens correctly reads that as sloppy, not human (the design's
+    # core point: random jitter is the discredited humanization model).
+    drum_parts = [p for s in lens_report.sections
+                  for p in s.parts if p.track_name == "01 Drums"]
+    assert any(p.classification == "sloppy" for p in drum_parts)
+
+
+def test_performance_lens_never_blocks_the_build(lens_report):
+    # Authored feel is not error: the lens reports, it never gates.
+    assert lens_report.ok is True
+    assert lens_report.blocking == ()
+
+
+def test_performance_lens_sections_match_the_arc(lens_report, build_module):
+    assert [s.section for s in lens_report.sections] == [e[0] for e in build_module.ARC]

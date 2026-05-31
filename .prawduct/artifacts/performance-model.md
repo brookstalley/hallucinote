@@ -1,10 +1,15 @@
 # Performance Model — the rendition layer (microtiming · dynamics · articulation)
 
-**Status:** proposed (design complete; **no code yet**). Foundational design
-artifact for the **performance realization layer**. This is the detailed,
-reference-backed home for what `arrangement-model.md` § *The dimension taxonomy*
-names as **the first realization layer**; read that section first for where this
-sits among the song's dimensions.
+**Status:** **phase 2a SHIPPED** — the symbolic performance lens (the read side,
+§7) is built and merged: `src/hallucinote/performance/` (`lens` + `correlation` +
+`dynamics` + `ensemble`), pure stdlib, render-free, validated on sun-zone-done
+(it reproduces the flat-organ + "feels-quantized" findings and reads the white-
+jitter drums as *sloppy*, not human). Wired into `/mix-review` as a render-free
+input. The authoring profile (2b) + audio-extension (2c) remain proposed (design
+complete, §4/§8). Foundational design artifact for the **performance realization
+layer** — the detailed, reference-backed home for what `arrangement-model.md` §
+*The dimension taxonomy* names as **the first realization layer**; read that
+section first for where this sits among the song's dimensions.
 
 **Sources.** A verified deep-research pass (2026-05-30): 5 search angles, 22
 primary academic sources fetched, 107 candidate claims extracted, 25 adversarially
@@ -294,13 +299,21 @@ sloppy" measurable**, classifying every part as:
 - **sloppy** — high-variance *uncorrelated* (white) jitter.
 
 **Two feeds** (mirrors harmony's symbolic lint + the audio mix-check):
-- **Symbolic lens (primary, build-time)** — runs on the DB notes (exact onsets +
-  velocities). Measures per-part deviation **structure** (mean = lay-back/push;
-  variance = looseness; the **1/f-correlation metric** = human-vs-sloppy; flat-
-  dynamics detection), inter-part phase, and conformance to the declared profile +
-  the energy-coupling. Cheap, exact, render-independent — sits beside the harmony
-  conformance lint. (A generalization of the by-hand `microtiming_check.py` spot-
-  check.)
+- **Symbolic lens (primary, build-time) — SHIPPED (phase 2a).** Runs on the
+  authored notes (exact onsets + velocities), `src/hallucinote/performance/`,
+  fed by `arrangement.Arrangement.section_perf_inputs()` (parallel to
+  `section_lints`). Measures per-part deviation **structure** (mean = lay-back/
+  push; variance = looseness; the **1/f-correlation metric** = human-vs-sloppy —
+  **lag-1 autocorrelation primary, DFA α on long series**, because calibration
+  showed DFA is unreliable below N≈48; `correlation.py`), **flat-dynamics**
+  detection + articulation (`dynamics.py`), and **inter-part ensemble** lock/
+  pocket (`ensemble.py`). Cheap, exact, render-independent — sits beside the
+  harmony conformance lint and is the only timing/dynamics feed available without
+  a render. Classifies each part **mechanical / human / sloppy / insufficient-
+  data**; findings are `info` coaching questions, never verdicts (authored feel is
+  not error). **Deferred to 2b:** conformance to a *declared* profile + the
+  energy-coupling read — they need the authoring-profile object (§4) that 2b
+  builds; today the lens reads what's authored, not what was *declared*.
 - **Audio ground-truth (secondary)** — the **existing** `audio/timing.py`
   (`analyze_timing_window` → `PartTiming`: per-part onset-vs-grid feel, swing ratio,
   confidence) + `audio/cross_rhythm.py` (inter-part phase; already distinguishes a
@@ -324,16 +337,21 @@ Strictly sequenced (per the user, 2026-05-30):
    DONE when this lands.** The research is a native part of the platform's design
    and planning materials, reference-backed, not an add-on.
 2. **Platform implementation (friction-driven).** Build incrementally, discovered
-   from real need (the *discovered-from-friction* discipline): (a) the symbolic
-   performance lens (read side first — it quantifies the gap and needs no Live); (b)
-   the performance-profile authoring surface (generalize the generators' `lazy`/
-   `lag`/`push` proto-profiles into declared, magnitude-scaled profiles + the
-   additive 1/f layer + the energy-coupling read); (c) extend `audio/timing.py` /
-   `cross_rhythm.py` with the 1/f metric + perceived-onset; (d) resolve the open
-   questions (§3) — the Magenta representation review, ensemble-phase representation.
+   from real need (the *discovered-from-friction* discipline): (a) **DONE** — the
+   symbolic performance lens (read side first — quantifies the gap, needs no Live):
+   `src/hallucinote/performance/` (lens + correlation + dynamics + ensemble),
+   wired into `/mix-review`; (b) the performance-profile authoring surface
+   (generalize the generators' `lazy`/`lag`/`push` proto-profiles into declared,
+   magnitude-scaled profiles + the additive 1/f layer + the energy-coupling read);
+   (c) extend `audio/timing.py` / `cross_rhythm.py` with the 1/f metric + perceived-
+   onset; (d) resolve the open questions (§3) — the Magenta representation review,
+   ensemble-phase representation.
 3. **Bring it to a song.** Apply to sun-zone-done (the flagship already strains it —
    the constant-offset finding + the flat organ + the rhythmic-collision work in
-   `songs/sun-zone-done/decisions/07`) and tune by ear.
+   `songs/sun-zone-done/decisions/07`) and tune by ear. **Partial:** the lens now
+   RUNS on sun-zone-done (regression-locked in its tests — it reproduces the flat
+   organ + the feels-quantized mechanical timing, and reads the white-jitter drums
+   as *sloppy*). The *tune-by-ear* fix awaits the 2b authoring profile.
 
 Out of band, fed by genres rather than pre-built: **meter-feel** as a structure
 axis (the grid swing deviates from), **text/lyric/flow** as a subsystem (rap, chant),

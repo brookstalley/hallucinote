@@ -10,6 +10,7 @@ are deliberately not here yet — they are friction-driven follow-ons.
 from __future__ import annotations
 
 from hallucinote.performance.lens import (
+    EnsemblePair,
     PartPerformance,
     PerfFinding,
     PerformanceReport,
@@ -21,6 +22,7 @@ from hallucinote.performance.lens import (
 __all__ = [
     "PerfFinding",
     "PartPerformance",
+    "EnsemblePair",
     "SectionPerformance",
     "PerformanceReport",
     "SectionPerf",

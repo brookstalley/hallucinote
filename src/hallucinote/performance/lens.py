@@ -28,6 +28,9 @@ What it measures, per part (track) per section that has onsets:
   * **dynamics + articulation** (``performance.dynamics``) — per-note velocity
     mean/stdev and a ``flat_dynamics`` flag (the organ-at-one-velocity case), plus
     an articulation character (median duration/IOI: ≈1 legato, <≈0.5 staccato).
+  * **inter-part ensemble** (``performance.ensemble``) — per track-pair, the
+    relative timing offset (a constant value = a deliberate pocket) and whether
+    the pair is ``locked`` (moves together) — reported, interpreted downstream.
 
 The **mechanical / human / sloppy** classification (performance-model §7): a part
 whose onsets sit on the grid with ~zero spread reads ``mechanical`` (this
@@ -61,6 +64,7 @@ from hallucinote.performance.dynamics import (
     is_flat_dynamics,
     velocity_stats,
 )
+from hallucinote.performance.ensemble import pairwise_offsets
 
 NoteDict = dict[str, Any]
 
@@ -99,6 +103,11 @@ _CONFIDENCE_FULL_ONSETS = 8
 # finding fires — flags the organ-at-one-velocity case while sparing a sustained
 # pad, whose single velocity is expected, not a missed dynamic opportunity.
 _FLAT_DYNAMICS_FINDING_MIN_ONSETS = 8
+
+# Relative-timing stdev (beats) at/below which two parts read LOCKED (they move
+# together — the pocket). Calibrated: identical / constant-offset pairs sit at
+# <=0.0045; independently-grooving parts at 0.036–0.066. 0.02 cleanly separates.
+LOCKED_ENSEMBLE_STDEV_MAX = 0.02
 
 
 @dataclass(frozen=True)
@@ -189,17 +198,47 @@ class PartPerformance:
 
 
 @dataclass(frozen=True)
+class EnsemblePair:
+    """The inter-part timing relationship between two tracks over a section.
+
+    ``offset_mean`` is B relative to A in beats (< 0 = B ahead, > 0 = B behind — a
+    constant nonzero value is a deliberate pocket); ``offset_stdev`` is the
+    ensemble tightness; ``locked`` is True when they move together (low stdev).
+    Reported, not flagged — non-locking is interpreted against intent downstream."""
+
+    track_a: str
+    track_b: str
+    shared_onsets: int
+    offset_mean: float
+    offset_stdev: float
+    locked: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "track_a": self.track_a,
+            "track_b": self.track_b,
+            "shared_onsets": self.shared_onsets,
+            "offset_mean": self.offset_mean,
+            "offset_stdev": self.offset_stdev,
+            "locked": self.locked,
+        }
+
+
+@dataclass(frozen=True)
 class SectionPerformance:
-    """A section's per-part performance result + its findings."""
+    """A section's per-part performance result, inter-part ensemble pairs, and
+    its findings."""
 
     section: str
     parts: tuple[PartPerformance, ...]
+    ensemble: tuple[EnsemblePair, ...]
     findings: tuple[PerfFinding, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "section": self.section,
             "parts": [p.to_dict() for p in self.parts],
+            "ensemble": [e.to_dict() for e in self.ensemble],
             "findings": [f.to_dict() for f in self.findings],
         }
 
@@ -298,8 +337,13 @@ def _classify_timing(stdev: float | None, acf: float | None) -> Classification:
     return "sloppy"
 
 
-def _part_performance(track: str, notes: Sequence[NoteDict], *, grid: float) -> PartPerformance:
-    events = _onset_events(notes)
+def _part_performance(
+    track: str,
+    notes: Sequence[NoteDict],
+    events: Sequence[tuple[float, float]],
+    *,
+    grid: float,
+) -> PartPerformance:
     onset_count = len(events)
     # Dynamics + articulation are assessed for EVERY part, independent of the
     # timing-onset floor — a sustained pad has no recoverable feel but still has a
@@ -339,11 +383,36 @@ def _part_performance(track: str, notes: Sequence[NoteDict], *, grid: float) -> 
     )
 
 
+def _ensemble_pairs(
+    events_by_track: dict[str, list[tuple[float, float]]], *, grid: float
+) -> tuple[EnsemblePair, ...]:
+    """Every track pair's inter-part timing relationship (in layer order)."""
+    tracks = list(events_by_track)
+    pairs: list[EnsemblePair] = []
+    for i in range(len(tracks)):
+        for j in range(i + 1, len(tracks)):
+            ta, tb = tracks[i], tracks[j]
+            res = pairwise_offsets(events_by_track[ta], events_by_track[tb], grid=grid)
+            if res is None:
+                continue
+            offset_mean, offset_stdev, shared = res
+            pairs.append(EnsemblePair(
+                track_a=ta, track_b=tb, shared_onsets=shared,
+                offset_mean=offset_mean, offset_stdev=offset_stdev,
+                locked=offset_stdev <= LOCKED_ENSEMBLE_STDEV_MAX,
+            ))
+    return tuple(pairs)
+
+
 def _analyze_section(sec: SectionPerf, *, grid: float) -> SectionPerformance:
+    # Build the de-duplicated onset events once per track — the single source for
+    # both the per-part timing/articulation stats and the inter-part ensemble pairs.
+    events_by_track = {t: _onset_events(notes) for t, notes in sec.layers.items()}
     parts = tuple(
-        _part_performance(track, notes, grid=grid)
+        _part_performance(track, notes, events_by_track[track], grid=grid)
         for track, notes in sec.layers.items()
     )
+    ensemble = _ensemble_pairs(events_by_track, grid=grid)
     findings: list[PerfFinding] = []
     for p in parts:
         # Findings are coaching QUESTIONS, never verdicts — authored feel is not
@@ -393,7 +462,9 @@ def _analyze_section(sec: SectionPerf, *, grid: float) -> SectionPerformance:
                 ),
                 metric=p.velocity_stdev,
             ))
-    return SectionPerformance(section=sec.name, parts=parts, findings=tuple(findings))
+    return SectionPerformance(
+        section=sec.name, parts=parts, ensemble=ensemble, findings=tuple(findings)
+    )
 
 
 def analyze_performance(

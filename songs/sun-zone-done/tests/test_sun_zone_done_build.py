@@ -160,7 +160,8 @@ def test_build_produces_canonical_shape(build_module, built):
         assert clip_counts["02 Bass"] == 9
         # Lead plays every section except the intro → 8 clips
         assert clip_counts["05 Lead"] == 8
-        # Organ: reggae world (5) + break2 interleave + integration callback → 7
+        # Organ: the reggae world (intro, verse1, verse2, development, break) +
+        # the integration polyrhythm callback → 7
         assert clip_counts["04 Organ"] == 7
         # Steel pans enter only in the later reggae sections → 2 clips
         assert clip_counts["06 Steel"] == 2
@@ -244,8 +245,8 @@ def test_intro_polyrhythm_is_em7_and_builds(build_module, built):
 
 
 def test_organ_tacet_only_in_pure_metal_choruses(build_module, built):
-    """Organ plays the whole reggae world plus the two fusion sections (break2
-    interleave + integration polyrhythm callback); it is silent only in the
+    """Organ plays the whole reggae world (intro, verse1, verse2, development,
+    break) plus the integration polyrhythm callback; it is silent only in the
     pure metal choruses (chorus1 / chorus2) — that silence is what makes its
     return at the integration land."""
     from hallucinote.db import init_db

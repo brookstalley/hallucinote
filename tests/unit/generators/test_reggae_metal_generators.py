@@ -189,10 +189,12 @@ def test_skank_chucks_offbeats_only():
 
 
 def test_organ_bubble_on_every_offbeat_eighth():
-    voicing = [55, 59, 64]
-    notes = harmony.organ_bubble(voicing, bars=1, lag=0.04)
+    notes = harmony.organ_bubble(_EM7, bars=1, register=3, lag=0.04)
     starts = sorted({n["start_beats"] for n in notes})
     assert starts == pytest.approx([0.5 + 0.04, 1.5 + 0.04, 2.5 + 0.04, 3.5 + 0.04])
+    # Em7 voiced at register 3 (the bubble follows the chord — full chord incl.
+    # the 7th, == the legacy hardcoded [52, 55, 59, 62], matching the skank above).
+    assert {n["pitch"] for n in notes} == {52, 55, 59, 62}
 
 
 # --------------------------------------------------------------------------
@@ -234,8 +236,8 @@ def test_guitar_gallop_locks_with_drum_gallop():
      lambda: bass.metal_pedal_16ths(_EM7, bars=2, start_beat=8.0, feel={0.5: 0.1}), 0.5, 0.1),
     (lambda: harmony.reggae_skank(_E5, bars=2),
      lambda: harmony.reggae_skank(_E5, bars=2, feel={1.5: 0.1}), 1.5, 0.1),
-    (lambda: harmony.organ_bubble([52, 59], bars=2),
-     lambda: harmony.organ_bubble([52, 59], bars=2, feel={0.5: 0.1}), 0.5, 0.1),
+    (lambda: harmony.organ_bubble(_EM7, bars=2),
+     lambda: harmony.organ_bubble(_EM7, bars=2, feel={0.5: 0.1}), 0.5, 0.1),
     (lambda: harmony.palm_mute_power_chords(_EM7, bars=2),
      lambda: harmony.palm_mute_power_chords(_EM7, bars=2, feel={0.0: 0.1}), 0.0, 0.1),
 ])

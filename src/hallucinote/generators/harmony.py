@@ -149,11 +149,12 @@ def reggae_skank(
 
 
 def organ_bubble(
-    voicing: Sequence[int],
+    chords: Progression,
     *,
     bars: int = 1,
     start_beat: float = 0.0,
     beats_per_bar: float = 4.0,
+    register: int = 3,
     duration: float = 0.20,
     velocity: int = 58,
     lag: float = REGGAE_LAZY,
@@ -163,16 +164,20 @@ def organ_bubble(
     (the "and" of every beat), the percolating reggae keyboard texture that
     sits under the skank.
 
-    Each stab lands ``lag`` beats behind the click. 4/4-shaped within a bar
-    (see module docstring); ``beats_per_bar`` only scales the inter-bar step.
-    ``feel`` (W17-E) shifts the {0.5, 1.5, 2.5, 3.5} positions on top of
-    ``lag``. Tagged "organ" + "bubble".
+    Chord-aware (the harmony substrate): each stab voices the chord SOUNDING at
+    that off-beat, so the bubble follows an authored progression instead of
+    repeating one voicing. ``register`` 3 sits it under the skank. Each stab
+    lands ``lag`` beats behind the click. 4/4-shaped within a bar (see module
+    docstring); ``beats_per_bar`` only scales the inter-bar step. ``feel`` (W17-E)
+    shifts the {0.5, 1.5, 2.5, 3.5} positions on top of ``lag``. Tagged "organ"
+    + "bubble".
     """
     out: list[NoteDict] = []
     for b in range(bars):
         bs = start_beat + b * beats_per_bar
         for off in (0.5, 1.5, 2.5, 3.5):
-            for p in voicing:
+            local_beat = b * beats_per_bar + off
+            for p in chords.chord_at(local_beat).voicing(register):
                 out.append(_note(p, bs + apply_feel(off, feel) + lag, duration, velocity,
                                  ["organ", "bubble", "offbeat"]))
     return out

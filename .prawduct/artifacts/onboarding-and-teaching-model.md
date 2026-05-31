@@ -37,6 +37,33 @@ For **experts** the value is leverage; for **novices** it is guided growth. The
 same instrument serves both because it calibrates *per domain* and *per session*,
 never by a global "beginner/expert" axis.
 
+## Personas we're serving
+
+Grounded in `docs/VISION.md` ("composers anywhere on the spectrum… same as an LLM
+coding agent serving a middle-schooler and a senior engineer") and this
+conversation. *The specific personas sketched earlier this session were not filed
+and are reconstructed here — correct freely. That they lived only in conversation
+is itself a finding: load-bearing personas belong in an artifact.*
+
+Two independent axes that **compose**:
+
+**Musical-expertise axis** (per domain, never a stored profile):
+- **Hobbyist / no-theory** — has something in their head, can't yet name it
+  musically (the Madonna kid). Value = guided growth.
+- **Cross-domain musician** — fluent in one domain, reaching into another they
+  don't command (the drummer who says "make it feel like Bach"). Value = the
+  third register opens the unfamiliar domain.
+- **Working producer** — competent, knows what they want, wants speed, leverage,
+  and bulk operations. Value = directed execution; get out of the way.
+- **Veteran** — wants the hard stuff (polytempic, microtonal) and zero friction.
+  Value = leverage + honest capability edges.
+
+**Session-goal axis** (what they came to do): **Create** new music · **Revise**
+existing music · **Learn the tool** itself (forking, sync, semantic addressing).
+
+The same person occupies different cells in different sentences — directed on
+groove, under-articulated on harmony; creating today, revising tomorrow.
+
 ## The third register
 
 The producer model in `intent-collaboration-model.md` has two registers. The
@@ -178,6 +205,38 @@ invite the user to name what they want to work on, and proceed collaboratively
 (piece #3). The dev-facing session briefing is a *different* surface; this is the
 musician's first-contact moment, and it lives at the install tail.
 
+## Session shapes: create, revise, learn-the-tool
+
+The install-tail elicitation **routes on the user's answer** — it does not *ask*
+which mode (no dependence menu); it reads intent from what they say ("start a new
+song" vs "load falling-walking and fix the chorus").
+
+**Create** — covered by pieces 1–5 above.
+
+**Revise** — the user loads an existing song into Live and works on it. The load
+path is the existing push flow (`/ableton-push` / "load \<song\>" from the install
+handoff — *assumed to be the right piece; confirm*). Revision is **mostly
+directed-action + volunteered-observation**, so the *existing*
+`intent-collaboration-model` already fits it ("tighten the chorus", mix-review).
+The teaching North Star applies less here — the user has material and intent;
+leverage dominates. Two things this flow must get right:
+
+- **Load-bearing caveat — sync-back is not safe yet.** Per `docs/VISION.md`,
+  until note-level addressing lands, Ableton→DB is destructive ("we push, we do
+  not pull safely"). A revision user who edits in Live expecting a clean
+  round-trip can lose work. This is caveat-first at its most consequential —
+  surface it *before* they start editing in Live, not after.
+- **Revision still teaches by ear** — mix-review and the compose-stage guided
+  evaluation apply: "the chorus you tightened now buries the vocal — hear it?"
+
+**Learn-the-tool** — a *distinct teaching target*. This user wants to learn
+Hallucinote's **workflow** (branch a chorus variant, push/pull, semantic
+addressing), not music theory. The musical-teaching model (pieces 4–5) does
+**not** cover this; it needs **tool-scaffolding** — the same
+propose→explain→show-the-difference verb applied to *workflow* moves ("let's
+branch this chorus so you can A/B it — watch what the diff shows"). Currently
+unaddressed; flagged.
+
 ## What changes (proposed — not yet applied)
 
 - **New:** the Capability Truth doc; a compose-stage guided-evaluation surface.
@@ -195,6 +254,48 @@ musician's first-contact moment, and it lives at the install tail.
     them and invite reaction. The norm currently assumes the expert case.
 - **Generalize the producer model:** add the third register to
   `intent-collaboration-model.md`.
+
+## Coherence review — honest gaps per persona
+
+Stress-testing the flow against the personas surfaced four real tensions.
+Recording them rather than papering over them:
+
+1. **The entry gate contradicts the novice North Star.** Reaching the
+   install-tail invitation requires cloning a repo, `pip install`, Python 3.10+,
+   MCP config, and an Ableton Control Surface click. That filters out exactly the
+   no-theory hobbyist *unless they are also technical*. The teaching-for-novices
+   vision is aspirational until distribution reaches non-technical users — this
+   ties straight to the deferred packaging question. **Today the novice persona
+   is well served only if they're a *technical* novice.**
+
+2. **Fluency detection is the linchpin and is unspecified.** Everything
+   calibrates on "detected fluency in the relevant domain" — but *how* is defined
+   nowhere. Mis-detect high → we silently auto-accompany a novice (the failure
+   we exist to avoid). Mis-detect low → we patronize an expert, wasting the
+   leverage they came for. Likely answer: infer from phrasing + react to
+   correction (cheap, no profile), but it needs real design. This is the single
+   biggest open mechanism.
+
+3. **Collaborate-by-default can over-step the leverage personas.** As written,
+   "default to collaborative always" risks taxing the producer / veteran, who
+   want directed execution, not a proposal loop or a sidechaining lesson. Fix is
+   **precedence: collaborate-by-default is the fallback when direction is absent;
+   it never overrides clear direction** (the directed-action register wins).
+   Also unspecified: *pacing* — a novice offered an A/B at every elementary
+   choice gets decision paralysis. Good teaching curates one or two lessons per
+   session; it does not fork everything.
+
+4. **Revision has a destructive-sync hazard and a missing teaching target** —
+   see "Session shapes": the unsafe sync-back caveat must fire before Live
+   editing, and the learn-the-tool persona needs workflow-scaffolding the
+   musical model doesn't provide.
+
+**Net:** the *create* flow for technically-comfortable users across the
+expertise spectrum is coherent and good. The weak seams are (a) the non-technical
+novice can't get in the door, (b) fluency detection is undefined, (c) the default
+stance must yield to clear direction, (d) revision needs the sync caveat and
+tool-teaching. None is fatal; **(1) and (2) decide whether this is genuinely good
+or only good-on-paper.**
 
 ## Deliberately not decided here
 

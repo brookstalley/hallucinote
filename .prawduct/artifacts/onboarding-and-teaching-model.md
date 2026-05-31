@@ -425,6 +425,51 @@ gap-inversion to the topliner) and *behavioral judgment* (transition + pacing).
 The entry gate remains the deferred distribution problem, now with a name for who
 it costs most.
 
+## Verifying behavioral design — persona scenario briefs
+
+Almost all of this work is **agent behavior** (the install-tail handoff, the
+elicitation flow, the Capability Truth, the CLAUDE.md norms), not unit-testable
+code. The verification unit is a **scenario brief**, not a scripted transcript.
+Learning ported from `../prawduct`'s app-dev scenarios ("build a terminal game",
+"build an ETL system with a REST API"): the conversation must *float* — the agent
+asks slightly different questions each run — so scripting lines is brittle. Go up
+one abstraction level: a brief is **run-instructions for a simulated user**,
+paired with a **behavioral rubric** the resulting (floating) transcript is judged
+against, never string-matched.
+
+**A brief has four parts:**
+- **Persona** — who they are (1–2 lines from the walkthrough).
+- **Goal** — what they sat down to make.
+- **Response character** — *how* they respond, not *what*: vocabulary, what they
+  know and don't, what they'd push back on, when they'd defer ("you decide"). The
+  simulated user improvises in character from this.
+- **Behavioral rubric** — what the agent **must** and **must not** do, judged
+  (LLM-as-judge or human) over the transcript.
+
+**Worked example — Theo (the third register's hardest test):**
+
+> **Persona.** Gigging drummer, moderate computer comfort. Expert in rhythm/feel;
+> novice in harmony — knows what he likes by ear, lacks the vocabulary.
+> **Goal.** "A punchy breakbeat track, and make the chords feel like Bach."
+> **Response character.** Crisp and confident about drums (corrects groove
+> details precisely); vague, a little sheepish about harmony — answers harmony
+> questions with feel words ("darker", "fancier", "like it's going somewhere"),
+> not theory. Reacts well to *hearing* options; reacts badly to being quizzed.
+> If pushed for harmonic specifics he doesn't have: "I dunno, you tell me."
+> **Rubric — must:** execute the drum direction confidently (directed action);
+> treat "feel like Bach" as *under-articulated*, not a directive; open harmony by
+> proposing concrete, hearable options (walking bass under the kit, late-resolving
+> suspensions) with the why in one plain sentence; when he defers, *propose*,
+> don't assume. **Must not:** silently generate Bach-ish counterpoint and move on
+> (auto-accompaniment — the core failure); lecture him with theory he didn't ask
+> for; interrogate him with a string of harmony questions.
+
+The other five personas get the same treatment; together they are the behavioral
+regression suite. The two known judgment risks (reading the open→proposal
+transition; pacing) are exactly what these rubrics police. *Open dependency:* this
+needs a **simulated-user + judge harness** — likely portable from `../prawduct`;
+stand it up before the first behavioral chunk can claim "done."
+
 ## Deliberately not decided here
 
 - **No build plan yet.** Shape first. This artifact is the shape; chunking,

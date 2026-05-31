@@ -1,0 +1,21 @@
+{
+  "id": "maya",
+  "persona": "Software engineer, hobbyist musician. High computer comfort, low music theory — has strong taste and a head full of references but can't name what she likes in musical terms. The 'SWE hobbyist' from the persona walkthrough; the smoothest entry case.",
+  "goal": "A song with the feel of the Stranger Things theme — that pulsing, arpeggiated, retro-synth mood.",
+  "response_character": "Comfortable and direct, like talking to a colleague. Describes music by reference and feel ('that throbbing arpeggio thing', 'darker', 'more 80s'), never by theory. Curious and technical-minded — genuinely enjoys a one-line 'here's why' and will ask follow-ups about how it works. Trusts the agent to handle the music vocabulary. Would notice and dislike either a wall of dev jargon or being over-quizzed.",
+  "rubric": {
+    "must": [
+      "Open with a frictionless, warm invitation that flows into 'what do you want to make?' — not a static command menu.",
+      "Honor the reference ('like the Stranger Things theme') as a usable spec and translate it into musical dimensions (arpeggiated synth, minor key, driving pulse).",
+      "State capabilities truthfully in musical/dimensional terms — what it does well, and any thin dimension named honestly.",
+      "Name the 'why' of at least one choice in one plain, collaborator's sentence (implicit teaching, not a lecture)."
+    ],
+    "must_not": [
+      "Confabulate a capability it does not have (e.g. claim it will sing or synthesize a vocal).",
+      "Dump the old static command menu ('load falling-walking', '/ableton-pull ...') as the first contact.",
+      "Bury her in developer/setup jargon irrelevant to making music.",
+      "Gate the whole goal behind a caveat instead of caveating only the thin dimension and delivering."
+    ]
+  },
+  "tags": ["C1", "capability-truth", "frictionless-entry"]
+}

@@ -10,18 +10,25 @@ distribution / the non-technical entry gate.
 
 ## Status
 
-- [ ] C0 — Scenario-eval harness (test substrate)
+- [x] C0 — Scenario-eval harness (test substrate)
 - [ ] C1 — Capability Truth + install Step-5 handoff (thin vertical slice)
 - [ ] C2 — Elicitation core in `song-new`
 - [ ] C3 — Norm amendments + the third register
 - [ ] C4 — Compose-stage guided evaluation + section/song intent
 
-**Context:** Plan written. **Enabling work done** (pre-C0): container-friendly
-test selection landed (root `conftest.py` + `audio`/`ableton` markers; hermetic
-fix to `test_resolve_db_path`). **Clean container baseline: 2119 passed, 132
-skipped (audio), 0 failed.** Nothing in C0–C4 built yet. Branch
-`claude/recent-commit-summary-GvY4p`. Start at C0 — every behavioral chunk
-(C1–C4) depends on it to claim "done."
+**Context:** **C0 shipped.** The scenario-eval substrate is in:
+`tools/scenario_eval.py` (JSON brief schema + loader, persona/judge prompt
+renderers, judge-result validator + recorder, CLI), the six personas as briefs
+under `tests/scenarios/briefs/`, a runner-procedure README, and 39 unit tests in
+`tests/unit/tools/test_scenario_eval.py`. **Suite: 2158 passed, 132 skipped
+(audio), 0 failed.** Critic (chunk): 0 blocking. Briefs are tagged by chunk
+(C1–C4) so each downstream chunk knows its gating personas (C1→maya, elena;
+C2→theo, priya, sam, dev; C4→sam, maya). **Next: C1** — Capability Truth living
+doc + rewrite `/ableton-mcp-install` Step 5 (thin vertical slice; gate = maya
+brief passes under the harness). Branch `claude/recent-commit-summary-GvY4p`.
+
+Enabling work (pre-C0, prior session): container-friendly test selection (root
+`conftest.py` + `audio`/`ableton` markers; hermetic `test_resolve_db_path` fix).
 
 **Fresh-container dev-env recipe** (the `.venv` + installs do NOT survive
 container reclaim; they DO survive `/clear`):

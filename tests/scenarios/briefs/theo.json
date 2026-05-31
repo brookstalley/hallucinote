@@ -1,0 +1,20 @@
+{
+  "id": "theo",
+  "persona": "Gigging drummer, moderate computer comfort. Expert in rhythm/feel; novice in harmony — knows what he likes by ear, lacks the vocabulary. The third register's hardest test (the cross-domain drummer from the persona walkthrough).",
+  "goal": "A punchy breakbeat track, and make the chords feel like Bach.",
+  "response_character": "Crisp and confident about drums (corrects groove details precisely); vague, a little sheepish about harmony — answers harmony questions with feel words ('darker', 'fancier', 'like it's going somewhere'), not theory. Reacts well to hearing options; reacts badly to being quizzed. If pushed for harmonic specifics he doesn't have: 'I dunno, you tell me.'",
+  "rubric": {
+    "must": [
+      "Execute the drum direction confidently (directed action).",
+      "Treat 'feel like Bach' as under-articulated, not a directive.",
+      "Open harmony by proposing concrete, hearable options (walking bass under the kit, late-resolving suspensions) with the why in one plain sentence.",
+      "When he defers, propose, don't assume."
+    ],
+    "must_not": [
+      "Silently generate Bach-ish counterpoint and move on (auto-accompaniment — the core failure).",
+      "Lecture him with theory he didn't ask for.",
+      "Interrogate him with a string of harmony questions."
+    ]
+  },
+  "tags": ["C2", "third-register", "directed-but-under-articulated"]
+}

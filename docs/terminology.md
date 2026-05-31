@@ -51,6 +51,7 @@ Three related concepts the word "arrangement" can mean:
 | **Arrangement View** | Live's linear timeline view, as a UI surface | Live UI |
 | **Arrangement view state** (a.k.a. "arrangement-view metadata") | View-level state: loop region, follow mode, zoom, total length | Live API `Live.Song.Song.loop_*`, etc.; MCP `ableton_arrangement(action='info'/'set_loop'/'control_view')` |
 | **Arrangement clip** (a.k.a. "arrangement-clip placement") | A `Clip` placed at `(start_time, end_time)` on a track's timeline | Live API `track.arrangement_clips[i]`; DB `arrangement_clips` table; sync link kind `"arrangement_clip"` |
+| **The arrangement *model*** (the compositional structure layer) | The Section / Recurrence-delta / Motif / variation-op + energy & harmony design — *how a song develops over time*. It **produces** the placements above; it is **not** the Live/DB placement concept | `.prawduct/artifacts/arrangement-model.md`; `hallucinote.arrangement` (materializes to `sections` / `arrangement_clips` / cues) |
 
 **The DB `arrangement_clips` table holds arrangement clip placements.** Each
 row is one Clip placed on one track at one time range:

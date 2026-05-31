@@ -271,6 +271,14 @@ C7's "calibrate against detection accuracy" learning). Result summary:
 Mirrors the masking/timing precedent exactly — pure measurement producer →
 `MixReport` → graded by `/mix-review`.
 
+> **Connects to the dimension model.** Cross-rhythm is the *measurement* sibling of
+> two authoring concepts that now have design homes: it is a **feed for the
+> performance lens** ([`performance-model.md`](../.prawduct/artifacts/performance-model.md)
+> §7, the audio ground-truth), and it measures play against the **meter-feel**
+> structure-intent candidate (the felt grid swing/polyrhythm deviate from — see the
+> dimension taxonomy in [`arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md)).
+> Polyrhythm *authoring* stays hand-authored (no generator; the process is the art).
+
 **New module:** `src/hallucinote/audio/cross_rhythm.py`
 - `analyze_cross_rhythm_window(stem_segments, sample_rate, *, window_start_beat,
   bpm, swing_ratios=None) -> CrossRhythmResult`

@@ -2,14 +2,16 @@
 
 How composer intent + decision rationale live alongside the structured song data, and how the LLM retrieves it before composing.
 
-Canonical example: `songs/falling-walking/` — copy its layout when starting a new song.
+> **Companion docs.** This is the **WHY** corpus (intent: `decisions/` + `annotations/`, the frontmatter schema, the controlled mix/groove **tag vocabulary**). The **WHAT/HOW of code** (build.py, generators, the harmony axis, the `feel` dict) lives in [`../../docs/song-authoring-conventions.md`](../../docs/song-authoring-conventions.md); the **dimension taxonomy** in [`arrangement-model.md`](arrangement-model.md); the intent *mechanism* (markdown, not the retired DB `annotations` table) is governed by [`intent-architecture.md`](intent-architecture.md).
+
+`/song-new` scaffolds the layout below from `tools/templates/song/`. (`songs/falling-walking/` is a **historical** worked example, not a template to copy.)
 
 ## Directory layout
 
 ```
 songs/<song-name>/
   <song-name>.md          ← curated overview: concept, specs, form, build notes
-  <song-name>.db          ← structured song data (gitignored)
+  <slug>-<branch>.db      ← structured song data — one DB per git branch, gitignored (resolve_db_path)
   build.py                ← programmatic builder
   captured_session.json   ← optional initial-mix snapshot
   decisions/

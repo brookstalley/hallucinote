@@ -37,6 +37,106 @@ never designed speculatively** — that is what keeps them rulers.
 
 ---
 
+## The dimension taxonomy — structure intents · realization layers · subsystems
+
+> Added 2026-05-30 after a verified deep-research pass on expressive-performance
+> modeling (Cancino-Chacón/Widmer 2018 canonical review; KTH/Director Musices;
+> the Performance Worm — Dixon/Goebl/Widmer 2002; Palmer 1997; Hennig et al. 2011
+> on 1/f timing; Iyer 2002; Danielsen 2023). Answers "what dimensions does a song
+> have, and how do we add them without sprawling into 1000 axes?" See `backlog
+> ARR-8P5K`.
+
+A song's dimensions are **not a flat list of orthogonal axes**. They sort into
+three kinds, and knowing which kind a candidate is tells you how to model it:
+
+1. **Authored structure intents** — the song's *bones*: deliberate, largely-
+   orthogonal decisions the composer authors. Today: **form/sections**, **energy**
+   (the intensity intent), **harmony** (key/mode/progression). Candidate:
+   **meter-feel** (the felt pulse — half/double-time, compound, clave; distinct
+   from time-signature and tempo). Each is a ruler + (ideally) a read-side lens.
+2. **Realization layers** — *how the bones are rendered*. **Derived from** the
+   structure intents (+ a genre profile + deliberate overrides), NOT authored as
+   competing dials. **Performance** (microtiming, dynamics, articulation) is the
+   first member. **This category is the answer to "no 1000 axes": a realization
+   layer reads the structure intents; it does not add a new one.**
+3. **Subsystems** — separate concerns with their own model. Today: **sound-design /
+   instrument-chains** (`feedback_sound_is_composition`). Candidate: **text / lyric
+   / prosody / flow** (the primary art for rap, chant, art-song — its own subsystem,
+   not an arrangement axis).
+
+Underneath all three is the raw **note floor** (`_note(pitch, start, dur, vel)`),
+which every layer degrades to.
+
+### Performance — the first realization layer (decided 2026-05-30)
+
+> **Full spec, verified research foundation (with citations), the measurement-lens
+> design, and the phased delivery plan: [`performance-model.md`](performance-model.md).**
+> The summary below is the integrated framing; that artifact is the owner doc.
+
+Performance is the gap between the *score* (which notes) and the *rendition* (how
+they are played). The decision:
+
+- **Profile → realization (the KTH "metaperformer" pattern).** The composer/LLM
+  *declares a performance profile*; a deterministic layer *computes* the per-note
+  deviations. Declared intent (WHAT) vs computed execution (HOW) — a **ruler**, not
+  a humanize-stamp. (Director Musices: a global magnitude `k` (default 1) scales
+  each rule; "the user acts as a metaperformer … leaving execution to the computer.")
+- **A derived realization layer, NOT a peer axis.** Performance **reads** the
+  structure intents; it does not duplicate them. Its macro intensity (push /
+  tighten / crescendo) is **derived from the `energy` curve** — the Performance Worm
+  is literally a 2-D tempo×loudness trajectory, "a direct analogue to an energy
+  curve." Dynamics may read harmonic tension. **One source of truth: intensity is
+  authored once, as energy; performance renders it** (the "score-energy vs
+  performance-energy" coupling — one intent, two channels).
+- **Profile components:** (a) a **genre groove-baseline** — named, energy-
+  INDEPENDENT (reggae drag, jazz swing, funk pocket, straight, rubato; feel is
+  genre-specific and inseparable from sound — Iyer 2002, Danielsen 2023); (b) the
+  **energy/harmony coupling** (derived, not authored); (c) **deliberate overrides**
+  — decouple where the art demands (the convention-break is the template).
+- **Realization is STRUCTURED, not random.** Human timing is **1/f long-range-
+  correlated, NOT white noise** — listeners prefer 1/f over white at matched
+  magnitude and judge it *more precise* (Hennig et al. 2011). So: deterministic
+  structured deviations (genre profile + phrase-arch from structure) **plus** a
+  small, separate, **correlated (1/f)** noise supplement (the GERM model's additive
+  Random term) — **never white-noise jitter** (the discredited "humanize" default).
+  Magnitude **small and genre-calibrated, not maximized** (exaggerated microtiming
+  *lowers* groove — Madison 2011, Senn 2016).
+- **Two grains, one parameter set:** per-note deviations (discrete parts — drums,
+  bass, riffs, rap onsets) AND continuous curves (sustained / legato / rubato).
+- **Both sides (mandatory).** AUTHOR = the profile above. MEASURE = a performance
+  lens: **symbolic-primary** (per-part deviation *structure* + the 1/f-correlation
+  metric + flat-dynamics detection, build-time on the DB notes, beside the harmony
+  conformance lint) **+ audio ground-truth** (the existing `audio/timing.py` +
+  `cross_rhythm.py` — already do swing/phase/structured-vs-jitter — extended with
+  the 1/f metric + perceived-onset). It grades **mechanical / human / sloppy**
+  against the declared profile + the energy-coupling. *A dimension authored but
+  unmeasured is half-built.*
+- **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
+  (it deviates *from* the grid); the metric grid it deviates from is *meter-feel*
+  (a structure intent). Clean split.
+
+### SCOPE BOUNDARY — performance is METERED-only (a documented limitation, not a flaw)
+
+Every foundational performance model (KTH, the Performance Worm, basis-function
+models, ASAP-style datasets) measures deviation **against a metric grid**.
+**Gregorian chant (unmetered), free rubato, and rap-flow (speech-rhythm) have no
+fixed grid to deviate from** — *"a single 'offset from the grid' time model does
+NOT cleanly span metered and unmetered music"* (the research's central caveat). The
+score-vs-performance split survives if recast as *conceptual-plan vs realization*,
+but the **time base** must fork (grid-relative for metered; absolute-time +
+reference-pulse or onset-sequence for free) under the same expression parameters.
+
+**Decision: metered-first.** Hallucinote's performance layer covers metered music
+(reggae, metal, jazz/swing, funk/Motown, most pop, rap-on-a-grid). **Unmetered /
+free-time performance is out of current scope — a known, documented limitation, NOT
+a defect.** Users should understand: *performance/feel authoring is grid-relative;
+truly unmetered traditions degrade gracefully to the raw note floor.* The free-time
+model is **future research** — forked when chant / free-rubato actually forces it
+(discovered-from-friction). Mirrored in `project-state.yaml` `scope.later`; see
+`backlog ARR-2B6K` (unmetered boundary) + `ARR-8P5K` (the axis investigation).
+
+---
+
 ## Research foundation (verified)
 
 A deep-research pass (20 sources, 25 claims adversarially verified, 21 confirmed)
@@ -164,6 +264,10 @@ has.
 - **Aleatoric / chance** — Hallucinote models *deliberate* arrangement.
 - **Sound design / timbre-granular** — belongs to the instrument/device-chain
   subsystem (see `feedback_sound_is_composition`), not arrangement.
+- **Unmetered / free-time *performance* feel** (chant, free rubato, rap-flow) — the
+  performance realization layer is grid-relative (metered-only) by design; see the
+  dimension-taxonomy SCOPE BOUNDARY above. A documented limitation, not a flaw;
+  these degrade to the note floor. (`backlog ARR-2B6K` / `ARR-8P5K`.)
 
 The bedrock is always raw note placement (`_note(pitch, start, dur, vel)`); the
 arrangement scaffold sits **on top** as optional, composable sugar — never the
@@ -174,23 +278,42 @@ only path.
 ## Known gaps surfaced in review (2026-05-30)
 
 A counter-example review found the model strong but with two honest gaps the
-original pressure test missed (backlogged for decision):
+original pressure test missed. The first (the harmony axis) has since been
+**resolved and built** (Chunks A–E, branch `feature/harmonic-substrate`); the
+second (the vertical/counterpoint constraint) remains open.
 
-- **Harmony/key is a second structural axis — and it's unmodeled.** The model's
-  only structural curve is *energy*. But functional-tonal music (sonata, jazz
-  changes, blues, most pop) is driven by *harmonic* tension/resolution —
-  tonic↔dominant, modulation, the recap landing home. The model can author the
-  notes but can't carry "this section is in the dominant, resolved at the recap"
-  AS STRUCTURE; it's blind to the thing doing the dramatic work. This is the
-  highest-priority gap: a real decision — **harmony as a modeled substrate (a
-  harmonic axis co-equal to energy: key / mode / function per section, composer
-  still authors the notes, a read-side lens verifies them) vs. harmony stays in
-  the notes.** → `backlog ARR-1H9C`.
-- **Counterpoint's vertical constraint is unmodeled (a near-miss).** Fugue maps
-  beautifully *horizontally* (subject=motif, answer=transpose, stretto=overlapping
-  references, augment/invert=ops) but the model represents nothing about whether
-  layers form valid counterpoint *when combined*. The ruler-consistent fix is a
-  read-side consonance lens, not a generator. → `backlog ARR-4V7P`.
+- **Harmony/key as a structural axis — RESOLVED: harmony is a modeled substrate.**
+  *Decision (2026-05-30):* harmony is a first-class axis co-equal to energy, not
+  left in the notes. A per-section key/mode *label* alone would not have prevented
+  the one-chord drone — a composer can still pedal the tonic under an "E Dorian"
+  tag — so the substrate carries an authored **chord progression with harmonic
+  rhythm** that the parts compose against, plus a **build-time conformance lens**
+  that fails the build when a section "declares movement but the parts play only
+  the tonic" (harmonic stasis). *Built:* `hallucinote.theory` (`Chord` — slash
+  bass, polymodal `split`, free-form function labels; `Mode`; `Progression` — an
+  authored harmonic-rhythm timeline, functional/modal toggle); chord-aware
+  generators (skank, bass, power chords, organ bubble) that *voice* a progression;
+  `transpose_diatonic` (the key-aware variation op — `transpose` stayed key-blind);
+  and the `Arrangement` carrying per-section `progression` + a read-side
+  `harmonic_curve` parallel to `energy_curve`. *Bias:* sophistication is the
+  default (functional harmony, modal harmony, AND legitimate stasis/minimalism all
+  first-class; simple I–IV–V is a supported fallback, never the default) — but
+  "default to sophisticated" lives in the model's vocabulary, the conventions/
+  skills, and a read-side coaching lens ("static drone — minimalist intent, or an
+  unrealized opportunity? the masters reharmonize the repeat"), never baked into a
+  ruler (an auto-passing-chord inserter would be a stamp). The composer still
+  authors every note. *Demonstrated by* sun-zone-done's 184-bar through-composed
+  arc (modes flipping E Dorian↔Phrygian over a constant E, resolving into a
+  polymodal both-at-once fusion). *Deferred:* DB-promotion of the harmony axis
+  (in-memory today, like `function`/`energy`); the VERTICAL constraint below.
+  → `backlog ARR-1H9C` (resolved).
+- **Counterpoint's vertical constraint is unmodeled (a near-miss) — STILL OPEN.**
+  Fugue maps beautifully *horizontally* (subject=motif, answer=transpose,
+  stretto=overlapping references, augment/invert=ops) but the model represents
+  nothing about whether layers form valid counterpoint *when combined*. The
+  harmony axis above models the harmony a single part realizes against the changes,
+  not inter-LAYER consonance. The ruler-consistent fix is a read-side consonance
+  lens (the masking-analyzer shape), not a generator. → `backlog ARR-4V7P`.
 
 The three boundaries above ("deliberately NOT modeled") are tracked in
 `backlog ARR-2B6K`; #3 (process/non-musical-axis) stays out by design.

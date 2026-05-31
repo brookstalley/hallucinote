@@ -191,7 +191,7 @@ product_definition:
       - "Nested rack chain probe + push (blocked on `hallucinote-mcp` `get_device_chains` — backlog)"
       - "Tempo / signature automation at (bar, beat) (blocked on Live arrangement-envelope target_kind — backlog)"
       - "Device-parameter pull (sync-layer not yet built — backlog. `ableton_device(action='get_parameters')` is fine in the greenfield server; the legacy fork's #17b bug doesn't apply)"
-      - "Hallucinote-side quantize / swing / groove module (DB-side pure-math, not Live's Groove Pool)"
+      - "Performance / expression realization layer — microtiming + dynamics + articulation as an authored PROFILE -> structured (1/f-correlated, NOT white-noise) realization that READS energy/harmony (a 'realization layer', not a peer axis; the KTH metaperformer profile/realization pattern). Supersedes the earlier 'quantize/swing/groove module' framing. METERED-ONLY by design: unmetered / free-time performance (Gregorian chant, free rubato, rap-flow) is OUT OF SCOPE — a documented limitation, NOT a flaw — and is future research. See arrangement-model.md 'The dimension taxonomy' (incl. the SCOPE BOUNDARY) + backlog ARR-8P5K / ARR-2B6K."
       - "Audio render + analysis (ableton_render + ableton_analysis)"
       - "Event replay function (replay(events) → state) + cross-DB merge tooling — useful after event-store flip"
       - "Track routing: sidechain, parallel busses, input/output routing config"
@@ -418,6 +418,14 @@ artifact_manifest:
       file_path: .prawduct/artifacts/build-plan.md
       version: 1
       depends_on: [project-preferences, boundary-patterns]
+    - name: arrangement-model
+      file_path: .prawduct/artifacts/arrangement-model.md
+      version: 2   # v2 adds the dimension taxonomy (structure intents / realization layers / subsystems) + harmony-axis resolution
+      depends_on: []
+    - name: performance-model
+      file_path: .prawduct/artifacts/performance-model.md
+      version: 1   # the performance realization layer — design complete, no code yet; research-backed (deep-research 2026-05-30)
+      depends_on: [arrangement-model]
     - name: vision
       file_path: docs/VISION.md
       version: 1

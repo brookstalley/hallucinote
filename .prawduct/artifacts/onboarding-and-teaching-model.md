@@ -24,10 +24,12 @@ opposite. Four values, in the user's words, are load-bearing:
 2. **Assume users want to know more than they do.** Default to revealing the
    reasoning, not hiding it. Teaching is a first-class output, co-equal with the
    song.
-3. **Caveat first, then best effort.** There is *always* something not supported
-   yet (today: melody is thin, no vocal synthesis; tomorrow something else).
-   Every boundary is named honestly *before* we attempt the best version we can.
-   Never gate, never silently substitute.
+3. **Caveat first, then best effort — and the caveat is *dimensional*, never
+   goal-blocking.** A song has many dimensions (harmony, groove, arrangement,
+   sound design, melody, vocal topline). A stylistic goal is almost always
+   reachable through the dimensions we render fully; the caveat names the
+   dimensions we render thinly, then we deliver anyway. Never gate, never
+   silently substitute.
 4. **We are not preserving users' novice-hood.** A novice should leave each
    session a slightly better musician. The song is the byproduct of the lesson.
 
@@ -56,29 +58,39 @@ a global skill level. The same drummer is "directed action" on groove and
 ### 1. Capability Truth — the anti-hallucination spine *(new)*
 
 A living, **capability-organized** source of truth for what Hallucinote can
-actually do *right now* — not a skill catalog. Status per capability with a
-best-effort-fallback note:
+actually do *right now* — read as **dimensions of a song**, not a skill catalog:
 
-| Capability | Status (2026-05-31) |
+| Dimension | Status (2026-05-31) |
 |---|---|
-| Rhythm / groove (kick_stumble, tresillo, kit abstraction, per-part `feel`) | ✓ shipped |
-| Harmony (pads, stabs, tresillo pluck, sparse bells) | ✓ shipped |
-| Bass (tresillo, walking) | ✓ shipped |
-| Arrangement / structure (sections, energy arc, contrast) | ✓ shipped |
-| Sound design (instrument chains as authorship) | ✓ shipped |
-| Mix (intent-aware review, masking, sidechain) | ✓ shipped |
-| Melody (single-line lead writing) | ◐ partial — pluck/bell only; lead-line generation in progress |
-| Vocals (synthesis / topline) | ✗ none |
+| Rhythm / groove (kick_stumble, tresillo, kit abstraction, per-part `feel`) | ✓ full |
+| Harmony (pads, stabs, tresillo pluck, sparse bells) | ✓ full |
+| Bass (tresillo, walking) | ✓ full |
+| Arrangement / structure (sections, energy arc, contrast) | ✓ full |
+| Sound design (instrument chains as authorship) | ✓ full |
+| Mix (intent-aware review, masking, sidechain) | ✓ full |
+| Melody (lead-line writing) | ◐ thinner than the rest — pluck/bell lines today |
+| Vocal topline (synthesis) | ✗ not yet |
 
 The agent reads this to (a) answer "what can you do?" with broad, *true* example
-invitations, (b) generate an **accurate** caveat when a request crosses a
-boundary (value #3), and (c) never confabulate a capability. The boundary moves
-as Melody ships — the table moves with it. *Caveat-first only works if the agent
+invitations, (b) generate an **accurate, dimensional** caveat when a request
+leans on a thin dimension, and (c) never confabulate a capability.
+
+**The caveat is dimensional, and the goal is still delivered.** The canonical
+example — a user asks for *"an 80s pop song like Madonna"*:
+
+> "Love it — I'll write you an 80s synth-pop song in Madonna's musical
+> language: the chord moves, the groove, the arrangement, the sound design are
+> all things I do well. Two honest caveats: I can't synthesize the vocal, and my
+> melody writing is less sophisticated than the rest of me — so the topline will
+> be a starting point, not the finished hook. Here's the song…"
+
+Not *"I can't do Madonna (no vocals)."* The Madonna-ness lives in the dimensions
+we own; the caveat scopes the two we don't, then we build. The boundary moves as
+Melody matures — the table moves with it. *Caveat-first only works if the agent
 knows its own edges; this is that knowledge.*
 
-**Home:** TBD per "design portable behavior now" decision — likely a doc the
-onboarding behavior + `song-new` both read. Must stay trivially updatable so it
-never lags the code.
+**Home:** a living doc both the onboarding handoff and `song-new` read. Must stay
+trivially updatable so it never lags the code.
 
 ### 2. Intent spine — *reuse, extended to the compose stage*
 
@@ -90,37 +102,45 @@ rebuild.** The new work is altitude + timing:
 - **One portable question at every altitude — *"what is this for?"*** Song,
   section, element. The element level exists (mix tags); lift the same question
   to **section intent** ("the verse holds back so the chorus can win") and
-  **song intent** as the teaching backbone. These are prose annotations in the
-  existing corpus, not a new schema.
+  **song intent** as the teaching backbone. Prose annotations in the existing
+  corpus, not a new schema.
 - **Intent is discovered retrospectively, not interrogated up front.** Novices
   often don't know their intent until they react to something concrete.
-  Generate fast, then teach intent by reflecting reactions back as intent
-  ("you said that chorus felt 'too happy' — *that's* intent; let's name what you
-  want instead") and learn-back per the existing CAPTURE step.
+  Generate fast, then teach intent by reflecting reactions back ("you said that
+  chorus felt 'too happy' — *that's* intent; let's name what you want instead")
+  and learn-back per the existing CAPTURE step.
 - **Per song, never a global user profile** — consistent with the existing
-  model. (This also settles the expertise question: infer fluency per request,
+  model. (This settles the expertise question: infer fluency per request,
   validate when a decision needs it; do *not* persist an expertise profile.)
 
-### 3. Adaptive collaboration mode — *(new behavioral)*
+### 3. Collaborative by default — never offer to take the work away *(new principle)*
 
-Open by sorting **what the user wants from the session**, not their skill (which
-novices can't self-assess, and which is per-domain anyway):
+The session does **not** open by asking the user to pick a mode. Offering *"want
+me to just build this for you?"* surfaces the dependence path as a legitimate
+option — the exact thing the North Star fights. Instead:
 
-> *"Want me to just build this for you, or build it with you — stopping at the
-> few choices that shape how it turns out?"*
+- **Assume the user is invested and here for leverage.** Hallucinote is a helper
+  that amplifies *their* work, not a service that does it instead of them.
+- **Default to collaborative, always.** When the user isn't giving direction on
+  an elementary musical choice we're about to make, **don't decide it silently
+  (that's auto-accompaniment) — propose it and invite reaction**, often with an
+  A/B:
+  > "My first thought: E minor, power chords landing on the chorus, denser
+  > harmony under the verses to make the chorus feel like a release. Sound right,
+  > or do you hear it differently?"
+- **The build-it-for-me path exists but is never *offered*.** A user can ask for
+  it outright ("just make me something, I trust you"), and we'll oblige — but we
+  never put it on the table as a menu choice. Available on request; never
+  advertised.
 
-- **For you** = the expert / just-make-it path: drive end-to-end (existing
-  creative-prompt norm).
-- **With you** = the guided-learning path: the stops are teaching choices with a
-  real fork, not status updates.
+This sharpens — and partly overrides — `song-new`'s current `make-me-X` /
+`scaffold-only` split: collaboration is the default stance, not one of two
+offered modes.
 
-Within the session, infer per-domain fluency from phrasing; validate only when a
-decision genuinely needs it (the Bach case). This replaces `song-new`'s current
-`make-me-X` / `scaffold-only` mode split.
+### 4. Teaching-by-choice — *the default interaction verb*
 
-### 4. Teaching-by-choice — *(the new interaction verb)*
-
-The atomic move on the "with you" path and in the third register:
+The atomic move, both in the third register and in ordinary collaborative
+composition:
 
 **propose → name the why in one sentence → offer a real fork (often an A/B) that
 *is* the lesson.**
@@ -129,9 +149,9 @@ The atomic move on the "with you" path and in the third register:
 > with the full kit too, to feel the difference?"
 
 Hearing the with/without teaches contrast better than any explanation, and the
-novice makes the call (value #4). The single highest-leverage novice lesson this
-delivers is **contrast and subtraction** — the verse holding back so the chorus
-wins — which is teachable purely by ear, no theory required.
+user makes the call (values #1, #4). The single highest-leverage novice lesson
+this delivers is **contrast and subtraction** — the verse holding back so the
+chorus wins — teachable purely by ear, no theory required.
 
 ### 5. Guided evaluation — *the existing INTERPRET loop, at the compose stage*
 
@@ -142,28 +162,46 @@ Apply the same `RECALL → INTERPRET vs intent → surface as a question` loop a
 here's whether it does; here's the one thing holding it back." This is where the
 lesson consolidates. Likely a lightweight compose-stage sibling to `mix-review`.
 
+## The entry point — out of the install script
+
+A typical user arrives having cloned the repo, read the README, and run
+`/ableton-mcp-install` (guided through MCP setup). At that moment they are a
+**music person, not a developer of this project** — and the install skill's
+**Step 5 handoff** is the natural, portable place to flow into eliciting what
+they want to make, and to explain capabilities.
+
+Today Step 5 prints a static command menu ("load falling-walking", "start a new
+song", "/ableton-pull …"). The refinement: that handoff becomes a **warm,
+capability-honest invitation that opens an intent conversation** — surface what
+Hallucinote does well (from the Capability Truth, in musical/dimensional terms),
+invite the user to name what they want to work on, and proceed collaboratively
+(piece #3). The dev-facing session briefing is a *different* surface; this is the
+musician's first-contact moment, and it lives at the install tail.
+
 ## What changes (proposed — not yet applied)
 
-- **New:** the Capability Truth doc; the for-you/with-you opener; a compose-stage
-  guided-evaluation surface.
-- **Extend:** `song-new` Phase 1 — lighter, altitude-aware intent elicitation;
-  mode split becomes for-you/with-you. Lift section/song intent into the existing
-  corpus.
+- **New:** the Capability Truth doc; a compose-stage guided-evaluation surface.
+- **Rewrite `/ableton-mcp-install` Step 5 handoff** from a command menu into a
+  capability-honest, intent-eliciting, collaborative invitation.
+- **Extend `song-new`:** lighter, altitude-aware intent elicitation; collaborate
+  by default (propose-and-react), retiring the make-me-X / scaffold-only mode
+  split. Lift section/song intent into the existing corpus.
 - **Amend two CLAUDE.md norms:**
-  - "Stop only on high-stakes decisions" — a *teaching choice* is a legitimate
-    stop on the with-you path, distinct from a summarize-and-ask.
-  - "Creative product prompt → drive end-to-end, phase boundaries aren't
-    user-facing checkpoints" — needs a pedagogical carve-out; the norm currently
-    assumes the expert case as the default.
+  - "Stop only on high-stakes decisions" — a *collaborative musical proposal /
+    teaching choice* is a legitimate stop (creative lock-in), distinct from a
+    summarize-and-ask.
+  - "Creative product prompt → drive end-to-end" — needs a carve-out: don't
+    silently decide elementary musical choices the user hasn't directed; propose
+    them and invite reaction. The norm currently assumes the expert case.
 - **Generalize the producer model:** add the third register to
   `intent-collaboration-model.md`.
 
 ## Deliberately not decided here
 
-- **Distribution / repo first-run.** User chose "design portable behavior now";
-  how composers eventually receive Hallucinote (shared repo vs packaged) is
-  deferred. A fresh clone today still greets everyone with the developer/
-  governance session briefing — out of scope until distribution settles, but
-  flagged.
 - **No build plan yet.** Shape first. This artifact is the shape; chunking,
-  tests, and sequencing come after review.
+  tests, and sequencing come after review. (Likely thin vertical slice: the
+  Capability Truth + the rewritten install-Step-5 handoff, since the
+  intent-eliciting first-contact leans on both.)
+- **Dev-session-briefing vs musician-first-contact** at the raw Claude Code
+  session level remains a separate surface; the musician's entry is now settled
+  (install tail), so this is narrowed, not urgent.

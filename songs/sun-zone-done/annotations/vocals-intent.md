@@ -30,9 +30,13 @@ Phrase intent:
 - Reggae vocal: dry-ish, intimate, maybe a touch of the `DubDelay` throw on
   phrase ends (classic dub vocal echo).
 - Metal vocal: more aggressive, forward, drier — matches the metal "wall" intent.
-- The protagonist's arc (tries to be productive, gives up, collapses back into
-  chill — exhausted, not victorious) should read in the *outro* vocal delivery:
-  the return to reggae is defeated, not triumphant.
+- The protagonist's arc RESOLVES, it doesn't collapse: they stop fighting the two
+  worlds and *integrate* them into something new (see
+  `decisions/07-rhythmic-collision-and-resolution.md`). The *outro* vocal should
+  read as **enlightenment / acceptance / joy** — arriving somewhere new and
+  exciting, neither sleepy-reggae resignation nor metal exhaustion. The frantic
+  "NO TIME FOR THAT" hook returns **augmented (slowed) and at peace** — the same
+  words, no longer panicked. Not defeated, not triumphant-over — *reconciled*.
 
 ## Open
 

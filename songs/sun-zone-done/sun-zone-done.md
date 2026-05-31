@@ -8,9 +8,10 @@
 > - `decisions/01-intent-and-theme.md` — user's original brief (the load-bearing source)
 > - `decisions/02-genre-mechanics.md` — alternation, not overlap; transition mechanics
 > - `decisions/03-key-tempo-meter.md` — E Dorian ↔ E Phrygian; 180 BPM; 4/4
-> - `decisions/04-section-structure.md` — original 7-section/64-bar shape (superseded by the 9-section/80-bar arc below)
+> - `decisions/04-section-structure.md` — original 7-section/64-bar shape (superseded by the 9-section/184-bar through-composed arc below)
 > - `decisions/05-instrumentation-and-chains.md` — instrumentation + the Amp Type envelope (now 6 tracks; see below)
 > - `decisions/06-per-section-feel.md` — microtiming as authorship (reggae drag, metal straight)
+> - `decisions/07-rhythmic-collision-and-resolution.md` — **(current)** rhythm is the third colliding world; the development collides rhythmically, the outro resolves into a new joyful synthesis
 >
 > Query via `/song-context [topic]` (FTS5-indexed). See `.prawduct/artifacts/song-conventions.md`.
 
@@ -24,30 +25,32 @@ Reggae × speed-metal mashup. Alternating (not overlapping) sections express the
 
 Fun, but not a novelty song: the harmony carries the joke. The arc is a story of *adapting* — the protagonist stops fighting and learns to hold both the crazy and the mellow at once.
 
-> **Authored on the `hallucinote.arrangement` module** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, recurrence deltas, motifs, and references are all expressed through the model — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
+> **Authored on the `hallucinote.arrangement` + `hallucinote.theory` modules** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, **per-section harmonic progressions** (the harmony axis), recurrence deltas, motifs, and references are all expressed through the model, and a build-time conformance lens fails the build if a section's parts don't realize its declared harmony (the structural fix for the old one-chord drone) — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
 
 ## Core specs
 
 - **Key:** Em — root E throughout, modes flip Dorian (reggae) ↔ Phrygian (metal)
 - **Tempo:** 180 BPM (constant)
 - **Time signature:** 4/4 (constant)
-- **Length:** 80 bars (~107 seconds)
+- **Length:** 184 bars (~4:05) — through-composed (no section is a literal repeat)
 
-## Structure — the narrative arc (9 sections / 80 bars)
+## Structure — the narrative arc (9 sections / 184 bars, through-composed)
 
-| Section | Bars | Genre | Energy | Story beat |
-|---|---|---|---|---|
-| intro | 1–8 | Reggae | 0.25 | Sun coming up — a 3:4:5:7 Em7 **polyrhythm** shimmer builds to unbearable, then drops |
-| verse1 | 9–16 | Reggae | 0.40 | "Chillin in the sun zone" — the hook arrives |
-| chorus1 | 17–24 | Metal | 0.80 | "NO TIME FOR THAT" — first interruption (discontinuity ↑) |
-| verse2 | 25–32 | Reggae | 0.45 | Back to chill, hasn't given up — recurrence + delta (organ doubled, **steel pans** enter) |
-| chorus2 | 33–40 | Metal | 0.90 | Second interruption, escalating — recurrence + delta (lead power-octave) |
-| break1 | 41–48 | Break | 0.70 | **Convention-break:** reggae groove through a HEAVY amp (metal timbre, reggae time) |
-| break2 | 49–56 | Break | 0.68 | **Convention-break:** metal groove turned CLEAN + organ bubble (reggae timbre, metal time) |
-| integration | 57–72 | Metal | 1.00 | **Integrating final chorus:** the metal engine FUSED with the intro polyrhythm (organ callback) — accepting life is both crazy and mellow |
-| outro | 73–80 | Reggae | 0.35 | **Enlightenment:** reggae beat + steel pans + brief metal double-time bursts (the stress, at peace) |
+Root **E throughout** — the song never modulates away; the *mode* evolves (Dorian reggae ↔ Phrygian metal) and fuses at the climax over an E pedal. Harmony is first-class: every section past the intro voices a real **moving progression**.
 
-Every genre flip is a deliberate **energy discontinuity** — never smoothed. Recurring sections are one identity + a delta (`vary()`), never independent copies. The polyrhythm cloud and the "NO TIME" hook are registered **motifs** that the integration and outro **reference** (the recapitulation primitive).
+| Section | Bars | Genre | Harmony (the moving progression) | Energy | Story beat |
+|---|---|---|---|---|---|
+| intro | 1–16 | Reggae | E Dorian — Em7 dawn drone | 0.25 | Sun coming up — a 3:4:5:7 Em7 **polyrhythm** shimmer builds to unbearable, then drops |
+| verse1 | 17–40 | Reggae | i–IV–♭VI–ii … B7 (V7/i push) | 0.40 | "Chillin in the sun zone" — the hook arrives |
+| chorus1 | 41–56 | Metal | E Phrygian — i–♭II Neapolitan + ♭VI–♭VII | 0.80 | "NO TIME FOR THAT" — first interruption (discontinuity ↑) |
+| verse2 | 57–80 | Reggae | richer: Em9–A7–C#m7♭5–Bm7 | 0.45 | Hasn't given up — harmonic development + **steel pans** enter |
+| chorus2 | 81–96 | Metal | E Phrygian — darker, more motion | 0.90 | Second interruption, escalating — lead octave-down doubled |
+| development | 97–120 | Reggae↔metal **collide** | Dorian cells answered by Phrygian; harmonic rhythm accelerates | 0.70 | The worlds **trade bars — harmonically AND rhythmically** (reggae drag ↔ metal stab), accelerating |
+| break | 121–136 | Break | the HINGE: Em/C#↔Em/C slash vote (the bass votes the mode) | 0.72 | **Convention-break:** a reggae groove pushed through a HEAVY amp (metal timbre, reggae time) |
+| integration | 137–168 | Metal | polymodal — a both-at-once split chord (F#/F, C#/C) over an E pedal | 1.00 | **CLIMAX (fuse hard):** the metal engine FUSED with the intro polyrhythm + the both-at-once chord — life is both crazy and mellow, made literally harmonic |
+| outro | 169–184 | Reggae→**synthesis** | re-brighten to E Dorian, land a warm Em9 | 0.50 | **RESOLUTION → something NEW:** joyful synthesis, neither sleepy-reggae nor exhausting-metal; the "NO TIME" hook **augmented** (slowed) into peace + a diatonic lift; steel-pan joy |
+
+Every genre flip is a deliberate **energy discontinuity** — never smoothed. The worlds collide on **three axes — harmony, timbre, AND rhythm/feel** (the development trades feel cell-by-cell, not just chords; see `decisions/07`). The climax **fuses hard** in the integration and the **resolution lands in the outro** — not a retreat to sleepy reggae but a *new, joyful synthesis* of both worlds (a confirmed creative decision). Recurring sections are one identity + a delta (`vary()`) — chorus2 lead = chorus1 lead octave-down; verse2 = verse1 + steel + a richer progression — never independent copies. The polyrhythm cloud and the "NO TIME" hook are registered **motifs** that the integration and outro **reference** (the recapitulation primitive).
 
 ## Instrumentation
 
@@ -64,7 +67,7 @@ Every genre flip is a deliberate **energy discontinuity** — never smoothed. Re
 
 ## The Amp Type envelope
 
-The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 320 beats = whole song / 80 bars); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint. In the **convention-break** the Amp is deliberately decoupled from the groove (break1 stays Heavy over the reggae groove; break2 goes Clean over the metal groove).
+The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 736 beats = whole song / 184 bars); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint. In the **convention-break** the Amp is deliberately decoupled from the groove: the single `break` stays HEAVY over its reggae groove (a metal timbre on reggae time).
 
 Other tracks (drums / bass / organ / lead) use per-section clips for compose-time convenience.
 
@@ -93,7 +96,7 @@ The compose-time helpers (`/ableton-push` skill) wrap this flow end-to-end.
 
 ## Verification status
 
-The full arrangement is **DB-verified** (build + 18 shape/intent tests, full suite green) but **not yet Live-verified** — the push → render → analysis → `/mix-review` loop needs Ableton open. One push-time item to confirm: the **Island Pans** browser load (the steel track) resolves by pattern under `instruments`; if not, it's a one-word `preset_query` fix in `captured_session.json`. The final **measured mix pass** (drum trim, ~−1 dBTP true-peak headroom, LUFS/dynamics against the denser new arrangement) is render-gated and deliberately deferred — static levels/sends are set conservatively in the snapshot.
+The full arrangement is **DB-verified** (build + 20 shape/intent tests + the build-time harmony-conformance lens, `ok=True`) but **not yet Live-verified** — the push → render → analysis → `/mix-review` loop needs Ableton open (a render-pipeline reset — full Live reopen — is the current gate; the multi-stem capture went stale). One push-time item to confirm: the **Island Pans** browser load (the steel track) resolves by pattern under `instruments`; if not, it's a one-word `preset_query` fix in `captured_session.json`. The final **measured mix pass** (drum trim, ~−1 dBTP true-peak headroom, LUFS/dynamics against the denser new arrangement) is render-gated and deliberately deferred — static levels/sends are set conservatively in the snapshot.
 
 ## Deferred (not yet authored)
 

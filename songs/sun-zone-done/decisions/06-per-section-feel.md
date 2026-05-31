@@ -7,6 +7,16 @@ tags: [feel, microtiming, groove, reggae, metal]
 
 # Per-Section Feel & Microtiming
 
+> **Historical record (2026-05-22).** Predates the harmony substrate and the
+> 184-bar through-composed arc. It describes the earlier generator API
+> (voicing/root args; the generators are now **chord-aware**, taking a
+> `Progression`) and an earlier section list (it names a `bridge` and omits
+> `development` / `break` / `integration`). The per-part **FEEL scheme below is
+> still current and implemented** via the generators' baked-in defaults (reggae
+> drag / metal on-grid): the new reggae sections (development, break) inherit the
+> reggae drag, and the integration inherits the metal on-grid, by genre. For the
+> current arc see `sun-zone-done.md` + the annotations. Left as a dated record.
+
 **Question:** What's the groove feel for each section?
 
 **Answer:** Reggae sections **drag** slightly (drums and skanks lay behind the grid by ~3-5%); metal sections sit **exactly on grid** (machine-tight). The microtiming is per-part, baked into the pattern at generation time — not a post-hoc humanize pass.

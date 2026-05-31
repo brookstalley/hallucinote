@@ -1,5 +1,5 @@
 {
-  "_note": "HAND-AUTHORED synthetic snapshot for sun-zone-done. 6 instrument tracks + 3 returns (steel pans added in the arrangement-model flagship rebuild). Reggae↔metal mashup; same instruments throughout. Amp Type on Rhythm Gtr is the genre-flip mechanism: ONE envelope with breakpoints at section boundaries, hosted by ONE monolithic 320-beat (80-bar) Rhythm Gtr session clip (Live 12.4 LOM requires device_parameter envelopes to be hosted by a clip covering the envelope's full beat range, and one envelope per (device, parameter) is the data-model constraint — see decisions/05-instrumentation-and-chains.md).",
+  "_note": "HAND-AUTHORED synthetic snapshot for sun-zone-done. 6 instrument tracks + 3 returns (steel pans added in the arrangement-model flagship rebuild). Reggae↔metal mashup; same instruments throughout. Amp Type on Rhythm Gtr is the genre-flip mechanism: ONE envelope with breakpoints at section boundaries, hosted by ONE monolithic 736-beat (184-bar) Rhythm Gtr session clip (Live 12.4 LOM requires device_parameter envelopes to be hosted by a clip covering the envelope's full beat range, and one envelope per (device, parameter) is the data-model constraint — see decisions/05-instrumentation-and-chains.md).",
   "_capture_status": "synthetic: scaffold for v2 rebuild; refresh via /song-snapshot once pushed and tweaked in Live",
   "song": {
     "tempo": 180.0,
@@ -166,8 +166,9 @@
         {
           "index": 1, "name": "Island Pans", "class": "Instrument Rack",
           "kind": "instrument",
-          "preset_query": {"root": "instruments", "pattern": "Island Pans"},
-          "_note": "Steel pans for the later reggae sections (Chunk 4). Native Mallets/Instrument-Rack preset; the browser load by pattern is the one push-time item to verify. Panned slightly right + a touch of dub delay for island air."
+          "preset_query": {"root": "instruments", "pattern": "Island Pans",
+                            "path_prefix": ["Instrument Rack", "Mallets"]},
+          "_note": "Steel pans for the later reggae sections. Native Mallets/Instrument-Rack preset. 'Island Pans' surfaces under TWO browser folders (Instrument Rack/Mallets AND Wavetable/Mallets — same FileId); the path_prefix pins the Instrument-Rack one to satisfy the strict (refuse-on-multi-match) loader. Panned slightly right + a touch of dub delay for island air."
         },
         {
           "index": 2, "name": "EQ Eight", "class": "EQ Eight",

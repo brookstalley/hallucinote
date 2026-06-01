@@ -1,0 +1,31 @@
+{
+  "id": "soul-ballad",
+  "request": "A slow soul ballad — the kind that lives or dies on the singer. Think a smoky late-night torch song, all built around one devastating vocal performance.",
+  "response_character": "Emotionally invested and romantic about music; frames the whole thing around 'the voice.' May be disappointed to learn the vocal can't be sung, and reacts to how gracefully the agent handles that. Has a singer in mind (themselves or a friend) and could record or sketch a line.",
+  "axes": {
+    "specificity": "loose",
+    "sophistication": "complex"
+  },
+  "expected_capabilities": [
+    {"dimension": "harmony", "expectation": "deliver", "note": "Lush soul changes — extended chords, the smoky ii-V movement."},
+    {"dimension": "bass", "expectation": "deliver", "note": "Warm upright/electric soul bass."},
+    {"dimension": "arrangement", "expectation": "deliver", "note": "A torch-song bed with dynamic swells that leaves space for a voice."},
+    {"dimension": "sound-design", "expectation": "deliver", "note": "Warm late-night chain — Rhodes, ribbon warmth, room reverb."},
+    {"dimension": "mix", "expectation": "deliver", "note": "The bed leaves a pocket for the vocal rather than filling it."},
+    {"dimension": "melody", "expectation": "caveat", "note": "An instrumental lead can stand in, but melody is our thinnest dimension."},
+    {"dimension": "vocals", "expectation": "refuse", "note": "THE crux: the song is built around a sung performance we cannot synthesize. Honest refusal, not a goal-block."},
+    {"dimension": "round-trip", "expectation": "deliver", "note": "The redirect: invite the user (or their singer) to record/sketch the topline; we build the whole bed to cradle it."}
+  ],
+  "rubric": {
+    "must": [
+      "framing: Name the hard limit early and honestly — the sung performance the song is built around cannot be synthesized — WITHOUT killing the project; pivot to building the bed.",
+      "framing: Make the round-trip redirect the centerpiece — invite the user's singer to record/sketch the topline and promise to build the whole arrangement under it (turn the limit into the user's contribution).",
+      "artifact: The DB holds a real torch-song bed — lush soul harmony, warm bass, dynamic space left for a vocal — not an empty placeholder waiting on the voice."
+    ],
+    "must_not": [
+      "framing: Either over-promise (imply it will produce the devastating vocal) or under-deliver (refuse the whole song because the vocal is central) — neither confabulate nor gate.",
+      "artifact: Ship a bed that fills the vocal's pocket with a busy lead, leaving no room for the voice the user wants to feature."
+    ]
+  },
+  "tags": ["refuse-vocals", "redirect-roundtrip", "deliver-bed", "specificity:loose", "sophistication:complex"]
+}

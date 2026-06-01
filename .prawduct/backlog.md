@@ -125,6 +125,11 @@ sections only via explicit `/backlog update` calls.
 
   Both `src/hallucinote/sync/compat.py:_PLUGIN_CLASSES` + `_is_plugin_class()` and `hallucinote_mcp/.../handlers/device.py:1236-1241` (`is_third_party_plugin`) implement the same logic (explicit set + `"Plugin" in class_name` substring). Lock-tests keep them consistent (`test_plugin_classes_lock_matches_mcp_side` + `test_classify_device_substring_branch_routes_to_third_party`) — sufficient short-term, but drift-prone long-term. Natural home: W11-A's `hallucinote-core` shared package. **Verifiable signal:** a `hallucinote-core` package exists; both compat.py and device.py import the discriminator from it. **Defer until** W11-A's extraction lands so the move happens once rather than twice. (v0.9.0 cumulative Critic note + PR reviewer note 3, 2026-05-20)
 
+- **[DEV-4X2N]** `ableton_analysis(action='extract')` flattens only top-level device chains; no test pins the exclusion
+  `effort: S · impact: S · area: device · source: critic · added: 2026-06-01 · status: open · related: DEV-7K4H`
+
+  The structural-dump handler (`hallucinote_mcp/.../handlers/analysis.py:_extract_song_structure`) collects devices via `get_devices_for_track` / `get_devices_for_return`, which by design don't recurse into nested rack chains (one-level via `get_device_chains_for_rack_device`; recursive racks unmodeled — see DEV-7K4H). The caveat is documented in the handler docstring + action tips, but the `_seed_full_song` test fixture builds only a top-level chain, so a regression that started dropping rack containers wouldn't be caught. When nested-rack pull lands (gated on `hallucinote-mcp` `get_device_chains`), extend the extract to flatten nested chains and add a seed with an Instrument/Audio-Effect Rack. **Verifiable signal:** `_seed_full_song` (or a sibling fixture) builds a nested rack and a test asserts the extract's device shape for it. (Critic note, extract-action 2026-06-01)
+
 - **[SNG-7H4M]** Future sibling skill: `/song-import` — ingest an existing Ableton Live set into a new Hallucinote song dir
   `effort: L · impact: M · area: song-tooling · source: builder · added: 2026-05-20 · status: open`
 

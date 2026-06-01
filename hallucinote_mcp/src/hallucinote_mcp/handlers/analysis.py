@@ -426,7 +426,126 @@ def get_latest_report_handler(
     }
 
 
+def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[str, Any]:
+    """Assemble a raw structural dump of a song from the DB.
+
+    This is the score-as-data tier the audio/compose analyzers can't see:
+    exact note timings, section boundaries, device chains + parameters,
+    arrangement placements, sends, returns, cues, tempo/meter maps. The
+    musical-work eval judge reads phase relationships and structural facts
+    straight from this dump (its ``--db-extract`` input) rather than
+    hand-querying the sqlite DB.
+
+    Uses the read-side ``queries`` helpers exclusively — no raw SQL — so
+    the dump tracks the canonical projections (note tags deserialized,
+    sends joined to return identity, devices joined to chain position).
+    Every ``sqlite3.Row`` is materialized to a plain dict so the result is
+    JSON-serializable; ``get_notes_for_clip`` already returns dicts.
+
+    Device caveat: ``get_devices_for_track`` / ``get_devices_for_return``
+    walk only the top-level chain — nested rack chains (one level deep via
+    ``get_device_chains_for_rack_device``, recursive racks not modeled at
+    all) are not flattened in. A song using Instrument/Audio-Effect Racks
+    therefore reports its rack containers but not the devices inside them.
+    Acceptable for the eval-judge tier (which reasons about structure /
+    phase, not exhaustive device trees) until nested-rack pull lands.
+    """
+    song_row = Q.get_song(conn, song_id)
+    song = dict(song_row) if song_row is not None else {"id": song_id}
+
+    tracks: list[dict[str, Any]] = []
+    for track in Q.get_tracks_for_song(conn, song_id):
+        track_id = track["id"]
+        clips: list[dict[str, Any]] = []
+        for clip in Q.get_clips_for_track(conn, track_id):
+            clip_d = dict(clip)
+            # get_notes_for_clip already returns dicts (tags deserialized).
+            clip_d["notes"] = Q.get_notes_for_clip(conn, clip["id"])
+            clips.append(clip_d)
+        devices: list[dict[str, Any]] = []
+        for device in Q.get_devices_for_track(conn, track_id):
+            device_d = dict(device)
+            device_d["parameters"] = [
+                dict(p) for p in Q.get_device_parameters(conn, device["id"])
+            ]
+            devices.append(device_d)
+        track_d = dict(track)
+        track_d["clips"] = clips
+        track_d["arrangement_clips"] = [
+            dict(a) for a in Q.get_arrangement_for_track(conn, track_id)
+        ]
+        track_d["devices"] = devices
+        track_d["sends"] = [dict(s) for s in Q.get_sends_for_track(conn, track_id)]
+        tracks.append(track_d)
+
+    returns: list[dict[str, Any]] = []
+    for ret in Q.get_returns_for_song(conn, song_id):
+        ret_d = dict(ret)
+        ret_devices: list[dict[str, Any]] = []
+        for device in Q.get_devices_for_return(conn, ret["id"]):
+            device_d = dict(device)
+            device_d["parameters"] = [
+                dict(p) for p in Q.get_device_parameters(conn, device["id"])
+            ]
+            ret_devices.append(device_d)
+        ret_d["devices"] = ret_devices
+        returns.append(ret_d)
+
+    return {
+        "song": song,
+        "tempo_map": [dict(r) for r in Q.get_tempo_map(conn, song_id)],
+        "time_signature_map": [
+            dict(r) for r in Q.get_time_signature_map(conn, song_id)
+        ],
+        "sections": [dict(r) for r in Q.get_sections_for_song(conn, song_id)],
+        "cue_points": [dict(r) for r in Q.get_cue_points(conn, song_id)],
+        "tracks": tracks,
+        "returns": returns,
+    }
+
+
+def extract_structure_handler(
+    _context: LiveContext,
+    *,
+    song_slug: str,
+) -> dict[str, Any]:
+    """Return a raw structural dump of a song's DB.
+
+    The score-as-data tier the analyzers can't reach: tracks, clips, notes
+    (exact timings), sections, device chains + parameters, arrangement
+    placements, sends, returns, cues, tempo/meter maps — keyed under one
+    tool call so the musical-work eval judge consumes it via ``--db-extract``
+    instead of a bespoke sqlite query.
+
+    Returns: ``{song_slug, extract}`` where ``extract`` is the nested dump.
+    Raises ``_AnalysisError`` on a typo'd / unbuilt slug (same teaching
+    error shape as ``analyze``).
+    """
+    if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
+        raise _AnalysisError(
+            "ableton_analysis requires the hallucinote package — "
+            "see analyze_handler for the same diagnosis."
+        )
+    db_path = _existing_db_path(song_slug)  # fail loud on a typo'd slug
+    conn = init_db(db_path)
+    try:
+        song = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (song_slug,)
+        ).fetchone()
+        if song is None:
+            raise _AnalysisError(
+                f"no song row named {song_slug!r} in {db_path} — the DB "
+                f"exists but has no matching song. `python3 "
+                f"songs/{song_slug}/build.py --reset` populates it."
+            )
+        extract = _extract_song_structure(conn, song["id"])
+    finally:
+        conn.close()
+    return {"song_slug": song_slug, "extract": extract}
+
+
 __all__ = [
     "analyze_handler",
     "get_latest_report_handler",
+    "extract_structure_handler",
 ]

@@ -38,7 +38,7 @@ the song's most euphoric sound sits on its least honest moments.
 | Section | Bars | Arc beat | Feel |
 |---------|------|----------|------|
 | `intro` | 1–8 | Lost | Pad only, notch wide open (max root absence). Opens on the **phantom root tail** — an E power chord struck two beats before the song, heard only as a dying reverb hint: *the root you just missed* (`decisions/12`). |
-| `verse1` | 9–24 | Lost | Bass (5ths, hi-passed), pulsing arp, melody enters reaching for a ground that isn't there. |
+| `verse1` | 9–24 | Lost | Cinematic: sustained open pads (notch-LFO most audible), recessed/filtered arp, bass on 5ths (hi-passed); melody enters reaching for a ground that isn't there. |
 | `chorus1` | 25–40 | Lost at home's doorstep | Full arrangement energy, **zero harmonic resolution** — the cruelest denial. |
 | `verse2` | 41–56 | Still lost | As V1; texture a touch fuller. |
 | `chorus2` | 57–72 | Coalescing | Notch Q narrows a hair — root overtones bleed through subliminally. Still no floor. |
@@ -46,6 +46,11 @@ the song's most euphoric sound sits on its least honest moments.
 | `verse3` | 89–96 | Disabused | Half-length gut-punch — the last verse takes the purpose back. The summit was a lie. |
 | `finalchorus` | 97–112 | Approach | Tension at maximum; the D# leading tone pulls hardest toward an E about to arrive. |
 | `coda` | 113–128 | **Found** | **The reveal:** sub-osc **E** swells up over ~4 bars (first energy in the bottom octave all song) — the same root whose tail died in the intro; melody lands on E for the first time. Voice and floor arrive together. Located, not happy. |
+
+**Per-section voicings (specs):** `decisions/14` chorus (dazzling arp + stabs, E-free except a
+bar-3 graze) · `decisions/15` verse (cinematic open pads, i↔iv drift) · `decisions/16` break
+(G-major illusion → B7 pivot) · `decisions/17` coda (the rooted reveal). Harmony engine:
+`decisions/02`. Not yet authored into `build.py` — specs await an Ableton pass.
 
 ---
 

@@ -1,6 +1,6 @@
 # Melody Model — the line layer (contour · expectation · motivic economy · harmonic fit)
 
-**Status:** **read-side lens SHIPPED (phase 2a); authoring side designed, pre-build.**
+**Status:** **read-side lens SHIPPED + WIRED into `/compose-review` (phase 2a); authoring side designed, pre-build.**
 The verified research foundation, the taxonomy placement, and the governing thesis
 are settled, and the FIRST both-sides primitive — the symbolic **melody lens**
 (`src/hallucinote/melody/`: `lens` + `contour` + `intervals` + `harmony_fit`) — is

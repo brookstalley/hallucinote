@@ -326,9 +326,7 @@ def analyze_handler(
     # (a quadruple-open per handler call once the tempo_map collector landed).
     conn = init_db(db_path)
     try:
-        song = conn.execute(
-            "SELECT id FROM songs WHERE name = ?", (song_slug,)
-        ).fetchone()
+        song = Q.get_song_by_name(conn, song_slug)
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
@@ -529,9 +527,7 @@ def extract_structure_handler(
     db_path = _existing_db_path(song_slug)  # fail loud on a typo'd slug
     conn = init_db(db_path)
     try:
-        song = conn.execute(
-            "SELECT id FROM songs WHERE name = ?", (song_slug,)
-        ).fetchone()
+        song = Q.get_song_by_name(conn, song_slug)
         if song is None:
             raise _AnalysisError(
                 f"no song row named {song_slug!r} in {db_path} — the DB "

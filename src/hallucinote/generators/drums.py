@@ -27,6 +27,8 @@ from typing import Any, Iterable
 from hallucinote.generators.kit import Kit
 from hallucinote.generators.primitives import (
     LAZY_SNARE,
+    METAL_GALLOP_OFFSETS,
+    REGGAE_LAZY,
     TRESILLO_HITS,
     Feel,
     apply_feel,
@@ -278,6 +280,113 @@ def open_hat_lifts(
               ["hat", "open", "lift"])
         for b in at_bars
     ]
+
+
+# ---------------------------------------------------------------------------
+# Reggae / metal grooves (promoted from sun-zone-done — the flagship demo song)
+# ---------------------------------------------------------------------------
+
+
+def reggae_one_drop(
+    bars: int,
+    *,
+    kit: Kit,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    kick_velocity: int = 95,
+    snare_velocity: int = 88,
+    hat_velocity: int = 55,
+    open_hat_velocity: int = 65,
+    lazy: float = REGGAE_LAZY,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Reggae one-drop: snare on beat 3, sparse kick (even bars only), closed
+    hats chucking the off-beats, open-hat lift every 4th bar.
+
+    The defining move is the *dropped* downbeat — no kick on 1; the snare
+    on 3 (laid ``lazy`` beats behind the click) carries the bar. Within-bar
+    layout is 4/4-shaped (see module docstring); ``beats_per_bar`` scales the
+    inter-bar step. ``lazy`` is the genre's structural drag (snare + open hat
+    full, hats half); ``feel`` (W17-E) shifts the canonical positions on top.
+    Tagged "kick"/"snare"/"hat" + "one_drop".
+    """
+    kick, snare = kit.kick, kit.snare
+    hat_c = kit.hat_closed
+    # The open-hat "lift" every 4th bar is an OPTIONAL accent — many real kits
+    # (e.g. Ableton's Hot Rod Kit) ship closed hats only. Degrade gracefully:
+    # skip the lift if the kit has no open hat rather than crash the build. The
+    # closed hat at 3.5 still plays, so the bar is never empty there. The
+    # load-bearing pads (kick/snare/closed-hat) still raise loudly if absent.
+    hat_o = kit.try_pitch_of("hat_open")
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        if b % 2 == 0:
+            out.append(_note(kick, bs + apply_feel(0.0, feel), 0.5, kick_velocity,
+                             ["kick", "one_drop"]))
+        out.append(_note(snare, bs + apply_feel(2.0, feel) + lazy, 0.5, snare_velocity,
+                         ["snare", "one_drop", "backbeat"]))
+        for off in (0.5, 1.5, 2.5, 3.5):
+            out.append(_note(hat_c, bs + apply_feel(off, feel) + lazy * 0.5, 0.25,
+                             hat_velocity + (4 if off == 1.5 else 0),
+                             ["hat", "closed", "offbeat"]))
+        if hat_o is not None and (b + 1) % 4 == 0:
+            out.append(_note(hat_o, bs + apply_feel(3.5, feel) + lazy, 0.5, open_hat_velocity,
+                             ["hat", "open", "lift"]))
+    return out
+
+
+def metal_gallop(
+    bars: int,
+    *,
+    kit: Kit,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    kick_velocity: int = 108,
+    snare_velocity: int = 115,
+    hat_velocity: int = 70,
+    hat_accent_boost: int = 15,
+    crash_velocity: int = 118,
+    crash_bars: Iterable[int] = (0,),
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Speed-metal: kick gallop on the :data:`METAL_GALLOP_OFFSETS` cell,
+    snare backbeat on 2 & 4, driving 16th hats (accent every downbeat 16th),
+    crash on ``crash_bars`` (default the first bar of the call — a section
+    entrance).
+
+    Within-bar layout is 4/4-shaped (see module docstring); ``beats_per_bar``
+    scales the inter-bar step. ``feel`` (W17-E) shifts every position — metal
+    typically wants ``None`` (dead-on, mechanical aggression). Tagged
+    "kick"/"snare"/"hat"/"crash" + "gallop". Pairs rhythmically with
+    :func:`hallucinote.generators.harmony.palm_mute_power_chords`.
+    """
+    kick, snare, hat_c = kit.kick, kit.snare, kit.hat_closed
+    # The crash is an OPTIONAL section-entrance accent — degrade gracefully on
+    # kits without one (skip the accent rather than crash the build). A caller
+    # that REQUIRES a crash should `kit.assert_has("crash")` up front.
+    crash = kit.try_pitch_of("crash")
+    crash_set = set(crash_bars)
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        for off in METAL_GALLOP_OFFSETS:
+            out.append(_note(kick, bs + apply_feel(off, feel), 0.15, kick_velocity,
+                             ["kick", "gallop"]))
+        out.append(_note(snare, bs + apply_feel(1.0, feel), 0.25, snare_velocity,
+                         ["snare", "backbeat"]))
+        out.append(_note(snare, bs + apply_feel(3.0, feel), 0.25, snare_velocity,
+                         ["snare", "backbeat"]))
+        for sixteenth in range(16):
+            t = sixteenth * 0.25
+            accent = sixteenth % 4 == 0
+            out.append(_note(hat_c, bs + apply_feel(t, feel), 0.10,
+                             hat_velocity + (hat_accent_boost if accent else 0),
+                             ["hat", "closed"] + (["accent"] if accent else [])))
+        if crash is not None and b in crash_set:
+            out.append(_note(crash, bs + apply_feel(0.0, feel), 1.0, crash_velocity,
+                             ["crash", "accent"]))
+    return out
 
 
 # ---------------------------------------------------------------------------

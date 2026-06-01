@@ -1304,3 +1304,74 @@ def test_clip_valid_call_without_context_sets_needs_remote(loaded_actions):
     )
     assert resp.ok is False
     assert resp.needs_remote is True
+
+
+# ---------- B4: inline-notes soft-cap guardrail (parity-locked) ----------
+
+from hallucinote_mcp.handlers.clip import INLINE_NOTES_SOFT_CAP  # noqa: E402
+
+
+def _make_notes(n: int) -> list[dict[str, Any]]:
+    """n valid note dicts, spaced so start_times stay non-negative + in-range."""
+    return [
+        {"pitch": 60, "start_time": i * 0.25, "duration": 0.25, "velocity": 90}
+        for i in range(n)
+    ]
+
+
+def _create_result(ctx, notes):
+    return dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "midi", "length": 64.0, "notes": notes,
+            },
+        ),
+        context=ctx,
+    )
+
+
+def _replace_result(ctx, notes):
+    ctx.song.tracks[0].clip_slots[0].clip = FakeClip()
+    return dispatch(
+        Request(
+            tool="ableton_clip", action="replace_notes",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "notes": notes,
+            },
+        ),
+        context=ctx,
+    )
+
+
+def test_inline_notes_no_warning_at_or_below_cap(loaded_actions):
+    """Trivial edits (<= cap) stay frictionless — no warning on either action."""
+    notes = _make_notes(INLINE_NOTES_SOFT_CAP)  # exactly the cap → silent
+    assert "warning" not in _create_result(FakeCtx(), notes).result
+    assert "warning" not in _replace_result(FakeCtx(), notes).result
+
+
+def test_inline_notes_warning_above_cap_is_non_blocking(loaded_actions):
+    """Above the cap: a teaching warning fires, but the write still succeeds."""
+    notes = _make_notes(INLINE_NOTES_SOFT_CAP + 1)
+    for result in (_create_result(FakeCtx(), notes).result,
+                   _replace_result(FakeCtx(), notes).result):
+        # Non-blocking: the notes were actually written.
+        assert result["notes_written"] == INLINE_NOTES_SOFT_CAP + 1
+        warning = result["warning"]
+        # Points at the DB / scoped-push path, not just "too many notes".
+        assert "push-notes" in warning
+        assert "/compose-part" in warning
+        assert str(INLINE_NOTES_SOFT_CAP) in warning
+
+
+def test_inline_notes_warning_parity_between_create_and_replace(loaded_actions):
+    """Lock: both inline-note actions emit the IDENTICAL warning at the same
+    threshold. Adding a third note-accepting path? Route it through
+    ``_inline_notes_warning`` and add it here."""
+    notes = _make_notes(INLINE_NOTES_SOFT_CAP + 5)
+    create_warning = _create_result(FakeCtx(), notes).result["warning"]
+    replace_warning = _replace_result(FakeCtx(), notes).result["warning"]
+    assert create_warning == replace_warning

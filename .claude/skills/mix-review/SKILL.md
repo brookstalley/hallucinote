@@ -1,6 +1,6 @@
 ---
 name: mix-review
-description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc.
+description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc.
 argument-hint: <song-slug> [section] [--focus masking|loudness|reverb|all]
 user-invocable: true
 disable-model-invocation: false
@@ -66,15 +66,79 @@ first — see "Refreshing the analysis"). For each section, you have:
   `confidence` (0–1 — **gate on this**: low confidence means few onsets or a
   loose/cross-rhythm part, so don't read drift/swing as gospel). "Snare drags
   +18 ms in the chorus" or "bass and kick are 30 ms apart in the lows."
+- `cross_rhythm` — per-part NAME of the grid a part is on, the read-side answer
+  to the question `timing` leaves open (when a part fights the straight grid,
+  `timing` reports low confidence; `cross_rhythm` says *what it's on*).
+  `pulse_ratio` is the musician's-terms label — `"3:2"` / `"4:3"` / `"5:4"` (an
+  N-against-M cross-rhythm) or `"3/beat"` / `"5/beat"` (a tuplet subdivision),
+  `null` when no clean pulse. `against_meter` (True = fights the binary grid —
+  the signal worth a producer question), `occupancy` (0–1, how filled the pulse
+  is — a 3:2 that rests reads ~0.82), `verdict` (`cross-rhythm` / `subdivision`
+  / `additive` / `rubato` / `roll` / `swing(see-timing)` / `low-confidence`),
+  `confidence` (**gate on this** too). "The clav is in 3-over-2 against the
+  straight-8th drums" — surface as a question: *intended hemiola, or locked?*
+  When `verdict` is `additive`, `grouping` is the decoded cell (e.g. `[3,3,2]`
+  for a 3+3+2 / 8-unit bar, `[2,2,3]` for 7/8) and `cycle_length_beats` its
+  length; the cell is accent-anchored when the part has dynamics, else reported
+  as the canonical rotation (so 3+3+2 vs 2+3+3 collapse — phase is unknowable
+  from equal-velocity onsets). "The bouzouki's in 3+3+2 aksak" — intended odd
+  meter, or do you want it straightened?
+- `phasing` — two-part Reich-style drift (the cross-rhythm two-part pass). Each
+  entry is a pair (`track_a`, `track_b`) whose relative alignment marches:
+  `drift_beats_per_cycle` (rate + direction of the slide per ~4-beat cycle),
+  `confidence`. Present only when two parts genuinely drift apart (locked parts
+  never surface). "The two marimbas are phasing ~0.1 beat/bar" — intended
+  Reich-style process, or two takes that should be locked?
+- `polymeter` — two parts looping cells of DIFFERENT length at one tempo (a
+  4-beat riff under a 3-beat ostinato; Meshuggah/Tool). Each entry is a pair
+  (`track_a`, `track_b`) with `cycle_a_beats` / `cycle_b_beats` (the recovered
+  cell lengths) and `realign_beats` (when their downbeats next coincide —
+  lcm of the cells; 4 vs 3 → 12). Distinct from phasing (same cell, drifting
+  tempo). Needs an audible accent — equal-velocity parts surface nothing
+  (the cell lives in dynamics). "Guitar's in a 4-bar cycle, kick in 3 — they
+  realign every 12 beats" — intended polymeter, or an accident?
+- `performance` (**SYMBOLIC, render-free**) — the build-time performance lens
+  (`hallucinote.performance.analyze_performance` over the song's arrangement;
+  **no audio pass needed**, so it's available even before a render, and it reads
+  the AUTHORED notes exactly — no onset-detection error). Per part:
+  `classification` (`mechanical` / `human` / `sloppy` / `insufficient-data`),
+  `timing_mean` / `timing_stdev` (push/drag + looseness, same 16th grid as the
+  audio `timing` feed), `timing_acf` (lag-1 autocorrelation — the human-vs-sloppy
+  line: correlated ≈1/f reads human, white/uncorrelated reads sloppy),
+  `timing_dfa_alpha` (the 1/f exponent, on long series only), `flat_dynamics`
+  (many notes at one velocity — the organ-at-one-velocity case),
+  `articulation` (median duration/IOI: ≈1 legato, <≈0.5 staccato), and a section
+  `ensemble` list per track-pair (`offset_mean` — a constant value is a deliberate
+  pocket — and `locked`). It REPORTS; its findings are `info` coaching questions
+  (`mechanical-timing` / `sloppy-timing` / `flat-dynamics`), never verdicts.
+
+  Read it **with** the audio feeds, not instead: the symbolic lens is the only
+  timing/dynamics feed available render-free and reads intent exactly; the audio
+  `timing` adds what symbols can't — **perceived onset** (a slow-attack pad feels
+  late though its note-on is on-grid) and proof the feel **survived to the sound**.
+  When they disagree, audio wins on "what's heard", symbolic on "what was meant".
+  Gate on intent exactly as for masking: an authored `mechanical` hat or a
+  `flat_dynamics` organ drone may be deliberate — surface as a question, learn the
+  answer back. (`sloppy` is the one worth a closer look: it's the discredited
+  white-noise humanization, distinct from a structured human groove.)
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
   band), `overshoots`, `reverb_verifications`.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid
 (swing and micro-timing interact — `swing_ratio` is the disambiguator); a
-cross-rhythm (e.g. 3:2) reads as low `confidence`, not as a tidy drift; absolute
-drift carries a small onset-detection offset, so RELATIVE reads (part-vs-part,
-section-vs-section, vs declared intent) are stronger than absolute.
+cross-rhythm (e.g. 3:2) reads as low `confidence` in `timing` but is NAMED in
+`cross_rhythm` — read them together (low timing confidence + a `cross_rhythm`
+verdict = "on a different grid", not "sloppy"); absolute drift carries a small
+onset-detection offset, so RELATIVE reads (part-vs-part, section-vs-section, vs
+declared intent) are stronger than absolute. Cross-rhythm caveats
+(`docs/polyrhythms.md` §5): additive grouping (`additive` verdict + `grouping`)
+and bar-level `polymeter` are now decoded — but both read from the ACCENT
+pattern, so they need an audible dynamic accent and inherit onset-detection's
+timbre dependence (a slow-attack or evenly-struck part may surface nothing,
+honestly, rather than a wrong cell); rubato-within-a-window is flagged not
+tracked; `swing(see-timing)` means C7's `swing_ratio` already explains it —
+don't double-report the same feel as a cross-rhythm.
 
 Reason **across** metrics, per section — that holistic read is the point. e.g.
 "the chorus opens up (loudness up, full spectrum) but the organ is buried 0.98

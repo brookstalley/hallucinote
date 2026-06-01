@@ -131,7 +131,7 @@ def normalize(preset_query):
 # code cannot import theirs. Mirror + lock-test is the deliberate pattern (see
 # the BROWSER_ROOTS lock-test above).
 
-SEARCH_MODES: frozenset[str] = frozenset({"substring", "glob", "regex"})
+SEARCH_MODES: frozenset[str] = frozenset({"substring", "exact", "glob", "regex"})
 
 # Depth the MCP push-time resolver walks the browser
 # (``hallucinote_mcp.handlers.device._BROWSER_WALK_DEPTH``). An inventory cache
@@ -160,6 +160,11 @@ def name_matches(
         pattern_cmp = pattern
     if mode == "substring":
         return pattern_cmp in name_cmp
+    if mode == "exact":
+        # Whole-leaf-name equality — anchored match so a precise preset name
+        # resolves uniquely even when it's a substring of another. Mirrors the
+        # MCP side's 'exact' mode.
+        return name_cmp == pattern_cmp
     if mode == "glob":
         return fnmatch.fnmatchcase(name_cmp, pattern_cmp)
     if mode == "regex":

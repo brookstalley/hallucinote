@@ -11,10 +11,14 @@ one of ``track_index`` / ``return_index`` (validated by
 set_parameter handles both continuous and enum values via ``value_type``.
 Live's DeviceParameter has ``value`` (always a float — for enum params it
 is an index into ``value_items``) plus ``value_items`` (tuple of strings)
-plus ``str_to_value`` (parses a display string). For the enum path the
-handler maps wire ``value`` (string) to an index via ``value_items`` and
-writes that. For continuous the handler validates 0.0–1.0 range and
-writes via ``value``.
+plus ``str_for_value`` (renders a raw value as its display string). There is
+**no** inverse on the object (a real-Live ``dir()`` shows ``str_for_value``
+but no ``str_to_value``), so the optional ``value_display`` write path
+("-18 dB", "3:1") inverts ``str_for_value`` numerically — see
+``handlers.display_value``. For the enum path the handler maps wire ``value``
+(string) to an index via ``value_items`` and writes that. For continuous the
+handler validates the raw value against [param.min, param.max] and writes via
+``value`` (or resolves ``value_display`` first).
 
 Nested rack chains are deliberately out of scope for M-4 — the parent_chain
 walk stops at the top-level chain. Recursing into instrument-rack or
@@ -27,6 +31,7 @@ from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
+from .display_value import resolve_continuous_write
 
 
 _PARENT_KINDS = ("track", "return", "master")
@@ -342,9 +347,10 @@ def _resolve_preset_query(
     mode = query.get("mode", "substring")
     case_sensitive = bool(query.get("case_sensitive", False))
     path_prefix = query.get("path_prefix")
-    if mode not in {"substring", "glob", "regex"}:
+    if mode not in {"substring", "exact", "glob", "regex"}:
         raise ValueError(
-            f"preset_query.mode={mode!r}; expected 'substring', 'glob', or 'regex'"
+            f"preset_query.mode={mode!r}; expected 'substring', 'exact', "
+            "'glob', or 'regex'"
         )
 
     root_node = getattr(browser, root, None)
@@ -823,6 +829,28 @@ def load_handler(
     result.update(_parent_address(parent_kind, parent_idx))
     if preset_uri is not None:
         result["preset_uri"] = preset_uri
+
+    # Warn on a rack kind/class mismatch. When `kind` names one of Live's four
+    # RACK display names it equals the loaded device's class_display_name on a
+    # correct load, so a divergence means Live resolved a *different* class —
+    # the classic "a user preset named 'Drum Rack' in the instruments root
+    # shadowed the canonical empty Drum Rack" trap (W7-0), which otherwise only
+    # surfaces later when a Drum-Rack-only op (pad_info) fails. Surfacing it here
+    # saves the delete+reload round-trip. Scoped to rack kinds because for
+    # built-in classes and preset_query/uri loads `kind` may legitimately differ
+    # from the resolved class — only rack display names are a reliable identity.
+    if (
+        device_names.browser_root_for_rack_kind(kind) is not None
+        and loaded_class_name
+        and loaded_class_name != kind
+    ):
+        result["warning"] = (
+            f"requested kind={kind!r} but Live loaded a {loaded_class_name!r} — "
+            f"a user-saved preset named like a built-in rack can shadow it in "
+            f"the browser walk. If you need an actual {kind}, delete this device "
+            f"and load by preset_uri (from ableton_browser(action='at_path')) "
+            f"for an unambiguous resolution."
+        )
     return result
 
 
@@ -857,6 +885,18 @@ def delete_handler(
 # ---------------------------------------------------------------------------
 # enable / disable / set_parameter
 # ---------------------------------------------------------------------------
+
+
+def _attach_achieved_display(result: dict[str, Any], param: Any) -> None:
+    """Echo the achieved display string (``str_for_value`` of what was written).
+
+    Lets a caller confirm a ``value_display`` target was hit at the parameter's
+    display resolution. Best-effort — omitted if the param exposes no
+    ``str_for_value``.
+    """
+    str_for_value = getattr(param, "str_for_value", None)
+    if callable(str_for_value):
+        result["value_display"] = str_for_value(param.value)
 
 
 def _set_active(
@@ -966,7 +1006,8 @@ def set_parameter_handler(
     *,
     device_index: int,
     parameter_name: str,
-    value: Any,
+    value: Any = None,
+    value_display: str | None = None,
     value_type: str = "continuous",
     track_index: int | None = None,
     return_index: int | None = None,
@@ -974,13 +1015,25 @@ def set_parameter_handler(
 ) -> dict[str, Any]:
     """Write one device parameter.
 
-    ``value_type='continuous'`` (default): ``value`` must be a float in
-    [param.min, param.max]. The handler writes via Live's ``parameter.value``.
+    ``value_type='continuous'`` (default): supply EXACTLY ONE of —
+      * ``value`` — the raw float in [param.min, param.max] (Live's own scale;
+        normalized [0,1] for many params), written via ``parameter.value``;
+      * ``value_display`` — display units as a string ("-18 dB", "3:1",
+        "20 ms"), inverted to the raw value via the parameter's
+        ``str_for_value`` curve (via ``resolve_continuous_write`` →
+        ``display_value.solve_raw_for_display``). Lets a caller
+        express a musical target without reverse-engineering the normalized
+        mapping.
 
     ``value_type='enum'``: ``value`` must be a string in
     ``parameter.value_items``. The handler resolves it to the index of that
     item in ``value_items`` and writes the index via ``parameter.value``
-    (which is how Live represents enum state internally).
+    (which is how Live represents enum state internally). ``value_display``
+    does not apply to enums — use ``value``.
+
+    The response echoes both the resolved raw ``value`` and the achieved
+    ``value_display`` (``str_for_value`` of what was actually written) so the
+    caller can confirm the target was hit at the parameter's display resolution.
 
     Resolves the legacy fork's gap #17b workaround — the new path doesn't
     depend on the broken ``set_device_parameter`` fork tool.
@@ -1006,6 +1059,11 @@ def set_parameter_handler(
         )
 
     if value_type == "enum":
+        if value_display is not None:
+            raise ValueError(
+                "value_display applies only to continuous params; for an enum "
+                "use value_type='enum' with `value` set to a value_items entry"
+            )
         # Live raises RuntimeError on continuous-parameter value_items access
         # (Wave-2 W2-9). Guard via is_quantized — when False, the parameter
         # has no enum items by definition.
@@ -1033,21 +1091,10 @@ def set_parameter_handler(
         new_value: float = float(items.index(value))
         target_param.value = new_value
     else:
-        try:
-            coerced = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"value_type='continuous' requires a numeric value, got "
-                f"{value!r}"
-            ) from exc
-        p_min = float(getattr(target_param, "min", 0.0))
-        p_max = float(getattr(target_param, "max", 1.0))
-        if not (p_min <= coerced <= p_max):
-            raise ValueError(
-                f"value {coerced} out of range [{p_min}, {p_max}] for "
-                f"parameter {parameter_name!r}"
-            )
-        target_param.value = coerced
+        target_param.value = resolve_continuous_write(
+            target_param, value=value, value_display=value_display,
+            parameter_name=parameter_name,
+        )
 
     result: dict[str, Any] = {
         "device_index": device_index,
@@ -1056,6 +1103,7 @@ def set_parameter_handler(
         "value_type": value_type,
         "parent_kind": kind,
     }
+    _attach_achieved_display(result, target_param)
     result.update(_parent_address(kind, idx))
     return result
 
@@ -1904,7 +1952,8 @@ def set_parameter_in_rack_handler(
     chain_index: int,
     nested_device_position: int,
     parameter_name: str,
-    value: str,
+    value: str | None = None,
+    value_display: str | None = None,
     track_index: int | None = None,
     return_index: int | None = None,
     master: bool | None = None,
@@ -1915,8 +1964,9 @@ def set_parameter_in_rack_handler(
     Addresses the parameter via (rack device_index, chain_index,
     nested_device_position, parameter_name). Reuses the
     continuous-vs-enum dispatch logic from set_parameter_handler so
-    the write semantics match exactly. Value is schema-permissive (str)
-    and coerced per value_type — mirrors set_parameter.
+    the write semantics match exactly — including the ``value_display``
+    display-units path and raw-range validation (via ``resolve_continuous_write``).
+    Value is schema-permissive (str) and coerced per value_type.
     """
     if value_type not in ("continuous", "enum"):
         raise ValueError(
@@ -1948,6 +1998,11 @@ def set_parameter_in_rack_handler(
         )
 
     if value_type == "enum":
+        if value_display is not None:
+            raise ValueError(
+                "value_display applies only to continuous params; for an enum "
+                "use value_type='enum' with `value` set to a value_items entry"
+            )
         items = tuple(getattr(param, "value_items", ()) or ())
         if not items:
             raise ValueError(
@@ -1961,33 +2016,21 @@ def set_parameter_in_rack_handler(
                 f"enum value {value!r} not in {parameter_name!r}'s value_items {list(items)!r}"
             ) from None
         param.value = float(idx)
-        result: dict[str, Any] = {
-            "device_index": device_index,
-            "chain_index": chain_index,
-            "nested_device_position": nested_device_position,
-            "parameter_name": parameter_name,
-            "value_type": value_type,
-            "value": value,
-            "parent_kind": parent_kind,
-        }
     else:
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"value_type='continuous' requires a numeric value (parseable as float); "
-                f"got {value!r}"
-            ) from None
-        param.value = numeric
-        result = {
-            "device_index": device_index,
-            "chain_index": chain_index,
-            "nested_device_position": nested_device_position,
-            "parameter_name": parameter_name,
-            "value_type": value_type,
-            "value": numeric,
-            "parent_kind": parent_kind,
-        }
+        param.value = resolve_continuous_write(
+            param, value=value, value_display=value_display,
+            parameter_name=parameter_name,
+        )
+    result: dict[str, Any] = {
+        "device_index": device_index,
+        "chain_index": chain_index,
+        "nested_device_position": nested_device_position,
+        "parameter_name": parameter_name,
+        "value_type": value_type,
+        "value": float(param.value),
+        "parent_kind": parent_kind,
+    }
+    _attach_achieved_display(result, param)
     result.update(_parent_address(parent_kind, parent_idx))
     return result
 

@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [genre, structure, reggae, metal, alternation]
+---
+
 # Genre Mechanics — Alternation, Not Overlap
 
 **Question:** Reggae and speed metal don't share an idiom. How do they coexist?

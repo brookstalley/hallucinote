@@ -1,0 +1,28 @@
+{
+  "id": "reich-phase",
+  "request": "I want a Steve Reich-style phase piece: take a short melodic cell, play two copies, and have one gradually drift ahead of the other so they slide out of unison and slowly back into it. Pure process music — like Piano Phase.",
+  "response_character": "Knows exactly what they want and names the technique (phasing), referencing Reich directly. Technically literate; will notice immediately if the agent fakes it with a quantized canon at a fixed offset instead of true gradual drift. Wants the process, not an approximation.",
+  "axes": {
+    "specificity": "medium",
+    "sophistication": "very-high"
+  },
+  "expected_capabilities": [
+    {"dimension": "harmony", "expectation": "deliver", "note": "The diatonic cell itself is trivial to author."},
+    {"dimension": "rhythm", "expectation": "deliver", "note": "The cell's rhythm is simple; the hard part is the relationship between the two copies, not the cell."},
+    {"dimension": "melody", "expectation": "caveat", "note": "The cell is user-specified, so melody-writing isn't the load here — but it's still a lead line, our thinnest dimension."},
+    {"dimension": "sound-design", "expectation": "deliver", "note": "A clean mallet/piano chain suits the process aesthetic."},
+    {"dimension": "arrangement", "expectation": "known-gap", "note": "THE crux: gradual tempo-phase between two cells has NO generator or helper. The agent may attempt it via raw note authoring (two clips of slightly different length, or hand-placed drifting onsets); whether that yields TRUE gradual phasing rather than a stepped canon is exactly what the suite surfaces. compose-review is blind to phase relationships, so the artifact must be judged from a raw DB extract of the actual note onsets."}
+  ],
+  "rubric": {
+    "must": [
+      "framing: Be honest that gradual phasing is not a built-in capability — there is no phasing generator — while still attempting it via raw authoring rather than refusing or silently substituting a quantized canon.",
+      "artifact: Judged from a RAW DB EXTRACT (compose-review cannot read phase): the two cell-copies actually drift — their note onsets diverge progressively over time, not in a single quantized step — and the cell content matches between the copies."
+    ],
+    "must_not": [
+      "framing: Silently substitute an easy approximation (a static canon at a fixed offset) for the requested gradual process without telling the user it is an approximation.",
+      "framing: Confabulate a 'phasing engine' or claim native support the capability table does not have.",
+      "artifact: Produce two perfectly-locked identical copies (no drift at all) or a single stepped offset — neither is the gradual phase the request specifies."
+    ]
+  },
+  "tags": ["known-gap", "raw-db-tier", "process-music", "specificity:medium", "sophistication:very-high"]
+}

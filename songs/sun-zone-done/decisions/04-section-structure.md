@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [structure, sections, form]
+---
+
 # Section Structure
 
 **Question:** What's the section layout?

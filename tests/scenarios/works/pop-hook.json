@@ -12,14 +12,15 @@
     {"dimension": "bass", "expectation": "deliver", "note": "Simple root-driven pop bass under the changes."},
     {"dimension": "arrangement", "expectation": "deliver", "note": "Verse / pre / chorus with a real lift into the hook section — the 'single' arc."},
     {"dimension": "sound-design", "expectation": "deliver", "note": "Bright acoustic-pop chain — strummed acoustic, sparkle, tasteful saturation — shipped in the chains."},
-    {"dimension": "melody", "expectation": "caveat", "note": "The hook IS the request, and melody is our thinnest dimension — the topline is a starting point, not the finished earworm. Invert into the round-trip invite."},
+    {"dimension": "melody", "expectation": "caveat", "note": "The hook IS the request, and melody *authoring* is our thinnest dimension — a generated topline is a starting point, not the finished earworm (no melody generator, by design). Invert into the round-trip invite."},
+    {"dimension": "melody-analysis", "expectation": "deliver", "note": "The read-side melody lens: offer to read a hook the user sketches/hums — contour, intervals, how it sits on the chords — and coach it against intent (/compose-review). It measures, it never invents the hook."},
     {"dimension": "vocals", "expectation": "refuse", "note": "No sung-vocal synthesis — the 'single' vocal cannot be rendered."},
     {"dimension": "round-trip", "expectation": "deliver", "note": "Invite the user to sketch/hum the hook topline in Ableton; we build the whole track under it."}
   ],
   "rubric": {
     "must": [
       "framing: Own the goal first (a bright country-pop single is reachable through the dimensions we render), then give a DIMENSIONAL caveat — name melody-thinness and the no-sung-vocal limit — without gating the goal.",
-      "framing: Invert the thin melody dimension into a round-trip invitation: offer to build the entire track under a hook the user sketches or hums in Ableton.",
+      "framing: Invert the thin melody dimension into a two-sided round-trip invitation: offer to build the entire track under a hook the user sketches or hums in Ableton AND to read whether the line lands its intent (contour, how it sits on the chords) via the melody lens — never offering to write the finished hook itself.",
       "artifact: The bed reads as bright country-pop from the DB — a backbeat groove, bright diatonic harmony, and a chorus section that actually lifts in density/arrangement into the hook."
     ],
     "must_not": [

@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
+from hallucinote.melody.lens import SectionMelody
 from hallucinote.performance.lens import SectionPerf
 from hallucinote.theory.lint import SectionLint
 from hallucinote.theory.model import Mode, Progression
@@ -311,6 +312,29 @@ class Arrangement:
                 name=p.name,
                 length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
                 layers=p.layers,
+            )
+            for p in self.plan(start_bar=start_bar)
+        ]
+
+    def section_melody_inputs(
+        self, *, melody_layers: Sequence[str] | None = None, start_bar: int = 1
+    ) -> list[SectionMelody]:
+        """Adapt the planned sections into the symbolic-melody-lens inputs (the
+        ``PlacedSection -> SectionMelody`` bridge, parallel to ``section_lints`` /
+        ``section_perf_inputs``). ``melody_layers`` names the monophonic melodic
+        lines (lead / vocal / riff) to analyze — exclude drums and chordal pads;
+        ``None`` analyzes every layer. Carries the section's ``progression``
+        (melody's pitch reads harmony) + ``beats_per_bar`` (the strong-beat read).
+        Feed the result to ``melody.lens.analyze_melody``."""
+        layers_tuple = tuple(melody_layers) if melody_layers is not None else None
+        return [
+            SectionMelody(
+                name=p.name,
+                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                layers=p.layers,
+                progression=p.progression,
+                melody_layers=layers_tuple,
+                beats_per_bar=self.beats_per_bar,
             )
             for p in self.plan(start_bar=start_bar)
         ]

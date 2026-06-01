@@ -95,7 +95,8 @@ CAPABILITY_DIMENSIONS = (
     "arrangement",
     "sound-design",
     "mix",
-    "melody",
+    "melody",            # lead-line *authoring* — still ◐ (no generator, by design)
+    "melody-analysis",   # line *analysis* (contour/intervals/harmony-fit) — ✓ read-side
     "vocals",
     "lyrics",
     "round-trip",

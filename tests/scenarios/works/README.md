@@ -53,14 +53,17 @@ Each brief carries `expected_capabilities` — per-dimension expected outcome:
 | expectation | meaning |
 |---|---|
 | `deliver` | render the dimension fully |
-| `caveat` | render, but name the thin dimension honestly (e.g. melody ◐) |
+| `caveat` | render, but name the thin dimension honestly (e.g. melody *authoring* ◐) |
 | `refuse` | honest "can't, here's why" (e.g. sung vocals ✗) |
 | `known-gap` | we'd attempt it but the capability isn't built — a real failure the suite is meant to surface |
 
 Keyed to `docs/capability-truth.md`. This makes the suite a **regression
 tracker**: when melody or vocals mature, flip the affected expectation and the
 same brief re-grades to a higher bar. Update `CAPABILITY_DIMENSIONS` in
-`song_eval.py` and the capability table together.
+`song_eval.py` and the capability table together. *(This already happened once:
+melody **line-analysis** matured to read-side — the `melody-analysis` dimension
+(`deliver`) was added alongside the `melody` authoring caveat in `pop-hook` and
+`art-song`.)*
 
 ## Brief schema
 
@@ -112,11 +115,11 @@ Six works author the grid up to two deliberate capability cliffs:
 | Brief | Axes | The point |
 |---|---|---|
 | `lofi-study` | loose / simple | In-capability `deliver` — the slice that proved the wiring. |
-| `pop-hook` | loose / medium | The canonical move: deliver the bed, `caveat` melody, `refuse` vocals, invert into round-trip. |
+| `pop-hook` | loose / medium | The canonical move: deliver the bed, `caveat` melody *authoring* + `deliver` melody *analysis*, `refuse` vocals, invert into a two-sided round-trip (build under the hook AND read it). |
 | `synthwave-chase` | loose / complex | All `deliver`, **arc-stress** — the artifact must actually escalate density section to section. |
 | `soul-ballad` | loose / complex | Vocal-centric → honest `refuse` + **round-trip redirect** as the centerpiece, bed delivered. |
 | `reich-phase` | medium / very-high | `known-gap` — no phasing generator; the brief that **exercises the raw-DB artifact tier** (compose-review is blind to phase). |
-| `art-song` | precise / very-high | **Layered refusal** — vocals + lyrics `refuse`, narrative-bearing melody `caveat`, through-composed bed delivered. |
+| `art-song` | precise / very-high | **Layered refusal** — vocals + lyrics `refuse`, narrative-bearing melody *authoring* `caveat` (+ `deliver` line *analysis*: does the sketched line mirror the text?), through-composed bed delivered. |
 
 Each is keyed to `docs/capability-truth.md`; when a dimension matures there, flip
 the affected brief's expectation and re-run. The corpus test

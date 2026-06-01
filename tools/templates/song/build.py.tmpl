@@ -17,6 +17,7 @@ from pathlib import Path
 
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
+from hallucinote.melody import MelodyReport
 
 # Per-branch DB filename (W12-A): branch switches pick up the right DB
 # silently; outside a repo / detached HEAD falls back to {{slug}}.db.
@@ -137,6 +138,28 @@ def report(song_id: str) -> None:
         print(f"sections: {sections}")
     finally:
         conn.close()
+
+
+def melody_report() -> MelodyReport:
+    """The melody-lens convention `tools/melody_lens.py` + `/compose-review` call to
+    read this song's line-level melodic facts (contour, intervals, harmony-fit).
+
+    Build the in-memory arrangement (or `SectionMelody` inputs) for this song's
+    monophonic melodic line(s) and run the lens. Full harmony-fit needs the
+    in-memory `Progression` (NOT persisted to the DB) — so this runs build-time over
+    the arrangement, not over a DB read. See melody-model.md §7 *Read-side surface*
+    and songs/sun-zone-done/build.py for the worked pattern:
+
+        from hallucinote.melody import analyze_arrangement
+        arr = _build_arrangement(...)          # your in-memory Arrangement
+        return analyze_arrangement(
+            arr, song_slug="{{slug}}", melody_layers=("Lead",))
+
+    Until this song has a composed melodic line wired here, it returns an empty
+    report (the CLI then shows "0 lines" rather than failing).
+    """
+    # TODO: wire to this song's melodic line(s) — see the docstring above.
+    return MelodyReport(song_slug="{{slug}}", sections=(), findings=())
 
 
 if __name__ == "__main__":

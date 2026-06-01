@@ -67,6 +67,13 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 Underneath all three is the raw **note floor** (`_note(pitch, start, dur, vel)`),
 which every layer degrades to.
 
+A fourth relationship exists: a **composite line that reads the other dimensions**.
+**Melody** is the case (decided 2026-05-31) — not an orthogonal structure intent
+with universal rules, and not a derived realization, but a *line* whose PITCH reads
+**harmony** and whose RHYTHM reads the **feel/performance** layer, while it owns
+the **contour + motivic shape** neither substrate carries. See the subsection below
+and [`melody-model.md`](melody-model.md).
+
 ### Performance — the first realization layer (decided 2026-05-30)
 
 > **Full spec, verified research foundation (with citations), the measurement-lens
@@ -145,6 +152,60 @@ truly unmetered traditions degrade gracefully to the raw note floor.* The free-t
 model is **future research** — forked when chant / free-rubato actually forces it
 (discovered-from-friction). Mirrored in `project-state.yaml` `scope.later`; see
 `backlog ARR-2B6K` (unmetered boundary) + `ARR-8P5K` (the axis investigation).
+
+### Melody — the line layer (decided 2026-05-31)
+
+> **Full spec, two verified research passes (45 confirmed claims), the both-sides
+> measurement design, and the phased plan: [`melody-model.md`](melody-model.md).**
+> The summary below is the integrated framing; that artifact is the owner doc.
+
+Melody is the line a listener carries home — and the dimension where a machine most
+easily produces the *plausible-but-dead* (in-key, in-rhythm, forgettable). The
+decision:
+
+- **No universal "good melody" function — substrate + profile, measured against
+  intent.** The research is decisive: there are **no absolute melodic universals,
+  only statistical ones** (Savage et al. 2015); contour **does not cluster into
+  discrete types** and the "melodic arch" is **style-specific** (Chinese folksong
+  averages descend); the pitch-vs-rhythm complexity balance is a **style
+  specialization**. So a melody model is a small genre-GENERAL **substrate**
+  (proximity/small intervals, small alphabet, harmonic anchoring, the *existence*
+  of contour + economy) + a declared per-song **profile** (contour intent, range,
+  step↔leap appetite, harmonic freedom, repetition appetite) → the lens grades the
+  line **against its own declared intent** and **learns it back per-song**, never a
+  universal verdict. This **is the metaperformer pattern again** (same as
+  performance's genre groove-baseline) — and the user's mandate framing.
+- **A line that reads the substrates, not a peer axis.** PITCH reads **harmony**
+  (empirically coupled — tonal hierarchy at strong beats, stepwise non-chord-tone
+  resolution by anchoring, tension as pitch-space distance; modest, statistical,
+  classical-bound). RHYTHM reads the **feel/performance** layer. CONTOUR + motivic
+  shape are melody's own. One source of truth: the line does not re-declare chords
+  or groove — it reads `theory` + `performance`.
+- **The organizing principle is EXPECTATION** (information content — surprisal/
+  entropy; Pearce/IDyOM), the genre-general spine separating *shaped* from *random
+  walk* from *mechanical drone*. As with performance's 1/f, the theory is the north
+  star but the lens ships **cheap corpus-free proxies** (proximity, alphabet size,
+  contour structure, within-line repetition, harmony-fit) — no trained model, no ML.
+- **Both sides (mandatory), read-side first.** AUTHOR = the declared melodic
+  profile (no `melody()` generator — inventing the line is the art, ruler-not-stamp).
+  MEASURE = a symbolic melody lens (`src/hallucinote/melody/`) beside the harmony
+  conformance lint + performance lens — contour, intervallic/leap profile, range,
+  motivic economy, and harmony-fit against the `Progression`. *A dimension authored
+  but unmeasured is half-built.* **Status: research + model artifact + READ-SIDE
+  LENS shipped** (`src/hallucinote/melody/` — `lens`+`contour`+`intervals`+
+  `harmony_fit`, 27 tests, validated on sun-zone-done's two hooks; classifies
+  `active`/`static`, the shaped-vs-aimless verdict deferred to the profile-relative
+  phase 2b). Next: the declared melodic-profile authoring surface + grading.
+
+### SCOPE BOUNDARY — melody is pitched-discrete-monophonic-line-only
+
+The melody layer models **pitched, discrete-onset monophonic lines** (a hummable
+line, a riff, a vocal hook) — the unit the discrete-pitch/small-alphabet substrate
+and single-line anchoring model actually describe. Dense polyphony / texture-mass
+(the unit is a mass, not a line — inter-line counterpoint is the separate
+vertical-consonance lens, ARR-4V7P), pitch-continuous / microtonal lines, and
+unmetered/free-time rhythm all **degrade to the raw note floor**. A documented
+limitation, not a flaw. See `melody-model.md` §6.
 
 ---
 

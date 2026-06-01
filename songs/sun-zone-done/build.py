@@ -54,7 +54,14 @@ from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_pat
 from hallucinote.generators import bass as BG, drums as DG, harmony as HG
 from hallucinote.generators import variations as V
 from hallucinote.generators.kit import Kit
+from hallucinote.melody import analyze_arrangement
 from hallucinote.theory import Chord, Progression, lint_harmony
+
+# The monophonic melodic line to read with the melody lens (exclude drums + the
+# chordal pads/organ). sun-zone-done's two hand-authored hooks live on "05 Lead":
+# the reggae "chillin in the sun zone" and the metal "NO TIME FOR THAT" — the
+# both-sides acceptance test (melody-model.md §9).
+MELODY_LAYERS = ("05 Lead",)
 
 # W12-A: per-branch DB filename.
 DB_PATH = resolve_db_path("sun-zone-done", root=Path(__file__).parent.parent)
@@ -654,6 +661,20 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
 # ---------------------------------------------------------------------------
 
 
+def melody_report():
+    """The per-song convention `tools/melody_lens.py` (and `/compose-review`) calls
+    to read the line-level melodic facts (contour, intervals, harmony-fit) of the
+    "05 Lead" hooks against their sections' progressions.
+
+    DB-free: the melodic lines and the per-section progressions are authored in
+    `build.py`, so the report builds the arrangement with a GM-default kit (drums
+    don't affect the line reading) and runs the lens over the in-memory arrangement
+    — no Live, no built DB needed. See melody-model.md §7 *Read-side surface*."""
+    arr = _build_arrangement(Kit.gm_default())
+    return analyze_arrangement(
+        arr, song_slug="sun-zone-done", melody_layers=MELODY_LAYERS)
+
+
 def build(reset: bool = False) -> str:
     conn = init_db(DB_PATH)
     try:
@@ -701,6 +722,19 @@ def build(reset: bool = False) -> str:
             print(f"  harmony lint: ok={report.ok}  stasis={report.stasis_sections}")
             for f in report.findings:
                 print(f"    [{f.severity}] {f.section}: {f.detail}")
+
+            # Melody lens — the line-level read-side reading (info-only, never a
+            # gate; the line is authored, not computed). Same `arr`, so the "05
+            # Lead" hooks read identically to `melody_report()`.
+            mel = analyze_arrangement(
+                arr, song_slug="sun-zone-done", melody_layers=MELODY_LAYERS)
+            active = sum(1 for s in mel.sections for ln in s.lines
+                         if ln.classification == "active")
+            print(f"  melody lens: lines={sum(len(s.lines) for s in mel.sections)} "
+                  f"active={active} findings={len(mel.findings)}")
+            for f in mel.findings:
+                print(f"    [{f.severity}] {f.section}: {f.detail}")
+
             for tname in ("01 Drums", "02 Bass", "03 Rhythm Gtr",
                           "04 Organ", "05 Lead", "06 Steel"):
                 tid = tracks[tname]

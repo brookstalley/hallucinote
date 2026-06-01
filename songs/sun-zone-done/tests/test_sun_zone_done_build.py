@@ -708,3 +708,33 @@ def test_performance_lens_never_blocks_the_build(lens_report):
 
 def test_performance_lens_sections_match_the_arc(lens_report, build_module):
     assert [s.section for s in lens_report.sections] == [e[0] for e in build_module.ARC]
+
+
+# ---------------------------------------------------------------------------
+# Melody lens — the §9 both-sides demonstration via the melody_report() convention
+# (DB-free: it builds the arrangement with a GM-default kit; harmony-fit reads the
+# in-memory per-section progressions).
+# ---------------------------------------------------------------------------
+
+
+def test_melody_report_reads_both_hooks_active(build_module):
+    """One lens, two profiles, neither graded against the other's ideal: the
+    stepwise/third-based reggae lead and the angular ♭2 metal lead both read
+    `active`, and harmony-fit runs for every section (melody-model.md §9)."""
+    rep = build_module.melody_report()
+    assert rep.song_slug == "sun-zone-done"
+    lines = [(s.section, ln) for s in rep.sections for ln in s.lines]
+    assert lines, "expected the 05 Lead hook in at least one section"
+    assert all(ln.track_name == "05 Lead" for _s, ln in lines)
+    assert all(ln.classification == "active" for _s, ln in lines)
+    assert all(ln.harmony is not None for _s, ln in lines)  # in-memory progression read
+
+
+def test_melody_report_reggae_anchors_harder_than_metal(build_module):
+    """The intent-relative reading made concrete: the reggae verse sits closer to
+    its chords than the angular metal chorus (whose Phrygian ♭2 raises its
+    non-chord-tone share) — a fact the lens surfaces as a question, never a verdict."""
+    rep = build_module.melody_report()
+    by_section = {s.section: s.lines[0] for s in rep.sections if s.lines}
+    assert by_section["verse1"].harmony.chord_tone_fraction \
+        > by_section["chorus1"].harmony.chord_tone_fraction

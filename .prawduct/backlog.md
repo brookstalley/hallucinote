@@ -28,7 +28,23 @@ sections only via explicit `/backlog update` calls.
 ## Open
 
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
-  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: open · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
+  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: in-progress · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
+
+  **Progress (2026-05-31): phase 1 (research + model artifact) DONE.** Two verified
+  deep-research passes (45 confirmed claims; pass 1 22/25 on expectation/contour/
+  universals/taxonomy, pass 2 23/25 on harmony-coupling + memorability; motivic/
+  phrase angle honestly returned no surviving claims — open follow-on).
+  `.prawduct/artifacts/melody-model.md` written (the verifiable signal), folded into
+  `arrangement-model.md` (taxonomy "Melody — the line layer" subsection), the
+  project-state manifest, and `scope.later`. The thesis: **no universal "good
+  melody" function** — a genre-general substrate + a declared per-song profile, the
+  lens grading the line against its OWN intent (the metaperformer pattern, learn
+  intent back per-song). Melody placed as a **"line layer"** (pitch reads harmony,
+  rhythm reads feel, owns contour + motivic economy). **Remaining (phase 2, the
+  both-sides build, read-side first):** the symbolic melody lens
+  `src/hallucinote/melody/` (contour + intervals + harmony-fit reusing `theory`),
+  wired into `/mix-review` beside the harmony + performance lenses; then the
+  declared-profile authoring surface; then tune-by-ear on sun-zone-done's two hooks.
 
   **User mandate (2026-05-31, URGENT):** *"approach melody the same way we did rhythm, polyrhythm, energy, and harmony. We need to seriously analyze and master melody."* Melody is the conspicuous gap in the dimension taxonomy (ARR-8P5K): form/recurrence, ENERGY, HARMONY (ARR-1H9C, shipped), and PERFORMANCE / rhythm-feel (read-side shipped; authoring 2b landing) all got the both-sides treatment — but **melodic content itself has no dedicated authoring intent and no analysis lens.** Today a melody is just notes at the raw floor plus the arrangement `Motif`/reference scaffold, which addresses the *recurrence* of a line, not its melodic *substance* (contour, intervallic profile, scale-degree function, phrase arc, singability, hook).
 
@@ -38,6 +54,10 @@ sections only via explicit `/backlog update` calls.
   3. **BOTH SIDES, always.** An authoring surface (express the line's intent) AND a read-side analysis lens — contour shape, intervallic/leap profile, non-chord-tone usage *against the harmony*, phrase arc, repetition-vs-variation balance, range/singability — the masking-analyzer / harmony-lint shape: *"is the line doing what it intends, and is it a good line?"*, info coaching never a verdict.
 
   Heavy coupling: melody is likely NOT an orthogonal axis but a line whose PITCH dimension reads harmony (ARR-1H9C) and whose RHYTHM dimension reads the feel layer (ARR-3R8F / performance) — the taxonomy refactor (ARR-8P5K) should absorb it (intent → realization channels, not a flat peer axis). Governed by ruler-not-stamp, one-source-of-truth, discovered-from-friction, both-sides. **Verifiable signal:** a `.prawduct/artifacts/melody-model.md` exists recording the research-backed framing + a both-sides decision; a melody analysis lens exists (read side) OR a decision-record states melodic correctness stays composer-owned at the note floor with rationale. **Sized:** large (research → design → incremental both-sides build, friction-driven like performance). (user melody mandate 2026-05-31)
+
+  **Update (2026-05-31b): phase 2a read-side LENS shipped.** `src/hallucinote/melody/` — `lens` + `contour` + `intervals` + `harmony_fit` (pure stdlib, render-free, the melodic counterpart to `theory.lint` / `performance.lens`) + the `Arrangement.section_melody_inputs()` adapter; 27 tests, full suite green (2691). Measures the genre-general substrate facts (step↔leap proximity, post-skip reversal, alphabet, contour shape + apex + variability, ambitus) and harmony-fit against the `Progression` (chord-tone/scale-tone/chromatic, Bharucha NCT-resolves-by-step, chord-tone-on-strong-beat); classifies `active`/`static`/`insufficient-data` with `static-line` + `unresolved-nct` coaching questions (info, never verdicts). The **verifiable signal is met** (model artifact + read-side lens both exist). A build-time correction proved the thesis: an early `step≥0.5→shaped else wandering` rule mislabeled the third-based reggae hook "wandering" → dropped the shaped-vs-aimless verdict to the profile-relative phase 2b (no universal verdict).
+
+  **Update (2026-06-01): phase 2a read-side surface WIRED + onboarding capability reconciled.** The lens gained a user-facing home: `analyze_arrangement()` + `tools/melody_lens.py` CLI + a per-song `melody_report()` convention (sun-zone-done + the scaffold template), wired into **`/compose-review`** (the render-free compositional surface — retargeted from `/mix-review`, which is audio-driven; see `melody-model.md` §7 *Read-side surface*). Resolved the capability intersection with the parallel onboarding/teaching work (merged from develop): split melody **authoring** (◐, permanent) from melody **line-analysis** (✓ read-side) across `capability-truth.md`, the onboarding model, song-new/install skills, and the persona/work eval rubrics (+ a `melody-analysis` `song_eval` dimension). 13 new tests; full suite 2579 passed / 210 skipped. **Remaining (phase 2b):** the declared melodic-PROFILE authoring surface + profile-relative grading + learn-back + the shaped-vs-aimless verdict; the motivic-economy reading; a candidate third research pass on motivic/phrase (Angle C returned no claims). See EVL-9R3T for refreshing the stale pre-change eval snapshots.
 
 - **[MIX-6K2P]** Track-mixer volume/pan should be dB-aware on the MCP surface (reuse `levels.py` calibration)
   `effort: S · impact: M · area: mcp-mixer · source: builder · added: 2026-05-30 · status: open`
@@ -104,6 +124,11 @@ sections only via explicit `/backlog update` calls.
   `effort: M · impact: M · area: framework-wiring · source: reflection · added: 2026-05-19 · status: open`
 
   The Wave 8 plan named two targets: (a) extend `tools/product-hook` so the session briefing surfaces in-scope song decisions + annotations; (b) add a CLAUDE.md addendum mirroring the existing `/learnings [topic]` guidance for song context. Both files are in the parked-upstream-framework set per memory `project_prawduct_framework_authorship` — adding hallucinote-specific behavior conflicts with the in-flight upstream sync. W8-C shipped only the SKILL.md guidance enhancement; the framework-coupled pieces are deferred. Then: (1) `product-hook` should detect "song in-scope" (any file touched in `songs/<slug>/`) and inject a `Song context:` block with the song's 5 most-recent markdown decisions + structural-fact annotations + `Q.get_annotations_for_song(..., kind='intent'|'structure')` from the W23-B annotations table; (2) CLAUDE.md should add a line: "Before non-trivial composition, run `/song-context [topic]` and read DB annotations via `ableton_annotation(action='list')`." **Verifiable signal:** session in a `songs/<slug>/` touch injects a `Song context:` block; CLAUDE.md mentions `ableton_annotation(action='list')`. (W8-C descope 2026-05-19; expanded for W23-B 2026-05-22)
+
+- **[EVL-9R3T]** Scenario-eval `results/*.json` retention policy + refresh the stale pre-melody-analysis snapshots
+  `effort: S · impact: S · area: eval-harness · source: critic · added: 2026-06-01 · status: open · related: MEL-1A7K`
+
+  Two linked items. (1) **Retention** (Critic NOTE): `tests/scenarios/results/` accumulates committed timestamped judge results (the behavioral-verification evidence for the non-unit-testable onboarding work) with no documented retention policy — decide pin-latest-and-gitignore-the-rest vs. a documented keep-N policy; the `works/README.md` should state it. (2) **Stale snapshots**: the existing `priya`/`elena`/`dev`/`maya` results were judged on 2026-05-31 under the *old* melody framing ("melody is my thin spot" as PASS); the briefs/works now carry the two-sided authoring-vs-analysis rubric (MEL-1A7K phase 2a), so a fresh scenario-eval pass should re-grade `priya`, `elena`, `pop-hook`, `art-song` against the updated rubric (the run is LLM-simulated persona role-play + judge — not deterministically regenerable, hence deferred, never hand-edited). **Verifiable signal:** `works/README.md`/`scenarios/README.md` document a retention policy; fresh result JSONs for the four melody-touched briefs exist post-2026-06-01. (Critic cumulative note + melody phase-2a 2026-06-01)
 
 - **[MSK-8R3D]** Masking level-reconstruction refinements (masking C3 follow-ons)
   `effort: M · impact: M · area: masking · source: critic · added: 2026-05-29 · status: open`

@@ -5,9 +5,9 @@
   "response_character": "Fluent and precise in theory and orchestration vocabulary; expects to work in terms of voices, movements, and notation. Mildly impatient with DAW/generator framing and with technical setup. Not defensive about her expertise but quick to disengage if the tool overpromises or talks down to her. Responds well to honesty about limits and to anything that respects the score-first way she thinks.",
   "rubric": {
     "must": [
-      "Set honest expectations EARLY about the capability ceiling — generator/DAW paradigm rather than notation-first scoring, and melody as a thinner dimension.",
+      "Set honest expectations EARLY about the capability ceiling — generator/DAW paradigm rather than notation-first scoring, and melody *authoring* as a thinner dimension (while line *analysis* — contour, intervals, harmony-fit — is read-side and available on a line she brings).",
       "Caveat dimensionally (name what is thin) while still committing to deliver the dimensions it owns — never gate the whole goal.",
-      "Offer the round-trip / sketch-input path where a dimension is thin ('sketch the line in Ableton and I'll build around it').",
+      "Offer the round-trip / sketch-input path where a dimension is thin ('sketch the line in Ableton and I'll build around it — and read its contour/voice-leading against your intent').",
       "Treat under-specified terms like 'atonality' as something to elicit or propose against, not silently assume."
     ],
     "must_not": [

@@ -13,7 +13,9 @@ thin dimensions honestly, then deliver anyway.
 > **Living doc.** Keep this current with the code — it must never lag. When a
 > dimension's depth changes (e.g. melody matures, vocals arrive), edit the table
 > here and the handoff/elicitation surfaces inherit it automatically. Last
-> reviewed: **2026-05-31**.
+> reviewed: **2026-06-01** (melody gained a read-side *line-analysis* capability —
+> the symbolic melody lens, wired into `/compose-review`; *authoring* a finished
+> hook stays thin, by design).
 
 ## The dimensions
 
@@ -25,8 +27,9 @@ thin dimensions honestly, then deliver anyway.
 | **Arrangement / structure** | ✓ full | sections, energy arc, contrast, build/drop, subtraction. |
 | **Sound design** | ✓ full | instrument *chains* (instrument + saturation + bus FX) as authorship, not a mix-time todo. |
 | **Mix** | ✓ full | intent-aware review, masking analysis, sidechain, reverb sends, loudness. |
-| **Melody (lead line)** | ◐ thinner | pluck/bell lines today; a topline is a starting point, not the finished hook. *Or sketch your line in Ableton and we arrange around it (round-trip).* |
-| **Vocal topline (synthesis)** | ✗ not yet | we don't synthesize a sung vocal. A sketched vocal *melody* (MIDI) round-trips in. |
+| **Melody — line analysis** | ✓ read-side | the symbolic **melody lens** reads any monophonic line's contour, intervals, and harmony-fit and coaches it *against your declared intent* (`/compose-review`, `tools/melody_lens.py`) — including a topline you sketched in. It measures, it never invents the hook (that's yours). No universal "good melody" verdict. |
+| **Melody — lead-line *authoring*** | ◐ thinner | I won't write your finished hook — that's your art, by design (no melody generator, ever). A generated topline is a starting point, not the finished hook. *Sketch your line in Ableton and I'll arrange under it (round-trip) — and read whether it lands its intent (line analysis above).* |
+| **Vocal topline (synthesis)** | ✗ not yet | we don't synthesize a sung vocal. A sketched vocal *melody* (MIDI) round-trips in — and the line analysis above reads it. |
 | **Round-trip / sketch-input** | ✓ full | edit in Ableton, we ingest + build around it — `/ableton-pull` `clip-notes`, stable per-note IDs. |
 
 ## How to use this in conversation
@@ -37,20 +40,23 @@ Madonna"*:
 
 > "Love it — I'll write you an 80s synth-pop song in Madonna's musical language:
 > the chord moves, the groove, the arrangement, the sound design are all things I
-> do well. Two honest caveats: I can't synthesize the vocal, and my melody
-> writing is less sophisticated than the rest of me — so the topline will be a
-> starting point, not the finished hook. Here's the song…"
+> do well. Two honest caveats: I can't synthesize the vocal, and I won't *write*
+> your finished hook — that's your art. But sketch the topline and I'll build the
+> whole track under it, then read whether the line lands (its contour, how it sits
+> on the chords). Here's the song…"
 
 Not *"I can't do Madonna (no vocals)."* The Madonna-ness lives in the dimensions
 we own; the caveat scopes the two we don't, then we build.
 
 **Invert a thin dimension into an invitation.** When a request leans on a thin
 dimension, don't just caveat it — offer the user's *contribution* there. Melody
-is our thinnest, but round-trip is **fully supported**: *"bring me your topline —
-sketch it in Ableton — and I'll build the whole track under it."* This is the
-standard move for any thin dimension, and it rests on round-trip, which is
-**supported, not a hazard**. (Generally: a user can sketch any part in the
-sequencer and we ingest it.)
+*authoring* is thin, but round-trip is **fully supported** AND the melody lens now
+**reads** a line: *"bring me your topline — sketch it in Ableton — I'll build the
+whole track under it, then read whether it's a shaped line that lands its intent
+(contour, how it sits on the chords) via `/compose-review`."* That is a stronger,
+more honest inversion than "melody's my weak spot": you keep the hook, I build the
+world around it and hold up the mirror. The round-trip itself is **supported, not a
+hazard** — a user can sketch any part in the sequencer and we ingest it.
 
 **Three rules:**
 1. **Never confabulate.** If it's not in the table as ✓ or ◐, don't promise it.

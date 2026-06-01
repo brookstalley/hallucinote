@@ -9,7 +9,8 @@
   "expected_capabilities": [
     {"dimension": "harmony", "expectation": "deliver", "note": "Through-composed harmonic motion across continuous sections is reachable."},
     {"dimension": "arrangement", "expectation": "deliver", "note": "Non-repeating continuous development maps onto distinct sections; the structural ask is supported."},
-    {"dimension": "melody", "expectation": "caveat", "note": "Word-painting demands precise, meaning-bearing melodic writing — melody is our thinnest dimension, so the line meant to carry the narrative is exactly where we are weakest."},
+    {"dimension": "melody", "expectation": "caveat", "note": "Word-painting demands precise, meaning-bearing melodic *authoring* — our thinnest dimension (no melody generator, by design), so the line meant to carry the narrative is exactly where authoring is weakest."},
+    {"dimension": "melody-analysis", "expectation": "deliver", "note": "Read-side: once the user sketches the vocal line, the melody lens reads its contour and harmony-fit — a mirror for 'does the line actually mirror the meaning?' It analyses the line, it never writes it."},
     {"dimension": "vocals", "expectation": "refuse", "note": "The voice that 'carries the whole narrative' cannot be synthesized."},
     {"dimension": "lyrics", "expectation": "refuse", "note": "We don't render sung words — the poem's text cannot be heard in the artifact. Words can be offered as text but not performed; best effort is an instrumental setting, named honestly."},
     {"dimension": "round-trip", "expectation": "deliver", "note": "Invite the user to sing/sketch the vocal line over the through-composed bed."}
@@ -17,7 +18,7 @@
   "rubric": {
     "must": [
       "framing: Deliver a LAYERED honest caveat in priority order — the sung voice cannot be synthesized and the words cannot be heard (refuse), and the narrative-bearing melody is our thinnest dimension (caveat) — while affirming the through-composed structure IS deliverable.",
-      "framing: Offer the round-trip as the path to the voice: build the continuous through-composed bed and invite the user to record/sketch the vocal narrative over it.",
+      "framing: Offer the round-trip as the path to the voice: build the continuous through-composed bed and invite the user to record/sketch the vocal narrative over it — then offer to read whether the line's contour mirrors the text (the melody lens), never offering to write the word-painting itself.",
       "artifact: The DB holds a through-composed bed — continuous, non-repeating harmonic/structural development, not a verse-chorus loop — that tracks the poem's shape."
     ],
     "must_not": [

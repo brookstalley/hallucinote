@@ -1,6 +1,6 @@
 ---
 name: compose-review
-description: Compose-stage guided evaluation for a song — the compositional sibling to /mix-review. After a first pass, recalls the song's declared intent, reads the COMPOSITION (sections, which parts play where, density/register, the energy arc — from build.py + the arrangement, not audio), and interprets it AGAINST intent: "you wanted the chorus to lift — does it? here's the one thing holding it back." Surfaces as a producer's question, never a verdict or a score. Teaches contrast and subtraction by ear. Lifts the "what is this for?" question to section and song altitude and learns revealed intent back as a markdown annotation. Use after a first compositional pass, or when the user asks "does this work?", "is the chorus landing?", "what's missing?", "review the arrangement" — BEFORE the mix stage (that's /mix-review).
+description: Compose-stage guided evaluation for a song — the compositional sibling to /mix-review. After a first pass, recalls the song's declared intent, reads the COMPOSITION (sections, which parts play where, density/register, the energy arc — from build.py + the arrangement, not audio) AND the line-level melodic reading from the symbolic melody lens (contour, intervals, harmony-fit — `tools/melody_lens.py`), and interprets it AGAINST intent: "you wanted the chorus to lift — does it? here's the one thing holding it back." Surfaces as a producer's question, never a verdict or a score. Teaches contrast and subtraction by ear. Lifts the "what is this for?" question to section and song altitude and learns revealed intent back as a markdown annotation. Use after a first compositional pass, or when the user asks "does this work?", "is the chorus landing?", "is the hook/melody working?", "what's missing?", "review the arrangement" — BEFORE the mix stage (that's /mix-review).
 argument-hint: <song-slug> [section]
 user-invocable: true
 disable-model-invocation: false
@@ -64,6 +64,27 @@ Read the song's structure from `songs/<slug>/build.py` and the arrangement
   single most common novice miss is no subtraction: everything plays everywhere,
   so nothing lifts.
 
+**Line-level melody (run the lens).** The bullets above you read by eye from the
+score; the *melodic line itself* — its shape and harmonic fit — you cannot eyeball.
+Run the symbolic melody lens:
+
+```
+python3 tools/melody_lens.py <song-slug>          # whole song
+python3 tools/melody_lens.py <song-slug> --section <name>
+```
+
+Per monophonic line, per section, it reports: **contour** shape + apex,
+**intervals** (step↔leap profile, post-skip reversal, pitch alphabet, ambitus),
+and **harmony-fit** (chord-tone / non-chord-tone shares, whether non-chord-tones
+resolve by step, whether chord tones favor strong beats) — plus coaching questions
+(a near-static line; abundant *unresolved* non-chord-tones against the harmony).
+These are **neutral facts, never a verdict**: there is no universal "good melody"
+(a chromatic bebop head and a folk hook read differently against their own idiom —
+see `.prawduct/artifacts/melody-model.md` §1), so grade them against the line's
+**declared intent** exactly as you grade density. If a song's build.py has no
+`melody_report()` wired yet, the lens says so (exit 3) — note it and read the line
+by eye.
+
 This is compositional evidence, neutral — like the MixReport, you grade it
 against intent, you don't grade it on its own.
 
@@ -78,7 +99,9 @@ For each notable observation:
   option with the cheapest musical fix first (fix order below).
 - **Intent unknown and it matters** → **ask ONE good question**, framed by ear:
   "the chorus has the same parts as the verse — is it meant to feel like a
-  continuation, or should it open up?"
+  continuation, or should it open up?" (Line-level too: "the lead leaps a lot and
+  sits mostly off the chord — is that the angular character you want, or should the
+  hook sing closer to the harmony?")
 
 Frame everything as a *hearable* observation, never a verdict. "The chorus lands
 flat because it adds nothing the verse didn't already have" is a verdict;
@@ -154,6 +177,14 @@ lets the right element win. A flat chorus is usually a composition problem
   sections when they contradict a stated or clearly-implied intent to lift.
 - **You propose; the artist decides.** Auto-applying compositional changes
   produces generic music, for the same reason it does in the mix.
+- **The melody lens reports facts, not a good/bad melody.** Contour, leap-rate,
+  alphabet, and harmony-fit are *genre-relative* — a high non-chord-tone share is a
+  defect in a hymn and the whole point in a bebop head; a static line is a flaw or a
+  deliberate drone. Never read a lens number as a verdict. Ask whether the line
+  realizes ITS intent, and **learn the answer back** (LEARN-BACK) so it never
+  re-flags. The lens also reads the *line you wrote at the note floor* — including a
+  topline a user sketched in and you arranged under — so it's the right surface for
+  "is the hook landing?", not just "are the parts arranged right?"
 
 ## One-line thesis
 

@@ -104,7 +104,7 @@ Resources (read via resources/read, no turn cost):
 Multi-step workflows live as Claude Code skills (.claude/skills/) — not
 MCP prompts — so the agent can invoke them directly. Reach for:
   /song-new, /song-pick-instruments, /track-new-with-instrument,
-  /return-new, /mix-sidechain, /clip-humanize, /pattern-compose.
+  /return-new, /mix-sidechain, /clip-humanize, /compose-part.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).

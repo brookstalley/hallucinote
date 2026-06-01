@@ -85,6 +85,19 @@ TRESILLO_HITS: tuple[tuple[float, int], ...] = (
 # Trip-hop swing: snare laid back this many beats. Empirical from falling-walking.
 LAZY_SNARE = 0.04
 
+# Speed-metal gallop cell within a 4-beat bar: a driving 16th-note pattern with
+# the classic gaps at the "e" of 1 and 3 (1.25 / 3.5-ish) that give the gallop
+# its forward lurch rather than a flat 16th wall. Shared by the metal kick
+# (`drums.metal_gallop`) and the palm-muted guitar (`harmony.palm_mute_power_chords`)
+# so the two lock rhythmically — the coordination is the genre. From sun-zone-done.
+METAL_GALLOP_OFFSETS: tuple[float, ...] = (
+    0.0, 0.25, 0.5, 0.75, 1.5, 1.75, 2.5, 2.75, 3.0, 3.25, 3.75,
+)
+
+# Reggae "lazy" drag: the snare/skank/bubble sit this many beats behind the
+# click. The one-drop's signature unhurried feel. From sun-zone-done.
+REGGAE_LAZY = 0.04
+
 
 def chord_tones(root_pitch: int, intervals: Sequence[int]) -> list[int]:
     """Build a chord from root + interval list (semitones).

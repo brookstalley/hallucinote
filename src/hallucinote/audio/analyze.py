@@ -33,12 +33,20 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .cross_rhythm import (
+    analyze_cross_rhythm_window,
+    analyze_phasing_window,
+    analyze_polymeter_window,
+)
 from .masking import analyze_masking_window
 from .report import (
     Finding,
     MasterOvershoot,
     MixReport,
+    PartCrossRhythm,
     PartTiming,
+    Phasing,
+    Polymeter,
     ReverbVerification,
     SectionMetrics,
     StemMetrics,
@@ -68,6 +76,29 @@ _MASKING_REPORTING_FLOOR = 0.15
 # with onsets and the interpreter grades what survives against intent.
 _TIMING_MIN_CONFIDENCE = 0.25
 
+# Product reporting floor for cross-rhythm. Mirrors the timing gate: a part
+# whose pulse read is below this confidence (too sparse, or no clean pulse) is
+# dropped from the report. Unlike timing, the LOW-confidence verdicts here
+# (roll / rubato / low-confidence) are themselves informative — but they're the
+# DSP's honest "I can't name this", not section-level evidence the interpreter
+# acts on, so the same don't-surface-untrustworthy-numbers gate applies.
+_CROSS_RHYTHM_MIN_CONFIDENCE = 0.25
+
+# Product reporting floors for phasing (the two-part cross-rhythm pass). A pair
+# only surfaces as phasing when its relative offset drifts both fast enough to
+# matter (``DRIFT_FLOOR``, beats/cycle — locked or constant-offset pairs sit
+# below it) AND cleanly enough to trust (``MIN_CONFIDENCE`` — a strong monotonic
+# trend, not jittered noise). Both gates are needed: a constant phase offset can
+# read a high trend correlation off detection jitter yet near-zero drift, so the
+# drift floor is what rejects locked-but-offset parts.
+_PHASING_DRIFT_FLOOR_BEATS = 0.02
+_PHASING_MIN_CONFIDENCE = 0.6
+
+# Product reporting floor for polymeter (two parts looping different cell
+# lengths). A pair surfaces only when both cells resolved cleanly enough to
+# trust — the confidence is the weaker part's accent-autocorrelation peak.
+_POLYMETER_MIN_CONFIDENCE = 0.5
+
 
 @dataclass(frozen=True)
 class DeclaredReverbSend:
@@ -90,6 +121,7 @@ def analyze_mix(
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
     analyze_timing: bool = False,
+    analyze_cross_rhythm: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
@@ -153,6 +185,7 @@ def analyze_mix(
         beat_map=beat_map,
         analyze_masking=analyze_masking,
         analyze_timing=analyze_timing,
+        analyze_cross_rhythm=analyze_cross_rhythm,
         stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
@@ -275,6 +308,7 @@ def _measure_sections(
     beat_map: BeatSampleMap,
     analyze_masking: bool = False,
     analyze_timing: bool = False,
+    analyze_cross_rhythm: bool = False,
     stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
@@ -357,11 +391,38 @@ def _measure_sections(
             )
             masking_pairs = mres.pairs
             bed_masking = mres.bed
+        # Timing and cross-rhythm share the window's grid geometry and C7's
+        # swing read, so compute the geometry once and thread it to both. The
+        # swing ratios feed cross-rhythm's swing-deference (its one cross-module
+        # input) — so even when the timing report is off, an enabled
+        # cross-rhythm pass still gets the swing context it needs.
         timing = []
-        if analyze_timing:
-            timing = _measure_window_timing(
-                sliced_stems, sl, capture, beat_map,
-            )
+        cross_rhythm = []
+        phasing = []
+        polymeter = []
+        if analyze_timing or analyze_cross_rhythm:
+            geom = _window_grid_geometry(sl, capture, beat_map)
+            if geom is not None:
+                start_beat, bpm = geom
+                timing_parts = _all_window_timing(
+                    sliced_stems, capture, start_beat, bpm,
+                )
+                if analyze_timing:
+                    timing = [
+                        p for p in timing_parts
+                        if p.confidence >= _TIMING_MIN_CONFIDENCE
+                    ]
+                if analyze_cross_rhythm:
+                    swing_ratios = {p.track_id: p.swing_ratio for p in timing_parts}
+                    cross_rhythm = _measure_window_cross_rhythm(
+                        sliced_stems, capture, start_beat, bpm, swing_ratios,
+                    )
+                    phasing = _measure_window_phasing(
+                        sliced_stems, capture, start_beat, bpm,
+                    )
+                    polymeter = _measure_window_polymeter(
+                        sliced_stems, capture, start_beat, bpm,
+                    )
         per_section.append(SectionMetrics(
             section_name=window.name,
             start_beat=window.start_beat,
@@ -373,45 +434,135 @@ def _measure_sections(
             masking=masking_pairs,
             bed_masking=bed_masking,
             timing=timing,
+            cross_rhythm=cross_rhythm,
+            phasing=phasing,
+            polymeter=polymeter,
         ))
 
     return per_section, skipped
 
 
-def _measure_window_timing(
-    sliced_stems: list[tuple[str, "np.ndarray"]],
+def _window_grid_geometry(
     sl: WindowSlice,
     capture: CaptureSet,
     beat_map: BeatSampleMap,
-) -> list[PartTiming]:
-    """Per-part onset-vs-grid timing over one section window.
+) -> tuple[float, float] | None:
+    """The window's ``(start_beat, bpm)`` grid geometry, or ``None`` if unusable.
 
-    Derives the window's grid geometry from the shared :class:`BeatSampleMap`:
-    the song-absolute beat at the window's first sample, and the effective
-    (constant) tempo across the window's covered samples. Onset timing is
-    level-blind — gain doesn't move onsets — so this runs on the raw pre-fader
-    slices (no ``stem_gains`` reconstruction, unlike masking). Parts below the
-    confidence floor (transient-poor pads/washes) are dropped.
-
-    A degenerate beat map (no usable tempo geometry) yields no timing rather
-    than a divide-by-zero — the section still reports its other metrics.
+    Derives the song-absolute beat at the window's first sample and the
+    effective (constant) tempo across the window's covered samples from the
+    shared :class:`BeatSampleMap`. A degenerate map or a zero-length window
+    yields ``None`` rather than a divide-by-zero — the onset analyzers then skip
+    the window and the section still reports its other metrics. Shared by the
+    timing and cross-rhythm passes so they measure on the same grid.
     """
     if beat_map.degenerate:
-        return []
+        return None
     start_beat = beat_map.sample_to_beat(sl.start_sample)
     end_beat = beat_map.sample_to_beat(sl.end_sample)
     span_beats = end_beat - start_beat
     span_s = (sl.end_sample - sl.start_sample) / capture.sample_rate
     if span_beats <= 0 or span_s <= 0:
-        return []
-    bpm = span_beats / span_s * 60.0
-    tres = analyze_timing_window(
+        return None
+    return start_beat, span_beats / span_s * 60.0
+
+
+def _all_window_timing(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+) -> list[PartTiming]:
+    """Every part's onset-vs-grid timing over one window (no confidence floor).
+
+    Returns the raw per-part timing — the caller applies the reporting floor for
+    the timing field, and reads ``swing_ratio`` off every part (floor-free) to
+    feed cross-rhythm's swing-deference. Onset timing is level-blind (gain
+    doesn't move onsets), so this runs on the raw pre-fader slices — no
+    ``stem_gains`` reconstruction, unlike masking.
+    """
+    return analyze_timing_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+    ).parts
+
+
+def _measure_window_cross_rhythm(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+    swing_ratios: "Mapping[str, float | None]",
+) -> list[PartCrossRhythm]:
+    """Per-part cross-rhythm read over one section window.
+
+    Level-blind like timing (gain doesn't move onsets — no ``stem_gains``).
+    ``swing_ratios`` is C7's per-part swing read, threaded through for the
+    swing-deference step. Parts below the confidence floor (sparse, or no clean
+    pulse) are dropped — same integration-level gate as the timing floor; the
+    interpreter grades what survives against intent.
+    """
+    cres = analyze_cross_rhythm_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+        swing_ratios=swing_ratios,
+    )
+    return [
+        p for p in cres.parts if p.confidence >= _CROSS_RHYTHM_MIN_CONFIDENCE
+    ]
+
+
+def _measure_window_phasing(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+) -> list[Phasing]:
+    """Two-part phasing over one section window (the cross-rhythm two-part pass).
+
+    Level-blind like timing/cross-rhythm (gain doesn't move onsets). Surfaces
+    only pairs whose relative offset drifts both fast enough (above the drift
+    floor — locked or constant-offset pairs sit below) and cleanly enough (above
+    the confidence floor). Both gates are required; see the floor constants.
+    """
+    pres = analyze_phasing_window(
         sliced_stems,
         capture.sample_rate,
         window_start_beat=start_beat,
         bpm=bpm,
     )
-    return [p for p in tres.parts if p.confidence >= _TIMING_MIN_CONFIDENCE]
+    return [
+        p for p in pres.pairs
+        if abs(p.drift_beats_per_cycle) >= _PHASING_DRIFT_FLOOR_BEATS
+        and p.confidence >= _PHASING_MIN_CONFIDENCE
+    ]
+
+
+def _measure_window_polymeter(
+    sliced_stems: list[tuple[str, "np.ndarray"]],
+    capture: CaptureSet,
+    start_beat: float,
+    bpm: float,
+) -> list[Polymeter]:
+    """Two-part polymeter over one section window (different cell lengths).
+
+    Level-blind like the other rhythm passes. Surfaces only pairs whose two
+    cells both resolved above the confidence floor (the weaker part's accent-
+    autocorrelation peak). Equal-velocity parts surface no cell, so no pair.
+    """
+    pres = analyze_polymeter_window(
+        sliced_stems,
+        capture.sample_rate,
+        window_start_beat=start_beat,
+        bpm=bpm,
+    )
+    return [
+        p for p in pres.pairs if p.confidence >= _POLYMETER_MIN_CONFIDENCE
+    ]
 
 
 def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:

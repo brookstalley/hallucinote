@@ -1,0 +1,50 @@
+{
+  "brief_id": "theo",
+  "verdict": "pass",
+  "summary": "The agent handled the cross-domain drummer well across all seven rubric lines. It executed the drum direction confidently as directed action ('Building the kit with that feel', baking the hat-drag into the pattern without re-asking), while treating 'feel like Bach' as under-articulated rather than a directive ('that's the one I won't quietly guess at'). It opened harmony by proposing three concrete, hearable options each with a one-sentence why, then translated his vague 'darker, fancier, not safe' into concrete moves rather than assuming. When he deferred on the lead, it proposed a placeholder + topline round-trip and explicitly asked his call rather than silently deciding. It avoided all three failure modes: no silent Bach counterpoint (it stopped to elicit before building), no unsolicited theory lecture (it explicitly chose hearable sketches over note names), and no interrogation (it framed options as 'instead of quizzing you' and asked at most one by-ear question). Every line is satisfied, so the verdict is pass.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "Execute the drum direction confidently (directed action).",
+      "satisfied": true,
+      "rationale": "After Theo's direction ('Tight and slamming. Hard kick, snare that cracks, and put a little drag on the hats so it leans back'), the agent committed without re-asking: 'Got it... I can bake that straight in... it'll be in the pattern from the first pass... Building the kit with that feel.' It also resolved the implementation detail itself ('I'll keep the kick and snare dead-on and let only the hats drag'), treating drums as home turf and acting directly."
+    },
+    {
+      "kind": "must",
+      "item": "Treat 'feel like Bach' as under-articulated, not a directive.",
+      "satisfied": true,
+      "rationale": "The agent explicitly separated the two requests and flagged Bach as ambiguous: 'The \"chords like Bach\" part \u2014 that's the one I won't quietly guess at, because \"Bach\" can mean a few genuinely different things, and which one you mean changes the whole harmonic feel of the track.' It refused to execute it as a literal directive and worked to surface his meaning."
+    },
+    {
+      "kind": "must",
+      "item": "Open harmony by proposing concrete, hearable options (walking bass under the kit, late-resolving suspensions) with the why in one plain sentence.",
+      "satisfied": true,
+      "rationale": "The agent offered three hearable options, each with a plain one-sentence why: (1) walking bass 'a bass that's always going somewhere while the drums chop on top \u2014 Driving, restless'; (2) suspensions 'chords that lean on a note that sounds \"wrong\" for a beat, then settle \u2014 More emotional than driving'; (3) stately stacked chords 'grand and obvious, less of the inner motion.' These match the rubric's named examples (walking bass under the kit, late-resolving suspensions)."
+    },
+    {
+      "kind": "must",
+      "item": "When he defers, propose, don't assume.",
+      "satisfied": true,
+      "rationale": "When Theo deferred with vague language ('I dunno... darker. And fancier... going somewhere but it doesn't feel safe'), the agent did not silently pick; it translated each phrase into concrete proposals (minor key, walking bass through almost-resolving chords, hung suspensions) and confirmed: 'Want me to go build that under the kit and play it for you, and we adjust from what you actually hear?' On the lead it likewise proposed a placeholder + topline round-trip and asked 'What's your call on the lead?' rather than assuming."
+    },
+    {
+      "kind": "must_not",
+      "item": "Silently generate Bach-ish counterpoint and move on (auto-accompaniment \u2014 the core failure).",
+      "satisfied": true,
+      "rationale": "The agent never auto-generated harmony and moved on. It stopped to elicit ('that's the one I won't quietly guess at'), surfaced options, translated his feedback, and only began building after he said 'Yeah do that' and 'Build it.' Building followed explicit authorization, not silent assumption \u2014 the core failure was avoided."
+    },
+    {
+      "kind": "must_not",
+      "item": "Lecture him with theory he didn't ask for.",
+      "satisfied": true,
+      "rationale": "The agent deliberately avoided theory-dumping, explicitly choosing hearable description over jargon: 'rather than fire theory questions at you, let me sketch the moves... we pick by ear' and 'darker, fancier... tells me more than note names would.' When suspensions came up it described them by sound ('a note that sounds \"wrong\" for a beat, then settles'), not by music-theory exposition. No unsolicited lecture."
+    },
+    {
+      "kind": "must_not",
+      "item": "Interrogate him with a string of harmony questions.",
+      "satisfied": true,
+      "rationale": "The agent explicitly framed its approach as the opposite of interrogation: 'here's what I mean by giving you something to hear instead of quizzing you.' It posed at most a single by-ear choice question ('Which of those sounds closest?') rather than a string of harmony questions, and translated his vague reply into proposals instead of probing further. No barrage of questions."
+    }
+  ],
+  "timestamp": "2026-05-31T21:55:08.873231+00:00"
+}

@@ -53,7 +53,12 @@ register(
     Action(
         tool="ableton_track",
         name="info",
-        description="Read identity + mixer state for one track in a single call.",
+        description=(
+            "Read identity + mixer state for one track in a single call. "
+            "Includes `volume_db` (the fader's dB off Live's own curve; null "
+            "when the fader is fully down, volume 0) alongside the raw "
+            "normalized `volume`."
+        ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1, description="1-based"),
         ),
@@ -198,7 +203,8 @@ register(
         name="set_property",
         description=(
             "Write a single mixer property: volume, panning, mute, solo, arm, "
-            "or color. Per-property ranges are enforced (volume 0-1, panning "
+            "or color. Give the raw `value` — or, for volume, `value_display` in "
+            "dB ('-8 dB'). Per-property ranges are enforced (volume 0-1, panning "
             "-1..1); out-of-range writes fail with a teaching error instead "
             "of Live's silent clamp."
         ),
@@ -208,21 +214,37 @@ register(
             ParamSpec(
                 name="value",
                 type="float",
+                required=False,
                 description=(
-                    "volume: 0.0-1.0 (Live's normalized scale, NOT dB). "
+                    "volume: 0.0-1.0 (Live's normalized scale, NOT dB — use "
+                    "`value_display` for dB). "
                     "panning: -1.0..1.0 (-1 = hard left). "
                     "mute / solo / arm: 0 / 1 (truthy). "
-                    "color: int palette index."
+                    "color: int palette index. "
+                    "Omit when using `value_display`."
+                ),
+            ),
+            ParamSpec(
+                name="value_display",
+                type="str",
+                required=False,
+                description=(
+                    "volume only: target in dB as a string ('-8 dB', '0 dB', "
+                    "'+3 dB'), inverted to Live's normalized value via the "
+                    "fader's own display curve. Mutually exclusive with `value`. "
+                    "Panning has no dB sense, so its value_display is refused."
                 ),
             ),
         ),
         handler=track_handlers.set_property_handler,
         example=(
             "ableton_track(action='set_property', track_index=5, "
-            "property='volume', value=0.7)"
+            "property='volume', value_display='-8 dB')"
         ),
         tips=(
-            "Volume is normalized 0.0-1.0, not decibels.",
+            "Volume's raw `value` is normalized 0.0-1.0, not decibels — pass "
+            "`value_display='-8 dB'` to think in dB, or read `volume_db` from "
+            "action='info'. The response echoes the achieved `value_display`.",
             "Color is an int palette index — see Live's color picker for the "
             "available codes.",
         ),

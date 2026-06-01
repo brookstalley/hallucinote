@@ -624,6 +624,11 @@ def test_name_matches_matches_mcp_side():
         ("Kit-Core 909", r"\d{3}", "regex", False),
         ("Kit-Core", r"\d{3}", "regex", False),
         ("EQ Eight", "eq", "substring", False),
+        # exact: anchored whole-name equality (the substring-collision fix).
+        ("Saturated Bass", "Saturated Bass", "exact", False),
+        ("Basic Saturated Bass", "Saturated Bass", "exact", False),
+        ("Saturated Bass", "saturated bass", "exact", False),
+        ("Saturated Bass", "saturated bass", "exact", True),
     ]
     for name, pattern, mode, cs in cases:
         assert domain_match(name, pattern, mode, cs) == mcp_match(
@@ -658,6 +663,9 @@ def test_resolve_query_matches_mcp_resolver_over_shared_fixture():
             N("Kit-Core 909", loadable=True, uri="q909"),
             N("Kit-Core 808", loadable=True, uri="q808"),
             N("Acoustic", children=[N("Brush Kit", loadable=True, uri="qbrush")]),
+            # Substring-collision pair: exact mode must disambiguate.
+            N("Saturated Bass", loadable=True, uri="qsat"),
+            N("Basic Saturated Bass", loadable=True, uri="qbasicsat"),
         ]),
         instruments=N("Instruments", children=[
             N("Operator", loadable=True, uri="qop", children=[
@@ -709,6 +717,11 @@ def test_resolve_query_matches_mcp_resolver_over_shared_fixture():
          "path_prefix": ["Operator", "Bass"]},                     # single via prefix
         {"root": "instruments", "pattern": "Sub",
          "path_prefix": ["Meld"]},                                 # prefix missing
+        {"root": "drums", "pattern": "Saturated Bass"},            # substring → 2+ ambiguous
+        {"root": "drums", "pattern": "Saturated Bass",
+         "mode": "exact"},                                         # exact → single
+        {"root": "drums", "pattern": "Basic Saturated Bass",
+         "mode": "exact"},                                         # exact → the superstring one
     ]
     for q in queries:
         assert _mcp(q) == _offline(q), f"resolver disagreement on {q!r}"

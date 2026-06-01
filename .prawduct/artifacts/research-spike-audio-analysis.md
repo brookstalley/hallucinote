@@ -1,6 +1,6 @@
 # Research Spike — Audio Analysis for Mix Verification
 
-**Status:** research; direction agreed in conversation; no code yet.
+**Status:** **HISTORICAL research spike (2026-05-23) — its conclusions SHIPPED.** `ableton_render` / `ableton_analysis` are live; the masking analyzer + section-windowing shipped (`src/hallucinote/audio/`). Kept as a citable record of the original direction; any forward-looking "reserved for v1.1 / no code yet" passages below are **superseded**. Where the analysis story went next: `masking-analyzer-spec.md`, and `arrangement-model.md` / `performance-model.md` (the read-side lenses).
 **Goal:** figure out how Hallucinote can play a mix and answer questions like
 *is this muddy?*, *is the reverb on the snare doing what I asked?*, *are the
 track volumes balanced?*, *is the master clipping and why?*

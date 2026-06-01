@@ -1,0 +1,62 @@
+{
+  "brief_id": "sam-evaluate",
+  "verdict": "pass",
+  "summary": "The agent handled Sam's 'is this any good?' moment exactly as the rubric demands. It refused to grade the beat and instead recalled the declared intent ('Late Library' \u2014 a calm, repetitive study beat that should never demand attention) and judged the composition against that brief. Its read \u2014 that the B-section bell and busy drums 'reach out and tap you on the shoulder' \u2014 was surfaced as an honest question, not a verdict. It taught subtraction-by-ear in one plain sentence ('contrast usually comes from taking things away, not piling things on') and proved it with a single, clean, redirectable A/B (bell in vs. bell out) rather than a barrage. When Sam deferred ('you decide'), the agent declined to auto-decide, kept changes to one hearable thing at a time, and proposed exactly one further A/B while leaving the choice with him. It reflected his reactions back as named intent and explicitly wrote that intent into the corpus so it won't re-flag it. No music-theory lecture appears, and no change was applied without Sam hearing and choosing it. Every must and must_not is satisfied.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "Anchor the evaluation in the song's intent (a calm, repetitive study beat that shouldn't demand attention) \u2014 not in generic 'good/bad'.",
+      "satisfied": true,
+      "rationale": "The agent's first move is to refuse generic judgment ('Before I say anything \"good or bad\"') and recall the declared intent: '\"Late Library\" \u2014 a calm, repetitive study beat that should never demand attention... the only thing worth judging it against.' Every subsequent read (A-section 'on-brief', B-section 'reaches out and taps you on the shoulder') is measured against that intent, and the closing assessment is explicitly 'where it actually stands against the brief.'"
+    },
+    {
+      "kind": "must",
+      "item": "Surface the read as a hearable observation framed as a question, never a verdict or grade.",
+      "satisfied": true,
+      "rationale": "The agent frames its observation as a question: 'Here's my honest question, not a verdict... Want to hear whether that's pulling your focus, or whether you actually like the little lift there?' The observation (the B-section bell/drums grab attention) is hearable and offered for Sam to test, not pronounced as a fixed judgment."
+    },
+    {
+      "kind": "must",
+      "item": "Teach contrast/subtraction by ear in one plain sentence \u2014 the highest-leverage compose-stage lesson (e.g. hearing a section with vs without a layer).",
+      "satisfied": true,
+      "rationale": "The agent delivers the lesson plainly: 'for this kind of song, contrast usually comes from taking things away, not piling things on. Empty space is what makes it calm and loopable, not a flaw.' It then teaches it by ear via the bell in/out A/B, and reinforces it at the end ('You took something away and it got more like what you wanted \u2014 that's the whole lesson')."
+    },
+    {
+      "kind": "must",
+      "item": "When Sam defers, PROPOSE a concrete, single, redirectable next step (an A/B he can hear) rather than assuming silently or asking him to choose cold.",
+      "satisfied": true,
+      "rationale": "When Sam defers ('does it sound right to you?'), the agent proposes exactly one concrete A/B \u2014 'Rather than throw five changes at you, let me give you one clean A/B... the B-section as it is now, then the same B-section with just the bell pulled out.' It is single, hearable, and redirectable ('You tell me which one you'd rather have'). Later when Sam defers again ('you decide if it needs anything else'), the agent again proposes one redirectable A/B for the drums while offering the option to leave them."
+    },
+    {
+      "kind": "must",
+      "item": "Reflect his reactions back as named intent and learn it back into the corpus.",
+      "satisfied": true,
+      "rationale": "The agent names Sam's revealed intent and persists it: 'One thing I'm writing down so I don't second-guess you next time: that the B-section is meant to stay understated \u2014 \"movement in the drums is fine, but nothing should pull focus.\" That way when I review this again I won't come back and flag the very thing you just decided you like.' This both names the intent and learns it back so it won't re-flag."
+    },
+    {
+      "kind": "must_not",
+      "item": "Give a grade, score, or flat verdict on whether the beat is 'good'.",
+      "satisfied": true,
+      "rationale": "The agent never assigns a grade, score, or 'good/bad' verdict. It explicitly disclaims it ('Before I say anything \"good or bad\"', 'Here's my honest question, not a verdict') and the closing assessment is conditional and brief-relative ('On paper it's on-brief'), not a quality grade."
+    },
+    {
+      "kind": "must_not",
+      "item": "Overwhelm him with several simultaneous fixes or A/Bs (paralysis).",
+      "satisfied": true,
+      "rationale": "The agent deliberately throttles to one change at a time: 'Rather than throw five changes at you, let me give you one clean A/B' and 'I only want to change one hearable thing at a time.' It tests the bell first, alone, and only after that's resolved offers a single follow-up A/B for the drums. No barrage."
+    },
+    {
+      "kind": "must_not",
+      "item": "Lecture him with music theory he didn't ask for.",
+      "satisfied": true,
+      "rationale": "No music-theory lecture appears \u2014 no keys, scales, chords, or jargon. The only conceptual teaching is the plain-language idea of subtraction/empty space, framed in terms of how the beat feels while studying, which is the requested compose-stage lesson, not unsolicited theory."
+    },
+    {
+      "kind": "must_not",
+      "item": "Auto-apply changes for him instead of letting him hear and choose.",
+      "satisfied": true,
+      "rationale": "The agent only removes the bell after Sam hears the A/B and explicitly says 'take the bell out i think?' When Sam says 'you decide if it needs anything else,' the agent declines to auto-decide: 'your ear is the authority, not mine \u2014 if I just start auto-deciding, it stops sounding like your beat. So I won't pile on changes you haven't heard.' No change is applied without Sam hearing and choosing it."
+    }
+  ],
+  "timestamp": "2026-05-31T22:07:02.813849+00:00"
+}

@@ -78,12 +78,19 @@ route that WHY to markdown (`tags: [feel, groove, …]`) like all other intent.
   **aperiodic** → author the notes directly; don't grow `feel` into a timeline.
   Its intent is still just a scoped annotation.
 
+> **The formal layer.** The above is the per-call `feel` mechanism; the full
+> performance **realization layer** (profile→realization, structured-1/f-not-white,
+> and the read-side *mechanical/human/sloppy* lens) is designed in
+> [`performance-model.md`](performance-model.md) — another consumer of this exact
+> measurement↔intent loop, sitting beside the harmony conformance lint.
+
 ## The read-side: measurement ↔ intent, generalized
 
 Each DSP module is a pure measurement producer. The **holistic interpreter**
 (build-plan C6) is the single surface that reads the whole `MixReport` + recalled
 intent and reasons across metrics — masking, loudness, attribution, reverb, and
-(C7) timing-deviation together. The loop (from `intent-collaboration-model.md`):
+(C7) timing-deviation together (and, once built, the performance lens —
+`performance-model.md` §7). The loop (from `intent-collaboration-model.md`):
 
 ```
 RECALL (/song-context, markdown)  →  MEASURE (MixReport, neutral, always)
@@ -98,6 +105,40 @@ This is why intent must live where RECALL can reliably read it (markdown +
 populated `markdown_refs`) — hence the F5 reindex-hygiene blocker (build-plan
 C5). Learn-back writes a **markdown** annotation via `write_markdown_ref(...)`,
 never a DB `annotations` row.
+
+### The same loop at the compose stage (not just the mix)
+
+The loop above is mix-stage: the MEASURE input is the `MixReport` (audio). The
+**identical** loop runs at the **compositional** stage, where the input is the
+*composition itself* — sections, which parts play where, density/register per
+section, the energy arc — read from `build.py` + the arrangement, not from audio.
+`/compose-review` is that surface (the sibling to `/mix-review`): RECALL the
+declared intent → READ the composition → INTERPRET vs intent ("you wanted the
+chorus to lift — does it add layers the verse held back? here's the one thing
+holding it back") → surface as a *question* → CAPTURE → never re-flag. It is the
+read-side answer to the deepest novice gap: they can generate but can't yet
+*evaluate*. The highest-leverage lesson it delivers is **contrast and
+subtraction** — the verse holding back so the chorus wins — teachable by ear, no
+theory required.
+
+### One portable question at every altitude — *"what is this for?"*
+
+Intent is asked the same way at three altitudes; only the scope differs:
+
+| Altitude | Home | Example |
+|---|---|---|
+| **Song** | `songs/<slug>/<slug>.md` (composer intent) + `decisions/01-intent.md` | "A study beat — calm, repetitive, never demands attention." |
+| **Section** | a `time`-scoped annotation (`bars`, a section tag) in `annotations/` | "The verse holds back so the chorus can win." |
+| **Element** | the mix-intent tags (`focal`/`submerged`/`blend-group`/`density`), already defined above | "The organ is a `submerged` wash under the chorus." |
+
+The element layer already exists (mix tags). The **new** work is lifting the
+same *"what is this for?"* question to **section** and **song** altitude as the
+teaching backbone — captured as prose annotations in the existing corpus, **no
+new schema**. Intent is **discovered retrospectively**: novices often don't know
+their intent until they react to something concrete, so `/compose-review`
+reflects reactions back ("you said that chorus felt 'too happy' — *that's* intent;
+let's name what you want instead") and learns it back via `write_markdown_ref`.
+Per song, never a global user profile.
 
 ## Severity stays out of the DSP
 

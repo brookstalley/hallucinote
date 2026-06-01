@@ -111,7 +111,11 @@ def test_git_probe_returns_none_on_detached_head(tmp_path):
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
+        # `-c commit.gpgsign=false` keeps the throwaway commit hermetic: without
+        # it the temp repo inherits any ambient commit-signing config (e.g. a
+        # signing-server hook), which is irrelevant to detached-HEAD probing.
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "-c", "commit.gpgsign=false", "commit",
          "--allow-empty", "-q", "-m", "initial"],
         cwd=repo, check=True,
     )

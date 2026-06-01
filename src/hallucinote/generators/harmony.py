@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from hallucinote.generators.primitives import Feel, apply_feel
+from hallucinote.generators.primitives import (
+    METAL_GALLOP_OFFSETS,
+    REGGAE_LAZY,
+    Feel,
+    apply_feel,
+)
+from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
 
@@ -94,3 +100,129 @@ def sparse_bell_top(
         _note(top, start_beat, 1.0, 75, ["bell", "arrival"]),
         _note(top - 5, start_beat + section_length_beats - 2.5, 0.5, 65, ["bell", "answer"]),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Reggae / metal idioms (promoted from sun-zone-done — the flagship demo song)
+# ---------------------------------------------------------------------------
+
+
+def reggae_skank(
+    chords: Progression,
+    *,
+    bars: int = 1,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    register: int = 3,
+    duration: float = 0.30,
+    velocity: int = 78,
+    lazy: float = 0.06,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """The iconic reggae skank: a clipped chord "chuck" on the "and" of 2 and
+    the "and" of 4 — nothing on the downbeats, which is what makes it lift.
+
+    Chord-aware (the harmony substrate): each chuck voices the chord SOUNDING at
+    its within-section beat — ``chords.chord_at(local_beat).voicing(register)`` —
+    so an authored progression MOVES (a 2-chord ``Em7→A7`` skank now alternates
+    instead of pedalling one chord, the exact failure this fixes). The chord
+    lookup is per-hit and cyclic, so a short authored cycle tiles safely across
+    ``bars``. ``register`` chooses the octave (3 reproduces the old E3-rooted
+    voicing). The composer authors the chords; this voices them as genre
+    furniture. The rhythm/lazy/feel are unchanged from the classic chop.
+
+    Each chuck lands ``lazy`` beats behind the click (the unhurried chop) and
+    is short (``duration``) — staccato, not sustained. 4/4-shaped within a bar
+    (see module docstring); ``beats_per_bar`` only scales the inter-bar step.
+    ``feel`` (W17-E) shifts the {1.5, 3.5} positions on top of ``lazy``.
+    Tagged "skank" + "offbeat".
+    """
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        for off in (1.5, 3.5):
+            local_beat = b * beats_per_bar + off
+            for p in chords.chord_at(local_beat).voicing(register):
+                out.append(_note(p, bs + apply_feel(off, feel) + lazy, duration, velocity,
+                                 ["skank", "offbeat", "chuck"]))
+    return out
+
+
+def organ_bubble(
+    chords: Progression,
+    *,
+    bars: int = 1,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    register: int = 3,
+    duration: float = 0.20,
+    velocity: int = 58,
+    lag: float = REGGAE_LAZY,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Hammond "bubble": short organ chord stabs on every off-beat eighth
+    (the "and" of every beat), the percolating reggae keyboard texture that
+    sits under the skank.
+
+    Chord-aware (the harmony substrate): each stab voices the chord SOUNDING at
+    that off-beat, so the bubble follows an authored progression instead of
+    repeating one voicing. ``register`` 3 sits it under the skank. Each stab
+    lands ``lag`` beats behind the click. 4/4-shaped within a bar (see module
+    docstring); ``beats_per_bar`` only scales the inter-bar step. ``feel`` (W17-E)
+    shifts the {0.5, 1.5, 2.5, 3.5} positions on top of ``lag``. Tagged "organ"
+    + "bubble".
+    """
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        for off in (0.5, 1.5, 2.5, 3.5):
+            local_beat = b * beats_per_bar + off
+            for p in chords.chord_at(local_beat).voicing(register):
+                out.append(_note(p, bs + apply_feel(off, feel) + lag, duration, velocity,
+                                 ["organ", "bubble", "offbeat"]))
+    return out
+
+
+def palm_mute_power_chords(
+    chords: Progression,
+    *,
+    bars: int = 1,
+    register: int = 3,
+    fifth_offset: int = 7,
+    octave_offset: int = 12,
+    start_beat: float = 0.0,
+    beats_per_bar: float = 4.0,
+    root_velocity: int = 108,
+    fifth_velocity: int = 100,
+    octave_velocity: int = 95,
+    note_duration: float = 0.18,
+    feel: Feel = None,
+) -> list[NoteDict]:
+    """Palm-muted power chords (root + 5th + octave) chugging the
+    :data:`METAL_GALLOP_OFFSETS` cell — the metal rhythm-guitar engine.
+
+    Chord-aware (the harmony substrate): each chug roots on the chord SOUNDING at
+    that hit, so a moving Phrygian riff (E5 → ♭II F5 → C5/D5 …) walks instead of
+    pedalling one chord. A power chord is always root + 5th + octave regardless
+    of the chord's full quality (metal omits the third), so it reads only the
+    chord ROOT — ``register`` 3 reproduces the old E3 root. Locks rhythmically
+    with :func:`hallucinote.generators.drums.metal_gallop` (same offset cell):
+    the chunked guitar and the kick gallop hit together, the genre's wall of
+    attack. Short notes (``note_duration``) = palm-muted chug. 4/4-shaped within
+    a bar; ``beats_per_bar`` scales the inter-bar step. ``feel`` (W17-E) shifts
+    each chug. Tagged "power_chord" + "palm_mute" + "gallop".
+    """
+    out: list[NoteDict] = []
+    for b in range(bars):
+        bs = start_beat + b * beats_per_bar
+        bb = b * beats_per_bar
+        for off in METAL_GALLOP_OFFSETS:
+            root = 12 * (register + 1) + chords.chord_at(bb + off).root_pc
+            t = bs + apply_feel(off, feel)
+            out.append(_note(root, t, note_duration, root_velocity,
+                             ["power_chord", "palm_mute", "gallop"]))
+            out.append(_note(root + fifth_offset, t, note_duration, fifth_velocity,
+                             ["power_chord", "palm_mute", "gallop"]))
+            out.append(_note(root + octave_offset, t, note_duration, octave_velocity,
+                             ["power_chord", "palm_mute", "gallop"]))
+    return out

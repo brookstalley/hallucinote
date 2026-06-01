@@ -81,10 +81,14 @@ register(
         ),
         tips=(
             "Returns {report_path, schema_version, finding_count, "
-            "summary}. The summary names the master peak true-peak, the "
-            "overshoot count, the per-section count, and any "
+            "summary, analysis_code}. The summary names the master peak "
+            "true-peak, the overshoot count, the per-section count, and any "
             "out-of-tolerance reverb sends — enough for the LLM to decide "
             "whether to read the full JSON.",
+            "analysis_code = {signature, stale}: the content hash of the "
+            "loaded analysis pipeline + whether it differs from disk. "
+            "stale=true means this server is running pre-edit code — run "
+            "/mcp to respawn before trusting the report.",
             "Declared intent drives two passes: set_send_intended_rt60 "
             "feeds reverb verification, create_section feeds per-section "
             "loudness (report.per_section, keyed by section name; a "
@@ -92,6 +96,53 @@ register(
             "lands in). When either is undeclared, skipped_analyses "
             "explains how to declare it. compare_to baseline diffs and "
             "per-section contribution attribution are post-MVP backlog.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_analysis",
+        name="extract",
+        description=(
+            "Return a raw structural dump of a song straight from its "
+            "Hallucinote DB — tracks, clips, notes (exact pitch / "
+            "start_beats / duration / velocity), sections, device chains + "
+            "parameters, arrangement-clip placements, sends, returns, cue "
+            "points, and the tempo / time-signature maps. This is the "
+            "score-as-data tier the audio + compose analyzers can't see "
+            "(phase relationships, exact note timings); read it directly "
+            "rather than hand-querying the sqlite DB. Read-only — never "
+            "touches Live, never mutates."
+        ),
+        params=(
+            ParamSpec(
+                name="song_slug",
+                type="str",
+                description=(
+                    "Hallucinote song slug — directs the dump at "
+                    "songs/<slug>/'s DB."
+                ),
+            ),
+        ),
+        handler=analysis_handlers.extract_structure_handler,
+        runs_server_side=True,
+        example=(
+            "ableton_analysis(action='extract', song_slug='reich-phase')"
+        ),
+        tips=(
+            "Returns {song_slug, extract}. extract has top-level keys song, "
+            "tempo_map, time_signature_map, sections, cue_points, tracks, "
+            "returns. Each track nests clips (with notes), arrangement_clips, "
+            "devices (with parameters), and sends; each return nests devices.",
+            "Devices are top-level-chain only — nested rack chains aren't "
+            "flattened in (a song using Instrument/Audio-Effect Racks reports "
+            "the rack container, not the devices inside it).",
+            "Built for the musical-work eval judge's --db-extract input: when "
+            "a request outran the compose/mix analyzers (a known-gap or novel "
+            "result), save this extract to JSON and pass it so the judge can "
+            "evaluate what the analyzer can't read.",
         ),
     )
 )
@@ -124,8 +175,10 @@ register(
             "song_slug='reggae-metal')"
         ),
         tips=(
-            "Returns {report_path, report} where report is the parsed "
-            "MixReport dict — same shape that analyze produces.",
+            "Returns {report_path, report, analysis_code} where report is "
+            "the parsed MixReport dict — same shape that analyze produces. "
+            "analysis_code = {signature, stale} flags whether this server's "
+            "loaded analysis code differs from disk (run /mcp if stale).",
         ),
     )
 )

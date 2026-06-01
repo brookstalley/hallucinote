@@ -10,6 +10,16 @@
             "statusMessage": "Preparing session..."
           }
         ]
+      },
+      {
+        "matcher": "startup|clear|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
+            "statusMessage": "Installing dependencies..."
+          }
+        ]
       }
     ],
     "Stop": [

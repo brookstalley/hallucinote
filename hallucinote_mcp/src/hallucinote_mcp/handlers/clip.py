@@ -188,6 +188,48 @@ def _coerce_notes(notes: Iterable[dict[str, Any]]) -> tuple[tuple[int, float, fl
 
 
 # ---------------------------------------------------------------------------
+# Inline-notes soft cap (build-plan B4)
+# ---------------------------------------------------------------------------
+#
+# The per-call ``notes=[…]`` channel (``create`` + ``replace_notes``) is the
+# right tool for trivial interactive edits. Above this many notes it costs
+# agent context the DB path avoids and bypasses the Hallucinote DB (the next
+# full push overwrites a clip authored only inline). The guardrail WARNS, never
+# blocks — small edits stay frictionless; large writes get pointed at the
+# author-as-code loop (build.py + ``push_cli push-notes``), where the array
+# never enters the agent's tool-use channel.
+#
+# Both note-accepting handlers route through ``_inline_notes_warning`` so they
+# emit the identical guidance at the identical threshold — parity locked in
+# ``tests/unit/test_actions_clip.py``. The agent-facing mirror is
+# ``ableton://guides/conventions`` ("Inline note arrays: soft cap"); there is
+# no domain-side mirror because no domain entry point inlines an agent-supplied
+# note array — domain writes read notes from build.py code through the mutators,
+# which is exactly the path this warning points TO, not a parallel one.
+INLINE_NOTES_SOFT_CAP = 32
+
+
+def _inline_notes_warning(note_count: int) -> str | None:
+    """Teaching warning when an inline note write exceeds the soft cap, else ``None``.
+
+    Non-blocking: the clip is still written. Shared by ``create_handler`` and
+    ``replace_notes_handler`` so the two inline-note actions stay in parity.
+    """
+    if note_count <= INLINE_NOTES_SOFT_CAP:
+        return None
+    return (
+        f"{note_count} notes written inline (soft cap {INLINE_NOTES_SOFT_CAP}). "
+        "Inline note arrays cost agent context and bypass the Hallucinote DB — "
+        "the next full push overwrites notes authored only this way. For a part "
+        "this size, author the notes as code in the song's build.py "
+        "(hallucinote.generators) and materialize with "
+        "`push_cli push-notes --changed`, where the array never enters the "
+        "agent's context. See the /compose-part skill and "
+        'docs/song-authoring-conventions.md "Authoring API".'
+    )
+
+
+# ---------------------------------------------------------------------------
 # create / delete / rename
 # ---------------------------------------------------------------------------
 
@@ -384,6 +426,9 @@ def create_handler(
         result["audio_path_deferred"] = audio_path
     if notes is not None:
         result["notes_written"] = len(notes)
+        warning = _inline_notes_warning(len(notes))
+        if warning:
+            result["warning"] = warning
     return result
 
 
@@ -791,11 +836,15 @@ def replace_notes_handler(
     )
     coerced = _coerce_notes(notes)
     clip.set_notes(coerced)
-    return {
+    result: dict[str, Any] = {
         "track_index": track_index,
         "location": location,
         "notes_written": len(coerced),
     }
+    warning = _inline_notes_warning(len(coerced))
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 # ---------------------------------------------------------------------------

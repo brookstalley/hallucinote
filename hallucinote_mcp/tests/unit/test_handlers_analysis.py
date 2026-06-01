@@ -152,6 +152,44 @@ def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):
     assert report["master"]["track_id"] == "master"
 
 
+def test_analyze_handler_surfaces_analysis_code_version(synthetic_song: Path):
+    """The response carries the loaded analysis-pipeline signature + a stale
+    flag so a stale MCP subprocess is obvious without reading the report."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+
+    result = analysis_handlers.analyze_handler(
+        None,
+        song_slug="test-song",
+        captures_dir=str(captures_dir),
+    )
+
+    code = result["analysis_code"]
+    assert isinstance(code["signature"], str) and code["signature"]
+    # Un-edited tree under test: loaded code matches disk.
+    assert code["stale"] is False
+
+
+def test_get_latest_report_surfaces_analysis_code_version(synthetic_song: Path):
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures_dir)
+    )
+
+    result = analysis_handlers.get_latest_report_handler(
+        None, song_slug="test-song"
+    )
+
+    code = result["analysis_code"]
+    assert isinstance(code["signature"], str) and code["signature"]
+    assert code["stale"] is False
+
+
 def test_analyze_handler_opens_db_once(synthetic_song: Path, monkeypatch):
     """Regression: analyze_handler used to open the DB three times (verify +
     each collector). It must open exactly once per invocation now."""
@@ -494,6 +532,28 @@ def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
 
     # 4/4 default: bar 1 -> beat 0, bar 3 -> beat 8.
     assert [(s.start_beat, s.bpm) for s in segs] == [(0.0, 120.0), (8.0, 90.0)]
+
+
+def test_collect_tempo_map_carries_ramp_kind(synthetic_song: Path):
+    """The DB row's ``ramp`` rides onto the TempoSegment so BeatSampleMap can
+    integrate a linear glide instead of stepping it."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        M.add_tempo_point(
+            conn, song_id=song_id, start_bar=1.0, tempo_bpm=90.0, ramp="linear",
+        )
+        M.add_tempo_point(conn, song_id=song_id, start_bar=5.0, tempo_bpm=140.0)
+        conn.commit()
+        segs = analysis_handlers._collect_tempo_map(conn, song_id)
+    finally:
+        conn.close()
+
+    assert [s.ramp for s in segs] == ["linear", "hold"]
 
 
 def test_analyze_handler_emits_skip_when_no_db_sections(synthetic_song: Path):

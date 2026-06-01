@@ -91,6 +91,17 @@ _INTER_MUTATION_YIELD_S = 0.05
 _MAX_WAIT_MULTIPLIER = 5.0
 _MIN_WAIT_S = 30.0
 
+# Fail-fast checkpoint: how many beats INTO the recording window transport must
+# advance before a still-zero frame count is treated as "the recorder never
+# armed" rather than "give it a moment". Measured from start_at_beat (not from
+# the pre-roll seek), so a long pre-roll at slow tempo never trips it — by the
+# time transport is this far past the recording start, a healthy analyzer has
+# been emitting feature frames for a while. When the recorder is dead (stale
+# Control-Surface subprocess, or an open analyzer M4L editor stealing
+# udpreceive — both documented sharp edges) this bails in seconds instead of
+# blocking the full ~minutes-long render window for frames that never come.
+_NO_FRAME_CHECKPOINT_BEATS = 4.0
+
 
 # --- public types ----------------------------------------------------
 
@@ -146,21 +157,31 @@ def _arrangement_length_beats(context: LiveContext) -> float:
     return float(getattr(context.song, "last_event_time", 0.0))
 
 
-def _wait_for_beat_crossing(
+def _wait_for_capture(
     context: LiveContext,
     target_beat: float,
     *,
     max_wait_s: float,
+    frame_count: Callable[[], int],
+    frames_before: int,
+    no_frame_checkpoint_beat: float,
     poll_interval_s: float = _POLL_INTERVAL_S,
     clock_source: Callable[[], float] | None = None,
-) -> bool:
-    """Poll until `current_song_time >= target_beat`.
+) -> str:
+    """Poll transport + frame count; return the capture outcome.
 
-    ``clock_source`` is a test seam: when provided, the loop reads from
-    it instead of from Live. Production callers leave it ``None`` so
-    polling goes through `context.run_on_main(read song.current_song_time)`.
+    Returns one of:
+      - ``"crossed"``   — transport reached ``target_beat`` (render complete).
+      - ``"no_frames"`` — transport advanced past ``no_frame_checkpoint_beat``
+        but the analyzer sidecar has received zero frames since
+        ``frames_before``: the recorder isn't capturing, so fail fast instead
+        of blocking the whole window.
+      - ``"timeout"``   — the deadline elapsed without crossing (transport
+        stalled while frames WERE flowing — a partial capture survives).
 
-    Returns True if crossed before the deadline; False on timeout.
+    The frame check is gated on transport progress (not wall-clock), so a long
+    pre-roll at slow tempo can't false-trip it. ``clock_source`` is a test seam:
+    when provided the loop reads the beat from it instead of from Live.
     """
     deadline = time.monotonic() + max_wait_s
 
@@ -174,9 +195,14 @@ def _wait_for_beat_crossing(
     while time.monotonic() < deadline:
         current = now_fn()
         if current >= target_beat:
-            return True
+            return "crossed"
+        if (
+            current >= no_frame_checkpoint_beat
+            and frame_count() - frames_before <= 0
+        ):
+            return "no_frames"
         time.sleep(poll_interval_s)
-    return False
+    return "timeout"
 
 
 # --- the two action handlers -----------------------------------------
@@ -337,28 +363,50 @@ def render_handler(
         context.song.start_playing()
     context.run_on_main(_play_on_main)
 
-    # Wait for transport to cross stop+post_roll.
+    # Wait for transport to cross stop+post_roll — or fail fast if the
+    # recorder never starts capturing.
     target_beat = float(end_beat) + float(post_roll_beats)
     max_wait_s = max(
         _MIN_WAIT_S,
         (target_beat - seek_to) * _MAX_WAIT_MULTIPLIER,
     )
-    crossed = _wait_for_beat_crossing(
+    # Only arm the zero-frame check if the checkpoint lands inside the render
+    # window; a sub-checkpoint-length render completes before it would fire.
+    checkpoint = float(start_at_beat) + _NO_FRAME_CHECKPOINT_BEATS
+    no_frame_checkpoint = checkpoint if checkpoint < target_beat else float("inf")
+    outcome = _wait_for_capture(
         context, target_beat,
         max_wait_s=max_wait_s,
+        frame_count=lambda: sidecar.frames_received,
+        frames_before=frames_before,
+        no_frame_checkpoint_beat=no_frame_checkpoint,
         clock_source=_clock_source,
     )
 
     # Stop transport, then disarm. Same split as seek+play: stop_playing
     # triggers its own notification cascade; the arm-writes that follow
-    # must each be their own bout.
+    # must each be their own bout. Always clean up Live's transport, even on
+    # the fail-fast path, before raising.
     def _stop_on_main() -> None:
         context.song.stop_playing()
     context.run_on_main(_stop_on_main)
     time.sleep(_INTER_MUTATION_YIELD_S)
     _set_arm_on_all(context, layout, arm=False)
 
-    status = "ok" if crossed else "incomplete"
+    if outcome == "no_frames":
+        raise ValueError(
+            f"render: the HallucinoteAnalyzer received 0 frames after "
+            f"transport reached beat {checkpoint:.0f} — the recorder isn't "
+            f"capturing, so no WAVs will be written. This is almost always a "
+            f"stale Control-Surface/server subprocess or an open analyzer M4L "
+            f"device-editor window stealing udpreceive. Fix: (1) quit and "
+            f"reopen Live, (2) close any open HallucinoteAnalyzer editor "
+            f"window, (3) run /mcp to respawn the server, then retry. (Failing "
+            f"fast — the full render window would otherwise block up to "
+            f"{max_wait_s:.0f}s waiting for frames that never arrive.)"
+        )
+
+    status = "ok" if outcome == "crossed" else "incomplete"
     frames_after = sidecar.frames_received
 
     now_iso = (_now_iso() if _now_iso is not None else _utc_timestamp())
@@ -395,7 +443,7 @@ def render_handler(
         encoding="utf-8",
     )
 
-    if not crossed:
+    if outcome != "crossed":
         logger.warning(
             "render: transport did not cross beat %.2f within %.1fs; "
             "captures may be incomplete (status=incomplete in manifest)",

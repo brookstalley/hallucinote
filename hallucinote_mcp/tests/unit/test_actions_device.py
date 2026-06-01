@@ -24,6 +24,7 @@ class FakeParam:
         min: float = 0.0,
         max: float = 1.0,
         value_items: tuple[str, ...] | None = None,
+        display_fn=None,
     ):
         self.name = name
         self.value = value
@@ -35,7 +36,9 @@ class FakeParam:
         # unguarded fail at test time (Wave-2 W2-9 root cause).
         self.is_quantized = value_items is not None
         self._value_items = value_items
-        self._str_for_value = lambda v: f"{v:.2f}"
+        # ``display_fn`` lets a test inject a realistic (e.g. nonlinear, dB)
+        # str_for_value curve; default mirrors Live's bare numeric render.
+        self._str_for_value = display_fn or (lambda v: f"{v:.2f}")
 
     @property
     def value_items(self) -> tuple[str, ...]:
@@ -1440,6 +1443,104 @@ def test_load_preset_query_path_prefix_unknown_segment_lists_available(loaded_ac
     assert "available" in (resp.error or "")
 
 
+def test_load_preset_query_exact_mode_resolves_substring_collision(loaded_actions):
+    """A precise preset name that is a substring of another resolves uniquely
+    in exact mode. substring would match both → ambiguous; exact anchors to the
+    whole leaf name. (The 'Saturated Bass' vs 'Basic Saturated Bass' friction.)"""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Saturated Bass", uri="query:Drums#exact"),
+    )
+    ctx.application.browser.drums.children.append(
+        FakeBrowserItem("Basic Saturated Bass", uri="query:Drums#super"),
+    )
+    # substring matches BOTH → strict mode refuses.
+    sub = _load_with_query(ctx, root="drums", pattern="Saturated Bass")
+    assert sub.ok is False
+    assert "ambiguous" in (sub.error or "")
+    # exact matches only the whole-name node → unambiguous load.
+    ex = _load_with_query(
+        ctx, root="drums", pattern="Saturated Bass", mode="exact",
+    )
+    assert ex.ok is True, ex.error
+    assert ctx.application.browser.load_calls[-1].uri == "query:Drums#exact"
+
+
+def test_load_rack_kind_class_mismatch_emits_warning(loaded_actions):
+    """kind='Drum Rack' resolving to an Instrument Rack (a user preset shadowed
+    the canonical rack in the browser walk) returns a `warning` naming the
+    mismatch — instead of silently succeeding until a Drum-Rack-only op fails."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    # Shadow trap: the walk matched a 'Drum Rack' node but Live instantiated an
+    # Instrument Rack (class_display_name = "Instrument Rack").
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(
+            FakeDevice(name="Acuff Kit", class_name="Instrument Rack"),
+        )
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["loaded_class_name"] == "Instrument Rack"
+    assert "warning" in resp.result
+    assert "Drum Rack" in resp.result["warning"]
+    assert "Instrument Rack" in resp.result["warning"]
+
+
+def test_load_rack_kind_class_match_has_no_warning(loaded_actions):
+    """A correctly-resolved rack (loaded class == requested rack kind) carries
+    no warning — the mismatch field only appears on a real divergence."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "drums", "Drum Rack", uri="query:DrumRack")
+    # Default load_item appends a device named like the matched item ("Drum
+    # Rack"), so class_display_name == kind.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Drum Rack"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["loaded_class_name"] == "Drum Rack"
+    assert "warning" not in resp.result
+
+
+def test_load_non_rack_kind_class_difference_does_not_warn(loaded_actions):
+    """A non-rack kind whose loaded class differs (e.g. a preset whose device
+    class isn't the kind label) must NOT warn — only the four rack display
+    names are a reliable kind==class identity, so the warning is scoped to them
+    to avoid false positives on built-in classes / preset loads."""
+    track = FakeTrack("T1")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Sub Bass", uri="query:SubBass")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(
+            FakeDevice(name="Sub Bass", class_name="Instrument Rack"),
+        )
+    ctx.application.browser.load_item = fake_load
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "kind": "Sub Bass"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert "warning" not in resp.result
+
+
 def test_load_preset_query_and_preset_uri_mutually_exclusive(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     resp = dispatch(
@@ -1659,6 +1760,115 @@ def test_set_parameter_enum_on_non_enum_errors(loaded_actions):
     )
     assert resp.ok is False
     assert "not an enum" in (resp.error or "")
+
+
+def _db_param(name: str = "Threshold") -> FakeParam:
+    """A normalized [0,1] param whose display renders dB, like a real Compressor
+    Threshold: raw 0 -> -70 dB, raw 1 -> 0 dB. str_for_value is the only inverse
+    Live exposes, so value_display must bisect it."""
+    return FakeParam(
+        name, 0.5, min=0.0, max=1.0,
+        display_fn=lambda v: f"{-70.0 + v * 70.0:.2f} dB",
+    )
+
+
+def test_set_parameter_value_display_resolves_to_raw(loaded_actions):
+    threshold = _db_param()
+    dev = FakeDevice("Comp", parameters=[threshold])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Threshold", "value_display": "-18 dB",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # -18 dB on the -70..0 curve is raw (-18+70)/70.
+    assert threshold.value == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-3)
+    # The response echoes the achieved display so the caller can confirm.
+    assert resp.result["value_display"] == "-18.00 dB"
+
+
+def test_set_parameter_value_and_display_mutually_exclusive(loaded_actions):
+    dev = FakeDevice("Comp", parameters=[_db_param()])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Threshold",
+                "value": "0.5", "value_display": "-18 dB",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "exactly one" in (resp.error or "")
+
+
+def test_set_parameter_continuous_requires_value_or_display(loaded_actions):
+    dev = FakeDevice("Comp", parameters=[_db_param()])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Threshold",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "exactly one" in (resp.error or "")
+
+
+def test_set_parameter_value_display_rejected_on_enum(loaded_actions):
+    dev = FakeDevice("Filter", parameters=[
+        FakeParam("Filter Type", 0.0, value_items=("Lowpass", "Highpass")),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Filter Type", "value_display": "Highpass",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "enum" in (resp.error or "")
+
+
+def test_set_parameter_in_rack_value_display_parity(loaded_actions):
+    """value_display resolves identically through the nested-rack handler —
+    the shared _resolve_continuous keeps the contract in lock-step (B4 lesson)."""
+    threshold = _db_param()
+    nested = FakeDevice("Comp", class_name="Compressor2", parameters=[threshold])
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 1, "nested_device_position": 1,
+                "parameter_name": "Threshold", "value_display": "-18 dB",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert threshold.value == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-3)
+    assert resp.result["value_display"] == "-18.00 dB"
 
 
 def test_set_parameter_unknown_name(loaded_actions):
@@ -2324,6 +2534,9 @@ def test_set_parameter_in_rack_writes_enum_value(loaded_actions):
     )
     assert resp.ok is True, resp.error
     assert filter_type.value == 1.0  # index of 'Highpass'
+    # Response `value` is the resolved float index, matching set_parameter's
+    # enum response shape (was the raw string before the shared-helper refactor).
+    assert resp.result["value"] == 1.0
 
 
 def test_set_parameter_in_rack_invalid_chain_raises(loaded_actions):

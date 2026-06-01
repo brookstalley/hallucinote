@@ -204,6 +204,143 @@ class PartTiming:
 
 
 @dataclass(frozen=True)
+class PartCrossRhythm:
+    """One part's cross-rhythm / subdivision read within a section window.
+
+    The read-side counterpart to the question C7's :class:`PartTiming` leaves
+    open. ``PartTiming`` measures a part's onset deviation from a single
+    straight grid; when a part plays *against* that grid (a 3-over-2 hemiola, a
+    quintuplet run) C7 honestly reports low confidence ("not on the straight
+    grid") but cannot say *what it is on*. ``PartCrossRhythm`` names the
+    relationship: it recovers the part's own base pulse and expresses it as a
+    rational subdivision of the known beat.
+
+    ``pulse_ratio`` is the musician's-terms label — ``"3:2"`` / ``"4:3"`` /
+    ``"5:4"`` (an N-against-M cross-rhythm: N onsets span M beats) or
+    ``"3/beat"`` / ``"5/beat"`` (a plain N-per-beat subdivision / tuplet). It is
+    ``None`` when no clean pulse was found (roll, rubato, swing-deferred, or
+    low-confidence). ``against_meter`` is True when the pulse fights the song's
+    binary grid (M>1, or a non-binary N ∈ {3,5,6,7}) — the signal the
+    interpreter reads to ask "intended hemiola, or do you want them locked?".
+    ``base_period_beats`` is the recovered pulse period P (beats);
+    ``occupancy`` (0..1) is the fraction of expected pulse slots actually filled
+    (a 3:2 that rests once a cycle reads ~0.82 — the holes are flagged without
+    losing the ratio). ``confidence`` (0..1) scales with onset count and how
+    tightly onsets sit on the recovered P-grid.
+
+    ``verdict`` is the categorical read:
+      * ``"cross-rhythm"``   — a named pulse that fights the meter (3:2, 5/beat)
+      * ``"subdivision"``    — a plain binary subdivision on the grid (2/beat, 16ths)
+      * ``"additive"``       — a repeating additive grouping (3+3+2, 2+2+3 = 7/8,
+                               Balkan aksak): no single clean pulse, but the
+                               irregular IOIs tile a fixed cell. ``grouping`` and
+                               ``cycle_length_beats`` carry the decode (C8c).
+      * ``"rubato"``         — the tempo itself is moving (monotonic IOI trend);
+                               not a polyrhythm, flagged so it's never mislabeled
+      * ``"roll"``           — density above the floor (buzz roll / tremolo); no ratio
+      * ``"swing(see-timing)"`` — a triplet feel that C7's ``swing_ratio`` already
+                               explains; deferred rather than double-reported
+      * ``"low-confidence"`` — too few onsets, or no single clean pulse and no
+                               clean grouping — honest, not a fabricated ratio
+
+    ``grouping`` is the decoded additive cell as a tuple of sub-unit counts —
+    ``(3, 3, 2)`` for a 3+3+2 / 8-unit bar, ``(2, 2, 3)`` for 7/8 — or ``None``
+    when the verdict isn't ``"additive"``. When the part carries accents (a
+    louder bar-downbeat), the tuple is rotated to start at the downbeat (so
+    2+2+3 and 3+2+2 read distinctly); with equal-velocity onsets the bar
+    downbeat is unknowable, so the tuple is the canonical (lexicographically-
+    largest) rotation of the cyclic grouping. ``cycle_length_beats`` is the
+    grouping cell's length in beats (sum of the grouping × the sub-unit), or
+    ``None``. Both ``None`` for every non-additive verdict.
+
+    NEUTRAL MEASUREMENT, not a judgement — a cross-rhythm is an authorial
+    choice, not a defect. Only per-section composer intent says whether a given
+    relationship is a wanted hemiola or an accidental clash; the holistic
+    interpreter grades that against recalled markdown intent (see
+    ``intent-architecture.md``). Parallel to masking's and timing's DSP↔intent
+    split. Remaining limitations (rubato-within-window, mixed stems, sparse
+    parts, accent-extraction timbre dependence) all resolve to an explicit
+    low-confidence / rubato / roll verdict — never a confident wrong answer. See
+    ``docs/polyrhythms.md`` §5.
+    """
+    track_id: str
+    pulse_ratio: str | None
+    against_meter: bool
+    base_period_beats: float
+    occupancy: float
+    confidence: float
+    verdict: str
+    grouping: tuple[int, ...] | None = None
+    cycle_length_beats: float | None = None
+
+
+@dataclass(frozen=True)
+class Phasing:
+    """A two-part phasing relationship within a section window (Reich-style).
+
+    The two-part counterpart to :class:`PartCrossRhythm`. Phasing is two parts
+    playing the *same* figure at fractionally different tempi, so one slowly
+    slides against the other (Steve Reich, "Piano Phase"). It is detected as a
+    **monotonic drift** in the mean nearest-onset offset of B relative to A,
+    sampled across the window — each part stays individually steady, but their
+    relative alignment marches.
+
+    ``track_a`` / ``track_b`` are the two surface IDs (B measured relative to A,
+    so the sign of the drift is B-leads-negative / B-lags-positive).
+    ``drift_beats_per_cycle`` is the rate that relative offset accumulates per
+    analysis cycle (default a 4-beat window — see ``cross_rhythm.py``); its
+    magnitude is how fast they're sliding apart, its sign which way.
+    ``confidence`` (0..1) is high when the drift is cleanly monotonic (the
+    offset-vs-time correlation is strong) — two locked parts drift ≈ 0 and never
+    surface here.
+
+    NEUTRAL MEASUREMENT — phasing is a compositional technique, not a defect;
+    the interpreter grades it against intent. Caveat (``docs/polyrhythms.md``
+    §3): nearest-onset matching wraps once the accumulated drift exceeds half a
+    pulse period, so this reads the onset of a phase relationship, not its
+    full multi-cycle trajectory.
+    """
+    track_a: str
+    track_b: str
+    drift_beats_per_cycle: float
+    confidence: float
+
+
+@dataclass(frozen=True)
+class Polymeter:
+    """A two-part polymeter relationship within a section window.
+
+    Polymeter is two parts looping cells of DIFFERENT length at the *same*
+    tempo (Meshuggah/Tool: a 4-beat riff under a 3-beat ostinato), so their
+    downbeats realign only every lcm(cells) beats. Distinct from phasing (same
+    cell, drifting tempo) and from a single part's additive grouping (one part,
+    irregular cell). With equal-velocity hits two cells of different length
+    produce identical onset *trains* — the cell length lives entirely in the
+    **accent pattern** (``docs/polyrhythms.md`` §5 #2), recovered per part via
+    accent autocorrelation (harmonic-safe: an accent series, unlike an onset
+    train, is not self-similar at sub-multiples of its period).
+
+    ``track_a`` / ``track_b`` are the two surface IDs; ``cycle_a_beats`` /
+    ``cycle_b_beats`` are their recovered cell lengths (beats). ``realign_beats``
+    is when the two downbeats next coincide (the rational lcm of the cells) — the
+    period of the combined groove. ``confidence`` (0..1) reflects how cleanly
+    each part's accent cycle resolved (the weaker of the two).
+
+    NEUTRAL MEASUREMENT — polymeter is a compositional technique, not a defect;
+    the interpreter grades it against intent. Caveat: cell detection needs an
+    audible accent (equal-velocity parts surface nothing — correctly, the
+    relationship is then unknowable from audio) and inherits the accent-
+    extraction timbre dependence (``docs/polyrhythms.md`` §5 #6).
+    """
+    track_a: str
+    track_b: str
+    cycle_a_beats: float
+    cycle_b_beats: float
+    realign_beats: float
+    confidence: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -242,6 +379,22 @@ class SectionMetrics:
     # enabled. The read-side counterpart to the `feel` generator. Neutral
     # measurement — the interpreter grades it against intent.
     timing: list[PartTiming] = field(default_factory=list)
+    # Per-part cross-rhythm / subdivision read (one entry per transient-rich
+    # stem above the confidence floor), populated only when cross-rhythm
+    # analysis is enabled. Names what grid a part is on when it fights the
+    # straight grid C7 measures against (3:2, quintuplets, ...). Neutral
+    # measurement — the interpreter grades it against intent.
+    cross_rhythm: list[PartCrossRhythm] = field(default_factory=list)
+    # Two-part phasing relationships (Reich-style drift), populated only when
+    # cross-rhythm analysis is enabled and the section has >= 2 onset-bearing
+    # parts that drift monotonically. Empty when parts are locked. Neutral
+    # measurement — the interpreter grades it against intent.
+    phasing: list[Phasing] = field(default_factory=list)
+    # Two-part polymeter relationships (different cell lengths at one tempo),
+    # populated only when cross-rhythm analysis is enabled and the section has
+    # >= 2 accented parts whose recovered cells differ. Empty when parts share a
+    # cell or carry no audible accent. Neutral — the interpreter grades intent.
+    polymeter: list[Polymeter] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -354,6 +507,43 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "masking": [_masking_pair_to_dict(m) for m in s.masking],
         "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
         "timing": [_part_timing_to_dict(t) for t in s.timing],
+        "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
+        "phasing": [_phasing_to_dict(p) for p in s.phasing],
+        "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+    }
+
+
+def _phasing_to_dict(p: Phasing) -> dict[str, Any]:
+    return {
+        "track_a": p.track_a,
+        "track_b": p.track_b,
+        "drift_beats_per_cycle": p.drift_beats_per_cycle,
+        "confidence": p.confidence,
+    }
+
+
+def _polymeter_to_dict(p: Polymeter) -> dict[str, Any]:
+    return {
+        "track_a": p.track_a,
+        "track_b": p.track_b,
+        "cycle_a_beats": p.cycle_a_beats,
+        "cycle_b_beats": p.cycle_b_beats,
+        "realign_beats": p.realign_beats,
+        "confidence": p.confidence,
+    }
+
+
+def _part_cross_rhythm_to_dict(c: PartCrossRhythm) -> dict[str, Any]:
+    return {
+        "track_id": c.track_id,
+        "pulse_ratio": c.pulse_ratio,
+        "against_meter": c.against_meter,
+        "base_period_beats": c.base_period_beats,
+        "occupancy": c.occupancy,
+        "confidence": c.confidence,
+        "verdict": c.verdict,
+        "grouping": list(c.grouping) if c.grouping is not None else None,
+        "cycle_length_beats": c.cycle_length_beats,
     }
 
 

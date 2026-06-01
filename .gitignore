@@ -77,3 +77,6 @@ songs/*/.last-push-errors.json
 songs/*/captures/
 .hallucinote/stems/
 *.amxd~
+
+# Prawduct session files
+.prawduct/.advisories.json

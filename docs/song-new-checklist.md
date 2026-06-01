@@ -66,6 +66,8 @@ BPM range, swing/groove pocket, energy level. Often inferable from genre but wor
 
 Key (Cmaj / Dm / etc.). Modal vs tonal. Harmonic rhythm pace (one chord per bar? Per 4 bars? Per beat?). Key changes y/n. Modal interchange y/n.
 
+→ These answers become an authored `theory.Progression` per section (the **harmony axis**) that the chord-aware generators voice and the conformance lint verifies — see `docs/song-authoring-conventions.md` § *Harmony is a modeled substrate*.
+
 ### 9. Production style
 
 Reverb tail (dry / club / cathedral). Stereo width (mono compatibility needed?). Vintage vs modern. Dynamic-range target (loud-and-flat vs dynamic). Mastering intent (in-DAW finish vs separate mastering pass).
@@ -73,6 +75,8 @@ Reverb tail (dry / club / cathedral). Stereo width (mono compatibility needed?).
 ### 10. Arrangement curve / energy arc
 
 Where's the peak? Slow build vs immediate engagement? Breakdown placement? Where do we lose layers to give the peak somewhere to come back from? This is the macro-shape; sections (item 3) are the bones.
+
+→ This is the authored **energy curve** of the arrangement model (a structure intent) — see `.prawduct/artifacts/arrangement-model.md` (the dimension taxonomy).
 
 ---
 
@@ -112,6 +116,6 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `.claude/skills/song-new/SKILL.md`. Sibling workflow skills under `.claude/skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `pattern-compose`.
+- Implementation: `.claude/skills/song-new/SKILL.md`. Sibling workflow skills under `.claude/skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
 - Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `.claude/skills/ableton-push/SKILL.md` for the push flow.
 - Decision retrieval: `/song-context` skill (queries `decisions/` + `annotations/`).

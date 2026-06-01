@@ -383,6 +383,157 @@ def test_analyze_mix_populates_section_timing_when_enabled(tmp_path: Path):
     )
 
 
+def test_analyze_mix_populates_section_cross_rhythm_when_enabled(tmp_path: Path):
+    """With ``analyze_cross_rhythm=True``, a covered section names each part's
+    base pulse: a straight-16ths stem reads an on-grid subdivision, a hemiola
+    stem reads 3:2 against the meter, and it serializes under
+    ``per_section[].cross_rhythm``.
+
+    The capture is 16 beats over 8 s → effective 120 bpm, derived from the
+    shared BeatSampleMap (no tempo passed in)."""
+    bpm = 120.0
+    straight = onsets_at_beats(
+        [i * 0.25 for i in range(64)], bpm=bpm, total_beats=16.0,
+    )
+    hemiola = onsets_at_beats(
+        [i * (2.0 / 3.0) for i in range(24)], bpm=bpm, total_beats=16.0,
+    )
+    master = straight + hemiola
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Straight", straight), ("track:2", "Hemiola", hemiola)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    # Off by default — no cross-rhythm computed.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].cross_rhythm == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_cross_rhythm=True)
+    sec = on.per_section[0]
+    by_id = {c.track_id: c for c in sec.cross_rhythm}
+    assert "track:1" in by_id and "track:2" in by_id
+
+    assert by_id["track:1"].pulse_ratio == "4/beat"
+    assert by_id["track:1"].verdict == "subdivision"
+    assert not by_id["track:1"].against_meter
+
+    assert by_id["track:2"].pulse_ratio == "3:2"
+    assert by_id["track:2"].verdict == "cross-rhythm"
+    assert by_id["track:2"].against_meter
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "cross_rhythm" in sec_json
+    j = {c["track_id"]: c for c in sec_json["cross_rhythm"]}
+    assert j["track:2"]["pulse_ratio"] == "3:2"
+    assert isinstance(j["track:2"]["base_period_beats"], float)
+    assert isinstance(j["track:2"]["occupancy"], float)
+    assert isinstance(j["track:2"]["against_meter"], bool)
+
+
+def test_analyze_mix_populates_section_phasing_when_enabled(tmp_path: Path):
+    """With ``analyze_cross_rhythm=True``, a section with two parts drifting at
+    fractionally different tempi reads a phasing relationship under
+    ``per_section[].phasing``; two locked parts read none.
+
+    The capture is 16 beats over 8 s → effective 120 bpm."""
+    bpm = 120.0
+
+    def pulse(period):
+        beats = [i * period for i in range(64)]
+        return onsets_at_beats(
+            [b for b in beats if b < 16.0], bpm=bpm, total_beats=16.0,
+        )
+
+    drifting = pulse(1.0 / 1.03)   # 3% faster → phases against the locked pulse
+    locked = pulse(1.0)
+    master = drifting + locked
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Locked", locked), ("track:2", "Drifting", drifting)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="phase", start_beat=0.0, end_beat=16.0)]
+
+    # Off by default.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].phasing == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_cross_rhythm=True)
+    sec = on.per_section[0]
+    assert len(sec.phasing) == 1
+    ph = sec.phasing[0]
+    assert {ph.track_a, ph.track_b} == {"track:1", "track:2"}
+    assert abs(ph.drift_beats_per_cycle) > 0.05
+    assert ph.confidence > 0.9
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "phasing" in sec_json
+    assert isinstance(sec_json["phasing"][0]["drift_beats_per_cycle"], float)
+
+    # Two locked parts → no phasing surfaced.
+    locked2 = pulse(1.0)
+    master2 = locked + locked2
+    captures2 = _write_synthetic_capture(
+        tmp_path / "locked",
+        stems=[("track:1", "A", locked), ("track:2", "B", locked2)],
+        master_audio=master2,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    locked_on = analyze_mix(captures2, sections=sections, analyze_cross_rhythm=True)
+    assert locked_on.per_section[0].phasing == []
+
+
+def test_analyze_mix_populates_section_polymeter_when_enabled(tmp_path: Path):
+    """With ``analyze_cross_rhythm=True``, two accented steady streams looping
+    different cell lengths (4-beat vs 3-beat) read a polymeter relationship under
+    ``per_section[].polymeter`` with the lcm realign; off by default.
+
+    The capture is 24 beats over 12 s → effective 120 bpm."""
+    bpm = 120.0
+
+    def accented(cell_beats):
+        n = 48  # steady 8ths over 24 beats
+        beats = [i * 0.5 for i in range(n)]
+        amps = [2.0 if (b % cell_beats) < 1e-6 else 1.0 for b in beats]
+        return onsets_at_beats(beats, bpm=bpm, total_beats=24.0, amplitudes=amps)
+
+    cell4 = accented(4.0)
+    cell3 = accented(3.0)
+    master = cell4 + cell3
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Cell4", cell4), ("track:2", "Cell3", cell3)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=24.0,
+    )
+    sections = [SectionWindow(name="poly", start_beat=0.0, end_beat=24.0)]
+
+    # Off by default.
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].polymeter == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_cross_rhythm=True)
+    sec = on.per_section[0]
+    assert len(sec.polymeter) == 1
+    pm = sec.polymeter[0]
+    assert {pm.track_a, pm.track_b} == {"track:1", "track:2"}
+    cells = sorted([pm.cycle_a_beats, pm.cycle_b_beats])
+    assert abs(cells[0] - 3.0) < 0.1 and abs(cells[1] - 4.0) < 0.1
+    assert abs(pm.realign_beats - 12.0) < 0.1
+
+    sec_json = on.to_json_dict()["per_section"][0]
+    assert "polymeter" in sec_json
+    assert isinstance(sec_json["polymeter"][0]["realign_beats"], float)
+
+
 def test_analyze_mix_tempo_map_moves_section_boundary(tmp_path: Path):
     """With a variable tempo, the beat→sample boundary shifts, so a section
     measures different audio than the constant-tempo linear map would.

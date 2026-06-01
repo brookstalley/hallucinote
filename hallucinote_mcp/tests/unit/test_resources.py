@@ -85,6 +85,24 @@ def test_guide_loads_and_contains_expected_anchors(guide_name):
     )
 
 
+def test_error_recovery_guide_documents_render_capture_preconditions():
+    """The render 0-frame fix must be discoverable in the guide, not only via
+    the fail-fast teaching error. Locks the recorder-arming preconditions +
+    the /mcp-respawn recovery (backlog: render-skill preconditions doc).
+    """
+    content = _read_guide("error-recovery").lower()
+    assert "0 frames" in content or "0-frame" in content, (
+        "error-recovery guide should name the 0-frame capture failure"
+    )
+    assert "udpreceive" in content, (
+        "guide should name udpreceive contention as the root cause"
+    )
+    assert "/mcp" in content, "guide should name the /mcp respawn fix"
+    assert "editor" in content, (
+        "guide should name the open analyzer editor window as a cause"
+    )
+
+
 def test_scales_json_loads_with_expected_shape():
     raw = _read_reference_json("scales")
     data = json.loads(raw)

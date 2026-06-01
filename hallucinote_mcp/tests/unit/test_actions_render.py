@@ -481,6 +481,62 @@ def test_render_marks_status_incomplete_on_timeout(
     assert manifest["status"] == "incomplete"
 
 
+def test_render_fails_fast_when_recorder_receives_no_frames(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Transport advances into the recording window but the analyzer sidecar
+    gets 0 frames (dead recorder) → fail fast with a teaching error instead of
+    blocking the whole render window for frames that never arrive."""
+    # Clock parks past the no-frame checkpoint (beat 4) but short of the
+    # crossing target (beat 68); stub_sidecar.frames_received stays 0.
+    with pytest.raises(ValueError, match="0 frames"):
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 10.0,
+        )
+    # Live's transport was cleaned up (stop + disarm) before raising.
+    assert ctx_two_tracks_one_return.song.stop_playing_calls == 1
+
+
+def test_render_does_not_fail_fast_when_frames_flow(
+    tmp_path, ctx_two_tracks_one_return, osc_factory,
+):
+    """Frames flowing past the checkpoint must NOT trip the fail-fast: once
+    transport crosses the target the render completes status=ok. The fail-fast
+    keys on the frame DELTA over the window, so the recorder must produce NEW
+    frames (a counter that grows), not merely report a non-zero total."""
+    class _LiveSidecar:
+        port = 11221
+
+        def __init__(self):
+            self._n = 0
+
+        @property
+        def frames_received(self):
+            self._n += 1   # a live recorder accrues frames on each read
+            return self._n
+
+    # First poll lands past the checkpoint (beat 4) with frames accruing; second
+    # poll has crossed the target (beat 68) → 'crossed' → ok.
+    ticks = iter([10.0, 999.0])
+
+    result = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=_LiveSidecar(),
+        _clock_source=lambda: next(ticks),
+        _now_iso=lambda: "20260528T120000Z",
+    )
+    assert result["status"] == "ok"
+    assert result["manifest"]["frames_received"] > 0  # new frames over the window
+
+
 def test_render_handler_refuses_missing_output_dir(
     tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
 ):

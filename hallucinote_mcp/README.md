@@ -68,7 +68,7 @@ for low-context-cost reads (`ableton://session/snapshot`,
 `ableton://guides/*`). Multi-step workflows live as Claude
 Code skills (`.claude/skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
 `/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,
-`/pattern-compose` — so they're assistant-callable, not just user-facing slash commands.
+`/compose-part` — so they're assistant-callable, not just user-facing slash commands.
 
 ## Development
 

@@ -29,8 +29,20 @@ caller's job.
 | MIDI velocity | 1–127 | 0 = note-off |
 | Tempo | 20–999 BPM | Live's bounds |
 | Time signature denominator | 1, 2, 4, 8, 16, 32 | Must be power of 2 |
+| Device parameter (`set_parameter`, continuous) | `[param.min, param.max]` | RAW Live value — **normalized [0,1] for many params** (a Compressor Threshold of `0.85` displays as `-3.0 dB`); some are already in native units (Output `[-36, 36]`). NOT display units. |
 
 Out-of-range writes raise a teaching error instead of silently clamping.
+
+**Device parameters in display units.** Continuous `set_parameter` (and
+`set_parameter_in_rack`) accept `value_display` instead of `value` — a display
+string like `'-18 dB'`, `'3:1'`, `'20 ms'`, `'80 Hz'`. The handler inverts
+Live's display curve to the raw value for you, so you can hit a musical target
+without reverse-engineering the normalized mapping. Pass EXACTLY ONE of `value`
+(raw) or `value_display`. The response echoes the achieved `value_display` so
+you can confirm the target landed at the parameter's display resolution.
+`value_display` is refused for enum params (use `value_type='enum'`) and for the
+rare params whose display can't be addressed numerically (e.g. Expansion Ratio
+renders `'1 : 1.15'`, where the leading number never varies).
 
 ## Devices on tracks XOR returns
 
@@ -42,6 +54,16 @@ Handler validates with a teaching error if you slip.
 `ableton_clip(action='replace_notes', ...)` replaces the entire note array of
 the clip. There is no append. `ableton_clip(action='create', ..., notes=[...])`
 accepts notes for atomic create-and-populate.
+
+## Inline note arrays: soft cap (~32 notes)
+
+The inline `notes=[...]` channel is for trivial interactive edits. Above ~32
+notes both `create` and `replace_notes` add a non-blocking `warning` to the
+result: large inline arrays cost agent context and bypass the Hallucinote DB
+(the next full push overwrites a clip authored only inline). For parts this
+size, author the notes as code in the song's `build.py`
+(`hallucinote.generators`) and materialize with `push_cli push-notes --changed`
+— the array never enters the agent's context. See the `/compose-part` skill.
 
 ## Devices append; order is fixed
 

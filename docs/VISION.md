@@ -36,6 +36,10 @@ Two bets, both unproven, both load-bearing:
 
 - **Pure generators.** `generators/*` produce note arrays with semantic tags. No DB or MCP coupling. The library a human-or-LLM composes against.
 
+- **The song as a multi-dimensional structured object.** Beyond raw notes, a song is authored along *structure intents* — form, **energy** (the intensity arc), **harmony** (key/mode/progression — a modeled substrate the parts compose *against*, with a build-time conformance lint) — rendered by *realization layers* (the **performance** layer: microtiming, dynamics, articulation as authorship) over instrument-chain *subsystems*, all sitting on the raw note floor. The organizing dimension taxonomy + design foundation: [`.prawduct/artifacts/arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md) and [`performance-model.md`](../.prawduct/artifacts/performance-model.md).
+
+- **A song you can measure.** Captured per-stem audio + the score feed an analysis pipeline — loudness, inter-track **masking**, per-part **timing/feel**, cross-rhythm, and a **mix-review *against declared intent***. This is how "songs are testable" becomes real for the things only an ear used to catch: quality checks become assertions the song carries. (`ableton_render` / `ableton_analysis`; the masking analyzer.)
+
 - **Plan-based Ableton sync.** `sync/push.py` returns a plan of MCP tool calls; the agent executes; results flow back via `apply_push_results`. Pure, testable, reorder-safe.
 
 - **Bidirectional sync.** Edits made in Ableton come back into the DB — diff-and-apply through the mutator + event path. Note-level addressing landed in V1 close-out (gap #4): pull reads notes by Live's stable per-note IDs (`clip.get_notes_extended()`), so per-note edits round-trip precisely.
@@ -50,7 +54,7 @@ Two bets, both unproven, both load-bearing:
 
 - **A non-LLM authoring tool.** Anyone can write Python against the library. That is not who this is for. Every design choice favors the LLM workflow.
 
-- **A live performance system.** This is a composition and production tool. Performance happens downstream, in Ableton, with a rendered song.
+- **A live performance system.** This is a composition and production tool; live-stage performance happens downstream, in Ableton, with a rendered song. *(Distinct from the **performance realization layer** — [`performance-model.md`](../.prawduct/artifacts/performance-model.md) — which authors a song's rendition **feel** (microtiming, dynamics, articulation) at compose time. Authoring how a part is played is in scope; performing it live on a stage is not.)*
 
 - **A walled garden.** No proprietary formats. SQLite, Python, git, standard MCP. If Hallucinote dies, your songs are still composable from the repo.
 

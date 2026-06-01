@@ -78,12 +78,19 @@ route that WHY to markdown (`tags: [feel, groove, …]`) like all other intent.
   **aperiodic** → author the notes directly; don't grow `feel` into a timeline.
   Its intent is still just a scoped annotation.
 
+> **The formal layer.** The above is the per-call `feel` mechanism; the full
+> performance **realization layer** (profile→realization, structured-1/f-not-white,
+> and the read-side *mechanical/human/sloppy* lens) is designed in
+> [`performance-model.md`](performance-model.md) — another consumer of this exact
+> measurement↔intent loop, sitting beside the harmony conformance lint.
+
 ## The read-side: measurement ↔ intent, generalized
 
 Each DSP module is a pure measurement producer. The **holistic interpreter**
 (build-plan C6) is the single surface that reads the whole `MixReport` + recalled
 intent and reasons across metrics — masking, loudness, attribution, reverb, and
-(C7) timing-deviation together. The loop (from `intent-collaboration-model.md`):
+(C7) timing-deviation together (and, once built, the performance lens —
+`performance-model.md` §7). The loop (from `intent-collaboration-model.md`):
 
 ```
 RECALL (/song-context, markdown)  →  MEASURE (MixReport, neutral, always)

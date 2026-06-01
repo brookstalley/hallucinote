@@ -16,6 +16,8 @@ from hallucinote.audio.report import (
     LoudnessMetrics,
     MasterOvershoot,
     MixReport,
+    PartCrossRhythm,
+    Polymeter,
     ReverbVerification,
     SectionMetrics,
     StemMetrics,
@@ -141,6 +143,72 @@ def test_per_section_serializes_with_scoped_surfaces():
     assert section["master"]["surface_kind"] == "master"
     assert section["stems"][0]["track_id"] == "track:1"
     assert section["returns"][0]["track_id"] == "return:1"
+
+
+def test_additive_grouping_and_polymeter_serialize():
+    """The C8c fields — an `additive` cross-rhythm's `grouping` /
+    `cycle_length_beats` and a `Polymeter` pair — round-trip through JSON.
+    Locks the new wire contract (the agent/mix-review read these keys)."""
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[_make_stem("track:1")],
+        master=_make_stem("master"),
+        per_section=[
+            SectionMetrics(
+                section_name="A",
+                start_beat=0.0,
+                end_beat=16.0,
+                master=_make_stem("master"),
+                cross_rhythm=[
+                    PartCrossRhythm(
+                        track_id="track:1",
+                        pulse_ratio=None,
+                        against_meter=True,
+                        base_period_beats=1.5,
+                        occupancy=1.0,
+                        confidence=0.9,
+                        verdict="additive",
+                        grouping=(3, 3, 2),
+                        cycle_length_beats=4.0,
+                    )
+                ],
+                polymeter=[
+                    Polymeter(
+                        track_a="track:1",
+                        track_b="track:2",
+                        cycle_a_beats=4.0,
+                        cycle_b_beats=3.0,
+                        realign_beats=12.0,
+                        confidence=0.7,
+                    )
+                ],
+            )
+        ],
+    )
+    section = json.loads(json.dumps(report.to_json_dict()))["per_section"][0]
+    cr = section["cross_rhythm"][0]
+    assert cr["verdict"] == "additive"
+    assert cr["grouping"] == [3, 3, 2]  # tuple → list through JSON
+    assert cr["cycle_length_beats"] == 4.0
+    pm = section["polymeter"][0]
+    assert pm["cycle_a_beats"] == 4.0 and pm["cycle_b_beats"] == 3.0
+    assert pm["realign_beats"] == 12.0
+
+
+def test_non_additive_cross_rhythm_has_null_grouping():
+    """A plain subdivision serializes grouping/cycle_length_beats as null."""
+    cr = PartCrossRhythm(
+        track_id="track:1", pulse_ratio="2/beat", against_meter=False,
+        base_period_beats=0.5, occupancy=1.0, confidence=0.95,
+        verdict="subdivision",
+    )
+    from hallucinote.audio.report import _part_cross_rhythm_to_dict
+    d = json.loads(json.dumps(_part_cross_rhythm_to_dict(cr)))
+    assert d["grouping"] is None
+    assert d["cycle_length_beats"] is None
 
 
 def test_per_section_defaults_empty():

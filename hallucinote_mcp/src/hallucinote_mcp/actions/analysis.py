@@ -81,10 +81,14 @@ register(
         ),
         tips=(
             "Returns {report_path, schema_version, finding_count, "
-            "summary}. The summary names the master peak true-peak, the "
-            "overshoot count, the per-section count, and any "
+            "summary, analysis_code}. The summary names the master peak "
+            "true-peak, the overshoot count, the per-section count, and any "
             "out-of-tolerance reverb sends — enough for the LLM to decide "
             "whether to read the full JSON.",
+            "analysis_code = {signature, stale}: the content hash of the "
+            "loaded analysis pipeline + whether it differs from disk. "
+            "stale=true means this server is running pre-edit code — run "
+            "/mcp to respawn before trusting the report.",
             "Declared intent drives two passes: set_send_intended_rt60 "
             "feeds reverb verification, create_section feeds per-section "
             "loudness (report.per_section, keyed by section name; a "
@@ -171,8 +175,10 @@ register(
             "song_slug='reggae-metal')"
         ),
         tips=(
-            "Returns {report_path, report} where report is the parsed "
-            "MixReport dict — same shape that analyze produces.",
+            "Returns {report_path, report, analysis_code} where report is "
+            "the parsed MixReport dict — same shape that analyze produces. "
+            "analysis_code = {signature, stale} flags whether this server's "
+            "loaded analysis code differs from disk (run /mcp if stale).",
         ),
     )
 )

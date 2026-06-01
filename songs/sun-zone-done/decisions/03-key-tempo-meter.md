@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [key, tempo, meter, harmony, dorian, phrygian]
+---
+
 # Key, Tempo, Meter
 
 **Question:** What key, what tempo, what meter?

@@ -64,8 +64,9 @@ elicitation, load-bearing-only, gap-inversion, name-the-why) lives in
               - contradicts a CLEAR intent (focal element losing) -> surface,
                 framed as an option
               - intent UNKNOWN and it matters -> ASK one good question
-4. CAPTURE  whatever the user reveals -> write it back as an `intent`
-            annotation via the mutator+event path. "Rhythm gtr intentionally
+4. CAPTURE  whatever the user reveals -> write it back as a MARKDOWN `intent`
+            annotation (via `write_markdown_ref`; the DB `annotations` table is
+            retired — see `intent-architecture.md`). "Rhythm gtr intentionally
             masked by scream in chorus — desired murk."  Now it is REMEMBERED.
 5. NEVER RE-FLAG  next run, step 1 recalls it; step 3 stays quiet.
 ```
@@ -79,9 +80,11 @@ session feel like the producer who already knows the record.
 **Already there — the shape is right, and it's LLM-first by design:**
 - **Stateful song DB + event-log seed** — durable state *and* the why
   (`actor`/`reason`/`request_id` on every mutation). The producer never forgets.
-- **`annotations` (intent/stylistic/structure/reference/todo, prose, per-song,
-  FTS5)** — exactly where learned artistic intent belongs, recalled by
-  `/song-context`. Per-song scoping is the model the user wants.
+- **Markdown intent corpus (`decisions/` + `annotations/`, prose, per-song,
+  FTS5-indexed via `markdown_refs`)** — where learned artistic intent belongs,
+  recalled by `/song-context`. (The earlier DB `annotations` table is **retired**
+  in favor of git-tracked markdown — see `intent-architecture.md` "Why the DB is
+  NOT an authoring home for intent." Per-song scoping is still the model the user wants.)
 - **Compose-time request/decision log** (`/decisions`) — the conversation
   history: prior prompts + rationale, retrievable.
 - **Mutator + event discipline** — anything learned is durable, auditable, and

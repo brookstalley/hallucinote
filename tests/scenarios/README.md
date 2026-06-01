@@ -24,7 +24,8 @@ Two layers:
 tests/scenarios/
   README.md          # this file — schema + runner procedure
   briefs/*.json      # one brief per persona (id == filename stem)
-  results/           # judge results accumulate here (one file per run)
+  results/           # judge verdicts — pinned canonical-<brief>.json committed,
+                     #   ad-hoc <brief>-<UTC>.json runs gitignored (see results/README.md)
 ```
 
 ## Brief schema

@@ -78,5 +78,16 @@ songs/*/captures/
 .hallucinote/stems/
 *.amxd~
 
+# Scenario-eval results (tests/scenarios/results/): ad-hoc timestamped runs are
+# ephemeral, LLM-simulated + non-deterministic working material — accumulating
+# them in git is churn, not signal. Only the pinned latest-passing
+# `canonical-<brief>.json` (+ its `canonical-<brief>.transcript.md`, when saved)
+# is tracked, as the durable verification evidence for this behaviorally-judged,
+# non-unit-testable work. See tests/scenarios/results/README.md.
+tests/scenarios/results/*
+!tests/scenarios/results/.gitkeep
+!tests/scenarios/results/README.md
+!tests/scenarios/results/canonical-*
+
 # Prawduct session files
 .prawduct/.advisories.json

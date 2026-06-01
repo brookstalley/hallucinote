@@ -301,6 +301,19 @@ def test_write_result_rejects_invalid(tmp_path):
         write_result(result, brief, results_dir=tmp_path)
 
 
+def test_write_result_canonical_uses_stable_name_and_overwrites(tmp_path):
+    """canonical=True writes the pinned `canonical-<id>.json` (no timestamp in the
+    name) and a re-run overwrites it in place — the committed latest-passing
+    result, vs. the gitignored timestamped ad-hoc runs."""
+    brief = parse_brief(_valid_brief_dict())
+    result = _fill(_result_skeleton(brief))
+    out = write_result(result, brief, results_dir=tmp_path, canonical=True)
+    assert out.name == f"canonical-{brief.id}.json"  # stable, no timestamp
+    again = write_result(result, brief, results_dir=tmp_path, canonical=True)
+    assert again == out  # same path — overwrites, does not accumulate
+    validate_result(json.loads(out.read_text(encoding="utf-8")), brief)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------

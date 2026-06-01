@@ -1849,7 +1849,7 @@ def test_set_parameter_value_display_rejected_on_enum(loaded_actions):
 
 def test_set_parameter_in_rack_value_display_parity(loaded_actions):
     """value_display resolves identically through the nested-rack handler —
-    the shared _resolve_continuous keeps the contract in lock-step (B4 lesson)."""
+    the shared resolve_continuous_write keeps the contract in lock-step (B4 lesson)."""
     threshold = _db_param()
     nested = FakeDevice("Comp", class_name="Compressor2", parameters=[threshold])
     chain = _FakeChain("Lead", devices=[nested])

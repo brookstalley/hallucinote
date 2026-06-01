@@ -31,7 +31,7 @@ from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
-from .display_value import solve_raw_for_display
+from .display_value import resolve_continuous_write
 
 
 _PARENT_KINDS = ("track", "return", "master")
@@ -887,62 +887,6 @@ def delete_handler(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_continuous(
-    param: Any, *, value: Any, value_display: str | None, parameter_name: str,
-) -> float:
-    """Resolve a continuous write to the raw float to assign to ``param.value``.
-
-    Supply EXACTLY ONE of ``value`` (raw, range-checked against
-    [param.min, param.max]) or ``value_display`` (display units like "-18 dB",
-    inverted via ``str_for_value``). Live exposes no string->value inverse on
-    DeviceParameter, so the numeric inversion lives in
-    ``handlers.display_value``. Shared by ``set_parameter`` and
-    ``set_parameter_in_rack`` so the continuous-write contract — exactly-one,
-    range-check, and display inversion — is identical on both.
-    """
-    if (value is None) == (value_display is None):
-        raise ValueError(
-            f"set continuous {parameter_name!r} with exactly one of `value` "
-            "(raw, in [param.min, param.max]) or `value_display` (display units "
-            "like '-18 dB', '3:1')"
-        )
-
-    if value_display is not None:
-        if bool(getattr(param, "is_quantized", False)):
-            raise ValueError(
-                f"parameter {parameter_name!r} is an enum (is_quantized=True); "
-                "use value_type='enum' with `value`, not `value_display`"
-            )
-        str_for_value = getattr(param, "str_for_value", None)
-        if not callable(str_for_value):
-            raise ValueError(
-                f"parameter {parameter_name!r} exposes no str_for_value; set it "
-                "via the normalized `value`"
-            )
-        return solve_raw_for_display(
-            value_display,
-            p_min=float(getattr(param, "min", 0.0)),
-            p_max=float(getattr(param, "max", 1.0)),
-            str_for_value=str_for_value,
-            parameter_name=parameter_name,
-        )
-
-    try:
-        coerced = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"value_type='continuous' requires a numeric value, got {value!r}"
-        ) from exc
-    p_min = float(getattr(param, "min", 0.0))
-    p_max = float(getattr(param, "max", 1.0))
-    if not (p_min <= coerced <= p_max):
-        raise ValueError(
-            f"value {coerced} out of range [{p_min}, {p_max}] for "
-            f"parameter {parameter_name!r}"
-        )
-    return coerced
-
-
 def _attach_achieved_display(result: dict[str, Any], param: Any) -> None:
     """Echo the achieved display string (``str_for_value`` of what was written).
 
@@ -1076,7 +1020,7 @@ def set_parameter_handler(
         normalized [0,1] for many params), written via ``parameter.value``;
       * ``value_display`` — display units as a string ("-18 dB", "3:1",
         "20 ms"), inverted to the raw value via the parameter's
-        ``str_for_value`` curve (via ``_resolve_continuous`` →
+        ``str_for_value`` curve (via ``resolve_continuous_write`` →
         ``display_value.solve_raw_for_display``). Lets a caller
         express a musical target without reverse-engineering the normalized
         mapping.
@@ -1147,7 +1091,7 @@ def set_parameter_handler(
         new_value: float = float(items.index(value))
         target_param.value = new_value
     else:
-        target_param.value = _resolve_continuous(
+        target_param.value = resolve_continuous_write(
             target_param, value=value, value_display=value_display,
             parameter_name=parameter_name,
         )
@@ -2021,7 +1965,7 @@ def set_parameter_in_rack_handler(
     nested_device_position, parameter_name). Reuses the
     continuous-vs-enum dispatch logic from set_parameter_handler so
     the write semantics match exactly — including the ``value_display``
-    display-units path and raw-range validation (via ``_resolve_continuous``).
+    display-units path and raw-range validation (via ``resolve_continuous_write``).
     Value is schema-permissive (str) and coerced per value_type.
     """
     if value_type not in ("continuous", "enum"):
@@ -2073,7 +2017,7 @@ def set_parameter_in_rack_handler(
             ) from None
         param.value = float(idx)
     else:
-        param.value = _resolve_continuous(
+        param.value = resolve_continuous_write(
             param, value=value, value_display=value_display,
             parameter_name=parameter_name,
         )

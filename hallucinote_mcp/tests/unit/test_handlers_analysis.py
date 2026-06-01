@@ -530,3 +530,172 @@ def test_analyze_handler_emits_skip_when_no_db_intent(synthetic_song: Path):
                     if s["kind"] == "reverb_verification"]
     assert len(reverb_skips) == 1
     assert "set_send_intended_rt60" in reverb_skips[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# extract_structure_handler — raw structural-dump tier
+# ---------------------------------------------------------------------------
+
+
+def _seed_full_song(db_path: Path, slug: str) -> None:
+    """Populate a song DB with one of each structural element so the
+    extract handler's nesting is exercised end-to-end: a track with a clip
+    (two notes), a device (one parameter), an arrangement placement, a
+    return, a send, a section, a cue point, and tempo/meter rows.
+    """
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Extract Test", key="E min")
+        M.add_tempo_point(conn, song_id=song_id, start_bar=1.0, tempo_bpm=120.0)
+        M.create_section(
+            conn, song_id=song_id, name="A", start_bar=1.0, end_bar=5.0
+        )
+        M.add_cue_point(conn, song_id=song_id, position_bar=1.0, name="Top")
+        ret_id = M.create_return(conn, song_id=song_id, name="A-Reverb", position=0)
+        track_id = M.create_track(
+            conn, song_id=song_id, track_index=1, name="Lead"
+        )
+        clip_id = M.create_clip(
+            conn, track_id=track_id, slot=0, length_beats=4.0, name="riff"
+        )
+        M.insert_notes(
+            conn,
+            clip_id=clip_id,
+            notes=[
+                {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0,
+                 "velocity": 100},
+                {"pitch": 64, "start_beats": 1.0, "duration_beats": 1.0,
+                 "velocity": 90},
+            ],
+        )
+        M.add_arrangement_clip(
+            conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
+            start_bar=1.0, end_bar=2.0,
+        )
+        M.set_send_level(
+            conn, from_track_id=track_id, to_return_id=ret_id, level=0.3
+        )
+        chain_id = M.create_device_chain(conn, parent_track_id=track_id, position=0)
+        device_id = M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Reverb",
+            display_name="Reverb",
+        )
+        M.set_device_parameter(
+            conn, device_id=device_id, name="Decay Time", value_display="2.0 s",
+            value_normalized=0.5,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def populated_song(tmp_path: Path, monkeypatch):
+    """A song dir whose DB carries one of every structural element, with the
+    handler's DB resolver redirected at it. Returns the slug."""
+    slug = "extract-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    _seed_full_song(db_path, slug)
+
+    def _fake_resolve_db_path(s, **_):
+        if s != slug:
+            return Path(tmp_path / "songs" / s / f"{s}.db")  # forced miss
+        return db_path
+
+    monkeypatch.setattr(analysis_handlers, "resolve_db_path", _fake_resolve_db_path)
+    return slug
+
+
+def test_extract_returns_full_nested_structure(populated_song: str):
+    result = analysis_handlers.extract_structure_handler(
+        None, song_slug=populated_song
+    )
+    assert result["song_slug"] == populated_song
+    extract = result["extract"]
+    assert set(extract) == {
+        "song", "tempo_map", "time_signature_map", "sections",
+        "cue_points", "tracks", "returns",
+    }
+    assert extract["song"]["name"] == populated_song
+    assert extract["song"]["key"] == "E min"
+    assert len(extract["sections"]) == 1
+    assert extract["sections"][0]["name"] == "A"
+    assert len(extract["cue_points"]) == 1
+    assert len(extract["tempo_map"]) == 1
+    assert extract["tempo_map"][0]["tempo_bpm"] == 120.0
+
+    assert len(extract["tracks"]) == 1
+    track = extract["tracks"][0]
+    assert {"clips", "arrangement_clips", "devices", "sends"} <= set(track)
+    assert track["name"] == "Lead"
+    assert len(track["clips"]) == 1
+    assert len(track["arrangement_clips"]) == 1
+    assert len(track["sends"]) == 1
+    assert track["sends"][0]["level"] == 0.3
+    assert len(track["devices"]) == 1
+    device = track["devices"][0]
+    assert device["display_name"] == "Reverb"
+    assert len(device["parameters"]) == 1
+    assert device["parameters"][0]["name"] == "Decay Time"
+
+    assert len(extract["returns"]) == 1
+    assert extract["returns"][0]["name"] == "Reverb"
+    assert extract["returns"][0]["devices"] == []
+
+
+def test_extract_includes_exact_note_timings(populated_song: str):
+    # The cliff tier: compose-review is blind to exact note timings; the
+    # extract must carry them so the judge can read phase relationships.
+    result = analysis_handlers.extract_structure_handler(
+        None, song_slug=populated_song
+    )
+    notes = result["extract"]["tracks"][0]["clips"][0]["notes"]
+    assert [n["pitch"] for n in notes] == [60, 64]
+    assert [n["start_beats"] for n in notes] == [0.0, 1.0]
+    assert [n["velocity"] for n in notes] == [100, 90]
+    # Notes round-trip through get_notes_for_clip — tags deserialized to a list.
+    assert all(isinstance(n["tags"], list) for n in notes)
+
+
+def test_extract_is_json_serializable(populated_song: str):
+    # The judge consumes the extract as a JSON file; every value must
+    # serialize (no raw sqlite3.Row leaking through).
+    result = analysis_handlers.extract_structure_handler(
+        None, song_slug=populated_song
+    )
+    json.dumps(result)  # raises TypeError if any Row survived
+
+
+def test_extract_teaches_when_song_db_missing(populated_song: str):
+    with pytest.raises(ValueError, match="no song DB"):
+        analysis_handlers.extract_structure_handler(
+            None, song_slug="nonexistent-slug"
+        )
+
+
+def test_extract_bare_song_has_empty_collections(tmp_path: Path, monkeypatch):
+    # A song with no tracks/sections still returns the full key set.
+    slug = "bare-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        M.create_song(conn, name=slug, title="Bare")
+        conn.commit()
+    finally:
+        conn.close()
+
+    def _fake_resolve_db_path(s, **_):
+        return db_path
+
+    monkeypatch.setattr(analysis_handlers, "resolve_db_path", _fake_resolve_db_path)
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    extract = result["extract"]
+    assert extract["tracks"] == []
+    assert extract["sections"] == []
+    assert extract["returns"] == []
+    assert extract["cue_points"] == []
+    assert extract["song"]["name"] == slug

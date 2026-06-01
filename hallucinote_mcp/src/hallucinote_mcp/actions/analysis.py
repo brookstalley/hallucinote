@@ -100,6 +100,53 @@ register(
 register(
     Action(
         tool="ableton_analysis",
+        name="extract",
+        description=(
+            "Return a raw structural dump of a song straight from its "
+            "Hallucinote DB — tracks, clips, notes (exact pitch / "
+            "start_beats / duration / velocity), sections, device chains + "
+            "parameters, arrangement-clip placements, sends, returns, cue "
+            "points, and the tempo / time-signature maps. This is the "
+            "score-as-data tier the audio + compose analyzers can't see "
+            "(phase relationships, exact note timings); read it directly "
+            "rather than hand-querying the sqlite DB. Read-only — never "
+            "touches Live, never mutates."
+        ),
+        params=(
+            ParamSpec(
+                name="song_slug",
+                type="str",
+                description=(
+                    "Hallucinote song slug — directs the dump at "
+                    "songs/<slug>/'s DB."
+                ),
+            ),
+        ),
+        handler=analysis_handlers.extract_structure_handler,
+        runs_server_side=True,
+        example=(
+            "ableton_analysis(action='extract', song_slug='reich-phase')"
+        ),
+        tips=(
+            "Returns {song_slug, extract}. extract has top-level keys song, "
+            "tempo_map, time_signature_map, sections, cue_points, tracks, "
+            "returns. Each track nests clips (with notes), arrangement_clips, "
+            "devices (with parameters), and sends; each return nests devices.",
+            "Devices are top-level-chain only — nested rack chains aren't "
+            "flattened in (a song using Instrument/Audio-Effect Racks reports "
+            "the rack container, not the devices inside it).",
+            "Built for the musical-work eval judge's --db-extract input: when "
+            "a request outran the compose/mix analyzers (a known-gap or novel "
+            "result), save this extract to JSON and pass it so the judge can "
+            "evaluate what the analyzer can't read.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_analysis",
         name="get_latest_report",
         description=(
             "Return the most recent MixReport JSON for a song without "

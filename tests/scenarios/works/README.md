@@ -32,15 +32,17 @@ Every rubric line is prefixed with the surface it is scored against:
      raw DB extract where the request outran the analyzers — `judge-prompt`
      takes both `--compose-review` and `--db-extract`.
 
-     The extract is just text the judge reads, so the producer is open. Today:
-     query the song's sqlite DB through `hallucinote.db.queries`
-     (tracks / clips / notes / sections / devices). The natural increment — and
-     the consistent home with how the agent reaches everything else — is to
-     surface a song **structural dump as an MCP action/resource** alongside
-     `ableton_analysis`, so the same extract is one tool call rather than a
-     bespoke script. Deferred until the cliff briefs (#5 phase piece, #6 art
-     song) actually need it; the thin slice (`lofi-study`) is a supported
-     `deliver` case that compose-review reads on its own.
+     The extract is just text the judge reads. Produce it with one tool call:
+     `ableton_analysis(action='extract', song_slug=<slug>)` returns
+     `{song_slug, extract}`, where `extract` is the raw structural dump
+     (tracks / clips / notes-with-exact-timings / sections / device chains /
+     arrangement placements / sends / returns / cues / tempo+meter maps) —
+     read straight from the song's DB, never touching Live. This is the
+     consistent home with how the agent reaches everything else, alongside
+     `analyze` and `get_latest_report` on the same tool. Save its `extract`
+     object to JSON and pass it as `--db-extract`. (The `lofi-study` slice is
+     a supported `deliver` case that compose-review reads on its own — the
+     extract tier is for the cliff briefs `reich-phase` and `art-song`.)
 
   Pushing to Live is optional throughout; a populated DB is enough to score.
 
@@ -88,9 +90,12 @@ Run from repo root.
    you want the optional mix surface.
 4. **Score the artifact** (tiered): run `/compose-review <slug>` and capture its
    output. For a request that outran the analyzers (a `known-gap` or novel
-   result), also capture a **raw DB extract** of the produced song
-   (tracks / clips / notes / sections / devices via `hallucinote.db.queries`) so
-   the judge can evaluate what the analyzer can't read.
+   result), also capture a **raw DB extract** of the produced song via
+   `ableton_analysis(action='extract', song_slug=<slug>)` — one tool call
+   returns the structural dump (tracks / clips / notes-with-exact-timings /
+   sections / device chains / arrangement / sends / returns / cues) so the
+   judge can evaluate what the analyzer can't read. Save its `extract` object
+   to a JSON file for `--db-extract`.
 5. **Render the judge prompt**:
    `python -m tools.song_eval judge-prompt <id> --transcript t.txt --compose-review c.txt [--db-extract d.txt]`.
    Spawn a **judge subagent**; it returns a JSON result. (Omit both artifact

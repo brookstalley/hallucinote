@@ -29,8 +29,8 @@ Every genre flip is a deliberate ENERGY DISCONTINUITY — never smoothed. The
 convention-break decouples Amp TIMBRE from groove TIME-FEEL (a reggae groove
 through a HEAVY amp). The integration QUOTES the registered polyrhythm motif
 (recapitulation) and resolves it into a `Chord.split` "both-at-once" sonority
-(both F#/F and C#/C); the outro fragments + double-times the no-time hook into the
-reggae groove (the stress, at peace).
+(both F#/F and C#/C); the outro AUGMENTS (slows) the no-time hook and lifts it
+in-key into the reggae groove (the stress, at peace).
 
 The Rhythm Gtr is the deliberate exception to the per-section clips: it stays
 MONOLITHIC — one session clip spanning the whole song (736 beats / 184 bars) —
@@ -55,6 +55,8 @@ from hallucinote.generators import bass as BG, drums as DG, harmony as HG
 from hallucinote.generators import variations as V
 from hallucinote.generators.kit import Kit
 from hallucinote.melody import analyze_arrangement
+from hallucinote.performance.realization import (
+    BREATH, HUMAN, PerformanceProfile, apply_profile)
 from hallucinote.theory import Chord, Progression, lint_harmony
 
 # The monophonic melodic line to read with the melody lens (exclude drums + the
@@ -167,9 +169,16 @@ SECTION_HARMONY: dict[str, Progression] = {
     "integration": INTEG, "outro": OUTRO_H,
 }
 
-# The polymodal "both-at-once" sonority — an Em7 carrying BOTH the Dorian F#/C#
-# AND the Phrygian F/C. Resolves the intro's polyrhythm cloud at the climax peak.
-FUSION_CHORD = Chord.of(4, "m7", split=[6, 5, 1, 0], label="both-at-once")  # Em7 + F#/F + C#/C
+# The polymodal "both-at-once" sonority, built as the UNION of the two worlds via
+# `Chord.split_chord`: an Em coloured Dorian (the F# 9th + C# 13th) fused with the
+# same Em coloured Phrygian (the F ♭9 + C ♭13). split_chord keeps the Dorian Em as
+# primary and folds Phrygian's extra pitch-classes (F, C) in as `split`, so the lens
+# accepts notes from EITHER world as in-chord. Resolves the intro's polyrhythm cloud
+# at the climax peak. (Same pitch-set as the old literal Em7+[F#,F,C#,C], but now
+# self-documenting as Dorian ⊕ Phrygian rather than a flat pitch-class list.)
+_EM_DORIAN = Chord.of(4, (0, 3, 7, 10, 2, 9), label="Em(Dorian)")      # E G B D + F#(9) + C#(13)
+_EM_PHRYGIAN = Chord.of(4, (0, 3, 7, 10, 1, 8), label="Em(Phrygian)")  # E G B D + F(♭9) + C(♭13)
+FUSION_CHORD = Chord.split_chord(_EM_DORIAN, _EM_PHRYGIAN, label="both-at-once")
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +191,32 @@ def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
     return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
 
 
-def _note(pitch: int, start: float, dur: float, vel: int) -> dict:
+# Composer-declared reverb decay intent (decisions/05 + captured_session.json: the
+# Plate is a long dub tail, the Room a tight metal punch). Quantifying the snapshot's
+# qualitative reverb _notes lets the audio analyzer VERIFY the realized RT60 against
+# intent — without it, reverb verification is SKIPPED. DubDelay is an Echo (a delay),
+# not a reverb, so it carries no RT60 intent.
+_INTENDED_RT60_S = {"Plate": 3.0, "Room": 0.8}
+
+
+def _declare_reverb_intent(conn, song_id: str) -> None:
+    """Declare intended RT60 on every audible send into the reverb returns."""
+    for s in Q.get_sends_for_song(conn, song_id):
+        rt60 = _INTENDED_RT60_S.get(s["return_name"])
+        if rt60 is not None and s["level"] > 0.0:
+            M.set_send_intended_rt60(
+                conn, from_track_id=s["from_track_id"],
+                to_return_id=s["to_return_id"], intended_rt60_s=rt60,
+                actor="build",
+                reason="composer-declared reverb decay intent (decisions/05)")
+
+
+def _note(pitch: int, start: float, dur: float, vel: int,
+          tags: list[str] | None = None) -> dict:
+    # Hand-authored content carries semantic tags too (matching the generators'
+    # convention) so the song's signature lines stay addressable by tag-based ops.
     return {"pitch": pitch, "start_beats": start,
-            "duration_beats": dur, "velocity": vel}
+            "duration_beats": dur, "velocity": vel, "tags": tags or []}
 
 
 def _kit_for_drums(conn, drum_track_id: str) -> Kit:
@@ -225,7 +257,7 @@ def _reggae_lead_chillin(length_beats: float) -> list[dict]:
     for cycle in range(int(length_beats // pattern_len)):
         offset = cycle * pattern_len
         for p, t, d, v in melody:
-            notes.append(_note(p, offset + t, d, v))
+            notes.append(_note(p, offset + t, d, v, tags=["lead", "reggae"]))
     return notes
 
 
@@ -242,7 +274,8 @@ _NO_TIME_CYCLE = [
 
 def _no_time_motif() -> list[dict]:
     """The 'NO TIME' hook as a single 0-based cycle — the referenceable motif."""
-    return [_note(p, t, d, v) for p, t, d, v in _NO_TIME_CYCLE]
+    return [_note(p, t, d, v, tags=["lead", "metal", "no-time"])
+            for p, t, d, v in _NO_TIME_CYCLE]
 
 
 def _metal_lead_no_time(length_beats: float) -> list[dict]:
@@ -251,7 +284,7 @@ def _metal_lead_no_time(length_beats: float) -> list[dict]:
     for cycle in range(int(length_beats // 8.0)):
         offset = cycle * 8.0
         for p, t, d, v in _NO_TIME_CYCLE:
-            notes.append(_note(p, offset + t, d, v))
+            notes.append(_note(p, offset + t, d, v, tags=["lead", "metal", "no-time"]))
     return notes
 
 
@@ -279,7 +312,8 @@ def _poly_voice(pitch: int, interval: float, start_beat: float, end_beat: float,
     notes: list[dict] = []
     t = start_beat
     while t < end_beat - 1e-9:
-        notes.append(_note(pitch, round(t, 6), _POLY_DUR, vel_at(t)))
+        notes.append(_note(pitch, round(t, 6), _POLY_DUR, vel_at(t),
+                           tags=["polyrhythm", "organ"]))
         t += interval
     return notes
 
@@ -346,12 +380,14 @@ def _metal_fill(kit: Kit, bar_start_beat: float) -> list[dict]:
     present; a low-tom accent only if the kit has one."""
     snare = kit.snare
     notes = [
-        _note(snare, bar_start_beat + 3.25 + i * 0.25, 0.12, 105 + i * 5)
+        _note(snare, bar_start_beat + 3.25 + i * 0.25, 0.12, 105 + i * 5,
+              tags=["drums", "metal", "fill"])
         for i in range(3)
     ]
     tom = kit.try_pitch_of("tom_lo")
     if tom is not None:
-        notes.append(_note(tom, bar_start_beat + 3.75, 0.18, 115))
+        notes.append(_note(tom, bar_start_beat + 3.75, 0.18, 115,
+                           tags=["drums", "metal", "fill"]))
     return notes
 
 
@@ -430,7 +466,7 @@ def _steel_island(bars: int) -> list[dict]:
     for c in range(int(bars * BEATS_PER_BAR // cycle)):
         base = c * cycle
         for p, t, d, v in _STEEL_FIGURE:
-            notes.append(_note(p, base + t, d, v))
+            notes.append(_note(p, base + t, d, v, tags=["steel", "reggae"]))
     return notes
 
 
@@ -481,7 +517,7 @@ def _integration_organ(motif_notes: list[dict], bars: int) -> list[dict]:
     for strike in range(2):  # two sustained hits across the last 8 bars
         at = peak_start + strike * 16.0
         for p in FUSION_CHORD.voicing(register=4):
-            notes.append(_note(p, at, 16.0, 58))
+            notes.append(_note(p, at, 16.0, 58, tags=["organ", "fusion"]))
     return notes
 
 
@@ -514,6 +550,42 @@ def _octave_down(notes: list[dict]) -> list[dict]:
     return notes + V.transpose(notes, -12)
 
 
+# ---------------------------------------------------------------------------
+# 1/f breathing (apply_profile) — the performance-authoring layer. Reggae + the
+# blend pockets BREATHE: correlated 1/f timing+velocity laid over the generators'
+# baked feel, so the perf lens reads them HUMAN (a constant offset reads mechanical;
+# white jitter reads sloppy — only 1/f structure reads human). Metal stays machine-
+# tight: its parts are never passed to `_breathe` (decisions/07 — tight is correct).
+# Each (section, part) draws its own seed so parts breathe independently — a band,
+# not one locked performer. k=1.0 = the presets as-authored; tune by ear post-render.
+# ---------------------------------------------------------------------------
+
+# Per-part base seed; the section's index is added so each section is a fresh "take".
+_PART_SEED = {"01 Drums": 1000, "02 Bass": 2000, "03 Rhythm Gtr": 3000,
+              "04 Organ": 4000, "05 Lead": 5000, "06 Steel": 6000}
+_SECTION_INDEX = {name: i for i, (name, *_rest) in enumerate(ARC)}
+
+# The reggae rhythm-section + hook pocket: drums/bass/organ on HUMAN, the signature
+# lead on BREATH (subtle — humanize the delivery, don't wobble the hook itself).
+_REGGAE_BREATH = {"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": HUMAN, "05 Lead": BREATH}
+
+
+def _seed_for(section: str, track: str) -> int:
+    return _PART_SEED[track] + _SECTION_INDEX[section]
+
+
+def _breathe(layers: dict[str, list[dict]], *, section: str,
+             plan: dict[str, PerformanceProfile]) -> dict[str, list[dict]]:
+    """Apply 1/f breathing to the named tracks of a section's layer map, each with a
+    deterministic per-(section, track) seed. Tracks absent from ``plan`` stay tight
+    (metal parts are never passed). Pure: returns a new dict, inputs untouched."""
+    out = dict(layers)
+    for name, profile in plan.items():
+        if name in out:
+            out[name] = apply_profile(out[name], profile, seed=_seed_for(section, name))
+    return out
+
+
 def _build_arrangement(kit: Kit) -> Arrangement:
     """Author the full through-composed arc on the arrangement + harmony modules.
 
@@ -539,22 +611,36 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     # Intro: sparse rhythm section under the hand-authored polyrhythm build.
     intro = reg("intro", sparse=True)
     intro["04 Organ"] = _polyrhythm_intro(specs["intro"][2])
+    # The dawn cloud breathes subtly (organic sunrise); the integration recap of
+    # this same motif stays TIGHT (the mechanical climax). Sparse intro = no lead.
+    intro = _breathe(intro, section="intro",
+                     plan={"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": BREATH})
 
-    verse1 = reg("verse1")
-    chorus1 = met("chorus1")
+    verse1 = _breathe(reg("verse1"), section="verse1", plan=_REGGAE_BREATH)
+    chorus1 = met("chorus1")  # metal — stays machine-tight (never breathed)
 
     # verse2: richer harmony (its own progression) + steel ENTERING (add-delta).
     verse2 = vary(reg("verse2"), add={"06 Steel": _steel_island(specs["verse2"][2])})
+    verse2 = _breathe(verse2, section="verse2",
+                      plan={**_REGGAE_BREATH, "06 Steel": HUMAN})
     # chorus2: darker harmony (own progression) + lead octave-doubled-down (escalation).
-    chorus2 = vary(met("chorus2"), transform={"05 Lead": _octave_down})
+    chorus2 = vary(met("chorus2"), transform={"05 Lead": _octave_down})  # metal — tight
 
     # development: the worlds collide rhythmically (feel trades bar-by-bar, derived
     # from the DEV harmonic map — see _dev_collision), not just harmonically.
     development = _dev_collision(kit, SECTION_HARMONY["development"], specs["development"][2])
+    # Only the persistent reggae BED breathes (organ bubble + chillin lead); the
+    # bar-by-bar collision drums/bass stay as authored — the contrast IS the point.
+    development = _breathe(development, section="development",
+                           plan={"04 Organ": HUMAN, "05 Lead": BREATH})
 
     # break: the hinge — reggae groove over the Em/C#↔Em/C slash vote (the bass
-    # votes the mode), Amp inverted to HEAVY (metal timbre on reggae time).
-    break_ = reg("break")
+    # votes the mode), Amp inverted to HEAVY (metal timbre on reggae time). The bass
+    # stays TIGHT here: the slash-vote IS the structural gesture, and at the fast
+    # 4-beat harmonic rhythm breathing it only smears the chord-at-onset read (like
+    # metal, its precision at the boundaries is the authorship). Bed/lead still breathe.
+    break_ = _breathe(reg("break"), section="break",
+                      plan={"01 Drums": HUMAN, "04 Organ": HUMAN, "05 Lead": BREATH})
 
     # integration: metal engine + the polyrhythm recap resolving into the fusion split.
     integration = met("integration")
@@ -572,6 +658,11 @@ def _build_arrangement(kit: Kit) -> Arrangement:
         "06 Steel": _steel_island(ob),
         "05 Lead":  _outro_lead(ob, no_time.notes, OUTRO_H.mode, OUTRO_H.key_pc),
     }
+    # The synthesis pocket — the whole reggae bed breathes together (distinct seeds):
+    # a band arriving somewhere new, not a grid with the drag merely halved.
+    outro = _breathe(outro, section="outro",
+                     plan={"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": HUMAN,
+                           "06 Steel": HUMAN, "05 Lead": BREATH})
 
     layers_by_name = {
         "intro": intro, "verse1": verse1, "chorus1": chorus1, "verse2": verse2,
@@ -609,8 +700,11 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
         section_bars = sec.end_bar - sec.start_bar
         prog = sec.progression  # resolved per section by plan()
         if sec.genre == "reggae":
-            all_notes.extend(HG.reggae_skank(
-                prog, bars=section_bars, start_beat=section_start_beats, register=3))
+            skank = HG.reggae_skank(
+                prog, bars=section_bars, start_beat=section_start_beats, register=3)
+            # The hand-on-strings skank breathes; metal power-chord chunks stay tight.
+            skank = apply_profile(skank, HUMAN, seed=_seed_for(sec.name, "03 Rhythm Gtr"))
+            all_notes.extend(skank)
         else:
             all_notes.extend(HG.palm_mute_power_chords(
                 prog, bars=section_bars, start_beat=section_start_beats, register=3))
@@ -690,6 +784,10 @@ def build(reset: bool = False) -> str:
                 song_title="Sun Zone / Stuff Done", song_key="Em",
                 actor="sync", reason="initial capture replay",
             )
+
+            # Reverb intent: declare the Plate (long dub) / Room (tight metal)
+            # decay times so the audio analyzer can verify them (decisions/05).
+            _declare_reverb_intent(conn, song_id)
 
             # Score-half: tempo + meter (constant across the song).
             M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")

@@ -86,18 +86,24 @@ resolution from this recorded intent, with no one-off hacks.
   the synthesis-feel bounce, and the outro energy are reasoned first-pass values —
   to be confirmed and tuned **by ear** at the next render. The *intent and the
   mechanism* (this document) are the durable part; the numbers are the tunable surface.
-- **Humanness (render-gated — from the 2026-05-30 microtiming spot-check):** the
-  per-part feel currently applies a CONSTANT offset (a uniformly *shifted* grid:
-  reggae drags +0.02–0.06 beat, metal sits tight, the development trades both,
-  the outro halves the drag). The DIRECTION is genre-true and the collision +
-  synthesis are real in the note data — but the offsets don't *breathe* (no
-  per-hit micro-variation), and two parts are dynamically flat (the organ bubble:
-  one velocity across 384 notes; the metal pedal bass: one velocity — defensible
-  for palm-mutes). Metal staying tight is correct (the genre is machine-tight).
-  For the reggae + blend to read as *performed* rather than *programmed*, those
-  parts want subtle AUTHORED variation around the characteristic offset/velocity —
-  looseness, never random jitter ("nothing sloppy"). Tune by ear; ties to backlog
-  GEN-2T8M (humanize/groove module — revisit) and ARR-3R8F (the rhythm axis).
+- **Humanness — RESOLVED 2026-06-01 (the `apply_profile` 1/f breathing pass).**
+  The constant-offset friction logged here is closed. `build.py` now lays a
+  `performance.realization.apply_profile` breathing pass over the baked feel:
+  **HUMAN** (timing σ≈0.020 beat, velocity σ≈8) on the reggae drums / bass / organ /
+  rhythm-gtr skank / steel, **BREATH** (subtler) on the signature lead and the intro
+  dawn-cloud — each part on its own seed so they breathe independently (a band, not a
+  locked grid). The breathing is **1/f-correlated** (not white jitter), so the
+  symbolic performance lens now reads every reggae + blend part as **human** (was
+  mechanical/sloppy), and the **flat organ is de-flattened** (the velocity breathing
+  killed that finding). Two deliberate exceptions stay tight: **metal** (chorus1/2,
+  integration — the genre is machine-tight) and the **break's slash-bass** (breathing
+  the Em/C#↔Em/C vote smeared the chord-at-onset read at the fast 4-beat harmonic
+  rhythm — precision there is the authorship). The only flat-dynamics finding left is
+  the metal pedal bass (intentional one-velocity palm mutes). The three perf-lens
+  regression tests were re-pointed from the old frictions to this resolved state.
+  Still render-gated: the magnitude dial `k` (currently 1.0 = presets as-authored)
+  is the by-ear knob for the next render. Closes the read↔author both-sides loop;
+  ties to the now-largely-addressed GEN-2T8M and to ARR-3R8F (the rhythm axis).
 - **Framework question:** whether rhythmic-collision / feel deserves a first-class
   *structural* representation in the arrangement model — the rhythm analog of the
   harmony axis (`ARR-1H9C`). For now it is expressed via the per-call feel mechanism

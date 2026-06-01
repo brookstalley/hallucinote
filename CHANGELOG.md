@@ -751,7 +751,8 @@ be informed by real user friction.
 _Historical context._ v0.9.0 is the first formally tagged release. Pre-
 tag work shipped through Waves 0–15 across `main` / `develop` between
 project inception and the V1 cumulative merge (commit `f4b6d58`,
-2026-05-20). Detailed wave-by-wave history lives in
-`docs/v1-build-plan.md`. The v1.0 CHANGELOG entry will absorb v0.9's
-content + the v1.0 additions (W11, W13-A, W16-A, release-prep R-1
+2026-05-20). Detailed wave-by-wave history lives in the git log
+(the original `docs/v1-build-plan.md` was removed after the V1 merge,
+per the post-merge build-plan cleanup). The v1.0 CHANGELOG entry absorbed
+v0.9's content + the v1.0 additions (W11, W13-A, W16-A, release-prep R-1
 exhaustive Critic sweep).

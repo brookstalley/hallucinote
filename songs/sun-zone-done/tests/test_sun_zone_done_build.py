@@ -652,10 +652,13 @@ def test_notes_match_baseline(build_module, built):
 
 
 # ---------------------------------------------------------------------------
-# Symbolic performance lens (phase 2a) — the render-free read side, run over the
-# authored arrangement. Locks the documented frictions (decisions/07) as
-# regressions: the flat organ, the "feels-quantized" mechanical timing, and the
-# white-jitter (not 1/f) drum humanization the design warns against.
+# Symbolic performance lens (phase 2a) over the authored arrangement, AFTER the 1/f
+# breathing pass (apply_profile). The both-sides loop, REALIZED: what decisions/07
+# logged as the "Humanness" pending friction (flat organ, feels-quantized timing,
+# constant-offset drums that read sloppy) is now resolved. These lock the new,
+# stronger state: the reggae + blend pockets read HUMAN, metal stays machine-tight
+# (mechanical), the break's slash-bass stays tight on purpose, and the only flat
+# part left is the deliberate metal pedal bass (palm-mute single velocity).
 # ---------------------------------------------------------------------------
 
 
@@ -676,28 +679,47 @@ def lens_report(build_module, built):
         conn.close()
 
 
-def test_performance_lens_reproduces_the_flat_organ(lens_report):
-    # decisions/07: the organ plays at essentially one velocity. The lens surfaces
-    # it as a flat-dynamics coaching question (info — never a verdict).
+def test_performance_lens_breathing_de_flattens_the_organ(lens_report):
+    # decisions/07's flat-organ friction is RESOLVED by the breathing pass: the
+    # reggae organ now carries velocity breathing and reads human, so it no longer
+    # surfaces a flat-dynamics finding. The only flat-dynamics findings left are the
+    # metal pedal bass (deliberate one-velocity palm mutes — never breathed).
     organ_flat = [f for f in lens_report.findings
                   if f.kind == "flat-dynamics" and f.track == "04 Organ"]
-    assert organ_flat, "the flat organ should surface as a flat-dynamics finding"
-    assert all(f.severity == "info" for f in organ_flat)
+    assert not organ_flat, "breathing should de-flatten the organ (no flat-dynamics)"
+    flat_tracks = {f.track for f in lens_report.findings if f.kind == "flat-dynamics"}
+    assert flat_tracks <= {"02 Bass"}, (
+        f"only the intentional metal pedal bass should read flat; got {flat_tracks}")
 
 
-def test_performance_lens_flags_the_feels_quantized_mechanical_timing(lens_report):
-    # decisions/07's "feels-quantized" friction: many parts sit dead on the grid.
+def test_performance_lens_keeps_metal_machine_tight(lens_report):
+    # The mechanical-timing reads are now the CORRECT ones — metal stays tight, never
+    # breathed. Every mechanical-timing finding is a metal section (chorus1/2,
+    # integration) or the break's slash-bass (kept tight so the Em/C#↔Em/C vote reads
+    # clean at the fast harmonic-rhythm boundaries). No reggae bed part reads mechanical.
+    metal_sections = {"chorus1", "chorus2", "integration"}
     mech = [f for f in lens_report.findings if f.kind == "mechanical-timing"]
-    assert len(mech) >= 5
+    assert mech, "metal parts must still read mechanical — tight is correct"
+    stray = [(f.section, f.track) for f in mech
+             if f.section not in metal_sections
+             and not (f.section == "break" and f.track == "02 Bass")]
+    assert not stray, f"unexpected mechanical (should be breathing) parts: {stray}"
 
 
-def test_performance_lens_reads_white_jitter_drums_as_sloppy_not_human(lens_report):
-    # The drums are humanized with white velocity+timing jitter, NOT 1/f-correlated
-    # structure — the lens correctly reads that as sloppy, not human (the design's
-    # core point: random jitter is the discredited humanization model).
+def test_performance_lens_reads_breathed_drums_as_human_not_sloppy(lens_report):
+    # The breathing pass turns the reggae drums HUMAN (1/f-correlated), while the
+    # metal drums stay mechanical — and NO drum part reads sloppy anymore. The old
+    # constant-offset state that read sloppy is gone; this is the both-sides loop
+    # (author breathing → lens reads human), the resolved state decisions/07 wanted.
     drum_parts = [p for s in lens_report.sections
                   for p in s.parts if p.track_name == "01 Drums"]
-    assert any(p.classification == "sloppy" for p in drum_parts)
+    assert drum_parts
+    assert not any(p.classification == "sloppy" for p in drum_parts), \
+        "no drum part should read sloppy after breathing"
+    assert any(p.classification == "human" for p in drum_parts), \
+        "reggae drums should read human (breathed)"
+    assert any(p.classification == "mechanical" for p in drum_parts), \
+        "metal drums should stay machine-tight"
 
 
 def test_performance_lens_never_blocks_the_build(lens_report):

@@ -362,6 +362,67 @@ sections only via explicit `/backlog update` calls.
 
   (migrated from legacy P6) Land per-chunk as appetite allows; not gating any chunk's completion.
 
+- **[ARR-7M3D]** Energy-realization is unmeasured in audio (declared curve vs rendered intensity) — measurement-coverage gap
+  `effort: M · impact: L · area: energy · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K`
+
+  **Both-sides gap (ARR-8P5K's own principle: "a dimension authored but unmeasured is half-built").** ENERGY is a first-class authored dimension — `Arrangement.section(..., energy=)` → `arr.energy_curve` (sun-zone-done declares 0.25→1.0 across 9 sections). The READ side is only *symbolic*: `/compose-review` reads whether the authored curve "builds, breathes, peaks" from build.py/arrangement (SKILL.md L61) — it never checks the audio. The MixReport measures per-section loudness (`audio/analyze.py` `_measure_sections` → `SectionMetrics`) but **nothing joins the two**: no tool confirms the declared energy[section] is actually realized as rendered intensity (loudness + spectral density + onset rate). A section authored energy=0.9 that renders quieter/sparser than an energy=0.6 section ships unflagged — the exact "is the chorus actually lifting?" question, gone dark on the audio side. Harmony (ARR-1H9C conformance lint) and performance (perf lens) both got the realization check; energy did not.
+
+  **Verifiable signal:** a read-side check exists that takes the arrangement's `energy_curve` + a MixReport and reports per-section declared-vs-measured intensity divergence (rank-correlation of declared energy against measured loudness/density, flagging inversions), wired into `/mix-review`; OR a decision-record states energy-realization stays a by-ear judgment with rationale. Today: no reference to the authored `energy_curve` anywhere in `src/hallucinote/audio/` — the curve never reaches the audio analyzer (the incidental `energy` hits there are all acoustic/spectral energy, a different quantity).
+
+- **[ARR-9K4T]** Recurrence/form has no read-side — motif recall & recapitulation are authored but unverifiable — measurement-coverage gap
+  `effort: M · impact: L · area: recurrence · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K, MEL-1A7K`
+
+  **Both-sides gap.** RECURRENCE/FORM is a first-class authored dimension — `Arrangement.motif()` + `vary()` + reference — and recapitulation is load-bearing in sun-zone-done (the integration QUOTES the registered `polyrhythm-cloud` motif; the outro AUGMENTS the `no-time-stab` motif via `V.augment`). The AUTHORING side is shipped; the READ side does not exist. **No tool verifies a registered motif was actually recalled, detects a recapitulation, or measures motivic economy** (is the song built from a small recurring cell-set, or scattered?). The melody lens's motivic/n-gram reading is explicitly NOT-YET (`melody/lens.py:48-50`) and is line-level anyway; this gap is the *cross-instrument / arrangement-level* recurrence read (e.g. "the integration organ's notes ARE `shift`s of the polyrhythm motif — confirmed"). MEL-1A7K owns the melodic-LINE motivic-economy slice; this is the structural recurrence-realization sibling under ARR-8P5K.
+
+  **Verifiable signal:** a read-side that, given an arrangement, reports which registered motifs recur where (and as which variation: transpose/augment/invert/…) plus a motivic-economy summary, wired into `/compose-review`; OR a decision-record states recurrence-realization stays composer-owned with rationale. Today: no motif-recall / recapitulation reader exists in `src/hallucinote/` analysis or lens code (the few incidental `recur` substring hits are unrelated).
+
+- **[AUD-8H2M]** Time-varying automation (sends / volume / device-param flips) is authorable but its audio realization is unverifiable — measurement-coverage gap
+  `effort: M · impact: M · area: audio · source: user · added: 2026-06-01 · status: open · related: MSK-8R3D, ENV-1T9M, ARR-8P5K`
+
+  **Both-sides gap.** The framework authors time-varying envelopes — `M.create_enum_envelope` (sun-zone-done's Amp Type Clean↔Heavy genre flip), `generators.envelopes.volume_swell` / `sidechain_trigger`, and (planned) dynamic sends. The audio analyzer **cannot verify any of these were realized in the render**: `audio/levels.py:13-15` explicitly DEFERS volume automation ("a stem that ducks under one section reads slightly hot — deferred"); MSK-8R3D(a) notes the same static-fader caveat narrowly. So the song's single most audible gesture — the Amp Type flip into HEAVY at the metal sections and the break — is never confirmed to have happened in audio, and a dry-reggae/wet-metal dynamic send (decision 05, deferred) would be equally invisible. A time-varying mix/timbre move is authored-but-unmeasured.
+
+  **Verifiable signal:** a MixReport pass that windows a stem around a declared envelope breakpoint and confirms the expected change (level step for volume/send, spectral/timbre shift for an Amp/device-param flip), reporting realized-vs-declared; OR a decision-record scoping automation-realization out with rationale. Today: `audio/levels.py:15` ("volume automation … deferred"); no envelope-aware section windowing in `audio/analyze.py`.
+
+- **[SYN-4P2D]** First push of a >8-section song into a fresh default Live set hard-fails — set ships with only 8 scenes, push doesn't auto-create them, raw per-clip IndexError
+  `effort: S · impact: L · area: sync · source: user · added: 2026-06-01 · status: open`
+
+  **Recurring first-push trap (user, 2026-06-01: "a real gap that will bite us over and
+  over").** A default Ableton Live set ALWAYS ships with exactly 8 scenes, so the FIRST
+  push (auto-session, fresh set) of ANY song with >8 sections fails *deterministically*
+  at the `clips` phase — this is the common new-song path, not an edge case.
+  Hit live pushing sun-zone-done (9 sections) into a fresh default Live set (8 scenes,
+  2026-06-01). The `clips` phase creates one session clip per section in scene slots
+  1..N; if the set has fewer than N scenes, every section-N clip fails with
+  `ableton_clip('create') failed: IndexError: clip_index 9 out of range [1, 8]` (one per
+  affected track — here 5), halting `execute` at `clips` (4/10 phases). The push does
+  NOT create the scenes it needs, and the failure surfaces as N raw per-clip IndexErrors
+  rather than one actionable message. Workaround that unblocked it:
+  `ableton_scene(action='create')` to add the 9th scene, then re-run execute (idempotent).
+  Fix options (pick one): (a) the planner emits a `scenes` phase ensuring
+  `scene_count >= max section slot` before `clips`; (b) `clips` auto-creates a missing
+  slot on demand; (c) at minimum a pre-flight coherence check that fails fast with "song
+  needs N scenes; set has M — add N−M" instead of per-clip IndexErrors. **Verifiable
+  signal:** push a ≥9-section song into a default 8-scene set and it completes (or fails
+  with the single actionable message), not 5 raw IndexErrors.
+
+- **[RND-7K3M]** Render silently burns the full wait window when Live's audio engine is OFF — no pre-flight, no actionable cause (CRITICAL)
+  `effort: S · impact: L · area: render · source: user · added: 2026-06-01 · status: open`
+
+  **User-flagged CRITICAL (2026-06-01): "renders can fail because no audio engine, but it
+  doesn't tell you, so it takes a long time."** When Live's audio engine is OFF (e.g. the
+  output device vanished — headphones unplugged — Live shows "the audio engine is off" and
+  refuses to play), `ableton_render(action='render')` still arms, issues play, and WAITS
+  THE FULL transport window for `current_song_time` to reach `stop_at_beat`. The transport
+  never advances, so it burns the entire ~song-length wait (~4 min for a 184-bar song) and
+  returns `status='incomplete'` with only a vague "Live's audio thread may have stalled"
+  hint — never naming the real cause. Fix: PRE-FLIGHT the transport/engine before the long
+  wait — (a) after seek+play, confirm `current_song_time` advances within a short probe
+  (~1–2 s) and abort fast with "transport not advancing — is Live's audio engine on? (check
+  the output device / Options ▸ tick 'Audio Engine On')"; and/or (b) read the engine-on flag
+  from the LOM if exposed. Fail in seconds with the real cause, not minutes with a vague one.
+  **Verifiable signal:** start a render with the audio engine off → it aborts within a few
+  seconds naming the audio-engine cause, not after the full song-length window.
+
 ## Promoted
 
 _(no items)_

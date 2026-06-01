@@ -426,10 +426,30 @@ _SESSION_GITIGNORED_PATHS = (
     ".prawduct/.subagent-briefing.md",
     ".prawduct/.gates-waived",
     ".prawduct/.sync-pending",
+    ".prawduct/.advisories.json",
     ".prawduct/reflections.md",
     ".prawduct/sync-manifest.json",
     ".prawduct/artifacts/build-plan.md",
 )
+
+
+def _read_advisory_store(prawduct_dir: Path) -> dict:
+    """Read `.prawduct/.advisories.json` (the post-sync nag log).
+
+    Standalone read — product-hook ships into product repos without access to
+    tools/lib, so it cannot import advisory_store. Missing/unreadable/malformed
+    → empty store; never raises (briefing must not break on a bad file).
+    """
+    path = prawduct_dir / ".advisories.json"
+    if not path.is_file():
+        return {"schema_version": 1, "advisories": []}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": 1, "advisories": []}
+    if not isinstance(data, dict) or not isinstance(data.get("advisories"), list):
+        return {"schema_version": 1, "advisories": []}
+    return data
 
 
 def _untrack_session_files(project_dir: Path) -> list[str]:
@@ -1378,6 +1398,72 @@ def assemble_session_briefing(
         for adv in advisories:
             msg = adv.get("message", "template drift detected")
             lines.append(f"  - {msg}")
+
+    # ADVISORIES (post-sync) — v1.6.0 Phase 1. The per-clone nag log written by
+    # sync's probe step (`.prawduct/.advisories.json`). Read directly here
+    # because product-hook is standalone and cannot import tools/lib. Active
+    # advisories are listed priority-ordered (urgent→warn→info, then newest
+    # first), capped at 5. Empty active set with nothing newly resolved → omit
+    # the section entirely (spec §5.2 / A5 — no "0 active" noise). Phase 1
+    # ships an empty production probe roster, so this section stays silent
+    # until a feature registers a probe.
+    adv_store = _read_advisory_store(prawduct_dir)
+    adv_all = adv_store.get("advisories", []) if isinstance(adv_store, dict) else []
+    active_adv = [a for a in adv_all if isinstance(a, dict) and a.get("state") == "active"]
+    # Stable two-pass sort: newest-first within each priority band.
+    active_adv.sort(key=lambda a: a.get("triggered_at") or "", reverse=True)
+    _adv_prio = {"urgent": 0, "warn": 1, "info": 2}
+    active_adv.sort(key=lambda a: _adv_prio.get(a.get("priority", "info"), 2))
+    # "Resolved/Dismissed since last session" — entries that transitioned at or
+    # after this session's start stamp (the just-run sync resolves; dismissals
+    # carry their own timestamp).
+    resolved_since = 0
+    dismissed_since = 0
+    session_start_path = prawduct_dir / ".session-start"
+    if session_start_path.is_file():
+        try:
+            session_start_ts = session_start_path.read_text().strip()
+        except OSError:
+            session_start_ts = ""
+        if session_start_ts:
+            resolved_since = sum(
+                1
+                for a in adv_all
+                if isinstance(a, dict)
+                and a.get("state") == "resolved"
+                and (a.get("resolved_at") or "") >= session_start_ts
+            )
+            dismissed_since = sum(
+                1
+                for a in adv_all
+                if isinstance(a, dict)
+                and a.get("state") == "dismissed"
+                and (a.get("dismissed_at") or "") >= session_start_ts
+            )
+    if active_adv or resolved_since or dismissed_since:
+        if active_adv:
+            lines.append(f"ADVISORIES (post-sync, {len(active_adv)} active):")
+            for adv in active_adv[:5]:
+                feature = adv.get("feature", "?")
+                summary = adv.get("trigger_summary", "")
+                lines.append(f"  • [{feature}] {summary}")
+                action = adv.get("recommended_action", "")
+                if action:
+                    aid = adv.get("id", "")
+                    lines.append(f"    → Run {action} (or /prawduct-advisory dismiss {aid})")
+            if len(active_adv) > 5:
+                lines.append(
+                    f"  ... and {len(active_adv) - 5} more (run /prawduct-advisory list)"
+                )
+        else:
+            lines.append("ADVISORIES (post-sync):")
+        if dismissed_since:
+            lines.append(
+                f"  Dismissed since last session: {dismissed_since} "
+                f"(run /prawduct-advisory list --state=dismissed to see)"
+            )
+        if resolved_since:
+            lines.append(f"  Resolved since last session: {resolved_since}")
 
     # F5a sync-pending marker — surfaces when sync couldn't auto-commit
     # framework drift because a precondition (WIP, protected branch,

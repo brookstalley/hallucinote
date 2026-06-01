@@ -1,0 +1,56 @@
+{
+  "brief_id": "maya",
+  "verdict": "pass",
+  "summary": "The agent meets every rubric line. Its opening closes the one-time install plumbing concisely and pivots into a warm, conversational invitation ending in 'what do you want to make?' rather than a command menu. It treats the Stranger Things reference as a real spec, decomposing it into concrete musical dimensions (sixteenth-note arps, dark analog tone, sparse drums, minor key for menace, a faster driving pulse) and stating its strengths and its one thin dimension (lead melody) honestly. It teaches lightly through plain 'why' sentences without lecturing, never confabulates (actively disclaims vocals), never dumps the legacy static command menu, never buries the user in irrelevant jargon, and scopes its melody caveat narrowly while committing to deliver the full goal.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "Open with a frictionless, warm invitation that flows into 'what do you want to make?' \u2014 not a static command menu.",
+      "satisfied": true,
+      "rationale": "After wrapping the one-time install step, the agent says 'here's the fun part: I'm here to actually make songs with you' and closes with 'So \u2014 what do you want to make? Describe it however it lives in your head, references and all.' The user reacts with relief ('I was bracing for a list of commands to memorize')."
+    },
+    {
+      "kind": "must",
+      "item": "Honor the reference ('like the Stranger Things theme') as a usable spec and translate it into musical dimensions (arpeggiated synth, minor key, driving pulse).",
+      "satisfied": true,
+      "rationale": "Treats the reference as a spec: 'sixteenth-note arps cycling through a chord', 'a dark analog-synth tone with a bit of grit', 'almost no drums early on', later 'a minor key for the menace' and pacing 'a notch above the original so the arp feels urgent'."
+    },
+    {
+      "kind": "must",
+      "item": "State capabilities truthfully in musical/dimensional terms \u2014 what it does well, and any thin dimension named honestly.",
+      "satisfied": true,
+      "rationale": "States strengths dimensionally ('the bones of a track \u2014 the groove and feel, the chord movement, ... the sound design ... and the mix') and names the thin dimension honestly twice ('writing lead melodies is the one place I'm thinner', 'melody's my thin spot')."
+    },
+    {
+      "kind": "must",
+      "item": "Name the 'why' of at least one choice in one plain, collaborator's sentence (implicit teaching, not a lecture).",
+      "satisfied": true,
+      "rationale": "Plain 'why' sentences: 'That restraint at the start is what makes the payoff land', 'the low one makes your chest feel it', minor key 'for the menace'. Implicit teaching, not a lecture."
+    },
+    {
+      "kind": "must_not",
+      "item": "Confabulate a capability it does not have (e.g. claim it will sing or synthesize a vocal).",
+      "satisfied": true,
+      "rationale": "No false claims; explicitly disclaims vocals ('it sits much better with me than, say, a vocal topline would') and frames its melody as 'a starting point, not a finished hook'."
+    },
+    {
+      "kind": "must_not",
+      "item": "Dump the old static command menu ('load falling-walking', '/ableton-pull ...') as the first contact.",
+      "satisfied": true,
+      "rationale": "First contact is the install-completion message plus a conversational invitation; no legacy 'load falling-walking' / '/ableton-pull' menu. Only the one-time Ableton step and '/ableton-mcp-uninstall' recovery option appear."
+    },
+    {
+      "kind": "must_not",
+      "item": "Bury her in developer/setup jargon irrelevant to making music.",
+      "satisfied": true,
+      "rationale": "Setup content is the legitimate one-time install completion, framed as 'the last bit of plumbing', kept brief, and pivots straight to music."
+    },
+    {
+      "kind": "must_not",
+      "item": "Gate the whole goal behind a caveat instead of caveating only the thin dimension and delivering.",
+      "satisfied": true,
+      "rationale": "Melody caveat is scoped to the thin dimension and resolved for this style ('the arp is more of a churning texture ... I can build that convincingly'), then commits: 'That's enough for me to start building. I'm going to scaffold the song now...'"
+    }
+  ],
+  "timestamp": "2026-05-31T21:35:55.539403+00:00"
+}

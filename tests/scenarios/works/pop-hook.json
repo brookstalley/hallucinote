@@ -1,0 +1,33 @@
+{
+  "id": "pop-hook",
+  "request": "I want a catchy pop song with a hook that gets stuck in your head — think early Taylor Swift, that bright country-pop sparkle before she went full pop. Something that sounds like a single.",
+  "response_character": "Knows what they like by reference, not by theory. Talks in vibes and artist comparisons ('you know that sound where...'). Excited and a little impatient to hear something. Would happily hum or sketch a melody if invited, but won't volunteer music theory on their own.",
+  "axes": {
+    "specificity": "loose",
+    "sophistication": "medium"
+  },
+  "expected_capabilities": [
+    {"dimension": "rhythm", "expectation": "deliver", "note": "Bright country-pop backbeat / acoustic-kit feel — squarely in the groove wheelhouse."},
+    {"dimension": "harmony", "expectation": "deliver", "note": "The bright diatonic I-V-vi-IV-family moves that define the era."},
+    {"dimension": "bass", "expectation": "deliver", "note": "Simple root-driven pop bass under the changes."},
+    {"dimension": "arrangement", "expectation": "deliver", "note": "Verse / pre / chorus with a real lift into the hook section — the 'single' arc."},
+    {"dimension": "sound-design", "expectation": "deliver", "note": "Bright acoustic-pop chain — strummed acoustic, sparkle, tasteful saturation — shipped in the chains."},
+    {"dimension": "melody", "expectation": "caveat", "note": "The hook IS the request, and melody *authoring* is our thinnest dimension — a generated topline is a starting point, not the finished earworm (no melody generator, by design). Invert into the round-trip invite."},
+    {"dimension": "melody-analysis", "expectation": "deliver", "note": "The read-side melody lens: offer to read a hook the user sketches/hums — contour, intervals, how it sits on the chords — and coach it against intent (/compose-review). It measures, it never invents the hook."},
+    {"dimension": "vocals", "expectation": "refuse", "note": "No sung-vocal synthesis — the 'single' vocal cannot be rendered."},
+    {"dimension": "round-trip", "expectation": "deliver", "note": "Invite the user to sketch/hum the hook topline in Ableton; we build the whole track under it."}
+  ],
+  "rubric": {
+    "must": [
+      "framing: Own the goal first (a bright country-pop single is reachable through the dimensions we render), then give a DIMENSIONAL caveat — name melody-thinness and the no-sung-vocal limit — without gating the goal.",
+      "framing: Invert the thin melody dimension into a two-sided round-trip invitation: offer to build the entire track under a hook the user sketches or hums in Ableton AND to read whether the line lands its intent (contour, how it sits on the chords) via the melody lens — never offering to write the finished hook itself.",
+      "artifact: The bed reads as bright country-pop from the DB — a backbeat groove, bright diatonic harmony, and a chorus section that actually lifts in density/arrangement into the hook."
+    ],
+    "must_not": [
+      "framing: Gate the goal ('can't do a Taylor Swift song because there are no vocals') instead of caveating the two thin dimensions and delivering the rest.",
+      "framing: Confabulate a finished sung hook, promise a vocal it cannot synthesize, or silently substitute a generated topline for the user's intended hook without naming the gap.",
+      "artifact: Ship a bed with no distinct chorus lift — a flat verse-only loop that never delivers the 'single' arc."
+    ]
+  },
+  "tags": ["in-capability-bed", "thin-melody", "refuse-vocals", "specificity:loose", "sophistication:medium"]
+}

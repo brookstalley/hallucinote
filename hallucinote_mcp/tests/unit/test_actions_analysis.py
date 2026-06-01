@@ -33,7 +33,7 @@ def test_ableton_analysis_in_tools_tuple():
 
 def test_ableton_analysis_has_help_analyze_get_latest_report():
     action_names = {a.name for a in actions_for("ableton_analysis")}
-    assert action_names == {"help", "analyze", "get_latest_report"}
+    assert action_names == {"help", "analyze", "get_latest_report", "extract"}
 
 
 def test_analyze_action_is_server_side_with_song_slug_param():
@@ -58,6 +58,19 @@ def test_get_latest_report_action_is_server_side_with_song_slug():
     assert glr.runs_server_side is True
     param_names = {p.name for p in glr.params}
     assert "song_slug" in param_names
+
+
+def test_extract_action_is_server_side_with_song_slug():
+    extract = get("ableton_analysis", "extract")
+    assert extract is not None
+    assert extract.runs_server_side is True
+    assert extract.runs_on_worker is False
+    # Read-only: no db_writes (the extract emits no events).
+    assert extract.db_writes is False
+    param_names = {p.name for p in extract.params}
+    assert "song_slug" in param_names
+    song_slug_param = next(p for p in extract.params if p.name == "song_slug")
+    assert song_slug_param.required is True
 
 
 def test_help_action_lists_under_ableton_analysis():

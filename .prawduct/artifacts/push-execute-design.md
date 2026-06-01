@@ -1,6 +1,6 @@
 # `push_cli execute` — design
 
-**Status.** Design locked 2026-05-20. Implementation chunk W10-E2.
+**Status.** Design locked 2026-05-20; **IMPLEMENTED** (chunk W10-E2 — `src/hallucinote/sync/push_execute.py`). **HISTORICAL design record** — kept for the rationale; the shipped code is the source of truth. Unrelated to the arrangement/harmony/performance dimension work.
 
 ## Problem (measured)
 

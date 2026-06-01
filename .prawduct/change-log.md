@@ -4,6 +4,47 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
+
+<!-- chunks=arrangement-1-5 status=shipped release=v1.4.0 scope=arrangement-model -->
+
+The `feature/sun-zone-done-flagship` branch. A new song-structure subsystem
+(`hallucinote.arrangement`) plus its first full demonstration: sun-zone-done
+rebuilt from a 7-section/64-bar skeleton into a **9-section / 80-bar narrative
+arc** authored entirely on the model. (Release tag matches the current
+in-progress release; confirm/regroup at merge into `develop`. Live verification
+of the song is deferred — see `songs/sun-zone-done/sun-zone-done.md`.)
+
+- **The module (Chunk 1, prior commit `2f971bf`):** `arrangement.py`
+  (`Motif` / `Arrangement` with `section`/`plan`/`materialize`/`energy_curve`,
+  `PlacedSection`, `vary()` delta ruler) + the six canonical motivic variation
+  ops + `shift` in `generators/variations.py`. All **rulers** — they carry
+  identity / presence / references / arithmetic and emit the same DB rows through
+  the mutators; the composer makes every musical decision. Design foundation in
+  `.prawduct/artifacts/arrangement-model.md`.
+- **Section map + energy curve (Chunk 2):** the full arc with genre-flip energy
+  **discontinuities** (never smoothed) and recurrence as one-identity-plus-a-delta
+  via `vary()` (verse2 organ +12; chorus2 lead −12 power-octave). Rhythm gtr stays
+  a monolithic 320-beat clip + Amp envelope, driven by the same `plan()`.
+- **Polyrhythm intro (Chunk 3):** a hand-authored 3:4:5:7 Em7 cross-rhythm
+  shimmer that builds to unbearable then drops — registered as the
+  `polyrhythm-cloud` motif.
+- **Metal energy + steel pans (Chunk 4):** a crash per 4-bar phrase + rising
+  snare fills so long metal stretches breathe; a new `06 Steel` Island-Pans track
+  entering in the later reggae sections (verse2 as a `vary()` add-delta + outro).
+- **Convention-break + integration + outro (Chunk 5):** the Amp **timbre**
+  decoupled from groove **time-feel** and inverted in the break; the integration
+  **quotes** the polyrhythm motif on the organ (recapitulation — the two worlds
+  fused); the outro fragment+diminishes the `no-time-stab` motif into double-time
+  Phrygian bursts → DubDelay.
+- **Framework robustness:** `reggae_one_drop` / `metal_gallop` now degrade
+  gracefully on kits missing the optional open-hat / crash pads
+  (`kit.try_pitch_of`) — Ableton's Hot Rod Kit ships closed hats only, which was
+  crashing the real build.
+
+Cumulative `/critic`: 3 warnings + 1 note, no BLOCKING — all resolved. Full suite
+**2515 passing** (+18 song shape/intent tests, +2 generator degradation tests).
+
 ## 2026-05-29 — Bulk note-authoring: scoped push + /compose-part + inline guardrail (B1–B4)
 
 <!-- chunks=bulk-notes-B1-B4 status=shipped release=v1.4.0 scope=bulk-note-authoring -->

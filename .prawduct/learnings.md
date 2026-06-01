@@ -2,6 +2,14 @@
 
 Accumulated wisdom from building this product.
 
+## A permission to collaborate must restate precedence in the same breath
+
+**When you add a norm or skill instruction that *permits* more proposing / stopping / collaborating, state the precedence guard ("but if the user directed it, or said they'll handle the rest, execute and hand back") in the same place. A bare "you may propose here" leaks into directed work as friction.**
+
+C3 (onboarding teaching norms) added a "pedagogical carve-out" to CLAUDE.md legitimizing collaborative musical proposals at creative forks. The scenario harness immediately caught the leak: the `dev` brief (a fully-directed "build the skeleton, I'll take it from there") FAILED — the agent forked the already-specified drop structure into an A/B and withheld the build, reading the new carve-out as blanket license to propose. The fix wasn't to remove the carve-out but to bound it: "Precedence dominates this carve-out — if they directed it or signalled they'll handle the rest, execute and hand back." `dev` then passed; `theo` (the carve-out's intended beneficiary) stayed passing.
+
+**How to apply.** (1) Any edit that widens "when to stop / ask / propose" pairs with the bounding case in the same paragraph — permissions and their limits travel together, or the permission overgeneralizes. (2) Regression-test the *opposite* persona: the change is meant to help the under-articulated/novice case, so verify it didn't tax the directed/expert case. The behavioral harness's value is exactly this — the friction was invisible to inspection and obvious the moment the directed persona was run against the edited norm. (3) "Drive end-to-end" and "collaborate by default" both need the precedence carve-out, for the same reason: neither means "decide silently," but neither means "stop at every fork" either.
+
 ## Pattern sweeps are tree-wide or they don't count
 
 **When changing a convention (a kind, name, or shape used across many surfaces), audit every reference with a tree-wide grep before declaring the sweep done. Partial sweeps create self-contradicting docs that ship.**
@@ -16,6 +24,16 @@ Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`ac
 3. Pin the NEW convention with a regression test that names what now FAILS (`test_load_internal_class_name_fails_under_new_convention`). The test makes the deletion semantic, not accidental — but only the grep catches surfaces the test doesn't exercise.
 
 The agent-facing surfaces (action descriptions, skill markdown, conventions guides) are read at every session start. Stale recommendations there are higher-impact than test-fixture drift, because they shape what the next agent tries first.
+
+## Inverting a black-box formatter: validate a monotonic proxy, don't enumerate formats
+
+**When you must invert an opaque value→string formatter that has no string→value API, don't special-case each output format. Parse a numeric proxy, VALIDATE it's monotonic over the domain by sampling, then bisect — and refuse when it isn't. One monotonicity check subsumes every "weird format" guard and auto-handles formats you haven't seen.**
+
+`DeviceParameter` exposes `str_for_value(raw)` but no inverse, so `set_parameter`'s `value_display` ("-18 dB", "3:1") inverts it by bisecting on the number parsed from the display. The first cut parsed a leading number and then bolted on a guard per format real Live revealed — `-inf dB` (Threshold min), `inf : 1` (Ratio max), `Hz`→`kHz` (frequency). Each live probe surfaced another → whack-a-mole on the comparison layer.
+
+Root cause: bisection only needs the parsed number to be a faithful *monotonic* proxy for the raw value. The failures were all "the proxy isn't faithful here," not distinct problems. The fix: sample `str_for_value` across `[min,max]`, verify the leading number is monotonic (varies + no reversal), bisect only then, refuse otherwise. That one check replaced the constant-leading-number and unit-scaling guards AND auto-handles unseen formats (ms→s, etc.) — a non-monotonic proxy is the general signal that display-units can't address a parameter.
+
+**How to apply.** Inverting any black-box formatter: (1) parse a proxy; (2) validate the property the algorithm needs (here monotonicity) by sampling the domain; (3) act only when valid, refuse with a teaching error otherwise. A new branch per observed bad input is the smell that you're guarding symptoms instead of validating the invariant. And calibrate against real instances: all three traps came from real-Live probes, not the synthetic corpus — the sibling rule "Unit fakes that mirror an *assumed* Live API give false confidence" applies directly.
 
 ## When a doc or duplicated contract IS the deliverable, lock it with a drift/parity test
 
@@ -32,6 +50,14 @@ The "Pattern sweeps are tree-wide" learning names the disease (agent-facing surf
 C7 (timing analyzer) almost shipped two bugs that only a calibration pass exposed. (1) The synthetic `kick_onset` fixture — picked because it already existed — is a *terrible* onset target: its slow low-frequency attack makes librosa detect it 0.13–0.49 beat late and multi-trigger, so on-grid material read as wildly off-grid. (2) Swing read 1.35 for a triplet feel that should be ~2.0, because spurious double-onsets polluted the mean off-beat phase. Both were invisible to intuition and to a "looks reasonable" fixture; both were obvious the moment real grooves (a user's "can we be Phish / Dead / Marley?") were run through the real module and the numbers printed. Fixes followed directly: a sharp `click` fixture (accurate onset), finer hop, onset dedup, MEDIAN (not mean) swing phase, tightness-based (not grid-aligned) confidence.
 
 **How to apply.** (1) Build a tiny calibration script that runs representative inputs through the real analyzer and prints the metrics; eyeball them against what the music *is* before locking assertions. (2) Choose fixtures for *detection accuracy*, not convenience — a synthetic transient with an instant attack tests the analyzer's math; the real-world detection-accuracy limit (slow-attack instruments) becomes a documented caveat, not silent fixture bias. (3) Prefer robust statistics (median over mean) and robustness-to-constant-offset designs (measure tightness/relative timing, not absolute) when the front-end has systematic error. (4) Treat a user's "can it do X?" as a design stress-test — answer it by running X, not by reasoning about X.
+
+## A staleness/version signature must be content-derived, never hand-bumped
+
+**When you surface a "version" or "signature" so a consumer can tell whether loaded code is stale, derive it from the content (hash the source), not a hand-maintained string. Forgetting to bump a manual version is the exact failure mode the signature exists to catch — a manual bump and the stale-reload it's meant to detect are indistinguishable.**
+
+The masking-arc backlog item "surface the loaded `analyzer_signature` so a stale MCP server is obvious" pointed at an existing field — but reading the code showed that field is a hardcoded capture-device label (`"hallucinote-analyzer-v1"` in `render.py`) that never moves when analysis-pipeline code changes. It structurally cannot detect staleness. The cheap fix (a hand-bumped `__version__`) has the identical defect. The correct fix hashes the `hallucinote/audio/` package source, frozen at import (= the code the subprocess actually loaded) and compared against a per-call disk recompute (`audio/codeversion.py`). The freeze-at-import-vs-recompute split is the load-bearing part: hashing only on-disk source would report "fresh" while the process runs old code. Aligns with "prefer structural fixes over patches."
+
+**How to apply.** (1) If the signal is "is the running code current?", capture the signature when the code loads (module-import-time constant) and compare to a live recompute — two reads, not one. (2) Hash content, never a manual label; a manual label re-creates the forget-to-update gap. (3) Verify the import-freeze claim in a *live process* (edit real source, watch the flag flip, revert), not just with monkeypatched functions — patching hides whether the freeze actually captures loaded vs on-disk bytes. (4) Don't conflate provenance concepts: "which device captured this" (capture signature) and "which code interpreted it" (analysis-code signature) are different surfaces — name them apart.
 
 ## DB-UUID → capture-surface-ID lifts must key by surface ID, and be tested with distinct IDs
 
@@ -344,3 +370,35 @@ The successful pattern uses `[clip <floor> <ceiling>]` upstream: `[snapshot~] �
 5. The `[clip]` upstream pattern doubles as a safety net for floating-point edge cases — `[average~]`'s output can rarely be slightly negative due to FP roundoff, which would make `log10` return NaN. `[clip <positive_floor> ...]` upstream catches that too.
 
 **Earlier-learning correction:** an earlier version of this entry claimed `max(a, b)` was in `[expr]`'s function vocabulary. That was wrong — it was cited from standard Max docs without verifying against M4L's runtime. M4L's bundled `[expr]` does not have `max()`. The lesson: when documenting M4L objects, trust empirical results from the user's Max console over docs that claim object behavior. M4L's bundled runtime is a subset of standalone Max, and the subset boundaries aren't always documented.
+
+## Splitting a monolith into a package: the facade contract is every name, private ones included
+
+**When a module grows past ~3kLOC and you split it into a per-domain package, the re-export `__init__.py` is a contract: it must surface EVERY name the old module exposed — public AND private. Before moving anything, grep the whole tree for every name imported from the module (`from x import _helper`, `x.SOME_CONST`, `x._priv`); that list is the contract. The existing test suite is the correctness oracle — a behavior-preserving split adds zero tests and changes zero test files; if a test breaks it's a missing re-export or a circular import, never a reason to touch the test.**
+
+The split-large-modules wave (mutations.py 4164 / pull.py 3401 / push.py 3166 → packages) stayed invisible to ~38 callers because almost all use `from hallucinote.db import mutations` then `mutations.create_clip(...)` (attribute access) — a package `__init__` that re-exports everything resolves those unchanged. The traps were the minority: private helpers imported by name from *other* modules (`handlers/analysis.py` does `from ...sync.push import _position_bar_to_beats`; a property test imports `pull._beats_to_position_bar`) and the one same-module **monkeypatch seam** — `plan_push_clips` called `plan_push_clip` as a module global that a test patches via `push.plan_push_clip`. A naive submodule split turns that into a direct import that the patch can't reach; preserve it with a function-local `from hallucinote.sync import push; push.plan_push_clip(...)` re-import (also breaks the load-time cycle).
+
+**How to apply.** (1) Grep first, build the name contract, re-export the superset — don't trust "looks public." (2) Keep a leaf `_core` (shared helpers/types/transaction machinery) that imports from no sibling, so domain modules depend only downward — no cycles. (3) Watch for a function that's monkeypatched through the module object; route its internal calls through the package facade. (4) A split also surfaces latent coupling worth fixing in the same wave: this one exposed `pull` importing geometry helpers from `push` (inbound depending on outbound) plus a duplicated `_beats_per_bar` — both resolved by extracting a neutral `sync/geometry.py` leaf. Run the full suite after EACH module's split, not just at the end, so a break is bisected to one move.
+
+## Pulling enforcement earlier shadows a downstream guard — migrate its tests, keep a bypass backstop
+
+**When you move a validation to an earlier layer (schema CHECK → mutator write-boundary guard), the earlier layer now fires FIRST, so every test that asserted the downstream error is testing a path that no longer runs. Flip those tests to the new (earlier, more specific) error, AND add a raw-bypass test that still exercises the now-shadowed layer — otherwise its coverage silently rots.**
+
+TMP-1R7K added a `_require_bar_floor` teaching `ValueError` at all five bar-position mutators, ahead of the schema `CHECK (start_bar >= 1.0)` that previously did the rejecting. The existing `test_bar_constraints.py` asserted `sqlite3.IntegrityError` — but the mutator now raises `ValueError` before any SQL runs, so those assertions would only pass by accident (wrong error) or fail. Mechanically "fixing" them to expect `ValueError` is right for the mutator path but would leave the schema CHECK with zero coverage: it's still there as a backstop for raw inserts, and a future schema edit could drop it unnoticed.
+
+**How to apply.** Restructure the suite into two layers that mirror the enforcement: (1) **mutator/primary** tests assert the new teaching error (`pytest.raises(ValueError, match="must be >= 1.0")`) and acceptance at the boundary; (2) **backstop** tests do a raw `conn.execute(INSERT ...)` that bypasses the mutator (FKs off so the CHECK, not a missing FK, is what rejects) to prove the schema layer still fires. This is the inverse of "Never weaken a test": the contract genuinely changed (earlier + clearer error), so the old assertion is now wrong, not weakened — but dropping the shadowed layer's coverage IS weakening, so keep the bypass test.
+
+## Variation ops are tiling-safe only on single-cycle motifs
+
+**The motivic variation ops split by input shape: per-note ops (`transpose`, `shift`) are safe on the pre-tiled multi-cycle note lists the generators emit, but `fragment` / `retrograde` / `augment` / `diminish` assume the list is ONE motif cycle. Apply the latter to a single-cycle motif you authored or registered, never to a generator's already-looped output.**
+
+In the sun-zone-done arrangement build, recurrence deltas (verse2/chorus2) used `transpose` on the full tiled section layer and composed cleanly — per-note pitch math doesn't care how many cycles are present. But `fragment(notes, 0, 4)` on a tiled list keeps the windowed onset across EVERY cycle and rebases them all to 0 (they pile up); `retrograde`/`augment` likewise reinterpret the whole span as one gesture. The outro double-time bursts only worked because the "no-time" hook was registered as a single 8-beat motif (`arr.motif(...)`), so `fragment → diminish → shift` operated on one clean cycle.
+
+**How to apply.** When you need fragment/retrograde/augment/diminish, author the source as a single-cycle motif (an `Arrangement.motif`, or a bare cell), transform it, THEN tile/shift the result — don't reach for these ops on `generators.*` output that already looped across the section. Per-note ops (transpose/shift) have no such constraint.
+
+## Generators degrade gracefully on OPTIONAL pads, raise on load-bearing ones
+
+**A drum generator must call `kit.try_pitch_of(...)` (returns None on absence/wrong-sound) for FLOURISH pads — open-hat lifts, crash accents, fills — and skip them when the kit lacks them; reserve the raising `kit.pitch_of` / `kit.<pad>` accessors for LOAD-BEARING pads (kick, snare, closed-hat) whose absence really does mean the pattern is broken. A caller that genuinely requires a flourish pad asserts it up front with `kit.assert_has(...)`.**
+
+`reggae_one_drop` and `metal_gallop` hard-referenced `kit.hat_open` / `kit.crash`, which raise on the wrong-sound case. That crashed the *real* sun-zone-done build: Ableton's Hot Rod Kit ships three closed hats and no dedicated open-hat chain, so `kit.hat_open` raised even though the open-hat "lift" is just a once-every-4-bars accent. The synthetic GM-default snapshot hid it (GM has note 46), so the test suite stayed green while the real `--reset` build died.
+
+**How to apply.** Classify each pad in a generator as load-bearing vs. flourish. Flourish pads → `try_pitch_of` + `if pad is not None:`. Add a degradation test with a `Kit.from_dict({kick,snare,hat_closed})` (captured-but-incomplete) asserting the generator builds and simply omits the missing flourish. This is the kit analogue of "the GM-default snapshot is not the real kit" — verify against an incomplete captured kit, not just GM defaults.

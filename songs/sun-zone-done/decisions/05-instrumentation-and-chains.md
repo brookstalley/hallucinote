@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [instrumentation, signal-chain, sends, amp]
+---
+
 # Instrumentation & Signal Chains
 
 **Question:** What instruments? What signal chains? What sends?

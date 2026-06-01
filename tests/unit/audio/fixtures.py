@@ -161,6 +161,7 @@ def onsets_at_beats(
     bpm: float,
     total_beats: float,
     onset: "np.ndarray | None" = None,
+    amplitudes: "list[float] | None" = None,
     sr: int = SAMPLE_RATE,
 ) -> np.ndarray:
     """Place a transient at each beat position in a silent buffer.
@@ -170,18 +171,31 @@ def onsets_at_beats(
     onset target). The buffer is ``total_beats`` long. This is the timing-
     analysis corpus primitive: build on-grid / pushed / dragged / swung parts by
     choosing where the onsets land, then assert what the analyzer recovers.
+
+    ``amplitudes`` (optional) scales each onset's transient — one factor per
+    beat position, in order. This is the C8c **accent** primitive: an accented
+    grouping (3+3+2) or a per-cell downbeat is built by making the group-start
+    onsets louder. Mirrors how Hallucinote authors accents (MIDI velocity →
+    loudness). When omitted, every onset is placed at the transient's own
+    amplitude (the existing equal-velocity behaviour).
     """
     onset = onset if onset is not None else click(sr=sr)
+    if amplitudes is not None and len(amplitudes) != len(beat_positions):
+        raise ValueError(
+            f"amplitudes ({len(amplitudes)}) must match beat_positions "
+            f"({len(beat_positions)})"
+        )
     samples_per_beat = sr * 60.0 / bpm
     total_n = int(round(total_beats * samples_per_beat))
     buf = np.zeros((total_n, 2), dtype=np.float32)
     olen = onset.shape[0]
-    for b in beat_positions:
+    for i, b in enumerate(beat_positions):
         start = int(round(b * samples_per_beat))
         if start < 0 or start >= total_n:
             continue
         end = min(start + olen, total_n)
-        buf[start:end] += onset[: end - start]
+        scale = 1.0 if amplitudes is None else float(amplitudes[i])
+        buf[start:end] += (onset[: end - start] * scale)
     return buf
 
 

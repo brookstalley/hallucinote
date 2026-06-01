@@ -232,29 +232,98 @@ If the target is in `mcp_configs.malformed`, stop.
 
 Write to `<config>.tmp`, then rename (`os.replace` / `mv` / `Move-Item -Force`). Don't write directly — a crash mid-write corrupts `~/.claude.json` and loses the user's project history.
 
-## Step 5 — Tell the user the Ableton click + hand off
+## Step 5 — Hand off (the MCP connection is the gotcha, then open the conversation)
 
-Print verbatim:
+This is the user's first contact as a **music person**, not a developer of this
+project. Two parts: finish the mechanical install (the one Ableton click + the
+MCP reconnect — the update case has a trap), then a warm, capability-honest
+invitation that opens an intent conversation. **Do not** print a static command
+menu — that surfaces a vending-machine framing and teaches nothing.
 
-```
-hallucinote-mcp install complete!
+### 5a — Finish the install (classify fresh vs update)
 
-One last step in Ableton Live:
-  1. Open Live.
-  2. Preferences → Link, Tempo & MIDI.
-  3. In any free "Control Surface" slot, select "Hallucinote".
-  4. Leave "Input" and "Output" as "None".
+The hand-off differs depending on whether this was a **fresh install** or an
+**update**, and the update case has a trap that's easy to get wrong. Classify
+from the preflight report you already have:
 
-Then restart Claude Code in this project so it picks up the new MCP entry.
+- **Update / reinstall** — `mcp_configs.containing_entry` already listed
+  `hallucinote-mcp` for the chosen scope (Step 4 left it unchanged) **and/or** a
+  Remote Script was already installed (`remote_script.candidates[*].installed ==
+  true`). The config didn't change; only the server **code** changed.
+- **Fresh install** — neither was true before this run (you wrote the
+  `.mcp.json` entry in Step 4; no prior Remote Script). Claude Code has never
+  loaded this server.
 
-Once you're back in Claude Code, try one of these to get going:
-  • "load falling-walking"          — push the bundled example song into Live
-  • "start a new song"              — scaffold a fresh song from a prompt
-  • "/ableton-pull <slug> <id> everything"
-                                   — pull current Live state into the DB
+> **Critical, update case:** if *you (the agent)* ran this skill through the
+> live `hallucinote-mcp` connection, you just replaced the code that connection
+> runs. **Your current bridge is now stale** — it holds the pre-update server in
+> memory and keeps behaving like the old version until the subprocess is
+> respawned. You cannot do this yourself; the user must reconnect. **Do not
+> report the install as working until they have.** The completion gate is a
+> `/mcp` reconnect, not a vibe.
 
-If something looks broken, /ableton-mcp-uninstall reverses every step.
-```
+Print the checklist for the matching case **as Markdown, NOT inside a code
+fence** — the checkboxes and strikethrough only render outside a fence. Mark
+each line:
+
+- something you (the agent) already did → `- [x] ~~**Me** — …~~` (checked + struck through)
+- something the user still must do → `- [ ] **You** — …` (unchecked)
+
+Fill from what you actually did (don't claim a step you skipped) and interpolate
+real version strings from preflight.
+
+**Update / reinstall** — render as:
+
+- [x] ~~**Me** — Remote Script re-vendored in the User Library (old copy removed first)~~
+- [x] ~~**Me** — version handshake will match (server `<package.version>` == vendored, same)~~
+- [x] ~~**Me** — `.mcp.json` entry already present, unchanged~~
+- [ ] **You** — Reopen Ableton Live so it loads the refreshed Control Surface (the *Hallucinote* slot is almost certainly still assigned — just reopen; re-check Preferences only if not)
+- [ ] **You** — Run `/mcp` → `hallucinote-mcp` → reconnect *(required to finish)*
+
+Then, as plain prose: the reconnect is REQUIRED and only the user can do it —
+the Claude Code session that ran this install is still talking to the
+PRE-UPDATE server, and reconnecting respawns it on the new code (a full Claude
+Code restart also works, but `/mcp` reconnect is enough since the `.mcp.json`
+entry didn't change). If a version-mismatch shows up after reconnect, the user
+should fully quit Live and reopen — Live caches Control Surface modules at
+startup, so a stale module can linger.
+
+**Fresh install** — render as:
+
+- [x] ~~**Me** — Remote Script installed in the User Library~~
+- [x] ~~**Me** — `.mcp.json` entry written (`hallucinote-mcp`)~~
+- [ ] **You** — In Ableton Live: Preferences → Link, Tempo & MIDI → select *Hallucinote* in any free Control Surface slot (Input/Output = None)
+- [ ] **You** — Load the new server in Claude Code: run `/mcp` (or restart Claude Code) so it picks up the new `.mcp.json` entry
+
+Then point them at a first action — *"load falling-walking"* (push the bundled
+example song into Live) or *"start a new song"* (scaffold from a prompt) — and
+note that `/ableton-mcp-uninstall` reverses every step if something looks wrong.
+
+### 5b — The handoff (compose it; don't print a menu)
+
+**Read `docs/capability-truth.md`.** Then write a short, warm invitation that:
+
+- Is **capability-honest in musical/dimensional terms** — name a few things
+  Hallucinote does well (groove, harmony, arrangement, sound design, mix), drawn
+  from the Capability Truth table, as *example invitations* ("we could build a
+  beat, flesh out a chord progression, arrange a track around an idea you have").
+- **Names the thin dimensions honestly** when they're relevant, and **inverts
+  the gap into an invitation** rather than apologizing — melody *authoring* is ◐
+  and vocal synthesis is ✗, but a topline sketched in Ableton round-trips in *and
+  the melody lens reads it*, so the move is *"bring me your melody, I'll build the
+  track under it and read whether the line lands."*
+- **Opens an intent conversation** — invite the user to say what they want to
+  make, in their own words and references ("a song like the Stranger Things
+  theme" is a perfectly good spec). Do **not** ask them to pick a "mode"; read
+  their intent from what they say (start fresh, load an existing song, sketch a
+  part) and proceed collaboratively — propose the elementary choices you'd
+  otherwise guess at and read their reaction, rather than deciding silently.
+- **Never confabulates.** If it isn't ✓ or ◐ in the Capability Truth table,
+  don't offer it.
+
+Keep it to a few sentences — an open door, not a manual. The goal is that the
+user's next message is "I want to make…", and you continue from there (into
+`/song-new` for a new song, or a load/pull for existing material).
 
 ## Edge cases
 

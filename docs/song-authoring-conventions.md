@@ -77,23 +77,68 @@ from hallucinote.generators import drums, bass, harmony, primitives
 - `drums.ghost_kicks` — Sparse low-velocity kicks; garnish over `kick_stumble`.
 - `drums.ghost_snares` — Sparse low-velocity snares for texture.
 - `drums.open_hat_lifts` — Open-hat lifts as drummer flourishes (mini-fill marks).
+- `drums.reggae_one_drop` — Reggae one-drop: dropped downbeat, snare on 3, off-beat hat chucks.
+- `drums.metal_gallop` — Speed-metal: kick gallop cell, 2 & 4 snare, driving 16th hats, section crash.
 
 **`bass`** (`src/hallucinote/generators/bass.py`)
 - `bass.tresillo_bass` — Plain tresillo on the chord root.
 - `bass.walking_bass_to_next_chord` — Walk through pitches across bars at beats [0, 1.5, 2, 3.5].
 - `bass.chord_tone_embellishment` — One bar of root + 3rd + octave + walk note.
+- `bass.reggae_offbeat_bass` — Reggae bass: long root/octave + short off-beat fifths, behind the click.
+- `bass.metal_pedal_16ths` — Metal palm-mute root pedal on straight 16ths, pushed ahead.
 
 **`harmony`** (`src/hallucinote/generators/harmony.py`)
 - `harmony.chord_pad` — Sustained chord; each pitch one long note.
 - `harmony.chord_stab` — Short rhythmic chord hit.
 - `harmony.tresillo_pluck` — Calypso-style pluck cycling a voicing on tresillo hits.
 - `harmony.sparse_bell_top` — Bell hits on the chord top: one long arrival + one mid answer.
+- `harmony.reggae_skank` — Off-beat staccato chord chucks ("and" of 2 & 4), behind the click.
+- `harmony.organ_bubble` — Hammond bubble: short chord stabs on every off-beat eighth.
+- `harmony.palm_mute_power_chords` — Palm-muted root+5th+octave on the gallop cell (locks with `metal_gallop`).
+
+> **Chord-aware vs static voicing.** `reggae_skank`, `organ_bubble`, and
+> `palm_mute_power_chords` (plus `bass.reggae_offbeat_bass` / `bass.metal_pedal_16ths`)
+> are **chord-aware** — they take a `theory.Progression` and voice the chord
+> sounding at each hit, so the part follows an authored harmony that *moves*.
+> `chord_pad` / `chord_stab` / `tresillo_pluck` / `sparse_bell_top` take a static
+> voicing (`list[int]`). The chord-aware path is the **harmony axis** — see below.
 
 **`primitives`** (`src/hallucinote/generators/primitives.py`) — building blocks shared across the above
 - `primitives.chord_tones` — Build a chord from root + interval list (semitones).
 - `primitives.apply_feel` — Apply a within-bar feel shift (generators call this internally).
 
 For a shape no helper covers, author the note list directly in `build.py` (still as code, still through `M.replace_clip_notes`) — never inline a note array into an MCP tool call. The named patterns the retired `/pattern-compose` skill offered (tresillo / bossa / trip-hop / …) all live here as importable helpers.
+
+---
+
+## Harmony is a modeled substrate (the harmony axis)
+
+Harmony is a **structure intent**, not just whatever pitches the generators happen
+to emit (see the dimension taxonomy in
+[`arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md)). Author it
+explicitly:
+
+- **`hallucinote.theory`** (`src/hallucinote/theory/`) — `Chord` (slash bass,
+  polymodal `split`, free-form function labels), `Mode`, and `Progression` (an
+  authored chord timeline with harmonic rhythm; a functional/modal toggle). Build a
+  section's changes with `Progression.of("E", "Dorian", ["Em7","A7", …], beats_per_chord=4.0)`.
+- **Chord-aware generators voice the progression** — pass the `Progression` to
+  `reggae_skank` / `organ_bubble` / `palm_mute_power_chords` /
+  `reggae_offbeat_bass` / `metal_pedal_16ths`; each voices the chord at each hit, so
+  the harmony *moves* instead of pedalling one voicing.
+- **`variations.transpose_diatonic`** is the key-aware sibling of `transpose`:
+  it shifts by scale degrees within a `(key, mode)`, staying diatonic — use it for
+  in-key sequences/lifts; plain `transpose` for chromatic/octave moves.
+- **The build-time conformance lint** (`theory.lint.lint_harmony`) is the read side:
+  it **fails the build** if a section declares harmonic movement but the parts
+  realize only the tonic (the harmonic-stasis bug), and warns on out-of-mode notes.
+  Wire it via `Arrangement.section_lints(harmony_layers=["02 Bass"])` → `lint_harmony(...)`.
+  Harmony authored-but-unrealized is caught here, not by ear.
+
+Default to **sophistication** (extended chords, secondary dominants, borrowed
+chords, modal color); simple I–IV–V is fully supported but never the default. The
+arrangement model carries harmony co-equal to energy (`arrangement-model.md`;
+`backlog ARR-1H9C`).
 
 ---
 
@@ -120,13 +165,26 @@ A finished song has the sound it's supposed to have *as part of being finished*,
 
 The "default volumes / sends / chain-state" the song needs to *sound right* live in this file. The composer's job is to put them there as part of authoring, not to defer them to a later mix session. See `docs/snapshot-schema.md` for the schema; see `/song-pick-instruments` for the picker that writes chains.
 
-This applies most strongly to `make-me-X` mode (see `/song-new`): the deliverable is the playable song, and the song's sound is part of being playable.
+This applies most strongly to a **creative product prompt** (see `/song-new`, "Read the request"): the deliverable is the playable song, and the song's sound is part of being playable.
 
 ---
 
 ## Per-part feel (microtiming is authorship)
 
 Per-part microtiming — push (early), pull/drag (late), swing, shuffle — is part of how a part is *written*, not a humanize pass run after the fact. Generators take a `feel` parameter per call. Three rules:
+
+> **This is the proto-profile of the performance *realization layer*.** The full
+> design — a declared performance **profile** (genre groove-baseline + energy
+> coupling + overrides) realized as **structured, 1/f-correlated** deviation (NOT
+> white-noise jitter, the discredited "humanize"), plus a read-side
+> mechanical/human/sloppy lens — lives in
+> [`performance-model.md`](../.prawduct/artifacts/performance-model.md). The
+> read-side lens (phase 2a) and the **first authoring primitive** (phase 2b — the
+> 1/f breathing profile, below) now ship; energy-coupling and phrase-arc curves
+> are friction-driven follow-ons. The per-call `feel` dict here, and the
+> generators' baked `lazy`/`lag`/`push` defaults, are the *deterministic* feel the
+> profile breathes life into. Performance is **metered-only** by design
+> (chant/free-rubato is a documented boundary).
 
 1. **Per-part, per-helper-call.** Granularity is the generator call. Punk drums + lazy bluegrass guitar in the same section is valid — two calls, two feel dicts, different intents at the same time. So is verse drums punching forward + chorus drums dragging back — same part, different clips, different feels. Don't put a song-level or section-level shared groove instance in the way; each call states its own feel.
 2. **Express intent as a dict; strings live in the prompt, not the call.** The generator API is dict-only — `Feel = Mapping[float, float] | None`. The dict maps within-bar positions to micro-shifts in beats (`{2.0: -0.01, 2.75: -0.02}` = beat 3 ten ticks early, beat-3.75 twenty ticks early). When the composer's intent reaches the LLM as freeform language (`"push hard"`, `"drag eighths"`, `"swing-16ths heavy"`), the model resolves that to a dict at compose time in the context of the call's other args (meter, density, etc.) and emits the dict literal into the call. Passing a string directly to the generator raises a `TypeError`. No registries; no enums. Negative within-bar shifts are valid math, but `start_beats < 0` after the bar offset is refused at the mutator boundary — either drop the bar-1 shift or author a pickup pattern explicitly.
@@ -143,6 +201,25 @@ chorus_drums = drums.kick_stumble(bars=8, feel={2.75: +0.025, 2.0: +0.015})
 ```
 
 Anti-pattern: a `/clip-humanize` pass run after composition to "add feel." `/clip-humanize` exists for velocity jitter on already-feel-correct parts (the velocity jitter is a different axis from microtiming); it is not the place to inject groove. If the part doesn't feel right, the wrong feel parameter went in at compose time — fix it there.
+
+### Human breathing: the performance profile (phase 2b)
+
+The `feel` dict above is a **deterministic** offset — a constant shift per within-bar position. That is the *generative* half of feel, and on its own it reads **mechanical** to the performance lens: a precisely-shifted grid is still a machine (tightness, not lateness, is the mechanical signal). The missing half — the one the research names as decisive ([Hennig 2011](../.prawduct/artifacts/performance-model.md#references)) — is a small, additive, **1/f-correlated** breathing layer: structured deviation, *never* white-noise jitter. That is what separates *human* from both *mechanical* and *sloppy*, and it's a **measurable property of structure, not magnitude**.
+
+Author it by declaring a `PerformanceProfile` and realizing a finished part through it (ruler-not-stamp: you declare the *what*, the layer computes the per-note *how*):
+
+```python
+from hallucinote.performance import apply_profile, HUMAN  # also BREATH (subtle), LOOSE (pronounced)
+
+# A part the generators wrote (it carries its deterministic feel already).
+bass = generators.bass.reggae_offbeat_bass(prog, bars=8, push=0.02)
+
+# Breathe 1/f-correlated life into it. Vary `seed` per part so two parts don't
+# share an identical breathing stream (which would read as artificial lock).
+bass = apply_profile(bass, HUMAN, seed=2)
+```
+
+`apply_profile` adds correlated timing **and** velocity breathing on top of the baked `lazy`/`push`/`lag` lay-back — it does **not** re-author the constant offset (one source of truth: the generator owns the lay-back, the profile owns the breathing). It is **deterministic** by seed (the build re-runs reproducibly), and the result is what flips the lens's reading of the part from `mechanical` to `human`. The three presets (`BREATH` / `HUMAN` / `LOOSE`) differ only in magnitude (the KTH `k` dial); all read human, because the human/sloppy verdict rides on correlation structure, not size. Declare your own with a genre name (`PerformanceProfile(name="reggae-pocket", timing_sigma=0.02, velocity_sigma=8.0)`) and record the *why* in the markdown corpus, as with `feel`. Genre-baseline-as-a-profile-field, the energy↔performance coupling, and phrase-arc curves are deferred follow-ons — see [`performance-model.md`](../.prawduct/artifacts/performance-model.md) §4–§5, §8.
 
 ---
 
@@ -313,6 +390,9 @@ Both print the new session_id; use it for the rest of the push cycle and reuse i
 
 ## See also
 
+- [`.prawduct/artifacts/arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md) — the arrangement model + the **dimension taxonomy** (structure intents · realization layers · subsystems) these conventions sit within
+- [`.prawduct/artifacts/performance-model.md`](../.prawduct/artifacts/performance-model.md) — the performance realization layer (the formal model behind "microtiming is authorship")
+- [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) — the **WHY** corpus: decisions/annotations, the frontmatter schema + controlled mix/groove **tag vocabulary** (the markdown companion to the `feel`-dict *WHAT* here)
 - `docs/snapshot-schema.md` — `captured_session.json` shape
 - `songs/falling-walking/` — historical worked example (~860 LoC, full song)
 - `tools/templates/song/` — the scaffold templates `/song-new` writes from

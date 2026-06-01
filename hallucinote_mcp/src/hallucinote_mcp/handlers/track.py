@@ -212,13 +212,13 @@ def set_property_handler(
     """Write a single mixer property. Branches on ``property`` to walk to
     the right Live attribute and apply per-property range validation.
 
-    ``volume`` and ``panning`` are Live ``DeviceParameter`` objects, so they also
-    accept ``value_display`` — a target in display units ("-8 dB" for volume) —
-    inverted to the raw value via the same shared ``resolve_continuous_write``
-    contract the device ``set_parameter`` handler uses. Volume is the real use
-    (dB gain-staging); panning's display ("50L") isn't a signed number, so its
-    ``value_display`` path refuses with a teaching error. The non-parameter
-    properties (mute / solo / arm / color) take ``value`` only.
+    ``volume`` accepts ``value_display`` — a dB target ("-8 dB") inverted to the
+    raw value via the same shared ``resolve_continuous_write`` contract the device
+    ``set_parameter`` handler uses. ``panning`` is also a ``DeviceParameter`` and
+    is routed through the same path, but its display ("50L"/"C"/"50R") isn't a
+    signed number, so ``value_display`` is refused for it with a teaching error —
+    set pan via ``value``. The non-parameter properties (mute / solo / arm /
+    color) take ``value`` only.
     """
     if property not in _TRACK_PROPERTIES:
         raise ValueError(

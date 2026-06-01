@@ -14,9 +14,42 @@ from hallucinote_mcp.wire import Request
 # ---------- Fakes ----------
 
 
+def _live_volume_db(v: float) -> str:
+    """Mimic Live's volume-fader display: dB = 40*(v - 0.85), '-inf dB' at 0.
+
+    Monotonic across (0, 1] so the bisection in resolve_continuous_write
+    converges; '-inf dB' at the floor exercises the muted -> None path. (Real
+    Live bends below ~0.4; the linear region is enough to test the wiring.)
+    """
+    if v <= 0.0:
+        return "-inf dB"
+    return f"{40.0 * (v - 0.85):.1f} dB"
+
+
+def _live_pan_display(v: float) -> str:
+    """Mimic Live's pan display: '50L' / 'C' / '50R' — deliberately non-numeric
+    at center, so value_display is refused for panning like in real Live."""
+    if v == 0.0:
+        return "C"
+    return f"{abs(v) * 50:.0f}{'L' if v < 0 else 'R'}"
+
+
 class FakeParam:
-    def __init__(self, value: float = 0.0):
+    def __init__(
+        self,
+        value: float = 0.0,
+        *,
+        min: float = 0.0,
+        max: float = 1.0,
+        str_for_value=None,
+        is_quantized: bool = False,
+    ):
         self.value = value
+        self.min = min
+        self.max = max
+        self.is_quantized = is_quantized
+        if str_for_value is not None:
+            self.str_for_value = str_for_value
 
 
 class FakeSend:
@@ -26,8 +59,10 @@ class FakeSend:
 
 class FakeMixer:
     def __init__(self, volume=0.85, panning=0.0, sends_count=2):
-        self.volume = FakeParam(volume)
-        self.panning = FakeParam(panning)
+        self.volume = FakeParam(volume, str_for_value=_live_volume_db)
+        self.panning = FakeParam(
+            panning, min=-1.0, max=1.0, str_for_value=_live_pan_display
+        )
         self.sends = [FakeSend() for _ in range(sends_count)]
 
 
@@ -482,6 +517,99 @@ def test_set_property_enforces_range(loaded_actions, property_name, bad_value):
     )
     assert resp.ok is False
     assert "out of range" in (resp.error or "")
+
+
+# ---------- set_property: dB value_display (MIX-6K2P) ----------
+
+
+def _set_property(ctx, **params):
+    return dispatch(
+        Request(tool="ableton_track", action="set_property", params=params),
+        context=ctx,
+    )
+
+
+def test_set_property_volume_value_display_resolves_db(loaded_actions):
+    # -8 dB inverts Live's fader curve to v = -8/40 + 0.85 = 0.65. The raw
+    # converges to within one display quantum (the fader shows 0.1-dB steps);
+    # the echoed display is the exact contract.
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="volume", value_display="-8 dB")
+    assert resp.ok is True, resp.error
+    assert ctx.song.tracks[0].mixer_device.volume.value == pytest.approx(0.65, abs=2e-3)
+    assert resp.result["value_display"] == "-8.0 dB"
+
+
+def test_set_property_volume_value_display_unity(loaded_actions):
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="volume", value_display="0 dB")
+    assert resp.ok is True, resp.error
+    assert ctx.song.tracks[0].mixer_device.volume.value == pytest.approx(0.85, abs=2e-3)
+
+
+def test_set_property_value_only_echoes_db_for_volume(loaded_actions):
+    # The raw-value path still works and now also echoes the achieved dB.
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="volume", value=0.65)
+    assert resp.ok is True, resp.error
+    assert resp.result["value"] == 0.65
+    assert resp.result["value_display"] == "-8.0 dB"
+
+
+def test_set_property_value_display_refused_on_panning(loaded_actions):
+    # Pan's display ('C' at center) isn't a signed number, so it can't be
+    # addressed by value_display — refused with guidance to use `value`.
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="panning", value_display="0 dB")
+    assert resp.ok is False
+    assert "value" in (resp.error or "").lower()
+
+
+def test_set_property_value_display_refused_on_mute(loaded_actions):
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="mute", value_display="1")
+    assert resp.ok is False
+    assert "parameter-backed" in (resp.error or "")
+
+
+def test_set_property_rejects_both_value_and_value_display(loaded_actions):
+    ctx = FakeCtx()
+    resp = _set_property(
+        ctx, track_index=1, property="volume", value=0.5, value_display="-8 dB"
+    )
+    assert resp.ok is False
+    assert "exactly one" in (resp.error or "")
+
+
+def test_set_property_requires_value_when_no_display(loaded_actions):
+    ctx = FakeCtx()
+    resp = _set_property(ctx, track_index=1, property="volume")
+    assert resp.ok is False
+    assert "requires" in (resp.error or "")
+
+
+def test_info_includes_volume_db(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(tool="ableton_track", action="info", params={"track_index": 1}),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # Default fader is 0.85 -> 0 dB; no panning_db (pan has no dB sense).
+    assert resp.result["volume_db"] == 0.0
+    assert "panning_db" not in resp.result
+
+
+def test_info_volume_db_is_none_when_fader_fully_down(loaded_actions):
+    ctx = FakeCtx()
+    ctx.song.tracks[0].mixer_device.volume.value = 0.0  # reads "-inf dB"
+    resp = dispatch(
+        Request(tool="ableton_track", action="info", params={"track_index": 1}),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["volume"] == 0.0
+    assert resp.result["volume_db"] is None
 
 
 def test_get_property_reads_each_field(loaded_actions):

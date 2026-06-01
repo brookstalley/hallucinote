@@ -13,7 +13,9 @@ import pytest
 
 from hallucinote_mcp.handlers.display_value import (
     DisplayValueError,
+    display_number_for,
     parse_leading_number,
+    resolve_continuous_write,
     solve_raw_for_display,
 )
 
@@ -226,3 +228,81 @@ def test_refuses_non_numeric_display() -> None:
         solve_raw_for_display(
             "1", p_min=0.0, p_max=2.0, str_for_value=lambda v: "RMS"
         )
+
+
+# ---------- resolve_continuous_write (shared continuous-write contract) ----------
+
+
+class _Param:
+    """Minimal DeviceParameter stand-in for the shared write contract."""
+
+    def __init__(self, value=0.0, *, min=0.0, max=1.0, str_for_value=None,
+                 is_quantized=False):
+        self.value = value
+        self.min = min
+        self.max = max
+        self.is_quantized = is_quantized
+        if str_for_value is not None:
+            self.str_for_value = str_for_value
+
+
+def test_resolve_continuous_raw_value_in_range() -> None:
+    assert resolve_continuous_write(
+        _Param(min=0.0, max=1.0), value=0.7, value_display=None
+    ) == pytest.approx(0.7)
+
+
+def test_resolve_continuous_raw_value_out_of_range() -> None:
+    with pytest.raises(ValueError, match="out of range"):
+        resolve_continuous_write(_Param(min=0.0, max=1.0), value=1.5, value_display=None)
+
+
+def test_resolve_continuous_value_display_inverts_curve() -> None:
+    # threshold_db: 0->-70 dB, 1->0 dB; -35 dB sits at raw 0.5.
+    raw = resolve_continuous_write(
+        _Param(min=0.0, max=1.0, str_for_value=threshold_db),
+        value=None,
+        value_display="-35 dB",
+    )
+    assert raw == pytest.approx(0.5, abs=1e-3)
+
+
+def test_resolve_continuous_requires_exactly_one() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        resolve_continuous_write(_Param(), value=0.5, value_display="-35 dB")
+    with pytest.raises(ValueError, match="exactly one"):
+        resolve_continuous_write(_Param(), value=None, value_display=None)
+
+
+def test_resolve_continuous_refuses_value_display_on_enum() -> None:
+    with pytest.raises(ValueError, match="enum"):
+        resolve_continuous_write(
+            _Param(is_quantized=True, str_for_value=threshold_db),
+            value=None,
+            value_display="-35 dB",
+        )
+
+
+def test_resolve_continuous_refuses_value_display_without_str_for_value() -> None:
+    with pytest.raises(ValueError, match="no str_for_value"):
+        resolve_continuous_write(_Param(), value=None, value_display="-35 dB")
+
+
+# ---------- display_number_for ----------
+
+
+def test_display_number_for_reads_db() -> None:
+    p = _Param(value=0.85, str_for_value=lambda v: f"{40.0 * (v - 0.85):.1f} dB")
+    assert display_number_for(p) == pytest.approx(0.0)
+
+
+def test_display_number_for_none_when_infinite() -> None:
+    assert display_number_for(_Param(value=0.0, str_for_value=lambda v: "-inf dB")) is None
+
+
+def test_display_number_for_none_without_str_for_value() -> None:
+    assert display_number_for(_Param(value=0.5)) is None
+
+
+def test_display_number_for_none_when_non_numeric() -> None:
+    assert display_number_for(_Param(value=0.5, str_for_value=lambda v: "RMS")) is None

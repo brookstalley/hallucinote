@@ -27,8 +27,9 @@ fall) is detected from the endpoints, not assumed.
 """
 from __future__ import annotations
 
+import math
 import re
-from typing import Callable
+from typing import Any, Callable
 
 # Leading signed float: optional sign, digits with optional decimal, or a bare
 # ".5". Matches "-8.40 dB" -> -8.40, "4.00 : 1" -> 4.00, "100 %" -> 100,
@@ -179,3 +180,86 @@ def solve_raw_for_display(
         else:
             hi = mid
     return (lo + hi) / 2.0
+
+
+def resolve_continuous_write(
+    param: Any,
+    *,
+    value: Any,
+    value_display: str | None,
+    parameter_name: str = "parameter",
+) -> float:
+    """Resolve a continuous ``DeviceParameter`` write to the raw float to assign.
+
+    Supply EXACTLY ONE of ``value`` (raw, range-checked against
+    ``[param.min, param.max]``) or ``value_display`` (display units like "-18 dB",
+    inverted via the parameter's ``str_for_value`` curve). Live exposes no
+    string->value inverse on ``DeviceParameter``, so the numeric inversion lives
+    in :func:`solve_raw_for_display`.
+
+    Shared by the device ``set_parameter`` / ``set_parameter_in_rack`` handlers
+    AND the track ``set_property`` mixer-volume path (``mixer_device.volume`` is a
+    ``DeviceParameter`` like any other), so the continuous-write contract —
+    exactly-one, range-check, display inversion, and the enum refusal — is
+    identical across all three call sites.
+    """
+    if (value is None) == (value_display is None):
+        raise ValueError(
+            f"set continuous {parameter_name!r} with exactly one of `value` "
+            "(raw, in [param.min, param.max]) or `value_display` (display units "
+            "like '-18 dB', '3:1')"
+        )
+
+    if value_display is not None:
+        if bool(getattr(param, "is_quantized", False)):
+            raise ValueError(
+                f"parameter {parameter_name!r} is an enum (is_quantized=True); "
+                "use value_type='enum' with `value`, not `value_display`"
+            )
+        str_for_value = getattr(param, "str_for_value", None)
+        if not callable(str_for_value):
+            raise ValueError(
+                f"parameter {parameter_name!r} exposes no str_for_value; set it "
+                "via the normalized `value`"
+            )
+        return solve_raw_for_display(
+            value_display,
+            p_min=float(getattr(param, "min", 0.0)),
+            p_max=float(getattr(param, "max", 1.0)),
+            str_for_value=str_for_value,
+            parameter_name=parameter_name,
+        )
+
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"value_type='continuous' requires a numeric value, got {value!r}"
+        ) from exc
+    p_min = float(getattr(param, "min", 0.0))
+    p_max = float(getattr(param, "max", 1.0))
+    if not (p_min <= coerced <= p_max):
+        raise ValueError(
+            f"value {coerced} out of range [{p_min}, {p_max}] for "
+            f"parameter {parameter_name!r}"
+        )
+    return coerced
+
+
+def display_number_for(param: Any) -> float | None:
+    """Read a Live ``DeviceParameter``'s current display as a finite number.
+
+    Returns the leading number of ``str_for_value(param.value)`` — for a track
+    volume that is the fader's dB. ``None`` when the param exposes no
+    ``str_for_value`` (e.g. a minimal test fake) or its display is non-numeric
+    or non-finite — a fully-down fader reads "-inf dB", which has no finite dB
+    AND is not JSON-encodable, so it is reported as ``None`` (the raw ``volume``
+    0.0 already conveys that).
+    """
+    str_for_value = getattr(param, "str_for_value", None)
+    if not callable(str_for_value):
+        return None
+    number = parse_leading_number(str(str_for_value(param.value)))
+    if number is None or not math.isfinite(number):
+        return None
+    return number

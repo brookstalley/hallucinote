@@ -52,11 +52,59 @@ exactly like the root's — restoration is **once and terminal.**
 9. **NOT four-on-the-floor-minus-3.** The pattern must be characterful/syncopated.
 10. **Tempo/feel:** 100 BPM, 4/4, energetic (`decisions/07`).
 
-## OPEN — the specific groove (design later, inside invariants 1–10)
+## FOUNDATION — tresillo + backbeat (chosen; validate by ear, then refine)
 
-The exact pattern is intentionally unchosen. Design space: kick syncopation on 1 / the
-"ands" / pickups; ghost notes; hat & perc interplay to carry intrigue without a sub or
-a beat-3 kick; an optional ghosted "wrong" element near beat 3 to make the withholding
-audible. Genre feel TBD (leans electronic/synth given the instrumentation).
+**Decided by:** user ("let's do tresillo and backbeat… we need to listen and may adjust").
+**Status:** foundation chosen as the starting point. We have no Live in this container,
+so this is locked *on paper* and must be **validated by ear in Ableton** before it's
+truly final — expect micro-adjustment. The macro choice (tresillo kick + 2&4 backbeat,
+beat 3 native-empty, reveal breaks the tresillo) is the commitment.
 
-_When the pattern is chosen, append it here and mark the file fully locked._
+### Why tresillo
+
+The tresillo (3+3+2 sixteenths — the habanera / reggaeton-lite feel under a huge share
+of modern pop) places its onsets on **beat 1 · the "and of 2" (2.5) · beat 4**, and
+leaves **beat 3 empty by nature.** Our deliberate structural wound is therefore native
+to one of pop's most familiar grooves: the listener hears a confident contemporary
+feel, not "a missing kick." The hole is hidden in plain sight as a genre convention —
+exactly the "energetic song with one problem you can't quite name" effect we want. It
+also satisfies every invariant: not four-on-the-floor (✓9), characterful (✓9), beat 3
+empty (✓1), energy syncopated off the downbeat (✓3,4).
+
+### The layering
+
+- **Kick (sub-rolled-off): tresillo** → onsets on **1 · "and of 2" · 4**. Never on 3.
+- **Backbone: claps/snare on 2 & 4** (invariant 4) over the tresillo.
+- Net accent map per bar: beat 2 = snare; "and of 2" = kick; beat 4 = kick+snare;
+  **beat 3 = nothing** — conspicuously framed by activity on either side (invariant 3).
+- **Beat 1** is articulated by a non-sub percussion timbre (rim / woodblock / pluck /
+  tuned tom) so the downbeat is clear (invariant 5) while the bottom octave stays
+  reserved (invariant 6). Timbral substitution, not a sub kick.
+- **Hats / arp** keep the constant pulse through the bar (invariant 8), including over
+  the empty beat 3.
+
+### The reveal breaks the tresillo
+
+When the real sub-kick lands on **beat 3** for the first time (coda), it *breaks* the
+tresillo: the syncopated, floor-less Latin-pop feel resolves into a grounded,
+downbeat-anchored backbeat. The groove that never quite touched the floor finally
+lands — rhythmic "found," in the same instant as the harmonic resolution and the sub-osc
+E (the triple convergence of invariant 6).
+
+### Candidate second axis (not yet committed) — subdivision ambiguity
+
+Optionally float **triplet hats** over the duple tresillo (trap-style) so the
+*subdivision itself* is ambiguous — the metric mirror of the two-keys-at-once harmony
+(the ear reaching for a stable grid that isn't there). Could resolve at the reveal too
+(triplets drop, the grid goes cleanly duple). **Hold this as a candidate** — try it by
+ear; it may be one layer too many. Decide during the Live listening pass.
+
+## OPEN — to settle by ear in Live
+
+- Exact swing/shuffle % on the 16ths (straight vs. lightly swung tresillo).
+- Whether the empty beat 3 gets a faint "wrong" tick (framing) or stays fully silent.
+- The beat-1 substitution timbre.
+- Whether the triplet-hat ambiguity layer earns its place.
+- Fills/transitions into the break (the bright crash on 3 = the false fill).
+
+_When validated/adjusted in Live, update this section and mark fully locked._

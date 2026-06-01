@@ -323,11 +323,19 @@ def write_result(
     *,
     results_dir: Path = RESULTS_DIR,
     now: datetime | None = None,
+    canonical: bool = False,
 ) -> Path:
     """Validate, stamp with a UTC timestamp, and record a judge result.
 
-    Filename: ``<brief_id>-<UTC timestamp>.json`` so re-runs accumulate rather
-    than overwrite (the corpus is the behavioral regression history).
+    Two filename modes (see ``tests/scenarios/results/README.md`` for the
+    retention policy):
+
+    * ``canonical=False`` (default): ``<brief_id>-<UTC timestamp>.json`` — an
+      ad-hoc run. These are **gitignored**: LLM-simulated runs are
+      non-deterministic, so accumulating them in git is churn, not signal.
+    * ``canonical=True``: ``canonical-<brief_id>.json`` (stable name, overwrites)
+      — the pinned latest-passing result, **committed** as the durable
+      verification evidence for this behaviorally-judged (non-unit-testable) work.
     """
     validate_result(data, brief, source="<write_result>")
     stamped = dict(data)
@@ -336,7 +344,10 @@ def write_result(
 
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"{brief.id}-{moment.strftime('%Y%m%dT%H%M%SZ')}.json"
+    fname = (
+        f"canonical-{brief.id}.json" if canonical
+        else f"{brief.id}-{moment.strftime('%Y%m%dT%H%M%SZ')}.json"
+    )
     out = results_dir / fname
     out.write_text(json.dumps(stamped, indent=2) + "\n", encoding="utf-8")
     return out

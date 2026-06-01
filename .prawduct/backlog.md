@@ -406,7 +406,21 @@ sections only via explicit `/backlog update` calls.
   with the single actionable message), not 5 raw IndexErrors.
 
 - **[RND-7K3M]** Render silently burns the full wait window when Live's audio engine is OFF — no pre-flight, no actionable cause (CRITICAL)
-  `effort: S · impact: L · area: render · source: user · added: 2026-06-01 · status: open`
+  `effort: S · impact: L · area: render · source: user · added: 2026-06-01 · status: shipped · closed-by: fix/render-audio-engine-preflight`
+
+  **SHIPPED (fix/render-audio-engine-preflight):** structural transport-advance
+  pre-flight added to `render_handler` — after `start_playing()` it samples
+  `current_song_time` over ~0.5s; a frozen transport raises fast with the
+  audio-engine cause (re-select output / Options ▸ Audio Engine On) instead of
+  blocking the full ~song-length window. The LOM exposes no engine flag (verified by
+  introspecting `song`+`application`), so the transport-advance probe is the detector.
+  Unit-tested via a new `_engine_check` seam + a direct `_default_engine_preflight`
+  test (no Live needed). **Pending (honest-confidence):** live verification of the
+  engine-off path requires re-vendoring the Remote Script (`/ableton-mcp-install`) +
+  a Live restart so the running surface picks up the new handler — deferred to the
+  user's next Live session. Also not addressed: a mid-render stall (engine on then
+  driver hiccup) still waits the full `max_wait_s` (the beats×5-as-seconds heuristic
+  is over-generous) — a separate, rarer follow-on.
 
   **User-flagged CRITICAL (2026-06-01): "renders can fail because no audio engine, but it
   doesn't tell you, so it takes a long time."** When Live's audio engine is OFF (e.g. the

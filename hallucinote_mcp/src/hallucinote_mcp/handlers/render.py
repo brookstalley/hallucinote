@@ -102,6 +102,20 @@ _MIN_WAIT_S = 30.0
 # blocking the full ~minutes-long render window for frames that never come.
 _NO_FRAME_CHECKPOINT_BEATS = 4.0
 
+# Engine pre-flight. After ``start_playing`` the transport must actually advance.
+# When Live's audio engine is OFF — the output device vanished (headphones
+# unplugged, a device switch); Live shows "the audio engine is off" and refuses to
+# play — the transport never moves: ``current_song_time`` stays frozen at the seek.
+# The capture wait loop below polls ``current_song_time``, so WITHOUT this check an
+# engine-off render blocks the ENTIRE ``max_wait_s`` window (minutes) before timing
+# out to ``incomplete`` with no actionable cause. We sample ``current_song_time``
+# across a short window right after play; a frozen transport fails fast and names
+# the cause. The LOM exposes NO audio-engine-running flag (verified by introspecting
+# ``song`` + ``application`` — neither carries one), so "does song-time move?" is the
+# robust, property-independent detector.
+_TRANSPORT_PROBE_S = 0.5
+_TRANSPORT_ADVANCE_EPSILON_BEATS = 0.02
+
 
 # --- public types ----------------------------------------------------
 
@@ -205,6 +219,26 @@ def _wait_for_capture(
     return "timeout"
 
 
+def _default_engine_preflight(context: LiveContext, *, probe_s: float) -> bool:
+    """True iff the transport advances over ``probe_s`` seconds after play.
+
+    Two samples of ``current_song_time`` on Live's main thread, ``probe_s`` apart.
+    A frozen transport (delta within ``_TRANSPORT_ADVANCE_EPSILON_BEATS``) means
+    Live's audio engine is off (or the transport stalled at the gate) — the caller
+    fails fast instead of waiting out the whole render window. ``probe_s`` gives
+    Live's transport time to spin up; even at 20 BPM (1 beat = 3 s) a 0.5 s window
+    advances ~0.17 beat, far above the epsilon, so a healthy engine never
+    false-trips."""
+    def _read() -> float:
+        def _r() -> float:
+            return float(getattr(context.song, "current_song_time", 0.0))
+        return float(context.run_on_main(_r))
+    t0 = _read()
+    time.sleep(probe_s)
+    t1 = _read()
+    return (t1 - t0) > _TRANSPORT_ADVANCE_EPSILON_BEATS
+
+
 # --- the two action handlers -----------------------------------------
 
 
@@ -237,6 +271,7 @@ def render_handler(
     _osc_factory: Callable[[int], AnalyzerOSC] | None = None,
     _sidecar: OSCSidecar | None = None,
     _clock_source: Callable[[], float] | None = None,
+    _engine_check: Callable[[], bool] | None = None,
     _now_iso: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     """End-to-end render: ensure analyzers, deliver paths, play, capture.
@@ -362,6 +397,37 @@ def render_handler(
     def _play_on_main() -> None:
         context.song.start_playing()
     context.run_on_main(_play_on_main)
+
+    # Engine pre-flight: the transport must advance now that we've pressed play.
+    # A frozen transport means Live's audio engine is off — fail fast (in ~probe_s)
+    # rather than blocking the full max_wait_s window for a capture that can't
+    # happen. A provided ``_clock_source`` is a transport SIMULATION (tests own the
+    # position), so trust it and skip the live probe; ``_engine_check`` is the
+    # direct seam for exercising this branch. See ``_TRANSPORT_PROBE_S``.
+    if _engine_check is not None:
+        transport_advancing = _engine_check()
+    elif _clock_source is None:
+        transport_advancing = _default_engine_preflight(
+            context, probe_s=_TRANSPORT_PROBE_S)
+    else:
+        transport_advancing = True
+    if not transport_advancing:
+        # Clean up Live's transport before raising (mirror the no_frames path).
+        def _stop_engine_off() -> None:
+            context.song.stop_playing()
+        context.run_on_main(_stop_engine_off)
+        time.sleep(_INTER_MUTATION_YIELD_S)
+        _set_arm_on_all(context, layout, arm=False)
+        raise ValueError(
+            "render: transport did not advance after play — Live's audio engine is "
+            "OFF (or the transport stalled at the gate). Nothing was captured. This "
+            "usually means the audio output device went away (headphones unplugged / "
+            "a device switch); Live then shows 'the audio engine is off' and refuses "
+            "to play. Fix: re-select an output device (Preferences > Audio) or tick "
+            "Options > 'Audio Engine On', then retry. (Failing fast after "
+            f"~{_TRANSPORT_PROBE_S:.1f}s — the full render window would otherwise "
+            "block for minutes waiting for a transport that never moves.)"
+        )
 
     # Wait for transport to cross stop+post_roll — or fail fast if the
     # recorder never starts capturing.

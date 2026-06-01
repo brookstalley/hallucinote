@@ -53,7 +53,10 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
+
+if TYPE_CHECKING:  # avoid a runtime cycle — arrangement imports SectionMelody from here
+    from hallucinote.arrangement import Arrangement
 
 from hallucinote.melody.contour import (
     ContourShape,
@@ -419,3 +422,30 @@ def analyze_melody(
     secs = tuple(_analyze_section(s) for s in sections)
     rollup = tuple(f for s in secs for f in s.findings)
     return MelodyReport(song_slug=song_slug, sections=secs, findings=rollup)
+
+
+def analyze_arrangement(
+    arr: "Arrangement",
+    *,
+    song_slug: str,
+    melody_layers: Sequence[str] | None = None,
+    start_bar: int = 1,
+) -> MelodyReport:
+    """Run the melody lens over an in-memory ``Arrangement`` — the build-time entry
+    point a song's ``melody_report()`` calls (and ``tools/melody_lens.py`` surfaces
+    to ``/compose-review``).
+
+    Full harmony-fit (§5 of the model) needs the in-memory ``Progression`` carried
+    by each section, which is NOT persisted to the DB — so the lens runs build-time
+    over the arrangement, not over a DB read. Thin wrapper over
+    ``arr.section_melody_inputs()`` -> ``analyze_melody()``; kept HERE (not on
+    ``arrangement.py``) so the melody layer never depends on the arrangement layer
+    at runtime — the adapter lives on the arrangement, the lens stays a leaf.
+
+    ``melody_layers`` names the monophonic lines to read (lead / vocal / riff);
+    exclude drums and chordal pads. ``None`` reads every layer.
+    """
+    return analyze_melody(
+        arr.section_melody_inputs(melody_layers=melody_layers, start_bar=start_bar),
+        song_slug=song_slug,
+    )

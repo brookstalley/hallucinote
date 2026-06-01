@@ -23,6 +23,7 @@ from hallucinote.melody import (
     MelodyFinding,
     MelodyReport,
     SectionMelody,
+    analyze_arrangement,
     analyze_melody,
 )
 from hallucinote.melody.lens import (
@@ -208,3 +209,36 @@ def test_arrangement_bridge_feeds_the_lens_end_to_end():
     assert line.classification == "active"
     assert line.harmony is not None                 # harmony-fit ran (progression present)
     assert rep.ok is True
+
+
+def test_analyze_arrangement_runs_lens_over_in_memory_arrangement():
+    """The build-time entry point a song's melody_report() calls: it wraps
+    section_melody_inputs -> analyze_melody, carries the in-memory progression
+    (so harmony-fit runs — the DB can't), excludes non-melodic layers, and
+    propagates the slug."""
+    prog = Progression.of("E", "Dorian", ["Em7"], beats_per_chord=16.0)
+    arr = Arrangement()
+    arr.section("verse", function="verse", bars=4,
+                layers={"lead": _reggae_chillin(), "drums": [_n(36, i * 1.0) for i in range(8)]},
+                progression=prog)
+    arr.section("chorus", function="chorus", bars=2,
+                layers={"lead": _metal_no_time(), "drums": [_n(36, i * 1.0) for i in range(8)]})
+
+    rep = analyze_arrangement(arr, song_slug="szd", melody_layers=("lead",))
+    assert rep.song_slug == "szd"
+    assert [s.section for s in rep.sections] == ["verse", "chorus"]
+    # one line per section — drums excluded by melody_layers
+    assert all(len(s.lines) == 1 and s.lines[0].track_name == "lead"
+               for s in rep.sections)
+    assert rep.sections[0].lines[0].harmony is not None   # in-memory progression read
+    assert rep.sections[1].lines[0].harmony is None       # chorus declared none
+    assert all(line.classification == "active" for s in rep.sections for line in s.lines)
+
+
+def test_analyze_arrangement_reads_all_layers_when_unspecified():
+    """melody_layers=None reads every layer (the adapter's default)."""
+    arr = Arrangement()
+    arr.section("verse", function="verse", bars=4,
+                layers={"lead": _reggae_chillin(), "drums": [_n(36, i * 1.0) for i in range(8)]})
+    rep = analyze_arrangement(arr, song_slug="szd")
+    assert {line.track_name for s in rep.sections for line in s.lines} == {"lead", "drums"}

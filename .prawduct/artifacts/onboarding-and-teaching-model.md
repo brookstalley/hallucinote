@@ -159,8 +159,9 @@ actually do *right now* — read as **dimensions of a song**, not a skill catalo
 | Arrangement / structure (sections, energy arc, contrast) | ✓ full |
 | Sound design (instrument chains as authorship) | ✓ full |
 | Mix (intent-aware review, masking, sidechain) | ✓ full |
-| Melody (lead-line writing) | ◐ thinner than the rest — pluck/bell lines today; *or sketch your line in Ableton and we arrange around it (round-trip)* |
-| Vocal topline (synthesis) | ✗ not yet — but a sketched vocal *melody* (MIDI) round-trips in |
+| Melody — line *analysis* (contour, intervals, harmony-fit via the melody lens / `/compose-review`) | ✓ read-side — coaches any line, incl. a sketched topline, against its declared intent; never invents the hook |
+| Melody — lead-line *authoring* | ◐ thinner than the rest — a generated topline is a starting point, not the finished hook (no melody generator, by design); *sketch your line in Ableton and we arrange under it + read whether it lands (round-trip + line analysis)* |
+| Vocal topline (synthesis) | ✗ not yet — but a sketched vocal *melody* (MIDI) round-trips in (and the line analysis reads it) |
 | Round-trip / sketch-input (edit in Ableton, we ingest + build around it) | ✓ full — `/ableton-pull` `clip-notes`, stable per-note IDs |
 
 The agent reads this to (a) answer "what can you do?" with broad, *true* example
@@ -172,24 +173,29 @@ example — a user asks for *"an 80s pop song like Madonna"*:
 
 > "Love it — I'll write you an 80s synth-pop song in Madonna's musical
 > language: the chord moves, the groove, the arrangement, the sound design are
-> all things I do well. Two honest caveats: I can't synthesize the vocal, and my
-> melody writing is less sophisticated than the rest of me — so the topline will
-> be a starting point, not the finished hook. Here's the song…"
+> all things I do well. Two honest caveats: I can't synthesize the vocal, and I
+> won't *write* your finished hook — that's your art. But sketch the topline and
+> I'll build the whole track under it, then read whether the line lands. Here's
+> the song…"
 
 Not *"I can't do Madonna (no vocals)."* The Madonna-ness lives in the dimensions
 we own; the caveat scopes the two we don't, then we build. The boundary moves as
-Melody matures — the table moves with it. *Caveat-first only works if the agent
-knows its own edges; this is that knowledge.*
+Melody matures — the table moves with it (it just did: line *analysis* is now
+read-side, even though *authoring* a finished hook stays thin). *Caveat-first only
+works if the agent knows its own edges; this is that knowledge.*
 
 **The dimensional gap inverts into an invitation.** When a request leans on a
 thin dimension, don't just caveat it — offer the user's *contribution* in that
-dimension. Melody is our thinnest, but **round-trip is fully supported**
-(`/ableton-pull` `clip-notes`, stable per-note IDs): *"bring me your topline —
-sketch it in Ableton — and I'll build the whole track under it."* Caveat-first
-becomes a collaboration boundary, not an apology. This is the **standard move for
-any thin dimension**, and it rests on round-trip, which is *supported, not a
-hazard.* (Remember this generally: users can sketch any part in the sequencer and
-we ingest it.)
+dimension. Melody *authoring* is thin, but **round-trip is fully supported**
+(`/ableton-pull` `clip-notes`, stable per-note IDs) AND the melody lens now
+**reads** a line: *"bring me your topline — sketch it in Ableton — I'll build the
+whole track under it, then read whether it's a shaped line that lands its intent
+(contour, how it sits on the chords) via `/compose-review`."* That is a stronger,
+more honest inversion than "melody's my weak spot": the user keeps the hook, the
+agent builds the world and holds up the mirror. Caveat-first becomes a
+collaboration boundary, not an apology — the **standard move for any thin
+dimension**, resting on round-trip, which is *supported, not a hazard.* (Remember
+this generally: users can sketch any part in the sequencer and we ingest it.)
 
 **Home:** a living doc both the onboarding handoff and `song-new` read. Must stay
 trivially updatable so it never lags the code.
@@ -392,9 +398,9 @@ not in the model; they cluster in three places below.
 |---|---|---|---|
 | 1 | SWE hobbyist | high / low | Frictionless entry; references-as-spec ("like the Stranger Things theme") work; implicit-why delights a curious technical mind. Smoothest case. |
 | 2 | Bedroom producer (self-taught) | high / high-production | Directed-action dominates; risk = over-proposing taxes them. Precedence (clear direction wins) must hold. Wants bulk leverage the linear compose flow under-serves. |
-| 3 | Conservatory composer | low / very-high-theory | Entry gate is a real barrier. Once in: paradigm mismatch — score / orchestration vs generator / DAW; melody ◐, no notation-first path. Interaction model fine; the *capability ceiling* disappoints. Needs early, honest expectation-setting. |
+| 3 | Conservatory composer | low / very-high-theory | Entry gate is a real barrier. Once in: paradigm mismatch — score / orchestration vs generator / DAW; melody *authoring* ◐ (but line *analysis* now reads a brought-in line — contour, harmony-fit), no notation-first path. Interaction model fine; the *capability ceiling* disappoints. Needs early, honest expectation-setting. |
 | 4 | Cross-domain drummer | mod / expert-rhythm, novice-harmony | The third register's showcase: execute the drums, open the harmony — in one sentence. Risk = under-reading the underspecification and silently auto-accompanying "make it feel like Bach." |
-| 5 | Singer-songwriter / topliner | low-mod / expert-melody + vocal | Brutal: their strength (melody, vocal) is our thinnest dimension (◐ / ✗). Best served by *inverting the gap* — "bring your melody, I'll build the track under it" — which leans on the caveated input / sync paths. |
+| 5 | Singer-songwriter / topliner | low-mod / expert-melody + vocal | Their strength (melody, vocal) is our thinnest *authoring* dimension (◐ / ✗) — but line *analysis* is read-side, so the inversion is now two-sided: "bring your melody, I'll build the track under it AND read whether it lands its intent (contour, harmony-fit)." Leans on the round-trip / sync paths + the melody lens. |
 | 6 | Curious newcomer (wants to learn) | mod / low | The North Star persona. Heavy proposal-mode; strong genre conventions (lo-fi) let us just-build-and-show. Risk = proposal overload / paralysis if we over-fork. |
 
 **The rough edges cluster in three places — none is the interaction model:**
@@ -406,13 +412,15 @@ not in the model; they cluster in three places below.
    walkthrough sharpens *who* it costs.
 2. **Capability ceiling on melody / vocal — invert it into a contribution
    boundary.** Personas whose strength is melody / voice (5, partly 3) hit our
-   thinnest dimensions. **New design move:** turn the gap into an invitation —
-   "I can't write the finished hook or sing it; bring yours and I'll arrange the
-   whole track under it." Caveat-first stops being an apology and becomes a
-   collaboration boundary. (Rests on round-trip, which is **fully supported** —
-   `clip-notes` pull, stable note IDs — solid ground, not a caveated path.) The
-   conservatory composer additionally hits a *paradigm*
-   limit (notated orchestration), which only early honesty fixes.
+   thinnest *authoring* dimensions. **New design move:** turn the gap into an
+   invitation — "I can't write the finished hook or sing it; bring yours and I'll
+   arrange the whole track under it, *then read whether the line lands its intent*
+   (the melody lens / `/compose-review`)." Caveat-first stops being an apology and
+   becomes a two-sided collaboration: the user owns the hook, the agent builds the
+   world AND holds up the mirror. (Rests on round-trip, **fully supported** —
+   `clip-notes` pull, stable note IDs — plus the read-side melody lens, which is
+   solid ground, not a caveated path.) The conservatory composer additionally hits
+   a *paradigm* limit (notated orchestration), which only early honesty fixes.
 3. **The two behavioral judgment calls, confirmed live.** Reading the
    open→proposal transition (4, 6) and proposal *pacing* (6); plus
    collaborate-default yielding to the power producer (2). All already flagged;

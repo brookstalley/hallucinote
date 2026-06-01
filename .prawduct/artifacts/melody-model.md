@@ -8,12 +8,14 @@ built: a pure-stdlib, render-free read-side analyzer that measures the genre-gen
 substrate facts and classifies a line `active` / `static` / `insufficient-data`,
 validated on sun-zone-done's two hand-authored hooks (§9); 27 tests, full suite
 green. Built **read-side-first**, as performance was — it quantifies the gap and
-becomes the authoring side's executable acceptance test. Still pre-build (friction-
-driven follow-ons): the declared melodic-PROFILE authoring surface + profile-relative
-grading + learn-back (§4), the motivic-economy reading + the shaped-vs-aimless
-verdict (§7), `/mix-review` wiring, and any thin authoring rulers. See
-`arrangement-model.md` § *The dimension taxonomy* for where melody sits among the
-song's dimensions; read that first.
+becomes the authoring side's executable acceptance test. Wired into the read-side
+**`/compose-review`** surface (the render-free compositional sibling to `/mix-review`)
+via a per-song `melody_report()` convention + the `tools/melody_lens.py` CLI — see
+§7 *Read-side surface*. Still pre-build (friction-driven follow-ons): the declared
+melodic-PROFILE authoring surface + profile-relative grading + learn-back (§4), the
+motivic-economy reading + the shaped-vs-aimless verdict (§7), and any thin authoring
+rulers. See `arrangement-model.md` § *The dimension taxonomy* for where melody sits
+among the song's dimensions; read that first.
 
 **Sources.** TWO verified deep-research passes (2026-05-31), same adversarial
 discipline as the performance pass (3-vote, majority-refute kills). Pass 1
@@ -542,6 +544,36 @@ to its apex on a weak beat and never repeats a cell — intended, or has the hoo
 got lost?"* — and the revealed intent is **learned back per-song** so it never
 re-flags.
 
+### Read-side surface — `/compose-review`, not `/mix-review`
+
+> Decision (2026-06-01), recorded here because it has lock-in. **The lens's
+> user-facing home is `/compose-review`, not `/mix-review`.** Both are intent-aware
+> read-side producers' surfaces, but they read different things: `/mix-review`
+> interprets an **audio** `MixReport` (masking, loudness, reverb — it needs a
+> render), while `/compose-review` (the compose-stage sibling that landed in
+> parallel — `intent-architecture.md` "the same loop at the compose stage") reads
+> the **composition** symbolically from `build.py` + the arrangement: density,
+> register, energy arc, contrast. The melody lens is **pure-symbolic and
+> render-free** — its kind matches `/compose-review` exactly. They are
+> complementary halves of *"is the composition doing what it intends?"*:
+> compose-review reads the *vertical/structural* facts (which parts play where,
+> how dense), the melody lens reads the *horizontal line-level* facts (contour,
+> intervals, harmony-fit, the static/unresolved-NCT coaching questions)
+> compose-review structurally cannot see. Wiring it into `/mix-review` would have
+> mis-coupled a build-time symbolic ruler to an audio surface and made it
+> unavailable at the compose stage, where line-shape questions belong.
+>
+> **Mechanism (full harmony-fit needs the in-memory progression).** Harmony is
+> authored in `build.py` and is **not persisted to the DB**, so a pure DB read
+> cannot do the harmony-fit reading (chord-tone / NCT-resolution / strong-beat) —
+> the §5 melody↔harmony coupling, the lens's richest output. The lens therefore
+> runs **build-time over the in-memory `Arrangement`**: a song exposes a
+> `melody_report()` (one line via `hallucinote.melody.analyze_arrangement(arr, …)`),
+> and `tools/melody_lens.py <slug>` invokes it for `/compose-review` to fold into
+> its INTERPRET-vs-intent loop. The scaffold template emits the convention so new
+> songs get it for free; retrofitting older songs (falling-walking, full-band-rock)
+> is a friction-driven follow-on.
+
 ---
 
 ## 8. Phased delivery plan
@@ -554,8 +586,10 @@ Strictly sequenced, mirroring the performance layer's proven order:
 2. **Platform implementation (friction-driven), read-side FIRST.** (a) **DONE** —
    the symbolic **melody lens** `src/hallucinote/melody/` (`lens` + `contour` +
    `intervals` + `harmony_fit`) + the `Arrangement.section_melody_inputs()` adapter,
-   validated on sun-zone-done's two hand-authored hooks (§9); 27 tests. *(Still to
-   do in 2a: wire into `/mix-review` beside the harmony + performance lenses.)*
+   validated on sun-zone-done's two hand-authored hooks (§9); 27 tests. **Wired
+   into `/compose-review`** (see §7 *Read-side surface* for why compose-review, not
+   mix-review): `analyze_arrangement()` + the `tools/melody_lens.py` CLI + a per-song
+   `melody_report()` convention (sun-zone-done + the scaffold template).
    (b) the **declared melodic profile** authoring surface (§4) + grading the lens
    against it + learn-back + the shaped-vs-aimless verdict. (c) any thin authoring
    rulers discovered from friction (contour→scale-degree, chord-tone snap) — never

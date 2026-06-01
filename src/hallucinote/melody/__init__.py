@@ -38,6 +38,7 @@ from hallucinote.melody.lens import (
     MelodyReport,
     SectionMelody,
     SectionMelodyResult,
+    analyze_arrangement,
     analyze_melody,
 )
 
@@ -50,6 +51,7 @@ __all__ = [
     "SectionMelody",
     "Classification",
     "analyze_melody",
+    "analyze_arrangement",
     # intervals
     "melodic_intervals",
     "step_leap_unison_counts",

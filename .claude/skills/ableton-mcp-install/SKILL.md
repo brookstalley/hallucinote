@@ -265,9 +265,10 @@ If something looks broken, /ableton-mcp-uninstall reverses every step.
   from the Capability Truth table, as *example invitations* ("we could build a
   beat, flesh out a chord progression, arrange a track around an idea you have").
 - **Names the thin dimensions honestly** when they're relevant, and **inverts
-  the gap into an invitation** rather than apologizing — melody is ◐ and vocal
-  synthesis is ✗, but a topline sketched in Ableton round-trips in, so the move
-  is *"bring me your melody and I'll build the track under it."*
+  the gap into an invitation** rather than apologizing — melody *authoring* is ◐
+  and vocal synthesis is ✗, but a topline sketched in Ableton round-trips in *and
+  the melody lens reads it*, so the move is *"bring me your melody, I'll build the
+  track under it and read whether the line lands."*
 - **Opens an intent conversation** — invite the user to say what they want to
   make, in their own words and references ("a song like the Stranger Things
   theme" is a perfectly good spec). Do **not** ask them to pick a "mode"; read

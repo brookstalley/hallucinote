@@ -41,8 +41,8 @@ Live's display curve to the raw value for you, so you can hit a musical target
 without reverse-engineering the normalized mapping. Pass EXACTLY ONE of `value`
 (raw) or `value_display`. The response echoes the achieved `value_display` so
 you can confirm the target landed at the parameter's display resolution. Track
-`info` likewise reports `volume_db` (the fader in dB; `null` when muted). Panning
-has no dB sense, so its `value_display` is refused.
+`info` likewise reports `volume_db` (the fader in dB; `null` when the fader is
+fully down, volume 0). Panning has no dB sense, so its `value_display` is refused.
 `value_display` is refused for enum params (use `value_type='enum'`) and for the
 rare params whose display can't be addressed numerically (e.g. Expansion Ratio
 renders `'1 : 1.15'`, where the leading number never varies).

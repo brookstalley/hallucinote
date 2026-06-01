@@ -102,8 +102,9 @@ def info_handler(context: LiveContext, *, track_index: int) -> dict[str, Any]:
         "color": getattr(track, "color", None),
         "volume": float(mixer.volume.value),
         # dB read off Live's own fader curve (str_for_value), for agents doing
-        # gain-staging in dB. None when muted ("-inf dB"); the raw `volume` 0.0
-        # already conveys that. Pan has no dB sense, so no panning_db.
+        # gain-staging in dB. None when the fader is fully down (volume 0 reads
+        # "-inf dB") — that is independent of the `mute` flag. Pan has no dB
+        # sense, so no panning_db.
         "volume_db": display_number_for(mixer.volume),
         "panning": float(mixer.panning.value),
         "mute": bool(track.mute),
@@ -261,10 +262,12 @@ def set_property_handler(
         "value": coerced,
     }
     # Echo the achieved display (e.g. "-8.0 dB") for parameter-backed props, so a
-    # caller can confirm a value_display target was hit — mirrors device set_parameter.
+    # caller can confirm a value_display target was hit — mirrors device
+    # set_parameter's _attach_achieved_display, which reads back the param POST
+    # write (robust if Live ever re-quantizes a write).
     str_for_value = getattr(obj, "str_for_value", None)
     if callable(str_for_value):
-        result["value_display"] = str_for_value(coerced)
+        result["value_display"] = str_for_value(getattr(obj, path[-1]))
     return result
 
 

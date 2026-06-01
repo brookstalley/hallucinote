@@ -252,9 +252,9 @@ def display_number_for(param: Any) -> float | None:
     Returns the leading number of ``str_for_value(param.value)`` — for a track
     volume that is the fader's dB. ``None`` when the param exposes no
     ``str_for_value`` (e.g. a minimal test fake) or its display is non-numeric
-    or non-finite — a muted fader reads "-inf dB", which has no finite dB AND is
-    not JSON-encodable, so it is reported as ``None`` (the raw ``volume`` 0.0
-    already conveys the mute).
+    or non-finite — a fully-down fader reads "-inf dB", which has no finite dB
+    AND is not JSON-encodable, so it is reported as ``None`` (the raw ``volume``
+    0.0 already conveys that).
     """
     str_for_value = getattr(param, "str_for_value", None)
     if not callable(str_for_value):

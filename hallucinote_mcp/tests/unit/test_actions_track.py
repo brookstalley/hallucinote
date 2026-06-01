@@ -600,7 +600,7 @@ def test_info_includes_volume_db(loaded_actions):
     assert "panning_db" not in resp.result
 
 
-def test_info_volume_db_is_none_when_muted(loaded_actions):
+def test_info_volume_db_is_none_when_fader_fully_down(loaded_actions):
     ctx = FakeCtx()
     ctx.song.tracks[0].mixer_device.volume.value = 0.0  # reads "-inf dB"
     resp = dispatch(

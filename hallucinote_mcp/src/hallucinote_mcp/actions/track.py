@@ -56,7 +56,8 @@ register(
         description=(
             "Read identity + mixer state for one track in a single call. "
             "Includes `volume_db` (the fader's dB off Live's own curve; null "
-            "when muted) alongside the raw normalized `volume`."
+            "when the fader is fully down, volume 0) alongside the raw "
+            "normalized `volume`."
         ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1, description="1-based"),

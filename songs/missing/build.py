@@ -2,16 +2,17 @@
 
 'missing' renders loss of purpose as a harmonic constraint: every chord is voiced without its root, so the tonal foundation is literally absent. In E harmonic minor (i-V-iv = Em-B7-Am, voiced rootless), the raised-7th leading tone D# pulls the ear toward an E that never arrives. The narrator is lost, searching for a ground that isn't there; the choruses, where pop form promises arrival, deny it twice. The break is a FALSE SUMMIT: the song slips into its own bright G-major illusion and the narrator believes they have found their purpose, until the pivot chord B7 reintroduces D#, collapses the illusion, and the last verse disabuses them. Only at the very end does the root return: a sub-oscillator E swells up from the empty bottom octave as the melody lands on E for the first time. Found, finally, meaning located rather than happy. Energetic (100 bpm, pulsing arp) with one structural wound. Theme is LOSS OF PURPOSE, not loss of a person.
 
-Section bar layout (1-based, 4/4 throughout — adjust if non-4/4):
-    intro        bars  1-8    (8 bars)
-    verse1       bars  9-16   (8 bars)
-    chorus1      bars 17-24   (8 bars)
-    verse2       bars 25-32   (8 bars)
-    chorus2      bars 33-40   (8 bars)
-    break        bars 41-48   (8 bars)
-    verse3       bars 49-56   (8 bars)
-    finalchorus  bars 57-64   (8 bars)
-    coda         bars 65-72   (8 bars)
+Section bar layout (1-based, 4/4 throughout) — locked map, see
+decisions/11-bar-map.md. ~4:48 at 100 BPM.
+    intro        bars   1-8    (8 bars)   lost — phantom root tail (decisions/12)
+    verse1       bars   9-24   (16 bars)
+    chorus1      bars  25-40   (16 bars)  lost at the doorstep
+    verse2       bars  41-56   (16 bars)
+    chorus2      bars  57-72   (16 bars)  notch Q narrows a hair
+    break        bars  73-88   (16 bars)  false summit (G-major illusion -> B7)
+    verse3       bars  89-96   (8 bars)   the disabuse — half-length gut-punch
+    finalchorus  bars  97-112  (16 bars)
+    coda         bars 113-128  (16 bars)  the reveal — root returns
 
 Run:
     python songs/missing/build.py            # state-converger: re-run is no-op if nothing changed
@@ -37,14 +38,14 @@ SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 # ---------------------------------------------------------------------------
 INTRO_BAR = 1
 VERSE1_BAR = 9
-CHORUS1_BAR = 17
-VERSE2_BAR = 25
-CHORUS2_BAR = 33
-BREAK_BAR = 41
-VERSE3_BAR = 49
-FINALCHORUS_BAR = 57
-CODA_BAR = 65
-END_BAR = 73
+CHORUS1_BAR = 25
+VERSE2_BAR = 41
+CHORUS2_BAR = 57
+BREAK_BAR = 73
+VERSE3_BAR = 89          # half-length verse (8 bars) — the disabuse
+FINALCHORUS_BAR = 97
+CODA_BAR = 113
+END_BAR = 129
 
 
 # ---------------------------------------------------------------------------

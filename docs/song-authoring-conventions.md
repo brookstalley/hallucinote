@@ -2,6 +2,23 @@
 
 Conventions for authoring `build.py` against the Hallucinote library. Companion to `docs/snapshot-schema.md`.
 
+**Contents**
+
+- [Filesystem layout](#filesystem-layout)
+- [State-converger discipline](#state-converger-discipline)
+- [Authoring API — the helper surface](#authoring-api--the-helper-surface)
+- [Sound design is authorship](#sound-design-is-authorship)
+- [Per-part feel (microtiming is authorship)](#per-part-feel-microtiming-is-authorship)
+- [Drum kits: probe, don't assume](#drum-kits-probe-dont-assume)
+- [Repeated sections (verse twice, chorus three times)](#repeated-sections-verse-twice-chorus-three-times)
+- [Cue points and duplicate names](#cue-points-and-duplicate-names)
+- [Meter (4/4 vs. other)](#meter-44-vs-other)
+- [Master and audio-track envelopes](#master-and-audio-track-envelopes)
+- [Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)](#enum-parameter-envelopes-amp-type-filter-type-lfo-sync-)
+- [Tempo of non-4/4 BPM](#tempo-of-non-44-bpm)
+- [Push session bootstrap (`--auto-session`)](#push-session-bootstrap---auto-session)
+- [See also](#see-also)
+
 ---
 
 ## Filesystem layout

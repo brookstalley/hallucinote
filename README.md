@@ -4,12 +4,12 @@
 
 You describe musical intent in plain language — *"write a stereotypical metal ballad using I–V–IV"*, *"make a 10-minute ambient soundscape in E major"* — and Claude composes the song against a SQLite source of truth, then pushes it into Ableton Live through an in-repo MCP server. Edits in Live pull back through the same path. Songs become forkable like git repos.
 
-See [`docs/VISION.md`](docs/VISION.md) for the big picture. See [`CHANGELOG.md`](CHANGELOG.md) for what shipped.
+**New here?** Install (below), then follow the [**Quickstart**](docs/quickstart.md) to build your first song in about 10 minutes. Want the big picture first? See [`docs/VISION.md`](docs/VISION.md). For what shipped, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What you can do
 
 - **Compose a song from a prompt.** `/song-new <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
-- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chrous drums"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
+- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chorus drums"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
 - **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
 - **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
 
@@ -52,7 +52,7 @@ pip install -e '.[dev]' -e './hallucinote_mcp[dev]'
 
 ### 2. Install the Ableton Remote Script and MCP entry
 
-**Quit Ableton Live first.** The installer refuses to copy into a running Live (on Windows the copy may fail silently because Live holds the old files locked).
+> ⚠️ **Quit Ableton Live before this step.** The installer refuses to copy into a running Live (on Windows the copy may fail silently because Live holds the old files locked).
 
 Start Claude Code in this directory and run the install skill:
 
@@ -62,7 +62,7 @@ claude
 
 > *"/ableton-mcp-install"*
 
-The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and instructs the user the enable the MCP plugin in Live's settings. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
+The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and tells you how to enable the MCP plugin in Live's settings. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
 
 ### 3. Wire up Ableton, restart Claude Code
 
@@ -154,14 +154,27 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 
 **Fix:** open Live; check **Preferences → Link, Tempo & MIDI** shows **Hallucinote** in a Control Surface slot; quit Claude Code and reopen it in the project directory.
 
+## Learn more
+
+| If you want to… | Read |
+|---|---|
+| Build your first song, step by step | [`docs/quickstart.md`](docs/quickstart.md) |
+| See every command (skill) you can ask for | [`docs/skills.md`](docs/skills.md) |
+| Understand the design philosophy | [`docs/VISION.md`](docs/VISION.md) |
+| Write or edit a song's `build.py` | [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) |
+| Share a song with a collaborator | [`docs/collaboration.md`](docs/collaboration.md) |
+| Look something up / fix a problem | [`docs/faq.md`](docs/faq.md) |
+| Contribute code | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Get precise about an overloaded term | [`docs/terminology.md`](docs/terminology.md) |
+
 ## Project layout
 
 ```
 src/hallucinote/      # composition library: db, generators, sync, capture
-hallucinote_mcp/      # in-repo MCP server (12 unified Ableton tools)
+hallucinote_mcp/      # in-repo MCP server (13 unified Ableton tools)
 songs/<slug>/         # one directory per song: build.py + snapshot + tests
 tools/                # scaffolding + maintenance scripts
-docs/                 # VISION, collaboration, MCP design + requirements
+docs/                 # quickstart, skills, VISION, collaboration, FAQ, schemas, terminology
 tests/                # platform-level tests (per-song tests live under songs/<slug>/tests/)
 ```
 

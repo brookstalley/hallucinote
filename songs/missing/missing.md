@@ -26,6 +26,10 @@ The whole song is one withheld resolution. See `annotations/00-theme.md` (the sp
 and the dated `decisions/`. Theme is **loss of purpose, not loss of a person**;
 "found" means *located*, not happy.
 
+The **idiom shifts by section** (`decisions/13`): **cinematic** verses/intro/coda (the
+real lost-and-found) vs. **synthpop** choruses + break peak (the bright, false hope) —
+the song's most euphoric sound sits on its least honest moments.
+
 ## Structure
 
 > Locked bar map (`decisions/11-bar-map.md`), encoded in `build.py` and contracted by

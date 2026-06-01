@@ -48,7 +48,9 @@ exactly like the root's — restoration is **once and terminal.**
    all in one instant.
 7. **Break false-fill is bright, not sub** — crash/cymbal/impact, never the kick timbre,
    never sub-bearing (the bottom octave stays saved for the true reveal).
-8. **Arp pulse is constant** — forward motion independent of the kick pattern.
+8. **Arp pulse is constant** — forward motion independent of the kick pattern. (Its
+   *prominence* is section-dependent — recessed/filtered under cinematic verses,
+   dazzling/foregrounded in synthpop choruses; the pulse never stops. See `decisions/13`.)
 9. **NOT four-on-the-floor-minus-3.** The pattern must be characterful/syncopated.
 10. **Tempo/feel:** 100 BPM, 4/4, energetic (`decisions/07`).
 

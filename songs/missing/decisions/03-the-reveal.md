@@ -28,6 +28,10 @@ This is what makes Option A's single resolution worth the entire withholding. Se
 ## Consequences
 
 - **Bass must be high-passed** ~100 Hz and play non-root tones (`decisions/04`).
+- **The kick must also be sub-rolled-off / mid-focused** until the coda — the bottom
+  octave reservation applies to drums too, not just the bass (`decisions/08`). The
+  reveal is where the kick regains its weight, lands on beat 3 for the first time, and
+  the sub-osc E arrives — a triple low-end convergence with the harmonic resolution.
 - The sub-osc patch must be authored so its level is fully closed until the coda
   (automation / envelope), then opens over ~4 bars.
 - "Found" stays minor — the reveal is Em with a root, not a turn to major.

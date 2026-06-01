@@ -1,0 +1,51 @@
+{
+  "id": "lofi-study",
+  "request": "A chill lo-fi beat to study to — something cozy I can leave on in the background. Nothing that demands attention.",
+  "response_character": "Casual and low on music vocabulary. Describes what they want by feel ('cozy', 'not distracting', 'kinda warm') rather than by genre mechanics. Happy to let the agent lead and react to a concrete first pass; would not hand over a list of technical requirements.",
+  "axes": {
+    "specificity": "loose",
+    "sophistication": "simple"
+  },
+  "expected_capabilities": [
+    {
+      "dimension": "rhythm",
+      "expectation": "deliver",
+      "note": "Lo-fi is a strong convention — swung/laid-back dusty kit is squarely in the rhythm/groove wheelhouse."
+    },
+    {
+      "dimension": "harmony",
+      "expectation": "deliver",
+      "note": "Mellow extended-chord keys/pads; gentle movement across sections."
+    },
+    {
+      "dimension": "bass",
+      "expectation": "deliver",
+      "note": "Simple rounded sub/upright-style bass under the keys."
+    },
+    {
+      "dimension": "arrangement",
+      "expectation": "deliver",
+      "note": "Background-music intent: a calm arc that never spikes — restraint is the success condition, not a build."
+    },
+    {
+      "dimension": "sound-design",
+      "expectation": "deliver",
+      "note": "Vinyl crackle / saturation / tape warmth ship in the chains as authorship, not a later mix pass."
+    }
+  ],
+  "rubric": {
+    "must": [
+      "framing: Lean on the strong lo-fi convention to just-build-and-show a concrete first pass rather than over-forking with questions the user has no answers to.",
+      "framing: Stay honest about scope without inventing capabilities — no confabulated features the request didn't need.",
+      "artifact: The composition reads as lo-fi from the DB: a laid-back/swung dusty kit, mellow keys/harmony, and a simple bass — i.e. the named deliver-dimensions are actually present, not stubbed.",
+      "artifact: The arrangement honors the 'never demands attention' intent — a calm, restrained arc that does not spike into a build/drop, with sound-design warmth (saturation/vinyl) baked into the chains."
+    ],
+    "must_not": [
+      "framing: Interrogate the user with a string of technical questions they have no answers to.",
+      "framing: Confabulate a capability or promise a dimension not actually rendered.",
+      "artifact: Ship an empty or stubbed song — sections with no parts, or a 'lo-fi' track missing the dusty kit / mellow keys entirely.",
+      "artifact: Force a loud build/drop that contradicts the calm background-music intent."
+    ]
+  },
+  "tags": ["thin-slice", "in-capability", "lofi", "specificity:loose", "sophistication:simple"]
+}

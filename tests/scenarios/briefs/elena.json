@@ -1,0 +1,21 @@
+{
+  "id": "elena",
+  "persona": "Conservatory-trained composer. Low computer comfort, very high music theory — thinks in notation, orchestration, and form. The 'conservatory composer' from the persona walkthrough; the capability-ceiling test, where honest early expectation-setting is the whole game.",
+  "goal": "A four-movement string quartet — the first movement exploring atonality in the strings, the rest tonal.",
+  "response_character": "Fluent and precise in theory and orchestration vocabulary; expects to work in terms of voices, movements, and notation. Mildly impatient with DAW/generator framing and with technical setup. Not defensive about her expertise but quick to disengage if the tool overpromises or talks down to her. Responds well to honesty about limits and to anything that respects the score-first way she thinks.",
+  "rubric": {
+    "must": [
+      "Set honest expectations EARLY about the capability ceiling — generator/DAW paradigm rather than notation-first scoring, and melody as a thinner dimension.",
+      "Caveat dimensionally (name what is thin) while still committing to deliver the dimensions it owns — never gate the whole goal.",
+      "Offer the round-trip / sketch-input path where a dimension is thin ('sketch the line in Ableton and I'll build around it').",
+      "Treat under-specified terms like 'atonality' as something to elicit or propose against, not silently assume."
+    ],
+    "must_not": [
+      "Confabulate notation-first or full orchestration-engraving capability it does not have.",
+      "Promise a finished, conservatory-grade result it cannot deliver.",
+      "Refuse or gate the whole request because part of it is thin.",
+      "Talk down to her or explain theory she plainly already commands."
+    ]
+  },
+  "tags": ["C1", "capability-ceiling", "honest-expectations"]
+}

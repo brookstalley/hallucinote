@@ -2,6 +2,14 @@
 
 Accumulated wisdom from building this product.
 
+## A permission to collaborate must restate precedence in the same breath
+
+**When you add a norm or skill instruction that *permits* more proposing / stopping / collaborating, state the precedence guard ("but if the user directed it, or said they'll handle the rest, execute and hand back") in the same place. A bare "you may propose here" leaks into directed work as friction.**
+
+C3 (onboarding teaching norms) added a "pedagogical carve-out" to CLAUDE.md legitimizing collaborative musical proposals at creative forks. The scenario harness immediately caught the leak: the `dev` brief (a fully-directed "build the skeleton, I'll take it from there") FAILED — the agent forked the already-specified drop structure into an A/B and withheld the build, reading the new carve-out as blanket license to propose. The fix wasn't to remove the carve-out but to bound it: "Precedence dominates this carve-out — if they directed it or signalled they'll handle the rest, execute and hand back." `dev` then passed; `theo` (the carve-out's intended beneficiary) stayed passing.
+
+**How to apply.** (1) Any edit that widens "when to stop / ask / propose" pairs with the bounding case in the same paragraph — permissions and their limits travel together, or the permission overgeneralizes. (2) Regression-test the *opposite* persona: the change is meant to help the under-articulated/novice case, so verify it didn't tax the directed/expert case. The behavioral harness's value is exactly this — the friction was invisible to inspection and obvious the moment the directed persona was run against the edited norm. (3) "Drive end-to-end" and "collaborate by default" both need the precedence carve-out, for the same reason: neither means "decide silently," but neither means "stop at every fork" either.
+
 ## Pattern sweeps are tree-wide or they don't count
 
 **When changing a convention (a kind, name, or shape used across many surfaces), audit every reference with a tree-wide grep before declaring the sweep done. Partial sweeps create self-contradicting docs that ship.**

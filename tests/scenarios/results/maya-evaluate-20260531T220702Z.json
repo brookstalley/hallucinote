@@ -1,0 +1,62 @@
+{
+  "brief_id": "maya-evaluate",
+  "verdict": "pass",
+  "summary": "The agent recalled Maya's declared intent ('start cold and sparse, build to real driving menace') via /song-context and the annotations BEFORE evaluating, explicitly stating that intent as the bar to hold the pass against. It then read the actual composition from build.py, finding all four sections (intro/build/peak/outro) carry the identical four layers with nothing entering or dropping out, so the arc never builds. It surfaced this as a hearable question ('does it kind of just sit at one level?') rather than a score or verdict, added an honest caveat about reading the score vs. hearing it, and led with the cheapest fix \u2014 subtraction (pull layers out of the intro so the peak becomes an arrival) \u2014 naming the why in one plain sentence ('the end can only hit harder if the start is holding back'). It learned Maya's revealed intent back as two markdown annotations (song-altitude arc note + intro held-back note). No grade/score, no unsolicited theory, no auto-applied changes (it explicitly offered an A/B and waited for her to decide), and it framed the sparse intro as authorship rather than a defect. Every line satisfied.",
+  "rubric_findings": [
+    {
+      "kind": "must",
+      "item": "RECALL her declared intent (the cold-and-sparse opening building to real drive; the menacing mood) BEFORE evaluating \u2014 anchor the read in what she wanted, not generic quality.",
+      "satisfied": true,
+      "rationale": "Before looking at the pass, the agent ran /song-context, read midnight-drive.md and annotations, and quoted her declared intent verbatim ('start cold and sparse, build to real driving menace by the end') plus the outro payoff annotation, then explicitly said 'that's the bar I'm going to hold it against' \u2014 anchoring in her intent, not generic quality."
+    },
+    {
+      "kind": "must",
+      "item": "Read the COMPOSITION against that intent \u2014 e.g. does the arc actually build (layers/density/range added section to section), or do later sections add nothing the early ones lacked.",
+      "satisfied": true,
+      "rationale": "The agent read structure from build.py and clips per section, enumerated the layers in all four sections, and concluded 'every section has the same four layers... Nothing enters and nothing drops out. The peak isn't adding anything the intro didn't already have, and the cold open isn't actually cold' \u2014 a direct read of layering/density against the build-arc intent."
+    },
+    {
+      "kind": "must",
+      "item": "Surface the assessment as a hearable observation framed as a question, never a verdict or a score.",
+      "satisfied": true,
+      "rationale": "The assessment was framed as a question: 'Does that match what you're hearing \u2014 does it kind of just sit at one level?' It also added the honest caveat 'I'm reading the score, not hearing it,' keeping it a hearable observation rather than a verdict or score."
+    },
+    {
+      "kind": "must",
+      "item": "Lead with the cheapest musical fix (subtraction/contrast \u2014 hold an early section back so the climax arrives) and name the why in one plain sentence.",
+      "satisfied": true,
+      "rationale": "The agent led with subtraction explicitly: 'The cheapest fix here isn't adding more to the peak. It's the opposite \u2014 pull stuff out of the intro so there's a climb,' and named the why in one line: 'the end can only hit harder if the start is holding back.' It reuses existing parts by delaying entrances rather than adding."
+    },
+    {
+      "kind": "must",
+      "item": "Learn back any intent she reveals (a reaction reflected into named intent).",
+      "satisfied": true,
+      "rationale": "After she agreed, the agent wrote two annotations back via write_markdown_ref: a song-altitude arc note ('starts cold... earns its weight by the outro; the build is by subtraction up front') and an intro section note ('intro deliberately holds back... Don't flag the intro as empty; the space is the point'), reflecting her revealed intent into named, persisted intent."
+    },
+    {
+      "kind": "must_not",
+      "item": "Deliver a grade, score, or flat verdict ('this is a 7/10', 'the chorus is wrong').",
+      "satisfied": true,
+      "rationale": "No numeric score, letter grade, or flat verdict appears anywhere. The agent consistently framed observations as questions and described a fixable layering issue rather than pronouncing the song good or bad."
+    },
+    {
+      "kind": "must_not",
+      "item": "Lecture her with music theory she didn't ask for.",
+      "satisfied": true,
+      "rationale": "The agent spoke in feel/contrast terms Maya understands ('big is the contrast against what came before,' 'climb,' 'arrival') with no key/scale/harmony jargon \u2014 no unsolicited theory lecture, matching her reference-and-feel idiom."
+    },
+    {
+      "kind": "must_not",
+      "item": "Auto-apply compositional changes without her say-so.",
+      "satisfied": true,
+      "rationale": "The agent repeatedly sought consent before building ('Want me to set up that version so you can hear A against B?') and only began building B after she said 'let's hear B,' adding 'I'll have you listen before anything's committed; you decide if it's the version.' Nothing was applied unilaterally."
+    },
+    {
+      "kind": "must_not",
+      "item": "Ignore her stated intent or flag a deliberately sparse/held-back section as a defect.",
+      "satisfied": true,
+      "rationale": "The agent honored her intent throughout and, far from flagging sparseness as a defect, prescribed a deliberately held-back/sparse intro and annotated it so the space 'reads as authorship next time, not a problem to fix.' The only thing flagged was the absence of contrast \u2014 which is her intent unmet, not a sparse section penalized."
+    }
+  ],
+  "timestamp": "2026-05-31T22:07:02.813332+00:00"
+}

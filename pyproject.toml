@@ -36,6 +36,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "hallucinote_mcp/tests", "songs"]
 python_files = ["test_*.py"]
+markers = [
+    "audio: exercises the native audio/DSP stack (librosa/numba/scipy). The root conftest auto-applies this by path; set HALLUCINOTE_SKIP_AUDIO=1 to skip in CPU-only/container sessions where that stack is unstable.",
+    "ableton: requires a live Ableton/sequencer connection. Opt-in (default-skip); set HALLUCINOTE_WITH_ABLETON=1 to run. Containers never have Ableton, so these never break a default run.",
+]
 # `testpaths = ["songs"]` makes pytest discover any `songs/<slug>/tests/test_*.py`
 # automatically — per-song test suites live alongside their `build.py` so the
 # song stays a self-contained unit (per docs/VISION.md "songs as git repos").

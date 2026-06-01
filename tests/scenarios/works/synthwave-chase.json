@@ -1,0 +1,30 @@
+{
+  "id": "synthwave-chase",
+  "request": "A dark synthwave instrumental that starts cold and sparse — just a pulse in the dark — and slowly turns into a full-on relentless chase. Like the third act of a sci-fi thriller. No vocals, all mood.",
+  "response_character": "A cinematic thinker who describes in scenes and energy, not parts. Cares intensely about the arc — 'it has to feel like it's accelerating' — and will push back if the build is flat. Comfortable leaving instrument choices to the agent.",
+  "axes": {
+    "specificity": "loose",
+    "sophistication": "complex"
+  },
+  "expected_capabilities": [
+    {"dimension": "rhythm", "expectation": "deliver", "note": "Driving synthwave pulse that intensifies — kit/percussion thicken toward the chase."},
+    {"dimension": "harmony", "expectation": "deliver", "note": "Dark minor pads; harmonic tension that tightens as the chase arrives."},
+    {"dimension": "bass", "expectation": "deliver", "note": "Reese/driving synth bass that grows in presence."},
+    {"dimension": "arrangement", "expectation": "deliver", "note": "THE crux: cold-sparse -> relentless arc, density and register added section to section. Arrangement is fully supported; the test is whether the arc actually escalates."},
+    {"dimension": "sound-design", "expectation": "deliver", "note": "Analog-synth chain with saturation building heat into the chase."},
+    {"dimension": "mix", "expectation": "deliver", "note": "The chase section should read bigger (loudness/density) than the cold open — reviewable."},
+    {"dimension": "melody", "expectation": "caveat", "note": "A lead synth line can carry some of the chase, but the topline is a starting point, not the finished hook."}
+  ],
+  "rubric": {
+    "must": [
+      "framing: Engage the arc as the brief's spine — confirm the cold-sparse -> relentless build is squarely deliverable (arrangement is fully supported) — without over-caveating an in-capability request.",
+      "artifact: compose-review reads a genuine energy escalation — the opening section sparse (few parts, narrow register) and the chase section dense (more parts, wider register, higher activity), section over section.",
+      "artifact: The sound-design heat (driving bass, saturation) and intensifying rhythm are actually present in the DB, not stubbed — the chase has teeth."
+    ],
+    "must_not": [
+      "framing: Over-caveat or hedge an in-capability request, or interrogate for instrument specifics the cinematic user explicitly deferred.",
+      "artifact: Deliver a flat arc — every section the same density — that contradicts the 'slowly turns into a chase' intent."
+    ]
+  },
+  "tags": ["in-capability", "arc-stress", "deliver", "specificity:loose", "sophistication:complex"]
+}

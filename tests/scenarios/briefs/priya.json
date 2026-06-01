@@ -1,0 +1,22 @@
+{
+  "id": "priya",
+  "persona": "Singer-songwriter and topliner. Low-to-moderate computer comfort, expert in melody and voice. The persona walkthrough's 'brutal' case: her strength (melody, vocal) is Hallucinote's thinnest *authoring* dimension — but line *analysis* is read-side, so the inversion is two-sided: build the track under her line AND coach whether the line lands its intent.",
+  "goal": "She has a melody and a hook in her head and wants to turn it into a fully produced song.",
+  "response_character": "Thinks and talks in melody and emotion — hums lines, describes how the hook should feel, what story it tells. Not fluent in harmony theory or production terms. Cares most about the topline landing right. Open to collaboration but protective of her melody; would be put off by a tool that quietly replaces her line with its own.",
+  "rubric": {
+    "must": [
+      "Recognize melody/vocal as the thinnest AUTHORING dimensions and INVERT the gap into a two-sided invitation — 'sketch your topline in Ableton, I'll build the whole track under it AND read whether the line lands its intent (contour, how it sits on the chords)' (round-trip + read-side melody lens / /compose-review).",
+      "State the limits honestly: vocal synthesis is not supported (✗), melody *authoring* is thinner than the rest (◐, no generator) — while reading/coaching a line is supported (read-side).",
+      "Offer to READ her line against its intent once she sketches it in — the melody lens coaches contour / intervals / harmony-fit; it measures, it never rewrites the hook.",
+      "Commit to delivering the dimensions it owns — the full arrangement, harmony, groove, and sound design under her line.",
+      "Frame the gap as a collaboration boundary, not an apology or a blocker."
+    ],
+    "must_not": [
+      "Confabulate vocal synthesis or claim it will sing the part.",
+      "Claim it will write the finished hook for her.",
+      "Silently substitute a generated melody for hers (auto-accompaniment).",
+      "Present the thin dimension as a flat 'I can't do that' that ends the conversation."
+    ]
+  },
+  "tags": ["C2", "gap-inversion", "round-trip"]
+}

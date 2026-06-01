@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..dispatcher import LiveContext
+from .display_value import display_number_for, resolve_continuous_write
 
 
 # Per-property metadata: (path-from-track, value-bounds-or-None, type-coercer)
@@ -100,6 +101,11 @@ def info_handler(context: LiveContext, *, track_index: int) -> dict[str, Any]:
         "kind": _kind_of(track),
         "color": getattr(track, "color", None),
         "volume": float(mixer.volume.value),
+        # dB read off Live's own fader curve (str_for_value), for agents doing
+        # gain-staging in dB. None when the fader is fully down (volume 0 reads
+        # "-inf dB") — that is independent of the `mute` flag. Pan has no dB
+        # sense, so no panning_db.
+        "volume_db": display_number_for(mixer.volume),
         "panning": float(mixer.panning.value),
         "mute": bool(track.mute),
         "solo": bool(track.solo),
@@ -196,10 +202,23 @@ def delete_handler(context: LiveContext, *, track_index: int) -> dict[str, Any]:
 
 
 def set_property_handler(
-    context: LiveContext, *, track_index: int, property: str, value: Any
+    context: LiveContext,
+    *,
+    track_index: int,
+    property: str,
+    value: Any = None,
+    value_display: str | None = None,
 ) -> dict[str, Any]:
     """Write a single mixer property. Branches on ``property`` to walk to
     the right Live attribute and apply per-property range validation.
+
+    ``volume`` accepts ``value_display`` — a dB target ("-8 dB") inverted to the
+    raw value via the same shared ``resolve_continuous_write`` contract the device
+    ``set_parameter`` handler uses. ``panning`` is also a ``DeviceParameter`` and
+    is routed through the same path, but its display ("50L"/"C"/"50R") isn't a
+    signed number, so ``value_display`` is refused for it with a teaching error —
+    set pan via ``value``. The non-parameter properties (mute / solo / arm /
+    color) take ``value`` only.
     """
     if property not in _TRACK_PROPERTIES:
         raise ValueError(
@@ -207,18 +226,49 @@ def set_property_handler(
             f"valid values are {sorted(_TRACK_PROPERTIES)}"
         )
     path, bounds = _TRACK_PROPERTIES[property]
-    coerced = _coerce_value(property, value)
-    if bounds is not None and not (bounds[0] <= float(coerced) <= bounds[1]):
-        raise ValueError(
-            f"set_property: value {value} for {property!r} is out of range "
-            f"{list(bounds)}"
-        )
     track = _resolve_track(context, track_index)
     obj: Any = track
     for attr in path[:-1]:
         obj = getattr(obj, attr)
+
+    if value_display is not None:
+        # value_display addresses a Live DeviceParameter by its display units.
+        if not callable(getattr(obj, "str_for_value", None)):
+            raise ValueError(
+                f"set_property: value_display is only supported for "
+                f"parameter-backed properties (volume, panning), not "
+                f"{property!r}; set it via `value`"
+            )
+        coerced = resolve_continuous_write(
+            obj, value=value, value_display=value_display, parameter_name=property
+        )
+    else:
+        if value is None:
+            raise ValueError(
+                f"set_property: {property!r} requires `value` "
+                "(or `value_display` for volume / panning)"
+            )
+        coerced = _coerce_value(property, value)
+        if bounds is not None and not (bounds[0] <= float(coerced) <= bounds[1]):
+            raise ValueError(
+                f"set_property: value {value} for {property!r} is out of range "
+                f"{list(bounds)}"
+            )
+
     setattr(obj, path[-1], coerced)
-    return {"track_index": track_index, "property": property, "value": coerced}
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "property": property,
+        "value": coerced,
+    }
+    # Echo the achieved display (e.g. "-8.0 dB") for parameter-backed props, so a
+    # caller can confirm a value_display target was hit — mirrors device
+    # set_parameter's _attach_achieved_display, which reads back the param POST
+    # write (robust if Live ever re-quantizes a write).
+    str_for_value = getattr(obj, "str_for_value", None)
+    if callable(str_for_value):
+        result["value_display"] = str_for_value(getattr(obj, path[-1]))
+    return result
 
 
 def get_property_handler(

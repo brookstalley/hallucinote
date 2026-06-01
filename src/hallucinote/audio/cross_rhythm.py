@@ -55,13 +55,17 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from math import gcd
+
 from .onsets import (
     DEFAULT_MIN_ONSET_SEPARATION_BEATS,
     dedup_onsets,
+    dedup_onsets_with_strength,
     detect_onset_samples,
+    detect_onsets_with_strength,
     to_mono,
 )
-from .report import PartCrossRhythm, Phasing
+from .report import PartCrossRhythm, Phasing, Polymeter
 
 # Largest denominator in the rational approximation P ≈ M/N. 8 covered every
 # musical case in the validation corpus; raising it trades naming reach for
@@ -102,6 +106,67 @@ _SWING_BAND = (1.3, 2.3)
 # these N values mark a cross-rhythm even when M=1 (triplet, quintuplet, ...).
 _NON_BINARY_N = frozenset({3, 5, 6, 7})
 
+# --- additive grouping decode (C8c, limit #1) ----------------------------- #
+# An additive meter (3+3+2, 2+2+3 = 7/8, Balkan aksak) has onsets on the group
+# starts, so its irregular IOIs tile a fixed cell over a common sub-unit U. We
+# recover U as the rational GCD of the IOIs, express each IOI as an integer
+# count of U, and find the shortest cycle that tiles the count sequence.
+
+# Largest sub-unit denominator when snapping an IOI to a fraction of a beat for
+# the rational-GCD. Matches the cross-rhythm ratio cap (denom ≤ 8) — a grouping
+# unit finer than a 32nd-of-a-beat isn't a musical additive cell, it's a roll.
+_GROUPING_MAX_DENOMINATOR = 8
+
+# A grouping must repeat at least this many whole cycles to be asserted (two
+# tilings = the pattern is real, not a one-off bar). Below it → low-confidence.
+_GROUPING_MIN_CYCLES = 2
+
+# Fraction of count-positions that must match the tiled cycle for the grouping
+# to be trustworthy. Below it the "cell" doesn't actually repeat cleanly.
+_GROUPING_MIN_CONSISTENCY = 0.80
+
+# Accent coefficient-of-variation above which the part is treated as accented,
+# so the grouping cell is rotated to start at the (loudest) bar downbeat rather
+# than reported as the canonical rotation. Below it the downbeat is unknowable.
+_GROUPING_ACCENT_CV = 0.10
+
+# --- polymeter cell detection (C8c, limit #2) ----------------------------- #
+# Per-part accent autocorrelation recovers the cell length (the accent repeat
+# period). Equal-velocity parts surface nothing — the cell lives in dynamics.
+
+# Accent coefficient-of-variation below which a part has no audible accent, so
+# no cell is detectable (the deferral's core insight: equal-velocity 4-cell and
+# 3-cell parts have identical onset trains). Shared threshold with grouping.
+_POLYMETER_ACCENT_CV = 0.10
+
+# Fewest onsets before an accent autocorrelation is trustworthy — need a few
+# cells of repetition for the period to dominate.
+_POLYMETER_MIN_ONSETS = 8
+
+# Smallest accent-grid lag considered a cell (in pulses). Lags 0/1 are the
+# trivial self / immediate-neighbour correlation, never a musical cell.
+_POLYMETER_MIN_LAG = 2
+
+# A lag is the FUNDAMENTAL cell (not a 2×/3× harmonic) if it's the smallest lag
+# whose autocorrelation is within this fraction of the global peak. Picking the
+# smallest near-maximal lag rejects integer-multiple harmonics.
+_POLYMETER_FUNDAMENTAL_TOL = 0.85
+
+# Minimum accent-autocorrelation peak (0..1) to trust a recovered cell.
+_POLYMETER_MIN_AC_PEAK = 0.35
+
+# A polymeter cell is only meaningful for a STEADY stream (uniform IOIs whose
+# accents mark the cell). An additive/irregular part folded onto a uniform pulse
+# grid yields a spurious cell at the lcm of its accent period and pulse — so
+# require most IOIs to sit near the base pulse before trusting a cell. Additive
+# parts (described by `grouping`, not a cell) fall below this and don't pair.
+_POLYMETER_MIN_PULSE_UNIFORMITY = 0.85
+
+# Two cells are "different" (the polymeter signal) when they differ by more than
+# this many beats; closer than this they're the same cell (one meter, no
+# polymeter).
+_POLYMETER_CELL_TOLERANCE_BEATS = 0.25
+
 # Phasing: length (beats) of one analysis cycle. The window is sliced into
 # cycles and the mean inter-part offset is sampled per cycle; the drift across
 # cycles is the phasing signal. 4 beats ≈ a bar — the natural pattern-repeat
@@ -124,6 +189,12 @@ class PhasingResult:
 class CrossRhythmResult:
     """Per-part cross-rhythm reads for one (pre-sliced) window."""
     parts: list[PartCrossRhythm]
+
+
+@dataclass(frozen=True)
+class PolymeterResult:
+    """Two-part polymeter relationships for one (pre-sliced) window."""
+    pairs: list[Polymeter]
 
 
 def analyze_cross_rhythm_window(
@@ -159,13 +230,15 @@ def analyze_cross_rhythm_window(
     parts: list[PartCrossRhythm] = []
     for track_id, audio in stem_segments:
         mono = to_mono(audio)
-        onset_samples = detect_onset_samples(mono, sample_rate)
+        onset_samples, strengths = detect_onsets_with_strength(mono, sample_rate)
         if onset_samples.size == 0:
             continue
         onset_beats = window_start_beat + onset_samples * beats_per_sample
-        onset_beats = dedup_onsets(onset_beats, min_onset_separation_beats)
+        onset_beats, strengths = dedup_onsets_with_strength(
+            onset_beats, strengths, min_onset_separation_beats,
+        )
         parts.append(_part_cross_rhythm(
-            track_id, onset_beats, swing_ratios.get(track_id),
+            track_id, onset_beats, strengths, swing_ratios.get(track_id),
         ))
 
     parts.sort(key=lambda p: p.confidence, reverse=True)
@@ -294,6 +367,149 @@ def _phasing_for_pair(
     )
 
 
+def analyze_polymeter_window(
+    stem_segments: Sequence[tuple[str, np.ndarray]],
+    sample_rate: int,
+    *,
+    window_start_beat: float,
+    bpm: float,
+    min_onset_separation_beats: float = DEFAULT_MIN_ONSET_SEPARATION_BEATS,
+) -> PolymeterResult:
+    """Detect polymeter between every pair of parts over one window.
+
+    Polymeter is two parts looping cells of DIFFERENT length at one tempo
+    (``docs/polyrhythms.md`` §5 #2). We recover each part's cell length via
+    accent autocorrelation (``_accent_cycle``) and pair up parts whose cells
+    differ; the pair's ``realign_beats`` is the rational lcm of the two cells.
+
+    Returns a :class:`Polymeter` per unordered pair with two distinct,
+    confidently-recovered cells. Parts with no audible accent (equal velocity)
+    surface no cell and so no pair — correctly, the relationship is then
+    unknowable from audio. The integration layer applies the reporting floor.
+    """
+    if bpm <= 0 or sample_rate <= 0:
+        return PolymeterResult(pairs=[])
+    beats_per_sample = bpm / 60.0 / sample_rate
+
+    # One onset+accent pass per part; recover each part's cell once.
+    cells: list[tuple[str, float, float]] = []  # (track_id, cell_beats, ac_peak)
+    for track_id, audio in stem_segments:
+        mono = to_mono(audio)
+        onset_samples, strengths = detect_onsets_with_strength(mono, sample_rate)
+        if onset_samples.size == 0:
+            continue
+        beats = window_start_beat + onset_samples * beats_per_sample
+        beats, strengths = dedup_onsets_with_strength(
+            beats, strengths, min_onset_separation_beats,
+        )
+        cell = _accent_cycle(beats, strengths)
+        if cell is not None:
+            cells.append((track_id, cell[0], cell[1]))
+
+    pairs: list[Polymeter] = []
+    for i in range(len(cells)):
+        for j in range(i + 1, len(cells)):
+            id_a, cell_a, peak_a = cells[i]
+            id_b, cell_b, peak_b = cells[j]
+            if abs(cell_a - cell_b) <= _POLYMETER_CELL_TOLERANCE_BEATS:
+                continue  # same cell → one meter, not polymeter
+            pairs.append(Polymeter(
+                track_a=id_a,
+                track_b=id_b,
+                cycle_a_beats=cell_a,
+                cycle_b_beats=cell_b,
+                realign_beats=_rational_lcm(cell_a, cell_b),
+                confidence=min(peak_a, peak_b),
+            ))
+
+    pairs.sort(key=lambda p: p.confidence, reverse=True)
+    return PolymeterResult(pairs=pairs)
+
+
+def _accent_cycle(
+    onset_beats: np.ndarray, strengths: np.ndarray,
+) -> "tuple[float, float] | None":
+    """Recover a part's cell length (beats) from its accent autocorrelation.
+
+    Returns ``(cell_beats, ac_peak)`` or ``None``. Folds the per-onset accents
+    onto a uniform base-pulse grid, zero-means it (so the autocorrelation
+    measures accent *co-variation*, not a DC offset), and takes the fundamental
+    lag — the SMALLEST lag whose autocorrelation is near-maximal, which rejects
+    the 2×/3× harmonics §2 warned about. Returns ``None`` for too few onsets, no
+    audible accent (equal velocity), or a weak autocorrelation peak.
+    """
+    if onset_beats.size < _POLYMETER_MIN_ONSETS:
+        return None
+    acc = strengths[: onset_beats.size]
+    mean = float(acc.mean())
+    if mean <= 0 or float(acc.std()) / mean < _POLYMETER_ACCENT_CV:
+        return None  # no audible accent — cell is undetectable from audio
+    iois = np.diff(onset_beats)
+    period = _base_period(iois)
+    if period <= 0:
+        return None
+    # Steady-stream guard: a cell is only meaningful when the part runs a
+    # roughly uniform pulse (the accents, not the IOIs, carry the cell). An
+    # additive/irregular part fails this and is left to the grouping decoder —
+    # otherwise it folds onto the pulse grid as a spurious lcm-period cell.
+    uniform = float(np.mean(np.abs(iois - period) <= _MODE_CLUSTER_BEATS))
+    if uniform < _POLYMETER_MIN_PULSE_UNIFORMITY:
+        return None
+
+    # Fold accents onto the P-grid (loudest wins per slot), zero-mean.
+    rel = onset_beats - onset_beats[0]
+    nslots = int(round(float(rel[-1]) / period)) + 1
+    if nslots <= _POLYMETER_MIN_LAG + 1:
+        return None
+    grid = np.zeros(nslots, dtype=np.float64)
+    for b, s in zip(rel, acc):
+        k = int(round(float(b) / period))
+        if 0 <= k < nslots:
+            grid[k] = max(grid[k], float(s))
+    grid = grid - grid.mean()
+    if np.allclose(grid, 0.0):
+        return None
+
+    full = np.correlate(grid, grid, mode="full")
+    ac = full[full.size // 2:]  # lags 0..nslots-1
+    if ac[0] <= 0:
+        return None
+    ac = ac / ac[0]
+    tail = ac[_POLYMETER_MIN_LAG:]
+    if tail.size == 0:
+        return None
+    peak_val = float(tail.max())
+    if peak_val < _POLYMETER_MIN_AC_PEAK:
+        return None
+    # Fundamental = smallest lag within tolerance of the global peak (rejects
+    # integer-multiple harmonics that also correlate highly).
+    threshold = peak_val * _POLYMETER_FUNDAMENTAL_TOL
+    fundamental = int(np.argmax(tail >= threshold)) + _POLYMETER_MIN_LAG
+    return float(fundamental) * period, float(ac[fundamental])
+
+
+def _rational_lcm(a: float, b: float) -> float:
+    """Least common multiple of two cell lengths (beats), via rationals.
+
+    The two downbeats realign every lcm(cell_a, cell_b) beats — 4 and 3 → 12.
+    Both cells are integer pulse-multiples, so a denom≤8 rational is exact.
+    """
+    fa = Fraction(a).limit_denominator(_GROUPING_MAX_DENOMINATOR)
+    fb = Fraction(b).limit_denominator(_GROUPING_MAX_DENOMINATOR)
+    if fa == 0 or fb == 0:
+        return 0.0
+    lcm = (fa * fb) / _fraction_gcd(fa, fb)
+    return float(lcm)
+
+
+def _fraction_gcd(a: Fraction, b: Fraction) -> Fraction:
+    """GCD of two fractions: gcd(numerators)/lcm(denominators) on a common base."""
+    den = a.denominator * b.denominator // gcd(a.denominator, b.denominator)
+    na = a.numerator * (den // a.denominator)
+    nb = b.numerator * (den // b.denominator)
+    return Fraction(gcd(na, nb), den)
+
+
 # --------------------------------------------------------------------------- #
 # Core per-part computation
 # --------------------------------------------------------------------------- #
@@ -301,9 +517,15 @@ def _phasing_for_pair(
 def _part_cross_rhythm(
     track_id: str,
     onset_beats: np.ndarray,
+    strengths: np.ndarray,
     swing_ratio: float | None,
 ) -> PartCrossRhythm:
-    """Turn one part's absolute-beat onsets into a neutral cross-rhythm read."""
+    """Turn one part's absolute-beat onsets into a neutral cross-rhythm read.
+
+    ``strengths`` is the per-onset accent (peak amplitude, index-aligned to
+    ``onset_beats``) — used only by the additive-grouping decode to anchor the
+    cell's rotation to the loud bar downbeat. The clean-pulse path ignores it.
+    """
     n = int(onset_beats.size)
     iois = np.diff(onset_beats)
 
@@ -378,9 +600,25 @@ def _part_cross_rhythm(
 
     label = _label(m, denom)
 
-    # A poor fit (no single clean pulse — additive grouping like 3+3+2) reads as
-    # low-confidence honestly, with no ratio asserted.
+    # A poor fit means no single clean pulse. Before giving up, try to decode an
+    # additive grouping (3+3+2, 7/8 — limit #1): its irregular IOIs have no
+    # single modal period but tile a fixed cell. If that succeeds, name the cell;
+    # otherwise it's honestly low-confidence (no ratio fabricated).
     if confidence < 0.3:
+        decoded = _decode_grouping(onset_beats, strengths)
+        if decoded is not None:
+            grouping, cycle_beats, consistency = decoded
+            return PartCrossRhythm(
+                track_id=track_id,
+                pulse_ratio=None,
+                against_meter=True,  # an additive cell fights the straight grid
+                base_period_beats=period,
+                occupancy=occupancy,
+                confidence=count_factor * consistency,
+                verdict="additive",
+                grouping=grouping,
+                cycle_length_beats=cycle_beats,
+            )
         return PartCrossRhythm(
             track_id=track_id,
             pulse_ratio=None,
@@ -499,9 +737,121 @@ def _label(m: int, denom: int) -> str:
     return f"{denom}:{m}"
 
 
+# --------------------------------------------------------------------------- #
+# Additive grouping decode (C8c, limit #1)
+# --------------------------------------------------------------------------- #
+
+def _rational_gcd(values: np.ndarray) -> Fraction:
+    """Rational GCD of the IOIs (beats) — the additive cell's sub-unit U.
+
+    Each IOI is snapped to a low-denominator fraction (absorbs onset-detection
+    jitter, matches the analyzer's denom≤8 convention), then the rational GCD is
+    ``gcd(numerators) / lcm(denominators)`` over a common denominator. For a
+    3+3+2 (IOIs 1.5, 1.5, 1.0 beats) this is gcd(3/2, 1) = 1/2 = a half-beat.
+    """
+    fracs = [
+        Fraction(float(v)).limit_denominator(_GROUPING_MAX_DENOMINATOR)
+        for v in values if v > 0
+    ]
+    if not fracs:
+        return Fraction(0)
+    den = 1
+    for f in fracs:
+        den = den * f.denominator // gcd(den, f.denominator)
+    g = 0
+    for f in fracs:
+        g = gcd(g, f.numerator * (den // f.denominator))
+    return Fraction(g, den)
+
+
+def _fundamental_cycle(counts: list[int]) -> list[int] | None:
+    """Shortest prefix whose repetition tiles ``counts`` (trailing partial cycle
+    allowed). Returns None if no period shorter than the whole sequence tiles it.
+    """
+    n = len(counts)
+    for period in range(1, n // 2 + 1):
+        if all(counts[i] == counts[i % period] for i in range(n)):
+            return counts[:period]
+    return None
+
+
+def _decode_grouping(
+    onset_beats: np.ndarray, strengths: np.ndarray,
+) -> "tuple[tuple[int, ...], float, float] | None":
+    """Decode a repeating additive grouping from a part's onsets + accents.
+
+    Returns ``(grouping, cycle_length_beats, consistency)`` or ``None``.
+
+    The IOIs of an additive part tile a fixed cell over a common sub-unit U
+    (``_rational_gcd``): a 3+3+2 has IOIs of 3U, 3U, 2U, so the integer count
+    sequence is [3,3,2,3,3,2,…]. We find the shortest cycle that tiles those
+    counts (``_fundamental_cycle``). A uniform count sequence (every gap equal —
+    a plain subdivision) is NOT a grouping and returns ``None``.
+
+    Rotation: in an additive meter every onset is a group start, so onsets alone
+    can't locate the bar *downbeat* — the cyclic equivalents (3+3+2 ≡ 3+2+3 ≡
+    2+3+3) are indistinguishable. When the part is accented (the downbeat is
+    louder, accent CV above ``_GROUPING_ACCENT_CV``) we rotate the cell to start
+    at the loudest cycle-position; otherwise we report the canonical
+    (lexicographically-largest) rotation so the read is stable but honest about
+    the unknown phase.
+    """
+    iois = np.diff(onset_beats)
+    if iois.size < 3:
+        return None
+    u = _rational_gcd(iois)
+    if u <= 0:
+        return None
+    u_beats = float(u)
+    counts = [int(round(float(io) / u_beats)) for io in iois]
+    if any(c < 1 for c in counts) or len(set(counts)) == 1:
+        return None  # missing/zero gap, or a uniform subdivision (not additive)
+
+    cycle = _fundamental_cycle(counts)
+    if cycle is None or len(cycle) < 2 or len(set(cycle)) == 1:
+        return None
+    if len(counts) < _GROUPING_MIN_CYCLES * len(cycle):
+        return None  # not enough whole repeats to assert the cell
+
+    tiled = [cycle[i % len(cycle)] for i in range(len(counts))]
+    consistency = float(np.mean([a == b for a, b in zip(counts, tiled)]))
+    if consistency < _GROUPING_MIN_CONSISTENCY:
+        return None
+
+    grouping = _rotate_to_downbeat(cycle, onset_beats, strengths)
+    cycle_beats = float(sum(cycle)) * u_beats
+    return grouping, cycle_beats, consistency
+
+
+def _rotate_to_downbeat(
+    cycle: list[int], onset_beats: np.ndarray, strengths: np.ndarray,
+) -> tuple[int, ...]:
+    """Rotate the grouping cell to its bar downbeat.
+
+    Accent-anchored when the part has dynamics (accent CV above the threshold):
+    the cycle offset whose onsets are loudest is the downbeat. Otherwise the
+    canonical (lexicographically-largest) rotation — stable, phase-honest.
+    """
+    p = len(cycle)
+    if (
+        strengths.size >= onset_beats.size
+        and onset_beats.size > 0
+    ):
+        acc = strengths[: onset_beats.size]
+        mean = float(acc.mean())
+        if mean > 0 and float(acc.std()) / mean > _GROUPING_ACCENT_CV:
+            means = [float(acc[o::p].mean()) for o in range(p)]
+            offset = int(np.argmax(means))
+            return tuple(cycle[offset:] + cycle[:offset])
+    rotations = [tuple(cycle[i:] + cycle[:i]) for i in range(p)]
+    return max(rotations)
+
+
 __all__ = [
     "CrossRhythmResult",
     "PhasingResult",
+    "PolymeterResult",
     "analyze_cross_rhythm_window",
     "analyze_phasing_window",
+    "analyze_polymeter_window",
 ]

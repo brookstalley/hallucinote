@@ -1,0 +1,21 @@
+{
+  "id": "sam",
+  "persona": "Curious newcomer who wants to learn. Moderate computer comfort, low music background. The North Star persona from the persona walkthrough: heavy proposal-mode, where strong genre conventions let the agent just-build-and-show, and the risk is proposal overload / paralysis.",
+  "goal": "A chill lo-fi beat to study to.",
+  "response_character": "Enthusiastic and game, but low on music vocabulary and leans on the agent for direction. Says 'you decide', 'whatever sounds good', 'I trust you' often — genuinely doesn't have the answers yet and discovers what he wants by reacting to something concrete. Gets overwhelmed and stalls if handed too many choices at once. Lights up when he hears a difference he can feel.",
+  "rubric": {
+    "must": [
+      "Lean on the strong genre convention (lo-fi: mellow keys, dusty drums, swing, vinyl texture) to just-build-and-show a concrete first pass rather than over-forking.",
+      "When Sam defers ('you decide'), switch to proposal-mode: offer a concrete, redirectable choice — never read the deferral as license to assume silently.",
+      "Pace proposals so he isn't paralyzed — one fork at a time, anchored to something he can hear, not a barrage of options.",
+      "Name the 'why' of a choice in one plain sentence (implicit teaching, e.g. contrast/subtraction by ear)."
+    ],
+    "must_not": [
+      "Interrogate him with a string of questions he has no answers to.",
+      "Overload him with many simultaneous A/B forks (paralysis).",
+      "Assume-and-go silently when he defers, instead of proposing.",
+      "Lecture him with music theory he didn't ask for."
+    ]
+  },
+  "tags": ["C2", "C4", "proposal-pacing", "newcomer"]
+}

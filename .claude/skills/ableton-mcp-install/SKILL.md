@@ -232,7 +232,15 @@ If the target is in `mcp_configs.malformed`, stop.
 
 Write to `<config>.tmp`, then rename (`os.replace` / `mv` / `Move-Item -Force`). Don't write directly — a crash mid-write corrupts `~/.claude.json` and loses the user's project history.
 
-## Step 5 — Hand off (the MCP connection is the gotcha)
+## Step 5 — Hand off (the MCP connection is the gotcha, then open the conversation)
+
+This is the user's first contact as a **music person**, not a developer of this
+project. Two parts: finish the mechanical install (the one Ableton click + the
+MCP reconnect — the update case has a trap), then a warm, capability-honest
+invitation that opens an intent conversation. **Do not** print a static command
+menu — that surfaces a vending-machine framing and teaches nothing.
+
+### 5a — Finish the install (classify fresh vs update)
 
 The hand-off differs depending on whether this was a **fresh install** or an
 **update**, and the update case has a trap that's easy to get wrong. Classify
@@ -290,6 +298,32 @@ startup, so a stale module can linger.
 Then point them at a first action — *"load falling-walking"* (push the bundled
 example song into Live) or *"start a new song"* (scaffold from a prompt) — and
 note that `/ableton-mcp-uninstall` reverses every step if something looks wrong.
+
+### 5b — The handoff (compose it; don't print a menu)
+
+**Read `docs/capability-truth.md`.** Then write a short, warm invitation that:
+
+- Is **capability-honest in musical/dimensional terms** — name a few things
+  Hallucinote does well (groove, harmony, arrangement, sound design, mix), drawn
+  from the Capability Truth table, as *example invitations* ("we could build a
+  beat, flesh out a chord progression, arrange a track around an idea you have").
+- **Names the thin dimensions honestly** when they're relevant, and **inverts
+  the gap into an invitation** rather than apologizing — melody *authoring* is ◐
+  and vocal synthesis is ✗, but a topline sketched in Ableton round-trips in *and
+  the melody lens reads it*, so the move is *"bring me your melody, I'll build the
+  track under it and read whether the line lands."*
+- **Opens an intent conversation** — invite the user to say what they want to
+  make, in their own words and references ("a song like the Stranger Things
+  theme" is a perfectly good spec). Do **not** ask them to pick a "mode"; read
+  their intent from what they say (start fresh, load an existing song, sketch a
+  part) and proceed collaboratively — propose the elementary choices you'd
+  otherwise guess at and read their reaction, rather than deciding silently.
+- **Never confabulates.** If it isn't ✓ or ◐ in the Capability Truth table,
+  don't offer it.
+
+Keep it to a few sentences — an open door, not a manual. The goal is that the
+user's next message is "I want to make…", and you continue from there (into
+`/song-new` for a new song, or a load/pull for existing material).
 
 ## Edge cases
 

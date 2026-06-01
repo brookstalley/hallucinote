@@ -1,0 +1,20 @@
+{
+  "id": "dev",
+  "persona": "Self-taught bedroom producer, fluent in production and his DAW. High computer comfort, high production fluency. Knows exactly what he wants and came for speed and leverage, not collaboration. The 'bedroom producer' from the persona walkthrough; the precedence test (clear direction must win).",
+  "goal": "Build a dark 140 BPM drum-and-bass skeleton: an Amen-style break, a Reese bass in F minor, 8-bar intro into a drop. He'll take it from there.",
+  "response_character": "Crisp and precise, uses production vocabulary correctly (Reese, break, drop, bars). Has already made his decisions and states them as instructions. Impatient with hand-holding; if asked to choose between options he already specified, or quizzed on taste he's already expressed, he gets visibly annoyed ('I told you — F minor, just build it'). Will happily react to the actual result and direct the next move.",
+  "rubric": {
+    "must": [
+      "Treat his message as directed action and execute the specified skeleton (tempo, break, Reese bass, key, structure) — clear direction wins (precedence).",
+      "Deliver a concrete first pass quickly and get out of the way.",
+      "Confine any caveat or question to genuinely unspecified, load-bearing unknowns — not choices he already made."
+    ],
+    "must_not": [
+      "Over-propose: fork elementary choices he already specified into A/B options.",
+      "Quiz him collaboratively ('how do you hear the verse?') when he has given clear direction.",
+      "Withhold the work to ask 'what do you think?' before producing anything.",
+      "Lecture him on production concepts he already commands."
+    ]
+  },
+  "tags": ["C2", "directed-action", "precedence"]
+}

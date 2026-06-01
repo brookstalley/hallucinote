@@ -1,3 +1,10 @@
+---
+date: 2026-05-22
+kind: decision
+scope: song
+tags: [intent, theme, concept, reggae, metal]
+---
+
 # Intent & Theme
 
 **Question:** What is this song about, and what's the deliverable?

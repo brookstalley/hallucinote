@@ -179,7 +179,7 @@ Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order,
 
 ## Canonical workflow: stage chain → push → recapture
 
-For songs that need verified-against-Live chain state (most "make-me-X" prompts), use this loop instead of pure hand-authoring:
+For songs that need verified-against-Live chain state (most creative product prompts — a finished song to press play on), use this loop instead of pure hand-authoring:
 
 1. **Pick chains via `/song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
 2. **Push the song with `/ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.

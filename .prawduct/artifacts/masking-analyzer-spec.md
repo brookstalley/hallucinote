@@ -6,10 +6,15 @@
 > **measurement layer**; the goals doc adds the **intent layer** (track roles +
 > per-section focal element → musically-framed, intent-graded findings with
 > arrangement-first fixes) that is the actual product. The sections marked
-> **[pending intent-layer revision]** will be folded in next — they currently
-> describe the measurement layer only.
+> **[pending intent-layer revision]** describe the measurement layer only — and the
+> intent layer was **resolved as the *interpreter's* job, NOT a spec revision**:
+> `masking.py` ships neutral evidence (`MaskingPair` / `BedMasking`, no
+> `MaskingFinding`/severity); `/mix-review` grades it against recalled intent
+> (LLM-first). See `intent-architecture.md` § *Severity stays out of the DSP*. Treat
+> those markers as **resolved**, not pending.
 
-Status: **proposed** (planning; no code yet). Owner artifact for the
+Status: **SHIPPED** — the DSP is live (`src/hallucinote/audio/masking.py`); this is
+now the accurate as-built spec, not a proposal. Owner artifact for the
 `feature/masking-analyzer` work. Sources: research spike §3/§4/§9
 (`research-spike-audio-analysis.md`) for the DSP; `masking-analyzer-goals.md`
 for the perceptual/production framing (working-engineer research).

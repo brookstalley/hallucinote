@@ -18,17 +18,26 @@ wrong."
   many (see `masking-analyzer-goals.md` intent taxonomy). The tool's job is to
   make the song *more itself*, not more "correct."
 
-## Two registers (the key distinction)
+## Three registers (the key distinction)
 
-| | **Directed action** | **Volunteered observation** |
-|---|---|---|
-| Trigger | User asks ("fix X", "make Y cut") | Tool noticed something |
-| Behavior | **Always execute.** No gating. | **Only when intent-confident.** |
-| Framing | Do it; report what was done. | A *question/option*, never a verdict: *"the rhythm guitar's getting buried under the scream in the chorus — is that the vibe, or do you want it to cut?"* |
-| On unknown intent | Still execute (it was asked). | **Ask one good question** (infer-confirm-proceed), then remember the answer. |
+| | **Directed action** | **Volunteered observation** | **Directed-but-under-articulated** *(new)* |
+|---|---|---|---|
+| Trigger | User asks ("fix X", "make Y cut") | Tool noticed something | User asked for something they can't yet specify — *"make it feel like Bach"*, *"a pop song like Madonna"* |
+| Behavior | **Always execute.** No gating. | **Only when intent-confident.** | **Open the domain.** Don't execute a silent best-guess; don't just ask one question and proceed. |
+| Framing | Do it; report what was done. | A *question/option*, never a verdict: *"the rhythm guitar's getting buried under the scream in the chorus — is that the vibe, or do you want it to cut?"* | A concrete, *hearable* proposal + the *why* in one plain sentence + a real choice that grows the user's understanding. |
+| On unknown intent | Still execute (it was asked). | **Ask one good question** (infer-confirm-proceed), then remember the answer. | The ask *is* the unknown — **propose** (never assume-and-go, never stop at one question). |
 
 Measurement (the DSP) always runs — it's neutral description. What's *gated* is
 whether a measurement becomes surfaced advice.
+
+The third register fires on the **request, not the requester**: it triggers when
+the ask is underspecified in some dimension, never on a judgment that the user
+"is a novice." The drummer's "make it feel like Bach" triggers it because *Bach*
+is unpinned, not because we decided the drummer can't do harmony — opening the
+domain *is* the elicitation. The full elicitation model (open vs proposal
+elicitation, load-bearing-only, gap-inversion, name-the-why) lives in
+`onboarding-and-teaching-model.md` and is operationalized in `/song-new`'s
+"Read the request, not the requester."
 
 ## Intent is per-song, per-section, per-element — and learned
 
@@ -55,8 +64,9 @@ whether a measurement becomes surfaced advice.
               - contradicts a CLEAR intent (focal element losing) -> surface,
                 framed as an option
               - intent UNKNOWN and it matters -> ASK one good question
-4. CAPTURE  whatever the user reveals -> write it back as an `intent`
-            annotation via the mutator+event path. "Rhythm gtr intentionally
+4. CAPTURE  whatever the user reveals -> write it back as a MARKDOWN `intent`
+            annotation (via `write_markdown_ref`; the DB `annotations` table is
+            retired — see `intent-architecture.md`). "Rhythm gtr intentionally
             masked by scream in chorus — desired murk."  Now it is REMEMBERED.
 5. NEVER RE-FLAG  next run, step 1 recalls it; step 3 stays quiet.
 ```
@@ -70,9 +80,11 @@ session feel like the producer who already knows the record.
 **Already there — the shape is right, and it's LLM-first by design:**
 - **Stateful song DB + event-log seed** — durable state *and* the why
   (`actor`/`reason`/`request_id` on every mutation). The producer never forgets.
-- **`annotations` (intent/stylistic/structure/reference/todo, prose, per-song,
-  FTS5)** — exactly where learned artistic intent belongs, recalled by
-  `/song-context`. Per-song scoping is the model the user wants.
+- **Markdown intent corpus (`decisions/` + `annotations/`, prose, per-song,
+  FTS5-indexed via `markdown_refs`)** — where learned artistic intent belongs,
+  recalled by `/song-context`. (The earlier DB `annotations` table is **retired**
+  in favor of git-tracked markdown — see `intent-architecture.md` "Why the DB is
+  NOT an authoring home for intent." Per-song scoping is still the model the user wants.)
 - **Compose-time request/decision log** (`/decisions`) — the conversation
   history: prior prompts + rationale, retrievable.
 - **Mutator + event discipline** — anything learned is durable, auditable, and
@@ -92,9 +104,11 @@ session feel like the producer who already knows the record.
    annotations (name the element + section + intent-mode: focal / blend-group /
    submerged / clarity-target) so learned intent round-trips consistently and
    cheaply. Promote to a typed field only if prose proves ambiguous in practice.
-3. **The two registers aren't formalized** in the analysis surfaces — tools need
-   an explicit "do X" vs "what do you notice?" mode so volunteered advice is
-   always intent-gated and always framed as a question.
+3. **The directed/volunteered pair isn't formalized** in the analysis surfaces —
+   tools need an explicit "do X" vs "what do you notice?" mode so volunteered
+   advice is always intent-gated and always framed as a question. (The third
+   register lives at the compose/onboarding stage, not in the mix/analysis
+   surfaces, so only these two apply here.)
 4. **Inferred-vs-declared confidence isn't surfaced** — carried implicitly by
    event `actor`; worth making explicit so the model knows when to act vs ask.
 

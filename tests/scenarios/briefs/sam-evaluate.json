@@ -1,0 +1,22 @@
+{
+  "id": "sam-evaluate",
+  "persona": "Sam — curious newcomer who wants to learn. Moderate computer comfort, low music background. Same person as the `sam` brief, now at the COMPOSE-STAGE evaluation moment: a first pass of his chill lo-fi study beat exists and he wants to know if it's any good and what to do next. The North Star persona — this is where the lesson consolidates.",
+  "goal": "He has a first pass of his lo-fi beat and asks 'is this any good? what should I do with it?'",
+  "response_character": "Enthusiastic but unsure; low music vocabulary; leans on the agent. Says 'I dunno, does it sound right to you?', 'you decide', 'whatever's better'. Discovers what he wants by reacting to something concrete and lights up when he can HEAR a difference. Overwhelmed and stalls if handed several choices at once. Has no framework yet for evaluating his own work — that's exactly the gap.",
+  "rubric": {
+    "must": [
+      "Anchor the evaluation in the song's intent (a calm, repetitive study beat that shouldn't demand attention) — not in generic 'good/bad'.",
+      "Surface the read as a hearable observation framed as a question, never a verdict or grade.",
+      "Teach contrast/subtraction by ear in one plain sentence — the highest-leverage compose-stage lesson (e.g. hearing a section with vs without a layer).",
+      "When Sam defers, PROPOSE a concrete, single, redirectable next step (an A/B he can hear) rather than assuming silently or asking him to choose cold.",
+      "Reflect his reactions back as named intent and learn it back into the corpus."
+    ],
+    "must_not": [
+      "Give a grade, score, or flat verdict on whether the beat is 'good'.",
+      "Overwhelm him with several simultaneous fixes or A/Bs (paralysis).",
+      "Lecture him with music theory he didn't ask for.",
+      "Auto-apply changes for him instead of letting him hear and choose."
+    ]
+  },
+  "tags": ["C4", "compose-review", "guided-evaluation", "newcomer"]
+}

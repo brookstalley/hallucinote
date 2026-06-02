@@ -122,7 +122,22 @@ first — see "Refreshing the analysis"). For each section, you have:
   answer back. (`sloppy` is the one worth a closer look: it's the discredited
   white-noise humanization, distinct from a structured human groove.)
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
-  band), `overshoots`, `reverb_verifications`.
+  band), `overshoots`, `reverb_verifications`. The last is **per return** (RT60
+  is a property of the return's reverb device, measured once from its captured
+  ring-out — not per send). When `sufficient_tail` is false the capture had no
+  usable ring-out: report it as "RT60 unverifiable — re-render with a larger
+  `ring_out_beats`", NOT as a measurement (`measured_rt60_s` is NaN).
+  `conflicting_declarations` (non-empty) means sends into one return declared
+  different RT60s — one device can't have two decay times; surface the conflict.
+- `automation_verifications` — was authored time-varying automation realized in
+  audio? Per value-changing breakpoint: a `device_parameter` flip (e.g. Amp
+  Type Clean→Heavy) is a **directional** timbre verdict (`spectral_centroid_hz`
+  before/after — "a shift occurred", not a scalar target); a `send_level` step
+  is a level move in the declared direction. `realized=false` (with
+  `measurable=true`) means the authored gesture didn't happen in the render —
+  surface it. `measurable=false` means it can't be checked from this capture
+  (mixer_volume/pan are post-fader-invisible; or the window was silent) — report
+  the gap, don't read it as a failure. The `note` field explains each verdict.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid

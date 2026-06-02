@@ -12,6 +12,7 @@ import json
 import pytest
 
 from hallucinote.audio.report import (
+    EnvelopeVerification,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
@@ -74,12 +75,27 @@ def test_to_json_dict_round_trips_through_json():
         ],
         reverb_verifications=[
             ReverbVerification(
-                dry_track_id="track:4",
-                wet_return_track_id="return:1",
+                return_track_id="return:1",
                 declared_rt60_s=1.2,
                 measured_rt60_s=1.18,
                 within_tolerance=True,
                 tolerance_s=0.15,
+                tail_span_db=58.0,
+                contributing_track_ids=("track:1", "track:4"),
+            )
+        ],
+        automation_verifications=[
+            EnvelopeVerification(
+                target_surface_id="track:3",
+                target_kind="device_parameter",
+                parameter_path="Amp Type",
+                at_beat=128.0,
+                metric="spectral_centroid_hz",
+                before=1240.0,
+                after=1880.0,
+                measurable=True,
+                realized=True,
+                note="timbre shift realized",
             )
         ],
         findings=[
@@ -103,7 +119,17 @@ def test_to_json_dict_round_trips_through_json():
     assert deserialized["song_slug"] == "reggae-metal"
     assert len(deserialized["stems"]) == 2
     assert deserialized["overshoots"][0]["attribution"][0] == ["track:1", 0.41]
-    assert deserialized["reverb_verifications"][0]["within_tolerance"] is True
+    rv = deserialized["reverb_verifications"][0]
+    assert rv["within_tolerance"] is True
+    assert rv["return_track_id"] == "return:1"  # per-return, not per (dry,wet) pair
+    assert rv["measurement_method"] == "decay_tail"
+    assert rv["contributing_track_ids"] == ["track:1", "track:4"]
+    assert rv["sufficient_tail"] is True
+    av = deserialized["automation_verifications"][0]
+    assert av["target_surface_id"] == "track:3"
+    assert av["target_kind"] == "device_parameter"
+    assert av["metric"] == "spectral_centroid_hz"
+    assert av["measurable"] is True and av["realized"] is True
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
     assert deserialized["compare_to"] is None  # reserved skeleton
 

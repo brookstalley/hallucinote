@@ -13,8 +13,8 @@ Module layout:
   ``loudness``     — BS.1770-4 LUFS-I / LUFS-S / LUFS-M + 4× true peak.
   ``attribution``  — master-bus overshoot detection + per-band per-stem
                      contribution attribution.
-  ``reverb``       — Wiener-deconvolved IR + RT60 measurement vs. declared
-                     intent.
+  ``reverb``       — per-return decay-tail RT60 (Schroeder on the return's
+                     own captured ring-out) vs. declared intent.
   ``section``      — slice captured audio into named section windows so
                      loudness can be scoped to verse / chorus / bridge.
   ``masking``      — inter-stem spectral masking (which stems mask which,
@@ -31,9 +31,11 @@ inside ``src/hallucinote/``" — audio is a sibling of ``db``, ``sync``,
 from __future__ import annotations
 
 from .analyze import DeclaredReverbSend, analyze_mix
+from .automation import DeclaredEnvelope
 from .codeversion import disk_signature, is_stale, loaded_signature
 from .report import (
     BandContribution,
+    EnvelopeVerification,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
@@ -46,8 +48,10 @@ from .section import SectionWindow, TempoSegment
 
 __all__ = [
     "BandContribution",
+    "DeclaredEnvelope",
     "DeclaredReverbSend",
     "disk_signature",
+    "EnvelopeVerification",
     "Finding",
     "is_stale",
     "loaded_signature",

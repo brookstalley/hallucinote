@@ -108,7 +108,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("devices", "browser_path_json", "TEXT"),
     # Audio-analysis MVP follow-on: sends gains a per-send composer-declared
     # RT60 intent. NULL on non-reverb sends (delays, parallel comp, undeclared).
-    # `verify_reverb_send()` reads non-NULL rows. CHECK matches schema.sql.
+    # The audio analyzer reads non-NULL rows to verify per-return RT60 from
+    # the captured ring-out. CHECK matches schema.sql.
     (
         "sends",
         "intended_rt60_s",

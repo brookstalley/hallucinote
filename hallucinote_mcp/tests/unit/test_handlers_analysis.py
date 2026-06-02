@@ -453,15 +453,76 @@ def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     assert len(report["reverb_verifications"]) == 1
     rv = report["reverb_verifications"][0]
-    # Verification dry/wet IDs are the capture-side surface IDs, not the
-    # DB UUIDs — that's the boundary `_collect_declared_sends` crosses.
-    assert rv["dry_track_id"] == f"track:{track_surface_index}"
-    assert rv["wet_return_track_id"] == f"return:{return_surface_index}"
+    # One verification PER RETURN. The surface IDs are capture-side, not DB
+    # UUIDs — the boundary `_collect_declared_sends` crosses. (This fixture's
+    # return is a continuous sine with no ring-out, so the RT60 itself is an
+    # honest insufficient-tail skip; the lift — surface IDs + declared value —
+    # is what this test pins.)
+    assert rv["return_track_id"] == f"return:{return_surface_index}"
+    assert rv["contributing_track_ids"] == [f"track:{track_surface_index}"]
     assert rv["declared_rt60_s"] == pytest.approx(0.8)
     # No DB intent → skip; intent present → no skip record.
     skips = [s for s in report["skipped_analyses"]
              if s["kind"] == "reverb_verification"]
     assert skips == []
+
+
+def test_collect_declared_envelopes_resolves_surfaces(synthetic_song: Path):
+    """`_collect_declared_envelopes` resolves each verifiable envelope kind to
+    its capture surface (the DB-UUID → track:N / return:N boundary):
+    device_parameter → the device's host track (device→chain→track),
+    send_level → the return it feeds, mixer_volume → the track (passed through
+    so the audio module reports it unverifiable rather than dropping it).
+    """
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        track_id = M.create_track(
+            conn, song_id=song_id, track_index=3, name="Rhythm Gtr")
+        return_id = M.create_return(
+            conn, song_id=song_id, name="A-Plate", position=1)
+        chain_id = M.create_device_chain(
+            conn, parent_track_id=track_id, position=0)
+        device_id = M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Amp", display_name="Amp")
+
+        env_dev = M.create_envelope(
+            conn, song_id=song_id, target_kind="device_parameter",
+            target_device_id=device_id, parameter_path="Amp Type")
+        M.add_breakpoint(conn, envelope_id=env_dev, time_beats=0.0, value=0.0,
+                         curve_kind="hold")
+        M.add_breakpoint(conn, envelope_id=env_dev, time_beats=8.0, value=1.0,
+                         curve_kind="hold")
+
+        M.set_send_level(conn, from_track_id=track_id, to_return_id=return_id,
+                         level=0.3)
+        env_send = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=track_id, target_send_return_id=return_id)
+        M.add_breakpoint(conn, envelope_id=env_send, time_beats=0.0, value=0.2)
+        M.add_breakpoint(conn, envelope_id=env_send, time_beats=8.0, value=0.8)
+
+        env_vol = M.create_envelope(
+            conn, song_id=song_id, target_kind="mixer_volume",
+            target_track_id=track_id)
+        M.add_breakpoint(conn, envelope_id=env_vol, time_beats=0.0, value=0.5)
+        M.add_breakpoint(conn, envelope_id=env_vol, time_beats=8.0, value=0.9)
+        conn.commit()
+
+        declared = analysis_handlers._collect_declared_envelopes(conn, song_id)
+    finally:
+        conn.close()
+
+    by_kind = {e.target_kind: e for e in declared}
+    assert by_kind["device_parameter"].target_surface_id == "track:3"
+    assert by_kind["device_parameter"].parameter_path == "Amp Type"
+    assert by_kind["device_parameter"].breakpoints == ((0.0, 0.0), (8.0, 1.0))
+    assert by_kind["send_level"].target_surface_id == "return:1"
+    assert by_kind["mixer_volume"].target_surface_id == "track:3"
 
 
 def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):

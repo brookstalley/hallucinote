@@ -72,9 +72,10 @@ register(
         description=(
             "End-to-end capture pass. Ensure analyzers are present, deliver "
             "per-instance WAV paths + transport-position windows via OSC, "
-            "arm, play the arrangement, stop on stop_at_beat + post-roll, "
-            "disarm, and write the captures manifest. Produces one WAV per "
-            "surface plus manifest.json in the captures directory."
+            "arm, play the arrangement, record a reverb ring-out past the "
+            "arrangement end (ring_out_beats), stop, disarm, and write the "
+            "captures manifest. Produces one WAV per surface plus "
+            "manifest.json in the captures directory."
         ),
         params=(
             ParamSpec(
@@ -112,8 +113,28 @@ register(
                 required=False,
                 minimum=1,
                 description=(
-                    "Beat at which recording should stop. Default: the "
-                    "arrangement's last_event_time (full song)."
+                    "Beat at which the dry arrangement stops (the ring-out "
+                    "records after this). Default: where the arrangement's "
+                    "content ends (the last clip's end) — NOT last_event_time, "
+                    "which drifts past the real content as renders play into "
+                    "the ring-out region."
+                ),
+            ),
+            ParamSpec(
+                name="ring_out_beats",
+                type="float",
+                required=False,
+                minimum=0.0,
+                description=(
+                    "Beats of reverb RING-OUT to record AFTER stop_at_beat. "
+                    "The dry arrangement stops at stop_at_beat; recording "
+                    "continues this many beats more while the returns decay "
+                    "into silence, so reverb RT60 is measurable from the "
+                    "captured tail (ableton_analysis verifies it per return). "
+                    "Default 8. Raise it for a long (3 s+) hall, especially "
+                    "at a fast session tempo — analysis degrades to an honest "
+                    "'insufficient ring-out, re-render with more' skip if too "
+                    "short. 0 skips the ring-out (no reverb to verify)."
                 ),
             ),
             ParamSpec(
@@ -122,10 +143,11 @@ register(
                 required=False,
                 minimum=0.0,
                 description=(
-                    "Extra beats to let transport run past stop_at_beat "
-                    "before issuing Live's stop. Gives the patch's beat "
-                    "observer time to fire sfrecord~'s stop+finalize. "
-                    "Default 4 (one bar at 4/4)."
+                    "Extra beats to let transport run past the recording "
+                    "stop (stop_at_beat + ring_out_beats) before issuing "
+                    "Live's stop. Gives the patch's beat observer time to "
+                    "fire sfrecord~'s stop+finalize. Default 4 (one bar at "
+                    "4/4)."
                 ),
             ),
             ParamSpec(

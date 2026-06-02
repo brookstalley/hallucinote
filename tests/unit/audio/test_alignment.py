@@ -4,24 +4,20 @@ The capture pipeline's per-surface sfrecord~ instances finalize at staggered
 times, so the raw WAVs differ in length — but their content starts are
 sample-aligned (a known-offset calibration capture recovered a 2-beat impulse
 spacing to the exact sample). So the fix is to trim every surface to the common
-(shortest) length; these pin that contract, including the capstone that the
-reverb deconvolution — which hard-fails on mismatched lengths — succeeds once
-the surfaces are trimmed.
+(shortest) length; these pin that contract. The cross-surface passes
+(attribution, masking) require equal-length surfaces; the capstone shows reverb
+RT60 — now measured from a return's OWN ring-out (one surface, dry-source-free
+per AUD-6R2M) — still recovers correctly from the trimmed return.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from hallucinote.audio.alignment import trim_to_common_length
 from hallucinote.audio.io import CaptureSet, Surface
-from hallucinote.audio.reverb import (
-    REVERB_TOLERANCE_S,
-    deconvolve_ir,
-    verify_reverb_send,
-)
+from hallucinote.audio.reverb import REVERB_TOLERANCE_S, measure_return_rt60
 from tests.unit.audio import fixtures
 
 SR = fixtures.SAMPLE_RATE
@@ -47,6 +43,7 @@ def _capture(master: Surface, stems=(), returns=()) -> CaptureSet:
         sample_rate=SR,
         start_at_beat=0.0,
         stop_at_beat=64.0,
+        ring_out_beats=0.0,
         master=master,
         stems=list(stems),
         returns=list(returns),
@@ -115,46 +112,45 @@ def test_human_summary_reports_drift_for_unequal_capture():
     assert "100 ms" in report.human_summary
 
 
-def test_reverb_verification_survives_capture_length_drift():
-    """The AUD-1C7K capstone. Per-surface stop drift gives the dry stem and its
-    wet return DIFFERENT lengths, so deconvolve_ir hard-fails. Because the
-    starts are sample-aligned (only the tails differ), trimming to the common
-    length restores the equal-length, phase-aligned pair and the RT60 comes
-    back within tolerance."""
-    ir = fixtures.synthetic_ir(0.6, duration_s=1.0)
-    # Unit-impulse dry so wet is the full IR (no truncated reverb tail) — the
-    # clean dry/wet pair the deconvolution math assumes; the variable under test
-    # is the LENGTH drift, not the deconvolution's tolerance to truncated input.
-    dry = fixtures.silence(2.0)
-    dry[0, 0] = 1.0
-    dry[0, 1] = 1.0
-    wet_full = fixtures.convolve(dry, ir)  # = the IR, with its 1.0 s tail intact
+def test_reverb_rt60_measured_from_trimmed_return_ringout():
+    """The AUD-1C7K capstone, post-AUD-6R2M. RT60 is now measured from the
+    return's OWN ring-out (one surface, dry-source-free), so capture length
+    drift across surfaces no longer couples into the deconvolution math — but
+    the return surface itself is still trimmed by the AUD-1C7K pass. A return
+    whose tail finalized later than its siblings is trimmed to the common
+    length; because the trimmed-off region is trailing post-decay silence, the
+    ring-out survives and ``measure_return_rt60`` recovers the declared RT60."""
+    # The return surface IS a ring-out: an impulse-excited IR decaying into
+    # silence (0.6 s RT60, well decayed within the 3 s buffer).
+    ir = fixtures.synthetic_ir(0.6, duration_s=3.0)
+    impulse = fixtures.silence(3.0)
+    impulse[0, 0] = 1.0
+    impulse[0, 1] = 1.0
+    ring_out = fixtures.convolve(impulse, ir)
 
-    # Stop drift: the wet return's sfrecord~ finalized later → its WAV is longer
-    # by the per-surface stop offset, but it STARTS at the same sample as the
-    # dry (heads aligned). Model that with extra trailing silence on the wet.
-    wet = np.concatenate([wet_full, fixtures.silence(0.05)], axis=0)  # 50 ms longer tail
-    assert dry.shape[0] != wet.shape[0]
-
-    # Raw, the deconvolution refuses the mismatched lengths — the AUD-1C7K bug.
-    with pytest.raises(ValueError, match="same length"):
-        deconvolve_ir(dry, wet, sr=SR)
+    # Stop drift: the return's sfrecord~ finalized later → its WAV is longer by
+    # the per-surface stop offset (trailing post-decay silence), heads aligned.
+    drifted_return = np.concatenate([ring_out, fixtures.silence(0.05)], axis=0)
+    master = ring_out  # shortest → defines the common length
+    assert drifted_return.shape[0] != master.shape[0]
 
     capture = _capture(
-        master=_surface("master", "master", dry),  # any equal-or-shorter ref
-        stems=[_surface("track:1", "track", dry)],
-        returns=[_surface("return:1", "return", wet)],
+        master=_surface("master", "master", master),
+        returns=[_surface("return:1", "return", drifted_return)],
     )
     aligned, _ = trim_to_common_length(capture)
-    dry_a = aligned.stems[0].audio
-    wet_a = aligned.returns[0].audio
-    assert dry_a.shape == wet_a.shape
+    return_a = aligned.returns[0].audio
+    assert return_a.shape[0] == master.shape[0]  # trimmed to common length
 
-    result = verify_reverb_send(
-        dry_a, wet_a,
-        sample_rate=SR, declared_rt60_s=0.6,
-        dry_track_id="track:1", wet_return_track_id="return:1",
+    # Decay onset is the impulse at sample 0; integrate the decay from there.
+    result = measure_return_rt60(
+        return_a,
+        sample_rate=SR,
+        decay_onset_sample=0,
+        declared_rt60_s=0.6,
+        return_track_id="return:1",
     )
+    assert result.sufficient_tail
     assert np.isfinite(result.measured_rt60_s)
     assert abs(result.measured_rt60_s - 0.6) <= REVERB_TOLERANCE_S
     assert result.within_tolerance

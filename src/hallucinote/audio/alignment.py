@@ -18,9 +18,9 @@ their tails differ.
 
 That makes the fix the simplest possible thing: **trim every surface to the
 common (shortest) length**. The result is sample-aligned, equal-length surfaces
-— the invariant ``deconvolve_ir`` and every cross-surface analysis (masking,
-timing, attribution) depend on. No cross-correlation, no shifting: the starts
-are aligned, so there's nothing to shift.
+— the invariant every cross-surface analysis (masking, timing, attribution)
+depends on. No cross-correlation, no shifting: the starts are aligned, so
+there's nothing to shift.
 
 This is deliberately NOT a GCC-PHAT / lag-recovery alignment. We measured that
 the offset is a pure stop-length ramp; recovering and removing a per-surface

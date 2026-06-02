@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [arrangement, structure, bar-map, form]
+---
+
 # 11 — Arrangement bar-map
 
 **Date:** 2026-06-01

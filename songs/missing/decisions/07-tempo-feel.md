@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [tempo, feel, groove]
+---
+
 # 07 — Tempo and feel
 
 **Date:** 2026-06-01

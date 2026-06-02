@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [melody, harmony, root]
+---
+
 # 06 — Melody's relationship to the root
 
 **Date:** 2026-06-01

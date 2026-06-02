@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [rhythm, groove, arrangement, missing-root]
+---
+
 # 08 — Rhythm: the missing rhythmic floor (parallel to the missing root)
 
 **Date:** 2026-06-01

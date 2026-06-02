@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [intro, harmony, missing-root]
+---
+
 # 12 — Intro: the phantom root you just missed
 
 **Date:** 2026-06-01

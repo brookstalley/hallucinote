@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [genre, structure, section-map, synthpop, cinematic]
+---
+
 # 13 — Genre is section-dependent: synthpop choruses, cinematic verses
 
 **Date:** 2026-06-01

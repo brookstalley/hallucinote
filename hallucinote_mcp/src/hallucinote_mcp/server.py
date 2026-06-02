@@ -153,7 +153,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
-    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return + master (idempotent); render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
+    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return (idempotent); the MASTER is detect-only — Live 12.4 can't add a device to the master via the API (DEV-2M9K), so place it on the Master strip by hand once and the render configures it from then on. The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
     _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, and declared dry->wet reverb verification (Wiener-deconvolved IR + RT60 vs intent). Writes a MixReport JSON to songs/<slug>/analysis/.")
 
     return mcp

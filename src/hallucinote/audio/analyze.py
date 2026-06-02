@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .alignment import trim_to_common_length
 from .attribution import (
     band_attribution,
     find_master_overshoots,
@@ -148,6 +149,14 @@ def analyze_mix(
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
 
+    # Trim every surface to the common length (AUD-1C7K). Per-surface sfrecord~
+    # instances finalize at staggered times, so the raw WAVs differ in length;
+    # their starts are sample-aligned (calibration-verified), so trimming the
+    # tails to the shortest surface yields equal-length, phase-aligned stems —
+    # the invariant deconvolve_ir and the cross-surface passes depend on.
+    # No-op on already-equal-length synthetic fixtures.
+    capture, alignment_report = trim_to_common_length(capture)
+
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
     # supplied; degenerates to the constant-tempo linear map otherwise.
@@ -211,6 +220,7 @@ def analyze_mix(
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
+        alignment=alignment_report.to_json_dict(),
     )
 
 

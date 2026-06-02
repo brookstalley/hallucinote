@@ -443,6 +443,10 @@ class MixReport:
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
+    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
+    # analysis so the correction is visible, not silent. None when analysis ran
+    # without an alignment pass (e.g. a directly-constructed report in a test).
+    alignment: dict[str, Any] | None = None
     compare_to: dict[str, Any] | None = None
     schema_version: str = SCHEMA_VERSION
 
@@ -471,6 +475,7 @@ class MixReport:
             "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
+            "alignment": self.alignment,
             "compare_to": self.compare_to,
         }
 

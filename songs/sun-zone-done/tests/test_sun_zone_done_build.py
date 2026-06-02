@@ -180,12 +180,13 @@ def test_build_produces_canonical_shape(build_module, built):
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
 
-        # Envelopes: 7 = 1 Amp Type (device_parameter) + 5 clip-local atmosphere
+        # Envelopes: 8 = 1 Amp Type (device_parameter) + 5 clip-local atmosphere
         # pan/send envelopes (intro organ + break lead/steel — MIX-3S7P) + 1 break
-        # drift pan SWEEP on the rhythm gtr (decisions/08 v2). Pinned in detail by
-        # test_atmosphere_envelopes_are_clip_local + test_break_drift_pans_extremely.
+        # drift pan SWEEP + 1 break drift VOLUME dip on the rhythm gtr (decisions/08 v2
+        # + mix-review 2026-06-02). Pinned in detail by test_atmosphere_envelopes_are_
+        # clip_local + test_break_drift_pans_extremely + test_break_drift_pulled_to_ghost.
         envs = Q.get_envelopes_for_song(conn, song_id)
-        assert len(envs) == 7, [(e["target_kind"], e["parameter_path"]) for e in envs]
+        assert len(envs) == 8, [(e["target_kind"], e["parameter_path"]) for e in envs]
         env = next(e for e in envs if e["target_kind"] == "device_parameter")
         assert env["parameter_path"] == "Amp Type"
         bps = Q.get_breakpoints(conn, env["id"])
@@ -245,10 +246,11 @@ def test_atmosphere_envelopes_are_clip_local(build_module, built):
         for e in Q.get_envelopes_for_song(conn, built):
             if e["target_kind"] == "device_parameter":
                 continue
-            # The break-drift pan SWEEP on the rhythm gtr is a different mechanism (a
-            # song-spanning bookended automation lane, not a clip-local atmosphere
-            # envelope) — pinned by test_break_drift_pans_extremely, excluded here.
-            if (e["target_kind"] == "mixer_pan"
+            # The break-drift pan SWEEP and volume DIP on the rhythm gtr are a different
+            # mechanism (song-spanning bookended automation lanes, not clip-local
+            # atmosphere envelopes) — pinned by test_break_drift_pans_extremely +
+            # test_break_drift_pulled_to_ghost, excluded here.
+            if (e["target_kind"] in ("mixer_pan", "mixer_volume")
                     and tracks[e["target_track_id"]] == "03 Rhythm Gtr"):
                 continue
             bps = Q.get_breakpoints(conn, e["id"])
@@ -309,6 +311,33 @@ def test_break_drift_pans_extremely(build_module, built):
         swept = [b for b in bps if abs(b["value"]) >= 0.9]
         assert swept and all(480.0 <= b["time_beats"] <= 544.0 for b in swept), \
             [(b["time_beats"], b["value"]) for b in swept]
+    finally:
+        conn.close()
+
+
+def test_break_drift_pulled_to_ghost(build_module, built):
+    """The break drift is pulled to a TRUE ghost (mix-review 2026-06-02): at ghost
+    velocity it still read LOUD through the Heavy amp (drowning the steel sparkle +
+    grazing the call-response lead), so a clip-local mixer-VOLUME dip pulls the gtr down
+    across the break only — bookended at its normal fader everywhere else, like the pan
+    sweep. Locks the dip's shape (not the exact value — that's render-tuned)."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = {t["name"]: t["id"] for t in Q.get_tracks_for_song(conn, built)}
+        vol = next(e for e in Q.get_envelopes_for_song(conn, built)
+                   if e["target_kind"] == "mixer_volume"
+                   and e["target_track_id"] == tracks["03 Rhythm Gtr"])
+        bps = sorted(Q.get_breakpoints(conn, vol["id"]), key=lambda b: b["time_beats"])
+        normal = bps[0]["value"]
+        # Bookended at the gtr's normal fader before the break (only the drift dips)…
+        assert all(abs(b["value"] - normal) < 1e-6 for b in bps if b["time_beats"] <= 480.0)
+        # …dips BELOW normal, and every dipped breakpoint lives inside the break window…
+        dipped = [b for b in bps if b["value"] < normal - 1e-6]
+        assert dipped and all(480.0 <= b["time_beats"] <= 544.0 for b in dipped), \
+            [(b["time_beats"], b["value"]) for b in dipped]
+        # …and returns to normal by the end of the break (the drop into integration is full).
+        assert abs(bps[-1]["value"] - normal) < 1e-6 and bps[-1]["time_beats"] >= 544.0
     finally:
         conn.close()
 

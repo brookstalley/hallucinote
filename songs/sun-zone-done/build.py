@@ -1471,6 +1471,39 @@ def _author_break_drift_pan(conn, song_id, tracks, placed) -> int:
     return 1
 
 
+# Gtr fader volume (normalized, from captured_session.json) + the break ghost dip.
+_GTR_VOL = 0.7
+_GTR_BREAK_GHOST = 0.5
+
+
+def _author_break_drift_gain(conn, song_id, tracks, placed) -> int:
+    """Pull the break's metal-guitar DRIFT down to a TRUE GHOST (mix-review 2026-06-02,
+    user-directed). At ghost VELOCITY the drift still read LOUD through the Heavy amp —
+    the measured break mix had it the loudest element (RMS ~-13 dBFS), drowning the
+    steel sparkle (bed-masked 0.88) and grazing the call-response lead (0.49), against
+    the intent that it 'must not rise out of ghost-level'. Distortion compresses
+    velocity, so the reliable cut is a clip-local mixer-VOLUME dip across the break only:
+    the gtr sits at its normal fader (`_GTR_VOL`) everywhere else, bookended like the
+    pan sweep, dipping to `_GTR_BREAK_GHOST` for the suspension. RENDER-GATED: tune the
+    dip by ear so the drift haunts UNDER the pad + call-response, never over them."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    bstart, bend = bounds["break"]
+    env = M.create_envelope(
+        conn, song_id=song_id, target_kind="mixer_volume",
+        target_track_id=tracks["03 Rhythm Gtr"], actor="build",
+        reason="break drift: pull to true ghost (mix-review 2026-06-02)")
+    M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+        {"time_beats": 0.0,          "value": _GTR_VOL,         "curve_kind": "linear"},
+        {"time_beats": bstart,       "value": _GTR_VOL,         "curve_kind": "linear"},
+        {"time_beats": bstart + 1.0, "value": _GTR_BREAK_GHOST, "curve_kind": "linear"},
+        {"time_beats": bend - 1.0,   "value": _GTR_BREAK_GHOST, "curve_kind": "linear"},
+        {"time_beats": bend,         "value": _GTR_VOL,         "curve_kind": "linear"},
+    ], actor="build", reason="break drift gain dip to ghost (mix-review 2026-06-02)")
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
@@ -1527,6 +1560,7 @@ def build(reset: bool = False) -> str:
             _compose_rhythm_gtr(conn, song_id, tracks, placed)
             atmos = _author_atmosphere_envelopes(conn, song_id, tracks, placed)
             atmos += _author_break_drift_pan(conn, song_id, tracks, placed)
+            atmos += _author_break_drift_gain(conn, song_id, tracks, placed)
 
             # Harmony conformance — the structural gate. The bass must realize the
             # declared harmony in every section (no one-chord drone).

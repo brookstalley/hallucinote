@@ -453,10 +453,13 @@ def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     assert len(report["reverb_verifications"]) == 1
     rv = report["reverb_verifications"][0]
-    # Verification dry/wet IDs are the capture-side surface IDs, not the
-    # DB UUIDs — that's the boundary `_collect_declared_sends` crosses.
-    assert rv["dry_track_id"] == f"track:{track_surface_index}"
-    assert rv["wet_return_track_id"] == f"return:{return_surface_index}"
+    # One verification PER RETURN. The surface IDs are capture-side, not DB
+    # UUIDs — the boundary `_collect_declared_sends` crosses. (This fixture's
+    # return is a continuous sine with no ring-out, so the RT60 itself is an
+    # honest insufficient-tail skip; the lift — surface IDs + declared value —
+    # is what this test pins.)
+    assert rv["return_track_id"] == f"return:{return_surface_index}"
+    assert rv["contributing_track_ids"] == [f"track:{track_surface_index}"]
     assert rv["declared_rt60_s"] == pytest.approx(0.8)
     # No DB intent → skip; intent present → no skip record.
     skips = [s for s in report["skipped_analyses"]

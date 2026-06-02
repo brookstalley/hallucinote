@@ -55,6 +55,24 @@ logger = logging.getLogger("hallucinote_mcp.render")
 # scheduler tick lands just before the boundary. One bar at 4/4 is plenty.
 _DEFAULT_POST_ROLL_BEATS = 4.0
 
+# How many beats of pure reverb RING-OUT to record AFTER the arrangement ends.
+# The dry arrangement plays through `stop_at_beat`; the render then keeps
+# recording for `ring_out_beats` more while transport runs into the empty
+# post-arrangement region — no MIDI, so instruments release and the reverb
+# returns decay into silence. This captured decay is what reverb RT60
+# verification measures (Schroeder backward integration of the tail; see
+# `audio.reverb.measure_return_rt60`). WITHOUT it the recording finalizes at
+# the arrangement end and RT60 is unverifiable (AUD-6R2M / AUD-4S8T).
+#
+# Beats, not seconds, because the analyzer's stop boundary is beat-based (the
+# patch fires `sfrecord~` stop when transport crosses the stop-beat it was
+# given). 8 beats covers a typical reverb at common tempos; scale it up for a
+# long (e.g. 3 s+) hall when the session tempo is fast — the read side
+# degrades to an honest "insufficient ring-out, re-render with more" skip
+# rather than a wrong number if it's too short. Set 0 to skip the ring-out
+# (e.g. a song with no reverb returns to verify).
+_DEFAULT_RING_OUT_BEATS = 8.0
+
 # How many beats before `start_at_beat` to seek BEFORE pressing play, so
 # the patch's transport-cross detector sees a true less-than-threshold-
 # then-at-or-above transition. The detector's expr is
@@ -266,6 +284,7 @@ def render_handler(
     output_dir: str | None = None,
     post_roll_beats: float = _DEFAULT_POST_ROLL_BEATS,
     pre_roll_beats: float = _DEFAULT_PRE_ROLL_BEATS,
+    ring_out_beats: float = _DEFAULT_RING_OUT_BEATS,
     start_at_beat: int = 0,
     stop_at_beat: int | None = None,
     _osc_factory: Callable[[int], AnalyzerOSC] | None = None,
@@ -286,8 +305,16 @@ def render_handler(
         Live's process cwd is ``/`` on macOS (read-only), so the
         handler refuses missing/relative values; the server-side
         preprocessor owns default + absolutize logic.
-      - ``post_roll_beats``: extra beats to let transport run past
-        ``stop_at_beat`` before stopping. Default 4 (one bar in 4/4).
+      - ``post_roll_beats``: extra beats to let transport run past the
+        recording stop before stopping transport. Default 4 (one bar in 4/4).
+      - ``ring_out_beats``: beats of pure reverb ring-out to RECORD after
+        ``stop_at_beat``. The dry arrangement stops at ``stop_at_beat``;
+        recording continues for ``ring_out_beats`` more while the returns
+        decay into silence, so reverb RT60 is measurable from the captured
+        tail (see ``_DEFAULT_RING_OUT_BEATS``). 0 skips the ring-out. The
+        manifest records ``stop_at_beat`` (the input-stop boundary) and
+        ``ring_out_beats`` separately; the captured audio spans
+        ``[start_at_beat, stop_at_beat + ring_out_beats]``.
       - ``pre_roll_beats``: how many beats BEFORE ``start_at_beat`` to
         seek before pressing play. Required so the patch's transport-
         cross detector sees an actual edge (less-than-threshold then
@@ -344,6 +371,15 @@ def render_handler(
             "stop_at_beat."
         )
 
+    # Record past the arrangement end so the reverb RING-OUT is captured: the
+    # dry input stops at end_beat, then transport runs into the empty
+    # post-arrangement region for ring_out_beats while the returns decay into
+    # silence (AUD-6R2M / AUD-4S8T). The analyzer's sfrecord~ finalizes when
+    # transport crosses the stop-beat it is given, so we hand it this EXTENDED
+    # stop; the manifest still records end_beat as stop_at_beat (the input-stop
+    # boundary the read side measures the decay from) plus ring_out_beats.
+    record_stop_beat = end_beat + max(0, int(round(ring_out_beats)))
+
     # Per-analyzer setup: deliver path, track_id, beat window via OSC.
     # Per-instance arrival is independent — each udpreceive owns its own
     # bound port and routes /path → prepend open → its sfrecord~ on
@@ -361,7 +397,7 @@ def render_handler(
         client.set_path(str(wav_path))
         client.set_track_id(inst.track_id)
         client.set_start_at_beat(start_at_beat)
-        client.set_stop_at_beat(end_beat)
+        client.set_stop_at_beat(record_stop_beat)
 
     # Frame counts before this render — surfaces sidecar health in the
     # manifest (deltas show whether we got any frames during the
@@ -389,6 +425,19 @@ def render_handler(
     # the empirical motivation — without the pre-roll, seeking AT the
     # threshold lands the observer's first fire on the boundary and the
     # detector misses the edge.
+    # Loop OFF for the capture: the ring-out needs transport to run into the
+    # empty post-arrangement region and decay, not loop back and re-trigger.
+    # Saved and restored after the capture stops (its own bout — like the
+    # seek/play split, a transport-property write triggers a notification
+    # cascade that must drain before the next Live touch).
+    original_loop: "bool | None" = None
+    def _loop_off_on_main() -> None:
+        nonlocal original_loop
+        original_loop = bool(context.song.loop)
+        context.song.loop = False
+    context.run_on_main(_loop_off_on_main)
+    time.sleep(_INTER_MUTATION_YIELD_S)
+
     seek_to = max(0.0, float(start_at_beat) - float(pre_roll_beats))
     def _seek_on_main() -> None:
         context.song.current_song_time = seek_to
@@ -418,6 +467,7 @@ def render_handler(
         context.run_on_main(_stop_engine_off)
         time.sleep(_INTER_MUTATION_YIELD_S)
         _set_arm_on_all(context, layout, arm=False)
+        _restore_loop(context, original_loop)
         raise ValueError(
             "render: transport did not advance after play — Live's audio engine is "
             "OFF (or the transport stalled at the gate). Nothing was captured. This "
@@ -429,9 +479,11 @@ def render_handler(
             "block for minutes waiting for a transport that never moves.)"
         )
 
-    # Wait for transport to cross stop+post_roll — or fail fast if the
-    # recorder never starts capturing.
-    target_beat = float(end_beat) + float(post_roll_beats)
+    # Wait for transport to cross the recording stop + post_roll — or fail fast
+    # if the recorder never starts capturing. The recording stop is the
+    # arrangement end PLUS the ring-out, so transport must run far enough for
+    # the analyzer to finalize the captured tail.
+    target_beat = float(record_stop_beat) + float(post_roll_beats)
     max_wait_s = max(
         _MIN_WAIT_S,
         (target_beat - seek_to) * _MAX_WAIT_MULTIPLIER,
@@ -458,6 +510,7 @@ def render_handler(
     context.run_on_main(_stop_on_main)
     time.sleep(_INTER_MUTATION_YIELD_S)
     _set_arm_on_all(context, layout, arm=False)
+    _restore_loop(context, original_loop)
 
     if outcome == "no_frames":
         raise ValueError(
@@ -482,6 +535,12 @@ def render_handler(
         "song_slug": song_slug,
         "start_at_beat": start_at_beat,
         "stop_at_beat": end_beat,
+        # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
+        # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
+        # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
+        # the captured samples; recording a fractional request would skew that
+        # beat↔sample map.
+        "ring_out_beats": record_stop_beat - end_beat,
         "post_roll_beats": post_roll_beats,
         "status": status,
         "frames_received": frames_after - frames_before,
@@ -525,6 +584,21 @@ def render_handler(
 
 
 # --- internals -------------------------------------------------------
+
+
+def _restore_loop(context: LiveContext, original_loop: "bool | None") -> None:
+    """Restore the transport loop toggle the render disabled for capture.
+
+    No-op when ``original_loop`` is None (loop-off bout never ran — e.g. an
+    early raise before the seek). Its own main-thread bout + yield, like every
+    other transport mutation, so Live's notification cascade drains."""
+    if original_loop is None:
+        return
+
+    def _restore_on_main() -> None:
+        context.song.loop = original_loop
+    context.run_on_main(_restore_on_main)
+    time.sleep(_INTER_MUTATION_YIELD_S)
 
 
 def _set_arm_on_all(

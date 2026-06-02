@@ -21,12 +21,14 @@ from hallucinote.audio import (
     analyze_mix,
 )
 from hallucinote.audio.report import SCHEMA_VERSION
+from hallucinote.audio.reverb import REVERB_TOLERANCE_S
 
 from .fixtures import (
     SAMPLE_RATE,
     calibrated_pink_noise,
     convolve,
     onsets_at_beats,
+    pink_noise,
     silence,
     sine,
     synthetic_ir,
@@ -41,6 +43,7 @@ def _write_synthetic_capture(
     master_audio: np.ndarray,
     start_at_beat: float = 0.0,
     stop_at_beat: float = 16.0,
+    ring_out_beats: float = 0.0,
 ) -> Path:
     """Write a captures dir + manifest mirroring what render produces."""
     returns = returns or []
@@ -79,6 +82,7 @@ def _write_synthetic_capture(
         "song_slug": "test-song",
         "start_at_beat": start_at_beat,
         "stop_at_beat": stop_at_beat,
+        "ring_out_beats": ring_out_beats,
         "post_roll_beats": 4.0,
         "status": "ok",
         "frames_received": 400,
@@ -159,43 +163,118 @@ def test_analyze_mix_attributes_overshoot_to_loud_stem(tmp_path: Path):
 
 
 def test_analyze_mix_runs_declared_reverb_verification(tmp_path: Path):
-    """When the caller declares a dry→wet send with target RT60, the
-    pipeline measures it and emits a ReverbVerification record."""
-    duration_s = 3.0
-    declared = 0.8
-    ir = synthetic_ir(declared, duration_s=duration_s)
-    # Use a single impulse as the dry; pure-impulse dry deconvolves cleanly.
-    dry = silence(duration_s)
-    dry[0, 0] = 1.0
-    dry[0, 1] = 1.0
-    wet = convolve(dry, ir)
-    master = (dry + wet * 0.4)  # any signal that has SOME content
+    """A declared send + a captured ring-out → one per-RETURN
+    ReverbVerification, RT60 measured from the return's own decay tail. The
+    capture spans song [0, stop] + ring-out [stop, stop+ring_out]; the return
+    decays into silence over the ring-out region."""
+    rt60 = 0.8
+    total_s, input_s = 5.0, 2.0
+    ir = synthetic_ir(rt60, duration_s=total_s)
+    tot_n, in_n = int(total_s * SAMPLE_RATE), int(input_s * SAMPLE_RATE)
+    dry = np.zeros((tot_n, 2), dtype=np.float32)
+    dry[:in_n] = sine(220.0, input_s)   # dry input plays, then stops
+    wet = convolve(dry, ir)             # return rings out after input stops
+    master = (dry + wet * 0.4).astype(np.float32)
 
     captures_dir = _write_synthetic_capture(
         tmp_path,
         stems=[("track:1", "01 Snare", dry)],
         returns=[("return:1", "A-Plate", wet)],
         master_audio=master,
+        # beat split mirrors the time split: 20/(20+30) = 0.4 = input_s/total_s,
+        # so beat_to_sample(stop_at_beat) lands at the input-stop sample.
+        stop_at_beat=20.0,
+        ring_out_beats=30.0,
     )
 
     sends = [DeclaredReverbSend(
         dry_track_id="track:1",
         wet_return_track_id="return:1",
-        declared_rt60_s=declared,
+        declared_rt60_s=rt60,
     )]
     report = analyze_mix(captures_dir, declared_reverb_sends=sends)
     assert len(report.reverb_verifications) == 1
     v = report.reverb_verifications[0]
-    assert v.declared_rt60_s == declared
+    assert v.return_track_id == "return:1"
+    assert v.declared_rt60_s == rt60
+    assert v.contributing_track_ids == ("track:1",)
+    assert v.conflicting_declarations == ()
+    assert v.sufficient_tail is True
+    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
     assert v.within_tolerance is True
     # No skipped reverb entry when a send was actually declared.
     assert not any(s.get("kind") == "reverb_verification"
                    for s in report.skipped_analyses)
 
 
-def test_analyze_mix_records_skip_when_declared_track_not_in_capture(tmp_path: Path):
-    """Declared dry/wet pointing at IDs that didn't get captured → record
-    the skip with a teaching reason rather than crashing."""
+def test_analyze_mix_groups_sends_into_one_per_return(tmp_path: Path):
+    """Two sends into the SAME return (the real multi-send case) collapse to ONE
+    per-return verification, recording both contributing dry sources."""
+    rt60 = 1.0
+    total_s, input_s = 5.0, 2.0
+    ir = synthetic_ir(rt60, duration_s=total_s)
+    tot_n, in_n = int(total_s * SAMPLE_RATE), int(input_s * SAMPLE_RATE)
+    dry_a = np.zeros((tot_n, 2), dtype=np.float32)
+    dry_b = np.zeros((tot_n, 2), dtype=np.float32)
+    dry_a[:in_n] = sine(220.0, input_s)
+    dry_b[:in_n] = sine(330.0, input_s)
+    wet = convolve((dry_a + dry_b).astype(np.float32), ir)
+    master = ((dry_a + dry_b) + wet * 0.4).astype(np.float32)
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Gtr", dry_a), ("track:2", "02 Keys", dry_b)],
+        returns=[("return:1", "A-Plate", wet)],
+        master_audio=master,
+        stop_at_beat=20.0,
+        ring_out_beats=30.0,
+    )
+    sends = [
+        DeclaredReverbSend(dry_track_id="track:1",
+                           wet_return_track_id="return:1", declared_rt60_s=rt60),
+        DeclaredReverbSend(dry_track_id="track:2",
+                           wet_return_track_id="return:1", declared_rt60_s=rt60),
+    ]
+    report = analyze_mix(captures_dir, declared_reverb_sends=sends)
+    assert len(report.reverb_verifications) == 1  # one PER RETURN, not per send
+    v = report.reverb_verifications[0]
+    assert v.return_track_id == "return:1"
+    assert set(v.contributing_track_ids) == {"track:1", "track:2"}
+    assert v.sufficient_tail is True
+    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+
+
+def test_analyze_mix_no_ringout_emits_honest_insufficient_tail(tmp_path: Path):
+    """The real-capture case: no ring-out (ring_out_beats=0, content to the end)
+    → an honest insufficient-tail verdict + finding, NOT a fabricated RT60."""
+    duration_s = 3.0
+    # Continuous content to the last sample — no decay region.
+    dry = sine(220.0, duration_s)
+    wet = pink_noise(duration_s, amplitude=0.4)
+    master = (dry + wet * 0.4).astype(np.float32)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Snare", dry)],
+        returns=[("return:1", "A-Plate", wet)],
+        master_audio=master,
+        stop_at_beat=16.0,
+        ring_out_beats=0.0,  # no ring-out captured
+    )
+    sends = [DeclaredReverbSend(dry_track_id="track:1",
+                                wet_return_track_id="return:1", declared_rt60_s=2.0)]
+    report = analyze_mix(captures_dir, declared_reverb_sends=sends)
+    assert len(report.reverb_verifications) == 1
+    v = report.reverb_verifications[0]
+    assert v.sufficient_tail is False
+    assert np.isnan(v.measured_rt60_s)
+    assert v.within_tolerance is False
+    # Surfaced as a finding pointing at the remedy (re-render with ring_out).
+    assert any(f.kind == "reverb_insufficient_tail" for f in report.findings)
+
+
+def test_analyze_mix_records_skip_when_declared_return_not_in_capture(tmp_path: Path):
+    """A send to a return that wasn't captured → record the skip with a
+    teaching reason rather than crashing."""
     duration_s = 2.0
     captures_dir = _write_synthetic_capture(
         tmp_path,
@@ -203,14 +282,14 @@ def test_analyze_mix_records_skip_when_declared_track_not_in_capture(tmp_path: P
         master_audio=silence(duration_s),
     )
     sends = [DeclaredReverbSend(
-        dry_track_id="track:99",  # doesn't exist
+        dry_track_id="track:1",
         wet_return_track_id="return:99",  # doesn't exist
         declared_rt60_s=1.0,
     )]
     report = analyze_mix(captures_dir, declared_reverb_sends=sends)
     assert report.reverb_verifications == []
     assert any(
-        "track:99" in s.get("reason", "")
+        "return:99" in s.get("reason", "")
         for s in report.skipped_analyses
     )
 

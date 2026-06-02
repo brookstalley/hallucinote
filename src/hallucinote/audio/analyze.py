@@ -21,7 +21,8 @@ the reverb-verification section is emitted as a structured
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -52,7 +53,7 @@ from .report import (
     SectionMetrics,
     StemMetrics,
 )
-from .reverb import verify_reverb_send
+from .reverb import find_decay_onset, measure_return_rt60
 from .section import (
     BeatSampleMap,
     SectionWindow,
@@ -132,8 +133,9 @@ def analyze_mix(
       1. Per-surface loudness — master, every stem, every return.
       2. Master-bus overshoot detection + per-stem contribution
          attribution.
-      3. For each declared dry→wet send: Wiener-deconvolve IR, measure
-         RT60, compare to declared. If none declared, emit a
+      3. Per return with a declared send: measure RT60 from the return's
+         own captured ring-out (Schroeder decay-tail, dry-source-free),
+         compare to declared. If none declared, emit a
          ``skipped_analyses`` entry.
       4. Per-section loudness — the pass-1 metrics scoped to each named
          section window. If no sections are declared, emit a
@@ -153,16 +155,24 @@ def analyze_mix(
     # instances finalize at staggered times, so the raw WAVs differ in length;
     # their starts are sample-aligned (calibration-verified), so trimming the
     # tails to the shortest surface yields equal-length, phase-aligned stems —
-    # the invariant deconvolve_ir and the cross-surface passes depend on.
+    # the invariant the cross-surface passes (attribution, masking) depend on.
     # No-op on already-equal-length synthetic fixtures.
     capture, alignment_report = trim_to_common_length(capture)
 
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
     # supplied; degenerates to the constant-tempo linear map otherwise.
+    #
+    # The recorded audio spans [start_at_beat, stop_at_beat + ring_out_beats]:
+    # the dry arrangement plays through stop_at_beat, then the render keeps
+    # recording the reverb ring-out for ring_out_beats more (0 for pre-ring-out
+    # captures). The map must cover the FULL recording so beat→sample stays
+    # correct — section windows live in [start, stop] (the leading portion) and
+    # the ring-out region [stop, stop+ring_out] maps to the trailing samples,
+    # where reverb RT60 is measured.
     beat_map = BeatSampleMap(
         capture.start_at_beat,
-        capture.stop_at_beat,
+        capture.stop_at_beat + capture.ring_out_beats,
         capture.master.audio.shape[0],
         tempo_map,
     )
@@ -186,6 +196,7 @@ def analyze_mix(
     reverb_verifications, skipped = _run_reverb_verifications(
         capture=capture,
         declared_sends=declared_reverb_sends,
+        beat_map=beat_map,
     )
 
     per_section, section_skips = _measure_sections(
@@ -259,16 +270,39 @@ def _rebeat_overshoot(
     )
 
 
+def _modal_rt60(values: Sequence[float]) -> float:
+    """Most frequently-declared RT60; ties resolve to the smallest for
+    determinism. Picks the value to measure against when sends into one return
+    declare different RT60s (the disagreement is surfaced separately)."""
+    counts = Counter(values)
+    top = max(counts.values())
+    return min(v for v, c in counts.items() if c == top)
+
+
 def _run_reverb_verifications(
     *,
     capture: CaptureSet,
     declared_sends: Sequence[DeclaredReverbSend],
+    beat_map: BeatSampleMap,
 ) -> tuple[list[ReverbVerification], list[dict]]:
-    """Run one verification per declared send; record skips otherwise.
+    """Measure RT60 once per RETURN from its captured ring-out.
 
-    Empty ``declared_sends`` produces a structured skip record so the
-    report explains *why* the section is empty (rather than ambiguously
-    "no reverbs verified — analyzed OK or no intent declared?").
+    RT60 is a property of a return's reverb *device*, so declared sends are
+    GROUPED by target return (a return fed by N sends declares RT60 N times,
+    redundantly). Each return is measured once, dry-source-free, from its own
+    decay tail — sidestepping the multi-source ill-posedness of the old
+    single-dry deconvolution. Sends into one return that declare DIFFERENT
+    RT60s are a contradiction (one device, one decay time) surfaced via
+    ``conflicting_declarations``.
+
+    The decay region is the captured ring-out after the arrangement's dry input
+    stops (``capture.stop_at_beat`` → end). A capture made without ring-out
+    capture has no such region, so ``measure_return_rt60`` returns an honest
+    ``sufficient_tail=False`` verdict (NaN RT60) — never a fabricated number.
+
+    Empty ``declared_sends`` produces a structured skip record so the report
+    explains *why* the section is empty (rather than ambiguously "no reverbs
+    verified — analyzed OK or no intent declared?").
     """
     if not declared_sends:
         skipped = [{
@@ -282,31 +316,50 @@ def _run_reverb_verifications(
         }]
         return [], skipped
 
-    verifications: list[ReverbVerification] = []
-    skipped: list[dict] = []
-    stems_by_id = {s.track_id: s for s in capture.stems}
     returns_by_id = {r.track_id: r for r in capture.returns}
 
+    # Group declared sends by target return, preserving first-seen order.
+    by_return: "dict[str, list[DeclaredReverbSend]]" = {}
     for send in declared_sends:
-        dry = stems_by_id.get(send.dry_track_id)
-        wet = returns_by_id.get(send.wet_return_track_id)
-        if dry is None or wet is None:
+        by_return.setdefault(send.wet_return_track_id, []).append(send)
+
+    verifications: list[ReverbVerification] = []
+    skipped: list[dict] = []
+    # The dry input stops at the arrangement end; the ring-out follows.
+    stop_sample = beat_map.beat_to_sample(capture.stop_at_beat)
+
+    for return_id, sends in by_return.items():
+        ret = returns_by_id.get(return_id)
+        if ret is None:
             skipped.append({
                 "kind": "reverb_verification",
                 "reason": (
-                    f"declared dry={send.dry_track_id} or "
-                    f"wet={send.wet_return_track_id} not in capture "
-                    f"(stems present: {sorted(stems_by_id)}; "
-                    f"returns present: {sorted(returns_by_id)})"
+                    f"declared return {return_id} not in capture "
+                    f"(returns present: {sorted(returns_by_id)})"
                 ),
             })
             continue
-        verifications.append(verify_reverb_send(
-            dry.audio, wet.audio,
+
+        declared_values = [s.declared_rt60_s for s in sends]
+        distinct = sorted(set(declared_values))
+        conflicting = tuple(distinct) if len(distinct) > 1 else ()
+
+        onset = find_decay_onset(
+            ret.audio,
+            search_start_sample=stop_sample,
             sample_rate=capture.sample_rate,
-            declared_rt60_s=send.declared_rt60_s,
-            dry_track_id=send.dry_track_id,
-            wet_return_track_id=send.wet_return_track_id,
+        )
+        verification = measure_return_rt60(
+            ret.audio,
+            sample_rate=capture.sample_rate,
+            decay_onset_sample=onset,
+            declared_rt60_s=_modal_rt60(declared_values),
+            return_track_id=return_id,
+        )
+        verifications.append(replace(
+            verification,
+            contributing_track_ids=tuple(s.dry_track_id for s in sends),
+            conflicting_declarations=conflicting,
         ))
     return verifications, skipped
 
@@ -663,11 +716,42 @@ def _derive_findings(
         ))
 
     for r in reverbs:
+        if r.conflicting_declarations:
+            findings.append(Finding(
+                kind="reverb_conflicting_declaration",
+                severity="warning",
+                subject=r.return_track_id,
+                metric="rt60_s",
+                observed=r.declared_rt60_s,
+                expected=r.declared_rt60_s,
+                db_reference=(
+                    "sends into this return declare different RT60s "
+                    f"{list(r.conflicting_declarations)} — one reverb device "
+                    "has one decay time; measured against the most-declared "
+                    f"value ({r.declared_rt60_s})"
+                ),
+            ))
+        if not r.sufficient_tail:
+            findings.append(Finding(
+                kind="reverb_insufficient_tail",
+                severity="warning",
+                subject=r.return_track_id,
+                metric="tail_span_db",
+                observed=r.tail_span_db,
+                expected=r.declared_rt60_s,
+                db_reference=(
+                    "no usable reverb ring-out in the capture (clean decay "
+                    f"span {r.tail_span_db:.1f} dB) — RT60 can't be measured "
+                    "from a truncated tail; re-render with a larger "
+                    "ring_out_beats so the reverb decays into silence"
+                ),
+            ))
+            continue
         if not r.within_tolerance:
             findings.append(Finding(
                 kind="reverb_out_of_tolerance",
                 severity="warning",
-                subject=f"{r.dry_track_id} → {r.wet_return_track_id}",
+                subject=r.return_track_id,
                 metric="rt60_s",
                 observed=r.measured_rt60_s,
                 expected=r.declared_rt60_s,

@@ -122,7 +122,13 @@ first — see "Refreshing the analysis"). For each section, you have:
   answer back. (`sloppy` is the one worth a closer look: it's the discredited
   white-noise humanization, distinct from a structured human groove.)
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
-  band), `overshoots`, `reverb_verifications`.
+  band), `overshoots`, `reverb_verifications`. The last is **per return** (RT60
+  is a property of the return's reverb device, measured once from its captured
+  ring-out — not per send). When `sufficient_tail` is false the capture had no
+  usable ring-out: report it as "RT60 unverifiable — re-render with a larger
+  `ring_out_beats`", NOT as a measurement (`measured_rt60_s` is NaN).
+  `conflicting_declarations` (non-empty) means sends into one return declared
+  different RT60s — one device can't have two decay times; surface the conflict.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid

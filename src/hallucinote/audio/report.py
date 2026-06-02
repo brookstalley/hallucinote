@@ -87,19 +87,39 @@ class MasterOvershoot:
 
 @dataclass(frozen=True)
 class ReverbVerification:
-    """One declared dry-stem → wet-return-send verification result.
+    """One per-RETURN RT60 verification result.
 
-    ``measured_rt60_s`` is the RT60 measured from the Wiener-deconvolved
-    IR via Schroeder backward energy integration
-    (``pyroomacoustics.experimental.rt60.measure_rt60``).
-    ``within_tolerance`` is ``abs(measured - declared) <= tolerance_s``.
+    RT60 is a property of the return's reverb *device*, not of any single
+    send into it — so it is measured ONCE per return, from the return's
+    own captured decay tail (ring-out) via Schroeder backward energy
+    integration (``pyroomacoustics.experimental.rt60.measure_rt60``),
+    dry-source-free. A return fed by N sends declares RT60 N times
+    (redundantly): ``contributing_track_ids`` records those dry sources and
+    ``conflicting_declarations`` is non-empty when the per-send
+    declarations disagree (one device cannot have two decay times).
+
+    Honesty fields surface measurement confidence rather than a bare
+    number. ``measurement_method`` names the technique; ``decay_db_used``
+    is the decay window actually fit (RT20/RT30 extrapolated to RT60 when
+    the tail is short); ``tail_span_db`` is the clean decay the tail
+    afforded; ``sufficient_tail`` is False when the capture has no usable
+    ring-out — then ``measured_rt60_s`` is NaN and ``within_tolerance`` is
+    False (we refuse to extrapolate RT60 from noise; the fix is a re-render
+    with a captured ring-out, see ``render`` ``ring_out_beats``).
+    ``within_tolerance`` is ``sufficient_tail and
+    abs(measured - declared) <= tolerance_s``.
     """
-    dry_track_id: str
-    wet_return_track_id: str
+    return_track_id: str
     declared_rt60_s: float
     measured_rt60_s: float
     within_tolerance: bool
     tolerance_s: float
+    measurement_method: str = "decay_tail"
+    decay_db_used: float = 60.0
+    tail_span_db: float = 0.0
+    sufficient_tail: bool = True
+    contributing_track_ids: tuple[str, ...] = ()
+    conflicting_declarations: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -594,12 +614,17 @@ def _overshoot_to_dict(o: MasterOvershoot) -> dict[str, Any]:
 
 def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
     return {
-        "dry_track_id": r.dry_track_id,
-        "wet_return_track_id": r.wet_return_track_id,
+        "return_track_id": r.return_track_id,
         "declared_rt60_s": r.declared_rt60_s,
         "measured_rt60_s": r.measured_rt60_s,
         "within_tolerance": r.within_tolerance,
         "tolerance_s": r.tolerance_s,
+        "measurement_method": r.measurement_method,
+        "decay_db_used": r.decay_db_used,
+        "tail_span_db": r.tail_span_db,
+        "sufficient_tail": r.sufficient_tail,
+        "contributing_track_ids": list(r.contributing_track_ids),
+        "conflicting_declarations": list(r.conflicting_declarations),
     }
 
 

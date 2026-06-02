@@ -27,6 +27,15 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[SYN-2M9P]** Push planner emits master device-LOAD calls that can never execute (DEV-2M9K follow-up)
+  `effort: S · impact: M · area: sync · source: critic · added: 2026-06-02 · status: open · related: DEV-2M9K`
+
+  Follow-up to the DEV-2M9K fix (commit on `fix/master-load-bridge`): Ableton Live 12.4 has no LOM path to load a device onto the master track, so `ableton_device(action='load', master=true)` now refuses up front. But `plan_push_devices` (`src/hallucinote/sync/push/devices.py` ~47-61) still walks the master strip and emits a `device.load(master=true)` for every *unbound* master-strip device chain. At execute time that load fails, and `push_execute.py:577-591` marks the **devices phase HALTED** (`outcome='partial'`, `EXIT_PARTIAL`) and all downstream phases (envelopes / arrangement / cues) **PENDING** — so any song that authors a master-strip device chain in its DB gets a reliably PARTIAL push, re-planned on every run. (Latent today: sun-zone-done's master limiter+EQ live in the saved `.als`, not the DB, so no current song triggers it. This halt also existed pre-DEV-2M9K — the old silent mis-load raised the misleading `_raise_silent_noop` — but it now fails cleanly without corrupting a regular track.)
+
+  **Fix direction:** the planner should NOT emit `device.load` for master-strip chains (they're impossible), while STILL emitting master device-PARAMETER writes (`set_parameter` works on a hand-placed master device). I.e. master devices are configure-only across the whole stack — `load_handler`, render setup, and now the push planner — mirroring the "place by hand once" contract. Consider a one-line push-state note when a master chain is skipped so the user knows to place it by hand.
+
+  **Verifiable signal:** `plan_push_devices` on a song with a master-strip device chain emits zero `device.load` calls addressed `master=true` (only `set_parameter`/param calls), and an execute-path regression test drives a refused-master scenario through `push_execute` asserting the devices phase is NOT halted by it. (No such regression test exists today — the sync tests only assert plan-level emission; Critic note, DEV-2M9K review 2026-06-02.)
+
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
   `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: in-progress · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
 

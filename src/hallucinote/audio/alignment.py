@@ -26,10 +26,19 @@ This is deliberately NOT a GCC-PHAT / lag-recovery alignment. We measured that
 the offset is a pure stop-length ramp; recovering and removing a per-surface
 *start* lag would be solving a problem this capture pipeline doesn't have, and
 would carry fragilities (narrowband sources, self-reverberant stems) for no
-benefit. The per-surface trim amounts ARE surfaced in :class:`AlignmentReport`
-so the drift is visible, not silently assumed — if a future capture ever starts
-*mis*-aligned, that shows up as analysis garbage with the drift in plain sight,
-not a silent wrong answer.
+benefit.
+
+**Honest limit of this approach.** It corrects LENGTH drift only, and ASSUMES
+the heads are sample-aligned — it does NOT verify that. The assumption is
+calibration-proven for the current pipeline (δ=0), and :class:`AlignmentReport`
+surfaces the length drift it does correct. But a *future* capture whose starts
+were mis-aligned yet happened to be equal-length would hit the no-op path and
+feed phase-misaligned content downstream with NO visible drift — a silent wrong
+answer this trim cannot catch. If the capture mechanism ever changes (e.g. the
+AUD-4S8T source-side stop fix alters timing), add a cheap head cross-correlation
+guard here: ``cross_correlation_peak_lag`` in
+``tests/unit/audio/test_pdc_alignment.py`` was scaffolded for exactly that and
+asserts a ±64-sample (1.3 ms @ 48 kHz) PDC tolerance.
 """
 from __future__ import annotations
 

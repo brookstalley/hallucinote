@@ -27,6 +27,18 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[AUD-6R2M]** Reverb verification is ill-posed for multi-source returns (the real RT60 blocker)
+  `effort: M · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · related: AUD-1C7K`
+
+  Found while validating the AUD-1C7K alignment fix on a real sun-zone-done capture (2026-06-02). With capture alignment now sample-exact (proven by a known-offset calibration — δ=0), reverb verification STILL returns garbage RT60 (A-Plate measured ~50s vs declared 3.0s). Cause is **multi-source contamination**, not alignment: `_declare_reverb_intent` declares RT60 on *every* audible send into each return, so A-Plate / B-Room are each fed by many tracks at once. The wet return is `IR ⊗ (drums + gtr + lead + …)`; `verify_reverb_send` deconvolves it by a SINGLE dry stem, leaving the other sends as unexplained signal → a noise-like "IR" → a 46–53s RT60. The single-dry-source deconvolution assumption (spike §7 / Chunk 3) doesn't hold for real multi-send reverb buses.
+
+  **Fix directions (pick after design):** (a) deconvolve the return against the SUM of its declared dry sources (gain-weighted by send level) instead of one; (b) a dedicated single-source verification send (mute other sends, or a transient probe); (c) a non-deconvolution RT60 estimate (Schroeder/EDT on the return's own decay after a gate, no dry needed). **Verifiable signal:** `verify_reverb_send` (or its successor) returns a physically-plausible RT60 (within tolerance of declared) on a multi-send reverb return in a real capture. (AUD-1C7K validation, 2026-06-02)
+
+- **[AUD-4S8T]** Source-side fix: make capture STOP transport-bracketed (kill the per-surface length ramp)
+  `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · related: AUD-1C7K`
+
+  AUD-1C7K is handled read-side by `trim_to_common_length` (starts are sample-aligned; only tails differ). But the underlying cause remains: per-surface `sfrecord~` recordings STOP at staggered times — a measured ~20ms/surface wall-clock ramp (buffer-INDEPENDENT: 512→128 left the 170ms spread unchanged) tied to the render's sequential per-surface disarm (`handlers/render.py` `_set_arm_on_all(arm=False)`), NOT the transport stop-crossing the spec intends. Fixing it at the source would make captures equal-length by construction (no trim, and sample-exact tails for any future cross-surface tail analysis). The spec's transport-bracketed stop already works for at least one surface (the master, in sun-zone-done), so the mechanism is achievable — but the master-stop is INCONSISTENT (shortest in sun-zone-done, longest in the calibration set), so why some surfaces' stop-crossing fires and others fall through to the disarm isn't pinned. **Likely touches the `.amxd` observer (Max GUI, human-authored) + render disarm sequence.** Low priority — trim handles the read side. **Verifiable signal:** a full render produces per-surface WAVs of equal (or ≤1-buffer-spread) length with no read-side trim. (AUD-1C7K source investigation, 2026-06-02)
+
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
   `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: in-progress · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
 

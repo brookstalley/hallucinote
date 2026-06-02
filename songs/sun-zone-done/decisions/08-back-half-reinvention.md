@@ -193,3 +193,67 @@ shape, the integration cell velocities, the climax-swell level, the development 
 the master clipping headroom (the v2 thinning should help the +1.52 dBTP) — tuned on the
 v2 render. Tests + the notes baseline regenerated for the v2 shape (intentional musical
 change, per `regen_notes_baseline.py`).
+
+## v3 — the stringent-eval pass (compose-review as an AI eval, 2026-06-01)
+
+The render pipeline was down (no audio), so we did a **render-free** pass. A deliberately
+demanding `/compose-review` — scored like an AI eval, the bar set at *songs for the ages*
+rather than *did it ship* — landed the back half at **~50%**. The headline gap: **the
+song's thesis is fusion, but the back half realized fusion in rhythm and timbre and only
+*cosmetically* in harmony and melody** — and the song's own intent says *"the harmony
+carries the joke."* The integration looped one Phrygian power-chord riff ×4 (the
+"both-at-once" sounded in just 2 organ hits at the end); the development's "accelerating
+harmonic rhythm" was a local artifact of a looped cell; the climax ran flat-full for 20
+bars and made the recap win by a velocity boost, not by space; and the playground
+*recombined* the two existing motifs but *generated nothing new*. The user chose to pursue
+all four fixes. Composed against the lint + the symbolic melody lens + the shape tests
+(the render-free signals); the **pitch bets are hypotheses until heard** (see render-gated).
+
+**1 — Harmonic fusion (the thesis fix).** `DEV` rewritten so the harmonic rhythm
+**accelerates globally** (phase 1 8-beat → phase 2 4-beat → phase 3 2-beat Dorian↔Phrygian
+whiplash), 24 bars exactly (no loop) → 9 distinct chords, the collision now harmonic not
+just rhythmic. `INTEG` rewritten from a looped Phrygian riff into a **Dorian→Phrygian→
+trade→fuse ARC** aligned to `INTEG_CELLS`: the reggae cell is Dorian (Em7→A7, the bright
+C#), the metal cell Phrygian (Em→F, the dark ♭2), the trade alternates them bar-by-bar,
+"both" rubs them at 2-beat rate, and the climax pedals E **holding both colours** under the
+recap. The bass plays the chord roots (its reggae/metal generators conform either way); the
+chord-aware `organ_bubble` voices the full colour — so **changing the progression alone
+fuses both bass and organ**, no new code. The conservative "organ-only colour" idea was
+rejected on inspection: it would put F♮ (mono-Phrygian bass) against F♯ (Dorian organ) =
+mud. Declared E Phrygian; the Dorian A7/C# is intended chromaticism (lint flags it as a
+*question*, not an error; `ok=True`). **Measurable:** the integration lead's
+resolve-by-step against the now-moving harmony rose **19% → 39%** from the fusion alone.
+
+**2 — The hybrid motif (the generativity fix).** `_HYBRID_CYCLE` — the NO-TIME hook's
+rhythm + contour with every dark Phrygian degree flipped to its bright Dorian neighbour
+(F→F♯, C→C♯), landing on the natural-6 C♯ (the "sun zone" note) instead of the tense E.
+The rhythm says NO TIME, the pitches say sun zone — "I don't have to choose" as one line,
+built from **both hooks' own DNA** so it sounds inevitable, not bolted on. It **debuts** in
+the integration "both" cell (the play discovering it), is **crowned** octave-doubled in the
+climax (its melodic identity, replacing the plain NO-TIME there), and **returns augmented**
+in the outro as the synthesis (replacing the old mechanical "transpose the chill up a
+third"). The hybrid floats brighter than the climax pedal could support (resolve dropped
+39%→15%), so the climax harmony was **brightened toward Dorian** (more A7) to anchor it —
+which also foreshadows the outro's Dorian resolution — recovering resolve to **21%** while
+keeping the high-NCT *fusion friction* the hook wants (it lands on colour, as hooks do).
+
+**3 — The climax by subtraction (the dynamics fix).** The climax no longer runs flat-full
+from its downbeat. Its **first 8 bars EXPOSE the polyrhythm recap** — steel held out, the
+hybrid lead single (not doubled) — so the recap **wins by SPACE**; the **last 8 bars** bring
+the full peak (steel returns, hybrid octave-doubled, the gtr swells, the FUSION bloom). The
+recap's velocity boost was cut **+20 → +12**: arrangement subtraction over fader-by-velocity.
+The drum floor + the asserted phrase-crashes (incl. the downbeat crash) are untouched — the
+subtraction is of the *masking* layers (steel/doubled-lead), the ones in the recap's register.
+
+**4 — The eureka dawns (the pivot fix).** The break call-response was 4× identical — static,
+for the song's emotional pivot. Now the realization **unfolds**: across the four cycles the
+response **draws in** (a 2-beat gap → overlapping the call's tail) and **softens** (urgent →
+gentle), so the worlds stop interrupting and start speaking *together*. Same materials (the
+v1 the user blessed by ear is recoverable in git); only their arc over the 16 bars changed.
+
+**Still render-gated (v3) — the pitch bets especially:** does the fused integration read as
+richness or mud (it's the song's #1 masking-risk section)? does the hybrid land as a hook or
+a contrivance? does the climax subtraction read as a peak or a dropout? does the dawning
+dialogue feel like reconciliation? Verified green on lint (`ok=True`, no stasis) + the
+melody lens + 31 shape tests; the **ear is still the authority** and has not yet ruled.
+Notes baseline regenerated for the v3 shape (intentional musical change).

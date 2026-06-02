@@ -147,12 +147,25 @@ CHORUS2 = Progression.of(                                                      #
     "E", "Phrygian", ["E5", "F5", "G5", "F5", "E5", "D5", "C5", "F5"],
     beats_per_chord=4.0)
 
-# Development — the morph: Dorian cells answered by Phrygian, harmonic rhythm
-# ACCELERATING (4,4 → 2,2,2,2). Declared E Dorian; the Phrygian F is intended
-# chromaticism (the lens flags it as a question, not an error).
+# Development — the morph: harmonic rhythm ACCELERATES across the WHOLE section
+# (decisions/08 v3), not a looped 5-bar cell. The collision the intent claims is
+# now realized harmonically: phase 1 (bars 0–8) settles on slow 8-beat Dorian
+# changes; phase 2 (8–16) tightens to 4-beat changes as the Phrygian F intrudes
+# (the worlds begin to trade); phase 3 (16–24) is the 2-beat WHIPLASH — chords
+# colliding twice as fast, accelerating into the break drop. Declared E Dorian;
+# the Phrygian F is intended chromaticism (the lens flags it as a question, not an
+# error). Exactly 24 bars (96 beats) — no tiling, so the acceleration is global.
 DEV = Progression.of("E", "Dorian", [
-    ("Em7", 4.0), ("A7", 4.0), ("Em", 2.0), ("F", 2.0),
-    ("Em7", 2.0), ("A7", 2.0), ("Em", 2.0), ("F", 2.0),
+    # phase 1 — settled, slow (8-beat Dorian), bars 0–8
+    ("Em7", 8.0), ("A7", 8.0), ("Cmaj7", 8.0), ("Bm7", 8.0),
+    # phase 2 — the morph, medium (4-beat); F = the Phrygian intrusion, bars 8–16
+    ("Em7", 4.0), ("A7", 4.0), ("Em", 4.0), ("F", 4.0),
+    ("Em7", 4.0), ("A7", 4.0), ("Bm7", 4.0), ("B7", 4.0),
+    # phase 3 — the WHIPLASH, fast (2-beat), bars 16–24: collision at double the rate
+    ("Em", 2.0), ("F", 2.0), ("Em", 2.0), ("A7", 2.0),
+    ("Em", 2.0), ("F", 2.0), ("G", 2.0), ("F", 2.0),
+    ("Em", 2.0), ("F", 2.0), ("Em", 2.0), ("A7", 2.0),
+    ("Em", 2.0), ("Bm7", 2.0), ("F", 2.0), ("D", 2.0),
 ])
 
 # Break — the EUREKA suspension (reinvented): a single sustained polymodal field.
@@ -164,13 +177,30 @@ DEV = Progression.of("E", "Dorian", [
 # a lint target). See decisions/07 + decisions/08 for the reinvention rationale.
 BREAK_H = Progression.of("E", "Dorian", ["Em"], beats_per_chord=64.0)
 
-# Integration — the fusion: a Phrygian metal riff with the Dorian IV (A5) injected,
-# the harmonic "both worlds" gesture under the polyrhythm recap. Power chords (root+
-# 5th, no third) keep every cell in-mode whether the bass walks it reggae- or metal-
-# style — the harmonic through-line of the playground.
-INTEG = Progression.of(
-    "E", "Phrygian", ["E5", "F5", "E5", "A5", "E5", "F5", "G5", "A5"],
-    beats_per_chord=4.0)
+# Integration — the fusion ARC (decisions/08 v3). The old version looped one
+# Phrygian power-chord riff ×4, so the "both worlds" only sounded in 2 organ hits at
+# the very end — the fusion was cosmetic. Now the HARMONY itself enacts the
+# combining, cell by cell (aligned to INTEG_CELLS): the reggae cell is Dorian
+# (Em7→A7, the bright C# 6th); the metal cell is Phrygian (Em→F, the dark ♭2); the
+# trade cell ALTERNATES them bar-by-bar (A7 Dorian ↔ F Phrygian); the "both" cell
+# rubs the two colors at 2-beat rate; the climax pedals E while holding BOTH the
+# Phrygian F and the Dorian A7/C# under the polyrhythm recap → the earned both-at-
+# once. The bass plays the chord roots (its reggae/metal generators conform either
+# way); the organ_bubble voices the full colour. Declared E Phrygian (the metal
+# home); the Dorian A7/C# is intended chromaticism (lens flags it as a question).
+# 128 beats = exactly the 32-bar section. RENDER-GATED: confirm the fusion reads as
+# richness, not mud (the integration is the song's #1 masking-risk section).
+INTEG = Progression.of("E", "Phrygian", [
+    ("Em7", 8.0), ("A7", 8.0),                              # reggae cell (0–4): Dorian
+    ("Em", 8.0), ("F", 8.0),                                # metal cell (4–8): Phrygian
+    ("A7", 4.0), ("F", 4.0), ("A7", 4.0), ("F", 4.0),       # trade cell (8–12): alternate
+    ("A7", 2.0), ("F", 2.0), ("A7", 2.0), ("F", 2.0),       # both cell (12–16): rub, fast
+    ("Em", 2.0), ("F", 2.0), ("A7", 2.0), ("F", 2.0),
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      # climax (16–32): E-centred but
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   BRIGHTENING — the Dorian A7 (C#)
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   anchors the hybrid hook + foreshadows
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   the outro synthesis; F keeps the dark
+])
 
 # The integration "playground" cell map — ONE source of truth for the per-cell world
 # structure, consumed by BOTH the layer builder (_integration_play) and the rhythm-
@@ -317,6 +347,41 @@ def _metal_lead_no_time(length_beats: float) -> list[dict]:
         offset = cycle * 8.0
         for p, t, d, v in _NO_TIME_CYCLE:
             notes.append(_note(p, offset + t, d, v, tags=["lead", "metal", "no-time"]))
+    return notes
+
+
+# The HYBRID hook (decisions/08 v3) — the NEW idea the playground BIRTHS, the
+# missing "something generated by the fusion". It is the NO-TIME hook's rhythm +
+# contour with every DARK Phrygian degree flipped to its BRIGHT Dorian neighbour
+# (F→F#, C→C#) and landing on the natural-6 C# (the "sun zone" note) instead of the
+# tense E: the rhythm still says "NO TIME", the pitches now say "sun zone". It is
+# "I don't have to choose" as a single line — neither pure reggae nor pure metal,
+# built from BOTH hooks' own DNA so it sounds inevitable, not bolted on. Debuts in
+# the integration "both" cell (the play discovering it), is crowned octave-doubled
+# in the climax (its melodic identity), and returns AUGMENTED in the outro as the
+# synthesis. RENDER-GATED: confirm it reads as a hook, not a contrivance.
+_HYBRID_CYCLE = [
+    (E5,  0.0, 0.5, 100), (D5,  1.0, 0.5,  96),
+    (CS5, 2.0, 0.5, 100), (E5,  3.0, 0.5,  96),   # C# (bright 6) where NO-TIME had C (♭6)
+    (E4,  4.0, 0.3,  92), (FS4, 4.5, 0.3,  96),   # F# (bright 2) where NO-TIME had F (♭2)
+    (A4,  5.0, 0.5, 100), (B4,  6.0, 0.5, 102),
+    (CS5, 7.0, 1.0, 104),                          # lands bright (the 6th), the urgency turned joyful
+]
+
+
+def _hybrid_hook() -> list[dict]:
+    """The hybrid hook as a single 0-based 8-beat cycle (the referenceable idea)."""
+    return [_note(p, t, d, v, tags=["lead", "hybrid", "fusion"])
+            for p, t, d, v in _HYBRID_CYCLE]
+
+
+def _hybrid_lead(length_beats: float) -> list[dict]:
+    """The hybrid hook tiled across a section (loops every 8 beats)."""
+    notes: list[dict] = []
+    for cycle in range(int(length_beats // 8.0)):
+        offset = cycle * 8.0
+        for p, t, d, v in _HYBRID_CYCLE:
+            notes.append(_note(p, offset + t, d, v, tags=["lead", "hybrid", "fusion"]))
     return notes
 
 
@@ -716,20 +781,29 @@ def _break_shimmer(total_beats: float) -> list[dict]:
 
 
 def _break_call_response(total_beats: float) -> list[dict]:
-    """The two worlds in DIALOGUE: a half-time (augmented, slowed) reggae 'chillin'
-    fragment as the CALL, answered by a double-time (diminished, fast) 'NO TIME'
-    fragment as the RESPONSE — repeated every 4 bars, a beat of listening between
-    them. Not interrupting each other (the verse/chorus whiplash) — answering."""
-    call = V.augment(V.fragment(_reggae_lead_chillin(16.0), 0.0, 4.0), 2.0)
-    call = [{**n, "velocity": max(46, n["velocity"] - 28)} for n in call]
-    resp = V.diminish(V.fragment(_no_time_motif(), 0.0, 4.0), 2.0)
-    resp = [{**n, "velocity": max(70, n["velocity"] - 30)} for n in resp]
+    """The two worlds in a DIALOGUE THAT DAWNS (decisions/08 v3): a half-time
+    (augmented, slowed) reggae 'chillin' CALL, answered by a double-time (diminished,
+    fast) 'NO TIME' RESPONSE. The old version repeated the same exchange 4× — static,
+    for the song's emotional pivot. Now the realization UNFOLDS across the four
+    cycles: the response starts far off (a 2-beat gap) and urgent, then each cycle it
+    draws CLOSER to the call and SOFTENS, until the last cycle it OVERLAPS the call's
+    tail and is gentle — the worlds stop interrupting and start speaking TOGETHER.
+    'They finally listen' is enacted, not labelled. (The v1 static exchange is in git
+    history; this evolves the same materials, so the blessed feel is recoverable.)"""
+    base_call = V.augment(V.fragment(_reggae_lead_chillin(16.0), 0.0, 4.0), 2.0)
+    base_resp = V.diminish(V.fragment(_no_time_motif(), 0.0, 4.0), 2.0)
+    # per-cycle (gap-after-call-start, extra response velocity-drop): the response
+    # draws IN (10→6 beats) and YIELDS (softens) as the eureka settles.
+    arc = [(10.0, 30), (9.0, 38), (8.0, 46), (6.0, 54)]
     notes: list[dict] = []
     cycle = 16.0
     for c in range(int(total_beats // cycle)):
         base = c * cycle
+        gap, soften = arc[min(c, len(arc) - 1)]
+        call = [{**n, "velocity": max(46, n["velocity"] - 28)} for n in base_call]
+        resp = [{**n, "velocity": max(58, n["velocity"] - soften)} for n in base_resp]
         notes.extend(V.shift(call, base))           # call: the slow chill, beats 0–8
-        notes.extend(V.shift(resp, base + 10.0))    # response: the fast urgency, after a beat of space
+        notes.extend(V.shift(resp, base + gap))      # response: drawing in + softening each cycle
     return notes
 
 
@@ -797,7 +871,10 @@ def _integration_climax_organ(motif_notes: list[dict], start_beat: float,
     (vel boosted) and the guitar is thinned beneath it (see _integration_climax_gtr_
     swells) — it must stay audible inside the wall, not be buried (mix-intent)."""
     recap = V.shift(_polyrhythm_callback(motif_notes, bars), start_beat)
-    recap = [{**n, "velocity": min(112, n["velocity"] + 20)} for n in recap]  # cut through
+    # +12 (was +20): the recap now wins primarily by SPACE — steel + the doubled lead are
+    # held out of its first 8 bars (see _integration_play climax) — so it needs only a
+    # modest lift to cut, not a brute boost. Arrangement subtraction over fader-by-velocity.
+    recap = [{**n, "velocity": min(112, n["velocity"] + 12)} for n in recap]
     notes = list(recap)
     peak = start_beat + (bars - 8) * BEATS_PER_BAR
     for strike in range(2):  # two sustained hits across the last 8 bars
@@ -884,14 +961,21 @@ def _integration_play(kit: Kit, prog: Progression, poly_notes: list[dict],
             bass.extend(BG.metal_pedal_16ths(cell_prog, bars=length, start_beat=bs))
             organ.extend(HG.organ_bubble(cell_prog, bars=length, start_beat=bs))
             steel.extend(V.shift(_steel_island(length), bs))
-            lead.extend(V.shift(_metal_lead_no_time(clen), bs))
+            lead.extend(V.shift(_hybrid_lead(clen), bs))   # the play BIRTHS the hybrid idea
 
-        else:  # "climax" — both worlds full + recap + the earned fusion chord
-            drums.extend(V.shift(_metal_drums(kit, length), bs))
+        else:  # "climax" — recap WINS BY SPACE (16–24), then the full PEAK (24–32)
+            half = (length // 2) * BEATS_PER_BAR   # 8 bars
+            drums.extend(V.shift(_metal_drums(kit, length), bs))   # metal floor + phrase crashes throughout
             bass.extend(BG.metal_pedal_16ths(cell_prog, bars=length, start_beat=bs))
             organ.extend(_integration_climax_organ(poly_notes, bs, length))
-            steel.extend(V.shift(_steel_island(length), bs))   # the island joy survives into the peak
-            lead.extend(V.shift(_octave_down(_metal_lead_no_time(clen)), bs))  # hook, octave-doubled
+            # SUBTRACTION (decisions/08 v3): the first 8 bars EXPOSE the polyrhythm recap —
+            # steel out, the hybrid lead single (not doubled) — so the recap wins by SPACE,
+            # not the old +20 boost. The last 8 bars bring the full PEAK: steel returns + the
+            # hybrid octave-doubled + the gtr swells + the FUSION bloom. The climax now PEAKS
+            # at bar 24 instead of running flat-full from its downbeat (16).
+            lead.extend(V.shift(_hybrid_lead(half), bs))                       # 16–24: exposed, single
+            lead.extend(V.shift(_octave_down(_hybrid_lead(half)), bs + half))  # 24–32: crowned, doubled
+            steel.extend(V.shift(_steel_island(length // 2), bs + half))       # steel only in the peak
 
     return {"01 Drums": drums, "02 Bass": bass, "04 Organ": organ,
             "05 Lead": lead, "06 Steel": steel}
@@ -908,16 +992,25 @@ def _augmented_no_time(no_time_motif: list[dict], at_beat: float) -> list[dict]:
     return V.shift(calm, at_beat)
 
 
-def _outro_lead(bars: int, no_time_motif: list[dict], mode, key_pc: int) -> list[dict]:
-    """The outro lead as a RESOLUTION arc (decisions/07): the chillin hook settles
-    (0–32), the 'NO TIME' anxiety returns AUGMENTED and at peace (32–48), then a
-    diatonic LIFT rises the chill up a third IN KEY — joyful, rising into something
-    new (48–64). Not a retreat to sleepy reggae: a synthesis."""
+def _augmented_hybrid(at_beat: float) -> list[dict]:
+    """The HYBRID hook (the playground's new idea) AUGMENTED (slowed 2×) and softened
+    — the synthesis returning at peace (decisions/08 v3). The fused 'I don't have to
+    choose' line, reconciled into the outro's Dorian bed: the genuinely NEW idea the
+    back half generated, now the resolution. 8-beat cycle -> 16 beats."""
+    slowed = V.augment(_hybrid_hook(), 2.0)
+    calm = [{**n, "velocity": max(50, n["velocity"] - 40)} for n in slowed]
+    return V.shift(calm, at_beat)
+
+
+def _outro_lead(bars: int, no_time_motif: list[dict]) -> list[dict]:
+    """The outro lead as a RESOLUTION arc (decisions/07 + 08): the chillin hook
+    settles (0–32), the 'NO TIME' anxiety returns AUGMENTED and at peace (32–48),
+    then the HYBRID hook the playground birthed returns AUGMENTED (48–64) — the
+    synthesis. Not a retreat to sleepy reggae, and not a mechanical transposition of
+    the chill: the genuinely NEW idea the fusion generated, now reconciled."""
     notes = _reggae_lead_chillin(32.0)                                  # settle (2 cycles)
     notes.extend(_augmented_no_time(no_time_motif, 32.0))               # the anxiety, slowed to peace
-    lift = V.transpose_diatonic(_reggae_lead_chillin(16.0),             # the joyful lift (in-key, +a third)
-                                mode=mode, key_pc=key_pc, steps=2)
-    notes.extend(V.shift(lift, 48.0))
+    notes.extend(_augmented_hybrid(48.0))                               # the synthesis: the new idea, at peace
     return notes
 
 
@@ -1042,7 +1135,7 @@ def _build_arrangement(kit: Kit) -> Arrangement:
         "02 Bass":  BG.reggae_offbeat_bass(OUTRO_H, bars=ob, push=0.01),
         "04 Organ": HG.organ_bubble(OUTRO_H, bars=ob, lag=0.02),
         "06 Steel": _steel_island(ob),
-        "05 Lead":  _outro_lead(ob, no_time.notes, OUTRO_H.mode, OUTRO_H.key_pc),
+        "05 Lead":  _outro_lead(ob, no_time.notes),
     }
     # The synthesis pocket — the whole reggae bed breathes together (distinct seeds):
     # a band arriving somewhere new, not a grid with the drag merely halved.

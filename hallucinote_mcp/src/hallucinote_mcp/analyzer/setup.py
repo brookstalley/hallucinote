@@ -322,6 +322,23 @@ def _ensure_on_surface(
     existing_idx = context.run_on_main(
         lambda: _find_analyzer_index(_existing_devices_for(context, track_address))
     )
+    if existing_idx is None and track_address.get("master"):
+        # DEV-2M9K: the master analyzer cannot be auto-loaded — Live 12.4 has
+        # no LOM path to add a device to the master track (load_handler refuses
+        # master for the same reason). So the master is DETECT-ONLY: if it's
+        # already there we configure its ports below; if it's absent we fail
+        # loudly with the one-time manual step rather than the old silent
+        # mis-load. Tracks and returns auto-load normally (their selection
+        # works); only the master needs this one-time human placement.
+        raise RuntimeError(
+            "ensure_analyzers_loaded: no HallucinoteAnalyzer on the master "
+            "track, and Live 12.4 cannot add one programmatically (DEV-2M9K). "
+            "Add it ONCE by hand: in Live, drag HallucinoteAnalyzer from "
+            "User Library → Presets → Audio Effects → Max Audio "
+            "Effect onto the Master track, then re-run — its OSC ports are "
+            "configured automatically from then on. Audio tracks and returns "
+            "need no manual step; only the master does."
+        )
     if existing_idx is None:
         # Load via preset_query, NOT kind=. The .amxd is placed under
         # ``user_library/Presets/Audio Effects/Max Audio Effect/`` by

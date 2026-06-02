@@ -257,11 +257,22 @@ class _StubSidecar:
 # --- fixtures --------------------------------------------------------
 
 
+def _master_with_analyzer(name: str = "Master") -> _FakeTrack:
+    """Real usage requires the master analyzer placed by hand once — Live 12.4
+    can't auto-load onto the master (DEV-2M9K), so the render sweep is
+    detect-only there. Pre-place it so the sweep takes the supported
+    detect-and-configure path instead of failing loudly."""
+    return _FakeTrack("Master" if name == "Master" else name, devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name="HallucinoteAnalyzer"),
+    ])
+
+
 @pytest.fixture
 def ctx_two_tracks_one_return() -> _FakeCtx:
     return _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],
         returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
         last_event_time=64.0,
     ))
 
@@ -290,9 +301,10 @@ def test_ensure_loaded_action_returns_layout(ctx_two_tracks_one_return):
         context=ctx_two_tracks_one_return,
     )
     assert resp.ok is True, resp.error
-    # 2 tracks + 1 return + master = 4 instances; all loaded this sweep.
-    assert resp.result["loaded_count"] == 4
-    assert resp.result["existing_count"] == 0
+    # 2 tracks + 1 return loaded; the pre-placed master is detect-only
+    # (DEV-2M9K) → 4 instances, 3 loaded + 1 existing.
+    assert resp.result["loaded_count"] == 3
+    assert resp.result["existing_count"] == 1
     assert len(resp.result["instances"]) == 4
     surfaces = {(i["surface_kind"], i["surface_index"]) for i in resp.result["instances"]}
     assert surfaces == {
@@ -312,7 +324,7 @@ def test_ensure_loaded_idempotent_across_action_dispatches(ctx_two_tracks_one_re
         context=ctx_two_tracks_one_return,
     )
     assert first.ok and second.ok
-    assert first.result["loaded_count"] == 4
+    assert first.result["loaded_count"] == 3  # master pre-placed (detect-only)
     assert second.result["loaded_count"] == 0
     assert second.result["existing_count"] == 4
     # No duplicates on any surface.

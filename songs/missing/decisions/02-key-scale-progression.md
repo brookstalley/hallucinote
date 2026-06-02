@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [key, scale, harmony, progression]
+---
+
 # 02 — Key, scale, and core progression
 
 **Date:** 2026-06-01

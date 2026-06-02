@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [sound-design, lfo, filter, automation]
+---
+
 # 10 — Notch-filter LFO: keep v1 simple
 
 **Date:** 2026-06-01

@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [break, harmony, modulation, pivot, illusion]
+---
+
 # 05 — The break: the G-major illusion (false summit) → B7 pivot
 
 **Date:** 2026-06-01

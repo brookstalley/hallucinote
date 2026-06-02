@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [break, voicing, harmony, modulation]
+---
+
 # 16 — Break voicings (the G-major illusion → B7 pivot)
 
 **Date:** 2026-06-01

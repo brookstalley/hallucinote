@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [coda, voicing, reveal, root]
+---
+
 # 17 — Coda voicings (the reveal: the root, finally rooted)
 
 **Date:** 2026-06-01

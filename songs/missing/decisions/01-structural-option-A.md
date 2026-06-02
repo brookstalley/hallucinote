@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [structure, missing-root, reveal, form]
+---
+
 # 01 — Structural option: root arrives only at the end (Option A)
 
 **Date:** 2026-06-01

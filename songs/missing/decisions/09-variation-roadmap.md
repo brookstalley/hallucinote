@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [variation, roadmap, process]
+---
+
 # 09 — Variation roadmap (this is the first of several)
 
 **Date:** 2026-06-01

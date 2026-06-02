@@ -402,3 +402,19 @@ In the sun-zone-done arrangement build, recurrence deltas (verse2/chorus2) used 
 `reggae_one_drop` and `metal_gallop` hard-referenced `kit.hat_open` / `kit.crash`, which raise on the wrong-sound case. That crashed the *real* sun-zone-done build: Ableton's Hot Rod Kit ships three closed hats and no dedicated open-hat chain, so `kit.hat_open` raised even though the open-hat "lift" is just a once-every-4-bars accent. The synthetic GM-default snapshot hid it (GM has note 46), so the test suite stayed green while the real `--reset` build died.
 
 **How to apply.** Classify each pad in a generator as load-bearing vs. flourish. Flourish pads → `try_pitch_of` + `if pad is not None:`. Add a degradation test with a `Kit.from_dict({kick,snare,hat_closed})` (captured-but-incomplete) asserting the generator builds and simply omits the missing flourish. This is the kit analogue of "the GM-default snapshot is not the real kit" — verify against an incomplete captured kit, not just GM defaults.
+
+## When a capability ships, audit the planning + intent artifacts — stale intent misguides tools
+
+**A new capability (a generator, an axis, an analysis) outpaces the docs and the per-song INTENT artifacts that describe it. When/after shipping, sweep the planning + intent layer (vision, conventions, per-song annotations, intent docs) — stale intent doesn't just read wrong, it can actively MISGUIDE the read-side tools that consume it.**
+
+The harmony axis + the sun-zone-done 184-bar re-author shipped, but the song's annotations still described the old 80-bar arc — and `genre-alternation-intent.md` told `/mix-review` *"genres never overlap → never flag cross-genre masking."* That instruction would have suppressed masking analysis **exactly at the new fusion climax** (the integration) — the one place fusion-vs-mud is the critical question. Separately, `docs/VISION.md` and `song-authoring-conventions.md` read ~2 arcs stale (no harmony axis, no performance layer, no analysis pipeline). The green test suite caught none of it — docs and annotations aren't exercised by tests.
+
+**How to apply.** When a capability lands, sweep the WHY/intent layer, not just the code + its tests. Highest risk: intent docs that FEED read-side tools (`/mix-review`, the conformance lenses) — stale intent there produces confidently-wrong guidance. Treat "we shipped X but forgot to update the docs/intent for X" as the same class of bug as "we forgot X."
+
+## Detect a running process with the framework's probe or `pgrep -x` — never `ps | grep name`
+
+**To check whether Ableton Live (or any process) is running, use the framework's own detector (`hallucinote_mcp.install_paths` / `python -m hallucinote_mcp.cli preflight` → `live.is_running`) or `pgrep -x "Live"`. Never `ps aux | grep -c "<name>"` — the grep process's own command line contains `<name>`, so `ps` lists it and the count includes the grep itself (and the shell wrapper), producing a false positive.**
+
+This session, `ps aux | grep -ic "Ableton Live.app/Contents/MacOS"` returned 2 and I told the user Live was running; the install preflight correctly reported `is_running: false`. The user caught the contradiction. The hand-rolled check was wrong, not the framework — which already had the answer.
+
+**How to apply.** For Live-state gates in install/push workflows, read `cli preflight`'s `live.is_running` (it's authoritative and already there). For ad-hoc shell checks, `pgrep -x` matches the exact process name and doesn't self-match; if you must `grep`, filter `grep -v grep` or match on the absolute binary path with `pgrep -fl`. Don't trust a `ps | grep -c` count.

@@ -15,21 +15,28 @@ progression. These tests lock the structural + harmonic intent:
     hand-authored polyrhythm build on the organ
   - organ is tacet only in the PURE metal choruses (chorus1 / chorus2); it plays
     every reggae section + the integration polyrhythm callback
-  - steel pans enter only in the later reggae sections (verse2 + outro)
-  - metal sections (chorus1 / chorus2 / integration) sustain energy: a crash per
-    4-bar phrase + fills
-  - the convention-break decouples Amp timbre from groove time-feel: the single
-    `break` is a reggae groove through a HEAVY (metal) amp
-  - the integration is the CLIMAX — it quotes the polyrhythm motif and RESOLVES it
-    into the polymodal both-at-once FUSION_CHORD; the RESOLUTION proper lands
-    later in the outro, which re-brightens to Dorian (confirmed creative decision:
-    fuse-hard-in-integration, resolve-in-outro)
+  - steel pans play the reggae counter-melody (verse2 + outro), ENTER in the
+    development collision arc, AND carry the back-half fusion textures: ethereal
+    sparkle in the break + floating over the integration
+  - the pure metal sections (chorus1 / chorus2) sustain energy: a crash per 4-bar
+    phrase + fills; the integration's CLIMAX (its last 16 bars) sustains the same
+  - the break (REINVENTED, decisions/08) is the EUREKA suspension: drums + bass drop
+    OUT, a sustained polymodal FUSION pad + thinned shimmer carry the held breath, a
+    half↔double-time call-response lets the worlds answer each other, a snare-roll
+    riser launches the bass DROP at the integration downbeat, and (v2) a ghosted
+    metal-guitar DRIFT haunts the field — swept hard L↔R through the Heavy amp
+  - the integration (REINVENTED, decisions/08) is the PLAYGROUND — the two worlds
+    genuinely COMBINED cell-by-cell (INTEG_CELLS), building to the EARNED climax that
+    quotes the polyrhythm motif and RESOLVES it into the polymodal both-at-once
+    FUSION_CHORD; the RESOLUTION proper lands later in the outro, which re-brightens
+    to Dorian (confirmed creative decision: fuse-hard-in-integration, resolve-in-outro)
   - the outro double-times the no-time hook into the reggae groove (recap primitive)
   - recurring sections derive from their first instance via `vary()`:
     chorus2 lead = chorus1 lead + an octave-down doubling (transform-delta);
     verse2 = verse1 + steel ENTERING (add-delta) + a richer progression
   - Rhythm Gtr is MONOLITHIC: 1 session clip spanning the whole song
-    (736 beats / 184 bars), hosting the Amp Type envelope (7 breakpoints)
+    (736 beats / 184 bars), hosting the Amp Type envelope (13 breakpoints — the amp
+    now PLAYS the back half: Heavy break drift + the integration's cell-by-cell trade)
   - the energy curve carries deliberate discontinuities at every genre flip
   - 9 cue points (one per section start)
 """
@@ -57,8 +64,11 @@ _SECTIONS_WITH_LEAD = {  # every section except the intro (the vocal hasn't arri
     "verse1", "chorus1", "verse2", "chorus2",
     "development", "break", "integration", "outro",
 }
-_SECTIONS_WITH_STEEL = {"verse2", "outro"}  # later reggae sections only
-_METAL_SECTIONS = {"chorus1", "chorus2", "integration"}  # break is now reggae-groove
+# Steel plays the reggae counter-melody (verse2 + outro) AND the back-half fusion
+# textures: it ENTERS in the development arc (the island lifting as the worlds collide),
+# the ethereal sparkle in the break, and floats over the integration playground.
+_SECTIONS_WITH_STEEL = {"verse2", "development", "outro", "break", "integration"}
+_PURE_METAL_SECTIONS = {"chorus1", "chorus2"}  # the integration is now the playground, not uniform metal
 
 
 def extract_notes(conn, song_id: str) -> dict:
@@ -155,52 +165,150 @@ def test_build_produces_canonical_shape(build_module, built):
             if t["name"] == "Master":
                 continue
             clip_counts[t["name"]] = len(Q.get_clips_for_track(conn, t["id"]))
-        # Drums + Bass play every section → 9 clips
+        # Drums play every section (the break carries only the riser) → 9 clips
         assert clip_counts["01 Drums"] == 9
-        assert clip_counts["02 Bass"] == 9
+        # Bass plays every section EXCEPT the break (it drops OUT — the suspension) → 8
+        assert clip_counts["02 Bass"] == 8
         # Lead plays every section except the intro → 8 clips
         assert clip_counts["05 Lead"] == 8
-        # Organ: the reggae world (intro, verse1, verse2, development, break) +
-        # the integration polyrhythm callback → 7
+        # Organ: the reggae world (intro, verse1, verse2, development) + the break
+        # FUSION pad + the integration (bubble in the cells + the polyrhythm climax) → 7
         assert clip_counts["04 Organ"] == 7
-        # Steel pans enter only in the later reggae sections → 2 clips
-        assert clip_counts["06 Steel"] == 2
+        # Steel: verse2 + outro (reggae counter-melody) + development arc + break
+        # sparkle + integration → 5
+        assert clip_counts["06 Steel"] == 5
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
 
-        # Envelopes: exactly 1, device_parameter on Amp Type, 7 breakpoints
+        # Envelopes: 7 = 1 Amp Type (device_parameter) + 5 clip-local atmosphere
+        # pan/send envelopes (intro organ + break lead/steel — MIX-3S7P) + 1 break
+        # drift pan SWEEP on the rhythm gtr (decisions/08 v2). Pinned in detail by
+        # test_atmosphere_envelopes_are_clip_local + test_break_drift_pans_extremely.
         envs = Q.get_envelopes_for_song(conn, song_id)
-        assert len(envs) == 1
-        env = envs[0]
-        assert env["target_kind"] == "device_parameter"
+        assert len(envs) == 7, [(e["target_kind"], e["parameter_path"]) for e in envs]
+        env = next(e for e in envs if e["target_kind"] == "device_parameter")
         assert env["parameter_path"] == "Amp Type"
         bps = Q.get_breakpoints(conn, env["id"])
-        # One breakpoint at every AMP change (Clean=0.0, Heavy=5.0). The amp is
-        # genre-driven (metal→Heavy, reggae→Clean) EXCEPT the convention-break,
-        # which inverts it: `break` (bar 121 / beat 480) is a reggae groove but
-        # plays HEAVY — a metal timbre on reggae time. integration (beat 544) is
-        # metal/Heavy and so carries `break`'s Heavy with no new breakpoint.
+        # One breakpoint at every AMP change (Clean=0.0, Heavy=5.0). The amp now PLAYS
+        # the back half (decisions/08 v2): the break runs HEAVY for the ghosted metal
+        # guitar DRIFT (480), and the integration follows INTEG_CELLS cell-by-cell —
+        # Clean reggae skank (544), Heavy engine at cell B (560), then the TRADE cell
+        # flips the amp BAR-BY-BAR (576 Clean, 580 Heavy, 584 Clean, 588 Heavy) before
+        # holding Heavy through both + climax. The genre-flip device itself plays the
+        # call-and-response rather than holding one timbre.
         bp_pairs = [(bp["time_beats"], bp["value"]) for bp in bps]
         assert bp_pairs == [
-            (0.0,   0.0),   # intro:       Clean
-            (160.0, 5.0),   # chorus1:     Heavy
-            (224.0, 0.0),   # verse2:      Clean
-            (320.0, 5.0),   # chorus2:     Heavy
-            (384.0, 0.0),   # development: Clean
-            (480.0, 5.0),   # break:       Heavy  ← convention inversion (reggae groove)
-            (672.0, 0.0),   # outro:       Clean
+            (0.0,   0.0),   # intro:             Clean
+            (160.0, 5.0),   # chorus1:           Heavy
+            (224.0, 0.0),   # verse2:            Clean
+            (320.0, 5.0),   # chorus2:           Heavy
+            (384.0, 0.0),   # development:       Clean
+            (480.0, 5.0),   # break:             Heavy  ← the metal-guitar DRIFT
+            (544.0, 0.0),   # integration cellA: Clean  (reggae skank)
+            (560.0, 5.0),   # integration cellB: Heavy  (the engine)
+            (576.0, 0.0),   # trade reggae bar:  Clean  ┐ the amp trades
+            (580.0, 5.0),   # trade metal bar:   Heavy  │ bar-by-bar with
+            (584.0, 0.0),   # trade reggae bar:  Clean  │ the groove
+            (588.0, 5.0),   # trade metal bar:   Heavy  ┘ (holds → both + climax)
+            (672.0, 0.0),   # outro:             Clean
         ], bp_pairs
 
-        # Arrangement: 36 placements (9 drums + 9 bass + 7 organ + 8 lead +
-        # 2 steel + 1 gtr)
+        # Arrangement: 38 placements (9 drums + 8 bass + 7 organ + 8 lead +
+        # 5 steel + 1 gtr) — bass drops out of the break (−1), steel gains the
+        # development + break + integration (+3) vs. the old 36.
         arr = Q.get_arrangement_for_song(conn, song_id)
-        assert len(arr) == 36, [(a["start_bar"], a["end_bar"]) for a in arr]
+        assert len(arr) == 38, [(a["start_bar"], a["end_bar"]) for a in arr]
 
         # Cue points: 9, at each section start (the 184-bar arc's boundaries)
         cues = Q.get_cue_points(conn, song_id)
         assert len(cues) == 9
         cue_positions = sorted(c["position_bar"] for c in cues)
         assert cue_positions == [1.0, 17.0, 41.0, 57.0, 81.0, 97.0, 121.0, 137.0, 169.0]
+    finally:
+        conn.close()
+
+
+def test_atmosphere_envelopes_are_clip_local(build_module, built):
+    """Per-section pan/reverb 'space' (MIX-3S7P, the user's clip-hosted route): the
+    intro dawn cloud + break suspension get a wetter Plate + a wider image, and the
+    mix snaps back to baseline at verse/chorus AUTOMATICALLY because each envelope's
+    breakpoint range sits ENTIRELY inside the per-section clip that hosts it (the
+    organ's intro clip [0,64); the lead/steel break clips [480,544)). No song-spanning
+    envelope, so the push hosts each on its section clip and nowhere else."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = {t["id"]: t["name"] for t in Q.get_tracks_for_song(conn, built)}
+        plate = next(r["id"] for r in Q.get_returns_for_song(conn, built) if r["name"] == "Plate")
+        # Collect (kind, track, return) → breakpoint range, for the non-Amp envelopes.
+        atmos = {}
+        for e in Q.get_envelopes_for_song(conn, built):
+            if e["target_kind"] == "device_parameter":
+                continue
+            # The break-drift pan SWEEP on the rhythm gtr is a different mechanism (a
+            # song-spanning bookended automation lane, not a clip-local atmosphere
+            # envelope) — pinned by test_break_drift_pans_extremely, excluded here.
+            if (e["target_kind"] == "mixer_pan"
+                    and tracks[e["target_track_id"]] == "03 Rhythm Gtr"):
+                continue
+            bps = Q.get_breakpoints(conn, e["id"])
+            rng = (min(b["time_beats"] for b in bps), max(b["time_beats"] for b in bps))
+            vals = {round(b["value"], 3) for b in bps}
+            atmos[(e["target_kind"], tracks[e["target_track_id"]],
+                   e["target_send_return_id"])] = (rng, vals)
+        # Exactly the intended set: organ (intro) send+pan, lead (break) send,
+        # steel (break) send+pan. Every reverb send routes to Plate.
+        assert set(atmos) == {
+            ("send_level", "04 Organ", plate), ("mixer_pan", "04 Organ", None),
+            ("send_level", "05 Lead", plate),
+            ("send_level", "06 Steel", plate), ("mixer_pan", "06 Steel", None),
+        }, set(atmos)
+        # Intro envelopes sit inside the intro clip [0,64); break inside [480,544).
+        for (kind, track, _ret), (rng, vals) in atmos.items():
+            lo, hi = rng
+            if track == "04 Organ":   # intro
+                assert 0.0 <= lo and hi < 64.0, (kind, track, rng)
+            else:                      # break (lead / steel)
+                assert 480.0 <= lo and hi < 544.0, (kind, track, rng)
+            # Elevated above the static baseline (more space), and held (snap-back is
+            # the clip boundary, not a ramp).
+            if kind == "send_level":
+                assert all(v >= 0.30 for v in vals), (track, vals)  # baseline sends are ≤ 0.25
+    finally:
+        conn.close()
+
+
+def test_break_drift_pans_extremely(build_module, built):
+    """The break is no longer tacet guitar (decisions/08 v2): a ghosted metal-guitar
+    DRIFT haunts the eureka suspension — sparse SUSTAINED E power chords at a ghost
+    velocity, through the Heavy amp (pinned in the canonical-shape amp breakpoints),
+    swept hard L↔R across the field. Locks the drift NOTES + the EXTREME pan sweep."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = {t["name"]: t["id"] for t in Q.get_tracks_for_song(conn, built)}
+        # The drift notes: in the break window [480,544), ghost-quiet, SUSTAINED, low E
+        # power chords (root + 5th → pitch classes E=4 / B=11).
+        gtr_clip = Q.get_clips_for_track(conn, tracks["03 Rhythm Gtr"])[0]
+        gnotes = Q.get_notes_for_clip(conn, gtr_clip["id"])
+        drift = [n for n in gnotes if 480.0 <= n["start_beats"] < 544.0]
+        assert drift, "the break carries a ghosted guitar drift (no longer tacet)"
+        assert max(n["velocity"] for n in drift) <= 40, "ghost-quiet (much lower than usual)"
+        assert max(n["duration_beats"] for n in drift) >= 4.0, "SUSTAINED swells, not chugs"
+        assert {n["pitch"] % 12 for n in drift} <= {4, 11}, "E power chords (E / B)"
+        # The EXTREME pan sweep on the rhythm gtr: reaches hard L and hard R…
+        pan = next(e for e in Q.get_envelopes_for_song(conn, built)
+                   if e["target_kind"] == "mixer_pan"
+                   and e["target_track_id"] == tracks["03 Rhythm Gtr"])
+        bps = sorted(Q.get_breakpoints(conn, pan["id"]), key=lambda b: b["time_beats"])
+        vals = [b["value"] for b in bps]
+        assert min(vals) <= -0.9 and max(vals) >= 0.9, ("extreme L↔R", vals)
+        # …is dead-center before the break (bookended — only the drift wanders)…
+        assert all(abs(b["value"]) < 1e-6 for b in bps if b["time_beats"] <= 480.0)
+        # …and every hard-panned breakpoint lives inside the break window.
+        swept = [b for b in bps if abs(b["value"]) >= 0.9]
+        assert swept and all(480.0 <= b["time_beats"] <= 544.0 for b in swept), \
+            [(b["time_beats"], b["value"]) for b in swept]
     finally:
         conn.close()
 
@@ -259,18 +367,65 @@ def test_organ_tacet_only_in_pure_metal_choruses(build_module, built):
         conn.close()
 
 
-def test_convention_break_inverts_amp_against_groove(build_module):
-    """The break's "playing with conventions" is the Amp timbre decoupled from
-    the groove's time-feel: the single `break` is a reggae groove (reggae genre)
-    pushed through a HEAVY (metal) amp — metal timbre on reggae time."""
-    amp = build_module._amp_for
-    # Non-break sections: amp follows genre (metal→Heavy, reggae→Clean).
-    assert amp("chorus1", "metal") == "Heavy"
-    assert amp("integration", "metal") == "Heavy"
-    assert amp("verse1", "reggae") == "Clean"
-    assert amp("development", "reggae") == "Clean"
-    # The break inverts it: a reggae groove through a HEAVY amp.
-    assert amp("break", "reggae") == "Heavy"
+def test_break_is_the_eureka_suspension(build_module, built):
+    """The REINVENTED break (decisions/08) is the EUREKA suspension, not the old
+    reggae-through-a-heavy-amp convention-break: drums + bass DROP OUT (no groove),
+    a sustained polymodal FUSION pad carries the held breath, a half↔double-time
+    call-response plays on the lead, and a snare-roll RISER in the last two bars
+    launches the bass DROP at the integration downbeat."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        # Bass DROPS OUT — there is no break bass clip at all.
+        assert "break" not in _clips_by_role(conn, built, "02 Bass")
+        # Drums carry ONLY the riser: every break drum hit is in the last two bars.
+        drums = _clips_by_role(conn, built, "01 Drums")["break"]
+        dnotes = Q.get_notes_for_clip(conn, drums["id"])
+        assert dnotes, "the break has a riser"
+        assert min(n["start_beats"] for n in dnotes) >= 56.0, "riser is the last two bars only"
+        assert max(n["velocity"] for n in dnotes) > min(n["velocity"] for n in dnotes), \
+            "the riser crescendos"
+        # Organ is the sustained FUSION pad: long notes carrying BOTH modal colors
+        # (F#/F and C#/C), plus a pp shimmer.
+        organ = Q.get_notes_for_clip(conn, _clips_by_role(conn, built, "04 Organ")["break"]["id"])
+        pad = [n for n in organ if n["duration_beats"] >= 16.0]
+        assert pad, "the break carries a sustained pad (long notes)"
+        pad_pcs = {n["pitch"] % 12 for n in pad}
+        assert {6, 5} <= pad_pcs and {1, 0} <= pad_pcs, ("both-at-once fusion pad", pad_pcs)
+        # Lead is the call-response dialogue: both the reggae chill (Dorian) and the
+        # metal urgency (Phrygian F/C) sound in the same suspended field.
+        lead = Q.get_notes_for_clip(conn, _clips_by_role(conn, built, "05 Lead")["break"]["id"])
+        assert {n["pitch"] % 12 for n in lead} & {5, 0}, "the metal response colour (F/C) answers"
+        # The bass DROP: the integration opens with a low sub slam on its downbeat.
+        integ_bass = Q.get_notes_for_clip(conn, _clips_by_role(conn, built, "02 Bass")["integration"]["id"])
+        downbeat = [n for n in integ_bass if n["start_beats"] < 0.5]
+        assert downbeat and min(n["pitch"] for n in downbeat) <= 28, "the bass DROPS in low on beat 1"
+    finally:
+        conn.close()
+
+
+def test_integration_amp_plays_clean_to_heavy(build_module):
+    """The genre-flip device itself 'plays with combinations' (decisions/08 v2): the
+    integration amp follows INTEG_CELLS cell-by-cell — Clean reggae skank in the
+    reggae cell, the Heavy engine in metal/both/climax, and in the TRADE cell it flips
+    BAR-BY-BAR — while the break runs Heavy for the metal-guitar drift and ordinary
+    sections follow genre."""
+    seg = build_module._amp_segments
+    assert build_module._amp_for("metal") == "Heavy"
+    assert build_module._amp_for("reggae") == "Clean"
+    # Ordinary sections: a single genre-driven segment.
+    assert seg("verse1", "reggae") == [(0.0, "Clean")]
+    assert seg("chorus1", "metal") == [(0.0, "Heavy")]
+    # The break drift runs through the Heavy amp.
+    assert seg("break", "reggae") == [(0.0, "Heavy")]
+    # The integration amp is cell-aware: Clean reggae cell → Heavy engine → the trade
+    # cell flips bar-by-bar (32 Clean / 36 Heavy / 40 Clean / 44 Heavy) → Heavy both +
+    # climax. Derived from INTEG_CELLS (one source of truth with the guitar part).
+    assert seg("integration", "metal") == [
+        (0.0, "Clean"), (16.0, "Heavy"),
+        (32.0, "Clean"), (36.0, "Heavy"), (40.0, "Clean"), (44.0, "Heavy"),
+        (48.0, "Heavy"), (64.0, "Heavy"),
+    ]
 
 
 def test_integration_recaps_polyrhythm_and_resolves_to_fusion(build_module, built):
@@ -287,13 +442,16 @@ def test_integration_recaps_polyrhythm_and_resolves_to_fusion(build_module, buil
         organ = _clips_by_role(conn, built, "04 Organ")
         assert "integration" in organ
         notes = Q.get_notes_for_clip(conn, organ["integration"]["id"])
-        peak_start = (32 - 8) * 4.0  # the fusion blooms over the final 8 bars
-        # The polyrhythm cloud is quoted, Em7-pure, tiled across the section
-        # (before the fusion bloom) — not just the first cell.
-        cloud = [n for n in notes if n["start_beats"] < peak_start]
+        # The recap + fusion now live in the CLIMAX (the last 16 bars). Cells A–D
+        # (beats 0–64) carry the reggae organ BUBBLE (the playground bed); the
+        # polyrhythm cloud returns only when the climax does (decisions/08).
+        climax_start = 16 * 4.0           # bar 16 of the 32-bar section
+        peak_start = climax_start + (16 - 8) * 4.0  # fusion blooms over the climax's final 8 bars
+        # The polyrhythm cloud is quoted Em7-pure across the climax, before the bloom.
+        cloud = [n for n in notes if climax_start <= n["start_beats"] < peak_start]
         assert cloud
         assert {n["pitch"] % 12 for n in cloud} <= {4, 7, 11, 2}  # Em7 cloud
-        assert max(n["start_beats"] for n in cloud) >= 88.0
+        assert max(n["start_beats"] for n in cloud) >= peak_start - 8.0  # tiled across the climax
         # The both-at-once fusion resolves at the peak: BOTH modal colors present.
         peak_pcs = {n["pitch"] % 12 for n in notes if n["start_beats"] >= peak_start}
         assert {6, 5} <= peak_pcs   # F# (Dorian) and F (Phrygian) together
@@ -334,37 +492,50 @@ def test_outro_resolves_anxiety_into_peace_and_lift(build_module, built):
 
 
 def test_development_collides_rhythmically(build_module, built):
-    """The development collides on RHYTHM too, not just harmony (decisions/07): the
-    feel trades bar-by-bar — bars where the Phrygian ♭II (F) intrudes go metal
-    (gallop + an entrance crash), Dorian bars stay reggae (one-drop). So the drums
-    carry metal crashes (the metal world breaks in) yet are NOT uniformly metal
-    (reggae bars remain) — a trade, not a genre flip. Derived from the SAME DEV
-    progression that drives the pitches."""
+    """The development is THROUGH-COMPOSED (decisions/08 v2), not a tiled loop: an
+    accelerating 3-phase whiplash — a settled reggae groove with brief metal POKES →
+    2-bar reggae↔metal trades → rapid bar-by-bar collision crescendoing into a snare
+    FILL that launches the break's drop-out. The metal world breaks in (gallop crashes)
+    yet reggae holds others (a trade, not a flat genre flip), and the section ENDS
+    denser than it starts (the acceleration into the eureka)."""
     from hallucinote.db import init_db, queries as Q
     conn = init_db(build_module.DB_PATH)
     try:
         drums = _clips_by_role(conn, built, "01 Drums")
         notes = Q.get_notes_for_clip(conn, drums["development"]["id"])
         crash_bars = {int(n["start_beats"] // 4) for n in notes if n["pitch"] == 49}
-        assert crash_bars, "expected metal-gallop crashes where the ♭II intrudes"
+        assert crash_bars, "expected metal-gallop crashes where the metal world breaks in"
         # A trade, not a genre flip: metal intrudes on some bars, reggae holds others.
         assert 0 < len(crash_bars) < 24, (len(crash_bars), "should be a mix of worlds")
+        # The acceleration: the FINAL bar is a dense 16th-note snare fill (≥8 hits)
+        # launching the drop — far more snare onsets than any settled early reggae bar.
+        last_bar_snares = [n for n in notes
+                           if n["start_beats"] >= 23 * 4.0 and n["pitch"] == 38]
+        assert len(last_bar_snares) >= 8, \
+            ("the development ends in a crescendoing fill", len(last_bar_snares))
+        # …and that fill crescendos (rising velocity into the drop).
+        vels = [n["velocity"] for n in sorted(last_bar_snares, key=lambda n: n["start_beats"])]
+        assert vels[-1] > vels[0], "the closing fill should crescendo into the eureka"
     finally:
         conn.close()
 
 
-def test_steel_pans_enter_in_later_reggae_only(build_module, built):
-    """Steel pans (Island Pans) play exactly the later reggae sections —
-    verse2 (entering as a vary() add-delta) and the enlightenment outro — and
-    nowhere else (not the intro, not any metal section)."""
+def test_steel_pans_play_counter_melody_and_fusion_textures(build_module, built):
+    """Steel pans (Island Pans) play the reggae counter-melody — verse2 (entering as
+    a vary() add-delta) + the enlightenment outro — AND the back-half fusion textures
+    (decisions/08): ethereal sparkle in the break + floating over the integration
+    playground. Never the intro, never the pure metal choruses. The bright island
+    register stays E-Dorian throughout (the calypso 'happy' note C#)."""
     from hallucinote.db import init_db, queries as Q
     conn = init_db(build_module.DB_PATH)
     try:
         steel = _clips_by_role(conn, built, "06 Steel")
         assert set(steel) == _SECTIONS_WITH_STEEL, set(steel)
-        # E Dorian only (E F# G A B C# D = pitch classes 4 6 7 9 11 1 2).
-        notes = Q.get_notes_for_clip(conn, steel["verse2"]["id"])
-        assert {n["pitch"] % 12 for n in notes} <= {4, 6, 7, 9, 11, 1, 2}
+        assert "intro" not in steel and steel.keys().isdisjoint(_PURE_METAL_SECTIONS)
+        # E Dorian only (E F# G A B C# D = pitch classes 4 6 7 9 11 1 2), every section.
+        for role in _SECTIONS_WITH_STEEL:
+            notes = Q.get_notes_for_clip(conn, steel[role]["id"])
+            assert {n["pitch"] % 12 for n in notes} <= {4, 6, 7, 9, 11, 1, 2}, (role,)
     finally:
         conn.close()
 
@@ -383,24 +554,30 @@ def test_verse2_add_delta_introduces_steel(build_module, built):
 
 
 def test_metal_sections_sustain_energy(build_module, built):
-    """Metal energy: every metal section gets a crash on each 4-bar phrase start
-    (so the 32-bar integration has 8, a 16-bar chorus has 4) plus a snare fill
-    leading out of each phrase — the long stretch breathes instead of looping
-    flat."""
+    """Metal energy: the PURE metal choruses get a crash on each 4-bar phrase start
+    (4 in a 16-bar chorus) + a fill out of each phrase — the stretch breathes instead
+    of looping flat. The integration is now the PLAYGROUND (decisions/08), not uniform
+    metal, but its CLIMAX (the last 16 bars) sustains the same metal energy: a crash
+    per 4-bar phrase, the first on the climax downbeat (beat 64)."""
     from hallucinote.db import init_db, queries as Q
     conn = init_db(build_module.DB_PATH)
     try:
         drums = _clips_by_role(conn, built, "01 Drums")
-        section_bars = {"chorus1": 16, "chorus2": 16, "integration": 32}
-        for role in _METAL_SECTIONS:
-            notes = Q.get_notes_for_clip(conn, drums[role]["id"])
-            # The kit resolves the crash to the GM crash pad (49).
-            crash_hits = sorted({n["start_beats"] for n in notes if n["pitch"] == 49})
-            assert len(crash_hits) == section_bars[role] // 4, (role, crash_hits)
+        # The kit resolves the crash to the GM crash pad (49).
+        for role in _PURE_METAL_SECTIONS:  # 16-bar choruses → 4 phrase crashes each
+            crash_hits = sorted({n["start_beats"]
+                                 for n in Q.get_notes_for_clip(conn, drums[role]["id"])
+                                 if n["pitch"] == 49})
+            assert len(crash_hits) == 4, (role, crash_hits)
             assert crash_hits[0] == 0.0  # entrance crash
-        # The integration (the 32-bar climax) carries the most crashes.
+        # The integration climax (beats 64–128) sustains metal energy: 4 phrase crashes,
+        # first on the climax downbeat. (The playground cells before it also crash where
+        # the metal world appears, so the section total is higher — the point is the
+        # climax doesn't go flat.)
         integ = Q.get_notes_for_clip(conn, drums["integration"]["id"])
-        assert len({n["start_beats"] for n in integ if n["pitch"] == 49}) == 8
+        climax_crashes = sorted({n["start_beats"] for n in integ
+                                 if n["pitch"] == 49 and n["start_beats"] >= 64.0})
+        assert climax_crashes == [64.0, 80.0, 96.0, 112.0], climax_crashes
     finally:
         conn.close()
 
@@ -512,22 +689,25 @@ def test_rhythm_gtr_clip_spans_full_song(build_module, built):
 def test_harmony_axis_moves_and_flips_modes(build_module):
     """The harmony axis (Chunk F): root E throughout (the thesis — stay on E,
     evolve the mode), reggae sections are E Dorian and metal sections E Phrygian
-    (the genre flip is a MODE flip), and the harmony MOVES — every section past
-    the intro declares more than one chord. The intro is the deliberate
-    single-chord dawn drone (the one place stasis is the intent)."""
+    (the genre flip is a MODE flip), and the harmony MOVES — every section EXCEPT
+    the two deliberate single-chord fields declares more than one chord. The two
+    fields are the intro (the dawn drone) and the break (the EUREKA suspension over
+    the E tonic, decisions/08) — the two places stasis is the intent."""
     from hallucinote.generators.kit import Kit
     arr = build_module._build_arrangement(Kit.gm_default())
     curve = {name: (key_pc, mode, n) for name, key_pc, mode, n in arr.harmonic_curve}
     # Root E (pc 4) throughout — the song never modulates away.
     assert all(key_pc == 4 for key_pc, _mode, _n in curve.values()), curve
-    # Reggae = Dorian, metal = Phrygian.
+    # Reggae = Dorian, metal = Phrygian. (The break declares the E-Dorian tonic the
+    # suspension hovers on; its pad voices a richer polymodal colour as a texture.)
     for s in ("intro", "verse1", "verse2", "development", "break", "outro"):
         assert curve[s][1] == "Dorian", (s, curve[s])
     for s in ("chorus1", "chorus2", "integration"):
         assert curve[s][1] == "Phrygian", (s, curve[s])
-    # Harmony moves everywhere except the deliberate intro drone.
-    assert curve["intro"][2] == 1, curve["intro"]
-    assert all(n >= 2 for s, (_pc, _m, n) in curve.items() if s != "intro"), curve
+    # Harmony moves everywhere except the two deliberate single-chord fields.
+    fields = {"intro", "break"}
+    assert curve["intro"][2] == 1 and curve["break"][2] == 1, curve
+    assert all(n >= 2 for s, (_pc, _m, n) in curve.items() if s not in fields), curve
 
 
 def test_outro_resolves_to_dorian_not_phrygian(build_module, built):
@@ -679,31 +859,40 @@ def lens_report(build_module, built):
         conn.close()
 
 
-def test_performance_lens_breathing_de_flattens_the_organ(lens_report):
-    # decisions/07's flat-organ friction is RESOLVED by the breathing pass: the
-    # reggae organ now carries velocity breathing and reads human, so it no longer
-    # surfaces a flat-dynamics finding. The only flat-dynamics findings left are the
-    # metal pedal bass (deliberate one-velocity palm mutes — never breathed).
-    organ_flat = [f for f in lens_report.findings
-                  if f.kind == "flat-dynamics" and f.track == "04 Organ"]
-    assert not organ_flat, "breathing should de-flatten the organ (no flat-dynamics)"
-    flat_tracks = {f.track for f in lens_report.findings if f.kind == "flat-dynamics"}
-    assert flat_tracks <= {"02 Bass"}, (
-        f"only the intentional metal pedal bass should read flat; got {flat_tracks}")
+def test_performance_lens_breathing_de_flattens_the_reggae_organ(lens_report):
+    # decisions/07's flat-organ friction is RESOLVED by the breathing pass: the reggae
+    # organ BUBBLE carries velocity breathing and reads human — no flat-dynamics in any
+    # reggae bubble section. The only flat-dynamics findings allowed are DELIBERATE
+    # sustained drones: the metal pedal bass (one-velocity palm mutes) and the break's
+    # sustained FUSION pad/shimmer (a pp drone — a sustained pad has no velocity
+    # variation by design, decisions/08; LNT-1V9K: deliberate, never an error).
+    flat = {(f.section, f.track) for f in lens_report.findings if f.kind == "flat-dynamics"}
+    for sec, trk in flat:
+        assert trk == "02 Bass" or sec == "break", \
+            f"unexpected flat-dynamics (should breathe): {(sec, trk)}"
+    # Specifically, no reggae organ BUBBLE reads flat (the breathing did its job).
+    organ_flat_nonbreak = [(f.section, f.track) for f in lens_report.findings
+                           if f.kind == "flat-dynamics" and f.track == "04 Organ"
+                           and f.section != "break"]
+    assert not organ_flat_nonbreak, organ_flat_nonbreak
 
 
 def test_performance_lens_keeps_metal_machine_tight(lens_report):
-    # The mechanical-timing reads are now the CORRECT ones — metal stays tight, never
-    # breathed. Every mechanical-timing finding is a metal section (chorus1/2,
-    # integration) or the break's slash-bass (kept tight so the Em/C#↔Em/C vote reads
-    # clean at the fast harmonic-rhythm boundaries). No reggae bed part reads mechanical.
+    # The mechanical-timing reads are the CORRECT ones — metal stays tight, never
+    # breathed. Every mechanical-timing finding is a metal/climax section (chorus1/2,
+    # integration) or one of the break's DELIBERATELY-tight suspension parts: the
+    # sustained pad (04 Organ), the riser (01 Drums), the sparkle (06 Steel). The
+    # break's call-response LEAD is breathed (BREATH) and must NOT read mechanical;
+    # no reggae bed part reads mechanical either (decisions/08).
     metal_sections = {"chorus1", "chorus2", "integration"}
+    break_tight = {("break", "04 Organ"), ("break", "01 Drums"), ("break", "06 Steel")}
     mech = [f for f in lens_report.findings if f.kind == "mechanical-timing"]
     assert mech, "metal parts must still read mechanical — tight is correct"
     stray = [(f.section, f.track) for f in mech
-             if f.section not in metal_sections
-             and not (f.section == "break" and f.track == "02 Bass")]
+             if f.section not in metal_sections and (f.section, f.track) not in break_tight]
     assert not stray, f"unexpected mechanical (should be breathing) parts: {stray}"
+    # The breathed call-response lead is NOT mechanical.
+    assert ("break", "05 Lead") not in {(f.section, f.track) for f in mech}
 
 
 def test_performance_lens_reads_breathed_drums_as_human_not_sloppy(lens_report):

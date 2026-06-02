@@ -6,7 +6,7 @@
     "signature": "4/4",
     "track_count": 6,
     "return_track_count": 3,
-    "master": {"volume": 0.85, "panning": 0.0}
+    "master": {"volume": 0.80, "panning": 0.0}
   },
   "returns": [
     {
@@ -44,7 +44,7 @@
   "tracks": [
     {
       "index": 1, "name": "01 Drums", "type": "midi",
-      "volume": 0.75, "panning": 0.0,
+      "volume": 0.70, "panning": 0.0,
       "sends": {"Plate": 0.15, "Room": 0.10, "DubDelay": 0.0},
       "devices": [
         {

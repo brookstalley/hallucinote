@@ -13,14 +13,25 @@ any given bar the body is *either* reggae (E Dorian, half-time chill) *or* metal
 structure: "chillin in the sun zone, rasta vibes flowin in the — NO TIME FOR THAT
 GOTTA GET STUFF DONE."
 
-**Two deliberate exceptions** — the through-composed arc earns them as the story of
-*adapting* (the protagonist stops fighting and learns to hold both at once):
+**The back half deliberately coexists** — the through-composed arc earns it as the
+story of *adapting* (the protagonist stops fighting and learns to hold both at once):
 - **development** (bars 97–120): the worlds start **trading bars** — Dorian reggae
   cells answered by Phrygian, harmonic rhythm accelerating. Still a reggae groove,
-  but the harmony morphs between the two.
-- **integration** (bars 137–168): the **climax FUSES both worlds at once** — the
-  metal gallop engine with the intro's reggae polyrhythm organ quoted over it,
-  resolving into the polymodal both-at-once chord (F#/F, C#/C over an E pedal).
+  but the harmony morphs between the two. **Through-composed (v2, decisions/08) as a
+  3-phase accelerating arc** — settled reggae + metal pokes → 2-bar trades with the
+  polyrhythm cloud creeping back + steel entering → rapid whiplash + a fill into the
+  break drop. It TRADES (true fusion is the integration's job), but it now *builds*
+  rather than looping a fixed cell.
+- **break** (bars 121–136, REINVENTED — decisions/08): the **EUREKA suspension** —
+  drums + bass drop OUT; a sustained polymodal FUSION pad + thinned shimmer hold the
+  breath while a half↔double-time **call-and-response** lets a reggae fragment and a
+  metal fragment finally *answer* each other (not interrupt). A riser launches the
+  bass DROP into the integration. The two worlds coexist *gently* here.
+- **integration** (bars 137–168, REINVENTED — decisions/08): the **PLAYGROUND** — the
+  two worlds genuinely COMBINED, cell by cell (reggae groove + metal lead answering;
+  metal gallop + floating reggae organ/steel; call-response trade; both engines
+  interlocking), building to the **earned climax** that quotes the intro's polyrhythm
+  organ and resolves into the polymodal both-at-once chord (F#/F, C#/C over an E pedal).
 
 Section map (genre by bar — the 184-bar through-composed arc):
 
@@ -32,8 +43,8 @@ Section map (genre by bar — the 184-bar through-composed arc):
 | 57–80 | verse2 | reggae |
 | 81–96 | chorus2 | metal |
 | 97–120 | development | worlds **collide** — harmony AND feel trade (reggae drag ↔ metal stab), accelerating |
-| 121–136 | break | reggae groove, HEAVY amp (convention-break) |
-| 137–168 | integration | **metal + reggae FUSED** (the climax) |
+| 121–136 | break | **EUREKA suspension** — drums+bass OUT, fusion pad + half↔double call-response (decisions/08) |
+| 137–168 | integration | **PLAYGROUND** — worlds COMBINED cell-by-cell → earned fusion climax (decisions/08) |
 | 169–184 | outro | reggae → **new joyful synthesis** (the resolution — not a retreat) |
 
 ## Mix implication (read this before flagging masking)

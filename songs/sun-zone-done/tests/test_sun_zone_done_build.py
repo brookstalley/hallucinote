@@ -582,6 +582,54 @@ def test_metal_sections_sustain_energy(build_module, built):
         conn.close()
 
 
+def test_metal_steals_the_reggae_downbeat(build_module, built):
+    """The RUDE INTERRUPTION (decisions/08 v4): the metal STEALS the reggae's last beat.
+
+    In the verses that precede a chorus (verse1, verse2), the chorus's opening slam —
+    crash + gallop kick + pedal-bass door-kick — is pulled a beat EARLY onto beat 4 of
+    the verse's final bar ('on 4 rather than 1'), while the chill lead is robbed of its
+    resolution (left hanging) and the chorus still CONFIRMS on its own downbeat (the
+    felt arrival is on 4, the landing on 1 — an intentional double-hit). Length-
+    preserving: the verse clip is still its full length — the grid never shifts. The
+    LITERAL shorten-the-song steal (a bar of 3/4) is a meter-change feature → backlog.
+    """
+    from hallucinote.db import init_db, queries as Q
+    arc_bars = {name: bars for name, _f, _g, bars, _e in build_module.ARC}
+    conn = init_db(build_module.DB_PATH)
+    try:
+        for vname, cname in (("verse1", "chorus1"), ("verse2", "chorus2")):
+            drums = _clips_by_role(conn, built, "01 Drums")[vname]
+            bass = _clips_by_role(conn, built, "02 Bass")[vname]
+            lead = _clips_by_role(conn, built, "05 Lead")[vname]
+            length = drums["length_beats"]
+            steal_at = length - 1.0  # beat 4 of the final bar (steal_beats=1.0)
+
+            # Length-preserving: the steal did NOT shorten the verse (no grid shift).
+            assert length == arc_bars[vname] * 4.0, (vname, length)
+
+            # The stolen metal slam: a crash (49) lands on beat 4, a beat early.
+            dn = Q.get_notes_for_clip(conn, drums["id"])
+            assert any(n["pitch"] == 49 and abs(n["start_beats"] - steal_at) < 1e-6
+                       for n in dn), f"{vname}: no stolen metal crash at beat {steal_at}"
+            # The pedal-bass door-kick is stolen too (low-end weight under the slam).
+            bn = Q.get_notes_for_clip(conn, bass["id"])
+            assert any(abs(n["start_beats"] - steal_at) < 1e-6 for n in bn), \
+                f"{vname}: no stolen pedal-bass downbeat at beat {steal_at}"
+            # The chill lead is robbed of resolution — it hangs BEFORE the slam, never
+            # resolving into it (the deep lead_gap cut).
+            ln = Q.get_notes_for_clip(conn, lead["id"])
+            assert max(n["start_beats"] for n in ln) < steal_at, \
+                f"{vname}: the chill lead must hang before the slam, not resolve into it"
+
+            # The chorus still CONFIRMS on its own downbeat (on-4 AND on-1, by design).
+            cd = _clips_by_role(conn, built, "01 Drums")[cname]
+            c0 = min(n["start_beats"] for n in Q.get_notes_for_clip(conn, cd["id"])
+                     if n["pitch"] == 49)
+            assert c0 == 0.0, f"{cname}: chorus must keep its own downbeat crash"
+    finally:
+        conn.close()
+
+
 def test_reference_motifs_registered(build_module):
     """Both referenceable motifs are registered for the recapitulation/
     reference primitive: the polyrhythm cloud (quoted in the integration) and

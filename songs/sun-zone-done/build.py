@@ -1019,6 +1019,66 @@ def _octave_down(notes: list[dict]) -> list[dict]:
     return notes + V.transpose(notes, -12)
 
 
+def _interrupt_tail(layers: dict[str, list[dict]], section_beats: float,
+                    *, next_metal: dict[str, list[dict]] | None = None,
+                    lead_gap: float = 4.5, groove_gap: float = 1.0,
+                    steal_beats: float = 1.0,
+                    kick_tracks: tuple[str, ...] = ("01 Drums", "02 Bass"),
+                    ) -> dict[str, list[dict]]:
+    """The RUDE INTERRUPTION (decisions/08 v4) — the metal STEALS the reggae's last
+    beat. The genre flips used to land on a clean bar line (a polite handoff); the
+    lyric SEVERS the chill mid-word ('chillin in the sun — NO TIME FOR THAT'), so the
+    band kicks the door in a beat EARLY: the metal's opening slam (crash + gallop kick
+    + the pedal-bass downbeat) is pulled forward onto beat 4 of the reggae's final bar
+    — 'on 4 rather than 1'. Two cuts clear the way for it:
+
+      - the chill MELODY is robbed of its resolution (``lead_gap``): its landing note
+        is removed, leaving the phrase hanging on an unresolved note the slam cuts off;
+      - the reggae GROOVE gives up its stolen beat (``groove_gap`` ≈ ``steal_beats``):
+        it lands its beat-3 one-drop, then yields beat 4 to the metal.
+
+    The metal section then CONFIRMS on its own downbeat (beat 1), so the felt arrival
+    is the early slam on 4 and the downbeat is the landing. The door-kick is pulled
+    from ``next_metal`` (single source of truth — it always matches the chorus that
+    follows) on ``kick_tracks`` only; the VOICE ('NO TIME FOR THAT') is left to land on
+    the downbeat, un-anticipated, so the hook isn't stuttered. Applied to the reggae
+    sections that precede a chorus (verse1, verse2). Length-preserving by design (the
+    grid never shifts) — the LITERAL steal (shorten the section, lurch the grid) is a
+    fractional-bar arrangement-model change we escalate to only if the ear demands it.
+    RENDER-GATED: tune the gaps + ``steal_beats`` by ear (lead too deep = the hook
+    never lands; steal too long = the metal pre-empts itself; groove gap ≠ steal = mud
+    at the seam or dead air)."""
+    out: dict[str, list[dict]] = {}
+    for name, notes in layers.items():
+        cut_at = section_beats - (lead_gap if name == "05 Lead" else groove_gap)
+        kept: list[dict] = []
+        for n in notes:
+            start = n["start_beats"]
+            if start >= cut_at - 1e-9:
+                continue                                  # in the gap → severed
+            end = start + n["duration_beats"]
+            if end > cut_at:                              # sustains into the gap → clip it
+                n = {**n, "duration_beats": round(cut_at - start, 6)}
+            kept.append(n)
+        out[name] = kept
+    # The early slam: steal the metal's first beat onto beat 4 of the reggae's last bar.
+    if next_metal is not None and steal_beats > 0:
+        at = section_beats - steal_beats
+        for track in kick_tracks:
+            head = [n for n in next_metal.get(track, [])
+                    if n["start_beats"] < steal_beats - 1e-9]
+            for n in head:
+                start = at + n["start_beats"]
+                dur = min(n["duration_beats"], section_beats - start)  # cap to clip end
+                if dur < 0.05:        # a sliver at the bar line → an inaudible click;
+                    continue          # the chorus downbeat re-articulates it anyway
+                out.setdefault(track, []).append(
+                    {**n, "start_beats": round(start, 6),
+                     "duration_beats": round(dur, 6),
+                     "tags": list(n.get("tags", [])) + ["interrupt", "steal"]})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 1/f breathing (apply_profile) — the performance-authoring layer. Reggae + the
 # blend pockets BREATHE: correlated 1/f timing+velocity laid over the generators'
@@ -1091,6 +1151,10 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     verse1 = _breathe(reg("verse1"), section="verse1", plan=_REGGAE_BREATH)
     verse1 = _verse1_metal_punctuation(verse1, kit)
     chorus1 = met("chorus1")  # metal — stays machine-tight (never breathed)
+    # The RUDE cut + STEAL: the chill is severed mid-gesture AND chorus1's slam is
+    # pulled a beat early onto verse1's beat 4 (decisions/08 v4 — 'on 4 rather than 1':
+    # the metal kicks the door in before the chill's bar even finishes).
+    verse1 = _interrupt_tail(verse1, specs["verse1"][2] * BEATS_PER_BAR, next_metal=chorus1)
 
     # verse2: richer harmony (its own progression) + steel ENTERING (add-delta).
     verse2 = vary(reg("verse2"), add={"06 Steel": _steel_island(specs["verse2"][2])})
@@ -1098,6 +1162,8 @@ def _build_arrangement(kit: Kit) -> Arrangement:
                       plan={**_REGGAE_BREATH, "06 Steel": HUMAN})
     # chorus2: darker harmony (own progression) + lead octave-doubled-down (escalation).
     chorus2 = vary(met("chorus2"), transform={"05 Lead": _octave_down})  # metal — tight
+    # severed before chorus2, whose slam is likewise stolen onto verse2's beat 4.
+    verse2 = _interrupt_tail(verse2, specs["verse2"][2] * BEATS_PER_BAR, next_metal=chorus2)
 
     # development: the worlds collide rhythmically (feel trades bar-by-bar, derived
     # from the DEV harmonic map — see _dev_collision), not just harmonically.

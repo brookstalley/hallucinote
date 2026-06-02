@@ -246,6 +246,41 @@ def test_analyze_mix_groups_sends_into_one_per_return(tmp_path: Path):
     assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
 
 
+def test_analyze_mix_surfaces_conflicting_rt60_declarations(tmp_path: Path):
+    """Sends into the SAME return declaring DIFFERENT RT60s is a contradiction
+    (one device, one decay time) — surfaced via conflicting_declarations + a
+    reverb_conflicting_declaration finding, measured against the modal value.
+    (The conflict is at the declaration level, independent of the audio.)"""
+    dry = sine(220.0, 3.0, amplitude=0.4)
+    wet = pink_noise(3.0, amplitude=0.3)
+    master = (dry + wet * 0.4).astype(np.float32)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01", dry)],
+        returns=[("return:1", "A-Plate", wet)],
+        master_audio=master,
+        stop_at_beat=16.0,
+        ring_out_beats=0.0,
+    )
+    # 2 sends declare 3.0, 1 declares 0.8 → modal is 3.0; contributing dry IDs
+    # are recorded as provenance (they need not all be captured surfaces).
+    sends = [
+        DeclaredReverbSend(dry_track_id="track:1",
+                           wet_return_track_id="return:1", declared_rt60_s=3.0),
+        DeclaredReverbSend(dry_track_id="track:2",
+                           wet_return_track_id="return:1", declared_rt60_s=3.0),
+        DeclaredReverbSend(dry_track_id="track:3",
+                           wet_return_track_id="return:1", declared_rt60_s=0.8),
+    ]
+    report = analyze_mix(captures_dir, declared_reverb_sends=sends)
+    assert len(report.reverb_verifications) == 1  # still one per return
+    v = report.reverb_verifications[0]
+    assert v.conflicting_declarations == (0.8, 3.0)   # sorted distinct
+    assert v.declared_rt60_s == 3.0                    # modal (2 of 3 votes)
+    assert set(v.contributing_track_ids) == {"track:1", "track:2", "track:3"}
+    assert any(f.kind == "reverb_conflicting_declaration" for f in report.findings)
+
+
 def test_analyze_mix_no_ringout_emits_honest_insufficient_tail(tmp_path: Path):
     """The real-capture case: no ring-out (ring_out_beats=0, content to the end)
     → an honest insufficient-tail verdict + finding, NOT a fabricated RT60."""

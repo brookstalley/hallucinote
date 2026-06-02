@@ -9,6 +9,8 @@ import via importlib (tests, shim scripts) see the same namespace as before.
 from .core import (  # noqa: F401
     BLOCK_BEGIN,
     BLOCK_END,
+    BUILD_PLAN_POINTER_KEY,
+    DEFAULT_BUILD_PLAN_REL,
     FILE_RENAMES,
     FRAMEWORK_DIR,
     GITIGNORE_ENTRIES,
@@ -16,6 +18,8 @@ from .core import (  # noqa: F401
     PRAWDUCT_VERSION,
     SKILL_PLACEMENTS,
     TEMPLATES_DIR,
+    resolve_build_plan_path,
+    read_str_yaml_key,
     V1_GITIGNORE_ENTRIES,
     V1_SESSION_FILES,
     V3_GITIGNORE_ENTRIES,
@@ -67,6 +71,35 @@ from .migrate_cmd import (  # noqa: F401
     upgrade_manifest_strategy,
 )
 
+# Post-sync advisory infrastructure (v1.6.0 Phase 1 — store + registry + diff)
+from .advisory_store import (  # noqa: F401
+    AdvisoryCandidate,
+    Codebase,
+    ProjectState,
+    clear_registry,
+    compute_id,
+    dismiss,
+    load_project_state,
+    make_codebase,
+    read_store,
+    reconcile,
+    register_probe,
+    resolve,
+    run_all_probes,
+    run_sync_advisories,
+    undismiss,
+    write_store,
+)
+
+# Post-sync advisory management CLI (v1.6.0 Chunk 05 — /prawduct-advisory)
+from .advisory_cmd import (  # noqa: F401
+    dismiss_advisory,
+    list_advisories,
+    resolve_advisory,
+    show_advisory,
+    undismiss_advisory,
+)
+
 # Sync operations
 from .sync_cmd import (  # noqa: F401
     _HISTORICAL_RENDER_DEPTH_CAP,
@@ -92,6 +125,9 @@ from .audit_learnings_cmd import (  # noqa: F401
     run_audit_learnings,
     run_sentinel,
 )
+
+# Critic mode inference (v1.5 Chunk 03 — no-arg /critic picks mode from state)
+from .critic_mode import infer_mode  # noqa: F401
 
 # Operator-verification queue (F10 — pre-merge human-verification gate)
 from .operator_verification import (  # noqa: F401

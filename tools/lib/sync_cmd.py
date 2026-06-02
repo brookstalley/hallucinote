@@ -28,6 +28,7 @@ from .core import (
     _try_pull_framework,
     compute_block_hash,
     compute_hash,
+    effective_managed_files,
     extract_block,
     infer_product_name,
     load_json,
@@ -36,6 +37,7 @@ from .core import (
     untrack_gitignored_files,
     update_gitignore,
 )
+from .advisory_store import run_sync_advisories
 from .migrate_cmd import (
     enable_v1_4_views,
     migrate_backlog,
@@ -209,7 +211,7 @@ def _bootstrap_manifest(product: Path, fw_dir: Path) -> dict:
     product_name = infer_product_name(product) or product.name
 
     file_hashes: dict[str, str | None] = {}
-    for rel_path, config in MANAGED_FILES.items():
+    for rel_path, config in effective_managed_files(fw_dir).items():
         strategy = config.get("strategy", "template")
         file_path = product / rel_path
 
@@ -455,10 +457,17 @@ def _git_op_in_progress(product: Path) -> str:
             return ""
     markers = [
         ("MERGE_HEAD", "merge"),
-        ("REBASE_HEAD", "rebase"),
         ("CHERRY_PICK_HEAD", "cherry-pick"),
         ("REVERT_HEAD", "revert"),
     ]
+    # REBASE_HEAD is intentionally NOT a marker: unlike MERGE_HEAD /
+    # CHERRY_PICK_HEAD / REVERT_HEAD (which git removes when the op ends or is
+    # aborted), git leaves REBASE_HEAD behind after a rebase completes — it is
+    # only overwritten by the *next* rebase. Its mere presence is therefore not
+    # an in-progress signal; treating it as one produced a phantom "rebase in
+    # progress" that blocked auto-sync and stuck in the session briefing. The
+    # rebase-merge / rebase-apply directory check below is git's own
+    # authoritative test (what `git status` uses), so real rebases stay covered.
     for filename, op in markers:
         if (git_path / filename).exists():
             return op
@@ -824,8 +833,11 @@ def run_sync(product_dir: str, framework_dir: str | None = None, *, no_pull: boo
         apply_renames(product, manifest, actions)
 
     # Backfill: add any managed files missing from the manifest (added after init)
-    # Also repair stale config (e.g., old template paths from renamed entries)
-    for rel_path, config in MANAGED_FILES.items():
+    # Also repair stale config (e.g., old template paths from renamed entries).
+    # effective_managed_files() expands MANAGED_DIRS (tools/lib) from the
+    # framework, so existing synced repos self-heal: the lib package lands as
+    # `New:` entries on the next sync without any per-product migration.
+    for rel_path, config in effective_managed_files(fw_dir).items():
         if rel_path not in files:
             files[rel_path] = dict(config)
             files[rel_path]["generated_hash"] = None  # Forces creation on first sync
@@ -1105,6 +1117,31 @@ def run_sync(product_dir: str, framework_dir: str | None = None, *, no_pull: boo
                 "last_changed_date": last_change.get("date", ""),
                 "last_changed_subject": last_change.get("subject", ""),
             })
+            # Fire ONCE per template change, not every session forever. Refresh
+            # the stored hash to current so the next sync sees no drift. Place-
+            # once files are user-owned ("surface the change once, then it's
+            # yours"); re-nagging indefinitely with no dismiss path was pure tax.
+            live_entry = pot.get(rel_path)
+            if live_entry is not None:
+                live_entry["template_hash"] = current_hash
+                live_entry["last_surfaced_at"] = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+
+    # Post-sync migration advisories (v1.6.0 Phase 1). Distinct from the
+    # template-drift `advisories` collected above — these come from the probe
+    # registry (empty in Phase 1, so this is a no-op) and land in the per-clone
+    # nag log `.prawduct/.advisories.json`. run_sync_advisories is return-value
+    # based and degrades safely; the broad guard is belt-and-suspenders so a
+    # future feature's faulty probe can never block a sync.
+    try:
+        run_sync_advisories(
+            product,
+            now=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sync_version=PRAWDUCT_VERSION,
+        )
+    except Exception as exc:  # prawduct:ok-broad-except — advisory probes must never block sync
+        notes.append(f"Advisory probe step skipped: {exc}")
 
     # Ensure gitignore stays current
     gi_result = update_gitignore(product)
@@ -1121,21 +1158,21 @@ def run_sync(product_dir: str, framework_dir: str | None = None, *, no_pull: boo
     for path in untracked:
         actions.append(f"Untracked {path} (removed from git index, file kept locally)")
 
-    # Update manifest when files changed or place-once tracking was bootstrapped
-    pot_bootstrapped = "place_once_templates" in manifest and manifest[
-        "place_once_templates"
-    ] != manifest_snapshot_pot
-    if actions or pot_bootstrapped:
-        manifest["files"] = updated_files
-        manifest["framework_version"] = PRAWDUCT_VERSION
-        # Record the framework commit at sync time so freshness checks can
-        # compute commits-behind precisely. Older manifests without this field
-        # will populate it on next sync.
-        fw_commit = _get_framework_head_commit(fw_dir)
-        if fw_commit:
-            manifest["framework_commit"] = fw_commit
-        manifest["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    # Always refresh freshness markers on a successful sync — even when no
+    # files changed. Otherwise a repo that is byte-identical to the framework
+    # keeps reporting a phantom "N commit(s) behind" in every session briefing,
+    # because last_sync / framework_commit were frozen at the last sync that
+    # happened to change a file. Refreshing them every sync makes a healthy,
+    # up-to-date repo report "in sync" and emit zero freshness noise — the
+    # whole point of the happy-path-silence work. (The manifest is gitignored,
+    # so rewriting it every session creates no git churn.)
+    manifest["files"] = updated_files
+    manifest["framework_version"] = PRAWDUCT_VERSION
+    fw_commit = _get_framework_head_commit(fw_dir)
+    if fw_commit:
+        manifest["framework_commit"] = fw_commit
+    manifest["last_sync"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     # F5a: after all framework-managed mutations land on disk and the
     # manifest is updated, attempt the single marker commit. Quarantines

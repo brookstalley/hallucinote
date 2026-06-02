@@ -34,6 +34,82 @@ def get_prawduct_dir(project_dir: Path) -> Path:
     return project_dir / ".prawduct"
 
 
+# --- Active build-plan resolution (inline mirror of tools/lib/core.py) ---
+# product-hook is standalone in product repos and cannot import tools/lib, so
+# the resolver is duplicated here. Kept in sync with
+# core.resolve_build_plan_path / core.read_str_yaml_key by a parity test
+# (same discipline as the GITIGNORE_ENTRIES / _SESSION_GITIGNORED_PATHS mirror).
+_BUILD_PLAN_POINTER_KEY = "active_build_plan"
+_DEFAULT_BUILD_PLAN_REL = "artifacts/build-plan.md"
+
+
+def _read_str_yaml_key(state_path: Path, key: str) -> str | None:
+    """Value of a top-level (column-0) ``key: value`` scalar, or None."""
+    try:
+        content = state_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    needle = f"{key}:"
+    for raw in content.splitlines():
+        if raw[:1] in (" ", "\t"):
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.startswith(needle):
+            continue
+        value = line.split(":", 1)[1].strip().strip("\"'")
+        return value or None
+    return None
+
+
+def _resolve_build_plan_path(prawduct_dir: Path) -> Path:
+    """Resolve the active build plan via the ``active_build_plan:`` pointer
+    (relative to ``.prawduct/``); fall back to ``artifacts/build-plan.md`` when
+    unset, so repos without the pointer are unchanged. May not exist — callers
+    treat a missing plan as no active build plan."""
+    pointer = _read_str_yaml_key(prawduct_dir / "project-state.yaml", _BUILD_PLAN_POINTER_KEY)
+    if pointer:
+        return prawduct_dir / pointer
+    return prawduct_dir / _DEFAULT_BUILD_PLAN_REL
+
+
+def _plugin_governance_active(project_dir: Path) -> bool:
+    """True when the Prawduct *plugin* is governing this repo — in which case this
+    legacy committed file-sync hook stands down, so exactly one governance path
+    runs (design §7 mutual stand-down; v2.0.0 build-plan Chunk 8).
+
+    CONSERVATIVE BY CONSTRUCTION. Returns True only on a clear, committed signal
+    that the plugin is active; ANY ambiguity, missing file, or parse error returns
+    False. A pure file-sync repo (no plugin) therefore behaves EXACTLY as before —
+    the legacy hook keeps governing. The asymmetry is deliberate: a false positive
+    would silently skip ALL governance, while a false negative merely double-fires
+    during the coexistence window (a known, harmless transition artifact). Chosen
+    precedence: plugin governs, legacy yields (build-plan Chunk 8 owner decision).
+
+    Either committed, repo-local signal suffices:
+      * ``.claude/settings.json`` or ``.claude/settings.local.json`` has a truthy
+        ``prawduct@…`` key under ``enabledPlugins`` — the committed install
+        reference by which a consumer enables the plugin (design §8); or
+      * ``project-state.yaml`` records ``distribution: plugin`` — the marker
+        written by ``/prawduct:migrate`` (build-plan Chunk 9).
+    """
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            data = json.loads((project_dir / ".claude" / name).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        enabled = data.get("enabledPlugins") if isinstance(data, dict) else None
+        if isinstance(enabled, dict):
+            for key, val in enabled.items():
+                if val and isinstance(key, str) and key.split("@", 1)[0] == "prawduct":
+                    return True
+    return (
+        _read_str_yaml_key(
+            get_prawduct_dir(project_dir) / "project-state.yaml", "distribution"
+        )
+        == "plugin"
+    )
+
+
 # =============================================================================
 # Sync trigger (best-effort on session start)
 # =============================================================================
@@ -108,18 +184,24 @@ def try_sync(
                         print("  (banner will show new version next session)")
 
                 if actions and not quiet:
-                    is_bootstrap = any("Bootstrapped" in a for a in actions)
+                    non_bootstrap = [a for a in actions if "Bootstrapped" not in a]
+                    is_bootstrap = len(non_bootstrap) != len(actions)
 
-                    # Header (skip if we already printed upgrade banner)
+                    # Collapse the per-file action dump to a single count line —
+                    # a routine sync (or the tools/lib self-heal, which touches
+                    # ~14 files) should not wallpaper the briefing with "+ New: …"
+                    # lines. The manifest records exactly what changed; re-read
+                    # prompts and gitignore fixes still surface as notes below.
                     if is_bootstrap:
-                        print("PRAWDUCT SYNC: First framework sync for this repo")
-                    elif not upgrade_info:
-                        print("PRAWDUCT SYNC: Framework updated")
-
-                    # List changes
-                    for action in actions:
-                        if "Bootstrapped" not in action:  # Already shown in header
-                            print(f"  + {action}")
+                        print("PRAWDUCT SYNC: first framework sync for this repo")
+                    if non_bootstrap:
+                        n = len(non_bootstrap)
+                        if upgrade_info or is_bootstrap:
+                            print(f"  ({n} framework file(s) updated)")
+                        else:
+                            print(f"PRAWDUCT SYNC: {n} framework file(s) updated")
+                    # Notes carry the genuinely actionable bits (re-read X,
+                    # un-ignored a path to git add) — keep them.
                     for note in notes:
                         print(f"  * {note}")
             except json.JSONDecodeError:
@@ -263,17 +345,19 @@ def _check_framework_version(project_dir: Path, fw_source: str, quiet: bool) -> 
         synced_parsed = _parse_version(synced_version)
 
         if fw_parsed < synced_parsed and not quiet:
+            # Framework checkout is behind its own history — git pull is the fix,
+            # not sync. One line; the version pair says the rest.
             print(
-                f"NOTE: Framework at {fw_source} is version {fw_version} but this product "
-                f"was last synced with {synced_version}. Templates may be stale. "
-                f"Run 'git pull' in the framework directory to update."
+                f"NOTE: framework checkout at {fw_source} is v{fw_version}, behind this "
+                f"product's last sync (v{synced_version}) — git pull the framework repo."
             )
         elif fw_parsed > synced_parsed and not quiet:
+            # Framework is ahead but the session-start auto-sync didn't land
+            # (failed/timed out/unreachable) — otherwise versions would match.
+            # One line, not a wall; this fires only on genuine sync failure now.
             print(
-                f"NOTE: This product is synced at v{synced_version} but the framework at "
-                f"{fw_source} is v{fw_version} — the auto-sync at session start did not "
-                f"apply. tools/product-hook and templates here are stale. Run: "
-                f"python3 {fw_source}/tools/prawduct-setup.py sync {project_dir}"
+                f"NOTE: framework is v{fw_version} but this product synced at "
+                f"v{synced_version} — session-start sync didn't apply; run prawduct-setup.py sync."
             )
     except Exception:  # prawduct:ok-broad-except — version check must never block session start
         pass
@@ -407,6 +491,22 @@ def git_has_code_changes(project_dir: Path) -> bool:
     framework metadata (.prawduct/, .claude/settings.json, etc.).
     """
     return bool(git_has_session_changes(project_dir))
+
+
+def _is_framework_tooling(f: Path, project_dir: Path) -> bool:
+    """True if ``f`` is Prawduct framework infrastructure shipped into a product
+    repo (``tools/product-hook`` or ``tools/lib/*``), not the product's own code.
+
+    Used by the "has product code?" heuristic so that sync-delivered tooling
+    doesn't make a freshly-initialized empty repo look like it contains source.
+    Deliberately NOT used by the compliance canary's source detection: in the
+    framework repo itself these paths ARE the source under test.
+    """
+    try:
+        rel = f.relative_to(project_dir).as_posix()
+    except ValueError:
+        return False
+    return rel == "tools/product-hook" or rel.startswith("tools/lib/")
 
 
 # Canonical list of session files that should be gitignored, never tracked.
@@ -730,68 +830,6 @@ def _read_gates_waived(prawduct_dir: Path) -> dict[str, str]:
 # =============================================================================
 
 
-def _count_tests_via_runner(project_dir: Path) -> int:
-    """Try to get exact test count from test runner (pytest or jest). Returns 0 on failure."""
-    # Only run pytest --co if the project has a pytest config file.
-    # Without one, pytest discovers upward and may collect the wrong project's tests.
-    has_pytest_config = (
-        (project_dir / "pyproject.toml").is_file()
-        or (project_dir / "pytest.ini").is_file()
-        or (project_dir / "setup.cfg").is_file()
-    )
-    if has_pytest_config:
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pytest", "--co", "-q", "--no-header", "--rootdir", str(project_dir)],
-                capture_output=True,
-                text=True,
-                cwd=str(project_dir),
-                timeout=15,
-            )
-            if result.returncode == 0:
-                # Last non-empty line is like "601 tests collected" or "601 test collected"
-                for line in reversed(result.stdout.strip().splitlines()):
-                    match = re.match(r"(\d+)\s+tests?\s+collected", line.strip())
-                    if match:
-                        return int(match.group(1))
-        except Exception:  # prawduct:ok-broad-except — test counting is best-effort
-            pass
-    return 0
-
-
-def _count_test_functions(project_dir: Path) -> int:
-    """Count tests across the project. Tries test runner first for exact count,
-    falls back to regex heuristic. Returns 0 if none found."""
-    # Try exact count from test runner (handles parametrized tests correctly)
-    exact = _count_tests_via_runner(project_dir)
-    if exact > 0:
-        return exact
-
-    # Fall back to regex heuristic (undercounts parametrized tests)
-    count = 0
-    skip_dirs = {".prawduct", "node_modules", ".git", "__pycache__", "venv", ".venv", ".tox"}
-
-    for root, dirs, files in os.walk(project_dir):
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
-        for fname in files:
-            fpath = Path(root) / fname
-            # Python test files
-            if (fname.startswith("test_") or fname.endswith("_test.py")) and fname.endswith(".py"):
-                try:
-                    content = fpath.read_text()
-                    count += len(re.findall(r"^\s*def test_", content, re.MULTILINE))
-                except Exception:  # prawduct:ok-broad-except — test counting is best-effort
-                    pass
-            # JS/TS test files
-            elif fname.endswith((".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.js", ".spec.ts")):
-                try:
-                    content = fpath.read_text()
-                    count += len(re.findall(r"\b(?:it|test)\s*\(", content))
-                except Exception:  # prawduct:ok-broad-except — test counting is best-effort
-                    pass
-    return count
-
-
 def _extract_dependency_names(dep_file: Path) -> list[str]:
     """Extract package names from dependency files."""
     try:
@@ -884,7 +922,8 @@ def staleness_scan(project_dir: Path) -> list[str]:
             pass
 
     # 4. Stale build plan detection — check Status section first, fall back to WIP
-    build_plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    build_plan_path = _resolve_build_plan_path(prawduct_dir)
+    build_plan_label = f".prawduct/{build_plan_path.relative_to(prawduct_dir).as_posix()}"
     if build_plan_path.is_file():
         try:
             status = _parse_build_plan_status(prawduct_dir)
@@ -893,7 +932,7 @@ def staleness_scan(project_dir: Path) -> list[str]:
             elif status.get("_has_status_items"):
                 # All items checked — work complete
                 findings.append(
-                    "build plan: .prawduct/artifacts/build-plan.md has all chunks complete — "
+                    f"build plan: {build_plan_label} has all chunks complete — "
                     "if work is done, delete the plan"
                 )
             else:
@@ -902,7 +941,7 @@ def staleness_scan(project_dir: Path) -> list[str]:
                 wip = _parse_wip(prawduct_dir, branch=current_branch)
                 if not wip.get("description"):
                     findings.append(
-                        "build plan: .prawduct/artifacts/build-plan.md exists but no active work — "
+                        f"build plan: {build_plan_label} exists but no active work — "
                         "if work is complete, delete the plan"
                     )
         except Exception:  # prawduct:ok-broad-except — staleness scan is best-effort
@@ -1104,7 +1143,7 @@ def _parse_build_plan_status(prawduct_dir: Path) -> dict[str, str]:
     description, size, type, current_chunk, context, governance_level.
     Returns empty dict if no build plan or no Status section.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return {}
     try:
@@ -1347,57 +1386,21 @@ def assemble_session_briefing(
         for s in staleness:
             lines.append(f"Stale: {s}")
 
-    # Framework freshness — surface only when there's actual drift to reason about.
-    # The three drift dimensions (version, commit, template content) are tracked
-    # separately so the agent doesn't have to derive deltas from raw timestamps.
+    # Framework freshness — one line, only on REAL drift, and only for the
+    # commit delta. Version drift is owned by _check_framework_version (printed
+    # during sync with the correct git-pull-vs-sync remedy) so the two never say
+    # the same thing twice. Raw SHAs/dates are no longer dumped here — they live
+    # in the sync manifest. After Chunk B an up-to-date repo keeps last_sync /
+    # framework_commit current, so commits_behind is 0 and this stays silent.
     has_commit_delta = bool(freshness and freshness.get("commits_behind"))
-    has_version_delta = bool(
-        freshness
-        and freshness.get("framework_version")
-        and freshness.get("last_sync_version")
-        and freshness["framework_version"] != freshness["last_sync_version"]
-    )
-    if freshness and (has_commit_delta or has_version_delta or advisories):
-        lines.append("Framework freshness:")
-        head = freshness.get("framework_head") or "?"
-        head_date = freshness.get("framework_head_date") or "?"
-        fw_v = freshness.get("framework_version") or "?"
-        sync_commit = freshness.get("last_sync_commit") or "(not recorded)"
-        sync_date = freshness.get("last_sync_date") or "?"
-        sync_v = freshness.get("last_sync_version") or "?"
+    if has_commit_delta:
         behind = freshness.get("commits_behind")
-        lines.append(f"  Framework HEAD:    {head}  ({head_date})  v{fw_v}")
-        lines.append(f"  Last sync:         {sync_commit}  ({sync_date})  v{sync_v}")
-        if behind is None:
-            if not freshness.get("last_sync_commit"):
-                lines.append("  Commit delta:      unknown — manifest predates commit tracking; will populate on next sync")
-            else:
-                lines.append("  Commit delta:      unknown")
-        elif behind == 0:
-            lines.append("  Commit delta:      in sync")
-        else:
-            lines.append(f"  Commit delta:      {behind} commit(s) since sync")
-        if has_version_delta:
-            lines.append(f"  Version delta:     v{sync_v} → v{fw_v}")
-        if advisories:
-            lines.append(f"  Place-once template advisories: {len(advisories)}")
-            for adv in advisories:
-                short = adv.get("file", "?").rsplit("/", 1)[-1]
-                commit = adv.get("last_changed_commit", "")
-                date = adv.get("last_changed_date", "")
-                subject = adv.get("last_changed_subject", "")
-                if commit:
-                    subject_str = f" — \"{subject}\"" if subject else ""
-                    lines.append(f"    - {short}: changed in {commit} ({date}){subject_str}")
-                else:
-                    lines.append(f"    - {short}: changed since last sync (commit info unavailable)")
-    elif advisories:
-        # Manifest exists but freshness couldn't be computed (e.g., no fw_dir
-        # access). Fall back to the simple advisory list rather than dropping it.
-        lines.append(f"Place-once template advisories: {len(advisories)} template(s) have new content since project setup")
-        for adv in advisories:
-            msg = adv.get("message", "template drift detected")
-            lines.append(f"  - {msg}")
+        lines.append(f"Framework drift: {behind} commit(s) since last sync — run a framework sync")
+    if advisories:
+        # Template-drift advisories are fire-once (Chunk B), so this surfaces at
+        # most once per template change. One line naming the files, not a table.
+        names = ", ".join(adv.get("file", "?").rsplit("/", 1)[-1] for adv in advisories)
+        lines.append(f"Template update(s) since setup: {names} — /janitor scope=templates to review")
 
     # ADVISORIES (post-sync) — v1.6.0 Phase 1. The per-clone nag log written by
     # sync's probe step (`.prawduct/.advisories.json`). Read directly here
@@ -1506,64 +1509,37 @@ def assemble_session_briefing(
                 elif in_prawduct:
                     prawduct_lines += 1
             project_lines = total_lines - prawduct_lines
-            if project_lines > 150:
+            # Only surface genuine bloat. The soft ~150-line guideline is already
+            # enforced by the Critic at review time (the actionable moment); a
+            # 250+ line CLAUDE.md is a real problem worth a standing reminder.
+            # Re-nagging every session at the soft threshold was pure tax.
+            if project_lines > 250:
                 lines.append(
-                    f"CLAUDE.md is large ({project_lines} project lines, {total_lines} total) "
-                    f"— move architecture docs, config tables, and component inventories to docs/ or .prawduct/artifacts/"
+                    f"CLAUDE.md is large ({project_lines} project lines) — move architecture "
+                    f"docs, config tables, and component inventories to docs/ or .prawduct/artifacts/"
                 )
         except Exception:  # prawduct:ok-broad-except — briefing must never block session start
             pass
 
-    # Test count — informational only; .test-evidence.json is the canonical count
-    try:
-        test_count = _count_test_functions(project_dir)
-        if test_count > 0:
-            lines.append(f"Tests: ~{test_count}")
-    except Exception:  # prawduct:ok-broad-except — briefing must never block session start
-        pass
+    # (Cut: per-session "Tests: ~N" count and the "Last Critic review took …"
+    # timing quip. Neither is actionable at session start — the canonical test
+    # count lives in .test-evidence.json, and a past review's duration is noise.)
 
-    # Last Critic review duration (set expectations for wait time)
-    critic_path = prawduct_dir / ".critic-findings.json"
-    if critic_path.is_file():
-        try:
-            critic_data = json.loads(critic_path.read_text())
-            duration = critic_data.get("duration_seconds")
-            if duration and isinstance(duration, (int, float)) and duration > 0:
-                minutes = int(duration) // 60
-                seconds = int(duration) % 60
-                if minutes > 0:
-                    dur_str = f"{minutes}m{seconds:02d}s"
-                else:
-                    dur_str = f"{seconds}s"
-                lines.append(f"Last Critic review took {dur_str} — pestering the Critic will only make it grumpier")
-        except Exception:  # prawduct:ok-broad-except — briefing must never block session start
-            pass
-
-    # Relevant learnings — show topic index so Claude knows what's there
+    # Relevant learnings — show count + pointer so Claude knows rules exist
     learnings_path = prawduct_dir / "learnings.md"
     if learnings_path.is_file():
         try:
             learnings_content = learnings_path.read_text()
-            topics = []
             rule_count = 0
             for line in learnings_content.splitlines():
-                stripped = line.strip()
-                # Collect section headers as topic names
-                if stripped.startswith("## "):
-                    topic = stripped[3:].strip()
-                    # Skip the top-level "Learnings" header and resolved topics
-                    if topic.lower().startswith("learnings") or "(RESOLVED)" in topic:
-                        continue
-                    topics.append(topic)
                 # Count bullet-point rules
-                elif stripped.startswith("- "):
+                if line.strip().startswith("- "):
                     rule_count += 1
+            # Collapse to a count + pointer. The full topic index re-printed
+            # unchanged every session — a static table of contents is tax; the
+            # /learnings skill is the intended lookup path.
             if rule_count > 0:
-                if topics:
-                    topic_list = " | ".join(topics)
-                    lines.append(f"Learnings ({rule_count} rules): {topic_list}")
-                else:
-                    lines.append(f"Learnings ({rule_count} rules): read .prawduct/learnings.md for active rules")
+                lines.append(f"Learnings ({rule_count} rules): /learnings <topic> or read .prawduct/learnings.md")
         except Exception:  # prawduct:ok-broad-except — briefing must never block session start
             pass
 
@@ -1591,13 +1567,9 @@ def assemble_session_briefing(
                         if item_text:
                             pending_items.append(item_text)
             if pending_items:
-                lines.append(f"Backlog: {len(pending_items)} pending items (.prawduct/backlog.md)")
-                for item in pending_items[:5]:  # Show up to 5, truncate long ones
-                    if len(item) > 120:
-                        item = item[:117] + "..."
-                    lines.append(f"  - {item}")
-                if len(pending_items) > 5:
-                    lines.append(f"  ... and {len(pending_items) - 5} more")
+                # One count line, not a 5-item dump every session. /backlog is
+                # the triage path; dumping arbitrary items here was tax.
+                lines.append(f"Backlog: {len(pending_items)} pending (/backlog to triage)")
         except Exception:  # prawduct:ok-broad-except — briefing must never block session start
             pass
 
@@ -2050,6 +2022,16 @@ def _check_previous_session_gates(project_dir: Path) -> list[str]:
 
 def cmd_clear(project_dir: Path) -> int:
     """Reset session state and trigger sync."""
+    # Mutual stand-down (design §7 / Chunk 8): when the Prawduct *plugin* governs
+    # this repo, the legacy committed hook yields so exactly one governance path
+    # runs. The plugin's SessionStart hook renders the banner + briefing; here we
+    # print a one-line migrate nudge and do nothing else (no sync, no briefing).
+    if _plugin_governance_active(project_dir):
+        print(
+            "PRAWDUCT: plugin governance active — legacy file-sync hook standing "
+            "down. Run /prawduct:migrate to remove the committed framework files."
+        )
+        return 0
     prawduct_dir = get_prawduct_dir(project_dir)
 
     # Check previous session's governance gates (warn, never block)
@@ -2137,7 +2119,10 @@ def cmd_clear(project_dir: Path) -> int:
             pass
 
     if prefs_missing or prefs_unfilled:
-        # Only warn if there's source code (not a brand-new project)
+        # Only warn if there's source code (not a brand-new project). Framework
+        # tooling (tools/product-hook, tools/lib/*.py) is infrastructure shipped
+        # by sync, NOT the product's own code — counting it would fire this
+        # CRITICAL on a freshly-initialized empty repo.
         has_code = any(
             f.suffix in (".py", ".js", ".ts", ".go", ".rs", ".java", ".rb", ".swift", ".kt", ".c", ".cpp", ".h")
             for f in project_dir.rglob("*")
@@ -2145,6 +2130,7 @@ def cmd_clear(project_dir: Path) -> int:
             and ".prawduct" not in f.parts
             and "node_modules" not in f.parts
             and f.name != "conftest.py"
+            and not _is_framework_tooling(f, project_dir)
         )
         if has_code:
             print(
@@ -2485,7 +2471,7 @@ def _count_build_plan_chunks(prawduct_dir: Path) -> tuple[int, int]:
     section, or has no chunk items. Mirrors the parsing rules in
     ``_parse_build_plan_status`` (skip HTML comments; exit on next ``## ``).
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return 0, 0
     try:
@@ -2622,6 +2608,12 @@ def _has_build_plan_in_state(prawduct_dir: Path) -> bool:
 
 def cmd_stop(project_dir: Path) -> int:
     """Check governance gates before session end."""
+    # Mutual stand-down (design §7 / Chunk 8): when the plugin governs, its Stop
+    # hook runs the Critic/reflection gate. The legacy hook yields so the gate
+    # fires exactly once (no double /critic). Silent: Stop output is user-facing
+    # and a per-session duplicate of the clear notice would be noise.
+    if _plugin_governance_active(project_dir):
+        return 0
     prawduct_dir = get_prawduct_dir(project_dir)
 
     # Skip if no .prawduct directory
@@ -3100,7 +3092,7 @@ def _parse_build_plan_chunk_refs(prawduct_dir: Path, chunk_id: str) -> dict:
     see Chunk 02 plan-vs-execution divergence (commit message).
     """
     result: dict = {"file_paths": [], "error": None}
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         result["error"] = f"missing build-plan: {plan_path}"
         return result
@@ -3183,7 +3175,7 @@ def _parse_build_plan_chunk_type(
     on ``### Chunk <chunk_id>:`` with leading-zero tolerance; fenced code
     blocks are skipped.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return None, f"missing build-plan: {plan_path}"
     try:
@@ -3249,7 +3241,7 @@ def _parse_build_plan_chunk_trivial_rationale(
     name-anchored on ``### Chunk <chunk_id>:`` with leading-zero
     tolerance; fenced code blocks are skipped.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return None, f"missing build-plan: {plan_path}"
     try:
@@ -3835,7 +3827,18 @@ def cmd_regen_views(project_dir: Path) -> int:
     tools_dir = str(Path(__file__).resolve().parent)
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
-    from lib import views  # noqa: PLC0415 — lazy import keeps top-level cheap
+    try:
+        from lib import views  # noqa: PLC0415 — lazy import keeps top-level cheap
+    except ImportError:
+        # Old repo that predates tools/lib propagation — degrade gracefully
+        # rather than crash. Views derivation is a convenience; Status can be
+        # updated by hand until the next framework sync ships tools/lib.
+        print(
+            "NOTE: regen-views needs tools/lib (not present in this repo). "
+            "Run a framework sync to install it; Status not auto-regenerated.",
+            file=sys.stderr,
+        )
+        return 0
 
     prawduct_dir = get_prawduct_dir(project_dir)
     try:
@@ -3880,7 +3883,18 @@ def cmd_check_operator_verification(project_dir: Path) -> int:
     tools_dir = str(Path(__file__).resolve().parent)
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
-    from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+    try:
+        from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+    except ImportError:
+        # Fail OPEN: this gate cannot evaluate a queue it can't load. In a repo
+        # that predates tools/lib, operator-verification isn't active anyway, so
+        # blocking /pr here would be a false positive. Surface a note, allow.
+        print(
+            "NOTE: check-operator-verification needs tools/lib (not present); "
+            "gate skipped. Run a framework sync to install it.",
+            file=sys.stderr,
+        )
+        return 0
 
     result = ov.run_check_operator_verification(project_dir)
     if not result["required"]:
@@ -3904,7 +3918,17 @@ def cmd_accept_operator_verification(
     tools_dir = str(Path(__file__).resolve().parent)
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
-    from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+    try:
+        from lib import operator_verification as ov  # noqa: PLC0415 — lazy import
+    except ImportError:
+        # Honest failure: this command mutates the queue, so it must not claim
+        # success when its machinery is absent. Tell the user to sync.
+        print(
+            "error: accept-operator-verification needs tools/lib (not present "
+            "in this repo). Run a framework sync to install it.",
+            file=sys.stderr,
+        )
+        return 1
 
     if rationale is None or not rationale.strip():
         print(
@@ -4210,13 +4234,37 @@ def cmd_infer_critic_mode(project_dir: Path, args: str | None) -> int:
     return 0
 
 
+def cmd_advisory(project_dir: Path, argv: list[str]) -> int:
+    """Dispatch the ``/prawduct-advisory`` management CLI (spec §6, Chunk 05).
+
+    Thin wrapper around ``tools.lib.advisory_cmd.run`` — the subcommand exists so
+    the skill's ``allowed-tools`` can be scoped to ``Bash(python3 tools/product-hook
+    advisory*)`` instead of arbitrary code execution, mirroring the
+    ``infer-critic-mode`` pattern. ``argv`` is ``sys.argv[2:]`` (everything after
+    ``advisory``).
+
+    Fail-safe: when ``tools/lib`` is absent (a product repo that has not yet
+    received the lib propagation), print a clear message and return 1 rather than
+    crashing — the advisory CLI is informational, never a gate.
+    """
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    try:
+        from lib import advisory_cmd  # noqa: PLC0415 — lazy keeps top-level cheap
+    except ImportError:
+        print("advisory CLI unavailable (tools/lib not present in this repo)", file=sys.stderr)
+        return 1
+    return advisory_cmd.run(project_dir, argv)
+
+
 _USAGE = (
     "Usage: product-hook "
     "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
     "verify-chunk-refs [chunk_id]|verify-coverage|"
     "check-operator-verification|accept-operator-verification <rationale>|"
     "check-pr-doc-only|check-pr-trivial|regen-views|infer-critic-mode [args]|"
-    "compute-verify-resolutions-scope}"
+    "compute-verify-resolutions-scope|advisory <subcmd> [args]}"
 )
 
 
@@ -4259,6 +4307,8 @@ def main() -> int:
         return cmd_infer_critic_mode(project_dir, args)
     elif command == "compute-verify-resolutions-scope":
         return cmd_compute_verify_resolutions_scope(project_dir)
+    elif command == "advisory":
+        return cmd_advisory(project_dir, sys.argv[2:])
     else:
         print(_USAGE, file=sys.stderr)
         return 1

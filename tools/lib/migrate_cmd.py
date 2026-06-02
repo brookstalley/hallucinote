@@ -1389,6 +1389,23 @@ def run_migrate(target_dir: str, product_name: str | None = None) -> dict:
     ):
         actions.append("Installed tools/product-hook (Python)")
 
+    # Ship tools/lib alongside the hook — product-hook imports it at runtime
+    # (regen-views, operator-verification). Eager + idempotent so a migrated
+    # repo is never in the degraded "hook present, lib absent" state that
+    # crashes those commands; mirrors init step 9b and MANAGED_DIRS.
+    lib_src = FRAMEWORK_DIR / "tools" / "lib"
+    if lib_src.is_dir():
+        lib_dst = target / "tools" / "lib"
+        lib_dst.mkdir(parents=True, exist_ok=True)
+        wrote_lib = False
+        for module in sorted(lib_src.glob("*.py")):
+            dst_module = lib_dst / module.name
+            if compute_hash(dst_module) != compute_hash(module):
+                shutil.copy2(module, dst_module)
+                wrote_lib = True
+        if wrote_lib:
+            actions.append("Installed tools/lib/")
+
     # Create critic-review.md if missing
     if write_template(
         TEMPLATES_DIR / "critic-review.md",

@@ -189,6 +189,41 @@ def _arrangement_length_beats(context: LiveContext) -> float:
     return float(getattr(context.song, "last_event_time", 0.0))
 
 
+def _content_end_beats(context: LiveContext) -> float:
+    """Where the arrangement's *content* ends — the max clip ``end_time``
+    across all tracks. This is the dry-stop anchor for the ring-out.
+
+    NOT ``song.last_event_time``: Live extends last_event_time to the
+    furthest playhead position, so a render that plays the transport into
+    the post-content ring-out region inflates it past where the music
+    actually ends — AND the inflation compounds across renders (each
+    default-stop render anchors off the previous render's inflated value
+    and pushes it further out). Once last_event_time has drifted past the
+    real content, the dry "stop" lands in trailing dead-air where the
+    reverb has already fully decayed, the ring-out window records pure
+    silence, and the per-return RT60 measurement honestly skips with
+    ``tail_span_db == 0`` — defeating the whole verification. Clip
+    ``end_time`` is stable ground truth, immune to the drift.
+
+    Falls back to ``last_event_time`` when no track carries arrangement
+    clips (an empty or session-only set) so the downstream
+    empty-arrangement guard still fires.
+    """
+    def _scan_max_clip_end() -> float:
+        max_end = 0.0
+        for track in context.song.tracks:
+            for clip in getattr(track, "arrangement_clips", None) or ():
+                end = float(getattr(clip, "end_time", 0.0))
+                if end > max_end:
+                    max_end = end
+        return max_end
+
+    content_end = float(context.run_on_main(_scan_max_clip_end))
+    if content_end > 0.0:
+        return content_end
+    return _arrangement_length_beats(context)
+
+
 def _wait_for_capture(
     context: LiveContext,
     target_beat: float,
@@ -323,8 +358,10 @@ def render_handler(
         is not part of the captured WAV — the patch's sfrecord~ only
         starts when transport crosses start_at_beat.
       - ``start_at_beat`` / ``stop_at_beat``: render window in beats.
-        ``stop_at_beat=None`` (default) uses the arrangement's full
-        length (``song.last_event_time``).
+        ``stop_at_beat=None`` (default) uses where the arrangement's
+        content ends (max clip ``end_time``; see ``_content_end_beats``),
+        NOT ``song.last_event_time`` — that accessor drifts past the real
+        content and compounds across renders.
 
     Returns a dict suitable for direct MCP response. Paths are
     absolute post-server-side absolutize::
@@ -355,12 +392,16 @@ def render_handler(
     captures_dir = Path(output_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Compute window. `song.last_event_time` is Live's arrangement length;
-    # an empty arrangement (last_event_time == 0) is the caller's bug, not
-    # ours — surface it loud.
+    # Compute window. The default dry-stop is where the arrangement's CONTENT
+    # ends (max clip end_time), NOT `song.last_event_time` — the latter drifts
+    # past the real content as the transport plays into the ring-out region and
+    # compounds across renders, marching the ring-out into already-decayed
+    # dead-air (see _content_end_beats). An empty arrangement (content end == 0
+    # and no last_event_time fallback) is the caller's bug, not ours — surface
+    # it loud below.
     end_beat = (
         int(stop_at_beat) if stop_at_beat is not None
-        else int(_arrangement_length_beats(context))
+        else int(_content_end_beats(context))
     )
     if end_beat <= start_at_beat:
         raise ValueError(
@@ -371,10 +412,10 @@ def render_handler(
             "stop_at_beat."
         )
 
-    # Record past the arrangement end so the reverb RING-OUT is captured: the
-    # dry input stops at end_beat, then transport runs into the empty
-    # post-arrangement region for ring_out_beats while the returns decay into
-    # silence (AUD-6R2M / AUD-4S8T). The analyzer's sfrecord~ finalizes when
+    # Record past the content end so the reverb RING-OUT is captured: the dry
+    # input stops at end_beat (where the last clip ends), then transport runs
+    # into the empty post-content region for ring_out_beats while the returns
+    # decay into silence (AUD-6R2M / AUD-4S8T). The analyzer's sfrecord~ finalizes when
     # transport crosses the stop-beat it is given, so we hand it this EXTENDED
     # stop; the manifest still records end_beat as stop_at_beat (the input-stop
     # boundary the read side measures the decay from) plus ring_out_beats.

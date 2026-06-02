@@ -309,6 +309,52 @@ def test_analyze_mix_no_ringout_emits_honest_insufficient_tail(tmp_path: Path):
     assert any(f.kind == "reverb_insufficient_tail" for f in report.findings)
 
 
+def test_derive_findings_insufficient_tail_remedy_is_mode_aware():
+    """The insufficient-tail remedy must match the failure mode. A genuinely
+    absent tail (span ~0) → re-render with more ring_out_beats. A captured-but-
+    too-shallow tail (the return's wet path is too quiet) must NOT tell the user
+    to add ring_out_beats — that adds time, not level, and won't help."""
+    from hallucinote.audio.analyze import _derive_findings
+    from hallucinote.audio.report import (
+        LoudnessMetrics,
+        ReverbVerification,
+        StemMetrics,
+    )
+
+    master = StemMetrics(
+        track_id="master",
+        surface_kind="master",
+        surface_name="Main",
+        loudness=LoudnessMetrics(-12.0, -14.0, -8.0, -1.0),
+    )
+    no_tail = ReverbVerification(
+        return_track_id="return:1", declared_rt60_s=2.0,
+        measured_rt60_s=float("nan"), within_tolerance=False,
+        tolerance_s=0.15, tail_span_db=0.0, sufficient_tail=False,
+    )
+    shallow_tail = ReverbVerification(
+        return_track_id="return:2", declared_rt60_s=0.8,
+        measured_rt60_s=float("nan"), within_tolerance=False,
+        tolerance_s=0.15, tail_span_db=13.5, sufficient_tail=False,
+    )
+    findings = _derive_findings(
+        master=master, stems=[], overshoots=[],
+        reverbs=[no_tail, shallow_tail],
+    )
+    by_subject = {
+        f.subject: f for f in findings
+        if f.kind == "reverb_insufficient_tail"
+    }
+    assert set(by_subject) == {"return:1", "return:2"}
+    # No tail at all → remedy IS more ring-out.
+    assert "ring_out_beats" in by_subject["return:1"].db_reference
+    # Shallow tail → remedy is NOT more ring-out; it points at the wet level.
+    shallow_msg = by_subject["return:2"].db_reference
+    assert "13.5" in shallow_msg
+    assert "won't help" in shallow_msg
+    assert "isolation" in shallow_msg or "send level" in shallow_msg
+
+
 def test_analyze_mix_records_skip_when_declared_return_not_in_capture(tmp_path: Path):
     """A send to a return that wasn't captured → record the skip with a
     teaching reason rather than crashing."""

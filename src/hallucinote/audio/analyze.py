@@ -795,6 +795,34 @@ def _derive_findings(
                 ),
             ))
         if not r.sufficient_tail:
+            # Two distinct failure modes need two distinct remedies — the old
+            # one-size message ("re-render with a larger ring_out_beats") is
+            # wrong for the second. tail_span_db tells them apart:
+            #   • ~0 dB  → no decaying tail captured at all: the ring-out was
+            #     too short, OR the dry-stop landed in trailing dead-air where
+            #     the reverb had already decayed (the render now anchors the
+            #     dry-stop to content end, so the latter should be rare). More
+            #     ring_out_beats is the right fix.
+            #   • >0 dB but too shallow to fit → a tail WAS captured, but the
+            #     return's wet path is too quiet to decay measurably above the
+            #     capture's noise floor. A longer ring-out adds TIME, not LEVEL
+            #     — it won't help. Raise the send into the return, or verify the
+            #     return in isolation (solo'd).
+            if r.tail_span_db <= 0.0:
+                reason = (
+                    "no reverb ring-out captured (clean decay span "
+                    f"{r.tail_span_db:.1f} dB) — re-render with a larger "
+                    "ring_out_beats; if the ring-out is already long, the "
+                    "dry-stop may have landed past the song's content"
+                )
+            else:
+                reason = (
+                    f"the captured ring-out affords only {r.tail_span_db:.1f} dB "
+                    "of clean decay above the noise floor — too little to fit a "
+                    "reliable RT60. The return's wet path is too quiet; raise its "
+                    "send level or verify the return in isolation. A longer "
+                    "ring_out_beats won't help (it adds time, not level)"
+                )
             findings.append(Finding(
                 kind="reverb_insufficient_tail",
                 severity="warning",
@@ -802,12 +830,7 @@ def _derive_findings(
                 metric="tail_span_db",
                 observed=r.tail_span_db,
                 expected=r.declared_rt60_s,
-                db_reference=(
-                    "no usable reverb ring-out in the capture (clean decay "
-                    f"span {r.tail_span_db:.1f} dB) — RT60 can't be measured "
-                    "from a truncated tail; re-render with a larger "
-                    "ring_out_beats so the reverb decays into silence"
-                ),
+                db_reference=reason,
             ))
             continue
         if not r.within_tolerance:

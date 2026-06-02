@@ -113,8 +113,11 @@ register(
                 required=False,
                 minimum=1,
                 description=(
-                    "Beat at which recording should stop. Default: the "
-                    "arrangement's last_event_time (full song)."
+                    "Beat at which the dry arrangement stops (the ring-out "
+                    "records after this). Default: where the arrangement's "
+                    "content ends (the last clip's end) — NOT last_event_time, "
+                    "which drifts past the real content as renders play into "
+                    "the ring-out region."
                 ),
             ),
             ParamSpec(

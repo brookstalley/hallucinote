@@ -65,18 +65,28 @@ class _FakeMixer:
         self.sends = []
 
 
+class _FakeClip:
+    """Minimal arrangement-clip stand-in: the render's content-end scan
+    reads only ``end_time`` (beats from arrangement start)."""
+
+    def __init__(self, end_time: float):
+        self.end_time = float(end_time)
+
+
 class _FakeTrack:
     def __init__(
         self,
         name: str,
         *,
         devices: list[_FakeDevice] | None = None,
+        arrangement_clips: list[_FakeClip] | None = None,
         has_audio_output: bool = True,
         has_midi_input: bool = False,
         is_foldable: bool = False,
     ):
         self.name = name
         self.devices = list(devices or [])
+        self.arrangement_clips = list(arrangement_clips or [])
         self.mixer_device = _FakeMixer()
         self.has_audio_output = has_audio_output
         self.has_midi_input = has_midi_input
@@ -386,7 +396,8 @@ def test_render_writes_manifest_and_returns_status_ok(
     assert manifest["status"] == "ok"
     assert manifest["song_slug"] == "test-song"
     assert manifest["captured_at"] == "20260526T120000Z"
-    # last_event_time fixture = 64 beats; stop_at_beat default uses it.
+    # Shared fixture has no arrangement clips, so the content-end scan falls
+    # back to last_event_time (=64); stop_at_beat default uses it.
     assert manifest["stop_at_beat"] == 64
     assert len(manifest["tracks"]) == 2
     assert len(manifest["returns"]) == 1
@@ -415,7 +426,8 @@ def test_render_captures_ring_out_past_arrangement_end(
         _now_iso=lambda: "20260602T120000Z",
     )
     manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
-    # last_event_time fixture = 64; stop_at_beat stays the arrangement end.
+    # No clips in the fixture → content-end scan falls back to last_event_time
+    # (=64); stop_at_beat stays that content end, ring-out is recorded after.
     assert manifest["stop_at_beat"] == 64
     assert manifest["ring_out_beats"] == 12.0
     # Every analyzer's recording stop = end_beat + ring_out_beats = 76.
@@ -423,6 +435,70 @@ def test_render_captures_ring_out_past_arrangement_end(
                    if addr == "/stop_at_beat"]
     assert stop_values, "no /stop_at_beat sent"
     assert set(stop_values) == {76}
+
+
+def test_render_default_stop_anchors_to_clip_content_end_not_last_event_time(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """Regression: the default dry-stop must anchor to where the arrangement's
+    CONTENT ends (max clip end_time), NOT song.last_event_time.
+
+    Live extends last_event_time to the furthest playhead, so the render's own
+    ring-out playback inflates it past the real content — and it compounds
+    across renders. If the dry-stop followed the inflated value, it would land
+    in trailing dead-air where the reverb has already decayed, the ring-out
+    would record silence, and the per-return RT60 would be unmeasurable. Here
+    the clips end at 48 while last_event_time is inflated to 64: the dry-stop
+    must be 48, and the analyzer's recording stop = 48 + ring_out (8) = 56."""
+    song = _FakeSong(
+        tracks=[
+            _FakeTrack("Drums", arrangement_clips=[_FakeClip(end_time=48.0)]),
+            _FakeTrack("Bass", arrangement_clips=[_FakeClip(end_time=32.0)]),
+        ],
+        returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
+        last_event_time=64.0,  # inflated past the real content end (48)
+    )
+    ctx = _FakeCtx(song)
+    render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=8.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["stop_at_beat"] == 48  # clip content end, NOT 64
+    stop_values = {args[0] for _p, addr, args in osc_sink if addr == "/stop_at_beat"}
+    assert stop_values == {56}  # 48 + 8 ring-out
+
+
+def test_render_default_stop_falls_back_to_last_event_time_when_no_clips(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """A session-only / empty-arrangement set has no arrangement clips, so the
+    content-end scan finds nothing and falls back to last_event_time — keeping
+    the downstream empty-arrangement guard live."""
+    song = _FakeSong(
+        tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],  # no arrangement_clips
+        returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
+        last_event_time=40.0,
+    )
+    ctx = _FakeCtx(song)
+    render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=0.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["stop_at_beat"] == 40  # fell back to last_event_time
 
 
 def test_render_ring_out_zero_records_to_arrangement_end(

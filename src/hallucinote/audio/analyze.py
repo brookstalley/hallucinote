@@ -40,8 +40,10 @@ from .cross_rhythm import (
     analyze_phasing_window,
     analyze_polymeter_window,
 )
+from .automation import DeclaredEnvelope, verify_envelope_realization
 from .masking import analyze_masking_window
 from .report import (
+    EnvelopeVerification,
     Finding,
     MasterOvershoot,
     MixReport,
@@ -119,6 +121,7 @@ def analyze_mix(
     captures_dir: Path | str,
     *,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
+    declared_envelopes: Sequence[DeclaredEnvelope] = (),
     sections: Sequence[SectionWindow] = (),
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
@@ -199,6 +202,13 @@ def analyze_mix(
         beat_map=beat_map,
     )
 
+    automation_verifications, automation_skips = _run_automation_verifications(
+        capture=capture,
+        declared_envelopes=declared_envelopes,
+        beat_map=beat_map,
+    )
+    skipped.extend(automation_skips)
+
     per_section, section_skips = _measure_sections(
         capture=capture,
         sections=sections,
@@ -215,6 +225,7 @@ def analyze_mix(
         stems=stem_metrics,
         overshoots=overshoots,
         reverbs=reverb_verifications,
+        automation=automation_verifications,
         sections=sections,
     )
 
@@ -228,6 +239,7 @@ def analyze_mix(
         returns=return_metrics,
         overshoots=overshoots,
         reverb_verifications=reverb_verifications,
+        automation_verifications=automation_verifications,
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
@@ -360,6 +372,56 @@ def _run_reverb_verifications(
             verification,
             contributing_track_ids=tuple(s.dry_track_id for s in sends),
             conflicting_declarations=conflicting,
+        ))
+    return verifications, skipped
+
+
+def _run_automation_verifications(
+    *,
+    capture: CaptureSet,
+    declared_envelopes: Sequence[DeclaredEnvelope],
+    beat_map: BeatSampleMap,
+) -> tuple[list[EnvelopeVerification], list[dict]]:
+    """Verify each declared automation envelope was realized in the audio.
+
+    Looks each envelope's target surface up in the capture, windows it around
+    every value-changing breakpoint, and confirms the expected change (timbre
+    shift for device_parameter, level step for send_level; mixer_volume/pan are
+    reported unverifiable — post-fader, invisible to the pre-fader stem).
+
+    Empty ``declared_envelopes`` produces a structured skip teaching the caller
+    to author automation — symmetric with the reverb and section skips.
+    """
+    if not declared_envelopes:
+        return [], [{
+            "kind": "automation_verification",
+            "reason": (
+                "no declared automation envelopes — author time-varying intent "
+                "(create_enum_envelope for a device-parameter flip, "
+                "generators.envelopes.volume_swell / a dynamic send) so the "
+                "analyzer can confirm it was realized in the render"
+            ),
+        }]
+
+    surfaces = {s.track_id: s for s in (*capture.stems, *capture.returns)}
+    verifications: list[EnvelopeVerification] = []
+    skipped: list[dict] = []
+    for env in declared_envelopes:
+        surface = surfaces.get(env.target_surface_id)
+        if surface is None:
+            skipped.append({
+                "kind": "automation_verification",
+                "reason": (
+                    f"declared envelope target {env.target_surface_id} "
+                    f"({env.target_kind}) not in capture (surfaces present: "
+                    f"{sorted(surfaces)})"
+                ),
+            })
+            continue
+        verifications.extend(verify_envelope_realization(
+            env, surface.audio,
+            sample_rate=capture.sample_rate,
+            beat_map=beat_map,
         ))
     return verifications, skipped
 
@@ -661,6 +723,7 @@ def _derive_findings(
     stems: list[StemMetrics],
     overshoots: list[MasterOvershoot],
     reverbs: list[ReverbVerification],
+    automation: Sequence[EnvelopeVerification] = (),
     sections: Sequence[SectionWindow] = (),
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
@@ -758,10 +821,23 @@ def _derive_findings(
                 db_reference=None,
             ))
 
+    for e in automation:
+        if e.measurable and not e.realized:
+            findings.append(Finding(
+                kind="automation_not_realized",
+                severity="warning",
+                subject=f"{e.target_surface_id} {e.parameter_path or e.target_kind}",
+                metric=e.metric,
+                observed=e.after,
+                expected=e.before,
+                db_reference=e.note,
+            ))
+
     return findings
 
 
 __all__ = [
+    "DeclaredEnvelope",
     "DeclaredReverbSend",
     "SectionWindow",
     "analyze_mix",

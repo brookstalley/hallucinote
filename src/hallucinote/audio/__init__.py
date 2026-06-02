@@ -31,9 +31,11 @@ inside ``src/hallucinote/``" — audio is a sibling of ``db``, ``sync``,
 from __future__ import annotations
 
 from .analyze import DeclaredReverbSend, analyze_mix
+from .automation import DeclaredEnvelope
 from .codeversion import disk_signature, is_stale, loaded_signature
 from .report import (
     BandContribution,
+    EnvelopeVerification,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
@@ -46,8 +48,10 @@ from .section import SectionWindow, TempoSegment
 
 __all__ = [
     "BandContribution",
+    "DeclaredEnvelope",
     "DeclaredReverbSend",
     "disk_signature",
+    "EnvelopeVerification",
     "Finding",
     "is_stale",
     "loaded_signature",

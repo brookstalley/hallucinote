@@ -31,6 +31,7 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # gated by runs_server_side=True).
 try:
     from hallucinote.audio import (
+        DeclaredEnvelope,
         DeclaredReverbSend,
         SectionWindow,
         TempoSegment,
@@ -50,6 +51,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     is_stale = None  # type: ignore[assignment]
     loaded_signature = None  # type: ignore[assignment]
+    DeclaredEnvelope = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
     TempoSegment = None  # type: ignore[assignment]
@@ -187,6 +189,89 @@ def _collect_declared_sends(
         )
         for row in rows
     ]
+
+
+def _collect_declared_envelopes(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredEnvelope"]:
+    """Lift DB automation envelopes into ``DeclaredEnvelope`` records for
+    ``analyze_mix``, resolving each to the capture surface it's measured on.
+
+    Surface resolution (the DB-UUID → ``track:N`` / ``return:N`` boundary):
+      - ``device_parameter`` → the track (or return) HOSTING the device
+        (device → chain → parent track/return → surface index). The pre-fader
+        stem captures the device's timbre change (e.g. the Amp Type flip).
+      - ``send_level`` → the RETURN the send feeds (more send → louder return).
+      - ``mixer_volume`` / ``mixer_pan`` → the track surface; passed through so
+        the audio module reports them unverifiable (post-fader, invisible to the
+        pre-fader stem) rather than dropping them silently.
+
+    Clip-/note-scoped MIDI automation (clip_cc, clip_pitch_bend,
+    note_expression) is not mix-audio automation — dropped here. Breakpoint
+    ``time_beats`` is already arrangement-local (song-absolute) beats for
+    mixer/send/device envelopes (schema), so no bar→beat conversion is needed.
+    Envelopes with fewer than two breakpoints carry no change to verify.
+    """
+    out: list["DeclaredEnvelope"] = []
+    for env in Q.get_envelopes_for_song(conn, song_id):
+        surface_id = _envelope_surface_id(conn, env)
+        if surface_id is None:
+            continue  # unresolvable, or a kind not verifiable from audio
+        bps = Q.get_breakpoints(conn, env["id"])
+        if len(bps) < 2:
+            continue
+        out.append(DeclaredEnvelope(
+            target_surface_id=surface_id,
+            target_kind=env["target_kind"],
+            parameter_path=env["parameter_path"],
+            breakpoints=tuple(
+                (float(b["time_beats"]), float(b["value"])) for b in bps
+            ),
+        ))
+    return out
+
+
+def _envelope_surface_id(
+    conn: "sqlite3.Connection", env: "sqlite3.Row",
+) -> "str | None":
+    """Capture surface (``track:N`` / ``return:N``) an envelope is measured on,
+    or None for kinds not verifiable from a captured surface."""
+    kind = env["target_kind"]
+    if kind in ("mixer_volume", "mixer_pan"):
+        return _track_surface(conn, env["target_track_id"])
+    if kind == "send_level":
+        return _return_surface(conn, env["target_send_return_id"])
+    if kind == "device_parameter":
+        device = Q.get_device(conn, env["target_device_id"])
+        if device is None:
+            return None
+        chain = Q.get_device_chain(conn, device["chain_id"])
+        if chain is None:
+            return None
+        if chain["parent_track_id"]:
+            return _track_surface(conn, chain["parent_track_id"])
+        if chain["parent_return_id"]:
+            return _return_surface(conn, chain["parent_return_id"])
+        return None  # device in a nested rack chain — not surface-resolvable yet
+    return None  # clip_cc / clip_pitch_bend / note_expression — not mix audio
+
+
+def _track_surface(conn: "sqlite3.Connection", track_id) -> "str | None":
+    if not track_id:
+        return None
+    track = Q.get_track(conn, track_id)
+    if track is None:
+        return None
+    return track_id_for_surface("track", int(track["track_index"]))
+
+
+def _return_surface(conn: "sqlite3.Connection", return_id) -> "str | None":
+    if not return_id:
+        return None
+    ret = Q.get_return(conn, return_id)
+    if ret is None:
+        return None
+    return track_id_for_surface("return", int(ret["position"]))
 
 
 def _collect_stem_gains(
@@ -329,6 +414,7 @@ def analyze_handler(
         song = Q.get_song_by_name(conn, song_slug)
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
+        declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
@@ -337,6 +423,7 @@ def analyze_handler(
     report = analyze_mix(
         captures_path,
         declared_reverb_sends=declared_sends,
+        declared_envelopes=declared_envelopes,
         sections=sections,
         tempo_map=tempo_map,
         # Masking is per-section evidence; enable it whenever the song declares

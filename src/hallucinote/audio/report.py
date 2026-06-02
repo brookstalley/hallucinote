@@ -123,6 +123,31 @@ class ReverbVerification:
 
 
 @dataclass(frozen=True)
+class EnvelopeVerification:
+    """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
+
+    One record per value-changing breakpoint of a declared envelope. ``metric``
+    + ``before`` / ``after`` are the measured quantity across the change
+    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db`` for
+    a send-level step). ``realized`` says whether the authored change actually
+    happened in the audio. ``measurable`` is False when the change can't be
+    verified from this capture — a post-fader kind (mixer_volume/pan) invisible
+    to the pre-fader stem, or a window too quiet to characterise; in that case
+    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is the
+    human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    target_surface_id: str
+    target_kind: str
+    parameter_path: str | None
+    at_beat: float
+    metric: str
+    before: float
+    after: float
+    measurable: bool
+    realized: bool
+    note: str
+
+
+@dataclass(frozen=True)
 class BandContribution:
     """Per-band ranking of stem RMS contribution within a section window.
 
@@ -460,6 +485,7 @@ class MixReport:
     returns: list[StemMetrics] = field(default_factory=list)
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
+    automation_verifications: list[EnvelopeVerification] = field(default_factory=list)
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
@@ -491,6 +517,9 @@ class MixReport:
             "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],
             "reverb_verifications": [
                 _reverb_to_dict(r) for r in self.reverb_verifications
+            ],
+            "automation_verifications": [
+                _envelope_to_dict(e) for e in self.automation_verifications
             ],
             "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
@@ -625,6 +654,21 @@ def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
         "sufficient_tail": r.sufficient_tail,
         "contributing_track_ids": list(r.contributing_track_ids),
         "conflicting_declarations": list(r.conflicting_declarations),
+    }
+
+
+def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
+    return {
+        "target_surface_id": e.target_surface_id,
+        "target_kind": e.target_kind,
+        "parameter_path": e.parameter_path,
+        "at_beat": e.at_beat,
+        "metric": e.metric,
+        "before": e.before,
+        "after": e.after,
+        "measurable": e.measurable,
+        "realized": e.realized,
+        "note": e.note,
     }
 
 

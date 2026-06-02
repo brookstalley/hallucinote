@@ -15,6 +15,7 @@ import numpy as np
 import soundfile as sf
 
 from hallucinote.audio import (
+    DeclaredEnvelope,
     DeclaredReverbSend,
     SectionWindow,
     TempoSegment,
@@ -26,6 +27,7 @@ from hallucinote.audio.reverb import REVERB_TOLERANCE_S
 from .fixtures import (
     SAMPLE_RATE,
     calibrated_pink_noise,
+    concat,
     convolve,
     onsets_at_beats,
     pink_noise,
@@ -292,6 +294,68 @@ def test_analyze_mix_records_skip_when_declared_return_not_in_capture(tmp_path: 
         "return:99" in s.get("reason", "")
         for s in report.skipped_analyses
     )
+
+
+# ---------- automation verification (AUD-8H2M) ----------
+
+
+def test_analyze_mix_verifies_declared_device_parameter_flip(tmp_path: Path):
+    """A declared Amp-Type flip with a real dark→bright timbre step at the
+    breakpoint reads as a realized automation change through analyze_mix."""
+    half = 2.0  # seconds; 16-beat span splits at beat 8 = the audio midpoint
+    stem = concat(sine(300.0, half, amplitude=0.5),
+                  sine(3500.0, half, amplitude=0.5))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:3", "03 Rhythm Gtr", stem)],
+        master_audio=stem.copy(),
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Amp Type",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    assert len(report.automation_verifications) == 1
+    v = report.automation_verifications[0]
+    assert v.target_surface_id == "track:3"
+    assert v.realized is True and v.measurable is True
+    assert not any(s.get("kind") == "automation_verification"
+                   for s in report.skipped_analyses)
+
+
+def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
+    """A flat stem at a declared flip → automation_not_realized finding."""
+    flat = sine(440.0, 4.0, amplitude=0.5)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:3", "03 Rhythm Gtr", flat)],
+        master_audio=flat.copy(),
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Amp Type",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    assert report.automation_verifications[0].realized is False
+    assert any(f.kind == "automation_not_realized" for f in report.findings)
+
+
+def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):
+    """No declared envelopes → a teaching skip, symmetric with reverb/section."""
+    flat = sine(440.0, 2.0, amplitude=0.5)
+    captures_dir = _write_synthetic_capture(
+        tmp_path, stems=[("track:1", "01", flat)], master_audio=flat.copy(),
+    )
+    report = analyze_mix(captures_dir)
+    assert report.automation_verifications == []
+    assert any(s.get("kind") == "automation_verification"
+               for s in report.skipped_analyses)
 
 
 # ---------- per-section windowing ----------

@@ -12,6 +12,7 @@ import json
 import pytest
 
 from hallucinote.audio.report import (
+    EnvelopeVerification,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
@@ -83,6 +84,20 @@ def test_to_json_dict_round_trips_through_json():
                 contributing_track_ids=("track:1", "track:4"),
             )
         ],
+        automation_verifications=[
+            EnvelopeVerification(
+                target_surface_id="track:3",
+                target_kind="device_parameter",
+                parameter_path="Amp Type",
+                at_beat=128.0,
+                metric="spectral_centroid_hz",
+                before=1240.0,
+                after=1880.0,
+                measurable=True,
+                realized=True,
+                note="timbre shift realized",
+            )
+        ],
         findings=[
             Finding(
                 kind="master_overshoot",
@@ -110,6 +125,11 @@ def test_to_json_dict_round_trips_through_json():
     assert rv["measurement_method"] == "decay_tail"
     assert rv["contributing_track_ids"] == ["track:1", "track:4"]
     assert rv["sufficient_tail"] is True
+    av = deserialized["automation_verifications"][0]
+    assert av["target_surface_id"] == "track:3"
+    assert av["target_kind"] == "device_parameter"
+    assert av["metric"] == "spectral_centroid_hz"
+    assert av["measurable"] is True and av["realized"] is True
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
     assert deserialized["compare_to"] is None  # reserved skeleton
 

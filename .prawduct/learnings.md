@@ -430,3 +430,9 @@ This session, harmonizing sun-zone-done's integration (a looped Phrygian riff �
 ## The toolkit removes bookkeeping — its absence is never a limit on the art
 
 **When a generator/helper/envelope-kind/device for what the music needs doesn't exist, hand-author it (notes/breakpoints/chains are plain lists) or build the capability — never scope the request down to the toolkit, and never silently substitute a lesser effect. The toolkit removes bookkeeping; it never caps what's authorable. See `docs/song-authoring-conventions.md` -> "The toolkit reduces work — it never limits what you can author".**
+
+## A file-mutating tool that errors mid-run is not a clean no-op — verify, then prefer a deterministic script
+
+**When a file-mutating skill or tool errors mid-run (e.g. the forked `/backlog` skill dying on an API socket error), VERIFY the file's actual state before retrying or proceeding — a crash can leave a partial mutation with real data loss, not a rollback. For bulk structural edits (backlog section-moves, mass reindents, multi-item status flips) prefer a deterministic, idempotent script you can re-verify (parse → transform by id → assert no dupes/leaks) over an LLM-driven multi-edit that can die halfway.**
+
+This session the `/backlog` skill crashed mid-write and left the backlog with one item DELETED-but-not-reinserted (data loss) plus four half-moved. Caught by re-reading the file (grep each target id's section + status) instead of trusting the error as a no-op, then repaired forward with a small parse-sections/move-by-id script. That same script shape then did the merged-item true-up, the ship-on-merge status flips, and (a sibling form) the helper-hoist across four song build.py files — each verified by a no-dups/no-leaks grep. Deterministic-script-for-bulk-edits became the session default once the skill proved fragile.

@@ -65,18 +65,28 @@ class _FakeMixer:
         self.sends = []
 
 
+class _FakeClip:
+    """Minimal arrangement-clip stand-in: the render's content-end scan
+    reads only ``end_time`` (beats from arrangement start)."""
+
+    def __init__(self, end_time: float):
+        self.end_time = float(end_time)
+
+
 class _FakeTrack:
     def __init__(
         self,
         name: str,
         *,
         devices: list[_FakeDevice] | None = None,
+        arrangement_clips: list[_FakeClip] | None = None,
         has_audio_output: bool = True,
         has_midi_input: bool = False,
         is_foldable: bool = False,
     ):
         self.name = name
         self.devices = list(devices or [])
+        self.arrangement_clips = list(arrangement_clips or [])
         self.mixer_device = _FakeMixer()
         self.has_audio_output = has_audio_output
         self.has_midi_input = has_midi_input
@@ -168,8 +178,22 @@ class _FakeSong:
         self.last_event_time = last_event_time
         self.current_song_time = 0.0
         self.is_playing = False
+        # `loop` records every write so tests can assert the render disabled it
+        # for the capture and restored it (the ring-out needs transport to run
+        # into empty arrangement, not loop back). Starts True.
+        self.loop_writes: list[bool] = []
+        self._loop = True
         self.start_playing_calls = 0
         self.stop_playing_calls = 0
+
+    @property
+    def loop(self):
+        return self._loop
+
+    @loop.setter
+    def loop(self, value):
+        self._loop = bool(value)
+        self.loop_writes.append(self._loop)
 
     def start_playing(self):
         self.is_playing = True
@@ -257,11 +281,22 @@ class _StubSidecar:
 # --- fixtures --------------------------------------------------------
 
 
+def _master_with_analyzer(name: str = "Master") -> _FakeTrack:
+    """Real usage requires the master analyzer placed by hand once — Live 12.4
+    can't auto-load onto the master (DEV-2M9K), so the render sweep is
+    detect-only there. Pre-place it so the sweep takes the supported
+    detect-and-configure path instead of failing loudly."""
+    return _FakeTrack("Master" if name == "Master" else name, devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name="HallucinoteAnalyzer"),
+    ])
+
+
 @pytest.fixture
 def ctx_two_tracks_one_return() -> _FakeCtx:
     return _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],
         returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
         last_event_time=64.0,
     ))
 
@@ -290,9 +325,10 @@ def test_ensure_loaded_action_returns_layout(ctx_two_tracks_one_return):
         context=ctx_two_tracks_one_return,
     )
     assert resp.ok is True, resp.error
-    # 2 tracks + 1 return + master = 4 instances; all loaded this sweep.
-    assert resp.result["loaded_count"] == 4
-    assert resp.result["existing_count"] == 0
+    # 2 tracks + 1 return loaded; the pre-placed master is detect-only
+    # (DEV-2M9K) → 4 instances, 3 loaded + 1 existing.
+    assert resp.result["loaded_count"] == 3
+    assert resp.result["existing_count"] == 1
     assert len(resp.result["instances"]) == 4
     surfaces = {(i["surface_kind"], i["surface_index"]) for i in resp.result["instances"]}
     assert surfaces == {
@@ -312,7 +348,7 @@ def test_ensure_loaded_idempotent_across_action_dispatches(ctx_two_tracks_one_re
         context=ctx_two_tracks_one_return,
     )
     assert first.ok and second.ok
-    assert first.result["loaded_count"] == 4
+    assert first.result["loaded_count"] == 3  # master pre-placed (detect-only)
     assert second.result["loaded_count"] == 0
     assert second.result["existing_count"] == 4
     # No duplicates on any surface.
@@ -360,7 +396,8 @@ def test_render_writes_manifest_and_returns_status_ok(
     assert manifest["status"] == "ok"
     assert manifest["song_slug"] == "test-song"
     assert manifest["captured_at"] == "20260526T120000Z"
-    # last_event_time fixture = 64 beats; stop_at_beat default uses it.
+    # Shared fixture has no arrangement clips, so the content-end scan falls
+    # back to last_event_time (=64); stop_at_beat default uses it.
     assert manifest["stop_at_beat"] == 64
     assert len(manifest["tracks"]) == 2
     assert len(manifest["returns"]) == 1
@@ -369,6 +406,161 @@ def test_render_writes_manifest_and_returns_status_ok(
     for entry in manifest["tracks"] + manifest["returns"]:
         assert entry["filename"].endswith(".wav")
         assert Path(entry["absolute_path"]).is_absolute()
+
+
+def test_render_captures_ring_out_past_arrangement_end(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """AUD-6R2M/AUD-4S8T: the analyzer is told to record past the arrangement
+    end by ring_out_beats so the reverb decays into a captured tail. The
+    manifest records stop_at_beat (the input-stop boundary) AND ring_out_beats
+    separately; the /stop_at_beat sent to every analyzer is the EXTENDED stop."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=12.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+        _now_iso=lambda: "20260602T120000Z",
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    # No clips in the fixture → content-end scan falls back to last_event_time
+    # (=64); stop_at_beat stays that content end, ring-out is recorded after.
+    assert manifest["stop_at_beat"] == 64
+    assert manifest["ring_out_beats"] == 12.0
+    # Every analyzer's recording stop = end_beat + ring_out_beats = 76.
+    stop_values = [args[0] for _port, addr, args in osc_sink
+                   if addr == "/stop_at_beat"]
+    assert stop_values, "no /stop_at_beat sent"
+    assert set(stop_values) == {76}
+
+
+def test_render_default_stop_anchors_to_clip_content_end_not_last_event_time(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """Regression: the default dry-stop must anchor to where the arrangement's
+    CONTENT ends (max clip end_time), NOT song.last_event_time.
+
+    Live extends last_event_time to the furthest playhead, so the render's own
+    ring-out playback inflates it past the real content — and it compounds
+    across renders. If the dry-stop followed the inflated value, it would land
+    in trailing dead-air where the reverb has already decayed, the ring-out
+    would record silence, and the per-return RT60 would be unmeasurable. Here
+    the clips end at 48 while last_event_time is inflated to 64: the dry-stop
+    must be 48, and the analyzer's recording stop = 48 + ring_out (8) = 56."""
+    song = _FakeSong(
+        tracks=[
+            _FakeTrack("Drums", arrangement_clips=[_FakeClip(end_time=48.0)]),
+            _FakeTrack("Bass", arrangement_clips=[_FakeClip(end_time=32.0)]),
+        ],
+        returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
+        last_event_time=64.0,  # inflated past the real content end (48)
+    )
+    ctx = _FakeCtx(song)
+    render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=8.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["stop_at_beat"] == 48  # clip content end, NOT 64
+    stop_values = {args[0] for _p, addr, args in osc_sink if addr == "/stop_at_beat"}
+    assert stop_values == {56}  # 48 + 8 ring-out
+
+
+def test_render_default_stop_falls_back_to_last_event_time_when_no_clips(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """A session-only / empty-arrangement set has no arrangement clips, so the
+    content-end scan finds nothing and falls back to last_event_time — keeping
+    the downstream empty-arrangement guard live."""
+    song = _FakeSong(
+        tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],  # no arrangement_clips
+        returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
+        last_event_time=40.0,
+    )
+    ctx = _FakeCtx(song)
+    render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=0.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["stop_at_beat"] == 40  # fell back to last_event_time
+
+
+def test_render_ring_out_zero_records_to_arrangement_end(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """ring_out_beats=0 (e.g. no reverb to verify) → recording stop is the
+    arrangement end, no extra tail."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=0.0,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["ring_out_beats"] == 0.0
+    stop_values = {args[0] for _p, addr, args in osc_sink if addr == "/stop_at_beat"}
+    assert stop_values == {64}  # == end_beat, no ring-out
+
+
+def test_render_manifest_records_actual_rounded_ring_out(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """The analyzer stop is `/stop_at_beat <int>`, so a fractional request is
+    rounded to whole beats. The manifest must record what was ACTUALLY
+    recorded (the rounded int), not the float request — the read side trusts
+    it to map the captured samples onto [stop, stop+ring_out]."""
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        ring_out_beats=7.4,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    manifest = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert manifest["ring_out_beats"] == 7          # 7.4 → 7 whole beats
+    stop_values = {args[0] for _p, addr, args in osc_sink if addr == "/stop_at_beat"}
+    assert stop_values == {71}                       # 64 + 7
+
+
+def test_render_disables_loop_for_capture_then_restores_it(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """Loop must be OFF during the ring-out (transport runs into empty
+    arrangement, not looping back), and restored to its prior value after."""
+    song = ctx_two_tracks_one_return.song
+    assert song.loop is True  # fixture default
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 9999.0,
+    )
+    # Disabled for the capture, then restored to the original True.
+    assert song.loop_writes == [False, True]
+    assert song.loop is True
 
 
 def test_render_sends_path_track_id_and_beat_window_via_osc(

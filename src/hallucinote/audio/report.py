@@ -87,19 +87,64 @@ class MasterOvershoot:
 
 @dataclass(frozen=True)
 class ReverbVerification:
-    """One declared dry-stem → wet-return-send verification result.
+    """One per-RETURN RT60 verification result.
 
-    ``measured_rt60_s`` is the RT60 measured from the Wiener-deconvolved
-    IR via Schroeder backward energy integration
-    (``pyroomacoustics.experimental.rt60.measure_rt60``).
-    ``within_tolerance`` is ``abs(measured - declared) <= tolerance_s``.
+    RT60 is a property of the return's reverb *device*, not of any single
+    send into it — so it is measured ONCE per return, from the return's
+    own captured decay tail (ring-out) via Schroeder backward energy
+    integration (``pyroomacoustics.experimental.rt60.measure_rt60``),
+    dry-source-free. A return fed by N sends declares RT60 N times
+    (redundantly): ``contributing_track_ids`` records those dry sources and
+    ``conflicting_declarations`` is non-empty when the per-send
+    declarations disagree (one device cannot have two decay times).
+
+    Honesty fields surface measurement confidence rather than a bare
+    number. ``measurement_method`` names the technique; ``decay_db_used``
+    is the decay window actually fit (RT20/RT30 extrapolated to RT60 when
+    the tail is short); ``tail_span_db`` is the clean decay the tail
+    afforded; ``sufficient_tail`` is False when the capture has no usable
+    ring-out — then ``measured_rt60_s`` is NaN and ``within_tolerance`` is
+    False (we refuse to extrapolate RT60 from noise; the fix is a re-render
+    with a captured ring-out, see ``render`` ``ring_out_beats``).
+    ``within_tolerance`` is ``sufficient_tail and
+    abs(measured - declared) <= tolerance_s``.
     """
-    dry_track_id: str
-    wet_return_track_id: str
+    return_track_id: str
     declared_rt60_s: float
     measured_rt60_s: float
     within_tolerance: bool
     tolerance_s: float
+    measurement_method: str = "decay_tail"
+    decay_db_used: float = 60.0
+    tail_span_db: float = 0.0
+    sufficient_tail: bool = True
+    contributing_track_ids: tuple[str, ...] = ()
+    conflicting_declarations: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnvelopeVerification:
+    """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
+
+    One record per value-changing breakpoint of a declared envelope. ``metric``
+    + ``before`` / ``after`` are the measured quantity across the change
+    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db`` for
+    a send-level step). ``realized`` says whether the authored change actually
+    happened in the audio. ``measurable`` is False when the change can't be
+    verified from this capture — a post-fader kind (mixer_volume/pan) invisible
+    to the pre-fader stem, or a window too quiet to characterise; in that case
+    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is the
+    human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    target_surface_id: str
+    target_kind: str
+    parameter_path: str | None
+    at_beat: float
+    metric: str
+    before: float
+    after: float
+    measurable: bool
+    realized: bool
+    note: str
 
 
 @dataclass(frozen=True)
@@ -440,9 +485,14 @@ class MixReport:
     returns: list[StemMetrics] = field(default_factory=list)
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
+    automation_verifications: list[EnvelopeVerification] = field(default_factory=list)
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
+    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
+    # analysis so the correction is visible, not silent. None when analysis ran
+    # without an alignment pass (e.g. a directly-constructed report in a test).
+    alignment: dict[str, Any] | None = None
     compare_to: dict[str, Any] | None = None
     schema_version: str = SCHEMA_VERSION
 
@@ -468,9 +518,13 @@ class MixReport:
             "reverb_verifications": [
                 _reverb_to_dict(r) for r in self.reverb_verifications
             ],
+            "automation_verifications": [
+                _envelope_to_dict(e) for e in self.automation_verifications
+            ],
             "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
+            "alignment": self.alignment,
             "compare_to": self.compare_to,
         }
 
@@ -589,12 +643,32 @@ def _overshoot_to_dict(o: MasterOvershoot) -> dict[str, Any]:
 
 def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
     return {
-        "dry_track_id": r.dry_track_id,
-        "wet_return_track_id": r.wet_return_track_id,
+        "return_track_id": r.return_track_id,
         "declared_rt60_s": r.declared_rt60_s,
         "measured_rt60_s": r.measured_rt60_s,
         "within_tolerance": r.within_tolerance,
         "tolerance_s": r.tolerance_s,
+        "measurement_method": r.measurement_method,
+        "decay_db_used": r.decay_db_used,
+        "tail_span_db": r.tail_span_db,
+        "sufficient_tail": r.sufficient_tail,
+        "contributing_track_ids": list(r.contributing_track_ids),
+        "conflicting_declarations": list(r.conflicting_declarations),
+    }
+
+
+def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
+    return {
+        "target_surface_id": e.target_surface_id,
+        "target_kind": e.target_kind,
+        "parameter_path": e.parameter_path,
+        "at_beat": e.at_beat,
+        "metric": e.metric,
+        "before": e.before,
+        "after": e.after,
+        "measurable": e.measurable,
+        "realized": e.realized,
+        "note": e.note,
     }
 
 

@@ -233,6 +233,16 @@ class _FakeCtx:
         return fn()
 
 
+def _master_with_analyzer(name: str = "Master") -> _FakeTrack:
+    """Real usage requires the master analyzer placed BY HAND once — Live 12.4
+    can't auto-load onto the master (DEV-2M9K), so the sweep is detect-only
+    there. Pre-place it so a sweep exercises the supported detect-and-configure
+    path instead of the loud "add it by hand" failure."""
+    return _FakeTrack(name, devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+    ])
+
+
 # --- track_id derivation ---------------------------------------------
 
 
@@ -251,19 +261,30 @@ def test_track_id_for_surface_rejects_unknown_kind():
 # --- empty sweep on bare song ----------------------------------------
 
 
-def test_sweep_loads_analyzer_on_master_only_when_no_other_surfaces():
-    """A song with no tracks + no returns + just master still gets one
-    analyzer on master."""
-    ctx = _FakeCtx(_FakeSong())
+def test_sweep_configures_preplaced_master_analyzer():
+    """A song with only the master: since Live can't auto-load onto the master
+    (DEV-2M9K), the analyzer is placed by hand and the sweep DETECTS and
+    configures it — it is never loaded/duplicated."""
+    ctx = _FakeCtx(_FakeSong(master=_master_with_analyzer()))
     layout = ensure_analyzers_loaded(ctx)
     assert len(layout.instances) == 1
     inst = layout.instances[0]
     assert inst.surface_kind == "master"
     assert inst.track_id == "master"
-    assert inst.was_loaded is True
-    # Loaded into a fresh chain at position 1.
+    assert inst.was_loaded is False  # detected, not loaded
     assert inst.device_index == 1
+    # Detect-only: the pre-placed analyzer is not duplicated.
     assert len(ctx.song.master_track.devices) == 1
+
+
+def test_sweep_fails_loudly_when_master_analyzer_absent():
+    """No master analyzer and no LOM way to add one (DEV-2M9K) → the sweep must
+    raise an actionable error pointing at the one-time manual placement, not
+    silently mis-load a regular track or skip the structurally-required
+    master."""
+    ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("Drums")]))  # default empty master
+    with pytest.raises(RuntimeError, match="by hand"):
+        ensure_analyzers_loaded(ctx)
 
 
 # --- idempotency: the most load-bearing property ---------------------
@@ -275,11 +296,12 @@ def test_sweep_is_idempotent_no_duplicates():
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],
         returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
     ))
 
     first = ensure_analyzers_loaded(ctx)
-    assert first.loaded_count == 4  # 2 tracks + 1 return + master
-    assert first.existing_count == 0
+    assert first.loaded_count == 3  # 2 tracks + 1 return (master is pre-placed)
+    assert first.existing_count == 1  # master detected, not loaded (DEV-2M9K)
 
     # All four surfaces should now have exactly one analyzer each.
     chain_counts_after_first = [
@@ -321,6 +343,7 @@ def test_sweep_detects_existing_analyzer_does_not_reload():
     eq = _FakeDevice(class_display_name="EQ Eight")
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums", devices=[eq, existing])],
+        master=_master_with_analyzer(),
     ))
 
     layout = ensure_analyzers_loaded(ctx)
@@ -329,9 +352,10 @@ def test_sweep_detects_existing_analyzer_does_not_reload():
     assert track_inst.was_loaded is False
     # Found at position 2 (1-based), not 1 — order in the chain matters.
     assert track_inst.device_index == 2
-    # Master still got a fresh load.
+    # Master is detect-only (DEV-2M9K) — the pre-placed analyzer is detected,
+    # never loaded.
     master_inst = by_surface[("master", 0)]
-    assert master_inst.was_loaded is True
+    assert master_inst.was_loaded is False
     # Track chain unchanged.
     assert len(ctx.song.tracks[0].devices) == 2
 
@@ -346,6 +370,7 @@ def test_port_assignment_is_deterministic_per_surface():
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("T1"), _FakeTrack("T2"), _FakeTrack("T3")],
         returns=[_FakeTrack("A-Rev"), _FakeTrack("B-Del")],
+        master=_master_with_analyzer(),
     ))
     layout = ensure_analyzers_loaded(ctx)
     by_tid = layout.by_track_id()
@@ -370,6 +395,7 @@ def test_sweep_writes_per_instance_port_via_live_param():
     which would cross-contaminate render targets."""
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("T1"), _FakeTrack("T2")],
+        master=_master_with_analyzer(),
     ))
     ensure_analyzers_loaded(ctx)
 
@@ -391,7 +417,9 @@ def test_sweep_writes_per_instance_port_via_live_param():
 
 
 def test_sweep_custom_emit_port_propagates():
-    ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("T1")]))
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[_FakeTrack("T1")], master=_master_with_analyzer(),
+    ))
     # Stay within the patch's documented Port range (11000-11400 — see
     # HallucinoteAnalyzer.amxd.spec.md). The active band is 11020-11221.
     layout = ensure_analyzers_loaded(ctx, emit_port=11250)
@@ -407,7 +435,7 @@ def test_sweep_skips_group_tracks():
     members. Skipping them avoids double-counting audio at render time."""
     group = _FakeTrack("Drums Group", is_foldable=True)
     leaf = _FakeTrack("Kick")
-    ctx = _FakeCtx(_FakeSong(tracks=[group, leaf]))
+    ctx = _FakeCtx(_FakeSong(tracks=[group, leaf], master=_master_with_analyzer()))
     layout = ensure_analyzers_loaded(ctx)
     surfaces = {(i.surface_kind, i.surface_index) for i in layout.instances}
     # Track index 2 (the leaf) is captured; track index 1 (the group) is not.
@@ -416,10 +444,13 @@ def test_sweep_skips_group_tracks():
 
 
 def test_sweep_skips_tracks_with_no_audio_output():
-    ctx = _FakeCtx(_FakeSong(tracks=[
-        _FakeTrack("Mute Stub", has_audio_output=False),
-        _FakeTrack("Audio Track"),
-    ]))
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[
+            _FakeTrack("Mute Stub", has_audio_output=False),
+            _FakeTrack("Audio Track"),
+        ],
+        master=_master_with_analyzer(),
+    ))
     layout = ensure_analyzers_loaded(ctx)
     surfaces = {(i.surface_kind, i.surface_index) for i in layout.instances}
     assert ("track", 2) in surfaces
@@ -433,6 +464,7 @@ def test_layout_helpers_round_trip_instances():
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("T")],
         returns=[_FakeTrack("R")],
+        master=_master_with_analyzer(),
     ))
     layout = ensure_analyzers_loaded(ctx)
     by_tid = layout.by_track_id()
@@ -457,12 +489,11 @@ def test_layout_helpers_round_trip_instances():
 
 
 def test_sweep_marshals_each_live_touch_through_run_on_main():
-    """Each per-surface bout = 1 surface plan + 1 detect + 1 load + 2 set_param
-    = 5 run_on_main calls (when the surface needs a load). Plus one
-    initial run_on_main for the surface-list snapshot. With 2 tracks +
-    1 return + master = 4 surfaces, all loaded fresh:
-        1 (plan) + 4 surfaces * (1 detect + 1 load + 2 set_param)
-        = 1 + 4 * 4 = 17 run_on_main bouts.
+    """A loaded surface = 1 detect + 1 load + 2 set_param = 4 bouts; the
+    detect-only master (DEV-2M9K — pre-placed, never loaded) = 1 detect +
+    2 set_param = 3 bouts. Plus one initial run_on_main for the surface-list
+    snapshot. With 2 tracks + 1 return loaded fresh + a pre-placed master:
+        1 (plan) + 3 loaded * 4 + 1 master * 3 = 16 run_on_main bouts.
 
     The exact count matters less than the discipline: more than one bout
     per Live touch means the worker thread is yielding control between
@@ -472,14 +503,14 @@ def test_sweep_marshals_each_live_touch_through_run_on_main():
     ctx = _FakeCtx(_FakeSong(
         tracks=[_FakeTrack("Drums"), _FakeTrack("Bass")],
         returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
     ))
     ensure_analyzers_loaded(ctx)
-    # Detect + load + 2 set_param per surface, plus a single initial
-    # surface-list snapshot bout. The lower bound (>= 3 per surface +
-    # 1) is what guards against re-introducing the worker-side bundling
-    # — if the regression collapses everything into one run_on_main,
-    # the count drops to 1.
-    assert ctx.run_on_main_calls >= 4 * 4 + 1
+    # 3 loaded surfaces * (detect + load + 2 set_param) + detect-only master
+    # (detect + 2 set_param) + 1 surface-list snapshot. The lower bound guards
+    # against re-introducing the worker-side bundling — if the regression
+    # collapses everything into one run_on_main, the count drops to 1.
+    assert ctx.run_on_main_calls >= 3 * 4 + 3 + 1
 
 
 def test_sweep_when_analyzer_already_present_still_bounces_per_touch():
@@ -487,11 +518,14 @@ def test_sweep_when_analyzer_already_present_still_bounces_per_touch():
     per-surface detect + 2 set_param writes. Even with nothing to load,
     each Live access is its own bout."""
     existing = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
-    ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("T1", devices=[existing])]))
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[_FakeTrack("T1", devices=[existing])],
+        master=_master_with_analyzer(),
+    ))
     before = ctx.run_on_main_calls
     ensure_analyzers_loaded(ctx)
     # 1 plan + (1 detect + 2 set_param) per surface × 2 surfaces (T1 + master)
-    # = 1 + 6 = 7. T1 skips the load bout (analyzer is already there);
-    # master does the load bout (+1).
+    # = 1 + 6 = 7. Both skip the load bout: T1's analyzer is already present,
+    # and the master is detect-only (DEV-2M9K — never auto-loaded).
     delta = ctx.run_on_main_calls - before
     assert delta >= 7

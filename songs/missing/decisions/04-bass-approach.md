@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [bass, voicing, fifths, sound-design]
+---
+
 # 04 — Bass approach: 5ths, weightless, never pedal
 
 **Date:** 2026-06-01

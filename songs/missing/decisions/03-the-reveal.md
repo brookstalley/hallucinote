@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [reveal, sub-oscillator, root, sound-design]
+---
+
 # 03 — The reveal: reserved sub octave + sub-oscillator root
 
 **Date:** 2026-06-01

@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [verse, voicing, harmony, cinematic]
+---
+
 # 15 — Verse voicings (cinematic: sustained open pads)
 
 **Date:** 2026-06-01

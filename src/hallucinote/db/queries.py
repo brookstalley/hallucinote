@@ -328,6 +328,19 @@ def get_device_chains_for_return(
     ).fetchall()
 
 
+def get_device_chain(
+    conn: sqlite3.Connection,
+    chain_id: str,
+) -> sqlite3.Row | None:
+    """One device chain by id. Carries the polymorphic parent (parent_track_id
+    / parent_return_id / parent_rack_device_id) — used to resolve a device back
+    to the surface (track or return) it sits on, e.g. for the audio analyzer's
+    device-parameter automation verification."""
+    return conn.execute(
+        "SELECT * FROM device_chains WHERE id = ?", (chain_id,)
+    ).fetchone()
+
+
 def get_device_chains_for_rack_device(
     conn: sqlite3.Connection,
     device_id: str,

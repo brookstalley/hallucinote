@@ -1,3 +1,10 @@
+---
+kind: decision
+scope: song
+date: 2026-06-01
+tags: [chorus, voicing, harmony, synthpop]
+---
+
 # 14 — Chorus voicings (synthpop: dazzling arp + backbeat stabs)
 
 **Date:** 2026-06-01

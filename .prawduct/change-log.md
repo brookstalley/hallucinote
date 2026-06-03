@@ -4,6 +4,39 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
+
+<!-- chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M status=shipped release=unreleased scope=audio-verification -->
+
+Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
+verification surfaces trustworthy on real multi-track songs. (`release=unreleased`:
+post-v1.4.0 work, no release cut yet — see backlog VEW-9QH4. Live re-render
+validation of the real reverb tail + the Amp-flip is deferred to the user.)
+
+- **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source
+  single-dry deconvolution (which returned 252–370 s on real 5–6-send returns)
+  with a dry-source-free measurement: RT60 once **per return** from the return's
+  own captured ring-out via Schroeder backward integration. `ReverbVerification`
+  reshaped per-return with honesty fields; refuses to fabricate a number
+  (`sufficient_tail=False`/NaN) when no ring-out exists. On the real sun-zone
+  capture: 11 garbage per-send values → 2 honest per-return skips.
+- **Source-side ring-out capture (AUD-4S8T).** A measure-first check showed the
+  real capture has no ring-out (master plays to within 35 ms of the file end).
+  `render.py` now records `ring_out_beats` (default 8) past the arrangement end
+  so the reverb decays into a captured tail — Python-only, **no `.amxd` change**
+  (the device records to whatever stop-beat it's handed). Loop forced off +
+  restored; manifest records the actual rounded ring-out.
+- **Automation realization verification (AUD-8H2M).** New `audio/automation.py`
+  windows each declared envelope breakpoint and reports realized-vs-declared: a
+  device-parameter timbre flip (Amp Type) as a directional spectral-centroid
+  shift, a dynamic send as a level step. `mixer_volume`/`pan` are reported
+  unverifiable (post-fader, invisible to the pre-fader stem) — master-bus
+  windowing is a follow-up.
+
+Two cumulative `/critic` passes (0 BLOCKING each); all warnings/notes resolved.
+Full suite 2840 passed / 0 failed (18 `songs/missing` corpus-parse failures are a
+pre-existing, user-acknowledged-out-of-scope gap in a different song, deselected).
+
 ## 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
 
 <!-- chunks=arrangement-1-5 status=shipped release=v1.4.0 scope=arrangement-model -->

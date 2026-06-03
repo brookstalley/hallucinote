@@ -1,3 +1,9 @@
+---
+kind: annotation
+scope: song
+tags: [theme, intent, concept, missing-root, loss-of-purpose]
+---
+
 # THEME — the spine of "missing"
 
 > **This is the north star.** Every other decision in this song — harmonic, rhythmic,

@@ -37,6 +37,7 @@ from pathlib import Path
 
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
+from hallucinote.authoring import arrange_section
 from hallucinote.generators import bass, drums, harmony
 
 # Per-branch DB path so feature branches don't clobber each other's state.
@@ -77,14 +78,6 @@ C_PAD  = [C3, E3, G3]        # bVI
 def _note(pitch: int, start: float, dur: float, vel: int) -> dict:
     return {"pitch": pitch, "start_beats": start,
             "duration_beats": dur, "velocity": vel}
-
-
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
-
-
-def _returns_by_name(conn, song_id: str) -> dict[str, str]:
-    return {row["name"]: row["id"] for row in Q.get_returns_for_song(conn, song_id)}
 
 
 # ---------------------------------------------------------------------------
@@ -390,16 +383,6 @@ def _build_outro(conn, song_id, tracks) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _arrange_section(conn, song_id, tracks, clips: dict[str, str],
-                     *, start_bar: float, end_bar: float) -> None:
-    for track_name, clip_id in clips.items():
-        M.add_arrangement_clip(
-            conn, song_id=song_id,
-            track_id=tracks[track_name], clip_id=clip_id,
-            start_bar=start_bar, end_bar=end_bar,
-        )
-
-
 def _author_envelopes(conn, song_id, tracks, returns) -> None:
     """Envelope authoring — WAVE 0 FINDINGS REIFIED AT V1.
 
@@ -508,8 +491,8 @@ def build(reset: bool = False) -> str:
                           (CHORUS3_BAR, "chorus"), (OUTRO_BAR, "outro")]:
             M.add_cue_point(conn, song_id=song_id, position_bar=float(bar), name=name)
 
-        tracks = _tracks_by_name(conn, song_id)
-        returns = _returns_by_name(conn, song_id)
+        tracks = Q.tracks_by_name(conn, song_id)
+        returns = Q.returns_by_name(conn, song_id)
 
         # Build each section's clips. Audio tracks (03 Rhythm Guitar, 04 Lead
         # Guitar, 07 Lead Vocal, 08 Parallel Comp Bus) get NO clips — they're
@@ -524,21 +507,21 @@ def build(reset: bool = False) -> str:
         outro_clips    = _build_outro(conn, song_id, tracks)
 
         # Arrangement.
-        _arrange_section(conn, song_id, tracks, intro_clips,
+        arrange_section(conn, song_id, tracks, intro_clips,
                          start_bar=float(INTRO_BAR),   end_bar=float(VERSE1_BAR))
-        _arrange_section(conn, song_id, tracks, verse1_clips,
+        arrange_section(conn, song_id, tracks, verse1_clips,
                          start_bar=float(VERSE1_BAR),  end_bar=float(CHORUS1_BAR))
-        _arrange_section(conn, song_id, tracks, chorus1_clips,
+        arrange_section(conn, song_id, tracks, chorus1_clips,
                          start_bar=float(CHORUS1_BAR), end_bar=float(VERSE2_BAR))
-        _arrange_section(conn, song_id, tracks, verse2_clips,
+        arrange_section(conn, song_id, tracks, verse2_clips,
                          start_bar=float(VERSE2_BAR),  end_bar=float(CHORUS2_BAR))
-        _arrange_section(conn, song_id, tracks, chorus2_clips,
+        arrange_section(conn, song_id, tracks, chorus2_clips,
                          start_bar=float(CHORUS2_BAR), end_bar=float(BRIDGE_BAR))
-        _arrange_section(conn, song_id, tracks, bridge_clips,
+        arrange_section(conn, song_id, tracks, bridge_clips,
                          start_bar=float(BRIDGE_BAR),  end_bar=float(CHORUS3_BAR))
-        _arrange_section(conn, song_id, tracks, chorus3_clips,
+        arrange_section(conn, song_id, tracks, chorus3_clips,
                          start_bar=float(CHORUS3_BAR), end_bar=float(OUTRO_BAR))
-        _arrange_section(conn, song_id, tracks, outro_clips,
+        arrange_section(conn, song_id, tracks, outro_clips,
                          start_bar=float(OUTRO_BAR),   end_bar=float(END_BAR))
 
         # No envelopes — Wave 0's master fade + lead-vocal sidechain are

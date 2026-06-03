@@ -248,11 +248,6 @@ FUSION_CHORD = Chord.split_chord(_EM_DORIAN, _EM_PHRYGIAN, label="both-at-once")
 # ---------------------------------------------------------------------------
 
 
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    """Map track name -> id for the song. Master included; returns are not."""
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
-
-
 # Composer-declared reverb decay intent (decisions/05 + captured_session.json: the
 # Plate is a long dub tail, the Room a tight metal punch). Quantifying the snapshot's
 # qualitative reverb _notes lets the audio analyzer VERIFY the realized RT60 against
@@ -1787,7 +1782,7 @@ def _author_gtr_reggae_space(conn, song_id, tracks, placed) -> int:
     (space) + gtr -> DubDelay (slap) lane, dry in metal/break/integration. RENDER-GATED:
     'a little more feel', nothing drastic — tune by ear."""
     first_bar = placed[0].start_bar
-    returns = {r["name"]: r["id"] for r in Q.get_returns_for_song(conn, song_id)}
+    returns = Q.returns_by_name(conn, song_id)
     if "Room" not in returns or "DubDelay" not in returns:
         raise RuntimeError("expected 'Room' + 'DubDelay' returns for the skank space")
 
@@ -1886,7 +1881,7 @@ def build(reset: bool = False) -> str:
                 conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4)
 
             # Compose-half: author the arc on the arrangement + harmony modules.
-            tracks = _tracks_by_name(conn, song_id)
+            tracks = Q.tracks_by_name(conn, song_id)
             kit = _kit_for_drums(conn, tracks["01 Drums"])
             arr = _build_arrangement(kit)
             placed = arr.plan()

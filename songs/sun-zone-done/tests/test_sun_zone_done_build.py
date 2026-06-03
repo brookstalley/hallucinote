@@ -1057,7 +1057,7 @@ def lens_report(build_module, built):
 
     conn = init_db(build_module.DB_PATH)
     try:
-        tracks = build_module._tracks_by_name(conn, built)
+        tracks = build_module.Q.tracks_by_name(conn, built)
         kit = build_module._kit_for_drums(conn, tracks["01 Drums"])
         arr = build_module._build_arrangement(kit)
         return analyze_performance(

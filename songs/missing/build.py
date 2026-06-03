@@ -49,16 +49,6 @@ END_BAR = 129
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    """Map track name -> id for the song. Master included; returns are not."""
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
-
-
-# ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
 
@@ -162,7 +152,7 @@ def build(reset: bool = False) -> str:
                     position_bar=float(bar), name=name,
                 )
 
-            tracks = _tracks_by_name(conn, song_id)
+            tracks = Q.tracks_by_name(conn, song_id)
 
             # === Compose-half: author your clips here ===
             #

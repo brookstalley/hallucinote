@@ -514,6 +514,13 @@ sections only via explicit `/backlog update` calls.
 
   **Dedup note (2026-06-03):** absorbs the PSH-1S9C dogfood duplicate (same bug — a >8-section song pushed into a fresh default 8-scene set hard-fails at the `clips` phase because the push doesn't auto-provision scenes). PSH-1S9C dropped with `closes: SYN-4P2D`.
 
+- **[SNG-4H2D]** Migrate the existing composed songs' `build()` lifecycle to the shared `run_build` harness
+  `effort: S · impact: S · area: song-tooling · source: builder · added: 2026-06-03 · status: open · related: GEN-1S4K`
+
+  Follow-up to the 2026-06-03 helpers DRY hoist (user-raised: "every song's build.py duplicates helpers like get-track-id-from-name"). That pass hoisted the duplicated HELPER FUNCTIONS into the library (`Q.tracks_by_name` / `Q.returns_by_name` in `db/queries.py`, `arrange_section` in `hallucinote/authoring.py`) and migrated all four songs to use them; it also added `hallucinote.authoring.run_build` (the open-DB → optional soft-reset → `build_session` → close lifecycle every `build()` repeats) and adopted it in the `/song-new` scaffold template (so every NEW song is DRY by construction) + covered it with unit + scaffold-e2e tests.
+
+  **Deferred here:** the three *existing composed* songs (`falling-walking`, `full-band-rock`, `sun-zone-done`) + `missing` still carry the explicit `conn = init_db; try; … with build_session; finally close` harness inline. Migrating them to `run_build` means wrapping each `build()` body in a `compose(conn)` closure — a whole-body reindent (sun-zone's is ~90 lines), which is churn-heavy and reindent-risky for modest gain, so it was left as its own focused change rather than bundled into the philosophy PR. Behavior-preserving + fully test-caught (each song's build test + the converger test rebuild it). **Verifiable signal:** no song `build.py` contains `conn = init_db(DB_PATH)` / `with M.build_session(` inline — all delegate to `run_build`. **Sized:** small (mechanical, per-song, test-gated). (helpers DRY hoist follow-up, 2026-06-03)
+
 ## Promoted
 
 _(no items)_

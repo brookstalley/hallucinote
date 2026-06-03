@@ -1,7 +1,7 @@
 ---
 name: compose-review
 description: >-
-  Compose-stage guided evaluation for a song — the compositional sibling to /mix-review. After a first pass, recalls the song's declared intent, reads the COMPOSITION (sections, which parts play where, density/register, the energy arc — from build.py + the arrangement, not audio) AND the line-level melodic reading from the symbolic melody lens (contour, intervals, harmony-fit — `hallucinote.tools.melody_lens`), and interprets it AGAINST intent: "you wanted the chorus to lift — does it? here's the one thing holding it back." Surfaces as a producer's question, never a verdict or a score. Teaches contrast and subtraction by ear. Lifts the "what is this for?" question to section and song altitude and learns revealed intent back as a markdown annotation. Use after a first compositional pass, or when the user asks "does this work?", "is the chorus landing?", "is the hook/melody working?", "what's missing?", "review the arrangement" — BEFORE the mix stage (that's /mix-review).
+  Compose-stage guided evaluation for a song — the compositional sibling to /mix-review. After a first pass, recalls the song's declared intent, reads the COMPOSITION (sections, which parts play where, density/register, the energy arc — from build.py + the arrangement, not audio) AND the line-level melodic reading from the symbolic melody lens (contour, intervals, harmony-fit — `hallucinote.tools.melody_lens`) AND the form/recurrence reading from the symbolic recurrence lens (which registered motifs recur where + as which variation, plus motivic economy — `hallucinote.tools.recurrence_lens`), and interprets it AGAINST intent: "you wanted the chorus to lift — does it? here's the one thing holding it back." Surfaces as a producer's question, never a verdict or a score. Teaches contrast and subtraction by ear. Lifts the "what is this for?" question to section and song altitude and learns revealed intent back as a markdown annotation. Use after a first compositional pass, or when the user asks "does this work?", "is the chorus landing?", "is the hook/melody working?", "what's missing?", "review the arrangement" — BEFORE the mix stage (that's /mix-review).
 argument-hint: <song-slug> [section]
 user-invocable: true
 disable-model-invocation: false
@@ -41,9 +41,11 @@ declared `review_workflow` archetype (RECALL step 1; model:
 `.prawduct/artifacts/review-workflow-model.md`).
 
 - The axes `/compose-review` owns: **arrangement** (layering / density / contrast /
-  energy arc), **harmony** (progression realization), **melody / line** (contour,
-  intervals, harmony-fit). `/mix-review` owns the sonic axes (sound, performance,
-  mix-balance) — don't reach into those here.
+  energy arc — and **form/recurrence**: which registered motifs recur where, read by
+  the recurrence lens; recurrence is part of the arrangement axis, NOT a new axis),
+  **harmony** (progression realization), **melody / line** (contour, intervals,
+  harmony-fit). `/mix-review` owns the sonic axes (sound, performance, mix-balance) —
+  don't reach into those here.
 - **Read holistically, EDIT one axis.** You may notice problems on another axis —
   NOTE them (a deferred review note via LEARN-BACK), but don't fix them this turn.
 - **Default archetype A (Ordered-Pass)** when the song declares none — and say so.
@@ -110,6 +112,38 @@ by eye.
 
 This is compositional evidence, neutral — like the MixReport, you grade it
 against intent, you don't grade it on its own.
+
+**Recurrence / recapitulation (run the lens).** The melody lens reads a *single
+line's* shape; the recurrence lens reads *form* — which **registered motifs** recur
+across the whole arrangement (organ / lead / steel / …), where, and **as which
+variation** (an `exact` quote, or a recovered `transpose` / `augment` / `diminish` /
+`invert` / `retrograde` / `fragment`, or a bounded composition like
+`diminish∘fragment`). Run it:
+
+```
+python3 -m hallucinote.tools.recurrence_lens <song-slug>          # whole song
+python3 -m hallucinote.tools.recurrence_lens <song-slug> --section <name>
+```
+
+It reports each recall (motif → section → layer → variation) plus a **motivic-economy
+summary** (cell-set size, recall coverage, a compression-ratio proxy). These are
+**neutral facts, never a verdict**: authored recapitulation is not an error, and
+economy is **style-relative** — a through-composed piece is *legitimately* less
+economical than a minimalist one (`research.md` §2 Temperley), so the lens reports
+the number and never says "be more economical." Grade each recall against the song's
+**declared recurrence intent** ("the outro was meant to recall the hook augmented —
+does it land there?"), exactly as you grade density. Two honest limits to carry: it
+reads only **registered** motifs (a recurring free function never `arr.motif(...)` is
+invisible — register it to track its recall), and it reads realized fact, not
+declared intent. If a song's build.py has no `recurrence_report()` wired yet, the lens
+says so (exit 3) — note it and read the recap structure by eye.
+
+> **Boundary (READ §2 reads three distinct things — do not conflate them):**
+> recurrence = **cross-instrument registered-motif** recall/recapitulation (this
+> block); within-line melodic **n-gram repetition** is the melody lens's line read
+> (MEL-1A7K, when it lands); the **energy-curve realization** read is ARR-7M3D's
+> (when it lands). Each is a separate lens over a separate unit; when the sibling
+> blocks arrive, they slot beside this one without overlapping its claim.
 
 ### 3. INTERPRET — composition against intent
 
@@ -208,6 +242,14 @@ lets the right element win. A flat chorus is usually a composition problem
   re-flags. The lens also reads the *line you wrote at the note floor* — including a
   topline a user sketched in and you arranged under — so it's the right surface for
   "is the hook landing?", not just "are the parts arranged right?"
+- **The recurrence lens reports recall facts, not "good recapitulation."** It tells
+  you a registered motif recurred (and as which variation) and reports motivic
+  economy as a raw number — it never says a recall *should* be there or that material
+  is "too scattered" (economy is style-relative — Temperley). It reads only
+  **registered** motifs and reads realized fact, not declared intent: a recurring
+  free function is invisible (register it), and a `derived` reading means "a partial
+  recall I can't fully name," not "wrong." Grade each recall against the song's
+  declared recurrence intent and learn the answer back.
 
 ## One-line thesis
 

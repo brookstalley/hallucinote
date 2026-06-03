@@ -259,6 +259,17 @@ All are **rulers**. The composer authors the music; these carry the structure.
 | **Reference / recap** | a link: "this section quotes/develops that motif" | how the fusion sounds |
 | **Energy curve** | an authored per-section/transition scalar + direction | the actual intensity intent |
 
+**Recurrence READ side (ARR-9K4T).** The recurrence/recap dimension now has a
+read-side ruler: a build-time symbolic lens (`hallucinote.recurrence`, surfaced via
+`hallucinote.tools.recurrence_lens` to `/compose-review`) reports which *registered*
+motifs recur where and as which variation, plus a motivic-economy summary — parallel
+to the harmony conformance lint / melody lens / performance lens, closing the
+both-sides gap for recurrence. It is **detect-only** (DR-1 Option A): it infers
+recalls from the realized section layers, so the **author-side "Reference / recap"
+link above remains documented-but-unbuilt** — `Arrangement` has no `reference()`
+method yet (the authored-link half is the tracked deferred work, ARR-9K4T Chunk 5).
+See the lens for the method; info-only, never a verdict (ruler-not-stamp).
+
 ### Cumulative development = per-iteration deltas
 
 The heart of the original question ("how do verse 1/2/3 stay the same yet

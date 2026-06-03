@@ -219,6 +219,42 @@ def test_step_appetite_match_is_silent():
     assert _findings_of_kind(rep, "step-appetite-mismatch") == []
 
 
+# --- repetition_appetite vs the within-line repetition number (Chunk 4) ----------
+
+def _cell_repeated_line() -> list[dict]:
+    # a 3-pitch (2-interval) cell repeated 4x -> high repetition coverage
+    pitches = [60, 64, 67] * 4
+    return [_n(p, i * 0.5) for i, p in enumerate(pitches)]
+
+
+def _through_composed_line() -> list[dict]:
+    pitches = [60, 61, 63, 66, 70, 71, 69, 64, 55, 67]
+    return [_n(p, i * 0.5) for i, p in enumerate(pitches)]
+
+
+def test_repetition_appetite_mismatch_fires_on_band_disagreement():
+    line = {"05 Lead": _through_composed_line()}  # low repetition coverage
+    profile = MelodicProfile(name="x", repetition_appetite="high")  # declared hooky
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    fs = _findings_of_kind(rep, "repetition-appetite-mismatch")
+    assert len(fs) == 1
+    _assert_question(fs[0])
+
+
+def test_repetition_appetite_match_is_silent():
+    line = {"05 Lead": _cell_repeated_line()}  # high repetition coverage
+    profile = MelodicProfile(name="x", repetition_appetite="high")
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "repetition-appetite-mismatch") == []
+
+
+def test_repetition_coverage_is_on_the_line():
+    line = {"05 Lead": _cell_repeated_line()}
+    rep = _analyze(line, profiles={"05 Lead": MelodicProfile(name="x")})
+    cov = rep.sections[0].lines[0].repetition_coverage
+    assert cov is not None and cov > 0.8
+
+
 # --- the PENDING by-ear edge constants are isolated + marked ---------------------
 
 def test_appetite_edges_are_named_constants_carrying_the_pending_marker():
@@ -232,6 +268,8 @@ def test_appetite_edges_are_named_constants_carrying_the_pending_marker():
     assert isinstance(lens_mod._STEP_FRACTION_LOW_MAX, float)
     assert isinstance(lens_mod._STEP_FRACTION_HIGH_MIN, float)
     assert isinstance(lens_mod._APEX_POSITION_TOLERANCE, float)
+    assert isinstance(lens_mod._REPETITION_LOW_MAX, float)
+    assert isinstance(lens_mod._REPETITION_HIGH_MIN, float)
     src = inspect.getsource(lens_mod)
     assert "PENDING by-ear calibration" in src
 

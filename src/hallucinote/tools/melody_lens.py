@@ -111,7 +111,8 @@ def render(report: Any, *, section_filter: str | None = None) -> str:
             lines.append(
                 f"    contour: {ln.contour_shape} · apex {apex} · "
                 f"{ln.direction_changes} direction-changes · "
-                f"gradient-stdev {ln.gradient_stdev:.2f}"
+                f"gradient-stdev {ln.gradient_stdev:.2f} · "
+                f"repetition-coverage {_fmt_frac(ln.repetition_coverage)}"
             )
             lines.append(
                 f"    intervals: step {_fmt_frac(ln.step_fraction)} / "

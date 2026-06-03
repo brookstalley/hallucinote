@@ -60,12 +60,22 @@ def _kinds(section):
 
 def test_reggae_hook_with_arch_high_repetition_profile_reads_shaped_never_aimless():
     """The recorded universal-verdict bug made permanently impossible: a third-based
-    reggae hook declared arch + high-repetition reads ``shaped``, NEVER ``aimless``."""
+    reggae hook declared arch + high-repetition reads ``shaped``, NEVER ``aimless``.
+
+    Strengthened for Chunk 4: the single-cycle hook's within-line repetition coverage
+    is LOW (its repetition is across loop cycles, invisible in one cycle) — yet
+    because it satisfies its contour aim (a real net shape), it stays ``shaped``.
+    Satisfying ANY declared aim keeps a line off the ``aimless`` verdict — the line
+    is doing something it set out to do, not wandering."""
     profile = MelodicProfile(
         name="reggae-hook", contour_intent="arch", repetition_appetite="high",
     )
     sec = _read({"05 Lead": _reggae_chillin()}, profiles={"05 Lead": profile})
     line = sec.lines[0]
+    # the within-line repetition number IS low (the bug-recurrence trap), and the
+    # line still reads shaped because its contour aim is satisfied.
+    assert line.repetition_coverage is not None and line.repetition_coverage < 0.5
+    assert line.contour_shape != "level"   # it has a real net shape
     assert line.shaped_reading == "shaped"
     assert line.shaped_reading != "aimless"
     assert "aimless-line" not in _kinds(sec)

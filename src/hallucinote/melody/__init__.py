@@ -28,6 +28,7 @@ from hallucinote.melody.contour import (
     direction_changes,
     gradient_stdev,
 )
+from hallucinote.melody.economy import repetition_coverage
 from hallucinote.melody.harmony_fit import HarmonyFit, analyze_harmony_fit, classify_tone
 from hallucinote.melody.intervals import (
     ambitus,
@@ -82,6 +83,8 @@ __all__ = [
     "contour_shape",
     "direction_changes",
     "gradient_stdev",
+    # economy (within-line motivic-economy / repetition)
+    "repetition_coverage",
     # harmony fit
     "HarmonyFit",
     "analyze_harmony_fit",

@@ -65,6 +65,7 @@ from hallucinote.melody.contour import (
     direction_changes,
     gradient_stdev,
 )
+from hallucinote.melody.economy import repetition_coverage as _repetition_coverage
 from hallucinote.melody.harmony_fit import HarmonyFit, analyze_harmony_fit
 from hallucinote.melody.intervals import (
     ambitus,
@@ -195,7 +196,9 @@ class MelodicLine:
     excluded) and are ``None`` for a line that never moves; ``post_skip_reversal``
     is ``None`` when there is no leap with a successor. ``contour_shape`` is a
     COARSE continuous-summary label (not a discrete type — §3.7); ``apex_pitch`` /
-    ``apex_position`` locate the climax. ``harmony`` is ``None`` when the section
+    ``apex_position`` locate the climax. ``repetition_coverage`` is the within-line
+    motivic-economy number (``economy.repetition_coverage`` — ``None`` for a line too
+    short for a cell to repeat). ``harmony`` is ``None`` when the section
     declared no progression. ``classification`` is the genre-safe active/static
     read (shaped-vs-aimless is profile-relative, deferred); ``confidence`` (0..1)
     scales with note count. ``profile_name`` is the declared ``MelodicProfile``'s
@@ -217,6 +220,7 @@ class MelodicLine:
     apex_position: float | None
     direction_changes: int
     gradient_stdev: float
+    repetition_coverage: float | None
     harmony: HarmonyFit | None
     classification: Classification
     confidence: float
@@ -240,6 +244,7 @@ class MelodicLine:
             "apex_position": self.apex_position,
             "direction_changes": self.direction_changes,
             "gradient_stdev": self.gradient_stdev,
+            "repetition_coverage": self.repetition_coverage,
             "harmony": self.harmony.to_dict() if self.harmony is not None else None,
             "classification": self.classification,
             "confidence": self.confidence,
@@ -381,18 +386,22 @@ def _shaped_reading(
         ``repetition_appetite``. The genre-safe default: the universal verdict stays
         forbidden (the 2a behavior preserved). **``aimless`` can NEVER fire here** —
         exactly why the reggae-hook bug cannot recur.
-      * ``aimless`` — a DEFINITE declared intent is contradicted: a definite contour
-        was declared but the line has NO net shape (measures ``level``), and/or high
-        repetition was declared but the line does not repeat its cell. The line
-        wanders relative to *its own* stated aim. NOTE this is NOT "a different
-        definite shape than declared" (that is the contour-mismatch re-shape
-        QUESTION) — only "you wanted shape and there is none."
-      * ``shaped`` — a definite intent was declared and the line is consistent with
-        it (it has a net shape when one was intended; it repeats a cell when high
-        repetition was intended). "Shaped" means "doing what it set out to do," NOT
-        "good."
+      * ``shaped`` — a definite intent was declared and the line SATISFIES at least
+        one of its declared aims: it has a net shape (any non-``level`` measured
+        contour) when a definite contour was intended, OR it repeats a cell when high
+        repetition was intended. "Shaped" means "doing what it set out to do," NOT
+        "good." A line that satisfies ANY declared aim is shaped — it is not wandering.
+      * ``aimless`` — EVERY declared aim is contradicted: the line has NO net shape
+        (measures ``level``) where a definite contour was intended, AND it does not
+        repeat its cell where high repetition was intended. The line wanders relative
+        to *its own* stated aim. NOTE a DIFFERENT definite shape than declared is the
+        contour-mismatch re-shape QUESTION, NOT aimlessness — only a no-net-shape
+        ``level`` line counts as a contradicted contour. Satisfying ONE aim is enough
+        to be ``shaped``: this is why a third-based reggae hook with a real
+        descending shape but loop-level (not cell-level) repetition reads ``shaped``,
+        never ``aimless`` (the recorded universal-verdict bug, made impossible).
 
-    Chunk 3 grades on ``contour_intent`` alone (``repetition_number`` is
+    Chunk 3 graded on ``contour_intent`` alone (``repetition_number`` was
     ``None``-tolerant); Chunk 4 supplies the real repetition number and folds in the
     ``repetition_appetite`` direction.
     """
@@ -408,21 +417,31 @@ def _shaped_reading(
     if contour_shape == "insufficient-data":
         return "ungraded"
 
-    # A definite contour intent contradicted by NO net shape (the line wanders
-    # relative to its own aim) -> aimless. A different definite shape is a re-shape
-    # QUESTION, not aimlessness, so only a measured "level" counts as contradicted.
-    if definite_contour and contour_shape == "level":
-        return "aimless"
-
-    # High repetition declared but the line does not repeat its cell -> aimless
-    # (Chunk 4 supplies the real number; until then this branch is dormant).
-    if (
+    # Per-aim satisfaction. A definite contour aim is SATISFIED by any net shape (a
+    # non-"level" measured contour) — a different shape than declared is a re-shape
+    # question, not a failure of the "have a shape" aim. The high-repetition aim is
+    # satisfied by a cell-covered line (the PENDING by-ear edge; an unmeasurable
+    # repetition number does not contradict the aim, so it counts as satisfied —
+    # never invent a verdict from missing data).
+    contour_satisfied = definite_contour and contour_shape != "level"
+    contour_contradicted = definite_contour and contour_shape == "level"
+    repetition_satisfied = (
+        profile.repetition_appetite == "high"
+        and (repetition_number is None or repetition_number >= _REPETITION_HIGH_MIN)
+    )
+    repetition_contradicted = (
         profile.repetition_appetite == "high"
         and repetition_number is not None
         and repetition_number < _REPETITION_HIGH_MIN
-    ):
-        return "aimless"
+    )
 
+    # Satisfying ANY declared aim => shaped (the line is doing something it set out
+    # to do — it is not wandering). aimless only when EVERY declared aim is
+    # contradicted and none is satisfied.
+    if contour_satisfied or repetition_satisfied:
+        return "shaped"
+    if contour_contradicted or repetition_contradicted:
+        return "aimless"
     return "shaped"
 
 
@@ -458,8 +477,12 @@ def _line(
         )
 
     shape = contour_shape(pitches)
+    rep_coverage = _repetition_coverage(pitches)
     shaped = _shaped_reading(
-        profile, contour_shape=shape, onset_count=onset_count
+        profile,
+        contour_shape=shape,
+        onset_count=onset_count,
+        repetition_number=rep_coverage,
     )
 
     return MelodicLine(
@@ -478,6 +501,7 @@ def _line(
         apex_position=apex_pos,
         direction_changes=direction_changes(intervals),
         gradient_stdev=gradient_stdev(intervals),
+        repetition_coverage=rep_coverage,
         harmony=harmony,
         classification=_classify(amb, onset_count),
         confidence=_confidence(onset_count),
@@ -614,15 +638,28 @@ def _profile_findings(
     # question, NEVER "this melody is bad / wandering". ``shaped`` / ``ungraded`` emit
     # nothing (the line is doing what it set out to, or there is no aim to grade).
     if line.shaped_reading == "aimless" and enough:
+        # mode-aware evidence: name the contradicted aim(s) so the question is
+        # precise (a no-net-shape line vs an un-repeating high-repetition line).
+        evidence: list[str] = []
+        if profile.contour_intent not in (None, "free") and line.contour_shape == "level":
+            evidence.append(f"reads {line.contour_shape} with no net shape")
+        if (
+            profile.repetition_appetite == "high"
+            and line.repetition_coverage is not None
+            and line.repetition_coverage < _REPETITION_HIGH_MIN
+        ):
+            evidence.append(
+                f"repeats a cell across only {line.repetition_coverage:.0%} of itself"
+            )
         out.append(MelodyFinding(
             kind="aimless-line", severity="info", section=section,
             track=line.track_name,
             detail=(
                 f"{line.track_name}: you declared a shaped line "
                 f"(contour_intent={profile.contour_intent!r}, "
-                f"repetition_appetite={profile.repetition_appetite!r}), but it reads "
-                f"{line.contour_shape} with no net shape — intended, or has the line "
-                f"wandered off the shape it set out to make?"
+                f"repetition_appetite={profile.repetition_appetite!r}), but it "
+                f"{' and '.join(evidence)} — intended, or has the line wandered off "
+                f"the shape it set out to make?"
             ),
         ))
 
@@ -686,7 +723,39 @@ def _profile_findings(
                 ),
                 metric=line.step_fraction,
             ))
+
+    # repetition_appetite vs the within-line repetition number (economy.py — the
+    # motivic-economy BOTH-SIDES pairing). Graded against the PENDING by-ear edges.
+    if (
+        profile.repetition_appetite is not None
+        and line.repetition_coverage is not None
+        and enough
+    ):
+        measured_band = _repetition_band(line.repetition_coverage)
+        if measured_band != profile.repetition_appetite:
+            out.append(MelodyFinding(
+                kind="repetition-appetite-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {profile.repetition_appetite} "
+                    f"repetition appetite, but {line.repetition_coverage:.0%} of the line "
+                    f"is covered by its most-repeated cell ({measured_band}) — intended "
+                    f"economy, or has the cell-vs-through-composed balance drifted?"
+                ),
+                metric=line.repetition_coverage,
+            ))
     return out
+
+
+def _repetition_band(coverage: float) -> Appetite:
+    """Map a measured within-line repetition coverage to a coarse appetite band
+    using the PENDING by-ear edges. Higher coverage = more cell-driven = HIGHER
+    repetition appetite. (The edge VALUES are calibration placeholders — design §8.)"""
+    if coverage <= _REPETITION_LOW_MAX:
+        return "low"
+    if coverage >= _REPETITION_HIGH_MIN:
+        return "high"
+    return "moderate"
 
 
 def _step_fraction_band(step_fraction: float) -> Appetite:

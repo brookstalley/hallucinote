@@ -116,6 +116,6 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `.claude/skills/song-new/SKILL.md`. Sibling workflow skills under `.claude/skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
-- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `.claude/skills/ableton-push/SKILL.md` for the push flow.
+- Implementation: `skills/song-new/SKILL.md`. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
+- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `skills/ableton-push/SKILL.md` for the push flow.
 - Decision retrieval: `/song-context` skill (queries `decisions/` + `annotations/`).

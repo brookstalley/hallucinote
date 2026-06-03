@@ -107,11 +107,12 @@ path.** The split is viable.
 
 ## Still deferred
 
-- **Path-coupled *skills*** (the `SKILL.md` files, distinct from the engine CLIs above)
-  assume cwd = monorepo: `tools/…` invocations + literal `songs/<slug>/…` paths in
-  compose-part, ableton-push/pull, song-new, song-context, decisions, compose-review,
-  song-snapshot, clip-humanize. The engine CLIs they shell out to are now contract-aware;
-  the skill markdown still needs workspace-relative wiring before songs move out.
+- **Literal `songs/<slug>/…` paths in skill markdown.** The tool *invocations* in skills are
+  now installed-module form (`-m hallucinote.tools.*`) — done. What remains is the literal
+  `songs/<slug>/…` paths the `SKILL.md` bodies still spell out (e.g. `python3
+  songs/<slug>/build.py`, `--db songs/<slug>/…`) in compose-part, ableton-push/pull, song-new,
+  song-context, decisions, song-snapshot. These work in a nested songs workspace (cwd-relative,
+  the chosen layout) but assume that shape; a future pass could resolve them via the contract.
 - **`song` (flat) layout end-to-end** — the resolver already supports `layout = "song"`
   (DB at the repo root), but `build.py` still hardcodes `root=Path(__file__).parent.parent`,
   so a flat repo's `build.py` would mislocate its DB. `monorepo`-with-one-song works today

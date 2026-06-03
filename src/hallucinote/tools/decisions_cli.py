@@ -31,13 +31,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Add src/ so the script runs without `pip install -e .` in environments
-# where the editable install isn't present.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from hallucinote.db import queries as Q  # noqa: E402
-from hallucinote.db.connection import init_db  # noqa: E402
+from hallucinote.db import queries as Q
+from hallucinote.db.connection import init_db
 
 
 def _format_row(row: Any) -> str:

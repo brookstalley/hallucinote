@@ -360,8 +360,12 @@ second (the vertical/counterpoint constraint) remains open.
   the one-chord drone — a composer can still pedal the tonic under an "E Dorian"
   tag — so the substrate carries an authored **chord progression with harmonic
   rhythm** that the parts compose against, plus a **build-time conformance lens**
-  that fails the build when a section "declares movement but the parts play only
-  the tonic" (harmonic stasis). *Built:* `hallucinote.theory` (`Chord` — slash
+  that NAMES "declares movement but the parts play only the tonic" (harmonic
+  stasis) as the realization bug-shape. *(Originally this lens FAILED the build;
+  per LNT-1V9K it now surfaces stasis as a loud WARNING and never blocks — a
+  ruler, not a stamp — and the song's own test gates the regression via
+  `report.stasis_sections`. See `gate-verdict-policy.md`.)* *Built:*
+  `hallucinote.theory` (`Chord` — slash
   bass, polymodal `split`, free-form function labels; `Mode`; `Progression` — an
   authored harmonic-rhythm timeline, functional/modal toggle); chord-aware
   generators (skank, bass, power chords, organ bubble) that *voice* a progression;

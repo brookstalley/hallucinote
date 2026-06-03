@@ -26,6 +26,7 @@ from pathlib import Path
 
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
+from hallucinote.authoring import arrange_section
 from hallucinote.generators import GeneratorOutput, bass, drums, harmony
 from hallucinote.generators.envelopes import sidechain_trigger, volume_swell
 from hallucinote.generators.kit import Kit
@@ -96,11 +97,6 @@ LAZY = 0.04  # Lay-back amount carried over from the prototype.
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    """Map track name -> id for the song. Master included; returns are not."""
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
 
 
 def _note(pitch: int, start: float, dur: float, vel: int) -> dict:
@@ -713,17 +709,6 @@ def _build_outro(conn, song_id: str, tracks: dict[str, str]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _arrange_section(conn, song_id: str, tracks: dict[str, str],
-                     clips: dict[str, str], *, start_bar: float, end_bar: float) -> None:
-    """Place every clip in `clips` on its track between start_bar and end_bar."""
-    for track_name, clip_id in clips.items():
-        M.add_arrangement_clip(
-            conn, song_id=song_id,
-            track_id=tracks[track_name], clip_id=clip_id,
-            start_bar=start_bar, end_bar=end_bar,
-        )
-
-
 def _author_envelopes(conn, song_id: str, tracks: dict[str, str]) -> None:
     """Author the song's automation envelopes.
 
@@ -834,7 +819,7 @@ def build(reset: bool = False) -> str:
                               (OUTRO_BAR, "outro")]:
                 M.add_cue_point(conn, song_id=song_id, position_bar=float(bar), name=name)
 
-            tracks = _tracks_by_name(conn, song_id)
+            tracks = Q.tracks_by_name(conn, song_id)
 
             # Build each section's clips.
             intro   = _build_intro(conn, song_id, tracks)
@@ -846,13 +831,13 @@ def build(reset: bool = False) -> str:
             outro   = _build_outro(conn, song_id, tracks)
 
             # Arrangement: every section drops its clips at its bar range.
-            _arrange_section(conn, song_id, tracks, intro,   start_bar=float(INTRO_BAR),  end_bar=float(VERSE_BAR))
-            _arrange_section(conn, song_id, tracks, verse,   start_bar=float(VERSE_BAR),  end_bar=float(CHORUS_BAR))
-            _arrange_section(conn, song_id, tracks, chorus,  start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR))
-            _arrange_section(conn, song_id, tracks, twist,   start_bar=float(TWIST_BAR),  end_bar=float(BRIDGE_BAR))
-            _arrange_section(conn, song_id, tracks, bridge_, start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR))
-            _arrange_section(conn, song_id, tracks, tag,     start_bar=float(TAG_BAR),    end_bar=float(OUTRO_BAR))
-            _arrange_section(conn, song_id, tracks, outro,   start_bar=float(OUTRO_BAR),  end_bar=float(END_BAR))
+            arrange_section(conn, song_id, tracks, intro,   start_bar=float(INTRO_BAR),  end_bar=float(VERSE_BAR))
+            arrange_section(conn, song_id, tracks, verse,   start_bar=float(VERSE_BAR),  end_bar=float(CHORUS_BAR))
+            arrange_section(conn, song_id, tracks, chorus,  start_bar=float(CHORUS_BAR), end_bar=float(TWIST_BAR))
+            arrange_section(conn, song_id, tracks, twist,   start_bar=float(TWIST_BAR),  end_bar=float(BRIDGE_BAR))
+            arrange_section(conn, song_id, tracks, bridge_, start_bar=float(BRIDGE_BAR), end_bar=float(TAG_BAR))
+            arrange_section(conn, song_id, tracks, tag,     start_bar=float(TAG_BAR),    end_bar=float(OUTRO_BAR))
+            arrange_section(conn, song_id, tracks, outro,   start_bar=float(OUTRO_BAR),  end_bar=float(END_BAR))
 
             # Automation envelopes demonstrate the new envelope pathway end-to-end.
             _author_envelopes(conn, song_id, tracks)

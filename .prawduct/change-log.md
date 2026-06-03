@@ -4,6 +4,36 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
+
+<!-- chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 status=shipped release=unreleased scope=tools-dont-narrow-the-art+helpers-dry -->
+
+One thesis across four pieces: a build-time lens/helper is a **ruler, not a stamp** —
+it measures and asks; it never vetoes a deliberate choice or makes the musical decision.
+
+- **A1 (LNT-1V9K) gate verdicts.** `theory/lint.py`'s `harmonic-stasis` — the only
+  `severity="blocking"` verdict in the codebase — split into `harmonic-stasis` WARNING
+  (still named in `stasis_sections`) + a new `harmonic-absence` INFO (the case that
+  false-blocked a bass-less section). Removed the build raise in `sun-zone-done/build.py`;
+  the realization regression moved to the song's own test. New `gate-verdict-policy.md`
+  enumerates BLOCKING = technical/structural errors only.
+- **A2 (GEN-1S4K) generator altitude.** `generator-altitude-policy.md` — no
+  section/genre-archetype builders in the package (song-local only); package idioms are
+  single-part conveniences over exposed primitives; the interplay vocabulary is a
+  friction-driven primitive layer (ARR-3R8F), not a fusion-section builder.
+- **A3 (REV-2W8K) structured review.** `review-workflow-model.md` (one axis per turn, 5
+  archetypes) + a per-song `review_workflow` annotation (sun-zone-done = C Subtractive) +
+  `/compose-review` and `/mix-review` wired to read the archetype and edit one axis per turn.
+- **Helpers DRY.** Hoisted duplicated song-build bookkeeping into the library —
+  `Q.tracks_by_name`/`returns_by_name` (queries) and `arrange_section`/`run_build`
+  (new `hallucinote/authoring.py`). All four songs migrated to the helper functions;
+  the `/song-new` scaffold uses `run_build`. Existing composed songs' build() lifecycle
+  migration deferred (SNG-4H2D).
+- **Chunk 0.** sun-zone-done back-half Pass-A close-out (prior stale-doc Critic warning
+  resolved) + backlog true-up (6 merged items archived, scene-provision dedup).
+
+Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 blocking).
+
 ## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
 
 <!-- chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M status=shipped release=unreleased scope=audio-verification -->

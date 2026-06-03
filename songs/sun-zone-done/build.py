@@ -21,16 +21,19 @@ The arc tells a story of adapting → accepting both worlds at once:
     verse2       24b  reggae  E Dorian     0.45  richer (Em9, C#m7♭5 passing); steel pans ENTER
     chorus2      16b  metal   E Phrygian   0.90  darker, more harmonic motion; lead octave-down
     development  24b  morphing E Dorian↔Phr 0.70  the worlds trade bars; harmonic rhythm accelerates
-    break        16b  break   (the hinge)  0.72  Em/C# ↔ Em/C slash vote; Amp inverted to HEAVY
-    integration  32b  metal   polymodal    1.00  metal engine + polyrhythm recap + the both-at-once split
-    outro        16b  reggae  E Dorian     0.35  enlightenment: re-brighten to Dorian, land Em9, calm
+    break        16b  reggae  E (suspended) 0.72  EUREKA: drums+bass OUT, ethereal FUSION pad + half↔double call-response, riser → bass drop
+    integration  32b  metal   polymodal    1.00  PLAYGROUND: 4-bar combine-cells (groove+lead, gallop+float, trade, interlock) → earned fusion
+    outro        16b  reggae  E Dorian     0.50  enlightenment: re-brighten to Dorian, land Em9, lifted joy
 
 Every genre flip is a deliberate ENERGY DISCONTINUITY — never smoothed. The
-convention-break decouples Amp TIMBRE from groove TIME-FEEL (a reggae groove
-through a HEAVY amp). The integration QUOTES the registered polyrhythm motif
-(recapitulation) and resolves it into a `Chord.split` "both-at-once" sonority
-(both F#/F and C#/C); the outro AUGMENTS (slows) the no-time hook and lifts it
-in-key into the reggae groove (the stress, at peace).
+break (decisions/08) is the EUREKA suspension: drums + bass drop OUT, an ethereal
+polymodal FUSION pad + thinned shimmer hold the breath while a half↔double-time
+call-response lets the two worlds finally answer (not interrupt) each other; a
+riser launches the bass DROP. The integration (decisions/08) is the PLAYGROUND:
+the worlds genuinely COMBINED cell-by-cell, building to the EARNED climax that
+QUOTES the registered polyrhythm motif (recapitulation) and resolves it into the
+`Chord.split` "both-at-once" sonority (both F#/F and C#/C). The outro AUGMENTS
+(slows) the no-time hook and lifts it in-key into the reggae groove (stress, at peace).
 
 The Rhythm Gtr is the deliberate exception to the per-section clips: it stays
 MONOLITHIC — one session clip spanning the whole song (736 beats / 184 bars) —
@@ -144,23 +147,82 @@ CHORUS2 = Progression.of(                                                      #
     "E", "Phrygian", ["E5", "F5", "G5", "F5", "E5", "D5", "C5", "F5"],
     beats_per_chord=4.0)
 
-# Development — the morph: Dorian cells answered by Phrygian, harmonic rhythm
-# ACCELERATING (4,4 → 2,2,2,2). Declared E Dorian; the Phrygian F is intended
-# chromaticism (the lens flags it as a question, not an error).
+# Development — the morph: harmonic rhythm ACCELERATES across the WHOLE section
+# (decisions/08 v3), not a looped 5-bar cell. The collision the intent claims is
+# now realized harmonically: phase 1 (bars 0–8) settles on slow 8-beat Dorian
+# changes; phase 2 (8–16) tightens to 4-beat changes as the Phrygian F intrudes
+# (the worlds begin to trade); phase 3 (16–24) is the 2-beat WHIPLASH — chords
+# colliding twice as fast, accelerating into the break drop. Declared E Dorian;
+# the Phrygian F is intended chromaticism (the lens flags it as a question, not an
+# error). Exactly 24 bars (96 beats) — no tiling, so the acceleration is global.
 DEV = Progression.of("E", "Dorian", [
-    ("Em7", 4.0), ("A7", 4.0), ("Em", 2.0), ("F", 2.0),
-    ("Em7", 2.0), ("A7", 2.0), ("Em", 2.0), ("F", 2.0),
+    # phase 1 — settled, slow (8-beat Dorian), bars 0–8
+    ("Em7", 8.0), ("A7", 8.0), ("Cmaj7", 8.0), ("Bm7", 8.0),
+    # phase 2 — the morph, medium (4-beat); F = the Phrygian intrusion, bars 8–16
+    ("Em7", 4.0), ("A7", 4.0), ("Em", 4.0), ("F", 4.0),
+    ("Em7", 4.0), ("A7", 4.0), ("Bm7", 4.0), ("B7", 4.0),
+    # phase 3 — the WHIPLASH, fast (2-beat), bars 16–24: collision at double the rate
+    ("Em", 2.0), ("F", 2.0), ("Em", 2.0), ("A7", 2.0),
+    ("Em", 2.0), ("F", 2.0), ("G", 2.0), ("F", 2.0),
+    ("Em", 2.0), ("F", 2.0), ("Em", 2.0), ("A7", 2.0),
+    ("Em", 2.0), ("Bm7", 2.0), ("F", 2.0), ("D", 2.0),
 ])
 
-# Break — the harmonic HINGE: the bass votes the mode by sliding one semitone,
-# C# (Dorian 6) ↔ C (Phrygian ♭6), under an unchanging Em. Amp inverted to HEAVY.
-BREAK_H = Progression.of("E", "Dorian", ["Em/C#", "Em/C", "Em/C#", "Em/C"], beats_per_chord=4.0)
+# Break — the EUREKA suspension (reinvented): a single sustained polymodal field.
+# Bass AND drums drop OUT; the harmony is carried by a sustained FUSION pad on the
+# organ, not a walking bass. So the break declares ONE chord (the E tonic the
+# insight hovers on) and names no bass — the conformance lens honors a single
+# declared chord as a deliberate field (never stasis), and with no bass layer there
+# is nothing to flag. The pad voices a richer polymodal colour on top (a texture, not
+# a lint target). See decisions/07 + decisions/08 for the reinvention rationale.
+BREAK_H = Progression.of("E", "Dorian", ["Em"], beats_per_chord=64.0)
 
-# Integration — the fusion: a Phrygian metal riff with the Dorian IV (A5) injected,
-# the harmonic "both worlds" gesture under the polyrhythm recap.
-INTEG = Progression.of(
-    "E", "Phrygian", ["E5", "F5", "E5", "A5", "E5", "F5", "G5", "A5"],
-    beats_per_chord=4.0)
+# Integration — the fusion ARC (decisions/08 v3). The old version looped one
+# Phrygian power-chord riff ×4, so the "both worlds" only sounded in 2 organ hits at
+# the very end — the fusion was cosmetic. Now the HARMONY itself enacts the
+# combining, cell by cell (aligned to INTEG_CELLS): the reggae cell is Dorian
+# (Em7→A7, the bright C# 6th); the metal cell is Phrygian (Em→F, the dark ♭2); the
+# trade cell ALTERNATES them bar-by-bar (A7 Dorian ↔ F Phrygian); the "both" cell
+# rubs the two colors at 2-beat rate; the climax pedals E while holding BOTH the
+# Phrygian F and the Dorian A7/C# under the polyrhythm recap → the earned both-at-
+# once. The bass plays the chord roots (its reggae/metal generators conform either
+# way); the organ_bubble voices the full colour. Declared E Phrygian (the metal
+# home); the Dorian A7/C# is intended chromaticism (lens flags it as a question).
+# 128 beats = exactly the 32-bar section. RENDER-GATED: confirm the fusion reads as
+# richness, not mud (the integration is the song's #1 masking-risk section).
+INTEG = Progression.of("E", "Phrygian", [
+    ("Em7", 8.0), ("A7", 8.0),                              # reggae cell (0–4): Dorian
+    ("Em", 8.0), ("F", 8.0),                                # metal cell (4–8): Phrygian
+    ("A7", 4.0), ("F", 4.0), ("A7", 4.0), ("F", 4.0),       # trade cell (8–12): alternate
+    ("A7", 2.0), ("F", 2.0), ("A7", 2.0), ("F", 2.0),       # both cell (12–16): rub, fast
+    ("Em", 2.0), ("F", 2.0), ("A7", 2.0), ("F", 2.0),
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      # climax (16–32): E-centred but
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   BRIGHTENING — the Dorian A7 (C#)
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   anchors the hybrid hook + foreshadows
+    ("Em", 4.0), ("A7", 4.0), ("F", 4.0), ("A7", 4.0),      #   the outro synthesis; F keeps the dark
+])
+
+# The integration "playground" cell map — ONE source of truth for the per-cell world
+# structure, consumed by BOTH the layer builder (_integration_play) and the rhythm-
+# gtr/amp authoring (_compose_rhythm_gtr), so the guitar + amp stay aligned with the
+# groove. (start_bar within the 32-bar section, length_bars, world). The worlds:
+#   reggae — one-drop groove + offbeat bass + organ, metal lead ANSWERING (active-
+#            while-relaxing); the guitar plays a CLEAN skank here.
+#   metal  — gallop engine + pedal bass, reggae organ + steel FLOATING over it
+#            (chill-while-working).
+#   trade  — call & response bar-by-bar (reggae one-drop ↔ metal gallop), the worlds
+#            in dialogue, half-time ↔ double-time.
+#   both   — both engines interlocking, rising into the climax.
+#   climax — both worlds full + the polyrhythm recap + the both-at-once FUSION chord
+#            (the EARNED payoff — the culmination of the play, not a cold smash).
+INTEG_CELLS = [
+    # start_bar  length  world
+    (0,  4,  "reggae"),
+    (4,  4,  "metal"),
+    (8,  4,  "trade"),
+    (12, 4,  "both"),
+    (16, 16, "climax"),
+]
 
 # Per-section declared harmony (drives the generators AND the conformance lens).
 SECTION_HARMONY: dict[str, Progression] = {
@@ -184,11 +246,6 @@ FUSION_CHORD = Chord.split_chord(_EM_DORIAN, _EM_PHRYGIAN, label="both-at-once")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    """Map track name -> id for the song. Master included; returns are not."""
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
 
 
 # Composer-declared reverb decay intent (decisions/05 + captured_session.json: the
@@ -285,6 +342,41 @@ def _metal_lead_no_time(length_beats: float) -> list[dict]:
         offset = cycle * 8.0
         for p, t, d, v in _NO_TIME_CYCLE:
             notes.append(_note(p, offset + t, d, v, tags=["lead", "metal", "no-time"]))
+    return notes
+
+
+# The HYBRID hook (decisions/08 v3) — the NEW idea the playground BIRTHS, the
+# missing "something generated by the fusion". It is the NO-TIME hook's rhythm +
+# contour with every DARK Phrygian degree flipped to its BRIGHT Dorian neighbour
+# (F→F#, C→C#) and landing on the natural-6 C# (the "sun zone" note) instead of the
+# tense E: the rhythm still says "NO TIME", the pitches now say "sun zone". It is
+# "I don't have to choose" as a single line — neither pure reggae nor pure metal,
+# built from BOTH hooks' own DNA so it sounds inevitable, not bolted on. Debuts in
+# the integration "both" cell (the play discovering it), is crowned octave-doubled
+# in the climax (its melodic identity), and returns AUGMENTED in the outro as the
+# synthesis. RENDER-GATED: confirm it reads as a hook, not a contrivance.
+_HYBRID_CYCLE = [
+    (E5,  0.0, 0.5, 100), (D5,  1.0, 0.5,  96),
+    (CS5, 2.0, 0.5, 100), (E5,  3.0, 0.5,  96),   # C# (bright 6) where NO-TIME had C (♭6)
+    (E4,  4.0, 0.3,  92), (FS4, 4.5, 0.3,  96),   # F# (bright 2) where NO-TIME had F (♭2)
+    (A4,  5.0, 0.5, 100), (B4,  6.0, 0.5, 102),
+    (CS5, 7.0, 1.0, 104),                          # lands bright (the 6th), the urgency turned joyful
+]
+
+
+def _hybrid_hook() -> list[dict]:
+    """The hybrid hook as a single 0-based 8-beat cycle (the referenceable idea)."""
+    return [_note(p, t, d, v, tags=["lead", "hybrid", "fusion"])
+            for p, t, d, v in _HYBRID_CYCLE]
+
+
+def _hybrid_lead(length_beats: float) -> list[dict]:
+    """The hybrid hook tiled across a section (loops every 8 beats)."""
+    notes: list[dict] = []
+    for cycle in range(int(length_beats // 8.0)):
+        offset = cycle * 8.0
+        for p, t, d, v in _HYBRID_CYCLE:
+            notes.append(_note(p, offset + t, d, v, tags=["lead", "hybrid", "fusion"]))
     return notes
 
 
@@ -391,14 +483,35 @@ def _metal_fill(kit: Kit, bar_start_beat: float) -> list[dict]:
     return notes
 
 
+# #4 (user 2026-06-03): crash DYNAMICS — BIG, Big, medium, small across the phrase crashes
+# (they were all 118, which the ear habituated to as BIG/medium/small). Two emphatic, then
+# taper — applied wherever _metal_drums lays the phrase crashes (chorus1/2 + the climax).
+_CRASH_SHAPE = (122, 116, 104, 94)
+
+
+def _shape_crashes(notes: list[dict], kit: Kit) -> list[dict]:
+    """Set each phrase-crash's velocity by its 4-bar phrase index — BIG, Big, medium, small
+    (#4). Pure: returns a new list; non-crash notes pass through untouched."""
+    crash = kit.try_pitch_of("crash")
+    if crash is None:
+        return notes
+    out: list[dict] = []
+    for n in notes:
+        if n["pitch"] == crash:
+            phrase = int(n["start_beats"] // (4 * BEATS_PER_BAR))
+            n = {**n, "velocity": _CRASH_SHAPE[min(max(phrase, 0), len(_CRASH_SHAPE) - 1)]}
+        out.append(n)
+    return out
+
+
 def _metal_drums(kit: Kit, bars: int) -> list[dict]:
-    """Gallop drums with sustained energy: a crash on every 4-bar phrase START and
-    a snare fill leading OUT of each 4-bar phrase."""
+    """Gallop drums with sustained energy: a crash on every 4-bar phrase START (velocities
+    shaped BIG, Big, medium, small — #4) and a snare fill leading OUT of each phrase."""
     crash_bars = tuple(range(0, bars, 4))
     notes = DG.metal_gallop(bars, kit=kit, crash_bars=crash_bars)
     for phrase_end in range(3, bars, 4):
         notes.extend(_metal_fill(kit, phrase_end * BEATS_PER_BAR))
-    return notes
+    return _shape_crashes(notes, kit)
 
 
 def _metal_layers(kit: Kit, bars: int, prog: Progression) -> dict[str, list[dict]]:
@@ -412,6 +525,13 @@ def _metal_layers(kit: Kit, bars: int, prog: Progression) -> dict[str, list[dict
     }
 
 
+# _verse1_metal_punctuation was REMOVED (#C, user 2026-06-03): verse1's metal "breakup"
+# is now a 2-bar Amp->Heavy TIMBRE flash on the reggae skank (authored in _amp_segments)
+# — the song's convention-break thesis in miniature — not a gallop + NO-TIME riff
+# intrusion. The old version read "a little too dramatic"; the timbre-only swap keeps the
+# reggae groove intact and just changes the guitar's character for two bars.
+
+
 # ---------------------------------------------------------------------------
 # Development — the worlds COLLIDE rhythmically, not just harmonically
 # (decisions/07). The rhythmic trade is DERIVED FROM THE SAME HARMONIC MAP that
@@ -423,26 +543,140 @@ def _metal_layers(kit: Kit, bars: int, prog: Progression) -> dict[str, list[dict
 # ---------------------------------------------------------------------------
 
 
+def _dev_polyrhythm_creep(start_beat: float, end_beat: float, *,
+                          hot: bool = False) -> list[dict]:
+    """The intro's 3:4:5:7 cloud CREEPING back into the development organ — two high
+    cross-rhythm voices (a third when ``hot``), velocity ramping up across the window,
+    foreshadowing the integration's polyrhythm recap. The dawn cloud the protagonist
+    can't escape, quietly reforming under the collision."""
+    voices = [(B3, 0.75), (D4, 1.25)] + ([(G3, 1.0)] if hot else [])
+    lo, hi = (40, 66) if hot else (26, 46)
+    span = max(1.0, end_beat - start_beat)
+
+    def vel_at(t: float) -> int:
+        return int(round(lo + (hi - lo) * ((t - start_beat) / span)))
+
+    notes: list[dict] = []
+    for pitch, interval in voices:
+        notes.extend(_poly_voice(pitch, interval, start_beat, end_beat, vel_at=vel_at))
+    return notes
+
+
+def _dev_fill(kit: Kit, start_beat: float) -> list[dict]:
+    """A 1-bar snare fill closing the development — a crescendo of 16ths at the tension
+    peak, launching the DROP into the eureka break (where everything cuts to silence)."""
+    snare = kit.snare
+    notes: list[dict] = []
+    t, vel = start_beat, 84.0
+    while t < start_beat + BEATS_PER_BAR - 1e-9:
+        notes.append(_note(snare, round(t, 6), 0.12, min(122, int(vel)),
+                           tags=["drums", "fill", "development"]))
+        vel += 5
+        t += 0.25
+    return notes
+
+
 def _dev_collision(kit: Kit, prog: Progression, bars: int) -> dict[str, list[dict]]:
+    """The development: the worlds COLLIDE with accelerating whiplash — THROUGH-COMPOSED
+    as a 3-phase arc, not the old tiled loop (which repeated one ~5-bar collision cell
+    until it read as 'parts just glued together differently'). Authored for the 24-bar
+    development (the ARC fixes its length):
+
+      Phase 1 (bars 0–8):  a settled reggae groove with brief metal POKES (the shout
+                           poking through the long chill).
+      Phase 2 (8–16):      2-bar reggae↔metal TRADES, the intro polyrhythm cloud
+                           CREEPING back into the organ, the steel island entering.
+      Phase 3 (16–24):     rapid bar-by-bar WHIPLASH accelerating, velocities rising,
+                           the chillin lead FRAGMENTING under NO-TIME stabs, a gallop
+                           crescendo + snare fill launching the break's drop-out.
+
+    The contrast intensifies toward the eureka; nothing just loops. Bass reads each
+    bar's chord (harmony-lint motion preserved); the persistent reggae bed + the
+    polyrhythm creep + the lead get breathed (see _build_arrangement)."""
     drums: list[dict] = []
-    bass: list[dict] = []
-    for b in range(bars):
+    bass:  list[dict] = []
+    organ: list[dict] = []
+    lead:  list[dict] = []
+    steel: list[dict] = []
+    no_time_head = V.fragment(_no_time_motif(), 0.0, 4.0)   # the 'NO TIME' shout (first half)
+
+    # #3 (user 2026-06-03): a crash on the development DOWNBEAT lands the chorus2 phrase-
+    # crash pattern on the bar-97 transition (the metal punctuates the section change).
+    _crash = kit.try_pitch_of("crash")
+    if _crash is not None:
+        drums.append(_note(_crash, 0.0, 1.0, 116, tags=["crash", "accent", "transition"]))
+
+    def _bp(b: int) -> Progression:   # the bar's chord slice (bass/organ realize it → lint motion)
+        return prog.slice(b * BEATS_PER_BAR, BEATS_PER_BAR)
+
+    def reggae_bar(b: int) -> None:
         bs = b * BEATS_PER_BAR
-        bar_prog = prog.slice(bs, BEATS_PER_BAR)
-        # The F (♭II, pitch-class 5) is the Phrygian/metal intrusion → this bar trades to metal.
-        metal_bar = any(ch.chord.root_pc == 5 for ch in bar_prog.changes)
-        if metal_bar:
-            drums.extend(DG.metal_gallop(1, kit=kit, start_beat=bs, crash_bars=(0,)))
-            bass.extend(BG.metal_pedal_16ths(bar_prog, bars=1, start_beat=bs))
+        drums.extend(DG.reggae_one_drop(1, kit=kit, start_beat=bs))
+        bass.extend(BG.reggae_offbeat_bass(_bp(b), bars=1, start_beat=bs))
+
+    def metal_bar(b: int, *, crash: bool = False, kv: int = 90, sv: int = 96,
+                  hv: int = 46, hab: int = 8, cv: int = 100) -> None:
+        # #6 (user, 2026-06-02): the development metal drums read "too loud, too
+        # repetitive/jarring, just playing ON TOP". Pull the gallop DOWN toward the
+        # reggae one-drop bed (kick95/snare88/hat55) so it weaves IN, not over —
+        # the busy 16th hats especially (hv 70->46) were what sat on top — and the
+        # crashes (the jarring element) are softened (cv 118->100) and THINNED at the
+        # call sites to two structural hits. The gallop identity the user likes stays;
+        # only its weight changes. RENDER-GATED: tune levels + which bars crash by ear.
+        bs = b * BEATS_PER_BAR
+        drums.extend(DG.metal_gallop(1, kit=kit, start_beat=bs,
+                                     crash_bars=(0,) if crash else (),
+                                     kick_velocity=kv, snare_velocity=sv,
+                                     hat_velocity=hv, hat_accent_boost=hab,
+                                     crash_velocity=cv))
+        bass.extend(BG.metal_pedal_16ths(_bp(b), bars=1, start_beat=bs))
+
+    # --- Phase 1 (bars 0–8): settled reggae + brief metal pokes ---
+    for b in range(0, 8):
+        if b in (4, 7):
+            metal_bar(b, crash=False, kv=82, sv=90, hv=42)   # the poke is a SHADOW — no crash (too jarring this early)
+            lead.extend(V.shift(no_time_head, b * BEATS_PER_BAR))   # the shout pokes through
         else:
-            drums.extend(DG.reggae_one_drop(1, kit=kit, start_beat=bs))
-            bass.extend(BG.reggae_offbeat_bass(bar_prog, bars=1, start_beat=bs))
-    return {
-        "01 Drums": drums,
-        "02 Bass":  bass,
-        "04 Organ": HG.organ_bubble(prog, bars=bars),              # reggae bed persists
-        "05 Lead":  _reggae_lead_chillin(bars * BEATS_PER_BAR),    # the chill voice the metal interrupts
-    }
+            reggae_bar(b)
+    organ.extend(HG.organ_bubble(prog.slice(0.0, 8 * BEATS_PER_BAR), bars=8))
+    lead.extend(_reggae_lead_chillin(8 * BEATS_PER_BAR))            # the chill through-line (2 cycles)
+
+    # --- Phase 2 (bars 8–16): 2-bar trades + polyrhythm creep + steel ---
+    for b in range(8, 16):
+        block_metal = ((b - 8) // 2) % 2 == 1
+        if block_metal:
+            metal_bar(b, crash=(b == 10))   # one structural crash at the first trade entry, not every metal block
+            if (b - 8) % 2 == 0:                                    # shout on each metal block downbeat
+                lead.extend(V.shift(_no_time_motif(), b * BEATS_PER_BAR))
+        else:
+            reggae_bar(b)
+            if (b - 8) % 2 == 0:                                    # a chill fragment answers on reggae blocks
+                lead.extend(V.shift(V.fragment(_reggae_lead_chillin(16.0), 0.0, 4.0),
+                                    b * BEATS_PER_BAR))
+    organ.extend(HG.organ_bubble(prog.slice(8 * BEATS_PER_BAR, 8 * BEATS_PER_BAR),
+                                 bars=8, start_beat=8 * BEATS_PER_BAR, velocity=46))
+    organ.extend(_dev_polyrhythm_creep(8 * BEATS_PER_BAR, 16 * BEATS_PER_BAR))
+    steel.extend(V.shift(_steel_island(8), 8 * BEATS_PER_BAR))     # the island enters, lifting
+
+    # --- Phase 3 (bars 16–24): rapid whiplash accelerating into the break drop ---
+    for b in range(16, 22):                                        # bar-by-bar collision
+        if b % 2 == 0:
+            reggae_bar(b)
+            lead.extend(V.shift(V.fragment(_reggae_lead_chillin(16.0), 0.0, 2.0),
+                                b * BEATS_PER_BAR))                 # chill, fragmenting
+        else:
+            metal_bar(b, crash=False, kv=96, sv=102, hv=50)   # whiplash rises, still under the chorus engine
+            lead.extend(V.shift(no_time_head, b * BEATS_PER_BAR))
+    metal_bar(22, crash=True, kv=104, sv=110)                      # the gallop crescendo — the one big crash, launches the break drop
+    lead.extend(V.shift(_no_time_motif(), 22 * BEATS_PER_BAR))
+    bass.extend(BG.metal_pedal_16ths(_bp(23), bars=1, start_beat=23 * BEATS_PER_BAR))
+    drums.extend(_dev_fill(kit, 23 * BEATS_PER_BAR))               # the fill → the eureka drop-out
+    lead.extend(V.shift(no_time_head, 23 * BEATS_PER_BAR))
+    organ.extend(_dev_polyrhythm_creep(16 * BEATS_PER_BAR, 24 * BEATS_PER_BAR, hot=True))
+    steel.extend(V.shift(_steel_island(8), 16 * BEATS_PER_BAR))
+
+    return {"01 Drums": drums, "02 Bass": bass, "04 Organ": organ,
+            "05 Lead": lead, "06 Steel": steel}
 
 
 # ---------------------------------------------------------------------------
@@ -471,15 +705,21 @@ def _steel_island(bars: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Convention-break + integration + outro.
+# Break (REINVENTED) + integration (REINVENTED) + outro.
 #
-# Convention-break: the Amp TIMBRE is decoupled from the groove's TIME-FEEL. The
-# single break is a reggae groove (one-drop + skank + the Em/C#↔Em/C bass vote)
-# through a HEAVY amp — metal timbre on reggae time, the "playing with conventions".
+# Break — the EUREKA (decisions/08): drums AND bass drop OUT. A suspended, ethereal
+# field — a sustained polymodal FUSION pad (pp), the intro polyrhythm thinned to a
+# slow distant shimmer, and a CALL-AND-RESPONSE between a half-time reggae lead
+# fragment and a double-time metal fragment (the two worlds finally LISTENING to
+# each other, not interrupting). The last two bars rebuild tension (a snare-roll
+# RISER); the bass DROPS IN at the integration downbeat (the insight crystallising).
 #
-# Integration: the registered polyrhythm cloud is QUOTED on the organ (the
-# recapitulation — the intro's chaos returning inside the metal climax) and
-# RESOLVED into the polymodal `FUSION_CHORD` at the peak (both worlds at once).
+# Integration — the PLAYGROUND (decisions/08): the realization in action. Not metal
+# layers with an organ bolted on (the old smash), but the two worlds genuinely
+# COMBINED — a sequence of 4-bar "experiment" cells (reggae groove + metal lead
+# answering; metal gallop + floating reggae organ/steel; call-response trade; both
+# engines interlocking) building to the EARNED climax: both worlds full + the
+# polyrhythm recap RESOLVING into the polymodal both-at-once FUSION_CHORD.
 #
 # Outro: the RESOLUTION into a NEW joyful synthesis (decisions/07) — not a retreat
 # to sleepy reggae. The no-time hook is AUGMENTED (slowed) and softened — the
@@ -487,15 +727,43 @@ def _steel_island(bars: int) -> list[dict]:
 # new. The bed is lifted (drag halved). Feel/energy = first-pass, tune by ear.
 # ---------------------------------------------------------------------------
 
-_AMP_OVERRIDE = {"break": "Heavy"}  # the convention inversion (reggae groove, metal timbre)
 
-
-def _amp_for(name: str, genre: str | None) -> str:
-    """The Amp Type for a section: genre by default (Heavy=metal, Clean=reggae),
-    inverted for the convention-break."""
-    if name in _AMP_OVERRIDE:
-        return _AMP_OVERRIDE[name]
+def _amp_for(genre: str | None) -> str:
+    """The Amp Type for a section by genre: Heavy=metal, Clean=reggae. (The
+    integration's internal Clean→Heavy guitar trade is in _amp_segments; the break
+    holds whatever preceded it — its guitar is tacet.)"""
     return "Heavy" if genre == "metal" else "Clean"
+
+
+def _amp_segments(sec_name: str, genre: str | None) -> list[tuple[float, str]]:
+    """(local_start_beat, amp_value) segments within a section. Most sections are a
+    single segment; the integration's guitar amp follows INTEG_CELLS cell-by-cell —
+    CLEAN in the reggae cell, HEAVY in the metal/both/climax engine, and in the TRADE
+    cell it FLIPS BAR-BY-BAR (Clean reggae bar ↔ Heavy metal bar) so the genre-flip
+    device itself plays the call-and-response. The break runs HEAVY for the ghosted
+    metal guitar DRIFT that haunts the suspension (decisions/08 v2). One source of
+    truth = INTEG_CELLS, so the amp lines up with the groove + the guitar part."""
+    if sec_name == "integration":
+        segs: list[tuple[float, str]] = []
+        for start_bar, length, world in INTEG_CELLS:
+            cb = start_bar * BEATS_PER_BAR
+            if world == "reggae":
+                segs.append((cb, "Clean"))
+            elif world == "trade":   # the amp trades bar-by-bar with the groove
+                for bb in range(length):
+                    segs.append((cb + bb * BEATS_PER_BAR,
+                                 "Clean" if bb % 2 == 0 else "Heavy"))
+            else:                    # metal / both / climax — the Heavy engine
+                segs.append((cb, "Heavy"))
+        return segs
+    if sec_name == "break":
+        return [(0.0, "Heavy")]   # the metal-guitar DRIFT through the suspension
+    if sec_name in ("verse1", "verse2"):
+        # #1/#2 (user 2026-06-03): the metal kicks the door in ONE BEAT EARLY for just 2
+        # BEATS (the steal pattern in miniature) ~halfway through the verse — Heavy on the
+        # '4' of the bar (local 43) into the downbeat, then back to Clean. Both verses.
+        return [(0.0, "Clean"), (43.0, "Heavy"), (45.0, "Clean")]
+    return [(0.0, _amp_for(genre))]
 
 
 def _polyrhythm_callback(motif_notes: list[dict], bars: int) -> list[dict]:
@@ -508,17 +776,260 @@ def _polyrhythm_callback(motif_notes: list[dict], bars: int) -> list[dict]:
     return notes
 
 
-def _integration_organ(motif_notes: list[dict], bars: int) -> list[dict]:
-    """The integration organ: the polyrhythm recap across the section, RESOLVING
-    into the polymodal both-at-once `FUSION_CHORD` over the final 8 bars — the
-    intro's pure Em7 cloud blooming into the fused Dorian+Phrygian sonority."""
-    notes = _polyrhythm_callback(motif_notes, bars)
-    peak_start = (bars - 8) * BEATS_PER_BAR
-    for strike in range(2):  # two sustained hits across the last 8 bars
-        at = peak_start + strike * 16.0
-        for p in FUSION_CHORD.voicing(register=4):
-            notes.append(_note(p, at, 16.0, 58, tags=["organ", "fusion"]))
+# ---------------------------------------------------------------------------
+# The break — the eureka suspension. Hand-authored (the gesture IS the art): no
+# generator builds "an ethereal field", so this is composed from primitives +
+# variation ops. Drums + bass are absent (the drop-out); the pad/shimmer/dialogue
+# carry the held breath, and a riser launches the bass drop into the integration.
+# ---------------------------------------------------------------------------
+
+
+def _break_shimmer(total_beats: float) -> list[dict]:
+    """The intro polyrhythm THINNED to a slow, distant shimmer — two high voices
+    on a slow cross-rhythm, pp, a wash of the dawn cloud heard from far away."""
+    notes: list[dict] = []
+    for pitch, interval in ((B4, 1.5), (E5, 2.5)):
+        t = 0.5  # off the downbeat — floating, not pulsed
+        while t < total_beats - 1e-9:
+            notes.append(_note(pitch, round(t, 6), 0.6, 36,
+                               tags=["organ", "shimmer", "break"]))
+            t += interval
     return notes
+
+
+def _break_call_response(total_beats: float) -> list[dict]:
+    """The two worlds in a DIALOGUE THAT DAWNS (decisions/08 v3): a half-time
+    (augmented, slowed) reggae 'chillin' CALL, answered by a double-time (diminished,
+    fast) 'NO TIME' RESPONSE. The old version repeated the same exchange 4× — static,
+    for the song's emotional pivot. Now the realization UNFOLDS across the four
+    cycles: the response starts far off (a 2-beat gap) and urgent, then each cycle it
+    draws CLOSER to the call and SOFTENS, until the last cycle it OVERLAPS the call's
+    tail and is gentle — the worlds stop interrupting and start speaking TOGETHER.
+    'They finally listen' is enacted, not labelled. (The v1 static exchange is in git
+    history; this evolves the same materials, so the blessed feel is recoverable.)"""
+    base_call = V.augment(V.fragment(_reggae_lead_chillin(16.0), 0.0, 4.0), 2.0)
+    base_resp = V.diminish(V.fragment(_no_time_motif(), 0.0, 4.0), 2.0)
+    # per-cycle (gap-after-call-start, extra response velocity-drop): the response
+    # draws IN (10→6 beats) and YIELDS (softens) as the eureka settles.
+    arc = [(10.0, 30), (9.0, 38), (8.0, 46), (6.0, 54)]
+    notes: list[dict] = []
+    cycle = 16.0
+    for c in range(int(total_beats // cycle)):
+        base = c * cycle
+        gap, soften = arc[min(c, len(arc) - 1)]
+        call = [{**n, "velocity": max(46, n["velocity"] - 28)} for n in base_call]
+        resp = [{**n, "velocity": max(58, n["velocity"] - soften)} for n in base_resp]
+        notes.extend(V.shift(call, base))           # call: the slow chill, beats 0–8
+        notes.extend(V.shift(resp, base + gap))      # response: drawing in + softening each cycle
+    return notes
+
+
+def _break_sparkle(total_beats: float) -> list[dict]:
+    """Sparse high steel sparkle — the ethereal top, one soft wet bell per 4 bars."""
+    pitches = (CS5, E5, B4, D5)
+    return [_note(pitches[i % len(pitches)], at, 1.5, 34, tags=["steel", "sparkle", "break"])
+            for i, at in enumerate((6.0, 22.0, 38.0, 54.0)) if at < total_beats]
+
+
+def _break_riser(kit: Kit, total_beats: float) -> list[dict]:
+    """The RISER: a snare roll across the last two bars, accelerating 8ths→16ths and
+    crescendoing — rebuilds the tension the suspension released, launching the bass
+    drop at the integration downbeat."""
+    snare = kit.snare
+    notes: list[dict] = []
+    start = total_beats - 8.0  # last two bars
+    t, vel = start, 60.0
+    while t < total_beats - 1e-9:
+        notes.append(_note(snare, round(t, 6), 0.12, min(120, int(vel)),
+                           tags=["drums", "riser", "break"]))
+        vel += 4
+        step = 0.25 if t >= total_beats - 4.0 else 0.5  # last bar tightens to 16ths
+        t += step
+    return notes
+
+
+def _break_suspension(kit: Kit, bars: int) -> dict[str, list[dict]]:
+    """The whole eureka break: an ethereal suspended field. Drums + bass absent
+    (the drop-out); a sustained polymodal FUSION pad + thinned shimmer on the organ,
+    a half↔double-time call-response on the lead, sparse steel sparkle, and a riser
+    in the last two bars launching the bass drop."""
+    total = bars * BEATS_PER_BAR
+    pad_voicing = FUSION_CHORD.voicing(register=4)
+    organ: list[dict] = []
+    for half in range(2):  # two long pad swells across the field, pp
+        at = half * (total / 2.0)
+        for p in pad_voicing:
+            organ.append(_note(p, at, total / 2.0, 40, tags=["organ", "pad", "fusion", "break"]))
+    organ.extend(_break_shimmer(total))
+    return {
+        "04 Organ": organ,
+        "05 Lead":  _break_call_response(total),
+        "06 Steel": _break_sparkle(total),
+        "01 Drums": _break_riser(kit, total),  # the riser only — no groove
+    }
+
+
+# ---------------------------------------------------------------------------
+# The integration — the playground. Hand-authored cell-by-cell (per INTEG_CELLS,
+# the shared world map) because the *combination* is the musical decision, not a
+# generator's: the helpers only place the genre furniture the composer chose for
+# each cell (ruler, not stamp). This is the worked example for GEN-1S4K — the
+# section-archetype builders (reg/met) could only superpose whole worlds; the
+# playground needs interplay, so it is authored at the bar/cell grain here.
+# ---------------------------------------------------------------------------
+
+
+def _integration_climax_organ(motif_notes: list[dict], start_beat: float,
+                              bars: int) -> list[dict]:
+    """The climax organ: the polyrhythm recap across the climax, RESOLVING into the
+    polymodal both-at-once FUSION_CHORD over its final 8 bars — the intro's pure Em7
+    cloud blooming into the fused Dorian+Phrygian sonority, now EARNED by the play.
+    The recap is the POINT of the climax (the intro returning), so it is voiced FORWARD
+    (vel boosted) and the guitar is thinned beneath it (see _integration_climax_gtr_
+    swells) — it must stay audible inside the wall, not be buried (mix-intent)."""
+    recap = V.shift(_polyrhythm_callback(motif_notes, bars), start_beat)
+    # +12 (was +20): the recap now wins primarily by SPACE — steel + the doubled lead are
+    # held out of its first 8 bars (see _integration_play climax) — so it needs only a
+    # modest lift to cut, not a brute boost. Arrangement subtraction over fader-by-velocity.
+    recap = [{**n, "velocity": min(112, n["velocity"] + 12)} for n in recap]
+    notes = list(recap)
+    peak = start_beat + (bars - 8) * BEATS_PER_BAR
+    for strike in range(2):  # two sustained hits across the last 8 bars
+        at = peak + strike * 16.0
+        for p in FUSION_CHORD.voicing(register=4):
+            notes.append(_note(p, at, 16.0, 70, tags=["organ", "fusion"]))
+    return notes
+
+
+def _integration_climax_gtr_swells(prog: Progression, start_beat: float) -> list[dict]:
+    """The climax guitar OPENS over the last 8 bars: sustained low power-chord swells
+    (root + 5th, following the riff harmony) instead of a chugging wall, at a pulled-
+    back velocity — so the polyrhythm organ recap and the both-at-once FUSION chord
+    ring THROUGH the climax (the wall resolving into the fused sonority, the earned
+    payoff) rather than smearing the low-mids the recap lives in. The arrange/thin fix
+    (fix-order #1) for the integration burying its own recapitulation."""
+    notes: list[dict] = []
+    step = 2 * BEATS_PER_BAR  # one swell per 2 bars
+    for i in range(int(8 * BEATS_PER_BAR // step)):
+        t = i * step
+        for p in prog.chord_at(t).voicing(register=3)[:2]:   # root + 5th = power chord
+            notes.append(_note(p, start_beat + t, step * 0.92, 60,
+                               tags=["power_chord", "fusion", "climax", "swell"]))
+    return notes
+
+
+def _climax_riser(bars: int = 8) -> list[dict]:
+    """The CLIMAX tension RISER (#5, user 2026-06-03) — barely audible but INTOLERABLY
+    tense, built HARMONICALLY (not a volume sweep). Against the E pedal, high discrete notes
+    ACCUMULATE dissonance and ACCELERATE (8ths -> 16ths) over the last 8 bars: the b9 (F)
+    grinds first, then the TRITONE (Bb) enters, then a tightening cluster, until the final
+    bars hammer F/Bb/Eb/E on relentless 16ths. F + Bb sit OUTSIDE both modes (the Phrygian
+    b2 + the tritone), so the tension never resolves — it tightens into the reveal. Velocity
+    stays in the floor (24->40): the unease is the harmony + the RATE, not the level. A
+    dedicated quiet voice ('07 Tension'), so it muddies no part. RENDER-GATED: tune by ear."""
+    F5, BB5, E5n, EB6 = 77, 82, 76, 87
+    # (start_bar, end_bar, interval_beats, pitches, velocity)
+    phases = [
+        (0, 2, 0.5,  (F5,),                24),  # the b9 grinds — 8ths
+        (2, 4, 0.5,  (F5, BB5),            30),  # the TRITONE enters, alternating
+        (4, 6, 0.25, (F5, BB5, E5n),       34),  # a tightening 3-note cluster — 16ths
+        (6, 8, 0.25, (BB5, EB6, F5, E5n),  40),  # relentless: the cluster hammers
+    ]
+    notes: list[dict] = []
+    for sb, eb, interval, pitches, vel in phases:
+        t = sb * BEATS_PER_BAR
+        i = 0
+        while t < eb * BEATS_PER_BAR - 1e-9:
+            notes.append(_note(pitches[i % len(pitches)], round(t, 6),
+                               interval * 0.85, vel, tags=["tension", "riser", "climax"]))
+            t += interval
+            i += 1
+    return notes
+
+
+def _integration_play(kit: Kit, prog: Progression, poly_notes: list[dict],
+                      no_time_notes: list[dict]) -> dict[str, list[dict]]:
+    """The 32-bar playground, authored cell-by-cell from INTEG_CELLS. Bass voices
+    INTEG in every cell (the harmonic through-line the lens checks); the worlds
+    combine differently in each cell, building to the earned fusion climax."""
+    drums: list[dict] = []
+    bass:  list[dict] = []
+    organ: list[dict] = []
+    lead:  list[dict] = []
+    steel: list[dict] = []
+    tension: list[dict] = []   # #5 the climax tension riser (a new dedicated quiet voice)
+
+    # A short metal "answer" — the back half of the NO TIME hook, the urgency
+    # poking through, placed on the off-bars of a reggae cell.
+    answer = V.fragment(no_time_notes, 4.0, 8.0)
+
+    for start_bar, length, world in INTEG_CELLS:
+        bs = start_bar * BEATS_PER_BAR
+        clen = length * BEATS_PER_BAR
+        cell_prog = prog.slice(bs, clen)
+
+        if world == "reggae":
+            # Active-while-relaxing: reggae groove + metal lead ANSWERING. THE DROP
+            # lands on beat 0 — a low sub slam + kick after the suspended break.
+            drums.append(_note(kit.kick, 0.0, 0.20, 122, tags=["drums", "drop"]))
+            drums.extend(DG.reggae_one_drop(length, kit=kit, start_beat=bs))
+            bass.append(_note(E2 - 12, 0.0, 1.0, 122, tags=["bass", "drop"]))   # the bass DROP
+            bass.extend(BG.reggae_offbeat_bass(cell_prog, bars=length, start_beat=bs))
+            organ.extend(HG.organ_bubble(cell_prog, bars=length, start_beat=bs))
+            lead.extend(V.shift(answer, bs + 6.0))    # urgency answers the chill
+            lead.extend(V.shift(answer, bs + 14.0))
+
+        elif world == "metal":
+            # Chill-while-working: metal gallop engine, reggae organ + steel FLOATING.
+            drums.extend(DG.metal_gallop(length, kit=kit, start_beat=bs, crash_bars=(0,)))
+            bass.extend(BG.metal_pedal_16ths(cell_prog, bars=length, start_beat=bs))
+            organ.extend(HG.organ_bubble(cell_prog, bars=length, start_beat=bs))  # reggae bed floats over
+            steel.extend(V.shift(_steel_island(length), bs))
+
+        elif world == "trade":
+            # Call & response bar-by-bar: reggae one-drop (half-time chill) ↔ metal
+            # gallop (double-time urgency), the worlds in dialogue, accelerating.
+            for b in range(length):
+                bbs = bs + b * BEATS_PER_BAR
+                bprog = prog.slice(bbs, BEATS_PER_BAR)
+                if b % 2 == 0:  # reggae call
+                    drums.extend(DG.reggae_one_drop(1, kit=kit, start_beat=bbs))
+                    bass.extend(BG.reggae_offbeat_bass(bprog, bars=1, start_beat=bbs))
+                    organ.extend(HG.organ_bubble(bprog, bars=1, start_beat=bbs))
+                else:           # metal response
+                    drums.extend(DG.metal_gallop(1, kit=kit, start_beat=bbs, crash_bars=(0,)))
+                    bass.extend(BG.metal_pedal_16ths(bprog, bars=1, start_beat=bbs))
+                    lead.extend(V.shift(V.diminish(V.fragment(no_time_notes, 0.0, 4.0), 2.0), bbs))
+
+        elif world == "both":
+            # Both engines interlock, rising: the metal drive + reggae organ/steel
+            # floating + the NO TIME lead, leaning into the climax.
+            drums.extend(DG.metal_gallop(length, kit=kit, start_beat=bs, crash_bars=(0, 2)))
+            bass.extend(BG.metal_pedal_16ths(cell_prog, bars=length, start_beat=bs))
+            organ.extend(HG.organ_bubble(cell_prog, bars=length, start_beat=bs))
+            steel.extend(V.shift(_steel_island(length), bs))
+            lead.extend(V.shift(_hybrid_lead(clen), bs))   # the play BIRTHS the hybrid idea
+
+        else:  # "climax" — recap WINS BY SPACE (16–24), then the full PEAK (24–32)
+            half = (length // 2) * BEATS_PER_BAR   # 8 bars
+            drums.extend(V.shift(_metal_drums(kit, length), bs))   # metal floor + phrase crashes throughout
+            bass.extend(BG.metal_pedal_16ths(cell_prog, bars=length, start_beat=bs))
+            organ.extend(_integration_climax_organ(poly_notes, bs, length))
+            # SUBTRACTION (decisions/08 v3): the first 8 bars EXPOSE the polyrhythm recap —
+            # steel out, the hybrid lead single (not doubled) — so the recap wins by SPACE,
+            # not the old +20 boost. The last 8 bars bring the full PEAK: steel returns + the
+            # hybrid octave-doubled + the gtr swells + the FUSION bloom. The climax now PEAKS
+            # at bar 24 instead of running flat-full from its downbeat (16).
+            lead.extend(V.shift(_hybrid_lead(half), bs))                       # 16–24: exposed, single
+            lead.extend(V.shift(_octave_down(_hybrid_lead(half)), bs + half))  # 24–32: crowned, doubled
+            steel.extend(V.shift(_steel_island(length // 2), bs + half))       # steel only in the peak
+            # #5 (user 2026-06-03): the tension RISER rides the peak (bars 24–32 / song
+            # 161–169) — barely audible, harmonically tightening (b9 + tritone, accelerating)
+            # so the climax feels intolerable without ever getting loud.
+            tension.extend(V.shift(_climax_riser(length // 2), bs + half))
+
+    return {"01 Drums": drums, "02 Bass": bass, "04 Organ": organ,
+            "05 Lead": lead, "06 Steel": steel, "07 Tension": tension}
 
 
 def _augmented_no_time(no_time_motif: list[dict], at_beat: float) -> list[dict]:
@@ -532,22 +1043,140 @@ def _augmented_no_time(no_time_motif: list[dict], at_beat: float) -> list[dict]:
     return V.shift(calm, at_beat)
 
 
-def _outro_lead(bars: int, no_time_motif: list[dict], mode, key_pc: int) -> list[dict]:
-    """The outro lead as a RESOLUTION arc (decisions/07): the chillin hook settles
-    (0–32), the 'NO TIME' anxiety returns AUGMENTED and at peace (32–48), then a
-    diatonic LIFT rises the chill up a third IN KEY — joyful, rising into something
-    new (48–64). Not a retreat to sleepy reggae: a synthesis."""
+def _augmented_hybrid(at_beat: float) -> list[dict]:
+    """The HYBRID hook (the playground's new idea) AUGMENTED (slowed 2×) and softened
+    — the synthesis returning at peace (decisions/08 v3). The fused 'I don't have to
+    choose' line, reconciled into the outro's Dorian bed: the genuinely NEW idea the
+    back half generated, now the resolution. 8-beat cycle -> 16 beats."""
+    slowed = V.augment(_hybrid_hook(), 2.0)
+    calm = [{**n, "velocity": max(50, n["velocity"] - 40)} for n in slowed]
+    return V.shift(calm, at_beat)
+
+
+def _outro_lead(bars: int, no_time_motif: list[dict]) -> list[dict]:
+    """The outro lead as a RESOLUTION arc (decisions/07 + 08): the chillin hook
+    settles (0–32), the 'NO TIME' anxiety returns AUGMENTED and at peace (32–48),
+    then the HYBRID hook the playground birthed returns AUGMENTED (48–64) — the
+    synthesis. Not a retreat to sleepy reggae, and not a mechanical transposition of
+    the chill: the genuinely NEW idea the fusion generated, now reconciled."""
     notes = _reggae_lead_chillin(32.0)                                  # settle (2 cycles)
     notes.extend(_augmented_no_time(no_time_motif, 32.0))               # the anxiety, slowed to peace
-    lift = V.transpose_diatonic(_reggae_lead_chillin(16.0),             # the joyful lift (in-key, +a third)
-                                mode=mode, key_pc=key_pc, steps=2)
-    notes.extend(V.shift(lift, 48.0))
+    notes.extend(_augmented_hybrid(48.0))                               # the synthesis: the new idea, at peace
     return notes
+
+
+def _outro_dub_ending(layers: dict[str, list[dict]], kit: Kit, *,
+                      section_beats: float) -> dict[str, list[dict]]:
+    """#5 (user, 2026-06-02): the outro was *great* but ENDED ABRUPTLY — every part cut
+    dead at the last bar. The chosen fix is a DUB ECHO-OUT (the user's pick, and the
+    most reggae-faithful 'arrival in the sun zone'): the synthesis groove plays its
+    course, then over the LAST 2 BARS it LANDS a sustained Em9 'button' (the outro's home
+    chord) and the groove DROPS OUT, leaving the chord + a final snare to ring and ECHO
+    away — the DubDelay throw + the long 3.0s Plate tail (the throw is authored clip-local
+    in `_author_outro_throw`). Lands, then washes; not a stop.
+
+    Hand-authored — no generator lands-and-rings. The bed (drums/bass/organ bubble/steel
+    figure) is truncated at `land`; the LEAD keeps its augmented-hybrid resolution through
+    the end (the synthesis line, resolving bright to the C# 'sun zone' note over the held
+    chord, IS the point). Added AFTER `_breathe`, so the button is a clean landing while
+    the bed breathed. RENDER-GATED: tune `land`, the button voicing/length, the final
+    accent weight, and the throw depth by ear."""
+    land = section_beats - 8.0          # the last 2 bars own the landing + the wash
+
+    def _stop_at(notes: list[dict], cut: float) -> list[dict]:
+        kept: list[dict] = []
+        for n in notes:
+            if n["start_beats"] >= cut - 1e-9:
+                continue                                  # starts in the wash → dropped
+            end = n["start_beats"] + n["duration_beats"]
+            if end > cut:                                 # sustains into the wash → clipped
+                n = {**n, "duration_beats": round(cut - n["start_beats"], 6)}
+            kept.append(n)
+        return kept
+
+    out = dict(layers)
+    for name in ("01 Drums", "02 Bass", "04 Organ", "06 Steel"):
+        if name in out:
+            out[name] = _stop_at(out[name], land)
+
+    ring = section_beats - land                            # the button fills the last 2 bars;
+    em9_organ = (E3, G3, B3, D4, FS4)                      # the Plate/DubDelay tail rings past it
+    em9_steel = (B4, E5, FS4 + 12)                         # high shimmer of the chord (E5 + F#5)
+    out.setdefault("04 Organ", []).extend(
+        _note(p, land, ring, 54, tags=["organ", "outro", "button"]) for p in em9_organ)
+    out.setdefault("06 Steel", []).extend(
+        _note(p, land, ring, 60, tags=["steel", "outro", "button"]) for p in em9_steel)
+    out.setdefault("02 Bass", []).append(
+        _note(E2, land, 6.0, 96, tags=["bass", "outro", "land"]))      # the final root, felt
+    drums = out.setdefault("01 Drums", [])                             # final one-drop accent —
+    drums.append(_note(kit.kick, land, 0.4, 92, tags=["drums", "outro", "land"]))
+    drums.append(_note(kit.snare, land, 0.4, 96, tags=["drums", "outro", "land"]))  # the snare echoes out
+    return out
 
 
 def _octave_down(notes: list[dict]) -> list[dict]:
     """Recurrence delta: double a layer an octave lower (heavier / escalating)."""
     return notes + V.transpose(notes, -12)
+
+
+def _interrupt_tail(layers: dict[str, list[dict]], section_beats: float,
+                    *, next_metal: dict[str, list[dict]] | None = None,
+                    lead_gap: float = 4.5, groove_gap: float = 1.0,
+                    steal_beats: float = 1.0,
+                    kick_tracks: tuple[str, ...] = ("01 Drums", "02 Bass"),
+                    ) -> dict[str, list[dict]]:
+    """The RUDE INTERRUPTION (decisions/08 v4) — the metal STEALS the reggae's last
+    beat. The genre flips used to land on a clean bar line (a polite handoff); the
+    lyric SEVERS the chill mid-word ('chillin in the sun — NO TIME FOR THAT'), so the
+    band kicks the door in a beat EARLY: the metal's opening slam (crash + gallop kick
+    + the pedal-bass downbeat) is pulled forward onto beat 4 of the reggae's final bar
+    — 'on 4 rather than 1'. Two cuts clear the way for it:
+
+      - the chill MELODY is robbed of its resolution (``lead_gap``): its landing note
+        is removed, leaving the phrase hanging on an unresolved note the slam cuts off;
+      - the reggae GROOVE gives up its stolen beat (``groove_gap`` ≈ ``steal_beats``):
+        it lands its beat-3 one-drop, then yields beat 4 to the metal.
+
+    The metal section then CONFIRMS on its own downbeat (beat 1), so the felt arrival
+    is the early slam on 4 and the downbeat is the landing. The door-kick is pulled
+    from ``next_metal`` (single source of truth — it always matches the chorus that
+    follows) on ``kick_tracks`` only; the VOICE ('NO TIME FOR THAT') is left to land on
+    the downbeat, un-anticipated, so the hook isn't stuttered. Applied to the reggae
+    sections that precede a chorus (verse1, verse2). Length-preserving by design (the
+    grid never shifts) — the LITERAL steal (shorten the section, lurch the grid) is a
+    fractional-bar arrangement-model change we escalate to only if the ear demands it.
+    RENDER-GATED: tune the gaps + ``steal_beats`` by ear (lead too deep = the hook
+    never lands; steal too long = the metal pre-empts itself; groove gap ≠ steal = mud
+    at the seam or dead air)."""
+    out: dict[str, list[dict]] = {}
+    for name, notes in layers.items():
+        cut_at = section_beats - (lead_gap if name == "05 Lead" else groove_gap)
+        kept: list[dict] = []
+        for n in notes:
+            start = n["start_beats"]
+            if start >= cut_at - 1e-9:
+                continue                                  # in the gap → severed
+            end = start + n["duration_beats"]
+            if end > cut_at:                              # sustains into the gap → clip it
+                n = {**n, "duration_beats": round(cut_at - start, 6)}
+            kept.append(n)
+        out[name] = kept
+    # The early slam: steal the metal's first beat onto beat 4 of the reggae's last bar.
+    if next_metal is not None and steal_beats > 0:
+        at = section_beats - steal_beats
+        for track in kick_tracks:
+            head = [n for n in next_metal.get(track, [])
+                    if n["start_beats"] < steal_beats - 1e-9]
+            for n in head:
+                start = at + n["start_beats"]
+                dur = min(n["duration_beats"], section_beats - start)  # cap to clip end
+                if dur < 0.05:        # a sliver at the bar line → an inaudible click;
+                    continue          # the chorus downbeat re-articulates it anyway
+                out.setdefault(track, []).append(
+                    {**n, "start_beats": round(start, 6),
+                     "duration_beats": round(dur, 6),
+                     "tags": list(n.get("tags", [])) + ["interrupt", "steal"]})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +1191,7 @@ def _octave_down(notes: list[dict]) -> list[dict]:
 
 # Per-part base seed; the section's index is added so each section is a fresh "take".
 _PART_SEED = {"01 Drums": 1000, "02 Bass": 2000, "03 Rhythm Gtr": 3000,
-              "04 Organ": 4000, "05 Lead": 5000, "06 Steel": 6000}
+              "04 Organ": 4000, "05 Lead": 5000, "06 Steel": 6000, "07 Tension": 7000}
 _SECTION_INDEX = {name: i for i, (name, *_rest) in enumerate(ARC)}
 
 # The reggae rhythm-section + hook pocket: drums/bass/organ on HUMAN, the signature
@@ -584,6 +1213,16 @@ def _breathe(layers: dict[str, list[dict]], *, section: str,
         if name in out:
             out[name] = apply_profile(out[name], profile, seed=_seed_for(section, name))
     return out
+
+
+def _intro_halfway(kit: Kit) -> list[dict]:
+    """A small rhythm at the intro HALFWAY (bar 9 / local beat 32) — a quiet midpoint nod as
+    the dawn cloud thickens (#6, user 2026-06-03). A soft snare flam + a couple of ghost
+    taps in the first half of the bar (clear of the one-drop's beat-3 snare), low velocity —
+    a gesture, not a fill."""
+    snare = kit.snare
+    pts = [(32.0, 52), (32.25, 40), (32.75, 38), (33.25, 44)]
+    return [_note(snare, t, 0.18, v, tags=["drums", "intro", "halfway"]) for t, v in pts]
 
 
 def _build_arrangement(kit: Kit) -> Arrangement:
@@ -611,13 +1250,22 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     # Intro: sparse rhythm section under the hand-authored polyrhythm build.
     intro = reg("intro", sparse=True)
     intro["04 Organ"] = _polyrhythm_intro(specs["intro"][2])
+    intro["01 Drums"] = intro["01 Drums"] + _intro_halfway(kit)   # #6 halfway acknowledgment
     # The dawn cloud breathes subtly (organic sunrise); the integration recap of
     # this same motif stays TIGHT (the mechanical climax). Sparse intro = no lead.
     intro = _breathe(intro, section="intro",
                      plan={"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": BREATH})
 
+    # verse1 (#C, user 2026-06-03): the metal "breakup" ~halfway (bar 12) is now a TIMBRE
+    # flash — the reggae skank keeps playing while the Amp flips to HEAVY for 2 bars
+    # (authored in _amp_segments), then back to Clean. No gallop/NO-TIME riff intrusion,
+    # so the bed stays pure reggae; the guitar just goes metal for two bars.
     verse1 = _breathe(reg("verse1"), section="verse1", plan=_REGGAE_BREATH)
     chorus1 = met("chorus1")  # metal — stays machine-tight (never breathed)
+    # The RUDE cut + STEAL: the chill is severed mid-gesture AND chorus1's slam is
+    # pulled a beat early onto verse1's beat 4 (decisions/08 v4 — 'on 4 rather than 1':
+    # the metal kicks the door in before the chill's bar even finishes).
+    verse1 = _interrupt_tail(verse1, specs["verse1"][2] * BEATS_PER_BAR, next_metal=chorus1)
 
     # verse2: richer harmony (its own progression) + steel ENTERING (add-delta).
     verse2 = vary(reg("verse2"), add={"06 Steel": _steel_island(specs["verse2"][2])})
@@ -625,26 +1273,34 @@ def _build_arrangement(kit: Kit) -> Arrangement:
                       plan={**_REGGAE_BREATH, "06 Steel": HUMAN})
     # chorus2: darker harmony (own progression) + lead octave-doubled-down (escalation).
     chorus2 = vary(met("chorus2"), transform={"05 Lead": _octave_down})  # metal — tight
+    # severed before chorus2, whose slam is likewise stolen onto verse2's beat 4.
+    verse2 = _interrupt_tail(verse2, specs["verse2"][2] * BEATS_PER_BAR, next_metal=chorus2)
 
     # development: the worlds collide rhythmically (feel trades bar-by-bar, derived
     # from the DEV harmonic map — see _dev_collision), not just harmonically.
     development = _dev_collision(kit, SECTION_HARMONY["development"], specs["development"][2])
-    # Only the persistent reggae BED breathes (organ bubble + chillin lead); the
-    # bar-by-bar collision drums/bass stay as authored — the contrast IS the point.
+    # The persistent reggae BED breathes (organ bubble + polyrhythm creep + chillin
+    # lead + the entering steel); the bar-by-bar collision drums/bass stay as authored
+    # — the contrast IS the point.
     development = _breathe(development, section="development",
-                           plan={"04 Organ": HUMAN, "05 Lead": BREATH})
+                           plan={"04 Organ": HUMAN, "05 Lead": BREATH, "06 Steel": HUMAN})
 
-    # break: the hinge — reggae groove over the Em/C#↔Em/C slash vote (the bass
-    # votes the mode), Amp inverted to HEAVY (metal timbre on reggae time). The bass
-    # stays TIGHT here: the slash-vote IS the structural gesture, and at the fast
-    # 4-beat harmonic rhythm breathing it only smears the chord-at-onset read (like
-    # metal, its precision at the boundaries is the authorship). Bed/lead still breathe.
-    break_ = _breathe(reg("break"), section="break",
-                      plan={"01 Drums": HUMAN, "04 Organ": HUMAN, "05 Lead": BREATH})
+    # break (REINVENTED — decisions/08): the EUREKA suspension. Drums + bass drop
+    # OUT; a sustained polymodal FUSION pad + thinned shimmer carry the held breath,
+    # a half↔double-time call-response dialogue plays over it, sparse steel sparkle
+    # is the ethereal top, and a snare-roll riser in the last two bars launches the
+    # bass DROP into the integration. Only the call-response lead breathes (BREATH) —
+    # the pad must not wobble and the riser is a deliberate mechanical build.
+    break_ = _breathe(_break_suspension(kit, specs["break"][2]), section="break",
+                      plan={"05 Lead": BREATH})
 
-    # integration: metal engine + the polyrhythm recap resolving into the fusion split.
-    integration = met("integration")
-    integration["04 Organ"] = _integration_organ(poly.notes, specs["integration"][2])
+    # integration (REINVENTED — decisions/08): the PLAYGROUND. Not metal layers with
+    # an organ bolted on (the old smash) — the two worlds genuinely COMBINED, cell by
+    # cell (INTEG_CELLS), building to the EARNED fusion climax (recap + both-at-once
+    # chord). Stays machine-tight (engine + climax precision); per-cell breathing is
+    # a render-gated dial, not v1.
+    integration = _integration_play(kit, SECTION_HARMONY["integration"],
+                                    poly.notes, no_time.notes)
 
     # outro: the RESOLUTION into a NEW joyful synthesis (decisions/07) — not a
     # retreat to sleepy reggae. The bed is LIFTED (drag halved toward the grid —
@@ -656,13 +1312,16 @@ def _build_arrangement(kit: Kit) -> Arrangement:
         "02 Bass":  BG.reggae_offbeat_bass(OUTRO_H, bars=ob, push=0.01),
         "04 Organ": HG.organ_bubble(OUTRO_H, bars=ob, lag=0.02),
         "06 Steel": _steel_island(ob),
-        "05 Lead":  _outro_lead(ob, no_time.notes, OUTRO_H.mode, OUTRO_H.key_pc),
+        "05 Lead":  _outro_lead(ob, no_time.notes),
     }
     # The synthesis pocket — the whole reggae bed breathes together (distinct seeds):
     # a band arriving somewhere new, not a grid with the drag merely halved.
     outro = _breathe(outro, section="outro",
                      plan={"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": HUMAN,
                            "06 Steel": HUMAN, "05 Lead": BREATH})
+    # #5: the DUB ECHO-OUT — land a sustained Em9 button, drop the groove, ring/echo out
+    # (the throw + Plate tail). Added after breathing so the landing is clean, not wobbled.
+    outro = _outro_dub_ending(outro, kit, section_beats=ob * BEATS_PER_BAR)
 
     layers_by_name = {
         "intro": intro, "verse1": verse1, "chorus1": chorus1, "verse2": verse2,
@@ -686,24 +1345,137 @@ def _build_arrangement(kit: Kit) -> Arrangement:
 # ---------------------------------------------------------------------------
 
 
+def _strum(notes: list[dict], *, spread: float = 0.012) -> list[dict]:
+    """Make a block chord read as a STRUMMED electric guitar, not a keyboard stab:
+    rake the notes that share an onset low→high by ``spread`` beats (a pick stroke),
+    nudging the top strings a hair louder. A dead-synchronous voicing is exactly what
+    made the reggae skank sound 'not quite' like a strum; the rake is the fix. Pure
+    note-arithmetic — the composer chose to strum, this only places the rake (ruler,
+    not stamp). Song-local for now (candidate promotion once GEN-1S4K resolves the
+    generator-altitude question). spread=0.012 beat ≈ 4 ms/string at 180 BPM — a tight
+    reggae chop, not a folk sweep; tune by ear at the render."""
+    by_onset: dict[float, list[dict]] = {}
+    for n in notes:
+        by_onset.setdefault(round(n["start_beats"], 4), []).append(n)
+    out: list[dict] = []
+    for grp in by_onset.values():
+        for i, n in enumerate(sorted(grp, key=lambda m: m["pitch"])):
+            out.append({**n, "start_beats": n["start_beats"] + i * spread,
+                        "velocity": min(127, n["velocity"] + i)})
+    return out
+
+
+def _break_drift() -> list[dict]:
+    """The metal guitar DRIFTING through the eureka suspension (decisions/08 v2): sparse,
+    SUSTAINED low power-chord swells at a GHOST velocity — the anxiety of the metal world
+    still echoing in the moment of peace, distant and (via the clip-local pan sweep)
+    panned hard across the field. Voiced as E power chords (root + 5th, no third) so the
+    metal timbre stays consonant with the suspension's E-tonic fusion pad, and placed in
+    the GAPS around the call-response, not on top of it. Played through the Heavy amp
+    (_amp_segments break = Heavy); 'much lower volume than usual' is the velocity floor."""
+    voicings = ((E2, E2 + 7), (E3, E3 + 7))   # low + slightly higher E5 power chord
+    # (onset_beat, length_beats, voicing_idx) — four long swells drifting in/out over 16 bars
+    swells = [(3.0, 9.0, 0), (19.0, 7.0, 1), (35.0, 11.0, 0), (51.0, 9.0, 1)]
+    notes: list[dict] = []
+    for at, ln, vi in swells:
+        for p in voicings[vi]:
+            notes.append(_note(p, at, ln, 30, tags=["power_chord", "metal", "drift", "break"]))
+    return notes
+
+
+def _verse_metal_flash(sec_start: float) -> list[dict]:
+    """The 2-BEAT metal intrusion (#1/#2, user 2026-06-03): the metal kicks the door in
+    ONE BEAT EARLY — a sharp E5 palm-mute power chord on the '4' of the bar (local 43)
+    carrying into the downbeat (44), then back to the reggae skank. The metal asserts its
+    own E tonic (like the chorus steal), not the verse chord. Heavy amp + the auto volume-
+    trim (_amp_segments + _author_gtr_volume_lanes). Two beats only — sharp, not muddy."""
+    notes: list[dict] = []
+    for beat in (43.0, 44.0):
+        for p in (E3, B3, E4):   # E power chord (root + 5th + octave), register 3
+            notes.append(_note(p, sec_start + beat, 0.45, 92,
+                               tags=["power_chord", "metal", "flash"]))
+    return notes
+
+
 def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
     """Author the monolithic rhythm-gtr clip + the Amp Type envelope. Reggae
-    sections voice the section's progression as a skank; metal sections as
+    sections voice the section's progression as a strummed skank; metal sections as
     walking power chords — the gtr now MOVES with the harmony."""
     gtr_track_id = tracks["03 Rhythm Gtr"]
     first_bar = placed[0].start_bar
     total_beats = (placed[-1].end_bar - first_bar) * BEATS_PER_BAR
+
+    def _skank(prog, *, bars, start_beat, section):
+        """A breathing, STRUMMED reggae skank — the hand-on-strings chuck raked into a
+        pick stroke (_strum), then humanized (HUMAN). Metal power-chord chunks stay
+        tight, un-raked (decisions/06)."""
+        notes = HG.reggae_skank(prog, bars=bars, start_beat=start_beat, register=3)
+        notes = _strum(notes)  # rake the chuck so it reads as a strummed electric, not a stab
+        return apply_profile(notes, HUMAN, seed=_seed_for(section, "03 Rhythm Gtr"))
 
     all_notes: list[dict] = []
     for sec in placed:
         section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
         section_bars = sec.end_bar - sec.start_bar
         prog = sec.progression  # resolved per section by plan()
+        if sec.name == "break":
+            # No longer tacet: a ghosted metal-guitar DRIFT haunts the suspension
+            # (decisions/08 v2), through the Heavy amp + the clip-local pan sweep.
+            all_notes.extend(V.shift(_break_drift(), section_start_beats))
+            continue
+        if sec.name == "integration":
+            # The guitar PLAYS the playground cell-by-cell (one source of truth =
+            # INTEG_CELLS): a Clean strummed skank in the reggae cell, the Heavy
+            # palm-muted engine in metal/both, a bar-by-bar Clean↔Heavy trade, and in
+            # the climax a Heavy gallop that OPENS into sustained power-chord swells so
+            # the polyrhythm organ recap + the fusion chord ring through. Velocities are
+            # pulled FAR under the chorus engine (root 62–68 vs 108): the integration must
+            # MIX, not dominate. The earlier 84–92 STILL masked steel 0.67 / organ 0.49 in
+            # the mud+mid bands (user 2026-06-03: "too loud, stomping — make it BLEND"), so
+            # the engine cells drop again; the climax swells already open for the recap.
+            def _engine(p, *, bars, sb, root):
+                return HG.palm_mute_power_chords(
+                    p, bars=bars, start_beat=sb, register=3, root_velocity=root,
+                    fifth_velocity=root - 14, octave_velocity=root - 20)
+            for cell_start, cell_len, world in INTEG_CELLS:
+                cbeat = section_start_beats + cell_start * BEATS_PER_BAR
+                cloc = cell_start * BEATS_PER_BAR
+                cprog = prog.slice(cloc, cell_len * BEATS_PER_BAR)
+                if world == "reggae":
+                    all_notes.extend(_skank(cprog, bars=cell_len, start_beat=cbeat,
+                                            section="integration"))
+                elif world == "metal":
+                    all_notes.extend(_engine(cprog, bars=cell_len, sb=cbeat, root=66))
+                elif world == "trade":   # the guitar trades bar-by-bar with the groove
+                    for bb in range(cell_len):
+                        bbeat = cbeat + bb * BEATS_PER_BAR
+                        bprog = prog.slice(cloc + bb * BEATS_PER_BAR, BEATS_PER_BAR)
+                        if bb % 2 == 0:
+                            all_notes.extend(_skank(bprog, bars=1, start_beat=bbeat,
+                                                    section="integration"))
+                        else:
+                            all_notes.extend(_engine(bprog, bars=1, sb=bbeat, root=66))
+                elif world == "both":
+                    all_notes.extend(_engine(cprog, bars=cell_len, sb=cbeat, root=68))
+                else:  # climax — a driving wall that OPENS into ringing fusion swells
+                    drive = cell_len - 8
+                    all_notes.extend(_engine(prog.slice(cloc, drive * BEATS_PER_BAR),
+                                             bars=drive, sb=cbeat, root=62))
+                    all_notes.extend(_integration_climax_gtr_swells(
+                        prog.slice(cloc + drive * BEATS_PER_BAR, 8 * BEATS_PER_BAR),
+                        cbeat + drive * BEATS_PER_BAR))
+            continue
         if sec.genre == "reggae":
-            skank = HG.reggae_skank(
-                prog, bars=section_bars, start_beat=section_start_beats, register=3)
-            # The hand-on-strings skank breathes; metal power-chord chunks stay tight.
-            skank = apply_profile(skank, HUMAN, seed=_seed_for(sec.name, "03 Rhythm Gtr"))
+            skank = _skank(prog, bars=section_bars,
+                           start_beat=section_start_beats, section=sec.name)
+            if sec.name in ("verse1", "verse2"):
+                # #1/#2 (user 2026-06-03 v2): a SHARP 2-BEAT palm-mute flash arriving ONE
+                # BEAT EARLY (local 43–45 — on the '4' into the downbeat, the steal pattern
+                # in miniature), in BOTH verses. The skank notes there yield to a tight E5
+                # metal chord; the rest stays the clean skank. Heavy amp + auto volume-trim.
+                flo, fhi = section_start_beats + 43.0, section_start_beats + 45.0
+                skank = [n for n in skank if not (flo - 1e-9 <= n["start_beats"] < fhi - 1e-9)]
+                skank = skank + _verse_metal_flash(section_start_beats)
             all_notes.extend(skank)
         else:
             all_notes.extend(HG.palm_mute_power_chords(
@@ -734,20 +1506,333 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
     breakpoints: list[dict] = []
     last_amp: str | None = None
     for sec in placed:
-        amp_value = _amp_for(sec.name, sec.genre)
-        if amp_value != last_amp:
-            section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
-            breakpoints.append({
-                "time_beats": section_start_beats, "value": amp_value,
-                "curve_kind": "hold",
-            })
-            last_amp = amp_value
+        section_start_beats = (sec.start_bar - first_bar) * BEATS_PER_BAR
+        for local_start, amp_value in _amp_segments(sec.name, sec.genre):
+            if amp_value != last_amp:
+                breakpoints.append({
+                    "time_beats": section_start_beats + local_start, "value": amp_value,
+                    "curve_kind": "hold",
+                })
+                last_amp = amp_value
 
     M.create_enum_envelope(
         conn, device_id=amp_device["id"], parameter_name="Amp Type",
         breakpoints=breakpoints, value_items=AMP_TYPE_VALUE_ITEMS,
         actor="build", reason="genre-flip amp character at section boundaries",
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-section "space" — the clip-hosted pan/reverb route (MIX-3S7P). The
+# atmospheric sections (intro dawn cloud + break suspension) get a wetter Plate tail
+# + a gently wider image; the rest of the song keeps the static baseline. The trick
+# (the user's): each section's organ/lead/steel CLIP exists ONLY in that section, so
+# a clip-local mixer/send envelope inside its beat range is hosted by that clip and
+# the mix SNAPS BACK to baseline at verse/chorus automatically — no monolithic host
+# clip needed (the push resolves the host clip by beat range; a miss warn+skips,
+# non-fatal). Amounts are conservative — render-gated to tune by ear.
+# (section, track, plate_send, pan-or-None) — ranges derived from the plan, not
+# hardcoded. `plate_send` is a float (a HOLD) or a (lo, hi) tuple (a linear RAMP that
+# DEEPENS across the section). `create_envelope` is find-or-create per identity (track,
+# kind, return, param), so each (track, return) carries ONE clip-local lane — one
+# atmospheric section. The organ + drums are the INTRO's voices; the LEAD + STEEL are the
+# BREAK's floating voices. The OUTRO's extra reverb rides the ROOM return instead (a free
+# identity on those tracks — see _author_outro_reverb), so it never clobbers these Plate
+# lanes. (A per-track per-SECTION Plate lane would need an envelope-model change.)
+_ATMOSPHERE = [
+    # intro: a gradually DEEPENING reverb (#4, user 2026-06-02) — the dawn cloud's
+    # Plate send RAMPS up as the polyrhythm thickens toward its peak, then SNAPS BACK
+    # to each track's normal send at verse1 (the clip-local host ends at the intro
+    # boundary, so the verse arrives dry + present after the wash).
+    ("intro", "04 Organ", (0.06, 0.92), -0.30),  # the cloud — DEEPENS HARD (user: bigger), wider
+    ("intro", "01 Drums", (0.08, 0.55), None),    # the bed washes deep, then snaps dry at verse1
+    ("break", "05 Lead",  0.42, None),     # the call-response floats (wet)
+    ("break", "06 Steel", 0.40, 0.34),    # the sparkle — wide right + wet
+]
+
+
+def _author_atmosphere_envelopes(conn, song_id, tracks, placed) -> int:
+    """Author the clip-local pan/send 'space' envelopes for intro + break (MIX-3S7P).
+    Beat ranges come from the plan so they always sit inside the hosting clip; a hold
+    across [start, end-4] keeps the resolver inside the section clip. Returns the count."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    plate = next((r for r in Q.get_returns_for_song(conn, song_id)
+                  if r["name"] == "Plate"), None)
+    if plate is None:
+        raise RuntimeError("expected a 'Plate' return for the atmosphere sends")
+
+    def _hold(env_id: str, start: float, end: float, value: float, what: str) -> None:
+        M.replace_breakpoints(conn, envelope_id=env_id, breakpoints=[
+            {"time_beats": start, "value": value, "curve_kind": "hold"},
+            {"time_beats": max(start, end - 4.0), "value": value, "curve_kind": "hold"},
+        ], actor="build", reason=f"hold the {what} across the section (clip-local)")
+
+    def _ramp(env_id: str, start: float, end: float, lo: float, hi: float,
+              what: str) -> None:
+        # A linear DEEPENING from lo->hi across the section; the clip-local host makes
+        # the mix SNAP BACK to the track's static send at the next section (#4).
+        M.replace_breakpoints(conn, envelope_id=env_id, breakpoints=[
+            {"time_beats": start, "value": lo, "curve_kind": "linear"},
+            {"time_beats": max(start, end - 4.0), "value": hi, "curve_kind": "linear"},
+        ], actor="build", reason=f"ramp the {what} across the section (clip-local)")
+
+    n = 0
+    for section, track, send, pan in _ATMOSPHERE:
+        start, end = bounds[section]
+        tid = tracks[track]
+        send_env = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level", target_track_id=tid,
+            target_send_return_id=plate["id"], actor="build",
+            reason=f"{section} atmosphere: wetter Plate (MIX-3S7P, clip-local)")
+        if isinstance(send, tuple):
+            _ramp(send_env, start, end, send[0], send[1], "deepening Plate send")
+        else:
+            _hold(send_env, start, end, send, "elevated Plate send")
+        n += 1
+        if pan is not None:
+            pan_env = M.create_envelope(
+                conn, song_id=song_id, target_kind="mixer_pan", target_track_id=tid,
+                actor="build",
+                reason=f"{section} atmosphere: wider image (MIX-3S7P, clip-local)")
+            _hold(pan_env, start, end, pan, "widened pan")
+            n += 1
+    return n
+
+
+def _author_break_drift_pan(conn, song_id, tracks, placed) -> int:
+    """The EXTREME pan SWEEP on the break's metal-guitar drift (decisions/08 v2): the
+    ghosted power chords drift slowly L→R→L across the suspension, dead-center
+    everywhere else. The rhythm gtr is a MONOLITHIC clip (it hosts the Amp envelope),
+    so unlike the clip-local atmosphere route this is one continuous automation lane
+    bookended at center — the guitar in every other section stays centered; only the
+    break drift wanders the field. Linear curves = a smooth drift, not a jump."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    bstart, bend = bounds["break"]
+    L, R = -0.95, 0.95
+    env = M.create_envelope(
+        conn, song_id=song_id, target_kind="mixer_pan",
+        target_track_id=tracks["03 Rhythm Gtr"], actor="build",
+        reason="break drift: extreme L↔R pan sweep (decisions/08 v2)")
+    M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+        {"time_beats": 0.0,          "value": 0.0,     "curve_kind": "linear"},
+        {"time_beats": bstart,       "value": 0.0,     "curve_kind": "linear"},
+        {"time_beats": bstart + 3.0, "value": L,       "curve_kind": "linear"},
+        {"time_beats": bstart + 22.0,"value": R,       "curve_kind": "linear"},
+        {"time_beats": bstart + 40.0,"value": L,       "curve_kind": "linear"},
+        {"time_beats": bend - 4.0,   "value": R * 0.6, "curve_kind": "linear"},
+        {"time_beats": bend,         "value": 0.0,     "curve_kind": "linear"},
+    ], actor="build", reason="break drift pan sweep (extreme, decisions/08 v2)")
+    return 1
+
+
+# Gtr fader volume (normalized, from captured_session.json) + the break ghost dip.
+_GTR_VOL = 0.7            # gtr normal fader (Clean amp)
+_GTR_HEAVY = 0.64         # ~3 dB trim wherever the amp is HEAVY (user 2026-06-03)
+_GTR_BREAK_GHOST = 0.40   # break drift — deeper than the generic Heavy trim (a ghost)
+_GTR_INTEG_BLEND = 0.45   # integration engine — deeper, so it blends under the recap
+
+
+def _author_gtr_volume_lanes(conn, song_id, tracks, placed) -> int:
+    """Couple the gtr VOLUME to the amp TIMBRE (user 2026-06-03 — "whenever the guitar
+    goes to metal mode it's ~3 dB too loud"). The Heavy amp adds gain, so every Clean->
+    Heavy flip bumped the level. The fix is ONE mixer-VOLUME envelope DERIVED FROM THE
+    SAME `_amp_segments` that drive the Amp Type envelope (one source of truth): wherever
+    the amp is HEAVY the gtr trims to `_GTR_HEAVY`, so the timbre flip is level-matched —
+    chorus1/chorus2, the verse1 flash, every Heavy bar (and any future one, for free).
+    Two sections cut DEEPER than the generic trim: the break DRIFT -> ghost
+    (`_GTR_BREAK_GHOST`), and the integration ENGINE -> blend (`_GTR_INTEG_BLEND`); the
+    integration climax SWELLS re-open to normal so the recap rings (the amp stays Heavy
+    there, so that one breakpoint isn't on an amp boundary). Velocity can't do this — the
+    Heavy distortion floors it; a limiter would squash dynamics and not level-match. The
+    envelope is exact + clean. RENDER-GATED: tune `_GTR_HEAVY` by ear (~3 dB)."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    istart = bounds["integration"][0]
+    eng_lo, eng_hi = istart + 16.0, istart + 96.0   # integration engine window
+
+    bps: list[dict] = []
+    last: float | None = None
+
+    def _emit(beat: float, val: float) -> None:
+        nonlocal last
+        if last is None or abs(val - last) > 1e-9:
+            bps.append({"time_beats": round(beat, 6), "value": val, "curve_kind": "hold"})
+            last = val
+
+    for sec in placed:
+        sbeat = (sec.start_bar - first_bar) * BEATS_PER_BAR
+        if sec.name == "integration":
+            # The whole engine window blends; the reggae cell + climax swells stay open
+            # (independent of the cell-by-cell amp trade — the engine is dipped as a block).
+            _emit(sbeat, _GTR_VOL)
+            _emit(eng_lo, _GTR_INTEG_BLEND)
+            _emit(eng_hi, _GTR_VOL)
+            continue
+        for local, amp in _amp_segments(sec.name, sec.genre):
+            if amp == "Clean":
+                _emit(sbeat + local, _GTR_VOL)
+            elif sec.name == "break":
+                _emit(sbeat + local, _GTR_BREAK_GHOST)
+            else:
+                _emit(sbeat + local, _GTR_HEAVY)
+
+    env = M.create_envelope(
+        conn, song_id=song_id, target_kind="mixer_volume",
+        target_track_id=tracks["03 Rhythm Gtr"], actor="build",
+        reason="gtr volume coupled to amp timbre (Heavy = trimmed)")
+    M.replace_breakpoints(conn, envelope_id=env, breakpoints=bps, actor="build",
+        reason="gtr volume = amp-coupled Heavy trim + break ghost + integration blend")
+    return 1
+
+
+# Gtr Plate send: dry baseline (snapshot 0.05) + the deep dub wash on the break drift.
+_GTR_PLATE_BASE = 0.05
+_GTR_BREAK_PLATE = 0.46
+
+
+def _author_break_drift_reverb(conn, song_id, tracks, placed) -> int:
+    """Stuff the break's metal-guitar DRIFT into a DEEP dub reverb (#2, user 2026-06-02):
+    even ghosted it read 'too loud / too foreground', so push it BACK in the depth field
+    — swell the gtr's Plate send (the long 3.0s dub tail) up only across the break, dry
+    (its 0.05 snapshot baseline) everywhere else. Bookended on the monolithic gtr clip
+    like the pan/gain lanes; identity (gtr, send_level, Plate) is otherwise unused. With
+    the lower ghost gain and the break-only Phaser (Pass B), the drift becomes a distant
+    SWIRL washed deep under the suspension, not a foreground wall. RENDER-GATED: tune the
+    depth by ear so the drift haunts from far away, never up front."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    bstart, bend = bounds["break"]
+    plate = next((r for r in Q.get_returns_for_song(conn, song_id)
+                  if r["name"] == "Plate"), None)
+    if plate is None:
+        raise RuntimeError("expected a 'Plate' return for the break drift reverb")
+    env = M.create_envelope(
+        conn, song_id=song_id, target_kind="send_level",
+        target_track_id=tracks["03 Rhythm Gtr"], target_send_return_id=plate["id"],
+        actor="build", reason="break drift: deep dub Plate wash (#2)")
+    M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+        {"time_beats": 0.0,          "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+        {"time_beats": bstart,       "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+        {"time_beats": bstart + 2.0, "value": _GTR_BREAK_PLATE, "curve_kind": "linear"},
+        {"time_beats": bend - 2.0,   "value": _GTR_BREAK_PLATE, "curve_kind": "linear"},
+        {"time_beats": bend,         "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+    ], actor="build", reason="break drift deep reverb send (#2)")
+    return 1
+
+
+# Outro dub echo-out: per-track DubDelay throw (static base_send, peak_send).
+_OUTRO_THROW = [("01 Drums", 0.0, 0.48), ("04 Organ", 0.0, 0.34),
+                ("05 Lead", 0.12, 0.36), ("06 Steel", 0.14, 0.40)]
+
+
+def _author_outro_throw(conn, song_id, tracks, placed) -> int:
+    """The DUB THROW for the outro echo-out (#5): as the groove lands its final Em9 and
+    drops (see `_outro_dub_ending`), swell drums/organ/lead/steel into the DubDelay (the
+    classic reggae echo) across the last 2 bars so the held chord + the final snare ECHO
+    out into silence. Clip-local — each outro clip exists only here, so identity (track,
+    send_level, DubDelay) is free and distinct from the break's Plate atmosphere on
+    lead/steel. Each swell rises from the track's static DubDelay send to `peak`, held to
+    the end. RENDER-GATED: tune throw depth + onset by ear (too early = the groove smears;
+    too deep = the echo swamps the tail)."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    ostart, oend = bounds["outro"]
+    land = oend - 8.0
+    dub = next((r for r in Q.get_returns_for_song(conn, song_id)
+                if r["name"] == "DubDelay"), None)
+    if dub is None:
+        raise RuntimeError("expected a 'DubDelay' return for the outro throw")
+    n = 0
+    for track, base, peak in _OUTRO_THROW:
+        env = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=tracks[track], target_send_return_id=dub["id"],
+            actor="build", reason="outro dub echo-out: throw into DubDelay (#5)")
+        M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+            {"time_beats": ostart,     "value": base, "curve_kind": "linear"},
+            {"time_beats": land - 2.0, "value": base, "curve_kind": "linear"},
+            {"time_beats": land,       "value": peak, "curve_kind": "linear"},
+            {"time_beats": oend - 4.0, "value": peak, "curve_kind": "hold"},
+        ], actor="build", reason="outro dub throw swell (#5)")
+        n += 1
+    return n
+
+
+# Reggae skank "space" (#3, user 2026-06-03 — research-backed). The CLEAN skank wants a
+# little more air + life WITHOUT a chorus (research: chorus smears the chop). Give it a
+# Room send (small-reverb body/space) + a DubDelay slap (the classic reggae echo),
+# elevated ONLY across the skank sections — dry in metal (tight), the break (the drift
+# owns the gtr), and the integration (the playground). Whole-song bookended on the
+# monolithic gtr clip, hold-stepped per section. The bigger device moves (Utility width +
+# a 3 kHz "chank" EQ, decisions/09) are deferred until the ear asks for more.
+_SKANK_SECTIONS = ("intro", "verse1", "verse2", "development", "outro")
+_GTR_ROOM_SKANK = 0.30   # bumped from 0.18 (render: -68 dB, inaudible) — "a little more feel"
+_GTR_DUB_SKANK = 0.24    # bumped from 0.12 (render: -inf, inaudible)
+
+
+def _author_gtr_reggae_space(conn, song_id, tracks, placed) -> int:
+    """#3: make the reggae skank a little bigger/livelier — a reggae-gated gtr -> Room
+    (space) + gtr -> DubDelay (slap) lane, dry in metal/break/integration. RENDER-GATED:
+    'a little more feel', nothing drastic — tune by ear."""
+    first_bar = placed[0].start_bar
+    returns = Q.returns_by_name(conn, song_id)
+    if "Room" not in returns or "DubDelay" not in returns:
+        raise RuntimeError("expected 'Room' + 'DubDelay' returns for the skank space")
+
+    def _lane(return_id: str, level: float, what: str) -> int:
+        bps = [{"time_beats": (sec.start_bar - first_bar) * BEATS_PER_BAR,
+                "value": level if sec.name in _SKANK_SECTIONS else 0.0,
+                "curve_kind": "hold"}
+               for sec in placed]
+        env = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=tracks["03 Rhythm Gtr"], target_send_return_id=return_id,
+            actor="build", reason=f"reggae skank {what} (#3)")
+        M.replace_breakpoints(conn, envelope_id=env, breakpoints=bps,
+                              actor="build", reason=f"skank {what} (reggae-gated, #3)")
+        return 1
+
+    return (_lane(returns["Room"], _GTR_ROOM_SKANK, "Room space")
+            + _lane(returns["DubDelay"], _GTR_DUB_SKANK, "dub slap"))
+
+
+# Outro reverb lift (#D, user 2026-06-03): the synthesis wants slightly more reverb. The
+# Plate lanes on organ/lead/steel are claimed by intro/break (create_envelope is find-or-
+# create per identity), so the outro's extra reverb rides the ROOM return — a free
+# identity on those tracks — as a held clip-local lift across the outro.
+_OUTRO_REVERB = [("04 Organ", 0.30), ("05 Lead", 0.34), ("06 Steel", 0.30)]
+
+
+def _author_outro_reverb(conn, song_id, tracks, placed) -> int:
+    """#D: a held Room-reverb lift across the outro (organ/lead/steel), clip-local so it
+    snaps in only for the synthesis. RENDER-GATED: 'slightly more' — tune by ear."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    ostart, oend = bounds["outro"]
+    room = next((r for r in Q.get_returns_for_song(conn, song_id)
+                 if r["name"] == "Room"), None)
+    if room is None:
+        raise RuntimeError("expected a 'Room' return for the outro reverb lift")
+    n = 0
+    for track, level in _OUTRO_REVERB:
+        env = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=tracks[track], target_send_return_id=room["id"],
+            actor="build", reason="outro reverb lift (#D)")
+        M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+            {"time_beats": ostart, "value": level, "curve_kind": "hold"},
+            {"time_beats": max(ostart, oend - 4.0), "value": level, "curve_kind": "hold"},
+        ], actor="build", reason="outro Room reverb hold (#D)")
+        n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -796,7 +1881,7 @@ def build(reset: bool = False) -> str:
                 conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4)
 
             # Compose-half: author the arc on the arrangement + harmony modules.
-            tracks = _tracks_by_name(conn, song_id)
+            tracks = Q.tracks_by_name(conn, song_id)
             kit = _kit_for_drums(conn, tracks["01 Drums"])
             arr = _build_arrangement(kit)
             placed = arr.plan()
@@ -804,9 +1889,19 @@ def build(reset: bool = False) -> str:
                 conn, song_id=song_id, tracks=tracks,
                 author_sections=True, author_cues=True, actor="build")
             _compose_rhythm_gtr(conn, song_id, tracks, placed)
+            atmos = _author_atmosphere_envelopes(conn, song_id, tracks, placed)
+            atmos += _author_break_drift_pan(conn, song_id, tracks, placed)
+            atmos += _author_gtr_volume_lanes(conn, song_id, tracks, placed)
+            atmos += _author_break_drift_reverb(conn, song_id, tracks, placed)   # #2 deep dub wash
+            atmos += _author_outro_throw(conn, song_id, tracks, placed)          # #5 dub echo-out throw
+            atmos += _author_gtr_reggae_space(conn, song_id, tracks, placed)     # #3 skank Room + slap
+            atmos += _author_outro_reverb(conn, song_id, tracks, placed)         # #D outro reverb lift
 
-            # Harmony conformance — the structural gate. The bass must realize the
-            # declared harmony in every section (no one-chord drone).
+            # Harmony conformance — a read-side RULER, not a build gate (LNT-1V9K).
+            # It surfaces stasis as a loud WARNING below; the realization
+            # regression (the bass must SOUND the declared movement, no one-chord
+            # pedal) is asserted in this song's own test
+            # (test_harmony_realization_has_no_stasis), where the intent lives.
             report = lint_harmony(
                 arr.section_lints(harmony_layers=["02 Bass"]),
                 song_slug="sun-zone-done")
@@ -834,24 +1929,23 @@ def build(reset: bool = False) -> str:
                 print(f"    [{f.severity}] {f.section}: {f.detail}")
 
             for tname in ("01 Drums", "02 Bass", "03 Rhythm Gtr",
-                          "04 Organ", "05 Lead", "06 Steel"):
+                          "04 Organ", "05 Lead", "06 Steel", "07 Tension"):
                 tid = tracks[tname]
                 clips = Q.get_clips_for_track(conn, tid)
                 total_notes = sum(len(Q.get_notes_for_clip(conn, c["id"]))
                                   for c in clips)
                 print(f"  {tname:20s} clips={len(clips)} notes={total_notes}")
             envs = Q.get_envelopes_for_song(conn, song_id)
-            print(f"  envelopes: {len(envs)}")
+            print(f"  envelopes: {len(envs)} (1 Amp Type + {atmos} atmosphere pan/send)")
             arrangement = Q.get_arrangement_for_song(conn, song_id)
             print(f"  arrangement placements: {len(arrangement)}")
             cues = Q.get_cue_points(conn, song_id)
             print(f"  cue points: {len(cues)}")
 
-            if not report.ok:
-                raise RuntimeError(
-                    f"HARMONIC STASIS in {report.stasis_sections}: the parts do "
-                    f"not realize the declared harmony. Fix the composition, not "
-                    f"the lens.")
+            # No build gate on harmony (LNT-1V9K): a build-time lens is a ruler,
+            # not a stamp — it never vetoes a deliberate choice. Stasis prints
+            # loudly above as a WARNING; the realization regression is the song's
+            # test (test_harmony_realization_has_no_stasis), not a raise here.
         return song_id
     finally:
         conn.close()

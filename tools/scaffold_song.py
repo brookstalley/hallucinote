@@ -131,11 +131,11 @@ def section_creates(req: ScaffoldRequest) -> str:
         else:
             end_const = "END_BAR"
         lines.append(
-            f"            M.create_section(\n"
-            f"                conn, song_id=song_id, name={s!r},\n"
-            f"                start_bar=float({start_const}),\n"
-            f"                end_bar=float({end_const}),\n"
-            f"            )"
+            f"        M.create_section(\n"
+            f"            conn, song_id=song_id, name={s!r},\n"
+            f"            start_bar=float({start_const}),\n"
+            f"            end_bar=float({end_const}),\n"
+            f"        )"
         )
     return "\n".join(lines)
 
@@ -143,16 +143,16 @@ def section_creates(req: ScaffoldRequest) -> str:
 def cue_creates(req: ScaffoldRequest) -> str:
     """Render cue-point creates — one per section boundary."""
     if not req.sections:
-        return "            # (no sections — no cues)"
+        return "        # (no sections — no cues)"
     pairs = ", ".join(
         f"({_section_const_name(s)}, {s!r})" for s in req.sections
     )
     return (
-        f"            for bar, name in [{pairs}]:\n"
-        f"                M.add_cue_point(\n"
-        f"                    conn, song_id=song_id,\n"
-        f"                    position_bar=float(bar), name=name,\n"
-        f"                )"
+        f"        for bar, name in [{pairs}]:\n"
+        f"            M.add_cue_point(\n"
+        f"                conn, song_id=song_id,\n"
+        f"                position_bar=float(bar), name=name,\n"
+        f"            )"
     )
 
 

@@ -63,7 +63,7 @@ The named patterns the old `/pattern-compose` offered are importable helpers —
 | tresillo / bossa hats, ghost kicks/snares, open-hat lifts | `drums.tresillo_hats / bossa_shaker / ghost_kicks / ghost_snares / open_hat_lifts(...)` |
 | chord pad / stab, tresillo pluck, sparse bell top | `harmony.chord_pad / chord_stab / tresillo_pluck / sparse_bell_top(...)` |
 
-Full signatures live in the source (`src/hallucinote/generators/`); the index in `docs/song-authoring-conventions.md` → *Authoring API* is the discovery entry point. For a shape no helper covers, author the note list directly **in `build.py`** (still as code, still through the mutator) — never inline it into a tool call.
+Full signatures live in the source (`src/hallucinote/generators/`); the index in `docs/song-authoring-conventions.md` → *Authoring API* is the discovery entry point. For anything no helper covers, **the absence of a helper is never a limit** — author the notes/envelopes/device-chain directly **in `build.py`** (still as code, still through the mutators), or write the generator. See `docs/song-authoring-conventions.md` -> *The toolkit reduces work — it never limits what you can author*. Never inline the data into a tool call.
 
 ## What this skill does NOT do
 - **Per-note surgical edits** — blocked by the Live per-note-ID gap; the whole-array path makes it unnecessary anyway (author the end-state).

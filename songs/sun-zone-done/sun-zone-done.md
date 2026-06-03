@@ -25,7 +25,7 @@ Reggae × speed-metal mashup. Alternating (not overlapping) sections express the
 
 Fun, but not a novelty song: the harmony carries the joke. The arc is a story of *adapting* — the protagonist stops fighting and learns to hold both the crazy and the mellow at once.
 
-> **Authored on the `hallucinote.arrangement` + `hallucinote.theory` modules** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, **per-section harmonic progressions** (the harmony axis), recurrence deltas, motifs, and references are all expressed through the model, and a build-time conformance lens fails the build if a section's parts don't realize its declared harmony (the structural fix for the old one-chord drone) — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
+> **Authored on the `hallucinote.arrangement` + `hallucinote.theory` modules** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, **per-section harmonic progressions** (the harmony axis), recurrence deltas, motifs, and references are all expressed through the model, and a build-time conformance lens names harmonic stasis (a section's parts not realizing its declared harmony) as a loud WARNING — per LNT-1V9K it asks rather than blocks (a ruler, not a stamp; `gate-verdict-policy.md`), and this song's `test_harmony_realization_has_no_stasis` is the actual regression gate — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
 
 ## Core specs
 
@@ -46,11 +46,11 @@ Root **E throughout** — the song never modulates away; the *mode* evolves (Dor
 | verse2 | 57–80 | Reggae | richer: Em9–A7–C#m7♭5–Bm7 | 0.45 | Hasn't given up — harmonic development + **steel pans** enter |
 | chorus2 | 81–96 | Metal | E Phrygian — darker, more motion | 0.90 | Second interruption, escalating — lead octave-down doubled |
 | development | 97–120 | Reggae↔metal **collide** | Dorian cells answered by Phrygian; harmonic rhythm accelerates | 0.70 | The worlds **trade bars — harmonically AND rhythmically** (reggae drag ↔ metal stab), accelerating |
-| break | 121–136 | Break | the HINGE: Em/C#↔Em/C slash vote (the bass votes the mode) | 0.72 | **Convention-break:** a reggae groove pushed through a HEAVY amp (metal timbre, reggae time) |
-| integration | 137–168 | Metal | polymodal — a both-at-once split chord (F#/F, C#/C) over an E pedal | 1.00 | **CLIMAX (fuse hard):** the metal engine FUSED with the intro polyrhythm + the both-at-once chord — life is both crazy and mellow, made literally harmonic |
+| break | 121–136 | Break | suspended polymodal field over an E pedal (single declared chord) | 0.72 | **EUREKA (decisions/08):** drums+bass drop OUT — an ethereal FUSION pad + thinned shimmer + a half↔double-time call-response; a riser launches the bass DROP. "I don't have to choose." |
+| integration | 137–168 | Metal | polymodal — a both-at-once split chord (F#/F, C#/C) over an E pedal | 1.00 | **PLAYGROUND → CLIMAX (decisions/08):** the worlds COMBINED cell-by-cell (groove+lead answering, gallop+float, trade, interlock) → the earned fusion (polyrhythm recap + both-at-once chord) |
 | outro | 169–184 | Reggae→**synthesis** | re-brighten to E Dorian, land a warm Em9 | 0.50 | **RESOLUTION → something NEW:** joyful synthesis, neither sleepy-reggae nor exhausting-metal; the "NO TIME" hook **augmented** (slowed) into peace + a diatonic lift; steel-pan joy |
 
-Every genre flip is a deliberate **energy discontinuity** — never smoothed. The worlds collide on **three axes — harmony, timbre, AND rhythm/feel** (the development trades feel cell-by-cell, not just chords; see `decisions/07`). The climax **fuses hard** in the integration and the **resolution lands in the outro** — not a retreat to sleepy reggae but a *new, joyful synthesis* of both worlds (a confirmed creative decision). Recurring sections are one identity + a delta (`vary()`) — chorus2 lead = chorus1 lead octave-down; verse2 = verse1 + steel + a richer progression — never independent copies. The polyrhythm cloud and the "NO TIME" hook are registered **motifs** that the integration and outro **reference** (the recapitulation primitive).
+Every genre flip is a deliberate **energy discontinuity** — never smoothed. The worlds collide on **three axes — harmony, timbre, AND rhythm/feel** (the development trades feel cell-by-cell, not just chords; see `decisions/07`). The back half (**`decisions/08`**) tells the *adapting* story: the **break** is the EUREKA suspension (drums+bass out, an ethereal fusion field, a half↔double-time call-response where the worlds finally *answer* each other), then the **integration** is the PLAYGROUND — the two worlds genuinely *combined* cell-by-cell, building to the **earned** fusion climax; the **resolution lands in the outro** — not a retreat to sleepy reggae but a *new, joyful synthesis* (a confirmed creative decision). Recurring sections are one identity + a delta (`vary()`) — chorus2 lead = chorus1 lead octave-down; verse2 = verse1 + steel + a richer progression — never independent copies. The polyrhythm cloud and the "NO TIME" hook are registered **motifs** that the break, integration, and outro **reference** (the recapitulation primitive).
 
 ## Instrumentation
 
@@ -67,7 +67,7 @@ Every genre flip is a deliberate **energy discontinuity** — never smoothed. Th
 
 ## The Amp Type envelope
 
-The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 736 beats = whole song / 184 bars); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint. In the **convention-break** the Amp is deliberately decoupled from the groove: the single `break` stays HEAVY over its reggae groove (a metal timbre on reggae time).
+The song's most audible genre-flip device. Rhythm Gtr is a **monolithic session clip** (one clip, 736 beats = whole song / 184 bars); the Amp Type envelope sits on the Amp device with breakpoints at the section boundaries where the genre flips. Live 12.4 LOM requires `device_parameter` envelopes to be hosted by a clip covering the envelope's full beat range — the single-long-clip structure is the cleanest way to satisfy that constraint. The guitar is **tacet in the break** (the eureka suspension), so the Amp simply holds the preceding Clean there. In the **integration** the device itself "plays with combinations" (decisions/08): a CLEAN reggae skank through cell A, then HEAVY from cell B on — one internal Clean→Heavy flip *inside* the section rather than at its boundary.
 
 Other tracks (drums / bass / organ / lead) use per-section clips for compose-time convenience.
 
@@ -100,7 +100,8 @@ The full arrangement is **DB-verified** (build + 20 shape/intent tests + the bui
 
 ## Deferred (not yet authored)
 
-- Per-section send **automation** (dry-reggae / wet-metal DubDelay) — currently a static Lead send; precise automation needs a render to tune and a host-clip strategy (the Lead is per-section, like the gap the monolithic gtr clip solves for the Amp envelope).
+- Per-section **atmosphere** (intro + break) IS now authored — clip-local pan + Plate-send envelopes hosted by the per-section clips, snapping back to baseline at verse/chorus (decisions/08, MIX-3S7P). The amounts are render-gated to tune.
+- A **song-spanning** dynamic send (dry-reggae / wet-metal DubDelay across the whole arc) still needs a host-clip strategy (it crosses the metal-chorus gaps where the source track is tacet) — tracked in MIX-3S7P. The Lead DubDelay stays a static send for v1.
 - Vocal Bus track (unnecessary until real vocals; the steel pans now carry the counter-melody role).
 - Sidechain compression on bass (kick-driven duck during metal sections).
 - Hi-hat opening variations within a bar (closed → open → closed).

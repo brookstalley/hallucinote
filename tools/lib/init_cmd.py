@@ -162,6 +162,24 @@ def run_init(target_dir: str, product_name: str) -> dict:
     ):
         actions.append("Created tools/product-hook")
 
+    # 9b. Product-hook runtime library (tools/lib). product-hook imports this at
+    # runtime (regen-views, operator-verification, advisories); without it a
+    # synced repo crashes with ModuleNotFoundError. Mirrors MANAGED_DIRS.
+    # Idempotent: only copy modules that are missing or changed so a re-init is
+    # a genuine no-op (writes nothing, reports no action).
+    lib_src = FRAMEWORK_DIR / "tools" / "lib"
+    if lib_src.is_dir():
+        lib_dst = target / "tools" / "lib"
+        lib_dst.mkdir(parents=True, exist_ok=True)
+        wrote_lib = False
+        for module in sorted(lib_src.glob("*.py")):
+            dst_module = lib_dst / module.name
+            if compute_hash(dst_module) != compute_hash(module):
+                shutil.copy2(module, dst_module)
+                wrote_lib = True
+        if wrote_lib:
+            actions.append("Created tools/lib/")
+
     # 10. Settings.json (with subs for banner)
     if merge_settings(
         target / ".claude" / "settings.json",
@@ -191,6 +209,9 @@ def run_init(target_dir: str, product_name: str) -> dict:
         }
         for skill_name, _ in SKILL_PLACEMENTS:
             rel = f".claude/skills/{skill_name}/SKILL.md"
+            file_hashes[rel] = compute_hash(target / rel)
+        for module in sorted((FRAMEWORK_DIR / "tools" / "lib").glob("*.py")):
+            rel = f"tools/lib/{module.name}"
             file_hashes[rel] = compute_hash(target / rel)
         manifest = create_manifest(target, FRAMEWORK_DIR, product_name, file_hashes)
 

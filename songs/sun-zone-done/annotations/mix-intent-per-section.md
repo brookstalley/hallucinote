@@ -10,15 +10,17 @@ related: [annotations/genre-alternation-intent.md, decisions/06-per-section-feel
 The single source for "the element meant to win" that a mix review interprets
 measurements against. Two mix worlds, one per genre.
 
-## Reggae sections (intro, verse1, verse2, development, break, outro)
+## Reggae sections (intro, verse1, verse2, development, outro)
 
 **Aesthetic: air and space.** The chill is made of what *isn't* there — the
 dropped downbeat, the gaps between the skank chucks. Don't fill them.
 
+> **intro** (bars 1–16) carries a clip-local **atmosphere bump** (MIX-3S7P): the
+> organ dawn cloud is wetter (Plate) + wider, snapping back to baseline at verse1.
 > **development** (bars 97–120) is a reggae groove with *morphing* harmony (Dorian
 > cells answered by Phrygian) — keep the air, but let the harmonic motion read.
-> **break** (bars 121–136) is a reggae groove through a HEAVY amp (the
-> convention-break): judge it as reggae air with a metal *timbre*, not as a wall.
+> **break** (bars 121–136) is NO LONGER a reggae groove — see *The break* section
+> below (it's the ethereal eureka suspension, REINVENTED, decisions/08).
 > **outro** (bars 169–184) is the RESOLUTION — *not* sleepy reggae air but a **new
 > joyful synthesis** (lifted, mid-energy; the "NO TIME" hook augmented into peace,
 > a diatonic lift, steel-pan brightness). Judge it as *uplift / arrival*, not chill;
@@ -52,24 +54,65 @@ relentless, tight, loud, no gaps.
   with reverb. Density and tightness are the point; if anything, the metal
   sections should feel *more* compressed than the reggae ones.
 
-## The integration — the fusion climax (bars 137–168)
+## The break — the eureka suspension (bars 121–136, REINVENTED — decisions/08)
 
-**Aesthetic: both worlds at once, and it must READ.** This is the only section
-where reggae and metal deliberately coexist (see `genre-alternation-intent.md`),
-so it's the one place cross-element masking is the critical question — and the
-single most important mix judgment in the song.
+**Aesthetic: ethereal space, the held breath.** Drums + bass drop OUT. This is the
+quietest, widest moment in the song — the opposite of a wall.
 
-- **Wins: the metal wall + the lead** — as in the choruses (gallop guitar at
-  Amp = Heavy, the Phrygian lead cutting over).
-- **Must stay audible: the reggae polyrhythm organ callback.** The intro's
-  3:4:5:7 Em7 cloud returns on `04 Organ`, quoted over the metal engine — it IS
-  the recapitulation, the whole point of the climax. It should sit *inside* the
-  wall, present, not drowned. If the wall buries it completely, the fusion fails.
+- **Wins: the call-and-response lead.** The half-time reggae fragment ↔ double-time
+  metal fragment dialogue (`05 Lead`) is the foreground; it should float, wet, with
+  room around each phrase. Clip-local atmosphere bump (MIX-3S7P): the lead is wetter
+  here (Plate) than its baseline.
+- **The bed: the sustained FUSION pad + thinned shimmer.** The polymodal pad
+  (`04 Organ`, pp) is the harmonic suspension — present but soft, NOT a wall; the
+  shimmer is a distant wash. The steel sparkle (`06 Steel`, wetter + wider here) is
+  the ethereal top.
+- **The metal-guitar DRIFT (v2, decisions/08).** A ghosted, SUSTAINED E power chord on
+  `03 Rhythm Gtr` (Heavy amp, ghost velocity) drifts hard L↔R across the field — the metal
+  anxiety still echoing in the moment of peace, distant. It is *meant* to be low and
+  wandering: **do not flag it being quiet or panned-extreme — that IS the intent.** Judge
+  only that it stays a ghost (it must not rise to compete with the call-response lead).
+- **The riser + bass drop.** The last two bars build (snare roll); the bass DROPS in
+  hard at the integration downbeat — that contrast is the payoff. Protect the
+  dynamic range into the drop (don't over-compress the suspension up to the wall).
+- **Must not happen:** the suspension sounding busy or loud, the pad/shimmer reading as
+  mud, or the drift rising out of ghost-level. Space and quiet are the point. Cross-genre
+  "masking" is moot — the worlds *answer* each other in turn here, they don't pile up.
+
+## The integration — the fusion playground + climax (bars 137–168, REINVENTED — decisions/08)
+
+**Aesthetic: the two worlds COMBINED, playfully, and it must READ.** This is where
+reggae and metal deliberately coexist most (see `genre-alternation-intent.md`), so
+cross-element masking is the critical question — the single most important mix
+judgment in the song. The section is a sequence of 4-bar *experiment cells* building
+to the climax; what "wins" shifts per cell:
+
+- **Cells (bars 137–153): the combination must read as combination.** In the
+  reggae-groove cell the metal lead stabs ANSWER (both audible — active-while-
+  relaxing); in the metal-gallop cell the reggae organ + steel FLOAT over the engine
+  (audible, not buried — chill-while-working); the trade cell alternates one-drop ↔
+  gallop bar-by-bar (each world clear in its bar). If either world disappears, the
+  "playing with both" reads as just one.
+- **The guitar PLAYS the playground (v2, decisions/08).** `03 Rhythm Gtr` is NOT a Heavy
+  wall held across the whole section — it follows the cells: a Clean reggae skank in the
+  reggae cell, the Heavy engine in metal/both, a **bar-by-bar Clean↔Heavy amp trade** in
+  the trade cell, at velocities pulled well under the chorus engine. Do not flag the
+  reggae-amp stretches as "wrong genre" — the variety IS the intent ("more combinations").
+- **Climax (bars 153–168): wins = the metal wall + the lead — but the wall OPENS.** The
+  first 8 bars drive (Heavy gallop); the last 8 bars the guitar drops to sustained
+  power-chord SWELLS so the recap + the both-at-once FUSION chord ring through. The Phrygian
+  lead cuts over throughout.
+- **Must stay audible: the reggae polyrhythm organ callback.** The intro's 3:4:5:7
+  Em7 cloud returns on `04 Organ`, quoted over the metal engine — the recapitulation,
+  the point of the climax. It should sit *inside* the wall, present, not drowned. (v2
+  boosted its velocity + thinned the guitar under it for exactly this — if the mix still
+  buries it, that's the collision to fix.)
 - **The both-at-once chord must read as fusion, not mud.** The polymodal split
   (F#/F + C#/C over an E pedal) is the harmonic payoff; it should sound like both
-  modes superimposed, not a dissonant smear. This is the key fusion-vs-mud call.
-- **Must not happen:** the organ callback inaudible, or the fusion chord reading
-  as noise. Density is fine (it's the climax) — incoherence is not.
+  modes superimposed, not a dissonant smear. The key fusion-vs-mud call.
+- **Must not happen:** a cell collapsing to one world, the organ callback inaudible,
+  or the fusion chord reading as noise. Density is fine (it's the climax) —
+  incoherence is not.
 
 ## The Amp Type envelope is the hinge
 

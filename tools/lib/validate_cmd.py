@@ -127,6 +127,18 @@ def run_validate(target_dir: str, *, framework_dir: str | None = None) -> dict:
     else:
         checks.append({"name": "hook_executable", "status": "fail", "detail": "tools/product-hook does not exist"})
 
+    # --- product-hook runtime library (tools/lib) ---
+    # product-hook imports tools/lib at runtime (regen-views, operator-
+    # verification, advisories). A repo missing it crashes on those commands.
+    lib_dir = target / "tools" / "lib"
+    lib_modules = sorted(lib_dir.glob("*.py")) if lib_dir.is_dir() else []
+    if lib_modules and (lib_dir / "__init__.py").is_file():
+        checks.append({"name": "hook_library", "status": "pass", "detail": f"tools/lib present ({len(lib_modules)} modules)"})
+    elif hook_path.is_file():
+        # Only a problem when product-hook is present (it's the importer).
+        checks.append({"name": "hook_library", "status": "fail", "detail": "tools/lib missing or incomplete — regen-views / operator-verification will crash"})
+        recommendations.append("Run prawduct-setup.py sync to install tools/lib")
+
     # --- CLAUDE.md block markers ---
     claude_path = target / "CLAUDE.md"
     if claude_path.is_file():

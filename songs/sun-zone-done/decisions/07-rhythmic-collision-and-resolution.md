@@ -8,6 +8,13 @@ related: [decisions/02-genre-mechanics.md, decisions/06-per-section-feel.md, ann
 
 # Rhythmic collision & resolution — rhythm is the third colliding world
 
+> **Superseded in part by `decisions/08` (2026-06-01).** The `break` (no longer a
+> reggae-groove convention-break) and the `integration` (no longer a metal smash)
+> were reinvented — the break into the EUREKA suspension, the integration into the
+> PLAYGROUND. The rhythmic-collision thesis below still holds (the development still
+> trades feel cell-by-cell; the outro still resolves into a new feel); only the
+> back-half *sections* changed. See `decisions/08`.
+
 **Question:** The song's thesis is two worlds colliding (reggae chill vs metal
 urgency). Harmony carries it (Dorian↔Phrygian, fusing at the climax) and timbre
 carries it (the Amp Type flip). But **rhythm / feel is just as central a dimension

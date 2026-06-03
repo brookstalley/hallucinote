@@ -6,6 +6,7 @@ Conventions for authoring `build.py` against the Hallucinote library. Companion 
 
 - [Filesystem layout](#filesystem-layout)
 - [State-converger discipline](#state-converger-discipline)
+- [The toolkit reduces work — it never limits what you can author](#the-toolkit-reduces-work--it-never-limits-what-you-can-author)
 - [Authoring API — the helper surface](#authoring-api--the-helper-surface)
 - [Sound design is authorship](#sound-design-is-authorship)
 - [Per-part feel (microtiming is authorship)](#per-part-feel-microtiming-is-authorship)
@@ -54,6 +55,43 @@ This buys:
 - **Per-branch DB filename**: branch switches pick up the right DB silently (no `--reset` ceremony when switching to a feature branch).
 
 `--reset` is now an escape hatch only — for "wipe DB, start fresh" (e.g., schema-migration testing). Day-to-day re-runs don't need it.
+
+---
+
+## The toolkit reduces work — it never limits what you can author
+
+Generators, helper functions, envelope `target_kind`s, device support, and the mutator API exist to **remove bookkeeping**, never to bound what a song can contain. The absence of a helper for what the music needs is **not a limitation** — it is a choice between two equally legitimate moves:
+
+1. **Hand-author it.** Notes are just `NoteDict` lists, envelopes just `EnvelopeDict`/breakpoint lists, a device chain just devices in order. Write it by hand in the song's `build.py` (still through the mutators, so events fall out). `sun-zone-done`'s polyrhythm intro, eureka break, and interrupt-steal are all hand-authored precisely because no generator could express them.
+2. **Build the capability.** If the gap is reusable — a new idiom, a new envelope `target_kind` + mutator + push handler, a new device class — add it properly (capability-probe first; prefer a uniform mechanism over a whitelist; with tests), then use it.
+
+Never scope the art down to fit the toolkit, and never silently substitute a lesser effect because the exact helper is missing — that drops a requirement (a Critical-Rule violation) and ships scaffold, not art. A capability gap inside a dimension we render is a **bug to fix or a thing to hand-build**, never a boundary to respect. (Distinct from `capability-truth.md`, which honestly scopes the *dimensions themselves* to the user; this is the authoring-side rule for the toolkit's internals.)
+
+The helper surface below is a **convenience index, not the menu of the possible.**
+
+---
+
+## Generator altitude — ruler vs stamp
+
+A generator is a **ruler, not a stamp**: it removes bookkeeping; it never makes the
+musical decision. Concretely (`.prawduct/artifacts/generator-altitude-policy.md`):
+
+- A package generator realizes **ONE part's pattern** from composer-supplied
+  parameters (a `Progression`, register, `feel`). It must **never** decide *which*
+  parts play, *how* they relate, or a section's arrangement — that is the
+  composition itself (a stamp), and it belongs to the composer, not a helper.
+- **Section / genre-archetype builders are forbidden in the package.** A "build me a
+  whole reggae section / metal section" helper bakes the arrangement decision and
+  quietly narrows the music toward the archetype (the sun-zone-done integration
+  *smash* is the worked example). If a song wants such a shortcut it lives
+  **song-local** in that song's `build.py`, as disposable scaffolding to break out
+  of the moment the music wants something between or across archetypes.
+- Package genre idioms (`reggae_skank`, `metal_gallop`, …) are single-part
+  conveniences — a shortcut, **never the only door**. Drop below them to the
+  `primitives` layer for any shape they don't cover (toolkit-reduces-work, above).
+- Interplay (call-and-response, half↔double-time dialogue, interlock) is a
+  **primitive** layer, not a "fusion section" builder — built friction-driven when a
+  second song needs it (ARR-3R8F), song-local until then.
 
 ---
 

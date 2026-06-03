@@ -31,6 +31,22 @@ report.
 See `intent-collaboration-model.md` for the register model. The third register is
 where most compose-stage teaching happens.
 
+## One axis per turn (the review-workflow discipline)
+
+Music is too complex to review on every concern at once — that's how you chase
+tails (re-arranging after a sound pass, re-voicing what's really a layering
+problem). So a single review pass acts on **ONE axis**, chosen from the song's
+declared `review_workflow` archetype (RECALL step 1; model:
+`.prawduct/artifacts/review-workflow-model.md`).
+
+- The axes `/compose-review` owns: **arrangement** (layering / density / contrast /
+  energy arc), **harmony** (progression realization), **melody / line** (contour,
+  intervals, harmony-fit). `/mix-review` owns the sonic axes (sound, performance,
+  mix-balance) — don't reach into those here.
+- **Read holistically, EDIT one axis.** You may notice problems on another axis —
+  NOTE them (a deferred review note via LEARN-BACK), but don't fix them this turn.
+- **Default archetype A (Ordered-Pass)** when the song declares none — and say so.
+
 ## The loop
 
 ### 1. RECALL — read the song's intent first
@@ -43,6 +59,12 @@ Run `/song-context <song-slug>` to load declared intent at every altitude:
   can win"). If absent, this is the gap C4 fills — see LEARN-BACK.
 - **Element** — the mix-intent tags (`focal`/`submerged`/`blend-group`/
   `density`), if any.
+- **Workflow** — the song's `review_workflow` archetype (a `scope: song`
+  annotation, tag `review-workflow`). It declares the axis order this song uses
+  (`.prawduct/artifacts/review-workflow-model.md`). **Default to A (Ordered-Pass)
+  if absent, and say so.** It tells you which axis this pass should be on (this
+  skill owns arrangement / harmony / melody) and whether axes are reviewed
+  together (B) or subtractively (C). Act on one axis — see "One axis per turn."
 
 If a section has no declared intent, that's the "intent unknown" case: form a
 hypothesis from the arrangement (the lead/hook usually wins; choruses usually

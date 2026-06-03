@@ -79,6 +79,16 @@ MANAGED_FILES = {
         "strategy": "template",
         "description": "/learnings skill — Look up project learnings and preferences relevant to your current task",
     },
+    ".claude/skills/prawduct-advisory/SKILL.md": {
+        "template": ".claude/skills/prawduct-advisory/SKILL.md",
+        "strategy": "template",
+        "description": "/prawduct-advisory skill — Manage post-sync advisories (list, show, dismiss, undismiss, resolve)",
+    },
+    ".claude/skills/backlog/SKILL.md": {
+        "template": ".claude/skills/backlog/SKILL.md",
+        "strategy": "template",
+        "description": "/backlog skill — Structured backlog management (pick, add, find, list, update, migrate)",
+    },
     ".claude/skills/critic/SKILL.md": {
         "template": "templates/skill-critic.md",
         "strategy": "template",
@@ -95,6 +105,47 @@ MANAGED_FILES = {
         "description": "Claude Code settings with hook configuration",
     },
 }
+
+# Managed directories: every matching file is synced like an always_update
+# managed file, enumerated dynamically from the framework so new modules ship
+# automatically without editing MANAGED_FILES. product-hook imports tools/lib
+# at runtime (regen-views, operator-verification, advisories), so product repos
+# MUST carry it — listing the package statically would re-introduce the
+# ModuleNotFoundError class of bug every time a module is added.
+MANAGED_DIRS: dict[str, dict] = {
+    "tools/lib": {
+        "glob": "*.py",
+        "strategy": "always_update",
+        "description": "product-hook runtime library (regen-views, operator-verification, advisories)",
+    },
+}
+
+
+def effective_managed_files(framework_dir: Path) -> dict[str, dict]:
+    """MANAGED_FILES plus every file under MANAGED_DIRS, enumerated from the
+    framework directory.
+
+    Managed-directory files are framework-owned (``always_update``), so they
+    propagate to product repos on every sync and pick up newly-added modules
+    without a code change here. Enumeration keys off ``framework_dir`` — when a
+    caller passes an empty/fake framework dir (unit tests), no managed-dir files
+    are added, preserving the static MANAGED_FILES set.
+    """
+    result: dict[str, dict] = dict(MANAGED_FILES)
+    for dir_rel, dir_config in MANAGED_DIRS.items():
+        src_dir = framework_dir / dir_rel
+        if not src_dir.is_dir():
+            continue
+        for path in sorted(src_dir.glob(dir_config.get("glob", "*"))):
+            if path.is_file():
+                rel = f"{dir_rel}/{path.name}"
+                result[rel] = {
+                    "source": rel,
+                    "strategy": dir_config.get("strategy", "always_update"),
+                    "description": dir_config.get("description", ""),
+                }
+    return result
+
 
 # Place-once files: created if missing, never overwritten. Template hashes
 # are tracked in manifest["place_once_templates"] for drift detection.
@@ -126,6 +177,8 @@ SKILL_PLACEMENTS: list[tuple[str, Path]] = [
     ("janitor", FRAMEWORK_DIR / ".claude" / "skills" / "janitor" / "SKILL.md"),
     ("prawduct-doctor", FRAMEWORK_DIR / ".claude" / "skills" / "prawduct-doctor" / "SKILL.md"),
     ("learnings", FRAMEWORK_DIR / ".claude" / "skills" / "learnings" / "SKILL.md"),
+    ("prawduct-advisory", FRAMEWORK_DIR / ".claude" / "skills" / "prawduct-advisory" / "SKILL.md"),
+    ("backlog", FRAMEWORK_DIR / ".claude" / "skills" / "backlog" / "SKILL.md"),
     ("critic", TEMPLATES_DIR / "skill-critic.md"),
 ]
 
@@ -142,6 +195,7 @@ GITIGNORE_ENTRIES = [
     ".prawduct/.subagent-briefing.md",
     ".prawduct/.gates-waived",
     ".prawduct/.sync-pending",
+    ".prawduct/.advisories.json",
     ".prawduct/reflections.md",
     ".prawduct/sync-manifest.json",
     ".prawduct/artifacts/build-plan.md",
@@ -205,6 +259,58 @@ def ensure_dir(path: Path) -> bool:
         return False
     path.mkdir(parents=True, exist_ok=True)
     return True
+
+
+# Optional project-state pointer naming the active build plan (relative to the
+# `.prawduct/` dir). When unset, tooling uses the conventional default below, so
+# repos that don't set it keep their existing behavior.
+BUILD_PLAN_POINTER_KEY = "active_build_plan"
+DEFAULT_BUILD_PLAN_REL = "artifacts/build-plan.md"
+
+
+def read_str_yaml_key(state_path: Path, key: str) -> str | None:
+    """Value of a top-level (column-0) ``key: value`` scalar, or None.
+
+    Mirrors the column-0 idiom used by ``is_views_enabled`` and product-hook's
+    ``_read_bool_yaml_key`` — no PyYAML dependency, fail-soft to None on a
+    missing/unreadable file or absent key. Surrounding quotes and inline ``#``
+    comments are stripped; an empty value reads as None.
+    """
+    try:
+        content = state_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    needle = f"{key}:"
+    for raw in content.splitlines():
+        if raw[:1] in (" ", "\t"):
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.startswith(needle):
+            continue
+        value = line.split(":", 1)[1].strip().strip("\"'")
+        return value or None
+    return None
+
+
+def resolve_build_plan_path(prawduct_dir: Path) -> Path:
+    """Resolve the active build-plan path (supports standard + scope-named plans).
+
+    Reads an optional ``active_build_plan:`` pointer (a path relative to the
+    ``.prawduct/`` dir) from ``project-state.yaml``; when set, that file is the
+    active plan, letting a project name its plan by scope
+    (``artifacts/v1.6.0-foo-plan.md``). When the pointer is absent, falls back to
+    the conventional ``artifacts/build-plan.md`` — so repos that don't set it
+    behave exactly as before. The returned path may not exist; callers treat a
+    missing plan as "no active build plan."
+
+    Kept in sync with the inline mirror in ``tools/product-hook``
+    (``_resolve_build_plan_path``), which cannot import this module in product
+    repos — a parity test pins the two together.
+    """
+    pointer = read_str_yaml_key(prawduct_dir / "project-state.yaml", BUILD_PLAN_POINTER_KEY)
+    if pointer:
+        return prawduct_dir / pointer
+    return prawduct_dir / DEFAULT_BUILD_PLAN_REL
 
 
 def compute_hash(path: Path) -> str | None:
@@ -400,7 +506,7 @@ def create_manifest(
     """
     files: dict[str, dict] = {}
 
-    for rel_path, config in MANAGED_FILES.items():
+    for rel_path, config in effective_managed_files(framework_dir).items():
         entry = dict(config)
         entry["generated_hash"] = file_hashes.get(rel_path)
         files[rel_path] = entry

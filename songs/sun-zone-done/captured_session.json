@@ -4,9 +4,9 @@
   "song": {
     "tempo": 180.0,
     "signature": "4/4",
-    "track_count": 6,
+    "track_count": 7,
     "return_track_count": 3,
-    "master": {"volume": 0.85, "panning": 0.0}
+    "master": {"volume": 0.80, "panning": 0.0}
   },
   "returns": [
     {
@@ -44,7 +44,7 @@
   "tracks": [
     {
       "index": 1, "name": "01 Drums", "type": "midi",
-      "volume": 0.75, "panning": 0.0,
+      "volume": 0.70, "panning": 0.0,
       "sends": {"Plate": 0.15, "Room": 0.10, "DubDelay": 0.0},
       "devices": [
         {
@@ -169,6 +169,22 @@
           "preset_query": {"root": "instruments", "pattern": "Island Pans",
                             "path_prefix": ["Instrument Rack", "Mallets"]},
           "_note": "Steel pans for the later reggae sections. Native Mallets/Instrument-Rack preset. 'Island Pans' surfaces under TWO browser folders (Instrument Rack/Mallets AND Wavetable/Mallets — same FileId); the path_prefix pins the Instrument-Rack one to satisfy the strict (refuse-on-multi-match) loader. Panned slightly right + a touch of dub delay for island air."
+        },
+        {
+          "index": 2, "name": "EQ Eight", "class": "EQ Eight",
+          "kind": "audio_effect"
+        }
+      ]
+    },
+    {
+      "index": 7, "name": "07 Tension", "type": "midi",
+      "volume": 0.5, "panning": 0.0,
+      "sends": {"Plate": 0.18, "Room": 0.0, "DubDelay": 0.0},
+      "devices": [
+        {
+          "index": 1, "name": "Operator", "class": "Operator",
+          "kind": "instrument",
+          "_note": "Thin high synth for the climax tension riser (#5) — barely audible, dissonant high notes (b9 F + tritone Bb against the E pedal). Default Operator; tune the patch by ear."
         },
         {
           "index": 2, "name": "EQ Eight", "class": "EQ Eight",

@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .core import resolve_build_plan_path
+
 
 TAG_LINE_RE = re.compile(r"<!--\s*prawduct:\s*(.+?)\s*-->")
 H2_RE = re.compile(r"^##\s+(.+?)\s*$")
@@ -113,12 +115,91 @@ def parse_change_log(content: str) -> list[ChangeLogEntry]:
     return entries
 
 
-def collect_shipped_chunks(entries: list[ChangeLogEntry]) -> set[str]:
-    """Aggregate shipped chunk IDs across all entries."""
+def collect_shipped_chunks(
+    entries: list[ChangeLogEntry], scope: str | None = None
+) -> set[str]:
+    """Aggregate shipped chunk IDs across all entries.
+
+    When ``scope`` is set, only entries whose ``scope=`` tag equals ``scope``
+    contribute — this prevents cross-version chunk-ID collisions (e.g., v1.4's
+    ``chunks=05 | scope=v1.4`` flipping v1.5's chunk 05). When ``scope`` is
+    ``None``, all shipped entries contribute (legacy unfiltered behavior).
+    """
     shipped: set[str] = set()
     for entry in entries:
+        if scope is not None and entry.tags.get("scope") != scope:
+            continue
         shipped.update(entry.shipped_chunks)
     return shipped
+
+
+def _parse_build_plan_frontmatter_scope(content: str) -> str | None:
+    """Parse ``scope:`` from a build-plan's YAML frontmatter block.
+
+    The frontmatter is the block bounded by ``---`` on its own line. A leading
+    HTML comment block (``<!-- ... -->``) and blank lines before the opening
+    ``---`` are tolerated — every real build-plan in the codebase begins with a
+    comment header before the frontmatter, so requiring ``---`` on line 1 would
+    make the field inert in practice.
+
+    Returns the bare string value (quotes stripped) or ``None`` if the field is
+    absent, empty, set to the YAML null literal (``null`` / ``~``), nested
+    inside another key, outside the frontmatter, or the file lacks a
+    frontmatter entirely.
+    """
+    lines = content.splitlines()
+    i = 0
+    # Skip leading blank lines, then any leading HTML comment block (possibly
+    # multi-line). Build-plans conventionally start with a comment header.
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and lines[i].lstrip().startswith("<!--"):
+        # Walk to the closing `-->` (inclusive).
+        while i < len(lines) and "-->" not in lines[i]:
+            i += 1
+        if i < len(lines):
+            i += 1  # consume the line containing `-->`
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines) or lines[i].strip() != "---":
+        return None
+    for j in range(i + 1, len(lines)):
+        line = lines[j]
+        if line.strip() == "---":
+            return None
+        if line[:1] in (" ", "\t"):
+            continue
+        stripped = line.split("#", 1)[0].rstrip()
+        if not stripped.startswith("scope:"):
+            continue
+        value = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+        if not value or value.lower() in ("null", "~"):
+            return None
+        return value
+    return None
+
+
+def _detect_active_scope(
+    build_plan_content: str, change_log_content: str | None = None
+) -> str | None:
+    """Detect the active scope for filtering change-log entries.
+
+    Resolution order (highest precedence first):
+
+    1. ``scope:`` field in build-plan YAML frontmatter — explicit, preferred.
+    2. Most recent change-log entry's ``scope=`` tag — inferred.
+    3. ``None`` — no scope detected; fail-safe to legacy unfiltered union.
+    """
+    fm_scope = _parse_build_plan_frontmatter_scope(build_plan_content)
+    if fm_scope:
+        return fm_scope
+    if change_log_content:
+        entries = parse_change_log(change_log_content)
+        for entry in entries:
+            scope = entry.tags.get("scope")
+            if isinstance(scope, str) and scope:
+                return scope
+    return None
 
 
 def extract_status_section(content: str) -> tuple[int, int, list[str]]:
@@ -180,7 +261,8 @@ def build_status_view(
     that case.
     """
     entries = parse_change_log(change_log_content)
-    shipped = collect_shipped_chunks(entries)
+    active_scope = _detect_active_scope(build_plan_content, change_log_content)
+    shipped = collect_shipped_chunks(entries, scope=active_scope)
     start, end, section = extract_status_section(build_plan_content)
     if start < 0:
         return None, []
@@ -439,7 +521,10 @@ def plan_regen(prawduct_dir: Path) -> tuple[bool, list[ViewRegenResult]]:
         return False, []
 
     change_log_path = prawduct_dir / "change-log.md"
-    build_plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    # Resolve the active plan via the optional `active_build_plan:` pointer
+    # (supports scope-named plans); falls back to artifacts/build-plan.md.
+    build_plan_path = resolve_build_plan_path(prawduct_dir)
+    build_plan_rel = build_plan_path.relative_to(prawduct_dir).as_posix()
     release_notes_path = prawduct_dir / "release-notes.md"
     if not change_log_path.exists():
         raise FileNotFoundError(f"change-log not found at {change_log_path}")
@@ -460,7 +545,7 @@ def plan_regen(prawduct_dir: Path) -> tuple[bool, list[ViewRegenResult]]:
                 name="status",
                 action="noop",
                 summary="Status: up to date",
-                path_relative="artifacts/build-plan.md",
+                path_relative=build_plan_rel,
             )
         )
     else:
@@ -480,7 +565,7 @@ def plan_regen(prawduct_dir: Path) -> tuple[bool, list[ViewRegenResult]]:
                     + "; ".join(parts)
                 ),
                 new_content=status_new,
-                path_relative="artifacts/build-plan.md",
+                path_relative=build_plan_rel,
             )
         )
 

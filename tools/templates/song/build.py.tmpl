@@ -15,6 +15,7 @@ import json
 import sys
 from pathlib import Path
 
+from hallucinote.authoring import run_build
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.melody import MelodyReport
@@ -32,16 +33,6 @@ SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
-    """Map track name -> id for the song. Master included; returns are not."""
-    return {row["name"]: row["id"] for row in Q.get_tracks_for_song(conn, song_id)}
-
-
-# ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
 
@@ -49,73 +40,64 @@ def _tracks_by_name(conn, song_id: str) -> dict[str, str]:
 def build(reset: bool = False) -> str:
     """Build the song. Returns the song_id (UUID hex).
 
-    W12-A: this is a state-converger. Re-running with no source changes is
-    a no-op (zero net events). Mutators inside `build_session` are
-    idempotent — second call with identical args returns kind='unchanged'.
-    Build-owned rows from a prior build that aren't touched this run get
-    tombstoned automatically at session exit. Pulled rows (actor='sync')
-    and LLM-authored edits survive.
-
-    `--reset` is a soft reset (W18-C): wipes rebuild-by-build.py content
-    (clips, notes, arrangement, sections, tempo/meter maps, cue points,
-    envelopes) but preserves the mix layout (tracks, returns, devices,
-    sends) AND the Ableton projection (`ableton_sessions` + `ableton_links`).
-    The session_id presented to a push session survives the natural
-    compose-iterate loop. For a full clean slate (drop bindings too),
-    delete the DB file directly.
+    State-converger (W12-A): re-running with no source change is a no-op (zero net
+    events). `--reset` is a soft reset (W18-C) — wipes build.py-authored content
+    (clips, notes, arrangement, sections, tempo/meter maps, cue points, envelopes)
+    but preserves the mix layout (tracks, returns, devices, sends) AND the Ableton
+    projection (`ableton_sessions` + `ableton_links`); delete the DB file for a full
+    clean slate. The lifecycle (open DB → optional reset → build_session → close)
+    lives in `hallucinote.authoring.run_build`; this function holds only the
+    composition (the `compose` closure below).
     """
-    conn = init_db(DB_PATH)
-    try:
-        if reset:
-            song = Q.get_song_by_name(conn, "{{slug}}")
-            if song is not None:
-                M.reset_song_content(conn, song_id=song["id"])
-        with M.build_session(conn, song_name="{{slug}}", owner="build.py"):
-            # Mix-half: replay the captured (or synthetic) Ableton session.
-            snapshot = json.loads(SNAPSHOT_PATH.read_text())
-            song_id = replay_capture(
-                conn, snapshot,
-                song_name="{{slug}}",
-                song_title="{{title}}",
-                song_key={{key_literal}},
-                actor="sync", reason="initial capture replay",
-            )
+    def compose(conn):
+        # Mix-half: replay the captured (or synthetic) Ableton session.
+        snapshot = json.loads(SNAPSHOT_PATH.read_text())
+        song_id = replay_capture(
+            conn, snapshot,
+            song_name="{{slug}}",
+            song_title="{{title}}",
+            song_key={{key_literal}},
+            actor="sync", reason="initial capture replay",
+        )
 
-            # Score-half: tempo, meter, sections, cue points.
-            M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
-            M.add_tempo_point(
-                conn, song_id=song_id, start_bar=1.0, tempo_bpm={{tempo}},
-            )
-            M.add_time_signature_point(
-                conn, song_id=song_id, start_bar=1.0,
-                numerator={{numerator}}, denominator={{denominator}},
-            )
+        # Score-half: tempo, meter, sections, cue points.
+        M.set_song_timing_mode(conn, song_id=song_id, timing_mode="native")
+        M.add_tempo_point(
+            conn, song_id=song_id, start_bar=1.0, tempo_bpm={{tempo}},
+        )
+        M.add_time_signature_point(
+            conn, song_id=song_id, start_bar=1.0,
+            numerator={{numerator}}, denominator={{denominator}},
+        )
 
-            # Section markers.
+        # Section markers.
 {{section_creates}}
 
-            # Cue points at every section boundary.
+        # Cue points at every section boundary.
 {{cue_creates}}
 
-            tracks = _tracks_by_name(conn, song_id)
+        tracks = Q.tracks_by_name(conn, song_id)
 
-            # === Compose-half: author your clips here ===
-            #
-            # Use library generators where they fit (`hallucinote.generators.*`),
-            # hand-author NoteDict lists where you need precision, then drop
-            # them into clips via `M.create_clip(...)` + `M.replace_clip_notes(...)`.
-            # Place clips in time with `M.add_arrangement_clip(...)`.
-            #
-            # See songs/falling-walking/build.py for a worked example —
-            # but note that falling-walking is historical, not a literal
-            # template. Generators accept a `beats_per_bar` kwarg (W14-B)
-            # so bar iteration scales through non-4/4 sections; within-bar
-            # layout still assumes a 4/4 shape, so hand-author non-4/4
-            # patterns where that matters.
+        # === Compose-half: author your clips here ===
+        #
+        # Use library generators where they fit (`hallucinote.generators.*`),
+        # hand-author NoteDict lists where you need precision, then drop them
+        # into clips via `M.create_clip(...)` + `M.replace_clip_notes(...)`.
+        # Place a section's clips with the shared helper:
+        #   from hallucinote.authoring import arrange_section
+        #   arrange_section(conn, song_id, tracks,
+        #                   {"01 Drums": drum_clip_id, ...},
+        #                   start_bar=..., end_bar=...)
+        #
+        # See songs/falling-walking/build.py for a worked example — but note that
+        # falling-walking is historical, not a literal template. Generators accept
+        # a `beats_per_bar` kwarg (W14-B) so bar iteration scales through non-4/4
+        # sections; within-bar layout still assumes a 4/4 shape, so hand-author
+        # non-4/4 patterns where that matters.
 
         return song_id
-    finally:
-        conn.close()
+
+    return run_build(DB_PATH, "{{slug}}", compose, reset=reset)
 
 
 def report(song_id: str) -> None:

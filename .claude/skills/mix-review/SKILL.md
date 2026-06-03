@@ -29,6 +29,25 @@ Masking is the mechanism of foregrounding, not a defect. The question is never
 The DSP always runs — measurement is neutral. What is *gated* is whether a
 measurement becomes surfaced advice.
 
+## One axis per turn (the review-workflow discipline)
+
+Music is too complex to review on every concern at once — that's how you chase
+tails (a fader move papering over an arrangement problem, re-mixing after a feel
+pass). So a single review pass acts on **ONE axis**, chosen from the song's
+declared `review_workflow` archetype (RECALL step 1; model:
+`.prawduct/artifacts/review-workflow-model.md`).
+
+- The axes `/mix-review` owns: **sound / production** (timbre, chains),
+  **performance / feel** (timing, dynamics, groove), **mix-balance** (masking,
+  loudness, attribution, reverb). `/compose-review` owns the compositional axes
+  (arrangement, harmony, melody) — if the real fix is there, NOTE it and defer;
+  don't re-arrange from a mix turn.
+- **Read holistically, EDIT one axis.** Reasoning across the whole MixReport is the
+  point — but the EDITS a turn proposes stay on the declared axis; a finding on
+  another axis is a deferred review note (LEARN-BACK), not a fix this turn.
+- **Default archetype A (Ordered-Pass)** when the song declares none — and say so.
+  (Note: under A, mix-balance is the LAST axis — don't let it do arrangement's job.)
+
 ## The loop
 
 ### 1. RECALL — read the song's intent first
@@ -42,6 +61,12 @@ vocabulary** (`.prawduct/artifacts/song-conventions.md`):
 - `blend-group` — parts meant to fuse → never flag intra-group masking; treat the group as one element.
 - `density` — wash-intended section → don't chase separation.
 - `clarity` (default, often implicit) — full analysis.
+
+Also read the song's **`review_workflow` archetype** (a `scope: song` annotation,
+tag `review-workflow`; model `.prawduct/artifacts/review-workflow-model.md`).
+**Default to A (Ordered-Pass) if absent, and say so.** It tells you which axis this
+pass should be on (this skill owns sound / performance / mix-balance) and the
+song's axis order — act on one axis (see "One axis per turn").
 
 If the song has **no mix-intent annotations yet** (common — `/song-context`
 returns prose feel/structure but no focal/submerged tags), you don't know which

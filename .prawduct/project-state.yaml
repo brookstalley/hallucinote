@@ -505,3 +505,7 @@ views_enabled: true
 # sections). Set by `/backlog migrate` 2026-05-29. Resolves the
 # `legacy-backlog-format` post-sync advisory.
 backlog_format_version: 2
+
+# Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
+# `plugin` tells the legacy file-sync hook to stand down (Chunk 8).
+distribution: plugin

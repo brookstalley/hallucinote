@@ -53,22 +53,11 @@ where = ["src"]
 "hallucinote.tools" = ["templates/**/*", "templates/**/.gitkeep"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "hallucinote_mcp/tests", "songs"]
+# Songs now live in their own repo (hallucinote-songs) with their own pytest
+# config — the framework tests the ENGINE + MCP server only.
+testpaths = ["tests", "hallucinote_mcp/tests"]
 python_files = ["test_*.py"]
 markers = [
     "audio: exercises the native audio/DSP stack (librosa/numba/scipy). The root conftest auto-applies this by path; set HALLUCINOTE_SKIP_AUDIO=1 to skip in CPU-only/container sessions where that stack is unstable.",
     "ableton: requires a live Ableton/sequencer connection. Opt-in (default-skip); set HALLUCINOTE_WITH_ABLETON=1 to run. Containers never have Ableton, so these never break a default run.",
 ]
-# `testpaths = ["songs"]` makes pytest discover any `songs/<slug>/tests/test_*.py`
-# automatically — per-song test suites live alongside their `build.py` so the
-# song stays a self-contained unit (per docs/VISION.md "songs as git repos").
-# Song test dirs intentionally have NO `__init__.py` (rootdir-discovered),
-# which keeps them from colliding with the platform `tests/` package
-# namespace under pytest's default `prepend` import mode.
-#
-# Per-song convention: test filenames MUST be unique across all songs
-# (`test_<slug>_build.py`, not bare `test_build.py`). Under the rootdir-
-# discovered + prepend-import-mode combination above, basename uniqueness is
-# how pytest distinguishes them; same-basename collisions across songs cause
-# collection errors. Follow falling-walking's pattern: descriptive per-song
-# names (`test_capture_replay.py`, `test_push_mix_snapshot.py`).

@@ -1,6 +1,6 @@
 # Song-new checklist
 
-**Authoritative pre-composition checklist.** Use this when starting a new song. The `/song-new` skill cross-links here — one source of truth.
+**Authoritative pre-composition checklist.** Use this when starting a new song. The `/hallucinote:song-new` skill cross-links here — one source of truth.
 
 ## How to use this
 
@@ -8,9 +8,9 @@ This is **guidance, not a script.** The agent reads the user's prompt, infers ev
 
 Apply with judgment, scaled to the work. A quick sketch song deserves 2-3 questions; a serious centerpiece deserves the full pass.
 
-**This is collaborate-by-default, with precedence** (see `/song-new`'s "Read the request, not the requester"): elicit only the *load-bearing* unknowns, and when open questions stop yielding direction ("you decide," repeated vagueness), switch from asking to **proposing** a concrete, redirectable option — never assume-and-go. Clear direction always wins; questions are for genuine gaps, not choices the user already made.
+**This is collaborate-by-default, with precedence** (see `/hallucinote:song-new`'s "Read the request, not the requester"): elicit only the *load-bearing* unknowns, and when open questions stop yielding direction ("you decide," repeated vagueness), switch from asking to **proposing** a concrete, redirectable option — never assume-and-go. Clear direction always wins; questions are for genuine gaps, not choices the user already made.
 
-**Persist the answers.** Each non-trivial decision (especially must-haves) lands as a markdown file under `songs/<slug>/decisions/`, recording the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/song-context` so the song's intent survives `/clear`.
+**Persist the answers.** Each non-trivial decision (especially must-haves) lands as a markdown file under `songs/<slug>/hallucinote:decisions/`, recording the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/hallucinote:song-context` so the song's intent survives `/clear`.
 
 ---
 
@@ -48,7 +48,7 @@ Three options, not binary:
 
 The palette. Doesn't need exact device picks at this stage — "vintage analog poly + acoustic drums + electric bass + tape-saturated guitar" is enough.
 
-*Why it's must-have:* shapes the snapshot's track structure and feeds `/song-pick-instruments` (the post-scaffold skill that resolves these descriptions to real devices via `ableton_browser`).
+*Why it's must-have:* shapes the snapshot's track structure and feeds `/hallucinote:song-pick-instruments` (the post-scaffold skill that resolves these descriptions to real devices via `ableton_browser`).
 
 ---
 
@@ -104,8 +104,8 @@ Sparse vs busy. Layer count at each moment. Affects how the agent picks generato
 
 Once the must-haves are settled (or confidently inferred + confirmed):
 
-1. **Scaffold** with `/song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
-2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via `preset_query` (composer-time, portable) or via load-then-recapture.
+1. **Scaffold** with `/hallucinote:song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
+2. **Pick instruments** via `/hallucinote:song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via `preset_query` (composer-time, portable) or via load-then-recapture.
 3. **Push the scaffold to a fresh Live set** so the device chains materialize.
 4. **Recapture** with `python -m hallucinote.tools.capture_cli` so device URIs / params land in `captured_session.json`.
 5. **Compose** — open `build.py`'s `=== Compose-half ===` and author clips/notes/arrangement against the now-realistic snapshot.
@@ -116,6 +116,6 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `skills/song-new/SKILL.md`. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
-- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `skills/ableton-push/SKILL.md` for the push flow.
-- Decision retrieval: `/song-context` skill (queries `decisions/` + `annotations/`).
+- Implementation: `skills/hallucinote:song-new/SKILL.md`. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
+- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `skills/hallucinote:ableton-push/SKILL.md` for the push flow.
+- Decision retrieval: `/hallucinote:song-context` skill (queries `decisions/` + `annotations/`).

@@ -1,0 +1,189 @@
+"""Unit tests for the recurrence lens — SYNTHETIC fixtures only (test-location
+convention: NO song-specific data in tests/unit/). Pins the lens contract (frozen
+dataclasses, info-only `ok`/`blocking` parity, `to_dict()` boundary), the
+per-(motif × section × layer × variation) recall reporting (incl. the all-layers
+scan + containment), and the synthetic `analyze_arrangement` path."""
+from __future__ import annotations
+
+import hallucinote.generators.variations as V
+from hallucinote.arrangement import Arrangement
+from hallucinote.recurrence.lens import (
+    MotifRecall,
+    RecurrenceFinding,
+    RecurrenceReport,
+    SectionRecurrence,
+    SectionRecurrenceInput,
+    analyze_arrangement,
+    analyze_recurrence,
+)
+
+
+def _n(pitch: int, start: float, dur: float, vel: int = 80, tags=None) -> dict:
+    return {"pitch": pitch, "start_beats": start, "duration_beats": dur,
+            "velocity": vel, "tags": list(tags or [])}
+
+
+_MOTIF = [_n(60, 0.0, 0.5), _n(64, 1.0, 0.5), _n(67, 2.0, 0.5), _n(72, 3.0, 1.0)]
+
+
+class _M:
+    """A minimal motif stand-in (name + notes) — the lens only reads `.notes`."""
+    def __init__(self, name, notes):
+        self.name = name
+        self.notes = notes
+
+
+def _tile(notes, *offsets):
+    out: list[dict] = []
+    for off in offsets:
+        out.extend(V.shift(notes, off))
+    return out
+
+
+def _registry(*pairs):
+    """An ordered name->motif mapping (dicts preserve insertion order = home order)."""
+    return {name: _M(name, notes) for name, notes in pairs}
+
+
+# --------------------------------------------------------------------------
+# Contract: info-only, ok/blocking parity, to_dict boundary
+# --------------------------------------------------------------------------
+
+
+def test_report_is_info_only_and_ok():
+    """The lens emits only `info` findings (authored recurrence is not error), so
+    `ok` is always True and `blocking` always empty — parity with the sibling lenses."""
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput("recap", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    assert rep.ok is True
+    assert rep.blocking == ()
+    assert all(f.severity == "info" for f in rep.findings)
+
+
+def test_finding_rejects_non_severity():
+    import pytest
+    with pytest.raises(ValueError):
+        RecurrenceFinding(kind="x", severity="bogus", section=None, detail="d")
+
+
+def test_to_dict_round_trips_structure():
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput("recap", 16.0, {"lead": _tile(V.transpose(_MOTIF, 5), 0.0)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    d = rep.to_dict()
+    assert d["song_slug"] == "syn"
+    assert {"sections", "economy", "findings"} <= set(d)
+    assert d["sections"][0]["section"] == "home"
+    assert "compression_ratio" in d["economy"]
+    # every recall dict carries section + layer + variation
+    for s in d["sections"]:
+        for r in s["recalls"]:
+            assert {"motif", "section", "layer", "variation", "coverage", "is_home"} <= set(r)
+
+
+# --------------------------------------------------------------------------
+# Recall reporting: section + layer + variation, home vs recall, all-layers scan
+# --------------------------------------------------------------------------
+
+
+def test_recall_reports_section_layer_variation():
+    """A transposed recall in a later section reports section + layer + the specific
+    variation, and is NOT marked home (the home is the first appearance)."""
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput("recap", 16.0, {"lead": _tile(V.transpose(_MOTIF, 7), 0.0)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    recap = [r for r in rep.recalls if r.section == "recap"]
+    assert len(recap) == 1
+    r = recap[0]
+    assert r.layer == "lead"
+    assert r.variation == "transpose +7"
+    assert r.is_home is False
+    # the first appearance is the home occurrence
+    home = [r for r in rep.recalls if r.section == "home"]
+    assert home and all(h.is_home for h in home)
+
+
+def test_all_layers_scanned_no_layer_filter():
+    """W2: the lens scans EVERY layer — a recall on a NON-lead layer (the polyrhythm-
+    on-organ shape) is found. A lead-only filter would miss it."""
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"organ": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput(
+            "climax", 16.0,
+            {"lead": [_n(40, 0, 1)], "organ": _tile(_MOTIF, 0.0, 4.0)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    climax = [r for r in rep.recalls if r.section == "climax"]
+    assert any(r.layer == "organ" and r.variation == "exact" for r in climax)
+
+
+def test_containment_superset_layer_reads_exact_not_derived():
+    """W3 regression: a layer that tiles the motif AND carries extra non-motif notes
+    (the climax-organ FUSION_CHORD superset shape) reads `exact` via containment —
+    not `derived`."""
+    busy = _tile(_MOTIF, 0.0, 4.0) + [_n(48, 0, 8.0), _n(55, 0, 8.0), _n(50, 4, 4.0)]
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"organ": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput("climax", 16.0, {"organ": busy}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    climax = [r for r in rep.recalls if r.section == "climax" and r.layer == "organ"]
+    assert any(r.variation == "exact" and r.coverage == 1.0 for r in climax)
+    assert not any(r.variation == "derived" for r in climax)
+
+
+def test_distinct_variations_both_reported_on_one_layer():
+    """N1: a layer quoting the motif as BOTH a bare fragment AND a diminish∘fragment
+    reports BOTH — the integration-trade shape; neither silently dropped."""
+    frag = V.fragment(_MOTIF, 0.0, 2.0)
+    layer = _tile(frag, 0.0) + _tile(V.diminish(frag, 2.0), 8.0)
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput("trade", 16.0, {"lead": layer}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    trade = {r.variation for r in rep.recalls if r.section == "trade"}
+    assert any(v.startswith("fragment[") for v in trade)
+    assert "diminish∘fragment ×2" in trade
+
+
+def test_no_recall_in_unrelated_section():
+    """A section with no quote of the motif reports no recall for it (no false pos)."""
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": _tile(_MOTIF, 0.0)}),
+        SectionRecurrenceInput(
+            "other", 16.0,
+            {"lead": [_n(40, 0, 1), _n(41, 1, 1), _n(38, 2, 1), _n(39, 3, 1)]}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    assert not [r for r in rep.recalls if r.section == "other"]
+
+
+# --------------------------------------------------------------------------
+# analyze_arrangement over a synthetic Arrangement (the build-time entry point)
+# --------------------------------------------------------------------------
+
+
+def test_analyze_arrangement_synthetic():
+    """The build-time entry point over an in-memory Arrangement: a motif registered
+    and recalled (augmented) in a later section is reported with section + layer +
+    `augment ×2`, scanning all layers, no filter."""
+    arr = Arrangement(beats_per_bar=4.0)
+    m = arr.motif("theme", _MOTIF)
+    arr.section("a", function="intro", bars=4, layers={"organ": _tile(m.notes, 0.0)})
+    arr.section(
+        "b", function="outro", bars=4,
+        layers={"organ": V.augment(m.notes, 2.0)})
+    rep = analyze_arrangement(arr, song_slug="syn")
+    assert rep.song_slug == "syn"
+    b = [r for r in rep.recalls if r.section == "b"]
+    assert any(r.variation == "augment ×2" and r.layer == "organ" for r in b)
+    # the recall's section-relative offset is anchored at section b's start (16 beats)
+    assert all(r.cell_offset_beats >= 16.0 for r in b)

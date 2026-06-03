@@ -60,32 +60,32 @@ MANAGED_FILES = {
         "description": "Build governance reference — how to build against a plan (read before coding)",
     },
     ".claude/skills/pr/SKILL.md": {
-        "template": ".claude/skills/pr/SKILL.md",
+        "template": "templates/skill-pr.md",
         "strategy": "template",
         "description": "/pr skill — PR lifecycle management (create, update, merge, status). Configure PR behavior in project-preferences.md",
     },
     ".claude/skills/janitor/SKILL.md": {
-        "template": ".claude/skills/janitor/SKILL.md",
+        "template": "templates/skill-janitor.md",
         "strategy": "template",
         "description": "/janitor skill — Periodic codebase maintenance (encapsulation, deduplication, cleanup)",
     },
     ".claude/skills/prawduct-doctor/SKILL.md": {
-        "template": ".claude/skills/prawduct-doctor/SKILL.md",
+        "template": "templates/skill-prawduct-doctor.md",
         "strategy": "template",
         "description": "/prawduct-doctor skill — Product repo setup, health check, and repair",
     },
     ".claude/skills/learnings/SKILL.md": {
-        "template": ".claude/skills/learnings/SKILL.md",
+        "template": "templates/skill-learnings.md",
         "strategy": "template",
         "description": "/learnings skill — Look up project learnings and preferences relevant to your current task",
     },
     ".claude/skills/prawduct-advisory/SKILL.md": {
-        "template": ".claude/skills/prawduct-advisory/SKILL.md",
+        "template": "templates/skill-prawduct-advisory.md",
         "strategy": "template",
         "description": "/prawduct-advisory skill — Manage post-sync advisories (list, show, dismiss, undismiss, resolve)",
     },
     ".claude/skills/backlog/SKILL.md": {
-        "template": ".claude/skills/backlog/SKILL.md",
+        "template": "templates/skill-backlog.md",
         "strategy": "template",
         "description": "/backlog skill — Structured backlog management (pick, add, find, list, update, migrate)",
     },
@@ -171,14 +171,18 @@ FILE_RENAMES: dict[str, str] = {
 }
 
 # Skill files placed during init. Each tuple: (skill_name, source_path).
-# Source is either the framework's own .claude/skills/ copy or templates/.
+# Source is the skill template under templates/skill-<name>.md. (Through v2.0.0
+# the framework's own .claude/skills/ copies were the source for the six
+# non-critic skills; they were relocated to templates/ so they no longer
+# double-load as bare skills when this repo runs on its own plugin — the synced
+# product destination .claude/skills/<name>/SKILL.md is unchanged.)
 SKILL_PLACEMENTS: list[tuple[str, Path]] = [
-    ("pr", FRAMEWORK_DIR / ".claude" / "skills" / "pr" / "SKILL.md"),
-    ("janitor", FRAMEWORK_DIR / ".claude" / "skills" / "janitor" / "SKILL.md"),
-    ("prawduct-doctor", FRAMEWORK_DIR / ".claude" / "skills" / "prawduct-doctor" / "SKILL.md"),
-    ("learnings", FRAMEWORK_DIR / ".claude" / "skills" / "learnings" / "SKILL.md"),
-    ("prawduct-advisory", FRAMEWORK_DIR / ".claude" / "skills" / "prawduct-advisory" / "SKILL.md"),
-    ("backlog", FRAMEWORK_DIR / ".claude" / "skills" / "backlog" / "SKILL.md"),
+    ("pr", TEMPLATES_DIR / "skill-pr.md"),
+    ("janitor", TEMPLATES_DIR / "skill-janitor.md"),
+    ("prawduct-doctor", TEMPLATES_DIR / "skill-prawduct-doctor.md"),
+    ("learnings", TEMPLATES_DIR / "skill-learnings.md"),
+    ("prawduct-advisory", TEMPLATES_DIR / "skill-prawduct-advisory.md"),
+    ("backlog", TEMPLATES_DIR / "skill-backlog.md"),
     ("critic", TEMPLATES_DIR / "skill-critic.md"),
 ]
 

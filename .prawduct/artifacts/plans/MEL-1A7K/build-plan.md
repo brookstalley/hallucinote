@@ -284,7 +284,7 @@ are PENDING by-ear (Live unattended). The melody layer itself is render-free.
 - [x] Chunk 3 — profile-relative `shaped_reading` (keystone; Critic `final`)
 - [x] Chunk 4 — within-line repetition reading + objective calibration (PENDING by-ear edges)
 - [x] Chunk 5 — OPTIONAL LBDM segmentation — **BUILT** (whole-section contour proved too coarse on the real hooks — DR-3 friction surfaced; see below)
-- [ ] Chunk 6 — wire `/compose-review` + scaffold + APPLY canonical `melody-model.md` deltas (cumulative-final)
+- [x] Chunk 6 — wire `/compose-review` + scaffold + APPLY canonical `melody-model.md` deltas (cumulative-final) — code+docs DONE; `/critic final`+`cumulative` + PR are the MAIN AGENT's to run (this builder does not run Critic/PR)
 
 ### Chunk 4 calibration — the REAL sun-zone-done hooks (PENDING by-ear, NOT resolved)
 
@@ -319,11 +319,15 @@ DR-3 trigger ("whole-section contour is too coarse on the actual hooks"). Chunk 
 (LBDM per-phrase contour) was therefore built — it locates the per-cycle shape the
 whole-section read masks.
 
-**Context (cross-session handoff):** Phase 2a (read side) shipped + wired. This plan
-adds the AUTHORING side (`MelodicProfile`, mirroring the proven `PerformanceProfile`),
-profile-relative grading, the profile-relative `shaped_reading` (resolving the recorded
-universal-verdict bug — NOT a universal rule), and the within-line motivic-economy
-reading. **Learn-back = declaring the `MelodicProfile` in build.py** (no separate
+**Context (cross-session handoff):** ALL CHUNKS BUILT (1–6, incl. the OPTIONAL Chunk
+5). Code + docs complete, full suite green (2855 passed / 2 skipped). **The MAIN
+AGENT still owns: `/critic final` (Chunk 3 keystone + Chunk 6), `/critic cumulative`
+(the `/pr create` gate), and the PR** — this builder did NOT run Critic or open a PR.
+Phase 2a (read side) shipped + wired. This plan added the AUTHORING side
+(`MelodicProfile`, mirroring the proven `PerformanceProfile`), profile-relative
+grading, the profile-relative `shaped_reading` (resolving the recorded universal-
+verdict bug — NOT a universal rule), the within-line motivic-economy reading, and
+LBDM per-phrase contour. **Learn-back = declaring the `MelodicProfile` in build.py** (no separate
 markdown-annotation surface this phase — descoped, design §0 (g)). **`phrase_arch` +
 `motif_dna` deferred out of v1** (no guaranteed read side — design §3 / W3).
 **PENDING by-ear (Live unattended):** the appetite→fraction grading edges +

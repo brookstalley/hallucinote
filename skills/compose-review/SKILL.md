@@ -100,15 +100,31 @@ python3 -m hallucinote.tools.melody_lens <song-slug> --section <name>
 
 Per monophonic line, per section, it reports: **contour** shape + apex,
 **intervals** (step↔leap profile, post-skip reversal, pitch alphabet, ambitus),
-and **harmony-fit** (chord-tone / non-chord-tone shares, whether non-chord-tones
-resolve by step, whether chord tones favor strong beats) — plus coaching questions
-(a near-static line; abundant *unresolved* non-chord-tones against the harmony).
+**within-line repetition coverage** (how much of the line is a repeated multi-interval
+cell), **per-phrase contour** (LBDM phrase segmentation — where the arch actually
+lives, since a looping hook reads `level` whole-section), and **harmony-fit**
+(chord-tone / non-chord-tone shares, whether non-chord-tones resolve by step, whether
+chord tones favor strong beats) — plus coaching questions (a near-static line;
+abundant *unresolved* non-chord-tones against the harmony).
 These are **neutral facts, never a verdict**: there is no universal "good melody"
 (a chromatic bebop head and a folk hook read differently against their own idiom —
 see `.prawduct/artifacts/melody-model.md` §1), so grade them against the line's
 **declared intent** exactly as you grade density. If a song's build.py has no
 `melody_report()` wired yet, the lens says so (exit 3) — note it and read the line
 by eye.
+
+**If a line declares a `MelodicProfile`, the lens grades against it** (profile-
+relative, still a question; melody-model.md §4). A song declares its profiles in
+`build.py` (`{layer_name: MelodicProfile}`, passed to `analyze_arrangement(...,
+profiles=...)`) — the declaration IS the learn-back, so a deliberate genre choice
+(an angular metal lead, a third-based reggae hook) never re-flags. With a profile
+present the lens adds profile-RELATIVE coaching questions on top of the neutral
+facts: a `harmonic-freedom` / contour / apex / ambitus / step-appetite / repetition-
+appetite divergence ("you declared a chord-tone-locked line; it's 60% non-chord-tone
+— intended?"), and a profile-relative **shaped-vs-aimless** reading (`shaped` /
+`aimless` / `ungraded`) that fires `aimless` ONLY against a definite declared intent
+the line contradicts — never a universal verdict. With NO profile, the lens reports
+the neutral facts exactly as before. Every melody finding stays a *question*.
 
 This is compositional evidence, neutral — like the MixReport, you grade it
 against intent, you don't grade it on its own.
@@ -138,12 +154,15 @@ invisible — register it to track its recall), and it reads realized fact, not
 declared intent. If a song's build.py has no `recurrence_report()` wired yet, the lens
 says so (exit 3) — note it and read the recap structure by eye.
 
-> **Boundary (READ §2 reads three distinct things — do not conflate them):**
-> recurrence = **cross-instrument registered-motif** recall/recapitulation (this
-> block); within-line melodic **n-gram repetition** is the melody lens's line read
-> (MEL-1A7K, when it lands); the **energy-curve realization** read is ARR-7M3D's
-> (when it lands). Each is a separate lens over a separate unit; when the sibling
-> blocks arrive, they slot beside this one without overlapping its claim.
+> **Boundary (READ §2 reads three distinct lenses — do not conflate them):**
+> the **within-line melodic** read (one line's contour / intervals / n-gram
+> repetition / harmony-fit, graded against its declared `MelodicProfile`) is the
+> melody lens above; **recurrence** = **cross-instrument registered-motif**
+> recall/recapitulation across the arrangement (this block); the **energy-curve
+> realization** read is ARR-7M3D's and wires into `/mix-review`, NOT here (no
+> collision on `/compose-review`). Each is a separate lens over a separate unit —
+> one line, the motif graph, the section-energy curve — so they read beside each
+> other without ever double-reporting.
 
 ### 3. INTERPRET — composition against intent
 

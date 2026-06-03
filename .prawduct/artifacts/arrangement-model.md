@@ -52,8 +52,20 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 1. **Authored structure intents** — the song's *bones*: deliberate, largely-
    orthogonal decisions the composer authors. Today: **form/sections**, **energy**
    (the intensity intent), **harmony** (key/mode/progression). Candidate:
-   **meter-feel** (the felt pulse — half/double-time, compound, clave; distinct
-   from time-signature and tempo). Each is a ruler + (ideally) a read-side lens.
+   **meter-feel**, which on inspection (ARR-4M3T, 2026-06-02) is **two
+   sub-dimensions**: (i) **felt pulse level** — half/double-time, compound, clave,
+   hemiola; the felt subdivision, *distinct from* time-signature and tempo (the
+   half→double-time gear-shift is already a first-class *discontinuity* — see the
+   derivative section); and (ii) **literal meter / time-signature** — the metric
+   grid's shape per section/bar (5/4, 7/8, a borrowed 3/4 bar that shortens the
+   song). Both stay **candidates** (not built): promote (ii) to a built structure
+   intent — carried on the arrangement beside energy/harmony, with `plan()` placing
+   non-4/4 sections beat-accurately and the read-side lenses becoming meter-aware —
+   when a **second** odd-meter song forces it, OR when the user accepts the literal
+   steal's blast radius (every absolute-beat consumer) over the shipped
+   length-preserving **early-slam** interim (recorded in the ARR-4M3T backlog entry,
+   the source of truth for its shipped status). swing stays ∈ performance; the
+   metric grid ∈ meter-feel(ii). Each is a ruler + (ideally) a read-side lens.
 2. **Realization layers** — *how the bones are rendered*. **Derived from** the
    structure intents (+ a genre profile + deliberate overrides), NOT authored as
    competing dials. **Performance** (microtiming, dynamics, articulation) is the
@@ -66,6 +78,15 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 
 Underneath all three is the raw **note floor** (`_note(pitch, start, dur, vel)`),
 which every layer degrades to.
+
+**Both-sides status (2026-06-03).** The structure-intent MEASURE halves are being
+realized by named siblings — exactly as *"a dimension authored but unmeasured is
+half-built"* predicts: **energy** by **ARR-7M3D** (declared `energy_curve` vs rendered
+intensity — Spearman ρ + inversions), **recurrence/form** by **ARR-9K4T**
+(cross-instrument motif-recall + recapitulation read), with **harmony** (ARR-1H9C
+conformance lint) and **performance** (the perf lens) the shipped precedents. Each is a
+*lens* — it reports declared-vs-realized divergence as info/coaching, never a stamp or a
+verdict the composer didn't ask for. (Links to the siblings' designs; not restated here.)
 
 A fourth relationship exists: a **composite line that reads the other dimensions**.
 **Melody** is the case (decided 2026-05-31) — not an orthogonal structure intent
@@ -130,8 +151,9 @@ they are played). The decision:
   *declared* profile (today it reads what was authored, not what was declared) —
   friction-driven follow-ons, tracked (ARR-8P5K (b)–(d)).
 - **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
-  (it deviates *from* the grid); the metric grid it deviates from is *meter-feel*
-  (a structure intent). Clean split.
+  (it deviates *from* the grid); the metric grid it deviates from is *meter-feel(ii)*,
+  the literal-meter sub-dimension (a candidate structure intent — see the two-sub-dim
+  split in the taxonomy above). Clean split.
 
 ### SCOPE BOUNDARY — performance is METERED-only (a documented limitation, not a flaw)
 
@@ -196,6 +218,13 @@ decision:
   `harmony_fit`, 27 tests, validated on sun-zone-done's two hooks; classifies
   `active`/`static`, the shaped-vs-aimless verdict deferred to the profile-relative
   phase 2b). Next: the declared melodic-profile authoring surface + grading.
+- **Motivic economy — two distinct reads, one boundary (ARR-8P5K).** *Line-level*
+  motivic economy (does a single line reuse its own cells?) is the **melody lens**'s
+  (MEL-1A7K, within-line repetition). *Cross-instrument* recurrence/recapitulation (is
+  the song built from a shared recurring cell-set across instruments — which registered
+  motif recurs where, and as which variation?) is the **arrangement-level recurrence
+  read**'s (ARR-9K4T). One source of truth: the two reads never both claim the same
+  verdict.
 
 ### SCOPE BOUNDARY — melody is pitched-discrete-monophonic-line-only
 

@@ -4,7 +4,7 @@ materialize step.
 Strategy mirrors test_push_execute: build a tiny song, inject a fake ``send_fn``
 shaped like ``hallucinote_mcp.client.send``. The track is pre-linked so
 ``plan_push_clip`` chooses create (unlinked clip) then replace_notes (linked
-clip) without a full ten-phase push. Tests assert on the dispatched call log and
+clip) without a full eleven-phase push. Tests assert on the dispatched call log and
 the returned counts-only summary — notes never appear.
 """
 from __future__ import annotations

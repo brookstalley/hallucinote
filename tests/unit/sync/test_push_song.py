@@ -1,6 +1,6 @@
 """Tests for W4-D: ``plan_push_song`` master orchestrator + ``plan_push_clips``.
 
-The orchestrator returns ten ordered :class:`PushPhase` objects, each
+The orchestrator returns eleven ordered :class:`PushPhase` objects, each
 carrying a ``plan_fn`` thunk that produces a fresh ``PushPlan`` from
 current DB state. Tests pin:
 
@@ -90,21 +90,24 @@ def session(conn, song):
 # ---------------------------------------------------------------------------
 
 
-def test_plan_push_song_returns_ten_phases(conn, song, session):
+def test_plan_push_song_returns_eleven_phases(conn, song, session):
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
-    assert len(phases) == 10
+    assert len(phases) == 11
 
 
 def test_plan_push_song_phase_names_and_order(conn, song, session):
-    """The ten phase names are the contract between the planner and the
+    """The eleven phase names are the contract between the planner and the
     push skill — renaming any breaks the skill prose. Order is
-    load-bearing (see plan_push_song docstring)."""
+    load-bearing (see plan_push_song docstring). ``scenes`` runs
+    immediately before ``clips`` (SYN-4P2D): session clip slots are scene
+    rows, so the set must have enough scenes before clip-create."""
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
     assert [p.name for p in phases] == [
         "tempo_map",
         "time_signature_map",
         "tracks",
         "returns",
+        "scenes",
         "clips",
         "mix",
         "devices",
@@ -112,6 +115,17 @@ def test_plan_push_song_phase_names_and_order(conn, song, session):
         "arrangement",
         "cues",
     ]
+
+
+def test_plan_push_song_scenes_phase_precedes_clips(conn, song, session):
+    """SYN-4P2D invariant: the ``scenes`` phase must run before ``clips``.
+    Session clip slots ARE scene rows — a clip-create into slot N requires
+    the set to have at least N scenes, so the provisioning pre-pass must
+    precede the clip-create phase or the first push of a song with more
+    sections than the set has scenes hits a raw per-clip IndexError."""
+    phases = push.plan_push_song(conn, song_id=song, session_id=session)
+    names = [p.name for p in phases]
+    assert names.index("scenes") < names.index("clips")
 
 
 def test_plan_push_song_envelopes_phase_precedes_arrangement(conn, song, session):
@@ -275,7 +289,7 @@ def filled_song(conn, song, session):
 
 
 def test_end_to_end_drive_links_every_entity(conn, song, session, filled_song):
-    """Drive all ten phases with fake-applied results between each.
+    """Drive all eleven phases with fake-applied results between each.
     Verifies the contract: each phase, given that prior phases' results
     applied, produces a clean plan that strict-link-precondition planners
     accept without raising. Pin the post-drive link state to detect
@@ -294,6 +308,8 @@ def test_end_to_end_drive_links_every_entity(conn, song, session, filled_song):
     assert emitted_per_phase["time_signature_map"] == 1
     assert emitted_per_phase["tracks"] == 2          # drums, bass
     assert emitted_per_phase["returns"] == 1         # reverb
+    # scenes: one ensure_count call (both clips sit at slot 1 → max_slot=1).
+    assert emitted_per_phase["scenes"] == 1
     assert emitted_per_phase["clips"] == 2           # one per track
     # mix emits: 2 tracks × 6 mixer fields are default-None so they're
     # skipped — only set values emit. The fixture sets no track/return
@@ -414,3 +430,37 @@ def test_plan_push_clips_empty_song_warns(conn, song, session):
     plan = push.plan_push_clips(conn, song_id=song, session_id=session)
     assert plan.calls == []
     assert any("no clips" in n for n in plan.notes), plan.notes
+
+
+# ---------------------------------------------------------------------------
+# plan_push_scenes (SYN-4P2D — scene-provisioning pre-pass)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_push_scenes_emits_ensure_count_at_max_slot(conn, song, session):
+    """The scenes phase emits ONE ensure_count call whose count is the
+    highest 1-based clip slot over the song's session clips — the exact
+    upper bound the clips phase will address. Deriving from clip rows (not
+    re-deriving from sections) keeps scenes and clips reading one source."""
+    track = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
+    # Clips at slots 1, 5, 9 → max_slot = 9 (a >8-section song into a default
+    # 8-scene set: the exact SYN-4P2D failure case).
+    for slot in (1, 5, 9):
+        M.create_clip(conn, track_id=track, slot=slot, length_beats=4.0, name=f"s{slot}")
+    plan = push.plan_push_scenes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_scene"
+    assert call.args == {"action": "ensure_count", "count": 9}
+    assert call.key == "scene:ensure"
+
+
+def test_plan_push_scenes_empty_song_warns_not_bare_empty(conn, song, session):
+    """No session clips → no ToolCall, but a warn (NOT a bare-empty plan) —
+    matching the documented per-phase warn-not-bare-empty convention so the
+    skill can distinguish 'ran cleanly with nothing to do' from 'phase
+    skipped', exactly like the sibling plan_push_clips empty path. Pins
+    review W2 as a contract, not just prose."""
+    plan = push.plan_push_scenes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("no session clips" in n for n in plan.notes), plan.notes

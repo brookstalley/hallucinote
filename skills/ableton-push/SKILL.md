@@ -1,12 +1,12 @@
 ---
-description: Push the Hallucinote DB into Ableton Live. Drives ten ordered phases (tempo → meter → tracks → returns → clips → mix → devices → envelopes → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
+description: Push the Hallucinote DB into Ableton Live. Drives eleven ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → envelopes → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
-You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving ten ordered phases through MCP, and report what was created.
+You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving eleven ordered phases through MCP, and report what was created.
 
 $ARGUMENTS
 
@@ -30,7 +30,7 @@ If slug is missing, ask. For session, default to `--auto-session` only if the us
 1.  push_cli probe-and-link --probe          → mints session, upserts matches,
                                                reconciles stale links
 2.  push_cli execute --probe                 → coherence check + dispatch all
-                                               ten phases over MCP TCP
+                                               eleven phases over MCP TCP
 2a. (conditional) cleanup-default-scaffold   → delete leftover defaults
 3.  Read .last-push-state.json + report.
 ```
@@ -97,7 +97,7 @@ Proceed only on explicit `yes`.
 python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 ```
 
-`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all ten phases in order, dispatching every MCP call directly over TCP.
+`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all eleven phases in order, dispatching every MCP call directly over TCP.
 
 **Exit codes:**
 
@@ -145,6 +145,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 | `time_signature_map` | `ableton_session(action='set_signature')` (bar-1 only) |
 | `tracks` | `ableton_track(action='create')` |
 | `returns` | `ableton_return(action='create')` |
+| `scenes` | `ableton_scene(action='ensure_count')` |
 | `clips` | `ableton_clip(action='create' / 'replace_notes')` |
 | `mix` | `ableton_track(set_property / set_send)`, `ableton_return(set_property)`, `ableton_session(set_master_property)` |
 | `devices` | `ableton_device(action='load' / 'set_parameter')` |

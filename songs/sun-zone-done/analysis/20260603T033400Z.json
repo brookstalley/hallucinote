@@ -1,0 +1,4742 @@
+{
+  "schema_version": "1",
+  "song_slug": "sun-zone-done",
+  "captures_dir": "/Users/brookstalley/source/hallucinote/songs/sun-zone-done/captures/20260603T032708Z",
+  "captured_at": "20260603T033208Z",
+  "analyzer_signature": "hallucinote-analyzer-v1",
+  "master": {
+    "track_id": "master",
+    "surface_kind": "master",
+    "surface_name": "Main",
+    "loudness": {
+      "lufs_i": -12.463686462866418,
+      "lufs_s_median": -15.763905820384393,
+      "lufs_m_peak": -7.593800271879512,
+      "true_peak_dbtp": -0.952447520365488
+    }
+  },
+  "stems": [
+    {
+      "track_id": "track:1",
+      "surface_kind": "track",
+      "surface_name": "01 Drums",
+      "loudness": {
+        "lufs_i": -7.106869312996474,
+        "lufs_s_median": -11.29577559947466,
+        "lufs_m_peak": -2.814928832393549,
+        "true_peak_dbtp": 0.03986263517675586
+      }
+    },
+    {
+      "track_id": "track:2",
+      "surface_kind": "track",
+      "surface_name": "02 Bass",
+      "loudness": {
+        "lufs_i": -15.570012808004982,
+        "lufs_s_median": -16.530976794206424,
+        "lufs_m_peak": -11.380716131310693,
+        "true_peak_dbtp": -4.680865254053296
+      }
+    },
+    {
+      "track_id": "track:3",
+      "surface_kind": "track",
+      "surface_name": "03 Rhythm Gtr",
+      "loudness": {
+        "lufs_i": -12.110520528890907,
+        "lufs_s_median": -19.822841462138314,
+        "lufs_m_peak": -8.760308671485765,
+        "true_peak_dbtp": -0.8532268963942703
+      }
+    },
+    {
+      "track_id": "track:4",
+      "surface_kind": "track",
+      "surface_name": "04 Organ",
+      "loudness": {
+        "lufs_i": -18.44366335290246,
+        "lufs_s_median": -19.90701306465779,
+        "lufs_m_peak": -10.863781757639334,
+        "true_peak_dbtp": -1.8733735044118516
+      }
+    },
+    {
+      "track_id": "track:5",
+      "surface_kind": "track",
+      "surface_name": "05 Lead",
+      "loudness": {
+        "lufs_i": -15.563292640175254,
+        "lufs_s_median": -17.46674440882958,
+        "lufs_m_peak": -9.640317717675403,
+        "true_peak_dbtp": -0.9645482387516463
+      }
+    },
+    {
+      "track_id": "track:6",
+      "surface_kind": "track",
+      "surface_name": "06 Steel",
+      "loudness": {
+        "lufs_i": -23.264277831151922,
+        "lufs_s_median": -23.4583419427915,
+        "lufs_m_peak": -19.390833487168297,
+        "true_peak_dbtp": -8.837970938409951
+      }
+    }
+  ],
+  "returns": [
+    {
+      "track_id": "return:1",
+      "surface_kind": "return",
+      "surface_name": "A-Plate",
+      "loudness": {
+        "lufs_i": -46.93680403853547,
+        "lufs_s_median": -56.038563212138115,
+        "lufs_m_peak": -26.233986656383628,
+        "true_peak_dbtp": -16.57528300102513
+      }
+    },
+    {
+      "track_id": "return:2",
+      "surface_kind": "return",
+      "surface_name": "B-Room",
+      "loudness": {
+        "lufs_i": -58.11890816373707,
+        "lufs_s_median": -71.44398473178715,
+        "lufs_m_peak": -47.10986395107713,
+        "true_peak_dbtp": -39.13682185058069
+      }
+    },
+    {
+      "track_id": "return:3",
+      "surface_kind": "return",
+      "surface_name": "C-DubDelay",
+      "loudness": {
+        "lufs_i": -44.72442831163947,
+        "lufs_s_median": -75.50405223703697,
+        "lufs_m_peak": -40.78036023959851,
+        "true_peak_dbtp": -28.492608311968752
+      }
+    }
+  ],
+  "overshoots": [],
+  "reverb_verifications": [
+    {
+      "return_track_id": "return:1",
+      "declared_rt60_s": 3.0,
+      "measured_rt60_s": 2.986357252868103,
+      "within_tolerance": true,
+      "tolerance_s": 0.15,
+      "measurement_method": "decay_tail",
+      "decay_db_used": 30.0,
+      "tail_span_db": 136.13636527262378,
+      "sufficient_tail": true,
+      "contributing_track_ids": [
+        "track:1",
+        "track:3",
+        "track:4",
+        "track:5",
+        "track:6"
+      ],
+      "conflicting_declarations": []
+    },
+    {
+      "return_track_id": "return:2",
+      "declared_rt60_s": 0.8,
+      "measured_rt60_s": 1.182316665261341,
+      "within_tolerance": false,
+      "tolerance_s": 0.15,
+      "measurement_method": "decay_tail",
+      "decay_db_used": 30.0,
+      "tail_span_db": 134.45833772470422,
+      "sufficient_tail": true,
+      "contributing_track_ids": [
+        "track:1",
+        "track:2",
+        "track:3",
+        "track:4",
+        "track:5",
+        "track:6"
+      ],
+      "conflicting_declarations": []
+    }
+  ],
+  "automation_verifications": [
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 108.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2415.3471553261447,
+      "after": 1845.769228366834,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2415\u21921846 Hz (+24%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 116.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1566.1764880331277,
+      "after": 2528.850508878725,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1566\u21922529 Hz (+61%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 160.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2693.984336747203,
+      "after": 2008.8679576840257,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2694\u21922009 Hz (+25%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 224.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1608.8007062667814,
+      "after": 2780.7585527230403,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1609\u21922781 Hz (+73%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 320.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2049.503072347325,
+      "after": 1640.434056008098,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2050\u21921640 Hz (+20%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 384.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1761.2120004432916,
+      "after": 2494.1405327095504,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1761\u21922494 Hz (+42%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 480.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2321.2662068413147,
+      "after": 1675.3043390847758,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2321\u21921675 Hz (+28%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 544.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1105.90040051326,
+      "after": 2710.11603708361,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1106\u21922710 Hz (+145%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 560.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2114.4122190905905,
+      "after": 1691.8536416967231,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2114\u21921692 Hz (+20%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 576.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1780.8439444159437,
+      "after": 2320.6990721599886,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1781\u21922321 Hz (+30%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 580.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2284.997635468451,
+      "after": 1906.720690136498,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2285\u21921907 Hz (+17%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 584.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1877.3379537621233,
+      "after": 2408.0230828875597,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1877\u21922408 Hz (+28%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 588.0,
+      "metric": "spectral_centroid_hz",
+      "before": 2514.656014792556,
+      "after": 1798.7593026529985,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 2515\u21921799 Hz (+28%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "device_parameter",
+      "parameter_path": "Amp Type",
+      "at_beat": 672.0,
+      "metric": "spectral_centroid_hz",
+      "before": 1566.2513970416016,
+      "after": 2567.6226378615515,
+      "measurable": true,
+      "realized": true,
+      "note": "timbre shift realized: spectral centroid 1566\u21922568 Hz (+64%) at the declared Amp Type change"
+    },
+    {
+      "target_surface_id": "track:6",
+      "target_kind": "mixer_pan",
+      "parameter_path": null,
+      "at_beat": 480.0,
+      "metric": "n/a",
+      "before": NaN,
+      "after": NaN,
+      "measurable": false,
+      "realized": false,
+      "note": "mixer_pan is post-fader \u2014 invisible to the pre-fader stem capture, so its realization can't be verified here. Needs master-bus windowing (follow-up)."
+    },
+    {
+      "target_surface_id": "track:4",
+      "target_kind": "mixer_pan",
+      "parameter_path": null,
+      "at_beat": 0.0,
+      "metric": "n/a",
+      "before": NaN,
+      "after": NaN,
+      "measurable": false,
+      "realized": false,
+      "note": "mixer_pan is post-fader \u2014 invisible to the pre-fader stem capture, so its realization can't be verified here. Needs master-bus windowing (follow-up)."
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "mixer_pan",
+      "parameter_path": null,
+      "at_beat": 0.0,
+      "metric": "n/a",
+      "before": NaN,
+      "after": NaN,
+      "measurable": false,
+      "realized": false,
+      "note": "mixer_pan is post-fader \u2014 invisible to the pre-fader stem capture, so its realization can't be verified here. Needs master-bus windowing (follow-up)."
+    },
+    {
+      "target_surface_id": "track:3",
+      "target_kind": "mixer_volume",
+      "parameter_path": null,
+      "at_beat": 0.0,
+      "metric": "n/a",
+      "before": NaN,
+      "after": NaN,
+      "measurable": false,
+      "realized": false,
+      "note": "mixer_volume is post-fader \u2014 invisible to the pre-fader stem capture, so its realization can't be verified here. Needs master-bus windowing (follow-up)."
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 160.0,
+      "metric": "rms_db",
+      "before": -71.87589822973823,
+      "after": -69.11426167529955,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared down; return moved +2.8 dB (-71.9\u2192-69.1 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 224.0,
+      "metric": "rms_db",
+      "before": -68.87810344152132,
+      "after": -76.14100255004212,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared up; return moved -7.3 dB (-68.9\u2192-76.1 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 320.0,
+      "metric": "rms_db",
+      "before": -72.03407614078459,
+      "after": -69.25815591473507,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared down; return moved +2.8 dB (-72.0\u2192-69.3 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 384.0,
+      "metric": "rms_db",
+      "before": -69.20767074481577,
+      "after": -76.03395801709543,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared up; return moved -6.8 dB (-69.2\u2192-76.0 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 480.0,
+      "metric": "rms_db",
+      "before": -73.21594928185534,
+      "after": -76.87478085056651,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared down; return moved -3.7 dB (-73.2\u2192-76.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:2",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 672.0,
+      "metric": "rms_db",
+      "before": -63.71961408938408,
+      "after": -52.65748278767109,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +11.1 dB (-63.7\u2192-52.7 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 160.0,
+      "metric": "rms_db",
+      "before": -89.44216679716745,
+      "after": -79.33274862593544,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared down; return moved +10.1 dB (-89.4\u2192-79.3 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 224.0,
+      "metric": "rms_db",
+      "before": -77.81336314506935,
+      "after": -77.54224094493948,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared up; return moved +0.3 dB (-77.8\u2192-77.5 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 320.0,
+      "metric": "rms_db",
+      "before": -82.17689080108927,
+      "after": -76.35576858503342,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared down; return moved +5.8 dB (-82.2\u2192-76.4 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 384.0,
+      "metric": "rms_db",
+      "before": -75.20466910086239,
+      "after": -78.22653775065665,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared up; return moved -3.0 dB (-75.2\u2192-78.2 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 480.0,
+      "metric": "rms_db",
+      "before": -74.57946972690871,
+      "after": -79.67510447664526,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared down; return moved -5.1 dB (-74.6\u2192-79.7 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 672.0,
+      "metric": "rms_db",
+      "before": -73.28406200334503,
+      "after": -75.36798887574858,
+      "measurable": true,
+      "realized": false,
+      "note": "send level declared up; return moved -2.1 dB (-73.3\u2192-75.4 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "target_surface_id": "return:1",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 482.0,
+      "metric": "rms_db",
+      "before": -53.43046244952969,
+      "after": -49.59103722846887,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +3.8 dB (-53.4\u2192-49.6 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:1",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 544.0,
+      "metric": "rms_db",
+      "before": -62.74649683375257,
+      "after": -68.33661452798322,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared down; return moved -5.6 dB (-62.7\u2192-68.3 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 728.0,
+      "metric": "rms_db",
+      "before": -58.53006782554154,
+      "after": -43.85437672683351,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +14.7 dB (-58.5\u2192-43.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 728.0,
+      "metric": "rms_db",
+      "before": -58.53006782554154,
+      "after": -43.85437672683351,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +14.7 dB (-58.5\u2192-43.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 728.0,
+      "metric": "rms_db",
+      "before": -58.53006782554154,
+      "after": -43.85437672683351,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +14.7 dB (-58.5\u2192-43.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:1",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 60.0,
+      "metric": "rms_db",
+      "before": -52.79502058493,
+      "after": -34.86906443235651,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +17.9 dB (-52.8\u2192-34.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:1",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 60.0,
+      "metric": "rms_db",
+      "before": -52.79502058493,
+      "after": -34.86906443235651,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +17.9 dB (-52.8\u2192-34.9 dBFS) \u2014 realized"
+    },
+    {
+      "target_surface_id": "return:3",
+      "target_kind": "send_level",
+      "parameter_path": null,
+      "at_beat": 728.0,
+      "metric": "rms_db",
+      "before": -58.53006782554154,
+      "after": -43.85437672683351,
+      "measurable": true,
+      "realized": true,
+      "note": "send level declared up; return moved +14.7 dB (-58.5\u2192-43.9 dBFS) \u2014 realized"
+    }
+  ],
+  "per_section": [
+    {
+      "section_name": "intro",
+      "start_beat": 0.0,
+      "end_beat": 64.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -18.520192875125243,
+          "lufs_s_median": -18.487608281517428,
+          "lufs_m_peak": -14.636563345089348,
+          "true_peak_dbtp": -3.801674208548648
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -16.241737186165373,
+            "lufs_s_median": -16.155333863718656,
+            "lufs_m_peak": -9.492338562333709,
+            "true_peak_dbtp": -0.6185522489194666
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -17.71801030466757,
+            "lufs_s_median": -17.620065740905304,
+            "lufs_m_peak": -14.754179376982629,
+            "true_peak_dbtp": -11.449355228690393
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -21.78518513772573,
+            "lufs_s_median": -22.291585031228,
+            "lufs_m_peak": -19.613809417266577,
+            "true_peak_dbtp": -2.0832794674954465
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -19.201319865841356,
+            "lufs_s_median": -19.39932204867417,
+            "lufs_m_peak": -15.25103922709456,
+            "true_peak_dbtp": -4.639007282633426
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -Infinity,
+            "lufs_m_peak": -Infinity,
+            "true_peak_dbtp": -14.031738195424456
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -Infinity,
+            "lufs_m_peak": -Infinity,
+            "true_peak_dbtp": -Infinity
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -28.380613866638363,
+            "lufs_s_median": -79.9926306789379,
+            "lufs_m_peak": -26.233986656383628,
+            "true_peak_dbtp": -16.57528300102513
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -78.46146550816354,
+            "lufs_m_peak": -72.94846711764694,
+            "true_peak_dbtp": -62.877310611145674
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -Infinity,
+            "lufs_m_peak": -Infinity,
+            "true_peak_dbtp": -81.92930529527301
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.8192981384552319
+            ],
+            [
+              "track:2",
+              0.09896014161369913
+            ],
+            [
+              "track:4",
+              0.07516869804587281
+            ],
+            [
+              "track:3",
+              0.005830220021754459
+            ],
+            [
+              "track:5",
+              0.0007428018634417305
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:2",
+              0.40122094703200367
+            ],
+            [
+              "track:1",
+              0.3279833072450796
+            ],
+            [
+              "track:4",
+              0.17721334295172872
+            ],
+            [
+              "track:3",
+              0.09265499626912087
+            ],
+            [
+              "track:5",
+              0.0009274065020671085
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:4",
+              0.48265571901466664
+            ],
+            [
+              "track:3",
+              0.26956640718015884
+            ],
+            [
+              "track:1",
+              0.1913581737847679
+            ],
+            [
+              "track:2",
+              0.032958000564326795
+            ],
+            [
+              "track:5",
+              0.023461699456079795
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.5325359245577322
+            ],
+            [
+              "track:1",
+              0.4102446134699402
+            ],
+            [
+              "track:4",
+              0.03756481405976402
+            ],
+            [
+              "track:2",
+              0.012015895716353777
+            ],
+            [
+              "track:5",
+              0.007638752196209735
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6298374011554497
+            ],
+            [
+              "track:3",
+              0.3669322639451356
+            ],
+            [
+              "track:4",
+              0.0023010962473101015
+            ],
+            [
+              "track:2",
+              0.0007838507341123886
+            ],
+            [
+              "track:5",
+              0.00014538791799219858
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8977236551046713
+            ],
+            [
+              "track:3",
+              0.10173955870241513
+            ],
+            [
+              "track:4",
+              0.0004385177925006731
+            ],
+            [
+              "track:5",
+              6.295410732752077e-05
+            ],
+            [
+              "track:2",
+              3.5314293085302576e-05
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.6862745098039216,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.35199185809828437,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.21198022681011922,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.1568627450980392,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.8627450980392157,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.4754289037510904,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.26129534831960827,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.24627951739354959,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.20217027534100704,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:4",
+          "onset_count": 148,
+          "mean_drift_beats": -0.03912827489875883,
+          "drift_stdev_beats": 0.01836163883670826,
+          "swing_ratio": 0.9782404997397225,
+          "confidence": 0.7704795145411467
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 64,
+          "mean_drift_beats": -0.02209752118309412,
+          "drift_stdev_beats": 0.02195794659496715,
+          "swing_ratio": 0.9208451273756614,
+          "confidence": 0.7255256675629106
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 88,
+          "mean_drift_beats": -0.007248422331837348,
+          "drift_stdev_beats": 0.02261643182850324,
+          "swing_ratio": 0.9521241074639144,
+          "confidence": 0.7172946021437094
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 32,
+          "mean_drift_beats": 0.02278827430135468,
+          "drift_stdev_beats": 0.023327315152792627,
+          "swing_ratio": 1.1100499722376516,
+          "confidence": 0.7084085605900922
+        },
+        {
+          "track_id": "track:5",
+          "onset_count": 1,
+          "mean_drift_beats": -0.035366559654754326,
+          "drift_stdev_beats": 0.0,
+          "swing_ratio": null,
+          "confidence": 0.25
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:1",
+          "pulse_ratio": "2/beat",
+          "against_meter": false,
+          "base_period_beats": 0.5002527406758276,
+          "occupancy": 0.6875799065529188,
+          "confidence": 0.5492697255856769,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": []
+    },
+    {
+      "section_name": "verse1",
+      "start_beat": 64.0,
+      "end_beat": 160.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -16.494639363358676,
+          "lufs_s_median": -17.646531663114118,
+          "lufs_m_peak": -8.838278185385109,
+          "true_peak_dbtp": -0.9655144646719138
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -14.281839145080408,
+            "lufs_s_median": -16.43439812842641,
+            "lufs_m_peak": -3.4856363512346165,
+            "true_peak_dbtp": 0.034718743216866105
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -17.47556760508468,
+            "lufs_s_median": -17.491813329425298,
+            "lufs_m_peak": -15.028515696151713,
+            "true_peak_dbtp": -7.56705665233936
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -17.23752880310732,
+            "lufs_s_median": -22.00965660355451,
+            "lufs_m_peak": -8.83282153491548,
+            "true_peak_dbtp": -1.0867355269126475
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -20.57968456103864,
+            "lufs_s_median": -20.69715985266679,
+            "lufs_m_peak": -16.95551010274342,
+            "true_peak_dbtp": -5.050409550422145
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -17.370442764215923,
+            "lufs_s_median": -18.495657074277663,
+            "lufs_m_peak": -14.091092030020636,
+            "true_peak_dbtp": -6.060744980150905
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -Infinity,
+            "lufs_m_peak": -Infinity,
+            "true_peak_dbtp": -Infinity
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -53.13064186844408,
+            "lufs_s_median": -58.09095236638293,
+            "lufs_m_peak": -35.11826500544205,
+            "true_peak_dbtp": -24.7204446407325
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -68.2453138250447,
+            "lufs_s_median": -76.85720081869727,
+            "lufs_m_peak": -67.03755062850912,
+            "true_peak_dbtp": -59.24516703972975
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -77.70111667740008,
+            "lufs_m_peak": -72.57056783769868,
+            "true_peak_dbtp": -65.75012046143786
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7287020701055686
+            ],
+            [
+              "track:2",
+              0.12222431288454134
+            ],
+            [
+              "track:4",
+              0.06860304006210992
+            ],
+            [
+              "track:5",
+              0.04078452178917636
+            ],
+            [
+              "track:3",
+              0.03968605515860369
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.3609591541088406
+            ],
+            [
+              "track:2",
+              0.2922713988624233
+            ],
+            [
+              "track:5",
+              0.13469697054930277
+            ],
+            [
+              "track:3",
+              0.12285529275682557
+            ],
+            [
+              "track:4",
+              0.08921718372260776
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.28584732278333136
+            ],
+            [
+              "track:4",
+              0.21340064827130986
+            ],
+            [
+              "track:3",
+              0.21029252636616894
+            ],
+            [
+              "track:2",
+              0.19444117772611388
+            ],
+            [
+              "track:1",
+              0.09601832485307588
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.5105800756091772
+            ],
+            [
+              "track:1",
+              0.22167797122227
+            ],
+            [
+              "track:5",
+              0.21457108040066825
+            ],
+            [
+              "track:4",
+              0.04608493298747005
+            ],
+            [
+              "track:2",
+              0.007085939780414434
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6237573629546068
+            ],
+            [
+              "track:3",
+              0.3720871419311215
+            ],
+            [
+              "track:4",
+              0.002449428442104651
+            ],
+            [
+              "track:5",
+              0.0008825580988105712
+            ],
+            [
+              "track:2",
+              0.0008235085733563161
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9016279180814241
+            ],
+            [
+              "track:3",
+              0.09700809524370357
+            ],
+            [
+              "track:4",
+              0.0008240993772697116
+            ],
+            [
+              "track:5",
+              0.00041984284850634523
+            ],
+            [
+              "track:2",
+              0.00012004444909628126
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3754563894523327,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.322920892494929,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.25405679513184587,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.244015444015444,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.19395109395109394,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.5576064908722109,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.3810810810810811,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.35970626554542223,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.29743949491406524,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2419450422631858,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:5",
+          "onset_count": 86,
+          "mean_drift_beats": -0.04212217104853812,
+          "drift_stdev_beats": 0.01634177584102353,
+          "swing_ratio": 0.8515207249782902,
+          "confidence": 0.7957278019872058
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 96,
+          "mean_drift_beats": -0.002936248969366506,
+          "drift_stdev_beats": 0.020869893863611266,
+          "swing_ratio": 0.991119028594601,
+          "confidence": 0.7391263267048591
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 99,
+          "mean_drift_beats": -0.024692812552676358,
+          "drift_stdev_beats": 0.021559216284336012,
+          "swing_ratio": 0.9089048234982561,
+          "confidence": 0.7305097964457998
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 136,
+          "mean_drift_beats": -0.012706858307781007,
+          "drift_stdev_beats": 0.023712247731054174,
+          "swing_ratio": 0.9520489013881779,
+          "confidence": 0.7035969033618228
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 53,
+          "mean_drift_beats": 0.016471700099187185,
+          "drift_stdev_beats": 0.026022602698608996,
+          "swing_ratio": 1.0727892547895743,
+          "confidence": 0.6747174662673876
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:4",
+          "pulse_ratio": "1/beat",
+          "against_meter": false,
+          "base_period_beats": 1.0002330704399018,
+          "occupancy": 0.9997828473178674,
+          "confidence": 0.6014453521869786,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        },
+        {
+          "track_id": "track:5",
+          "pulse_ratio": "2/beat",
+          "against_meter": false,
+          "base_period_beats": 0.4994824833780673,
+          "occupancy": 0.4497087150402948,
+          "confidence": 0.37013970465023815,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": []
+    },
+    {
+      "section_name": "chorus1",
+      "start_beat": 160.0,
+      "end_beat": 224.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -9.3163048321396,
+          "lufs_s_median": -9.304512078531884,
+          "lufs_m_peak": -7.832462707034232,
+          "true_peak_dbtp": -0.9556841247005575
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -5.093596846097617,
+            "lufs_s_median": -5.02562199410127,
+            "lufs_m_peak": -3.0969532430900757,
+            "true_peak_dbtp": 0.03986263517675586
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -15.772752918830685,
+            "lufs_s_median": -15.777346357803546,
+            "lufs_m_peak": -14.411891132366087,
+            "true_peak_dbtp": -9.55922793701462
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -9.487297447565938,
+            "lufs_s_median": -9.464883979356001,
+            "lufs_m_peak": -8.825496012212405,
+            "true_peak_dbtp": -0.8928704758913275
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -47.132124081981544,
+            "lufs_s_median": -1235.696431476694,
+            "lufs_m_peak": -47.132124081981544,
+            "true_peak_dbtp": -31.563328138828965
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -16.405156799571227,
+            "lufs_s_median": -16.438734014527395,
+            "lufs_m_peak": -14.88213255746015,
+            "true_peak_dbtp": -9.346113684553996
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -Infinity,
+            "lufs_m_peak": -Infinity,
+            "true_peak_dbtp": -Infinity
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -54.47301223376856,
+            "lufs_s_median": -54.50436598631721,
+            "lufs_m_peak": -52.30357065163856,
+            "true_peak_dbtp": -43.310722492618304
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -67.20837347468294,
+            "lufs_s_median": -67.25286555943406,
+            "lufs_m_peak": -65.77117515450085,
+            "true_peak_dbtp": -57.29828692636289
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -74.39444795093867,
+            "lufs_m_peak": -72.28536363041906,
+            "true_peak_dbtp": -67.44680496979626
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7327226868006418
+            ],
+            [
+              "track:2",
+              0.19764211625277178
+            ],
+            [
+              "track:3",
+              0.04826474057441696
+            ],
+            [
+              "track:5",
+              0.021143815159467873
+            ],
+            [
+              "track:4",
+              0.00022664121270157215
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.5664982897979771
+            ],
+            [
+              "track:3",
+              0.22648488352154036
+            ],
+            [
+              "track:2",
+              0.20367325738382386
+            ],
+            [
+              "track:5",
+              0.0033085275029608044
+            ],
+            [
+              "track:4",
+              3.504179369778195e-05
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.503773977522303
+            ],
+            [
+              "track:1",
+              0.26209298165312667
+            ],
+            [
+              "track:5",
+              0.2232759279917199
+            ],
+            [
+              "track:2",
+              0.009474296078275404
+            ],
+            [
+              "track:4",
+              0.001382816754575067
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.43485307189989447
+            ],
+            [
+              "track:5",
+              0.3777289260362033
+            ],
+            [
+              "track:1",
+              0.18413370843398097
+            ],
+            [
+              "track:2",
+              0.003191697365107094
+            ],
+            [
+              "track:4",
+              9.2596264814193e-05
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6257522854950631
+            ],
+            [
+              "track:3",
+              0.3732373800510416
+            ],
+            [
+              "track:5",
+              0.0006736005769636136
+            ],
+            [
+              "track:2",
+              0.0003364927511242301
+            ],
+            [
+              "track:4",
+              2.411258074989697e-07
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9176687296393667
+            ],
+            [
+              "track:3",
+              0.0820935357615708
+            ],
+            [
+              "track:5",
+              0.00023530453356329157
+            ],
+            [
+              "track:2",
+              2.3210536107030977e-06
+            ],
+            [
+              "track:4",
+              1.0901188853425555e-07
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.6428571428571429,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6119591093684358,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5807309900574149,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.688839098165523,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.5288588632692025,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2946813205287158,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.17007189661448854,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:2",
+          "onset_count": 256,
+          "mean_drift_beats": -0.05142163570338609,
+          "drift_stdev_beats": 0.003971601261948417,
+          "swing_ratio": 1.3486476673130119,
+          "confidence": 0.9503549842256448
+        },
+        {
+          "track_id": "track:5",
+          "onset_count": 72,
+          "mean_drift_beats": -0.049247042553319256,
+          "drift_stdev_beats": 0.007228375748344264,
+          "swing_ratio": 0.8060606780687639,
+          "confidence": 0.9096453031456967
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 237,
+          "mean_drift_beats": -0.034991926363193794,
+          "drift_stdev_beats": 0.009567336617811817,
+          "swing_ratio": 1.440660549280263,
+          "confidence": 0.8804082922773523
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 200,
+          "mean_drift_beats": 0.023560207357505192,
+          "drift_stdev_beats": 0.037927255936251576,
+          "swing_ratio": 1.0804346784733794,
+          "confidence": 0.5259093007968554
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:5",
+          "pulse_ratio": null,
+          "against_meter": true,
+          "base_period_beats": 1.0022745214366704,
+          "occupancy": 1.0,
+          "confidence": 1.0,
+          "verdict": "additive",
+          "grouping": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            1,
+            1
+          ],
+          "cycle_length_beats": 8.0
+        },
+        {
+          "track_id": "track:2",
+          "pulse_ratio": "4/beat",
+          "against_meter": false,
+          "base_period_beats": 0.2500574273180669,
+          "occupancy": 1.0,
+          "confidence": 0.8753576413917352,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        },
+        {
+          "track_id": "track:1",
+          "pulse_ratio": null,
+          "against_meter": false,
+          "base_period_beats": 0.24948921640645094,
+          "occupancy": 0.92184259494553,
+          "confidence": 0.2578200627135985,
+          "verdict": "low-confidence",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": [
+        {
+          "track_a": "track:1",
+          "track_b": "track:2",
+          "cycle_a_beats": 3.991827462503215,
+          "cycle_b_beats": 0.5001148546361338,
+          "realign_beats": 4.0,
+          "confidence": 0.7524237543997202
+        }
+      ]
+    },
+    {
+      "section_name": "verse2",
+      "start_beat": 224.0,
+      "end_beat": 320.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -17.138888225583933,
+          "lufs_s_median": -17.37396236655858,
+          "lufs_m_peak": -8.758227782498787,
+          "true_peak_dbtp": -2.0721449350409578
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -15.604600302961359,
+            "lufs_s_median": -16.338746064767292,
+            "lufs_m_peak": -3.4972546713183528,
+            "true_peak_dbtp": 0.018888000426514406
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -17.524313910318195,
+            "lufs_s_median": -17.477525036803247,
+            "lufs_m_peak": -14.640508961203798,
+            "true_peak_dbtp": -7.947682452067285
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -21.436361581790806,
+            "lufs_s_median": -21.919219742633278,
+            "lufs_m_peak": -18.67202009059155,
+            "true_peak_dbtp": -3.4876921467734845
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -20.231071749131853,
+            "lufs_s_median": -20.260600557444654,
+            "lufs_m_peak": -16.02613372457053,
+            "true_peak_dbtp": -4.276868855302663
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -17.332304958347517,
+            "lufs_s_median": -18.348697887571852,
+            "lufs_m_peak": -13.988197539414024,
+            "true_peak_dbtp": -7.796831535294779
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -23.220413634458513,
+            "lufs_s_median": -23.233420147460855,
+            "lufs_m_peak": -21.045641589508552,
+            "true_peak_dbtp": -12.661896362314328
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -57.491836051104535,
+            "lufs_s_median": -57.69605726402068,
+            "lufs_m_peak": -52.602908523433314,
+            "true_peak_dbtp": -44.05684334073625
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -67.73625362394601,
+            "lufs_s_median": -76.58888753094494,
+            "lufs_m_peak": -67.15156515503415,
+            "true_peak_dbtp": -60.07522029340051
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -76.0518982690417,
+            "lufs_m_peak": -71.88336462174999,
+            "true_peak_dbtp": -64.10960134068245
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7485066595675376
+            ],
+            [
+              "track:2",
+              0.1007541684196759
+            ],
+            [
+              "track:4",
+              0.08627936067792828
+            ],
+            [
+              "track:5",
+              0.031028847579069166
+            ],
+            [
+              "track:3",
+              0.030167363311437698
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.3327384428281802
+            ],
+            [
+              "track:2",
+              0.3277172747467982
+            ],
+            [
+              "track:5",
+              0.14697086053753483
+            ],
+            [
+              "track:4",
+              0.11536236104214628
+            ],
+            [
+              "track:3",
+              0.07571232516400178
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.30617037387684304
+            ],
+            [
+              "track:4",
+              0.21952861828323153
+            ],
+            [
+              "track:2",
+              0.18058948979872003
+            ],
+            [
+              "track:3",
+              0.133381609010857
+            ],
+            [
+              "track:1",
+              0.09168051539272258
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:6",
+              0.4747830368430176
+            ],
+            [
+              "track:3",
+              0.22740908396651702
+            ],
+            [
+              "track:1",
+              0.17611190278781746
+            ],
+            [
+              "track:5",
+              0.0796121909097161
+            ],
+            [
+              "track:4",
+              0.036185103687291116
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5709877700110743
+            ],
+            [
+              "track:3",
+              0.3122926466911669
+            ],
+            [
+              "track:6",
+              0.1124968041873033
+            ],
+            [
+              "track:4",
+              0.0025450326055433906
+            ],
+            [
+              "track:5",
+              0.0008736411739579639
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8716073139613931
+            ],
+            [
+              "track:3",
+              0.09234064864442151
+            ],
+            [
+              "track:6",
+              0.03471579933526515
+            ],
+            [
+              "track:4",
+              0.0007899202890539679
+            ],
+            [
+              "track:5",
+              0.00043566769550293345
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3593877551020408,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3130612244897959,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.23447820343461032,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.21193877551020407,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:6",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.1736734693877551,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.6129591836734694,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.4219645934513552,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.39352708058124175,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.3536404160475483,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.326375,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:5",
+          "onset_count": 84,
+          "mean_drift_beats": -0.050194256693238515,
+          "drift_stdev_beats": 0.014738488347048733,
+          "swing_ratio": 0.8050526940775306,
+          "confidence": 0.8157688956618908
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 99,
+          "mean_drift_beats": -0.03324157181518303,
+          "drift_stdev_beats": 0.02069179369853486,
+          "swing_ratio": 0.8654836195841048,
+          "confidence": 0.7413525787683143
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 96,
+          "mean_drift_beats": -0.010919381436046057,
+          "drift_stdev_beats": 0.02117736842747702,
+          "swing_ratio": 0.9676774214427816,
+          "confidence": 0.7352828946565373
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 131,
+          "mean_drift_beats": -0.020059284746345062,
+          "drift_stdev_beats": 0.021964393810352444,
+          "swing_ratio": 0.917053945833511,
+          "confidence": 0.7254450773705945
+        },
+        {
+          "track_id": "track:6",
+          "onset_count": 97,
+          "mean_drift_beats": -0.05624137660685657,
+          "drift_stdev_beats": 0.023251570640731814,
+          "swing_ratio": 0.8065972985661168,
+          "confidence": 0.7093553669908523
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 49,
+          "mean_drift_beats": 0.004929318972487835,
+          "drift_stdev_beats": 0.02591732680014,
+          "swing_ratio": 1.0303331841830603,
+          "confidence": 0.67603341499825
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:6",
+          "pulse_ratio": "1/beat",
+          "against_meter": false,
+          "base_period_beats": 0.9994712057761367,
+          "occupancy": 1.0,
+          "confidence": 0.31096010285949627,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        },
+        {
+          "track_id": "track:1",
+          "pulse_ratio": null,
+          "against_meter": false,
+          "base_period_beats": 0.49952926454163354,
+          "occupancy": 0.6889510672743112,
+          "confidence": 0.29582937777177587,
+          "verdict": "low-confidence",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": []
+    },
+    {
+      "section_name": "chorus2",
+      "start_beat": 320.0,
+      "end_beat": 384.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -9.179958271514055,
+          "lufs_s_median": -9.162280959473463,
+          "lufs_m_peak": -7.839323297649862,
+          "true_peak_dbtp": -0.9551544158651754
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -5.093812537966713,
+            "lufs_s_median": -5.024452703364601,
+            "lufs_m_peak": -3.062156572142669,
+            "true_peak_dbtp": 0.03986165892572896
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -15.520164012457235,
+            "lufs_s_median": -15.289327992194556,
+            "lufs_m_peak": -14.30704653610683,
+            "true_peak_dbtp": -9.814470738293245
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -9.416392823182447,
+            "lufs_s_median": -9.421739269113994,
+            "lufs_m_peak": -8.91432449136372,
+            "true_peak_dbtp": -0.8532268963942703
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -47.287384743621885,
+            "lufs_s_median": -1223.570886049381,
+            "lufs_m_peak": -47.287384743621885,
+            "true_peak_dbtp": -29.613849571334537
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -13.346210730714313,
+            "lufs_s_median": -13.378701834058983,
+            "lufs_m_peak": -11.858722670156913,
+            "true_peak_dbtp": -4.502124895888156
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -36.46739313038365,
+            "lufs_s_median": -245.87094234055004,
+            "lufs_m_peak": -32.92219010157448,
+            "true_peak_dbtp": -20.426179226694483
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -52.115326905769365,
+            "lufs_s_median": -52.19572755928803,
+            "lufs_m_peak": -49.7494721897979,
+            "true_peak_dbtp": -41.24585351437464
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -66.98447889943344,
+            "lufs_s_median": -66.93783265862412,
+            "lufs_m_peak": -65.66672665102567,
+            "true_peak_dbtp": -57.44724033808851
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -72.70702314001423,
+            "lufs_m_peak": -71.47569210491709,
+            "true_peak_dbtp": -63.97661613212935
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7714740151210524
+            ],
+            [
+              "track:2",
+              0.16893563911684523
+            ],
+            [
+              "track:3",
+              0.03828908094868835
+            ],
+            [
+              "track:5",
+              0.015742371609400296
+            ],
+            [
+              "track:6",
+              0.004103683465053208
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.5394061320302738
+            ],
+            [
+              "track:2",
+              0.2011582907945493
+            ],
+            [
+              "track:3",
+              0.1901144283327518
+            ],
+            [
+              "track:5",
+              0.06866338659325832
+            ],
+            [
+              "track:6",
+              0.0004758754341313881
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.43550510223414063
+            ],
+            [
+              "track:5",
+              0.33642944811670755
+            ],
+            [
+              "track:1",
+              0.2154336197124609
+            ],
+            [
+              "track:2",
+              0.008348762511888054
+            ],
+            [
+              "track:6",
+              0.003090073905045046
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4510130318495551
+            ],
+            [
+              "track:5",
+              0.3618571182932906
+            ],
+            [
+              "track:1",
+              0.17641946745369486
+            ],
+            [
+              "track:6",
+              0.007342056739308946
+            ],
+            [
+              "track:2",
+              0.0032283572011823436
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6052329341667363
+            ],
+            [
+              "track:3",
+              0.3922825319171224
+            ],
+            [
+              "track:6",
+              0.0012377073920846933
+            ],
+            [
+              "track:5",
+              0.0008534102390002652
+            ],
+            [
+              "track:2",
+              0.00039261062264750647
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9105455796673486
+            ],
+            [
+              "track:3",
+              0.08904051149380136
+            ],
+            [
+              "track:5",
+              0.00036385109955080813
+            ],
+            [
+              "track:6",
+              4.660900092574559e-05
+            ],
+            [
+              "track:2",
+              3.1667157018368285e-06
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.9190751445086706,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.8670520231213873,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 1.0,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.9884393063583815,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            630.0,
+            770.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.6708511518830184,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.48820017059994314,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.31244485525818244,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:5",
+          "onset_count": 72,
+          "mean_drift_beats": -0.055514987515294933,
+          "drift_stdev_beats": 0.003437589989948422,
+          "swing_ratio": 0.805910481451735,
+          "confidence": 0.9570301251256448
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 256,
+          "mean_drift_beats": -0.059748500078960154,
+          "drift_stdev_beats": 0.0038659844427004326,
+          "swing_ratio": 1.284031403778921,
+          "confidence": 0.9516751944662446
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 237,
+          "mean_drift_beats": -0.044826490921991535,
+          "drift_stdev_beats": 0.010181852166174843,
+          "swing_ratio": 1.3936571424070998,
+          "confidence": 0.8727268479228145
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 193,
+          "mean_drift_beats": 0.017004542029814947,
+          "drift_stdev_beats": 0.03448803837772291,
+          "swing_ratio": 1.037299380130607,
+          "confidence": 0.5688995202784637
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 2,
+          "mean_drift_beats": 0.0659537655912743,
+          "drift_stdev_beats": 0.0019867375401361187,
+          "swing_ratio": null,
+          "confidence": 0.48758289037414926
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:5",
+          "pulse_ratio": null,
+          "against_meter": true,
+          "base_period_beats": 1.001110946313829,
+          "occupancy": 1.0,
+          "confidence": 1.0,
+          "verdict": "additive",
+          "grouping": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            1,
+            1
+          ],
+          "cycle_length_beats": 8.0
+        },
+        {
+          "track_id": "track:2",
+          "pulse_ratio": "4/beat",
+          "against_meter": false,
+          "base_period_beats": 0.2500887982159865,
+          "occupancy": 1.0,
+          "confidence": 0.8368174693068918,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": [
+        {
+          "track_a": "track:1",
+          "track_b": "track:2",
+          "cycle_a_beats": 4.007492783030919,
+          "cycle_b_beats": 0.500177596431973,
+          "realign_beats": 4.0,
+          "confidence": 0.5619658712171718
+        }
+      ]
+    },
+    {
+      "section_name": "development",
+      "start_beat": 384.0,
+      "end_beat": 480.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -12.861150529256957,
+          "lufs_s_median": -12.819647200221109,
+          "lufs_m_peak": -8.037054062195415,
+          "true_peak_dbtp": -0.9617067148711322
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -8.050992462528036,
+            "lufs_s_median": -8.562160044802734,
+            "lufs_m_peak": -3.0851836983582683,
+            "true_peak_dbtp": 0.024152201303562545
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -14.11428501000931,
+            "lufs_s_median": -14.260235180893197,
+            "lufs_m_peak": -11.436459375706589,
+            "true_peak_dbtp": -4.680865254053296
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -19.74142609923843,
+            "lufs_s_median": -20.158460244582052,
+            "lufs_m_peak": -16.230488024830517,
+            "true_peak_dbtp": -1.949016036831496
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -20.21606946875371,
+            "lufs_s_median": -20.41706218145255,
+            "lufs_m_peak": -15.961186057780973,
+            "true_peak_dbtp": -2.9858960587407246
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -16.543776811270643,
+            "lufs_s_median": -17.583946444781716,
+            "lufs_m_peak": -12.478514206656591,
+            "true_peak_dbtp": -4.398046196961875
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -23.25133940429139,
+            "lufs_s_median": -23.312738248550296,
+            "lufs_m_peak": -21.322942542539412,
+            "true_peak_dbtp": -12.227971323599347
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -56.03908384591914,
+            "lufs_s_median": -56.00757426287305,
+            "lufs_m_peak": -52.70951001117254,
+            "true_peak_dbtp": -41.53278575974135
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -68.98902182152602,
+            "lufs_s_median": -71.34846237125706,
+            "lufs_m_peak": -66.36413009772296,
+            "true_peak_dbtp": -59.621159761717934
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -75.50345610147552,
+            "lufs_m_peak": -71.62496463351636,
+            "true_peak_dbtp": -62.694384050329475
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7223763566775849
+            ],
+            [
+              "track:2",
+              0.21823907219935557
+            ],
+            [
+              "track:4",
+              0.04098212223295808
+            ],
+            [
+              "track:5",
+              0.010709561804499298
+            ],
+            [
+              "track:3",
+              0.006383601950968722
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.49220216355226026
+            ],
+            [
+              "track:2",
+              0.32670316031122104
+            ],
+            [
+              "track:4",
+              0.0640766578016426
+            ],
+            [
+              "track:5",
+              0.061454286690501674
+            ],
+            [
+              "track:3",
+              0.054849203707836955
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.2559957495380794
+            ],
+            [
+              "track:4",
+              0.2124004728909493
+            ],
+            [
+              "track:1",
+              0.1785575660587067
+            ],
+            [
+              "track:3",
+              0.15156916557521416
+            ],
+            [
+              "track:2",
+              0.1490036163388136
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:5",
+              0.41195460158966196
+            ],
+            [
+              "track:6",
+              0.21695046701182436
+            ],
+            [
+              "track:1",
+              0.18535892681761712
+            ],
+            [
+              "track:3",
+              0.15597490462302596
+            ],
+            [
+              "track:4",
+              0.02207828733091736
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.6570337525054415
+            ],
+            [
+              "track:3",
+              0.2730057448451054
+            ],
+            [
+              "track:6",
+              0.0658375762726223
+            ],
+            [
+              "track:4",
+              0.0023369573453859214
+            ],
+            [
+              "track:2",
+              0.0010356629518769288
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9030957579973085
+            ],
+            [
+              "track:3",
+              0.07629969563964745
+            ],
+            [
+              "track:6",
+              0.019673361067616354
+            ],
+            [
+              "track:4",
+              0.0005678839705719084
+            ],
+            [
+              "track:5",
+              0.00029165166784707916
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.3850858818600754,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.36749057394218687,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.3471244635193133,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.332543194268858,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.26952789699570817,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.674151654796816,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.5204909397387274,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5014592274678111,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.4625771493147113,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.4197183098591549,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:2",
+          "onset_count": 227,
+          "mean_drift_beats": -0.061739461544702876,
+          "drift_stdev_beats": 0.013124661927630569,
+          "swing_ratio": 0.858027294451185,
+          "confidence": 0.8359417259046179
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 210,
+          "mean_drift_beats": -0.04417295706242774,
+          "drift_stdev_beats": 0.014580680570495037,
+          "swing_ratio": 0.8840969515180129,
+          "confidence": 0.817741492868812
+        },
+        {
+          "track_id": "track:5",
+          "onset_count": 91,
+          "mean_drift_beats": -0.05893374755870994,
+          "drift_stdev_beats": 0.01680852641485632,
+          "swing_ratio": 0.7805473723665591,
+          "confidence": 0.789893419814296
+        },
+        {
+          "track_id": "track:6",
+          "onset_count": 64,
+          "mean_drift_beats": -0.06701292037262885,
+          "drift_stdev_beats": 0.02292592468158276,
+          "swing_ratio": 0.772739730021248,
+          "confidence": 0.7134259414802155
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 49,
+          "mean_drift_beats": -0.015034050302414453,
+          "drift_stdev_beats": 0.02794511431109051,
+          "swing_ratio": 0.9445450068118755,
+          "confidence": 0.6506860711113687
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 187,
+          "mean_drift_beats": -0.04656272312717038,
+          "drift_stdev_beats": 0.03152466916946566,
+          "swing_ratio": 0.948733069669898,
+          "confidence": 0.6059416353816792
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": []
+    },
+    {
+      "section_name": "break",
+      "start_beat": 480.0,
+      "end_beat": 544.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -19.36249264512085,
+          "lufs_s_median": -20.725240906664652,
+          "lufs_m_peak": -12.88879605598931,
+          "true_peak_dbtp": -3.8279274763160815
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.43074266452952,
+            "lufs_s_median": -38.0452965270368,
+            "lufs_m_peak": -7.220162034258384,
+            "true_peak_dbtp": -0.16902384879987675
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -33.88982731084719,
+            "lufs_s_median": -1182.5015469511325,
+            "lufs_m_peak": -33.88982731084719,
+            "true_peak_dbtp": -8.21234216357894
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -10.575020393683833,
+            "lufs_s_median": -11.321772025014463,
+            "lufs_m_peak": -9.156877515036955,
+            "true_peak_dbtp": -1.046933945265826
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -16.70873584948233,
+            "lufs_s_median": -16.711981463034117,
+            "lufs_m_peak": -15.70205997320398,
+            "true_peak_dbtp": -7.015775153524448
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -17.42086338992316,
+            "lufs_s_median": -18.454780260883872,
+            "lufs_m_peak": -13.160628199058909,
+            "true_peak_dbtp": -6.275221025898055
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -36.03630046482769,
+            "lufs_s_median": -43.5247143747664,
+            "lufs_m_peak": -33.03082550874697,
+            "true_peak_dbtp": -21.177488446874086
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -45.954624433722074,
+            "lufs_s_median": -46.59938382295074,
+            "lufs_m_peak": -42.16690512415469,
+            "true_peak_dbtp": -32.337253144594456
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -80.3315014562245,
+            "lufs_m_peak": -71.05013688124788,
+            "true_peak_dbtp": -62.72461837250432
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -Infinity,
+            "lufs_s_median": -77.33966370665901,
+            "lufs_m_peak": -71.90729162435429,
+            "true_peak_dbtp": -64.6137301629823
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.3874730656180869
+            ],
+            [
+              "track:3",
+              0.28247443080627765
+            ],
+            [
+              "track:5",
+              0.1470836483708852
+            ],
+            [
+              "track:2",
+              0.09522761065441024
+            ],
+            [
+              "track:4",
+              0.05466132895845948
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:3",
+              0.6460059014652606
+            ],
+            [
+              "track:1",
+              0.18625694843618498
+            ],
+            [
+              "track:5",
+              0.1524560835693947
+            ],
+            [
+              "track:2",
+              0.00997425263894147
+            ],
+            [
+              "track:4",
+              0.0036765823693915675
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.45643042628125047
+            ],
+            [
+              "track:5",
+              0.24912608366093622
+            ],
+            [
+              "track:4",
+              0.21300621278704143
+            ],
+            [
+              "track:1",
+              0.07581911133198022
+            ],
+            [
+              "track:6",
+              0.0049621084452120936
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:4",
+              0.34820373808049887
+            ],
+            [
+              "track:3",
+              0.3132085170488924
+            ],
+            [
+              "track:5",
+              0.2519336670659448
+            ],
+            [
+              "track:1",
+              0.06864184125955042
+            ],
+            [
+              "track:6",
+              0.017785276378348543
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5872997443262362
+            ],
+            [
+              "track:3",
+              0.4037853901343211
+            ],
+            [
+              "track:6",
+              0.006004442912054407
+            ],
+            [
+              "track:4",
+              0.0017187996895746194
+            ],
+            [
+              "track:5",
+              0.001153330183650202
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.9062719538031025
+            ],
+            [
+              "track:3",
+              0.09166994801723082
+            ],
+            [
+              "track:4",
+              0.0008640072236954401
+            ],
+            [
+              "track:6",
+              0.0006573496589086351
+            ],
+            [
+              "track:5",
+              0.0005362552407643731
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.8883333333333333,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5172413793103449,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5103448275862069,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.4968660003388108,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.4841666666666667,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.9025,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.8896551724137931,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.561578858207691,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.33240790176187934,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.2714535901926445,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 24,
+          "mean_drift_beats": -0.049861410802899776,
+          "drift_stdev_beats": 0.0031243638406008374,
+          "swing_ratio": 0.8272388508235747,
+          "confidence": 0.9609454519924895
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 62,
+          "mean_drift_beats": -0.061482332848337436,
+          "drift_stdev_beats": 0.006899214992005948,
+          "swing_ratio": 0.7805786576081623,
+          "confidence": 0.9137598125999257
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 4,
+          "mean_drift_beats": -0.06543076680175375,
+          "drift_stdev_beats": 0.01313992866422675,
+          "swing_ratio": null,
+          "confidence": 0.8357508916971657
+        },
+        {
+          "track_id": "track:5",
+          "onset_count": 48,
+          "mean_drift_beats": -0.060837258565326145,
+          "drift_stdev_beats": 0.016104265877300503,
+          "swing_ratio": 0.7814133364585579,
+          "confidence": 0.7986966765337438
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 1,
+          "mean_drift_beats": -0.059378453765589256,
+          "drift_stdev_beats": 0.0,
+          "swing_ratio": null,
+          "confidence": 0.25
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:1",
+          "pulse_ratio": "4/beat",
+          "against_meter": false,
+          "base_period_beats": 0.25012016911390067,
+          "occupancy": 0.7501999466808681,
+          "confidence": 0.947565848745181,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        },
+        {
+          "track_id": "track:3",
+          "pulse_ratio": "1:16",
+          "against_meter": true,
+          "base_period_beats": 16.009824044348534,
+          "occupancy": 1.0,
+          "confidence": 0.6584981230788017,
+          "verdict": "cross-rhythm",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": []
+    },
+    {
+      "section_name": "integration",
+      "start_beat": 544.0,
+      "end_beat": 672.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -9.577612161675725,
+          "lufs_s_median": -9.016002344176599,
+          "lufs_m_peak": -7.62297835963828,
+          "true_peak_dbtp": -0.952447520365488
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -5.240203967148395,
+            "lufs_s_median": -5.239452861154364,
+            "lufs_m_peak": -3.0433633526813617,
+            "true_peak_dbtp": 0.039841149465726866
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -13.454474227629243,
+            "lufs_s_median": -13.235055734065472,
+            "lufs_m_peak": -11.462837353916802,
+            "true_peak_dbtp": -5.4150729403091145
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -9.783886940711314,
+            "lufs_s_median": -9.43050246087276,
+            "lufs_m_peak": -8.894887954552777,
+            "true_peak_dbtp": -1.0291959177024177
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -16.19201229693593,
+            "lufs_s_median": -17.93102105564008,
+            "lufs_m_peak": -10.862599585443458,
+            "true_peak_dbtp": -1.8733735044118516
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -13.288127856953402,
+            "lufs_s_median": -13.255728717453511,
+            "lufs_m_peak": -9.637824460876606,
+            "true_peak_dbtp": -0.9645482387516463
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -23.280272569750853,
+            "lufs_s_median": -23.29822038418918,
+            "lufs_m_peak": -21.521776921578805,
+            "true_peak_dbtp": -12.92434391815492
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -52.5880805076954,
+            "lufs_s_median": -52.19618312920059,
+            "lufs_m_peak": -48.59927992482249,
+            "true_peak_dbtp": -38.37878535690608
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -66.84063661906029,
+            "lufs_s_median": -66.90231731017545,
+            "lufs_m_peak": -59.73007767827541,
+            "true_peak_dbtp": -41.61330174545665
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -69.71143172680124,
+            "lufs_s_median": -71.92973410067633,
+            "lufs_m_peak": -69.55120551472734,
+            "true_peak_dbtp": -60.50952765546839
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7236822097935898
+            ],
+            [
+              "track:2",
+              0.1939647912160809
+            ],
+            [
+              "track:3",
+              0.03635999693147304
+            ],
+            [
+              "track:4",
+              0.03147609612313935
+            ],
+            [
+              "track:5",
+              0.01360896290371728
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.47883330748687536
+            ],
+            [
+              "track:2",
+              0.2435278103095263
+            ],
+            [
+              "track:3",
+              0.1610220649743067
+            ],
+            [
+              "track:4",
+              0.06525191666606107
+            ],
+            [
+              "track:5",
+              0.05087065195237365
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.3343316948937207
+            ],
+            [
+              "track:5",
+              0.2309669284590811
+            ],
+            [
+              "track:4",
+              0.189176121878411
+            ],
+            [
+              "track:1",
+              0.16007650366005063
+            ],
+            [
+              "track:2",
+              0.05063482392248934
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.3346846563560744
+            ],
+            [
+              "track:5",
+              0.2902478479082858
+            ],
+            [
+              "track:1",
+              0.14016588355512674
+            ],
+            [
+              "track:6",
+              0.1294655107783025
+            ],
+            [
+              "track:4",
+              0.10073349057760334
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5938380272252626
+            ],
+            [
+              "track:3",
+              0.3506197439916571
+            ],
+            [
+              "track:6",
+              0.05229929845543089
+            ],
+            [
+              "track:4",
+              0.0015480913668502096
+            ],
+            [
+              "track:5",
+              0.0009008370357241123
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8996744991454388
+            ],
+            [
+              "track:3",
+              0.08322515949821356
+            ],
+            [
+              "track:6",
+              0.016167046397975865
+            ],
+            [
+              "track:5",
+              0.0005094709286322599
+            ],
+            [
+              "track:4",
+              0.00039638776077130603
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.6633370197281581,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5159185646106446,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.48370639627574774,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.4820878390624056,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.46783917805287006,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.7549855517106061,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.6727249537657037,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:2",
+          "masked_fraction": 0.5943937654805775,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.4561487784792753,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.30588718671127546,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:5",
+          "onset_count": 109,
+          "mean_drift_beats": -0.07087295984905548,
+          "drift_stdev_beats": 0.007419775346858395,
+          "swing_ratio": 0.7722953514672583,
+          "confidence": 0.9072528081642701
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 441,
+          "mean_drift_beats": -0.07179454154520025,
+          "drift_stdev_beats": 0.008248460321019465,
+          "swing_ratio": 0.8477845985536705,
+          "confidence": 0.8968942459872566
+        },
+        {
+          "track_id": "track:6",
+          "onset_count": 96,
+          "mean_drift_beats": -0.06957309264426097,
+          "drift_stdev_beats": 0.00832337920878824,
+          "swing_ratio": 0.7667747596963423,
+          "confidence": 0.895957759890147
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 348,
+          "mean_drift_beats": -0.056541450933926644,
+          "drift_stdev_beats": 0.00866947246008166,
+          "swing_ratio": 0.8478744484023107,
+          "confidence": 0.8916315942489792
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 224,
+          "mean_drift_beats": -0.05882209207035771,
+          "drift_stdev_beats": 0.020238302805189547,
+          "swing_ratio": 0.9116415357722059,
+          "confidence": 0.7470212149351307
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 128,
+          "mean_drift_beats": 0.007352923036952674,
+          "drift_stdev_beats": 0.022402454898429108,
+          "swing_ratio": 1.0136443720280741,
+          "confidence": 0.7199693137696361
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:6",
+          "pulse_ratio": "1/beat",
+          "against_meter": false,
+          "base_period_beats": 0.999862269287058,
+          "occupancy": 0.8571317838293797,
+          "confidence": 0.8387968511589213,
+          "verdict": "subdivision",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [
+        {
+          "track_a": "track:4",
+          "track_b": "track:5",
+          "drift_beats_per_cycle": -0.03168330682675125,
+          "confidence": 0.6368453475960405
+        }
+      ],
+      "polymeter": []
+    },
+    {
+      "section_name": "outro",
+      "start_beat": 672.0,
+      "end_beat": 736.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -16.6889091955719,
+          "lufs_s_median": -16.865568926964343,
+          "lufs_m_peak": -13.08413461051853,
+          "true_peak_dbtp": -1.7710775297215517
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -16.217351146396688,
+            "lufs_s_median": -16.02599508336746,
+            "lufs_m_peak": -9.535625745613379,
+            "true_peak_dbtp": -0.13087140490135496
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -17.310692105255484,
+            "lufs_s_median": -17.439621438710105,
+            "lufs_m_peak": -14.059899754357842,
+            "true_peak_dbtp": -8.546936571897053
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Rhythm Gtr",
+          "loudness": {
+            "lufs_i": -21.07739517087165,
+            "lufs_s_median": -21.733849022177296,
+            "lufs_m_peak": -18.585210973181624,
+            "true_peak_dbtp": -3.265180695228666
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Organ",
+          "loudness": {
+            "lufs_i": -18.61939479950661,
+            "lufs_s_median": -19.59624457918741,
+            "lufs_m_peak": -13.626087158233444,
+            "true_peak_dbtp": -3.6116399864426003
+          }
+        },
+        {
+          "track_id": "track:5",
+          "surface_kind": "track",
+          "surface_name": "05 Lead",
+          "loudness": {
+            "lufs_i": -16.570158044126813,
+            "lufs_s_median": -16.971262216783757,
+            "lufs_m_peak": -12.075447071934732,
+            "true_peak_dbtp": -4.522420227146976
+          }
+        },
+        {
+          "track_id": "track:6",
+          "surface_kind": "track",
+          "surface_name": "06 Steel",
+          "loudness": {
+            "lufs_i": -23.227699903195788,
+            "lufs_s_median": -23.262153206502422,
+            "lufs_m_peak": -19.533420152880957,
+            "true_peak_dbtp": -8.837970938409951
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Plate",
+          "loudness": {
+            "lufs_i": -56.55659263048234,
+            "lufs_s_median": -56.76858487067203,
+            "lufs_m_peak": -52.07840662202001,
+            "true_peak_dbtp": -43.427851165190546
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Room",
+          "loudness": {
+            "lufs_i": -51.8082985902259,
+            "lufs_s_median": -51.92569102796464,
+            "lufs_m_peak": -47.08529411251079,
+            "true_peak_dbtp": -39.13682185058069
+          }
+        },
+        {
+          "track_id": "return:3",
+          "surface_kind": "return",
+          "surface_name": "C-DubDelay",
+          "loudness": {
+            "lufs_i": -44.17530782559757,
+            "lufs_s_median": -74.79232420189238,
+            "lufs_m_peak": -40.85985592468498,
+            "true_peak_dbtp": -28.492608311968752
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.6483750241148896
+            ],
+            [
+              "track:2",
+              0.17002566087030754
+            ],
+            [
+              "track:4",
+              0.09061884560628453
+            ],
+            [
+              "track:5",
+              0.0714936670737949
+            ],
+            [
+              "track:6",
+              0.015338130427203427
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:2",
+              0.3443265610523537
+            ],
+            [
+              "track:1",
+              0.275994036526551
+            ],
+            [
+              "track:4",
+              0.15745589788010325
+            ],
+            [
+              "track:5",
+              0.12823854577173438
+            ],
+            [
+              "track:3",
+              0.09192246277836405
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:5",
+              0.33304285123856914
+            ],
+            [
+              "track:4",
+              0.25005977319404843
+            ],
+            [
+              "track:3",
+              0.13516843182893487
+            ],
+            [
+              "track:2",
+              0.12527481462702866
+            ],
+            [
+              "track:1",
+              0.08582600772115315
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:5",
+              0.3631177901531514
+            ],
+            [
+              "track:6",
+              0.34466854400462926
+            ],
+            [
+              "track:3",
+              0.15970679316110548
+            ],
+            [
+              "track:1",
+              0.11095826503483106
+            ],
+            [
+              "track:4",
+              0.018045210285490967
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.5446383080501156
+            ],
+            [
+              "track:3",
+              0.3367251663482551
+            ],
+            [
+              "track:6",
+              0.1142208903801537
+            ],
+            [
+              "track:4",
+              0.0025445611707878846
+            ],
+            [
+              "track:5",
+              0.0011688626231330028
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.8635515038360586
+            ],
+            [
+              "track:3",
+              0.10012092812669572
+            ],
+            [
+              "track:6",
+              0.035044784057337415
+            ],
+            [
+              "track:4",
+              0.0006546501334358333
+            ],
+            [
+              "track:5",
+              0.0005611830522062123
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:2",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.33542915630940195,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.26465857581517765,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:5",
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.20828590940132027,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.19213335282936103,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:6",
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.17751133206609154,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:4",
+          "masked_fraction": 0.563971340839304,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "masked_fraction": 0.45859321648076484,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:6",
+          "masked_fraction": 0.3650606288228351,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:5",
+          "masked_fraction": 0.35844329380324036,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "masked_fraction": 0.32484012789768185,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:5",
+          "onset_count": 53,
+          "mean_drift_beats": -0.07283616155260281,
+          "drift_stdev_beats": 0.01588167447671918,
+          "swing_ratio": 0.7588836305147986,
+          "confidence": 0.8014790690410103
+        },
+        {
+          "track_id": "track:1",
+          "onset_count": 87,
+          "mean_drift_beats": -0.05372078118092832,
+          "drift_stdev_beats": 0.020918683748586585,
+          "swing_ratio": 0.8035428259554083,
+          "confidence": 0.7385164531426677
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 33,
+          "mean_drift_beats": -0.014359491446250351,
+          "drift_stdev_beats": 0.025137794575787707,
+          "swing_ratio": 0.9623304029017536,
+          "confidence": 0.6857775678026536
+        },
+        {
+          "track_id": "track:2",
+          "onset_count": 65,
+          "mean_drift_beats": -0.06286764259372586,
+          "drift_stdev_beats": 0.028621062030214656,
+          "swing_ratio": 0.7834825356971024,
+          "confidence": 0.6422367246223168
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 65,
+          "mean_drift_beats": -0.050278831478529074,
+          "drift_stdev_beats": 0.029257196499341342,
+          "swing_ratio": 0.8076607484747473,
+          "confidence": 0.6342850437582332
+        },
+        {
+          "track_id": "track:6",
+          "onset_count": 63,
+          "mean_drift_beats": -0.06897621511986637,
+          "drift_stdev_beats": 0.04022976593386739,
+          "swing_ratio": 0.7337667522096865,
+          "confidence": 0.49712792582665766
+        }
+      ],
+      "cross_rhythm": [
+        {
+          "track_id": "track:1",
+          "pulse_ratio": null,
+          "against_meter": false,
+          "base_period_beats": 0.5008827286602117,
+          "occupancy": 0.6859294109566659,
+          "confidence": 0.2674578790526032,
+          "verdict": "low-confidence",
+          "grouping": null,
+          "cycle_length_beats": null
+        }
+      ],
+      "phasing": [],
+      "polymeter": []
+    }
+  ],
+  "findings": [
+    {
+      "kind": "reverb_out_of_tolerance",
+      "severity": "warning",
+      "subject": "return:2",
+      "metric": "rt60_s",
+      "observed": 1.182316665261341,
+      "expected": 0.8,
+      "db_reference": null
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:2 send_level",
+      "metric": "rms_db",
+      "observed": -69.11426167529955,
+      "expected": -71.87589822973823,
+      "db_reference": "send level declared down; return moved +2.8 dB (-71.9\u2192-69.1 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:2 send_level",
+      "metric": "rms_db",
+      "observed": -76.14100255004212,
+      "expected": -68.87810344152132,
+      "db_reference": "send level declared up; return moved -7.3 dB (-68.9\u2192-76.1 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:2 send_level",
+      "metric": "rms_db",
+      "observed": -69.25815591473507,
+      "expected": -72.03407614078459,
+      "db_reference": "send level declared down; return moved +2.8 dB (-72.0\u2192-69.3 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:2 send_level",
+      "metric": "rms_db",
+      "observed": -76.03395801709543,
+      "expected": -69.20767074481577,
+      "db_reference": "send level declared up; return moved -6.8 dB (-69.2\u2192-76.0 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:3 send_level",
+      "metric": "rms_db",
+      "observed": -79.33274862593544,
+      "expected": -89.44216679716745,
+      "db_reference": "send level declared down; return moved +10.1 dB (-89.4\u2192-79.3 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:3 send_level",
+      "metric": "rms_db",
+      "observed": -77.54224094493948,
+      "expected": -77.81336314506935,
+      "db_reference": "send level declared up; return moved +0.3 dB (-77.8\u2192-77.5 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:3 send_level",
+      "metric": "rms_db",
+      "observed": -76.35576858503342,
+      "expected": -82.17689080108927,
+      "db_reference": "send level declared down; return moved +5.8 dB (-82.2\u2192-76.4 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:3 send_level",
+      "metric": "rms_db",
+      "observed": -78.22653775065665,
+      "expected": -75.20466910086239,
+      "db_reference": "send level declared up; return moved -3.0 dB (-75.2\u2192-78.2 dBFS) \u2014 NOT realized in the declared direction"
+    },
+    {
+      "kind": "automation_not_realized",
+      "severity": "warning",
+      "subject": "return:3 send_level",
+      "metric": "rms_db",
+      "observed": -75.36798887574858,
+      "expected": -73.28406200334503,
+      "db_reference": "send level declared up; return moved -2.1 dB (-73.3\u2192-75.4 dBFS) \u2014 NOT realized in the declared direction"
+    }
+  ],
+  "skipped_analyses": [],
+  "alignment": {
+    "method": "trim_to_common_length",
+    "common_length": 12160640,
+    "sample_rate": 48000,
+    "max_drift_samples": 8192,
+    "max_drift_ms": 170.66666666666666,
+    "surfaces": [
+      {
+        "track_id": "master",
+        "surface_kind": "master",
+        "original_length": 12160640,
+        "trimmed_samples": 0
+      },
+      {
+        "track_id": "track:1",
+        "surface_kind": "track",
+        "original_length": 12162176,
+        "trimmed_samples": 1536
+      },
+      {
+        "track_id": "track:2",
+        "surface_kind": "track",
+        "original_length": 12162688,
+        "trimmed_samples": 2048
+      },
+      {
+        "track_id": "track:3",
+        "surface_kind": "track",
+        "original_length": 12163712,
+        "trimmed_samples": 3072
+      },
+      {
+        "track_id": "track:4",
+        "surface_kind": "track",
+        "original_length": 12164736,
+        "trimmed_samples": 4096
+      },
+      {
+        "track_id": "track:5",
+        "surface_kind": "track",
+        "original_length": 12165248,
+        "trimmed_samples": 4608
+      },
+      {
+        "track_id": "track:6",
+        "surface_kind": "track",
+        "original_length": 12166272,
+        "trimmed_samples": 5632
+      },
+      {
+        "track_id": "return:1",
+        "surface_kind": "return",
+        "original_length": 12167296,
+        "trimmed_samples": 6656
+      },
+      {
+        "track_id": "return:2",
+        "surface_kind": "return",
+        "original_length": 12167808,
+        "trimmed_samples": 7168
+      },
+      {
+        "track_id": "return:3",
+        "surface_kind": "return",
+        "original_length": 12168832,
+        "trimmed_samples": 8192
+      }
+    ]
+  },
+  "compare_to": null
+}

@@ -49,12 +49,20 @@ Section map (genre by bar — the 184-bar through-composed arc):
 
 ## Mix implication (read this before flagging masking)
 
-In the **alternating** sections (intro, verse1, chorus1, verse2, chorus2, break,
+In the **alternating** sections (intro, verse1, chorus1, verse2, chorus2,
 outro) the genres never coexist, so **cross-genre masking is not a defect** — a
 mix review should not flag "the metal guitar buries the reggae skank," because
 those parts are never sounding together. Evaluate masking **within a single
-genre's world** there. The `break` is a reggae groove through a HEAVY amp — judge
-it as reggae air with a metal *timbre*, not as a wall.
+genre's world** there.
+
+The **break is now an exception too** (reinvented per decisions/08): it is the
+EUREKA *suspension*, not the old convention-break. Drums + bass drop OUT, and a
+polymodal fusion pad, a half↔double-time call-response, sparse steel sparkle, and
+a **ghosted metal-guitar drift** all coexist. So cross-element masking IS a live
+question here — but the bar is *suspension*, not *wall*: judge whether the drift
+(and the bed) stays UNDER the call-response + steel sparkle (it must haunt, never
+foreground — see `mix-intent-per-section.md` + decisions/09's break-drift note),
+not whether two full genres collide.
 
 **The integration is the exception, and it matters most.** Here the reggae
 polyrhythm organ and the metal gallop wall **deliberately coexist** — so

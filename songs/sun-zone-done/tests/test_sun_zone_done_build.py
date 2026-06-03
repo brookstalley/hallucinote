@@ -138,12 +138,12 @@ def test_build_produces_canonical_shape(build_module, built):
     conn = init_db(build_module.DB_PATH)
     try:
         song_id = built
-        # Tracks: 5 instrument + 1 master = 6
+        # Tracks: 6 instrument + 1 master = 7 (07 Tension added — the climax riser, #5)
         tracks = Q.get_tracks_for_song(conn, song_id)
         track_names = sorted(t["name"] for t in tracks)
         assert track_names == sorted([
             "01 Drums", "02 Bass", "03 Rhythm Gtr", "04 Organ", "05 Lead",
-            "06 Steel", "Master",
+            "06 Steel", "07 Tension", "Master",
         ]), track_names
 
         # Returns: 3, named Plate / Room / DubDelay (stored stripped)
@@ -179,19 +179,22 @@ def test_build_produces_canonical_shape(build_module, built):
         assert clip_counts["06 Steel"] == 5
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
+        # 07 Tension plays ONLY the climax riser → exactly 1 clip (integration)
+        assert clip_counts["07 Tension"] == 1
 
-        # Envelopes: 14 = 1 Amp Type (device_parameter)
+        # Envelopes: 19 = 1 Amp Type (device_parameter)
         #   + 6 clip-local atmosphere pan/send: intro organ send+pan + intro DRUMS send
         #     (#4 the deepening dawn reverb RAMP) + break lead send + break steel send+pan
-        #     (MIX-3S7P)
-        #   + 4 clip-local OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel —
-        #     #5 dub echo-out)
-        #   + 3 whole-song bookended rhythm-gtr lanes: break drift pan SWEEP + VOLUME dip
-        #     (decisions/08 v2 + mix-review) + the break drift deep-PLATE send (#2)
-        # Pinned in detail by test_atmosphere_envelopes_are_clip_local + the break-drift
-        # tests (incl. test_break_drift_reverb_deep) + test_outro_dub_ending.
+        #   + 4 clip-local OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel — #5)
+        #   + 3 clip-local OUTRO Room reverb lifts (organ/lead/steel — #D; Room because the
+        #     Plate lanes are claimed by intro/break — create_envelope is find-or-create)
+        #   + 2 whole-song reggae-gated gtr SKANK sends: gtr->Room + gtr->DubDelay (#3)
+        #   + 3 whole-song bookended rhythm-gtr lanes: break drift pan SWEEP + VOLUME
+        #     (amp-coupled Heavy trim + break ghost + integration blend) + deep-PLATE send
+        # Pinned by test_atmosphere_envelopes_are_clip_local + the break-drift tests
+        # (incl. test_break_drift_reverb_deep) + test_outro_dub_ending.
         envs = Q.get_envelopes_for_song(conn, song_id)
-        assert len(envs) == 14, [(e["target_kind"], e["parameter_path"]) for e in envs]
+        assert len(envs) == 19, [(e["target_kind"], e["parameter_path"]) for e in envs]
         env = next(e for e in envs if e["target_kind"] == "device_parameter")
         assert env["parameter_path"] == "Amp Type"
         bps = Q.get_breakpoints(conn, env["id"])
@@ -205,8 +208,12 @@ def test_build_produces_canonical_shape(build_module, built):
         bp_pairs = [(bp["time_beats"], bp["value"]) for bp in bps]
         assert bp_pairs == [
             (0.0,   0.0),   # intro:             Clean
+            (107.0, 5.0),   # verse1 flash:      Heavy  ← #1 a 2-BEAT flash, one beat early
+            (109.0, 0.0),   # verse1 resume:     Clean
             (160.0, 5.0),   # chorus1:           Heavy
             (224.0, 0.0),   # verse2:            Clean
+            (267.0, 5.0),   # verse2 flash:      Heavy  ← #2 the same 2-beat flash in verse2
+            (269.0, 0.0),   # verse2 resume:     Clean
             (320.0, 5.0),   # chorus2:           Heavy
             (384.0, 0.0),   # development:       Clean
             (480.0, 5.0),   # break:             Heavy  ← the metal-guitar DRIFT
@@ -219,11 +226,10 @@ def test_build_produces_canonical_shape(build_module, built):
             (672.0, 0.0),   # outro:             Clean
         ], bp_pairs
 
-        # Arrangement: 38 placements (9 drums + 8 bass + 7 organ + 8 lead +
-        # 5 steel + 1 gtr) — bass drops out of the break (−1), steel gains the
-        # development + break + integration (+3) vs. the old 36.
+        # Arrangement: 39 placements (9 drums + 8 bass + 7 organ + 8 lead + 5 steel +
+        # 1 gtr + 1 tension) — the climax riser (07 Tension) adds its single integration clip.
         arr = Q.get_arrangement_for_song(conn, song_id)
-        assert len(arr) == 38, [(a["start_bar"], a["end_bar"]) for a in arr]
+        assert len(arr) == 39, [(a["start_bar"], a["end_bar"]) for a in arr]
 
         # Cue points: 9, at each section start (the 184-bar arc's boundaries)
         cues = Q.get_cue_points(conn, song_id)
@@ -249,6 +255,7 @@ def test_atmosphere_envelopes_are_clip_local(build_module, built):
         rets = {r["id"]: r["name"] for r in Q.get_returns_for_song(conn, built)}
         plate = next(i for i, n in rets.items() if n == "Plate")
         dub = next(i for i, n in rets.items() if n == "DubDelay")
+        room = next(i for i, n in rets.items() if n == "Room")
         # Collect (kind, track, return) → breakpoint range, for the non-Amp envelopes.
         atmos = {}
         for e in Q.get_envelopes_for_song(conn, built):
@@ -266,7 +273,9 @@ def test_atmosphere_envelopes_are_clip_local(build_module, built):
                    e["target_send_return_id"])] = (rng, vals)
         # The intended clip-local set: intro organ send+pan + intro DRUMS send (#4 the
         # deepening dawn reverb), break lead send + steel send+pan (the suspension floats),
-        # and the OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel — #5).
+        # the OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel — #5), and the
+        # OUTRO Room reverb lifts (organ/lead/steel — #D, on Room because the Plate lanes
+        # are already claimed by intro/break).
         windows = {
             ("send_level", "04 Organ", plate): (0.0, 64.0),
             ("mixer_pan", "04 Organ", None): (0.0, 64.0),
@@ -278,6 +287,9 @@ def test_atmosphere_envelopes_are_clip_local(build_module, built):
             ("send_level", "04 Organ", dub): (672.0, 736.0),
             ("send_level", "05 Lead", dub): (672.0, 736.0),
             ("send_level", "06 Steel", dub): (672.0, 736.0),
+            ("send_level", "04 Organ", room): (672.0, 736.0),
+            ("send_level", "05 Lead", room): (672.0, 736.0),
+            ("send_level", "06 Steel", room): (672.0, 736.0),
         }
         assert set(atmos) == set(windows), set(atmos) ^ set(windows)
         for key, (rng, vals) in atmos.items():
@@ -328,29 +340,45 @@ def test_break_drift_pans_extremely(build_module, built):
         conn.close()
 
 
-def test_break_drift_pulled_to_ghost(build_module, built):
-    """The break drift is pulled to a TRUE ghost (mix-review 2026-06-02): at ghost
-    velocity it still read LOUD through the Heavy amp (drowning the steel sparkle +
-    grazing the call-response lead), so a clip-local mixer-VOLUME dip pulls the gtr down
-    across the break only — bookended at its normal fader everywhere else, like the pan
-    sweep. Locks the dip's shape (not the exact value — that's render-tuned)."""
+def test_gtr_volume_lanes(build_module, built):
+    """The gtr VOLUME is COUPLED to the amp TIMBRE (user 2026-06-03): wherever the amp is
+    HEAVY the gtr is trimmed (the Heavy amp adds ~3 dB), so the timbre flip is level-
+    matched — chorus1/chorus2 + the verse1 flash. Two sections cut DEEPER: the break drift
+    -> ghost, and the integration engine -> blend; the integration climax swells re-open.
+    Derived from `_amp_segments` (one source of truth with the Amp Type envelope). Locks
+    the shape + the relative ORDERING of the levels (ghost < blend < heavy < normal), not
+    the exact dB (render-tuned)."""
     from hallucinote.db import init_db, queries as Q
     conn = init_db(build_module.DB_PATH)
+    VOL = build_module._GTR_VOL
+    HEAVY = build_module._GTR_HEAVY
+    GHOST = build_module._GTR_BREAK_GHOST
+    BLEND = build_module._GTR_INTEG_BLEND
+    assert GHOST < BLEND < HEAVY < VOL, (GHOST, BLEND, HEAVY, VOL)  # the intended ordering
     try:
         tracks = {t["name"]: t["id"] for t in Q.get_tracks_for_song(conn, built)}
         vol = next(e for e in Q.get_envelopes_for_song(conn, built)
                    if e["target_kind"] == "mixer_volume"
                    and e["target_track_id"] == tracks["03 Rhythm Gtr"])
         bps = sorted(Q.get_breakpoints(conn, vol["id"]), key=lambda b: b["time_beats"])
-        normal = bps[0]["value"]
-        # Bookended at the gtr's normal fader before the break (only the drift dips)…
-        assert all(abs(b["value"] - normal) < 1e-6 for b in bps if b["time_beats"] <= 480.0)
-        # …dips BELOW normal, and every dipped breakpoint lives inside the break window…
-        dipped = [b for b in bps if b["value"] < normal - 1e-6]
-        assert dipped and all(480.0 <= b["time_beats"] <= 544.0 for b in dipped), \
-            [(b["time_beats"], b["value"]) for b in dipped]
-        # …and returns to normal by the end of the break (the drop into integration is full).
-        assert abs(bps[-1]["value"] - normal) < 1e-6 and bps[-1]["time_beats"] >= 544.0
+
+        def at(beat):  # hold semantics: the last breakpoint at or before `beat`
+            prior = [b["value"] for b in bps if b["time_beats"] <= beat + 1e-6]
+            return prior[-1] if prior else bps[0]["value"]
+
+        # Clean reggae sits at normal (verse2 + verse1 OUTSIDE their flashes).
+        assert abs(at(240.0) - VOL) < 1e-6, ("verse2 Clean", at(240.0))
+        assert abs(at(70.0) - VOL) < 1e-6, ("verse1 pre-flash", at(70.0))
+        # Heavy metal trims to the coupled level (chorus1/2 + the 2-beat verse flashes).
+        assert abs(at(180.0) - HEAVY) < 1e-6, ("chorus1", at(180.0))
+        assert abs(at(340.0) - HEAVY) < 1e-6, ("chorus2", at(340.0))
+        assert abs(at(108.0) - HEAVY) < 1e-6, ("verse1 flash", at(108.0))   # local 43–45 -> 107–109
+        assert abs(at(268.0) - HEAVY) < 1e-6, ("verse2 flash", at(268.0))   # verse2 flash 267–269
+        # The break drift cuts DEEPER (a ghost); the integration ENGINE blends; the climax
+        # SWELLS re-open to normal so the polyrhythm recap rings.
+        assert abs(at(510.0) - GHOST) < 1e-6, ("break ghost", at(510.0))
+        assert abs(at(600.0) - BLEND) < 1e-6, ("integ engine blend", at(600.0))
+        assert abs(at(660.0) - VOL) < 1e-6, ("integ swells re-open", at(660.0))
     finally:
         conn.close()
 
@@ -519,9 +547,14 @@ def test_integration_amp_plays_clean_to_heavy(build_module):
     seg = build_module._amp_segments
     assert build_module._amp_for("metal") == "Heavy"
     assert build_module._amp_for("reggae") == "Clean"
-    # Ordinary sections: a single genre-driven segment.
-    assert seg("verse1", "reggae") == [(0.0, "Clean")]
+    # Ordinary sections: a single genre-driven segment (development is Clean reggae).
+    assert seg("development", "reggae") == [(0.0, "Clean")]
     assert seg("chorus1", "metal") == [(0.0, "Heavy")]
+    # verse1 + verse2 (#1/#2, user 2026-06-03): a 2-BEAT HEAVY flash arriving ONE BEAT EARLY
+    # (local 43–45 — the metal kicks the door in on the '4' into the downbeat, the steal
+    # pattern in miniature), then back to Clean. Same in BOTH verses.
+    assert seg("verse1", "reggae") == [(0.0, "Clean"), (43.0, "Heavy"), (45.0, "Clean")]
+    assert seg("verse2", "reggae") == [(0.0, "Clean"), (43.0, "Heavy"), (45.0, "Clean")]
     # The break drift runs through the Heavy amp.
     assert seg("break", "reggae") == [(0.0, "Heavy")]
     # The integration amp is cell-aware: Clean reggae cell → Heavy engine → the trade

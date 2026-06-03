@@ -95,6 +95,23 @@ def test_malformed_toml_is_ignored(tmp_path):
     assert find_workspace(start=tmp_path) is None
 
 
+def test_no_toml_parser_degrades_to_none(tmp_path, monkeypatch):
+    """On Python < 3.11 without `tomli`, the marker is ignored (not raised)."""
+    _write_marker(tmp_path, '[workspace]\nlayout = "song"\n')
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_toml(name, *args, **kwargs):
+        if name in ("tomllib", "tomli"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_toml)
+    # both parsers unavailable → marker can't be parsed → no workspace, no raise
+    assert find_workspace(start=tmp_path) is None
+
+
 def test_start_from_project_dir_env(tmp_path, monkeypatch):
     _write_marker(tmp_path, '[workspace]\nlayout = "monorepo"\n')
     monkeypatch.setenv(ENV_PROJECT_DIR, str(tmp_path))

@@ -726,6 +726,26 @@ def test_analyze_handler_skips_energy_realization_when_no_energy_declared(
     )
 
 
+def test_analyze_handler_always_emits_energy_realization_key(synthetic_song: Path):
+    """ARR-7M3D chunk-5 verify-api (deferred-render): the render→analyze handler
+    path ALWAYS writes the energy_realization key to the on-disk report — null
+    when no energy is declared, an object when it is. This is the UNIT proof that
+    the new report key reaches disk through the real handler, standing in for the
+    live render (Live unattended this run; see operator-verification.md)."""
+    slug = "test-song"
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T143000Z", song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    # Key is always present in the wire format (the song here declares no
+    # sections/energy, so it's null with a skip entry — never absent).
+    assert "energy_realization" in report
+    assert report["energy_realization"] is None
+
+
 def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
     """_collect_tempo_map reads the tempo_map table and converts each row's
     start_bar to a song-absolute beat (via the 4/4-default meter walk),

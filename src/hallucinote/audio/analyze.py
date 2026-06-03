@@ -107,6 +107,24 @@ _PHASING_MIN_CONFIDENCE = 0.6
 # trust — the confidence is the weaker part's accent-autocorrelation peak.
 _POLYMETER_MIN_CONFIDENCE = 0.5
 
+# DR-5 (ARR-7M3D) — the "notable inversion" surfacing gate for the
+# energy-realization lens. How big a measured inversion (the magnitude of a
+# wrong-direction rank flip) before /mix-review treats it as worth a producer
+# question (vs DSP noise) is a PERCEPTUAL judgment, calibrated like
+# _MASKING_REPORTING_FLOOR / _TIMING_MIN_CONFIDENCE — NOT guessed.
+#
+# PENDING CALIBRATION: Live was unattended this run, so the final value awaits a
+# human-ear pass against the measured inversion distribution from a real
+# sun-zone-done render (declared 0.25→1.0 across 9 sections). Until then this is
+# the CONSERVATIVE SURFACE-EVERYTHING default (0.0): the lens records EVERY
+# measured inversion as neutral evidence and /mix-review's intent gate (not a
+# magnitude floor) decides what becomes a question. Surfacing-everything can
+# never hide a real inversion; it only risks surfacing trivia, which the
+# intent gate already filters. See .prawduct/operator-verification.md for the
+# queued render-based calibration. The lens itself (energy.realize_energy)
+# reports all inversions; this floor is the integration-level surfacing gate.
+_ENERGY_INVERSION_SURFACING_FLOOR = 0.0
+
 
 @dataclass(frozen=True)
 class DeclaredReverbSend:
@@ -622,7 +640,10 @@ def _realize_energy(
         density_by_beat[sm.start_beat] = sm.onset_density
 
     measured = {LOUDNESS: loudness_by_beat, ONSET_DENSITY: density_by_beat}
-    realization = realize_energy(declared, measured)
+    realization = realize_energy(
+        declared, measured,
+        surfacing_floor=_ENERGY_INVERSION_SURFACING_FLOOR,
+    )
     if realization is None:
         return None, [{
             "kind": "energy_realization",

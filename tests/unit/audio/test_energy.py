@@ -276,6 +276,33 @@ def test_independent_per_correlate_rho():
 
 
 # --------------------------------------------------------------------------- #
+# DR-5 — the surfacing-floor gate (conservative default = surface everything)
+# --------------------------------------------------------------------------- #
+
+def test_default_surfacing_floor_surfaces_every_inversion():
+    """The default surfacing_floor (0.0, the conservative surface-everything
+    setting) keeps every genuine inversion — even a tiny one."""
+    declared = _declared_abc()
+    # C (0.9) renders just 0.1 LU below B (0.6) — a tiny inversion.
+    measured = {LOUDNESS: {0.0: -20.0, 16.0: -10.0, 32.0: -10.1}}
+    r = realize_energy(declared, measured)  # default floor 0.0
+    assert len([i for i in r.inversions if i.correlate == LOUDNESS]) == 1
+
+
+def test_surfacing_floor_drops_subthreshold_inversions():
+    """A raised surfacing_floor (DR-5 calibration knob) drops inversions whose
+    measured-delta magnitude is below it as DSP noise, while keeping larger
+    ones. The lens ρ is unchanged (ρ is never gated)."""
+    declared = _declared_abc()
+    # C renders 0.1 below B (tiny inversion, magnitude 0.1).
+    measured = {LOUDNESS: {0.0: -20.0, 16.0: -10.0, 32.0: -10.1}}
+    r = realize_energy(declared, measured, surfacing_floor=1.0)
+    assert [i for i in r.inversions if i.correlate == LOUDNESS] == []
+    # ρ still computed over all finite sections (not gated by the floor).
+    assert r.correlate_rho[LOUDNESS] is not None
+
+
+# --------------------------------------------------------------------------- #
 # Ruler-not-stamp lock
 # --------------------------------------------------------------------------- #
 

@@ -48,6 +48,8 @@ def _is_finite(x: "float | None") -> bool:
 def realize_energy(
     declared: Sequence[SectionEnergy],
     measured: Mapping[str, Mapping[float, "float | None"]],
+    *,
+    surfacing_floor: float = 0.0,
 ) -> "EnergyRealization | None":
     """Compute the energy-realization read.
 
@@ -57,6 +59,13 @@ def realize_energy(
     of that correlate's per-section measurement; a value that is ``None`` / NaN /
     Inf marks a section whose measured correlate is unavailable (out-of-capture,
     too-quiet, degenerate window).
+
+    ``surfacing_floor`` (DR-5) is the magnitude gate for INVERSIONS: a pair whose
+    measured-delta magnitude is below it is DSP noise, not a notable inversion,
+    and is dropped from the list. The default ``0.0`` is the conservative
+    surface-everything setting (every inversion kept) — the final value awaits a
+    human-ear render calibration (see ``analyze._ENERGY_INVERSION_SURFACING_FLOOR``).
+    ρ is never gated — it is always computed over the finite-paired sections.
 
     Returns ``None`` when fewer than 2 energy-declared sections are supplied
     (Spearman needs >= 2 ranks) — the caller records a ``skipped_analyses``
@@ -112,7 +121,11 @@ def realize_energy(
                 else:
                     higher, h_val, lower, l_val = sec_b, val_b, sec_a, val_a
                 measured_delta = h_val - l_val
-                if measured_delta < 0.0:
+                # An inversion: higher-declared renders LOWER. The surfacing
+                # floor (DR-5) drops sub-threshold magnitudes as DSP noise; the
+                # default 0.0 surfaces every inversion (abs > 0.0 keeps all
+                # genuine flips, drops only exact-zero non-flips).
+                if measured_delta < 0.0 and abs(measured_delta) > surfacing_floor:
                     inversions.append(EnergyInversion(
                         higher_energy_start_beat=higher.start_beat,
                         higher_energy_section=higher.name,

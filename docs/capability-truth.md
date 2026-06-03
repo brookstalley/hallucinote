@@ -10,6 +10,10 @@ Read capabilities as **dimensions of a song**, not a skill catalog. A stylistic
 goal is almost always reachable through the dimensions we render fully; name the
 thin dimensions honestly, then deliver anyway.
 
+See `song-authoring-conventions.md` -> "The toolkit reduces work — it never limits
+what you can author" for the authoring-side counterpart (a missing helper is never
+a limit).
+
 > **Living doc.** Keep this current with the code — it must never lag. When a
 > dimension's depth changes (e.g. melody matures, vocals arrive), edit the table
 > here and the handoff/elicitation surfaces inherit it automatically. Last

@@ -426,3 +426,7 @@ This session, `ps aux | grep -ic "Ableton Live.app/Contents/MacOS"` returned 2 a
 This session, harmonizing sun-zone-done's integration (a looped Phrygian riff → a Dorian→Phrygian→fuse arc) raised the integration lead's resolve-by-step from 19%→39% in the melody lens — a measurable sign the line+harmony got MORE coherent, with no audio. The corollary that kept it honest: when a new hook (the hybrid) dropped resolve 39%→15%, the fix was to brighten the HARMONY to anchor the line (back to 21%), NOT to blandify the hook to chase the number — tune the harmony to the line, not the line to the lens. The lens is a ruler, not the verdict; the ear still rules last.
 
 **How to apply.** When audio is unavailable, drive compose changes through build → lint (`ok=True`, no stasis) → melody lens deltas → shape tests, and read the lens numbers as evidence the change landed. Never treat a lens number as a target to optimize (that blandifies); treat a regression in it as a question to diagnose. Always label the result render-gated until the ear confirms.
+
+## The toolkit removes bookkeeping — its absence is never a limit on the art
+
+**When a generator/helper/envelope-kind/device for what the music needs doesn't exist, hand-author it (notes/breakpoints/chains are plain lists) or build the capability — never scope the request down to the toolkit, and never silently substitute a lesser effect. The toolkit removes bookkeeping; it never caps what's authorable. See `docs/song-authoring-conventions.md` -> "The toolkit reduces work — it never limits what you can author".**

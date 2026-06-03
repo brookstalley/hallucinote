@@ -41,6 +41,7 @@ from .cross_rhythm import (
     analyze_polymeter_window,
 )
 from .automation import DeclaredEnvelope, verify_envelope_realization
+from .density import section_onset_density
 from .masking import analyze_masking_window
 from .report import (
     EnvelopeVerification,
@@ -525,10 +526,22 @@ def _measure_sections(
         cross_rhythm = []
         phasing = []
         polymeter = []
+        onset_density = None
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
                 start_beat, bpm = geom
+                # Onset density (ARR-7M3D's second energy correlate) shares the
+                # window's grid geometry. window_beats = the covered slice length
+                # in beats at the window's effective tempo. Level-blind, so it
+                # reads the raw sliced stems (no stem_gains), like the timing pass.
+                window_beats = (
+                    (sl.end_sample - sl.start_sample) / capture.sample_rate
+                    * bpm / 60.0
+                )
+                onset_density = section_onset_density(
+                    sliced_stems, capture.sample_rate, window_beats=window_beats,
+                )
                 timing_parts = _all_window_timing(
                     sliced_stems, capture, start_beat, bpm,
                 )
@@ -562,6 +575,7 @@ def _measure_sections(
             cross_rhythm=cross_rhythm,
             phasing=phasing,
             polymeter=polymeter,
+            onset_density=onset_density,
         ))
 
     return per_section, skipped

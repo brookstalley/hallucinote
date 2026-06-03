@@ -582,14 +582,21 @@ def test_analyze_mix_populates_section_timing_when_enabled(tmp_path: Path):
     )
     sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
 
-    # Off by default — no timing computed.
+    # Off by default — no timing computed; onset density rides the same grid
+    # geometry, so it's None when neither timing nor cross-rhythm is enabled.
     off = analyze_mix(captures_dir, sections=sections)
     assert off.per_section[0].timing == []
+    assert off.per_section[0].onset_density is None
 
     on = analyze_mix(captures_dir, sections=sections, analyze_timing=True)
     sec = on.per_section[0]
     by_id = {t.track_id: t for t in sec.timing}
     assert "track:1" in by_id and "track:2" in by_id
+
+    # ARR-7M3D: density populated (onsets summed across the 2 stems / beats);
+    # the tight+swung 16-beat section is busy, so density is well above zero.
+    assert sec.onset_density is not None and sec.onset_density > 1.0
+    assert on.to_json_dict()["per_section"][0]["onset_density"] == sec.onset_density
 
     assert abs(by_id["track:1"].mean_drift_beats) < 0.03   # tight, on grid
     assert by_id["track:1"].drift_stdev_beats < 0.02

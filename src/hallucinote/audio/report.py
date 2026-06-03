@@ -440,6 +440,13 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Onset/event density (onsets-per-beat summed across stems) over the section
+    # window — the second energy-realization correlate (ARR-7M3D), alongside
+    # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
+    # analysis was disabled (the density pass shares their grid geometry), 0.0
+    # when the window had no detected onsets. A RELATIVE read across sections:
+    # only the ranking feeds the energy-realization Spearman ρ.
+    onset_density: float | None = None
 
 
 @dataclass(frozen=True)
@@ -564,6 +571,7 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "onset_density": s.onset_density,
     }
 
 

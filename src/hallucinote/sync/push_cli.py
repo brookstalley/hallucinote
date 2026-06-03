@@ -213,7 +213,7 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
         # <slug>.db does, use that (pre-W12-A songs not yet rebuilt under
         # the new convention). This is purely transitional.
         if not path.exists():
-            legacy = Path("songs") / args.song / f"{args.song}.db"
+            legacy = resolve_db_path(args.song, branch=None)  # bare <slug>.db, same song dir
             if legacy.exists():
                 path = legacy
     if not path.exists():

@@ -3939,6 +3939,27 @@ def test_pull_cli_song_flag_resolves_canonical_path(tmp_path, monkeypatch):
     assert plan_dict["domain"] == "mix-state"
 
 
+def test_pull_cli_resolve_honors_songs_root_contract(tmp_path, monkeypatch):
+    """`--song` resolves the DB via the project-root contract, not a hardcoded
+    `songs/`. Regression for the PR-reviewer warning: pull_cli used to pin
+    `Path("songs")/<slug>/<slug>.db`, so it couldn't find a song in its own
+    repo. Now it routes through resolve_db_path (env / marker / legacy)."""
+    from types import SimpleNamespace
+
+    from hallucinote.sync.pull_cli import _resolve_db_path
+
+    slug = "midnight-drive"
+    songs_root = tmp_path / "elsewhere"
+    db = songs_root / slug / f"{slug}.db"
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b"")  # _resolve_db_path only checks existence
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(songs_root))
+
+    resolved = _resolve_db_path(SimpleNamespace(song=slug, db=None))
+    assert resolved.samefile(db)
+
+
 def test_pull_cli_song_flag_missing_db_errors_clearly(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     p = subprocess.run(

@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from hallucinote.workspace import resolve_song_dir
+
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # sqlite3.Connection doesn't allow attribute assignment, so we track nested
@@ -206,16 +208,30 @@ def _git_current_branch(cwd: Path | None = None) -> str | None:
 
 
 _BRANCH_PROBE_GIT = object()  # sentinel: "probe git" (vs explicit None/str)
+_ROOT_RESOLVE = object()  # sentinel: "resolve the song dir via env/marker/legacy"
 
 
 def resolve_db_path(
     slug: str,
     *,
-    root: Path | str = "songs",
+    root: Path | str = _ROOT_RESOLVE,  # type: ignore[assignment]
     branch: str | None = _BRANCH_PROBE_GIT,  # type: ignore[assignment]
 ) -> Path:
-    """Per-branch DB filename. `songs/<slug>/<slug>-<branch>.db` inside a repo,
-    falling back to `songs/<slug>/<slug>.db` outside a repo or on detached HEAD.
+    """Per-branch DB filename: `<song_dir>/<slug>-<branch>.db` inside a repo,
+    falling back to `<song_dir>/<slug>.db` outside a repo or on detached HEAD.
+
+    The song directory comes from one of two paths:
+
+    - **explicit `root`** — `<root>/<slug>/…`. `build.py` passes
+      `root=Path(__file__).parent.parent`, so a song resolves its own DB
+      relative to its file regardless of cwd. Byte-identical to the historical
+      behavior; the git branch is probed in the process cwd.
+    - **resolved `root`** (the default) — the song dir is resolved via the
+      project-root contract (`HALLUCINOTE_SONGS_ROOT` → a `hallucinote.toml`
+      marker → legacy `songs/<slug>`; see `hallucinote.workspace`). This is
+      what lets a long-running MCP server, launched with cwd ≠ the song's repo,
+      still find a song that lives in its own repo. The branch is probed in the
+      *resolved song dir* (the song's repo), not the server's cwd.
 
     The branch name is sanitized by replacing `/` with `--` so `feature/foo`
     becomes `feature--foo` — mirrors `.prawduct/.pr-reviews/` naming so
@@ -225,15 +241,23 @@ def resolve_db_path(
     the no-branch fallback, or a literal string to skip the git probe. Default
     triggers the real git probe.
     """
+    if root is _ROOT_RESOLVE:
+        song_dir = resolve_song_dir(slug)
+        # Probe the song's OWN repo (it may differ from the process cwd), but
+        # only if it already exists — a not-yet-built song dir falls back to
+        # the process cwd so a fresh `build.py --reset` still gets the branch.
+        probe_cwd = song_dir if song_dir.is_dir() else None
+    else:
+        song_dir = Path(root) / slug
+        probe_cwd = None  # explicit root: probe the process cwd (unchanged)
     if branch is _BRANCH_PROBE_GIT:
-        resolved_branch = _git_current_branch()
+        resolved_branch = _git_current_branch(cwd=probe_cwd)
     else:
         resolved_branch = branch
-    root_path = Path(root)
     if resolved_branch is None:
-        return root_path / slug / f"{slug}.db"
+        return song_dir / f"{slug}.db"
     sanitized = resolved_branch.replace("/", "--")
-    return root_path / slug / f"{slug}-{sanitized}.db"
+    return song_dir / f"{slug}-{sanitized}.db"
 
 
 @contextmanager

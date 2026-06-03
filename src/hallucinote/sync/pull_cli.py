@@ -69,7 +69,7 @@ import sys
 from pathlib import Path
 
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.db.connection import connect, transaction
+from hallucinote.db.connection import connect, resolve_db_path, transaction
 from hallucinote.sync import pull
 
 
@@ -94,19 +94,28 @@ _DOMAINS = {
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
-    """`--song <slug>` -> `songs/<slug>/<slug>.db`; `--db PATH` -> PATH.
+    """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
 
-    Project convention: one SQLite DB per song at `songs/<slug>/<slug>.db`.
-    See `.prawduct/artifacts/project-preferences.md`.
+    Mirrors push_cli + build.py so push and pull agree on the same DB: the song
+    dir is resolved via the project-root contract (env / ``hallucinote.toml``
+    marker / legacy ``songs/<slug>``; see ``hallucinote.workspace``) so a song
+    in its own repo resolves correctly, then W12-A per-branch naming applies,
+    falling back to the legacy bare ``<slug>.db`` in the same dir.
     """
     if args.db:
         path = Path(args.db)
     else:
-        path = Path("songs") / args.song / f"{args.song}.db"
+        path = resolve_db_path(args.song)
+        # Legacy fallback: pre-W12-A songs not yet rebuilt under the per-branch
+        # convention keep a bare <slug>.db in the same (resolved) song dir.
+        if not path.exists():
+            legacy = resolve_db_path(args.song, branch=None)
+            if legacy.exists():
+                path = legacy
     if not path.exists():
         raise SystemExit(
-            f"pull_cli: DB not found at {path} — "
-            "songs convention is one DB per song at songs/<slug>/<slug>.db"
+            f"pull_cli: DB not found at {path} — run "
+            f"`python songs/{args.song}/build.py` first to populate it."
         )
     return path
 

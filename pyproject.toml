@@ -21,6 +21,10 @@ dependencies = [
     "pyloudnorm>=0.2",
     "librosa>=0.10",
     "pyroomacoustics>=0.7",
+    # `hallucinote.workspace` parses the `hallucinote.toml` project-root marker.
+    # tomllib is stdlib on 3.11+; tomli backfills it on 3.10 (requires-python
+    # floor). The marker reader degrades gracefully if neither is present.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +32,14 @@ dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.6",
     "hypothesis>=6.0",
+]
+# A song repo whose build.py pushes to Live needs the MCP client transport the
+# engine imports lazily (sync/push_cli.py). It's an undeclared coupling in the
+# monorepo (both packages coexist in the dev venv); declared here so a
+# standalone song repo can `pip install hallucinote[live]` instead of hitting
+# an ImportError at push time. See .prawduct/artifacts/project-root-contract.md.
+live = [
+    "hallucinote-mcp>=0.9",
 ]
 
 [tool.setuptools.packages.find]

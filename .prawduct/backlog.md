@@ -32,19 +32,11 @@ sections only via explicit `/backlog update` calls.
 
   AUD-8H2M verifies `device_parameter` (timbre) and `send_level` (return level) automation, but `mixer_volume` / `mixer_pan` are **post-fader** — invisible to the pre-fader stem tap (`audio/levels.py`), so `audio/automation.verify_envelope_realization` reports them `measurable=False` rather than verifying them. A volume swell or pan move IS visible on the **master** (post-fader sum) and in attribution. A master-bus-windowing pass — window the master (and/or the post-fader contribution) around a declared mixer envelope breakpoint and confirm the level/balance change — would close the gap. Scope: extend `_run_automation_verifications` to route mixer kinds to a master-windowed measurement; needs the per-stem post-fader contribution (attribution already estimates this) or a post-fader tap. **Verifiable signal:** a declared `mixer_volume` swell on a real capture reports `measurable=True` + `realized` from master-bus windowing, not the current post-fader skip. (cumulative Critic + AUD-8H2M scoping, 2026-06-02)
 
-- **[AUD-6R2M]** Reverb verification is ill-posed for multi-source returns (the real RT60 blocker)
-  `effort: M · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · related: AUD-1C7K`
-
-  Found while validating the AUD-1C7K alignment fix on a real sun-zone-done capture (2026-06-02). With capture alignment now sample-exact (proven by a known-offset calibration — δ=0), reverb verification STILL returns garbage RT60 (A-Plate measured ~50s vs declared 3.0s). Cause is **multi-source contamination**, not alignment: `_declare_reverb_intent` declares RT60 on *every* audible send into each return, so A-Plate / B-Room are each fed by many tracks at once. The wet return is `IR ⊗ (drums + gtr + lead + …)`; `verify_reverb_send` deconvolves it by a SINGLE dry stem, leaving the other sends as unexplained signal → a noise-like "IR" → a 46–53s RT60. The single-dry-source deconvolution assumption (spike §7 / Chunk 3) doesn't hold for real multi-send reverb buses.
-
-  **Fix directions (pick after design):** (a) deconvolve the return against the SUM of its declared dry sources (gain-weighted by send level) instead of one; (b) a dedicated single-source verification send (mute other sends, or a transient probe); (c) a non-deconvolution RT60 estimate (Schroeder/EDT on the return's own decay after a gate, no dry needed). **Verifiable signal:** `verify_reverb_send` (or its successor) returns a physically-plausible RT60 (within tolerance of declared) on a multi-send reverb return in a real capture. (AUD-1C7K validation, 2026-06-02)
-  **RESOLVED on branch `fix/reverb-rt60-decay-tail` (515c6ab), pending PR → develop.** Replaced single-dry deconvolution with per-return decay-tail RT60 (`audio/reverb.measure_return_rt60`, dry-source-free). The successor refuses to fabricate (`sufficient_tail=False`) when there's no ring-out — which is why AUD-4S8T (capture the ring-out) was done alongside. Close on PR merge.
-
 - **[AUD-4S8T]** Source-side fix: make capture STOP transport-bracketed (kill the per-surface length ramp)
-  `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · related: AUD-1C7K`
+  `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · reviewed: 2026-06-03 · related: AUD-1C7K`
 
   AUD-1C7K is handled read-side by `trim_to_common_length` (starts are sample-aligned; only tails differ). But the underlying cause remains: per-surface `sfrecord~` recordings STOP at staggered times — a measured ~20ms/surface wall-clock ramp (buffer-INDEPENDENT: 512→128 left the 170ms spread unchanged) tied to the render's sequential per-surface disarm (`handlers/render.py` `_set_arm_on_all(arm=False)`), NOT the transport stop-crossing the spec intends. Fixing it at the source would make captures equal-length by construction (no trim, and sample-exact tails for any future cross-surface tail analysis). The spec's transport-bracketed stop already works for at least one surface (the master, in sun-zone-done), so the mechanism is achievable — but the master-stop is INCONSISTENT (shortest in sun-zone-done, longest in the calibration set), so why some surfaces' stop-crossing fires and others fall through to the disarm isn't pinned. **Likely touches the `.amxd` observer (Max GUI, human-authored) + render disarm sequence.** Low priority — trim handles the read side. **Verifiable signal:** a full render produces per-surface WAVs of equal (or ≤1-buffer-spread) length with no read-side trim. (AUD-1C7K source investigation, 2026-06-02)
-  **RESOLVED (the ring-out half) on branch `fix/reverb-rt60-decay-tail` (515c6ab), pending PR → develop.** `render.py` now records `ring_out_beats` past the arrangement end (analyzer `set_stop_at_beat(end_beat + ring_out)`, transport target extended, loop off+restored, manifest carries it) so the reverb tail is captured — no `.amxd` change. NOTE: the ORIGINAL equal-length-by-construction goal (kill the ~20ms/surface stop ramp) is NOT addressed; read-side trim still handles that residual. If only the ring-out matters, close on PR; else keep open for the stop-ramp. Close/regroup on PR merge.
+  **PARTIALLY SHIPPED (the ring-out half) on develop (commit 515c6ab, merge `fix/reverb-rt60-decay-tail`).** `render.py` now records `ring_out_beats` past the arrangement end (analyzer `set_stop_at_beat(end_beat + ring_out)`, transport target extended, loop off+restored, manifest carries it) so the reverb tail is captured — no `.amxd` change. **STILL OPEN (the residual this item now tracks):** the ORIGINAL equal-length-by-construction goal — killing the ~20ms/surface wall-clock stop ramp so per-surface WAVs come out the same length by construction — is NOT addressed. The read-side `trim_to_common_length` from AUD-1C7K handles that residual for now; this item stays open for the source-side stop-ramp fix (the `.amxd` observer + render disarm sequence work described above).
 
 - **[SYN-2M9P]** Push planner emits master device-LOAD calls that can never execute (DEV-2M9K follow-up)
   `effort: S · impact: M · area: sync · source: critic · added: 2026-06-02 · status: open · related: DEV-2M9K`
@@ -141,11 +133,6 @@ sections only via explicit `/backlog update` calls.
   **The ask.** Decide the host-clip strategy for per-section MIXER/SEND automation (the mixer analog of the Amp-envelope monolithic-clip pattern): either (a) give the automated tracks a monolithic clip to host their mixer envelopes, or (b) author per-section session-clip-routed envelope segments, or (c) a cleaner mechanism. Then author the first use: intro + break get an elevated Plate send + a slightly wider pan on organ/lead/steel, snapping to baseline at verse1 + integration. Couples to AUD-8H2M (the analyzer can't yet VERIFY time-varying mix moves landed in the render — same envelope-realization blind spot). Kept STATIC for v1 (conservative sends in `captured_session.json`).
 
   **Verifiable signal:** a decision-record naming the host-clip strategy for mixer/send envelopes + sun-zone-done authoring per-section pan/send automation for intro+break that returns to baseline (verifiable by the breakpoints in the DB; realization render-gated). **Sized:** medium. (user pan/reverb-space request, 2026-06-01)
-
-- **[PSH-1S9C]** Push should provision (or pre-check) session scenes for clip slots — halts mid-`clips` on a fresh set instead of failing fast
-  `effort: S · impact: M · area: sync · source: dogfood · added: 2026-06-01 · status: open · related: AUD-8H2M`
-
-  Found dogfooding the sun-zone-done push (2026-06-01, first full push to a fresh set). The song has 9 sections → session clips land at slot indices 1–9, but Live's default fresh set has only 8 scenes, so `ableton_clip('create')` raised `IndexError: clip_index 9 out of range [1, 8]` for the 5 `outro` clips (drums/bass/organ/lead/steel). The push **halted mid-`clips` (32/37)** — phases 5–10 never ran. Manual fix: `ableton_scene(action='create')` to add a 9th scene, then re-run `execute` (idempotent — it recovered cleanly, all 10 phases). Two ruler-consistent fixes: (a) the `clips` phase auto-provisions scenes up to the max required slot before creating clips (the planner knows the slot count), or (b) the `--probe` coherence check counts Live's scenes vs the max clip slot and **fails fast with a clear message** ("song needs 9 scenes, set has 8 — add scenes or shorten") rather than halting partway. Prefer (a) — the push already mutates the set; provisioning scenes is in-scope and removes a manual step for every 9+ section song. **Verifiable signal:** a fresh-set push of a ≥9-section song completes without manual scene creation, OR the coherence check refuses pre-dispatch with a scene-count message. **Sized:** small. (sun-zone-done first-push dogfood, 2026-06-01)
 
 - **[REV-2W8K]** A structured, PER-SONG-CONFIGURABLE review workflow — stop chasing our tails across arrangement/production/harmony/mix at once (**HIGH PRIORITY** — user)
   `effort: M · impact: L · area: process · source: user · added: 2026-06-01 · status: open · related: GEN-1S4K, LNT-1V9K, MEL-1A7K, ARR-8P5K`
@@ -272,15 +259,6 @@ sections only via explicit `/backlog update` calls.
 
   Audio-analysis MVP diagnoses; this proposes ranked mutations with predicted metric deltas ("Lower rhythm guitar 1.5 dB in chorus — predicted master peak drops ~0.6 dB"). Requires a mutation-template library (sidechain insert, EQ carve, mixer-level adjust, limiter ceiling) + a predictor estimating post-mutation metric. Each proposal must cite which DB intent it's verifying or improving. **Verifiable signal:** `MixReport.proposals: list[Proposal]` populated with named mutations + predicted deltas + DB-intent citations. (spike §9 defer 2026-05-23)
 
-- **[DEV-2M9K]** `ableton_device(action='load', master=true)` no-ops — can't add master-bus devices via the bridge
-  `effort: S · impact: M · area: device · source: dogfood · added: 2026-06-02 · status: open`
-
-  Found during sun-zone-done mix-review (2026-06-02): loading a device onto the MASTER strip silently no-ops — `RuntimeError: load: Live did not append a device on master 0 after browser.load_item. Existing chain: [(empty)]` — even on an EMPTY master chain (so it's not the "matching class already present" no-op the error guesses). Track/return loads work fine; master device-PARAMETER writes work fine (`set_parameter`/`get_parameters`/`delete`/`list` with `master=true` all succeed); only `load` on master is broken. Likely cause: the load handler routes `browser.load_item` to `song.view.selected_track` and, for `master=true`, never selects `song.master_track` first (track/return loads select their track, so they work) — so the load targets nothing. **Impact:** no master-bus mastering chain (limiter, master EQ, glue comp) can be authored through the bridge. Blocked the user's chosen clipping fix (a −1 dBTP master limiter); worked around by EQ low-end cleanup + (pending) a manual one-drag Limiter the user adds, after which `set_parameter master=true` configures it. **Fix is likely small** (select `master_track` before `load_item`, mirror the track path) **but testing it needs a full Live quit+reopen** — Live caches Control Surface modules ([[project_mcp_reconnect_workflow]]) — so iterating is a restart loop; lives in `hallucinote_mcp` ([[project_mcp_server_stdlib_only]]). **Verifiable signal:** `ableton_device(action='load', master=true, kind='Limiter')` appends a Limiter to the master chain on both an empty and a non-empty master. **Sized:** small (one selection fix + a Live-restart test cycle). (sun-zone-done mix-review, 2026-06-02)
-
-  **ROOT CAUSE CONFIRMED (2026-06-02).** `load_handler` (`hallucinote_mcp/.../handlers/device.py:750-751`) does `view.selected_track = parent` then `browser.load_item(item)`, with `parent = song.master_track` for master. **Live silently refuses to set `selected_track` to the master track** — the assignment doesn't take — so `browser.load_item` loads onto whichever *regular* track was previously selected. The post-load check then inspects the *master* chain, sees no new device, and raises the misleading "did not append on master" — while the device actually landed on the selected regular track. PROVEN: after several failed master-loads, track 6 (Steel) held two stray `Limiter`s + a stray `HallucinoteAnalyzer` (cleaned up). "Works once" = the first master-load of a session lands correctly because no regular track is selected yet; once any regular track gets selected, every master-load mis-fires. **Fix direction:** after `view.selected_track = parent`, assert `view.selected_track is parent`; if Live didn't honor it (master case), do NOT call `load_item` (it mis-targets) — either find the correct master-load mechanism (research: can Live's API add a device to `master_track` at all?) or fail loudly. The render's master-analyzer auto-load needs the same fix (or a master-specific path). Needs Live quit+reopen to test the Remote Script change ([[project_mcp_reconnect_workflow]]).
-
-  **Severity note (2026-06-02): `ableton_render` master capture silently depends on this.** The render's "auto-load HallucinoteAnalyzer on every track + return + master (idempotent)" uses the same broken path for the master, so it has NEVER actually loaded the analyzer there — it only works because the analyzer persists in the saved `.als` from an earlier placement ("auto-load" = load-if-missing; on the master it was never missing). Confirmed by deleting the master analyzer mid-session: the render then failed to re-add it with the identical `browser.load_item` error. So **rendering the master on a genuinely fresh set (no pre-saved master analyzer) is also broken**, not just adding mastering devices — this is a render-pipeline dependency, not only a convenience gap. Recovery without the fix = a human re-adds the analyzer (and any master device) by hand in Live.
-
 - **[DEV-1F9X]** W13-B follow-up: extract shared plugin-discriminator into a single module
   `effort: S · impact: M · area: device · source: critic · added: 2026-05-20 · status: open`
 
@@ -340,15 +318,6 @@ sections only via explicit `/backlog update` calls.
   `effort: M · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
 
   Captures are heavy (~165 MB per song per take); audio-analysis MVP keeps everything indefinitely. Add a rolling-window cleanup (keep last N captures per song) with explicit "pin this take" marker for important reference points. Analysis JSONs always retained (cheap). **Verifiable signal:** a `tools/audio-prune` (or similar) exists with `--keep N` + pinned captures have a `.pinned` marker file. (spike §9 defer 2026-05-23)
-
-- **[AUD-1C7K]** Sample-accurate capture alignment — per-surface WAVs are NOT the same length (breaks reverb verification)
-  `effort: M · impact: M · area: audio-analysis · source: user · added: 2026-06-02 · status: open · related: AUD-5M8H, AUD-2D6T`
-
-  Raised by the user (2026-06-02, sun-zone-done v4 full render). `ableton_render` captures each surface (every track + return + master) through its own `HallucinoteAnalyzer` / `sfrecord~` instance, and each one **finalizes independently** — so the per-surface WAVs come out at DIFFERENT lengths. Observed in `songs/sun-zone-done/captures/v4-full/`: frame counts climbed monotonically by ~512/surface in capture order — `01 Drums` 11784704 … `master` 11792384, a spread of **7680 frames (~0.16s @ 48kHz)**. They are not sample-aligned.
-
-  **Impact (concrete, today).** `ableton_analysis(analyze)` hard-fails: *"dry and wet must be the same length; got dry=11784704, wet=11789824 — the analyzer's PDC alignment should guarantee this."* The reverb verification (Wiener-deconvolved IR + RT60) needs the dry stem (a track) and the wet stem (its return) to be identical length; the independent-finalize spread violates that. The workaround — trim every WAV to the min length — let `analyze` run but the misalignment then **broke the deconvolution itself** (garbage RT60 ≈ 364s, 11 false `reverb_out_of_tolerance` findings). So loudness + overshoot attribution survived, but ALL reverb verification was unusable for the v4 review. Misalignment also silently smears any future cross-stem phase/timing analysis.
-
-  **User's proposed direction (the WHY — capture it):** make all captures latch on a **common clock / external sync event** rather than each detecting transport-cross independently — e.g. broadcast a single transport-cross trigger to every `sfrecord~` so they start (and stop) on the same sample, and/or encode an absolute sample timestamp into each capture so the analyzer can align post-hoc to sub-millisecond accuracy. A common sample-accurate start+stop yields identical lengths *by construction* — no trim, no deconvolution smear. Touches the Max/Live-side capture patch (`sfrecord~` triggering) + the analyzer's PDC-alignment contract; lives in `hallucinote_mcp` (stdlib-only server [[project_mcp_server_stdlib_only]]) + the Max patch. **Verifiable signal:** a full render produces per-surface WAVs of IDENTICAL frame count (or a recorded per-surface sample-offset the analyzer honors), and `ableton_analysis(analyze)` runs on a fresh capture with reverb verification producing physically-plausible RT60s (no length-mismatch ValueError, no trim workaround). **Sized:** medium (Max-patch sync trigger + analyzer alignment contract + a length-equality assertion in the capture manifest). (sun-zone-done v4 full-render mix review, 2026-06-02)
 
 - **[AUD-5M8H]** `AUDIO_CAPTURED` event kind for capture audit trail
   `effort: S · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
@@ -521,14 +490,6 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** a read-side that, given an arrangement, reports which registered motifs recur where (and as which variation: transpose/augment/invert/…) plus a motivic-economy summary, wired into `/compose-review`; OR a decision-record states recurrence-realization stays composer-owned with rationale. Today: no motif-recall / recapitulation reader exists in `src/hallucinote/` analysis or lens code (the few incidental `recur` substring hits are unrelated).
 
-- **[AUD-8H2M]** Time-varying automation (sends / volume / device-param flips) is authorable but its audio realization is unverifiable — measurement-coverage gap
-  `effort: M · impact: M · area: audio · source: user · added: 2026-06-01 · status: open · related: MSK-8R3D, ENV-1T9M, ARR-8P5K`
-
-  **Both-sides gap.** The framework authors time-varying envelopes — `M.create_enum_envelope` (sun-zone-done's Amp Type Clean↔Heavy genre flip), `generators.envelopes.volume_swell` / `sidechain_trigger`, and (planned) dynamic sends. The audio analyzer **cannot verify any of these were realized in the render**: `audio/levels.py:13-15` explicitly DEFERS volume automation ("a stem that ducks under one section reads slightly hot — deferred"); MSK-8R3D(a) notes the same static-fader caveat narrowly. So the song's single most audible gesture — the Amp Type flip into HEAVY at the metal sections and the break — is never confirmed to have happened in audio, and a dry-reggae/wet-metal dynamic send (decision 05, deferred) would be equally invisible. A time-varying mix/timbre move is authored-but-unmeasured.
-
-  **Verifiable signal:** a MixReport pass that windows a stem around a declared envelope breakpoint and confirms the expected change (level step for volume/send, spectral/timbre shift for an Amp/device-param flip), reporting realized-vs-declared; OR a decision-record scoping automation-realization out with rationale. Today: `audio/levels.py:15` ("volume automation … deferred"); no envelope-aware section windowing in `audio/analyze.py`.
-  **RESOLVED on branch `fix/reverb-rt60-decay-tail` (256c5cb), pending PR → develop.** `audio/automation.py` windows each declared envelope breakpoint; `device_parameter` (Amp flip) → directional spectral-centroid shift, `send_level` → level step; `MixReport.automation_verifications` + `automation_not_realized` finding. NOTE: `mixer_volume`/`mixer_pan` are reported `measurable=False` (post-fader → invisible to the pre-fader stem) — verifying those needs **master-bus windowing**, a remaining follow-up worth its own item. Close on PR merge; file the master-windowing follow-up then.
-
 - **[SYN-4P2D]** First push of a >8-section song into a fresh default Live set hard-fails — set ships with only 8 scenes, push doesn't auto-create them, raw per-clip IndexError
   `effort: S · impact: L · area: sync · source: user · added: 2026-06-01 · status: open`
 
@@ -551,37 +512,7 @@ sections only via explicit `/backlog update` calls.
   signal:** push a ≥9-section song into a default 8-scene set and it completes (or fails
   with the single actionable message), not 5 raw IndexErrors.
 
-- **[RND-7K3M]** Render silently burns the full wait window when Live's audio engine is OFF — no pre-flight, no actionable cause (CRITICAL)
-  `effort: S · impact: L · area: render · source: user · added: 2026-06-01 · status: shipped · closed-by: fix/render-audio-engine-preflight`
-
-  **SHIPPED (fix/render-audio-engine-preflight):** structural transport-advance
-  pre-flight added to `render_handler` — after `start_playing()` it samples
-  `current_song_time` over ~0.5s; a frozen transport raises fast with the
-  audio-engine cause (re-select output / Options ▸ Audio Engine On) instead of
-  blocking the full ~song-length window. The LOM exposes no engine flag (verified by
-  introspecting `song`+`application`), so the transport-advance probe is the detector.
-  Unit-tested via a new `_engine_check` seam + a direct `_default_engine_preflight`
-  test (no Live needed). **Pending (honest-confidence):** live verification of the
-  engine-off path requires re-vendoring the Remote Script (`/ableton-mcp-install`) +
-  a Live restart so the running surface picks up the new handler — deferred to the
-  user's next Live session. Also not addressed: a mid-render stall (engine on then
-  driver hiccup) still waits the full `max_wait_s` (the beats×5-as-seconds heuristic
-  is over-generous) — a separate, rarer follow-on.
-
-  **User-flagged CRITICAL (2026-06-01): "renders can fail because no audio engine, but it
-  doesn't tell you, so it takes a long time."** When Live's audio engine is OFF (e.g. the
-  output device vanished — headphones unplugged — Live shows "the audio engine is off" and
-  refuses to play), `ableton_render(action='render')` still arms, issues play, and WAITS
-  THE FULL transport window for `current_song_time` to reach `stop_at_beat`. The transport
-  never advances, so it burns the entire ~song-length wait (~4 min for a 184-bar song) and
-  returns `status='incomplete'` with only a vague "Live's audio thread may have stalled"
-  hint — never naming the real cause. Fix: PRE-FLIGHT the transport/engine before the long
-  wait — (a) after seek+play, confirm `current_song_time` advances within a short probe
-  (~1–2 s) and abort fast with "transport not advancing — is Live's audio engine on? (check
-  the output device / Options ▸ tick 'Audio Engine On')"; and/or (b) read the engine-on flag
-  from the LOM if exposed. Fail in seconds with the real cause, not minutes with a vague one.
-  **Verifiable signal:** start a render with the audio engine off → it aborts within a few
-  seconds naming the audio-engine cause, not after the full song-length window.
+  **Dedup note (2026-06-03):** absorbs the PSH-1S9C dogfood duplicate (same bug — a >8-section song pushed into a fresh default 8-scene set hard-fails at the `clips` phase because the push doesn't auto-provision scenes). PSH-1S9C dropped with `closes: SYN-4P2D`.
 
 ## Promoted
 
@@ -644,3 +575,100 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
   `effort: M · impact: M · area: audio · source: verification · added: 2026-06-02 · status: pending`
 
   During reverb verification the open Live set's A-Plate return carried Live's **stock Reverb** (Decay Time knob 2.5 s), but `captured_session.json` authored a **Hybrid Reverb**. So the in-mix RT60 verdicts (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against a device that ISN'T the authored one — the set was never re-pushed from the rebuilt DB, or the Hybrid Reverb load fell back to stock. Before treating any reverb-vs-intent gap as a real authorship issue: re-push sun-zone-done from the DB so the AUTHORED devices are measured, then re-run render+analysis and re-assess. Also confirm whether the Hybrid Reverb load path is reliable (did the push silently fall back to stock?). **Verifiable signal:** the A-Plate return device class matches `captured_session.json` (Hybrid Reverb) after a fresh push. **Sized:** medium. (reverb verification session 2026-06-02)
+
+- **[SNG-D1FF]** "Diffusion" — a denoising-as-form song (+ a target-chord noise-schedule generator)
+  `effort: L · impact: M · area: song · source: user · added: 2026-06-03 · status: pending`
+
+  **Concept:** the song is structured like a diffusion/denoising model. There is a single massive
+  TARGET chord the whole piece resolves to at the very end. Over the song, the music plays only tiny
+  fragments of it — and at the start those fragments are deliberately "wrong" notes (noisy, out-of-chord,
+  scattered). As it progresses the fragments coalesce toward the true chord: wrong notes get rarer,
+  in-chord notes denser/more confident, until the final reveal lands the full sonority cleanly.
+
+  **Why it's interesting:** form = a denoising schedule. The "noise level" is a real, authorable curve
+  (probability of a wrong note + scatter of timing/register), monotonically decreasing — maps naturally
+  onto authoring-as-code (a per-section noise parameter that biases pitch selection toward/away from the
+  target chord's tones).
+
+  **Open design questions:** what's the target chord (rich/polytonal?); is the schedule linear or does it
+  have plateaus/setbacks (a few "reverse-diffusion" moments where it gets noisier for drama?); do rhythm +
+  density also denoise (arrhythmic → locked)? single timbre or does instrumentation resolve too? how long
+  (the reveal needs runway to feel earned).
+
+  **Possible new capability:** a "target-chord-with-noise-schedule" generator primitive (bias note pitches
+  toward a chord by a 0→1 coalescence parameter) — reusable beyond this song. (user idea 2026-06-03)
+- **[AUD-6R2M]** Reverb verification is ill-posed for multi-source returns (the real RT60 blocker)
+  `effort: M · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: shipped · reviewed: 2026-06-03 · closed-by: 515c6ab (merge fix/reverb-rt60-decay-tail) · related: AUD-1C7K, AUD-4S8T`
+
+  Found while validating the AUD-1C7K alignment fix on a real sun-zone-done capture (2026-06-02). With capture alignment now sample-exact (proven by a known-offset calibration — δ=0), reverb verification STILL returns garbage RT60 (A-Plate measured ~50s vs declared 3.0s). Cause is **multi-source contamination**, not alignment: `_declare_reverb_intent` declares RT60 on *every* audible send into each return, so A-Plate / B-Room are each fed by many tracks at once. The wet return is `IR ⊗ (drums + gtr + lead + …)`; `verify_reverb_send` deconvolves it by a SINGLE dry stem, leaving the other sends as unexplained signal → a noise-like "IR" → a 46–53s RT60. The single-dry-source deconvolution assumption (spike §7 / Chunk 3) doesn't hold for real multi-send reverb buses.
+
+  **Fix directions (pick after design):** (a) deconvolve the return against the SUM of its declared dry sources (gain-weighted by send level) instead of one; (b) a dedicated single-source verification send (mute other sends, or a transient probe); (c) a non-deconvolution RT60 estimate (Schroeder/EDT on the return's own decay after a gate, no dry needed). **Verifiable signal:** `verify_reverb_send` (or its successor) returns a physically-plausible RT60 (within tolerance of declared) on a multi-send reverb return in a real capture. (AUD-1C7K validation, 2026-06-02)
+
+  **SHIPPED on develop (commit 515c6ab, merge `fix/reverb-rt60-decay-tail`).** Replaced single-dry deconvolution with per-return decay-tail RT60 (`audio/reverb.measure_return_rt60`, dry-source-free). The successor refuses to fabricate (`sufficient_tail=False`) when there's no ring-out — which is why AUD-4S8T (capture the ring-out) was done alongside.
+
+- **[PSH-1S9C]** Push should provision (or pre-check) session scenes for clip slots — halts mid-`clips` on a fresh set instead of failing fast
+  `effort: S · impact: M · area: sync · source: dogfood · added: 2026-06-01 · status: dropped · reviewed: 2026-06-03 · closes: SYN-4P2D · related: AUD-8H2M`
+
+  Found dogfooding the sun-zone-done push (2026-06-01, first full push to a fresh set). The song has 9 sections → session clips land at slot indices 1–9, but Live's default fresh set has only 8 scenes, so `ableton_clip('create')` raised `IndexError: clip_index 9 out of range [1, 8]` for the 5 `outro` clips (drums/bass/organ/lead/steel). The push **halted mid-`clips` (32/37)** — phases 5–10 never ran. Manual fix: `ableton_scene(action='create')` to add a 9th scene, then re-run `execute` (idempotent — it recovered cleanly, all 10 phases). Two ruler-consistent fixes: (a) the `clips` phase auto-provisions scenes up to the max required slot before creating clips (the planner knows the slot count), or (b) the `--probe` coherence check counts Live's scenes vs the max clip slot and **fails fast with a clear message** ("song needs 9 scenes, set has 8 — add scenes or shorten") rather than halting partway. Prefer (a) — the push already mutates the set; provisioning scenes is in-scope and removes a manual step for every 9+ section song. **Verifiable signal:** a fresh-set push of a ≥9-section song completes without manual scene creation, OR the coherence check refuses pre-dispatch with a scene-count message. **Sized:** small. (sun-zone-done first-push dogfood, 2026-06-01)
+
+- **[DEV-2M9K]** `ableton_device(action='load', master=true)` no-ops — can't add master-bus devices via the bridge
+  `effort: S · impact: M · area: device · source: dogfood · added: 2026-06-02 · status: shipped · reviewed: 2026-06-03 · closed-by: #129 (commit de34b8c) · related: SYN-2M9P`
+
+  Found during sun-zone-done mix-review (2026-06-02): loading a device onto the MASTER strip silently no-ops — `RuntimeError: load: Live did not append a device on master 0 after browser.load_item. Existing chain: [(empty)]` — even on an EMPTY master chain (so it's not the "matching class already present" no-op the error guesses). Track/return loads work fine; master device-PARAMETER writes work fine (`set_parameter`/`get_parameters`/`delete`/`list` with `master=true` all succeed); only `load` on master is broken. Likely cause: the load handler routes `browser.load_item` to `song.view.selected_track` and, for `master=true`, never selects `song.master_track` first (track/return loads select their track, so they work) — so the load targets nothing. **Impact:** no master-bus mastering chain (limiter, master EQ, glue comp) can be authored through the bridge. Blocked the user's chosen clipping fix (a −1 dBTP master limiter); worked around by EQ low-end cleanup + (pending) a manual one-drag Limiter the user adds, after which `set_parameter master=true` configures it. **Fix is likely small** (select `master_track` before `load_item`, mirror the track path) **but testing it needs a full Live quit+reopen** — Live caches Control Surface modules ([[project_mcp_reconnect_workflow]]) — so iterating is a restart loop; lives in `hallucinote_mcp` ([[project_mcp_server_stdlib_only]]). **Verifiable signal:** `ableton_device(action='load', master=true, kind='Limiter')` appends a Limiter to the master chain on both an empty and a non-empty master. **Sized:** small (one selection fix + a Live-restart test cycle). (sun-zone-done mix-review, 2026-06-02)
+
+  **ROOT CAUSE CONFIRMED (2026-06-02).** `load_handler` (`hallucinote_mcp/.../handlers/device.py:750-751`) does `view.selected_track = parent` then `browser.load_item(item)`, with `parent = song.master_track` for master. **Live silently refuses to set `selected_track` to the master track** — the assignment doesn't take — so `browser.load_item` loads onto whichever *regular* track was previously selected. The post-load check then inspects the *master* chain, sees no new device, and raises the misleading "did not append on master" — while the device actually landed on the selected regular track. PROVEN: after several failed master-loads, track 6 (Steel) held two stray `Limiter`s + a stray `HallucinoteAnalyzer` (cleaned up). "Works once" = the first master-load of a session lands correctly because no regular track is selected yet; once any regular track gets selected, every master-load mis-fires. **Fix direction:** after `view.selected_track = parent`, assert `view.selected_track is parent`; if Live didn't honor it (master case), do NOT call `load_item` (it mis-targets) — either find the correct master-load mechanism (research: can Live's API add a device to `master_track` at all?) or fail loudly. The render's master-analyzer auto-load needs the same fix (or a master-specific path). Needs Live quit+reopen to test the Remote Script change ([[project_mcp_reconnect_workflow]]).
+
+  **Severity note (2026-06-02): `ableton_render` master capture silently depends on this.** The render's "auto-load HallucinoteAnalyzer on every track + return + master (idempotent)" uses the same broken path for the master, so it has NEVER actually loaded the analyzer there — it only works because the analyzer persists in the saved `.als` from an earlier placement ("auto-load" = load-if-missing; on the master it was never missing). Confirmed by deleting the master analyzer mid-session: the render then failed to re-add it with the identical `browser.load_item` error. So **rendering the master on a genuinely fresh set (no pre-saved master analyzer) is also broken**, not just adding mastering devices — this is a render-pipeline dependency, not only a convenience gap. Recovery without the fix = a human re-adds the analyzer (and any master device) by hand in Live.
+
+  **SHIPPED on develop (#129, commit de34b8c).** Master device-LOAD now refuses loudly (no silent mis-target onto a regular track) and the render master-analyzer is detect-only — master devices are place-by-hand-once / configure-only across the stack. NOTE: the push-PLANNER follow-up — `plan_push_devices` still emits impossible `device.load(master=true)` calls that halt the devices phase at execute time — remains tracked separately as **SYN-2M9P**.
+
+- **[AUD-1C7K]** Sample-accurate capture alignment — per-surface WAVs are NOT the same length (breaks reverb verification)
+  `effort: M · impact: M · area: audio-analysis · source: user · added: 2026-06-02 · status: shipped · reviewed: 2026-06-03 · closed-by: #130 (commit 1bbac6a) · related: AUD-5M8H, AUD-2D6T, AUD-4S8T`
+
+  Raised by the user (2026-06-02, sun-zone-done v4 full render). `ableton_render` captures each surface (every track + return + master) through its own `HallucinoteAnalyzer` / `sfrecord~` instance, and each one **finalizes independently** — so the per-surface WAVs come out at DIFFERENT lengths. Observed in `songs/sun-zone-done/captures/v4-full/`: frame counts climbed monotonically by ~512/surface in capture order — `01 Drums` 11784704 … `master` 11792384, a spread of **7680 frames (~0.16s @ 48kHz)**. They are not sample-aligned.
+
+  **Impact (concrete, today).** `ableton_analysis(analyze)` hard-fails: *"dry and wet must be the same length; got dry=11784704, wet=11789824 — the analyzer's PDC alignment should guarantee this."* The reverb verification (Wiener-deconvolved IR + RT60) needs the dry stem (a track) and the wet stem (its return) to be identical length; the independent-finalize spread violates that. The workaround — trim every WAV to the min length — let `analyze` run but the misalignment then **broke the deconvolution itself** (garbage RT60 ≈ 364s, 11 false `reverb_out_of_tolerance` findings). So loudness + overshoot attribution survived, but ALL reverb verification was unusable for the v4 review. Misalignment also silently smears any future cross-stem phase/timing analysis.
+
+  **User's proposed direction (the WHY — capture it):** make all captures latch on a **common clock / external sync event** rather than each detecting transport-cross independently — e.g. broadcast a single transport-cross trigger to every `sfrecord~` so they start (and stop) on the same sample, and/or encode an absolute sample timestamp into each capture so the analyzer can align post-hoc to sub-millisecond accuracy. A common sample-accurate start+stop yields identical lengths *by construction* — no trim, no deconvolution smear. Touches the Max/Live-side capture patch (`sfrecord~` triggering) + the analyzer's PDC-alignment contract; lives in `hallucinote_mcp` (stdlib-only server [[project_mcp_server_stdlib_only]]) + the Max patch. **Verifiable signal:** a full render produces per-surface WAVs of IDENTICAL frame count (or a recorded per-surface sample-offset the analyzer honors), and `ableton_analysis(analyze)` runs on a fresh capture with reverb verification producing physically-plausible RT60s (no length-mismatch ValueError, no trim workaround). **Sized:** medium (Max-patch sync trigger + analyzer alignment contract + a length-equality assertion in the capture manifest). (sun-zone-done v4 full-render mix review, 2026-06-02)
+
+  **SHIPPED on develop (#130, commit 1bbac6a) — read-side.** `trim_to_common_length` trims captured surfaces to a common length so `ableton_analysis(analyze)` runs (starts are sample-aligned; only tails differed). NOTE: the source-side cause — the per-surface stop-ramp that makes WAVs unequal-length in the first place — is NOT fixed here; it remains tracked as the open residual **AUD-4S8T** (read-side trim handles it for now).
+
+- **[AUD-8H2M]** Time-varying automation (sends / volume / device-param flips) is authorable but its audio realization is unverifiable — measurement-coverage gap
+  `effort: M · impact: M · area: audio · source: user · added: 2026-06-01 · status: shipped · reviewed: 2026-06-03 · closed-by: 256c5cb · related: MSK-8R3D, ENV-1T9M, ARR-8P5K, AUD-3F8M`
+
+  **Both-sides gap.** The framework authors time-varying envelopes — `M.create_enum_envelope` (sun-zone-done's Amp Type Clean↔Heavy genre flip), `generators.envelopes.volume_swell` / `sidechain_trigger`, and (planned) dynamic sends. The audio analyzer **cannot verify any of these were realized in the render**: `audio/levels.py:13-15` explicitly DEFERS volume automation ("a stem that ducks under one section reads slightly hot — deferred"); MSK-8R3D(a) notes the same static-fader caveat narrowly. So the song's single most audible gesture — the Amp Type flip into HEAVY at the metal sections and the break — is never confirmed to have happened in audio, and a dry-reggae/wet-metal dynamic send (decision 05, deferred) would be equally invisible. A time-varying mix/timbre move is authored-but-unmeasured.
+
+  **Verifiable signal:** a MixReport pass that windows a stem around a declared envelope breakpoint and confirms the expected change (level step for volume/send, spectral/timbre shift for an Amp/device-param flip), reporting realized-vs-declared; OR a decision-record scoping automation-realization out with rationale. Today: `audio/levels.py:15` ("volume automation … deferred"); no envelope-aware section windowing in `audio/analyze.py`.
+  **SHIPPED on develop (commit 256c5cb).** `audio/automation.py` windows each declared envelope breakpoint; `device_parameter` (Amp flip) → directional spectral-centroid shift, `send_level` → level step; `MixReport.automation_verifications` + `automation_not_realized` finding. NOTE: `mixer_volume`/`mixer_pan` are reported `measurable=False` (post-fader → invisible to the pre-fader stem) — verifying those needs **master-bus windowing**, tracked separately as the follow-up **AUD-3F8M**.
+
+- **[RND-7K3M]** Render silently burns the full wait window when Live's audio engine is OFF — no pre-flight, no actionable cause (CRITICAL)
+  `effort: S · impact: L · area: render · source: user · added: 2026-06-01 · status: shipped · reviewed: 2026-06-03 · closed-by: #122 (commit 026d59d)`
+
+  **SHIPPED (fix/render-audio-engine-preflight):** structural transport-advance
+  pre-flight added to `render_handler` — after `start_playing()` it samples
+  `current_song_time` over ~0.5s; a frozen transport raises fast with the
+  audio-engine cause (re-select output / Options ▸ Audio Engine On) instead of
+  blocking the full ~song-length window. The LOM exposes no engine flag (verified by
+  introspecting `song`+`application`), so the transport-advance probe is the detector.
+  Unit-tested via a new `_engine_check` seam + a direct `_default_engine_preflight`
+  test (no Live needed). **Pending (honest-confidence):** live verification of the
+  engine-off path requires re-vendoring the Remote Script (`/ableton-mcp-install`) +
+  a Live restart so the running surface picks up the new handler — deferred to the
+  user's next Live session. Also not addressed: a mid-render stall (engine on then
+  driver hiccup) still waits the full `max_wait_s` (the beats×5-as-seconds heuristic
+  is over-generous) — a separate, rarer follow-on.
+
+  **User-flagged CRITICAL (2026-06-01): "renders can fail because no audio engine, but it
+  doesn't tell you, so it takes a long time."** When Live's audio engine is OFF (e.g. the
+  output device vanished — headphones unplugged — Live shows "the audio engine is off" and
+  refuses to play), `ableton_render(action='render')` still arms, issues play, and WAITS
+  THE FULL transport window for `current_song_time` to reach `stop_at_beat`. The transport
+  never advances, so it burns the entire ~song-length wait (~4 min for a 184-bar song) and
+  returns `status='incomplete'` with only a vague "Live's audio thread may have stalled"
+  hint — never naming the real cause. Fix: PRE-FLIGHT the transport/engine before the long
+  wait — (a) after seek+play, confirm `current_song_time` advances within a short probe
+  (~1–2 s) and abort fast with "transport not advancing — is Live's audio engine on? (check
+  the output device / Options ▸ tick 'Audio Engine On')"; and/or (b) read the engine-on flag
+  from the LOM if exposed. Fail in seconds with the real cause, not minutes with a vague one.
+  **Verifiable signal:** start a render with the audio engine off → it aborts within a few
+  seconds naming the audio-engine cause, not after the full song-length window.

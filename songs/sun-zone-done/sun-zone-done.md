@@ -25,7 +25,7 @@ Reggae × speed-metal mashup. Alternating (not overlapping) sections express the
 
 Fun, but not a novelty song: the harmony carries the joke. The arc is a story of *adapting* — the protagonist stops fighting and learns to hold both the crazy and the mellow at once.
 
-> **Authored on the `hallucinote.arrangement` + `hallucinote.theory` modules** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, **per-section harmonic progressions** (the harmony axis), recurrence deltas, motifs, and references are all expressed through the model, and a build-time conformance lens fails the build if a section's parts don't realize its declared harmony (the structural fix for the old one-chord drone) — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
+> **Authored on the `hallucinote.arrangement` + `hallucinote.theory` modules** (`.prawduct/artifacts/arrangement-model.md`): the section map, energy curve, **per-section harmonic progressions** (the harmony axis), recurrence deltas, motifs, and references are all expressed through the model, and a build-time conformance lens names harmonic stasis (a section's parts not realizing its declared harmony) as a loud WARNING — per LNT-1V9K it asks rather than blocks (a ruler, not a stamp; `gate-verdict-policy.md`), and this song's `test_harmony_realization_has_no_stasis` is the actual regression gate — sun-zone-done is its first full demonstration. `build.py` is the integration proof.
 
 ## Core specs
 

@@ -108,7 +108,10 @@ def test_section_lints_feed_the_conformance_lens_clean():
     assert report.sections[0].sounded_distinct_chords == 2
 
 
-def test_section_lints_catch_a_frozen_part_as_stasis():
+def test_section_lints_name_a_frozen_part_as_stasis_without_blocking():
+    # The adapter feeds a pedaled part to the lens. Per LNT-1V9K the lens NAMES it
+    # in stasis_sections (the signal a song's test gates on) but never blocks —
+    # a ruler, not a stamp.
     declared = Progression.of("E", "Dorian", ["Em7", "A7"], beats_per_chord=4.0)
     frozen = Progression.of("E", "Dorian", ["Em7"], beats_per_chord=4.0)
     skank = harmony.reggae_skank(frozen, bars=2, register=3)  # pedals Em7
@@ -116,5 +119,6 @@ def test_section_lints_catch_a_frozen_part_as_stasis():
     arr.section("verse", function="verse", bars=2, layers={"03 Gtr": skank},
                 progression=declared)
     report = lint_harmony(arr.section_lints(harmony_layers=["03 Gtr"]), song_slug="t")
-    assert report.ok is False
-    assert report.stasis_sections == ("verse",)
+    assert report.stasis_sections == ("verse",)   # named — a song's test can gate
+    assert report.ok is True                        # but the lens never blocks
+    assert report.blocking == ()

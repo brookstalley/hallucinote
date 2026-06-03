@@ -431,6 +431,10 @@ artifact_manifest:
       file_path: .prawduct/artifacts/melody-model.md
       version: 1   # design — research-grounded; read-side lens SHIPPED. TWO verified deep-research passes (45 confirmed claims): melody = genre-general substrate + declared per-song profile, measured against intent (the metaperformer pattern); a "line layer" whose pitch reads harmony, rhythm reads feel, owning contour + motivic economy. Phase 2a read-side lens built: src/hallucinote/melody/ (lens+contour+intervals+harmony_fit, 27 tests). Pre-build: declared-profile authoring + grading + learn-back (2b).
       depends_on: [arrangement-model, performance-model]
+    - name: gate-verdict-policy
+      file_path: .prawduct/artifacts/gate-verdict-policy.md
+      version: 1   # LNT-1V9K — BLOCKING reserved for technical errors; aesthetics never gate (ruler-not-stamp)
+      depends_on: [arrangement-model]
     - name: vision
       file_path: docs/VISION.md
       version: 1

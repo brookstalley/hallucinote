@@ -1902,8 +1902,11 @@ def build(reset: bool = False) -> str:
             atmos += _author_gtr_reggae_space(conn, song_id, tracks, placed)     # #3 skank Room + slap
             atmos += _author_outro_reverb(conn, song_id, tracks, placed)         # #D outro reverb lift
 
-            # Harmony conformance — the structural gate. The bass must realize the
-            # declared harmony in every section (no one-chord drone).
+            # Harmony conformance — a read-side RULER, not a build gate (LNT-1V9K).
+            # It surfaces stasis as a loud WARNING below; the realization
+            # regression (the bass must SOUND the declared movement, no one-chord
+            # pedal) is asserted in this song's own test
+            # (test_harmony_realization_has_no_stasis), where the intent lives.
             report = lint_harmony(
                 arr.section_lints(harmony_layers=["02 Bass"]),
                 song_slug="sun-zone-done")
@@ -1944,11 +1947,10 @@ def build(reset: bool = False) -> str:
             cues = Q.get_cue_points(conn, song_id)
             print(f"  cue points: {len(cues)}")
 
-            if not report.ok:
-                raise RuntimeError(
-                    f"HARMONIC STASIS in {report.stasis_sections}: the parts do "
-                    f"not realize the declared harmony. Fix the composition, not "
-                    f"the lens.")
+            # No build gate on harmony (LNT-1V9K): a build-time lens is a ruler,
+            # not a stamp — it never vetoes a deliberate choice. Stasis prints
+            # loudly above as a WARNING; the realization regression is the song's
+            # test (test_harmony_realization_has_no_stasis), not a raise here.
         return song_id
     finally:
         conn.close()

@@ -897,6 +897,26 @@ def test_harmony_axis_moves_and_flips_modes(build_module):
     assert all(n >= 2 for s, (_pc, _m, n) in curve.items() if s not in fields), curve
 
 
+def test_harmony_realization_has_no_stasis(build_module):
+    """LNT-1V9K: the harmony lens no longer GATES the build (a ruler, not a
+    stamp), so the realization regression — the bass must actually SOUND the
+    declared movement, never pedal one chord under a written change — lives HERE,
+    in the song's own test where the intent is known. The intro + break are
+    deliberate single-chord fields (declared==1, so never stasis); every section
+    that declares movement must realize it, so stasis_sections must be empty."""
+    from hallucinote.theory import lint_harmony
+    from hallucinote.generators.kit import Kit
+    arr = build_module._build_arrangement(Kit.gm_default())
+    report = lint_harmony(arr.section_lints(harmony_layers=["02 Bass"]),
+                          song_slug="sun-zone-done")
+    assert report.stasis_sections == (), (
+        f"the bass pedals a declared change in {report.stasis_sections} — fix the "
+        f"composition (the lens only asks; this test is the gate)")
+    # And — the LNT-1V9K contract — the lens never blocks regardless.
+    assert report.ok is True
+    assert report.blocking == ()
+
+
 def test_outro_resolves_to_dorian_not_phrygian(build_module, built):
     """The CONFIRMED creative resolution (fuse-hard-in-integration, resolve-in-
     OUTRO): the outro re-brightens from the integration's polymodal fusion back

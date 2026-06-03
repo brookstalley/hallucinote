@@ -14,9 +14,9 @@ Two request fields scanned in one SQL pass, song-scoped:
 Multi-keyword semantics: AND. Every keyword must appear in the row.
 
 Usage:
-    python3 tools/decisions_cli.py --db <db> "bridge counter-melody"
-    python3 tools/decisions_cli.py --db <db> --keywords "bridge,dim7"
-    python3 tools/decisions_cli.py --db <db> --limit 5 "sidechain"
+    python3 -m hallucinote.tools.decisions_cli --db <db> "bridge counter-melody"
+    python3 -m hallucinote.tools.decisions_cli --db <db> --keywords "bridge,dim7"
+    python3 -m hallucinote.tools.decisions_cli --db <db> --limit 5 "sidechain"
 
 See also: `/song-context` for markdown-primary ADR retrieval
 (decisions/<date>-slug.md + annotations/slug.md). The two are

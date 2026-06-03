@@ -9,7 +9,7 @@ Invoke any skill explicitly by typing `/<name>` in Claude Code, or just ask in
 plain language (*"build a reverb bus"* → `/return-new`).
 
 > This list is maintained by hand; the source of truth is each skill's
-> `description` in `.claude/skills/<name>/SKILL.md`. If something here disagrees
+> `description` in `skills/<name>/SKILL.md`. If something here disagrees
 > with a skill's own description, the skill wins — please open a PR.
 
 ## Setup

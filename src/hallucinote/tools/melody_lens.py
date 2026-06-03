@@ -11,9 +11,9 @@ reads them AGAINST the line's declared intent (there is no universal "good
 melody"; melody-model.md §1).
 
 Usage:
-    python3 tools/melody_lens.py sun-zone-done
-    python3 tools/melody_lens.py sun-zone-done --section chorus1
-    python3 tools/melody_lens.py sun-zone-done --json
+    python3 -m hallucinote.tools.melody_lens sun-zone-done
+    python3 -m hallucinote.tools.melody_lens sun-zone-done --section chorus1
+    python3 -m hallucinote.tools.melody_lens sun-zone-done --json
 
 Exit codes: 0 = report printed · 2 = no such song · 3 = song has not wired the
 melody lens (no `melody_report()` in its build.py — add one; see the scaffold

@@ -6,10 +6,10 @@ rationale before non-trivial composition work. Output is markdown-formatted
 for direct LLM consumption.
 
 Usage:
-    python3 tools/song_context.py --db songs/falling-walking/falling-walking.db "dim7 bridge"
-    python3 tools/song_context.py --db <db> --kind decision --limit 10
-    python3 tools/song_context.py --db <db> --tags chorus,bridge
-    python3 tools/song_context.py --db <db> --bars 33:40
+    python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db "dim7 bridge"
+    python3 -m hallucinote.tools.song_context --db <db> --kind decision --limit 10
+    python3 -m hallucinote.tools.song_context --db <db> --tags chorus,bridge
+    python3 -m hallucinote.tools.song_context --db <db> --bars 33:40
 
 If TOPIC is given, runs FTS5 match across body + tags. All filters AND-compose.
 """

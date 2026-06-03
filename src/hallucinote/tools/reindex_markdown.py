@@ -6,8 +6,8 @@ upserts rows into `markdown_refs`, refreshes the FTS5 index, and tombstones
 rows whose file vanished.
 
 Usage:
-    python3 tools/reindex_markdown.py songs/falling-walking/falling-walking.db
-    python3 tools/reindex_markdown.py --songs-root songs --repo-root . <db>
+    python3 -m hallucinote.tools.reindex_markdown songs/falling-walking/falling-walking.db
+    python3 -m hallucinote.tools.reindex_markdown --songs-root songs --repo-root . <db>
 
 The DB path is positional; the repo root + songs root default to the current
 working directory and `./songs`. Run from the repo root for the defaults to

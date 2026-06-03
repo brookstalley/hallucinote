@@ -84,7 +84,7 @@ release-only. Both are protected — no direct commits.
 This project is developed with [Claude Code](https://claude.ai/code) under the
 "prawduct" governance framework — the rules above are enforced by hooks and the
 Critic. `CLAUDE.md` is the authoritative working-instructions file; read it
-before a substantial change. Note that some framework files (`.claude/skills/`,
+before a substantial change. Note that some framework files (`skills/`,
 `.prawduct/`, `tools/product-hook`) may carry in-flight upstream framework work —
 check before bundling unrelated edits to them into a feature PR.
 

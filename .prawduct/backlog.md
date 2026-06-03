@@ -27,11 +27,6 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
-- **[WSP-1K4D]** Route the render captures dir through the project-root contract (`server.py` `songs/` literal)
-  `effort: S · impact: S · area: mcp-render · source: critic · added: 2026-06-03 · status: shipped · closed-by: feature/songs-split · related: project-root-contract`
-
-  The project-root contract (`hallucinote.workspace`, shipped on `feature/project-root-contract`) routes DB-path resolution through `resolve_song_dir` so a song can live in its own repo. One `songs/` literal remained outside the contract: `server.py`'s `_absolutize_render_output_dir` defaulted a render `output_dir` to `Path("songs")/<slug>/"captures"/<ts>` off `os.getcwd()`. **SHIPPED (feature/songs-split):** the default now resolves the song dir via `resolve_song_dir(<slug>)` (guarded import; falls back to the legacy cwd-relative `songs/<slug>` only when the engine isn't importable — e.g. a uvx MCP-only install), so captures travel with the resolved song dir. The remaining `Path(os.getcwd())/"songs"/<slug>` literal at `server.py:280` is that deliberate engine-absent fallback, not the primary path.
-
 - **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
   `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M`
 
@@ -462,6 +457,11 @@ _(no items)_
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[WSP-1K4D]** Route the render captures dir through the project-root contract (`server.py` `songs/` literal)
+  `effort: S · impact: S · area: mcp-render · source: critic · added: 2026-06-03 · status: shipped · closed-by: feature/songs-split · related: project-root-contract`
+
+  The render `output_dir` default (`server.py` `_absolutize_render_output_dir`) defaulted to `Path("songs")/<slug>/"captures"/<ts>` off `os.getcwd()`. SHIPPED (feature/songs-split): it now resolves the song dir via `resolve_song_dir(<slug>)` (guarded import; the residual `os.getcwd()/songs/<slug>` at `server.py:280` is the deliberate engine-absent fallback for a uvx MCP-only install), so captures travel with the resolved song dir.
 
 - **[MIX-6K2P]** Track-mixer volume/pan should be dB-aware on the MCP surface
   `effort: S · impact: M · area: mcp-mixer · source: builder · added: 2026-05-30 · status: shipped · closed-by: feature/mixer-db-surface`

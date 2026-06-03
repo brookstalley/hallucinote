@@ -73,7 +73,7 @@ from hallucinote.melody.intervals import (
     post_skip_reversal_rate,
     step_leap_unison_counts,
 )
-from hallucinote.melody.profile import MelodicProfile
+from hallucinote.melody.profile import Appetite, MelodicProfile
 from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
@@ -82,6 +82,14 @@ Severity = Literal["info", "warning", "blocking"]
 _VALID_SEVERITIES = ("info", "warning", "blocking")
 
 Classification = Literal["active", "static", "insufficient-data"]
+
+# The profile-RELATIVE shaped-vs-aimless reading (design §4, the recorded
+# universal-verdict correction). ``ungraded`` (no definite declared intent — the
+# genre-safe default), ``shaped`` (the measured contour/repetition are consistent
+# with the declared intents), ``aimless`` (a DEFINITE declared intent is
+# contradicted). ``aimless`` can NEVER fire on a silent or ``free`` profile — that
+# is exactly why the reggae-hook universal-verdict bug cannot recur (model §7).
+ShapedReading = Literal["shaped", "aimless", "ungraded"]
 
 # Onsets closer than this (beats) are treated as ONE melodic event — a melody is
 # monophonic, so a block-chord onset collapses to its TOP voice (the melody note).
@@ -113,6 +121,29 @@ _NCT_RESOLVE_MIN = 0.5
 # ``_NCT_COACH_MIN`` "abundant NCT" threshold so the two readings speak one notion
 # of "a lot of non-chord-tones".
 _HARMONIC_FREEDOM_LOW_NCT_MAX = 0.4
+
+# ---------------------------------------------------------------------------
+# Appetite -> fraction grading edges (design §4 / §8).
+#
+# PENDING by-ear calibration — see build-plan Chunk 4 / design §8. These map a
+# coarse declared appetite band (low/moderate/high) to a measured-fraction range.
+# The VALUES below are PLACEHOLDERS: Chunk 4 renders + measures sun-zone-done's two
+# hooks objectively and SURFACES the numbers, but the threshold VALUES (and which
+# profile each hook declares) are a creative lock-in left to the user's ear — they
+# are NOT finalized here. Isolated as named constants so the ear-set values land in
+# ONE place (no magic numbers scattered through the grading).
+#
+# Semantics: a declared "low" step appetite expects step_fraction at/below
+# ``_STEP_FRACTION_LOW_MAX`` (leap-driven); "high" expects at/above
+# ``_STEP_FRACTION_HIGH_MIN`` (proximity-driven); "moderate" is the band between.
+# A finding fires only when the MEASURED band disagrees with the DECLARED band.
+_STEP_FRACTION_LOW_MAX = 0.4   # PENDING by-ear calibration
+_STEP_FRACTION_HIGH_MIN = 0.7  # PENDING by-ear calibration
+
+# The apex-position tolerance: a measured apex within this (normalized 0..1)
+# distance of the declared apex_position reads as "where you intended"; beyond it
+# the climax-moved question fires. PENDING by-ear calibration.
+_APEX_POSITION_TOLERANCE = 0.2  # PENDING by-ear calibration
 
 _DEFAULT_BEATS_PER_BAR = 4.0
 
@@ -181,6 +212,7 @@ class MelodicLine:
     classification: Classification
     confidence: float
     profile_name: str | None = None
+    shaped_reading: ShapedReading = "ungraded"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -203,6 +235,7 @@ class MelodicLine:
             "classification": self.classification,
             "confidence": self.confidence,
             "profile_name": self.profile_name,
+            "shaped_reading": self.shaped_reading,
         }
 
 
@@ -442,6 +475,10 @@ def _profile_findings(
         return []
     out: list[MelodyFinding] = []
 
+    # All profile-relative findings gate on enough notes to trust the call (the 2a
+    # _STATIC_FINDING_MIN_NOTES discipline) — a short line never false-nags.
+    enough = line.onset_count >= _STATIC_FINDING_MIN_NOTES
+
     # harmonic_freedom="low" (chord-tone-locked) contradicted by abundant NCT share.
     # (declared "high" instead SUPPRESSES the 2a unresolved-nct finding above — that
     # is the high-freedom direction; the low direction asks the opposite question.)
@@ -450,7 +487,7 @@ def _profile_findings(
         profile.harmonic_freedom == "low"
         and hf is not None
         and hf.non_chord_tone_fraction > _HARMONIC_FREEDOM_LOW_NCT_MAX
-        and line.onset_count >= _STATIC_FINDING_MIN_NOTES
+        and enough
     ):
         out.append(MelodyFinding(
             kind="harmonic-freedom-mismatch", severity="info", section=section,
@@ -463,7 +500,100 @@ def _profile_findings(
             ),
             metric=hf.non_chord_tone_fraction,
         ))
+
+    # contour_intent vs the measured contour_shape (string-equal by construction —
+    # ContourIntent's members ARE ContourShape's, minus insufficient-data, plus free,
+    # W2). "free" intent and an "insufficient-data" measured shape both suppress it:
+    # no shape was declared to diverge from / too few notes to read a shape.
+    if (
+        profile.contour_intent is not None
+        and profile.contour_intent != "free"
+        and line.contour_shape != "insufficient-data"
+        and line.contour_shape != profile.contour_intent
+        and enough
+    ):
+        out.append(MelodyFinding(
+            kind="contour-intent-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared a {profile.contour_intent} contour, "
+                f"but the line reads {line.contour_shape} — intended re-shape, or did "
+                f"the climax move?"
+            ),
+        ))
+
+    # apex_position vs the measured apex position (tolerance band).
+    if (
+        profile.apex_position is not None
+        and line.apex_position is not None
+        and abs(line.apex_position - profile.apex_position) > _APEX_POSITION_TOLERANCE
+        and enough
+    ):
+        out.append(MelodyFinding(
+            kind="apex-position-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you intended the climax at {profile.apex_position:.0%} "
+                f"of the line, but it crests at {line.apex_position:.0%} — intended "
+                f"lift placement, or has the peak drifted?"
+            ),
+            metric=line.apex_position,
+        ))
+
+    # ambitus band: measured range outside the declared [min, max] window.
+    if (
+        (profile.ambitus_min is not None or profile.ambitus_max is not None)
+        and enough
+    ):
+        below = profile.ambitus_min is not None and line.ambitus < profile.ambitus_min
+        above = profile.ambitus_max is not None and line.ambitus > profile.ambitus_max
+        if below or above:
+            band = (
+                f"{profile.ambitus_min if profile.ambitus_min is not None else '—'}"
+                f"..{profile.ambitus_max if profile.ambitus_max is not None else '—'}"
+            )
+            out.append(MelodyFinding(
+                kind="ambitus-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {band}-semitone range, but the "
+                    f"line spans {line.ambitus} — intended register, or has the line "
+                    f"outgrown / shrunk from its declared ambitus?"
+                ),
+                metric=float(line.ambitus),
+            ))
+
+    # step_appetite vs the measured step_fraction band (the PENDING by-ear edges).
+    if (
+        profile.step_appetite is not None
+        and line.step_fraction is not None
+        and enough
+    ):
+        measured_band = _step_fraction_band(line.step_fraction)
+        if measured_band != profile.step_appetite:
+            out.append(MelodyFinding(
+                kind="step-appetite-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {profile.step_appetite} step "
+                    f"appetite, but {line.step_fraction:.0%} of moving intervals are "
+                    f"steps ({measured_band}) — intended proximity/leap balance, or has "
+                    f"the line's motion drifted?"
+                ),
+                metric=line.step_fraction,
+            ))
     return out
+
+
+def _step_fraction_band(step_fraction: float) -> Appetite:
+    """Map a measured step-fraction to a coarse appetite band using the PENDING
+    by-ear edges. Higher step-fraction = more proximity-driven = HIGHER step
+    appetite. (The edge VALUES are calibration placeholders — design §8.)"""
+    if step_fraction <= _STEP_FRACTION_LOW_MAX:
+        return "low"
+    if step_fraction >= _STEP_FRACTION_HIGH_MIN:
+        return "high"
+    return "moderate"
 
 
 def _declared_but_unmatched(sec: SectionMelody) -> list[MelodyFinding]:

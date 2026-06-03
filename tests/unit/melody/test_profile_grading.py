@@ -107,3 +107,131 @@ def test_high_freedom_profile_suppresses_unresolved_nct_finding():
     assert "unresolved-nct" not in _kinds(rep)
     # high freedom is NOT the low-direction mismatch either.
     assert "harmonic-freedom-mismatch" not in _kinds(rep)
+
+
+# === Chunk 2: contour / apex / ambitus / step-appetite gradings (both states) ====
+
+# A clear arch line (rises to a peak in the middle, falls back), 12 notes, ambitus
+# 12 semitones, apex near the middle (~45-55%).
+def _arch_line() -> list[dict]:
+    pitches = [60, 62, 64, 65, 67, 69, 71, 69, 67, 64, 62, 60]
+    return [_n(p, i * 0.5) for i, p in enumerate(pitches)]
+
+
+def _findings_of_kind(report, kind):
+    return [f for f in report.findings if f.kind == kind]
+
+
+def _assert_question(finding):
+    assert finding.severity == "info"
+    assert finding.detail.endswith("?")
+
+
+# --- contour_intent vs measured contour_shape ------------------------------------
+
+def test_contour_mismatch_fires_when_declared_shape_differs():
+    line = {"05 Lead": _arch_line()}  # measures "arch"
+    profile = MelodicProfile(name="x", contour_intent="descending")
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    fs = _findings_of_kind(rep, "contour-intent-mismatch")
+    assert len(fs) == 1
+    _assert_question(fs[0])
+    assert "descending" in fs[0].detail
+
+
+def test_contour_match_is_silent():
+    line = {"05 Lead": _arch_line()}  # measures "arch"
+    profile = MelodicProfile(name="x", contour_intent="arch")
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "contour-intent-mismatch") == []
+
+
+def test_free_contour_intent_never_fires_a_contour_finding():
+    line = {"05 Lead": _arch_line()}
+    profile = MelodicProfile(name="x", contour_intent="free")
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "contour-intent-mismatch") == []
+
+
+# --- apex_position vs measured apex ----------------------------------------------
+
+def test_apex_mismatch_fires_when_climax_is_far_from_intended():
+    line = {"05 Lead": _arch_line()}  # apex near the middle (~45%)
+    profile = MelodicProfile(name="x", apex_position=1.0)  # wanted a final lift
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    fs = _findings_of_kind(rep, "apex-position-mismatch")
+    assert len(fs) == 1
+    _assert_question(fs[0])
+
+
+def test_apex_match_within_tolerance_is_silent():
+    line = {"05 Lead": _arch_line()}  # apex near the middle
+    profile = MelodicProfile(name="x", apex_position=0.5)
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "apex-position-mismatch") == []
+
+
+# --- ambitus band ----------------------------------------------------------------
+
+def test_ambitus_mismatch_fires_outside_declared_band():
+    line = {"05 Lead": _arch_line()}  # ambitus 11
+    profile = MelodicProfile(name="x", ambitus_min=0, ambitus_max=5)  # wanted narrow
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    fs = _findings_of_kind(rep, "ambitus-mismatch")
+    assert len(fs) == 1
+    _assert_question(fs[0])
+
+
+def test_ambitus_match_inside_band_is_silent():
+    line = {"05 Lead": _arch_line()}  # ambitus 11
+    profile = MelodicProfile(name="x", ambitus_min=7, ambitus_max=15)
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "ambitus-mismatch") == []
+
+
+# --- step_appetite vs measured step_fraction band (the PENDING by-ear edges) ------
+
+def _stepwise_line() -> list[dict]:
+    # all whole-tone moves -> step_fraction = 1.0 -> "high" band
+    pitches = [60, 62, 64, 62, 60, 62, 64, 62, 60, 62]
+    return [_n(p, i * 0.5) for i, p in enumerate(pitches)]
+
+
+def _leapy_line() -> list[dict]:
+    # all wide leaps -> step_fraction = 0.0 -> "low" band
+    pitches = [60, 67, 60, 67, 60, 67, 60, 67, 60, 67]
+    return [_n(p, i * 0.5) for i, p in enumerate(pitches)]
+
+
+def test_step_appetite_mismatch_fires_on_band_disagreement():
+    line = {"05 Lead": _leapy_line()}  # step_fraction 0.0 -> "low"
+    profile = MelodicProfile(name="x", step_appetite="high")  # declared proximity
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    fs = _findings_of_kind(rep, "step-appetite-mismatch")
+    assert len(fs) == 1
+    _assert_question(fs[0])
+
+
+def test_step_appetite_match_is_silent():
+    line = {"05 Lead": _stepwise_line()}  # step_fraction 1.0 -> "high"
+    profile = MelodicProfile(name="x", step_appetite="high")
+    rep = _analyze(line, profiles={"05 Lead": profile})
+    assert _findings_of_kind(rep, "step-appetite-mismatch") == []
+
+
+# --- the PENDING by-ear edge constants are isolated + marked ---------------------
+
+def test_appetite_edges_are_named_constants_carrying_the_pending_marker():
+    """Chunk 4 sets these by ear in ONE place — assert they exist as named module
+    constants (no magic numbers scattered) and the source carries the PENDING
+    marker so the calibration step has a single home (design §8)."""
+    import inspect
+
+    from hallucinote.melody import lens as lens_mod
+
+    assert isinstance(lens_mod._STEP_FRACTION_LOW_MAX, float)
+    assert isinstance(lens_mod._STEP_FRACTION_HIGH_MIN, float)
+    assert isinstance(lens_mod._APEX_POSITION_TOLERANCE, float)
+    src = inspect.getsource(lens_mod)
+    assert "PENDING by-ear calibration" in src
+

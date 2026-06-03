@@ -31,23 +31,32 @@ Hallucinote has two halves: the **plugin** (the `/hallucinote:*` skills + the
 live in their own git repo (a workspace with a `hallucinote.toml` marker), not
 in this repo — see [`docs/VISION.md`](docs/VISION.md) ("a song is a git repo").
 
-**To make music** (most people): install the plugin + the engine, then write in
-your own songs repo.
+**To make music — install from a local checkout** (the path today; the plugin
+and engine both live in this repo):
 
-```bash
-# 1. the plugin (skills + MCP server) — in Claude Code:
-#    /plugin marketplace add brookstalley/hallucinote
-#    /plugin install hallucinote@hallucinote
-# 2. the engine (so build.py can run):
-pip install hallucinote          # add [live] to push to Ableton: hallucinote[live]
-```
+1. Clone + editable-install this repo (see [Clone and install](#1-clone-and-install) below) — that
+   gives you the **engine** and the plugin's `skills/`.
+2. In your **songs repo**, start Claude Code with the plugin loaded from your
+   checkout:
 
-Then `/ableton-mcp-install` once (installs the Ableton Remote Script — the one
-thing the plugin can't do for you), and `/hallucinote:song-new` in your songs repo.
+   ```bash
+   claude --plugin-dir /path/to/hallucinote
+   ```
 
-**To work on Hallucinote itself** (contributors): clone and editable-install
-below. Skills load from your checkout with `claude --plugin-dir .` (they live in
-`skills/`, invoked `/hallucinote:song-new`).
+   Skills appear as `/hallucinote:song-new`, …; the `hallucinote-mcp` server
+   auto-connects.
+3. Run `/hallucinote:ableton-mcp-install` once (the Ableton Remote Script — the
+   one thing the plugin can't do for you), then `/hallucinote:song-new`.
+
+> **One-line install, once it's published.** After the first release (the plugin
+> on the default branch + the engine on PyPI), setup collapses to:
+> ```bash
+> # in Claude Code:  /plugin marketplace add brookstalley/hallucinote
+> #                  /plugin install hallucinote@hallucinote
+> pip install 'hallucinote[live]'
+> ```
+> Until then, use the local-checkout path above (the plugin currently lives on
+> `develop`, not the default branch a marketplace install reads).
 
 ### 1. Clone and install 
 

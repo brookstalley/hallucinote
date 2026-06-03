@@ -34,6 +34,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
 from hallucinote.melody.lens import SectionMelody
+from hallucinote.melody.profile import MelodicProfile
 from hallucinote.performance.lens import SectionPerf
 from hallucinote.recurrence.lens import SectionRecurrenceInput
 from hallucinote.theory.lint import SectionLint
@@ -318,7 +319,11 @@ class Arrangement:
         ]
 
     def section_melody_inputs(
-        self, *, melody_layers: Sequence[str] | None = None, start_bar: int = 1
+        self,
+        *,
+        melody_layers: Sequence[str] | None = None,
+        start_bar: int = 1,
+        profiles: Mapping[str, MelodicProfile] | None = None,
     ) -> list[SectionMelody]:
         """Adapt the planned sections into the symbolic-melody-lens inputs (the
         ``PlacedSection -> SectionMelody`` bridge, parallel to ``section_lints`` /
@@ -326,7 +331,13 @@ class Arrangement:
         lines (lead / vocal / riff) to analyze — exclude drums and chordal pads;
         ``None`` analyzes every layer. Carries the section's ``progression``
         (melody's pitch reads harmony) + ``beats_per_bar`` (the strong-beat read).
-        Feed the result to ``melody.lens.analyze_melody``."""
+
+        ``profiles`` (phase 2b) is the song's declared ``{layer_name:
+        MelodicProfile}`` map, carried onto every section so the lens grades each
+        line against its declared intent (``None`` = the unchanged 2a path). The
+        profile lives in build.py, never on the arrangement (Decision-Record 1) — so
+        it rides through here as a passthrough, not a stored field. Feed the result
+        to ``melody.lens.analyze_melody``."""
         layers_tuple = tuple(melody_layers) if melody_layers is not None else None
         return [
             SectionMelody(
@@ -336,6 +347,7 @@ class Arrangement:
                 progression=p.progression,
                 melody_layers=layers_tuple,
                 beats_per_bar=self.beats_per_bar,
+                profiles=profiles,
             )
             for p in self.plan(start_bar=start_bar)
         ]

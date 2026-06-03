@@ -73,6 +73,7 @@ from hallucinote.melody.intervals import (
     post_skip_reversal_rate,
     step_leap_unison_counts,
 )
+from hallucinote.melody.profile import MelodicProfile
 from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
@@ -105,6 +106,13 @@ _STATIC_FINDING_MIN_NOTES = 8
 # unresolved (stranded dissonance) — high NCT alone is normal melodic color.
 _NCT_COACH_MIN = 0.4
 _NCT_RESOLVE_MIN = 0.5
+
+# A declared ``harmonic_freedom="low"`` (chord-tone-locked) is contradicted when the
+# line's non-chord-tone share rises above this — the profile-relative grading edge
+# for the harmonic-freedom field (design §4). Chosen to align with the 2a
+# ``_NCT_COACH_MIN`` "abundant NCT" threshold so the two readings speak one notion
+# of "a lot of non-chord-tones".
+_HARMONIC_FREEDOM_LOW_NCT_MAX = 0.4
 
 _DEFAULT_BEATS_PER_BAR = 4.0
 
@@ -150,7 +158,9 @@ class MelodicLine:
     ``apex_position`` locate the climax. ``harmony`` is ``None`` when the section
     declared no progression. ``classification`` is the genre-safe active/static
     read (shaped-vs-aimless is profile-relative, deferred); ``confidence`` (0..1)
-    scales with note count."""
+    scales with note count. ``profile_name`` is the declared ``MelodicProfile``'s
+    name when this line was graded against one (``None`` = the unchanged 2a
+    no-profile path)."""
 
     track_name: str
     note_count: int
@@ -170,6 +180,7 @@ class MelodicLine:
     harmony: HarmonyFit | None
     classification: Classification
     confidence: float
+    profile_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,6 +202,7 @@ class MelodicLine:
             "harmony": self.harmony.to_dict() if self.harmony is not None else None,
             "classification": self.classification,
             "confidence": self.confidence,
+            "profile_name": self.profile_name,
         }
 
 
@@ -250,7 +262,14 @@ class SectionMelody:
     analyze — drums and chordal pads are NOT melodic lines; ``None`` analyzes every
     layer. ``progression=None`` means no declared harmony — the harmony-fit read is
     skipped (``harmony`` reports ``None``), a graceful degradation to the contour /
-    interval substrate. ``beats_per_bar`` feeds the strong-beat read."""
+    interval substrate. ``beats_per_bar`` feeds the strong-beat read.
+
+    ``profiles`` (phase 2b) maps a layer NAME to its declared ``MelodicProfile`` —
+    the authoring side the lens grades each line AGAINST (design §4, Decision-Record
+    1). ``None`` (the default) is the byte-for-byte-unchanged 2a no-profile path: no
+    profile-relative findings, every line reads as unconstrained substrate facts. A
+    profile keyed to a layer name absent from this section surfaces a
+    ``declared-but-unmatched`` typo finding (enumerate-every-state)."""
 
     name: str
     length_beats: float
@@ -258,6 +277,7 @@ class SectionMelody:
     progression: Progression | None = None
     melody_layers: tuple[str, ...] | None = None
     beats_per_bar: float = _DEFAULT_BEATS_PER_BAR
+    profiles: Mapping[str, MelodicProfile] | None = None
 
 
 def _melodic_sequence(notes: Sequence[NoteDict]) -> list[tuple[float, int]]:
@@ -298,7 +318,12 @@ def _classify(ambitus_semitones: int, onset_count: int) -> Classification:
     return "active"
 
 
-def _line(track: str, notes: Sequence[NoteDict], sec: SectionMelody) -> MelodicLine:
+def _line(
+    track: str,
+    notes: Sequence[NoteDict],
+    sec: SectionMelody,
+    profile: MelodicProfile | None = None,
+) -> MelodicLine:
     seq = _melodic_sequence(notes)
     pitches = [p for _start, p in seq]
     onset_count = len(seq)
@@ -343,6 +368,7 @@ def _line(track: str, notes: Sequence[NoteDict], sec: SectionMelody) -> MelodicL
         harmony=harmony,
         classification=_classify(amb, onset_count),
         confidence=_confidence(onset_count),
+        profile_name=profile.name if profile is not None else None,
     )
 
 
@@ -352,13 +378,16 @@ def _layer_names(sec: SectionMelody) -> list[str]:
     return list(sec.layers)
 
 
-def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
+def _findings_for(
+    line: MelodicLine, section: str, profile: MelodicProfile | None = None
+) -> list[MelodyFinding]:
     out: list[MelodyFinding] = []
     # Each finding is a coaching QUESTION — a static line may be an intended drone;
     # the lens asks, the composer decides (the harmony lint honors an intentional
     # drone the same way). Gated on enough notes to trust the call. NOTE: there is
-    # deliberately NO "aimless/random-walk" finding — that verdict is genre-relative
-    # and needs the declared profile (phase 2b); v1 reports the facts, never nags a
+    # deliberately NO "aimless/random-walk" finding here — that verdict is
+    # genre-relative and needs the declared profile (the profile-relative
+    # ``shaped_reading``, Chunk 3); v1's findings report the facts, never nag a
     # leap-driven idiom (a line built on 3rds is not "wrong").
     if line.classification == "static" and line.onset_count >= _STATIC_FINDING_MIN_NOTES:
         out.append(MelodyFinding(
@@ -371,15 +400,19 @@ def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
             metric=float(line.ambitus),
         ))
     # Harmony coaching: only when non-chord-tones are BOTH abundant AND mostly
-    # unresolved (stranded dissonance) — high NCT alone is normal melodic color, and
-    # is graded against the (future) declared harmonic-freedom, never a verdict.
+    # unresolved (stranded dissonance) — high NCT alone is normal melodic color. A
+    # declared ``harmonic_freedom="high"`` SUPPRESSES this (design §4): high freedom
+    # means floating, freely-chromatic color is the intended idiom, so stranded-
+    # dissonance coaching would nag exactly what the profile declared on purpose.
     hf = line.harmony
+    declared_freedom = profile.harmonic_freedom if profile is not None else None
     if (
         hf is not None
         and hf.nct_resolves_by_step is not None
         and hf.non_chord_tone_fraction > _NCT_COACH_MIN
         and hf.nct_resolves_by_step < _NCT_RESOLVE_MIN
         and line.onset_count >= _MIN_MELODIC_NOTES
+        and declared_freedom != "high"
     ):
         out.append(MelodyFinding(
             kind="unresolved-nct", severity="info", section=section, track=line.track_name,
@@ -391,15 +424,81 @@ def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
             ),
             metric=hf.nct_resolves_by_step,
         ))
+    out.extend(_profile_findings(line, section, profile))
+    return out
+
+
+def _profile_findings(
+    line: MelodicLine, section: str, profile: MelodicProfile | None
+) -> list[MelodyFinding]:
+    """Profile-RELATIVE findings — the line's measured values graded AGAINST its
+    declared intent (design §4). Each is still ``severity="info"`` and phrased as a
+    coaching QUESTION ("you declared X; the line measures Y — intended?"), never a
+    verdict. Fired only when the declared field has a measured counterpart, the
+    measure DIVERGES, and there are enough notes to trust it (the
+    ``_STATIC_FINDING_MIN_NOTES`` gate). Chunk 1 grades ``harmonic_freedom``; the
+    remaining fields land in Chunk 2 over values the lens already computes."""
+    if profile is None:
+        return []
+    out: list[MelodyFinding] = []
+
+    # harmonic_freedom="low" (chord-tone-locked) contradicted by abundant NCT share.
+    # (declared "high" instead SUPPRESSES the 2a unresolved-nct finding above — that
+    # is the high-freedom direction; the low direction asks the opposite question.)
+    hf = line.harmony
+    if (
+        profile.harmonic_freedom == "low"
+        and hf is not None
+        and hf.non_chord_tone_fraction > _HARMONIC_FREEDOM_LOW_NCT_MAX
+        and line.onset_count >= _STATIC_FINDING_MIN_NOTES
+    ):
+        out.append(MelodyFinding(
+            kind="harmonic-freedom-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared chord-tone-locked harmony "
+                f"(harmonic_freedom=low), but {hf.non_chord_tone_fraction:.0%} of "
+                f"notes are non-chord-tones — intended looser color, or has the line "
+                f"drifted off its declared harmonic anchor?"
+            ),
+            metric=hf.non_chord_tone_fraction,
+        ))
+    return out
+
+
+def _declared_but_unmatched(sec: SectionMelody) -> list[MelodyFinding]:
+    """A declared profile keyed to a layer NAME absent from this section is almost
+    always a typo (the binding is by string — Decision-Record 1) — surface it as a
+    coaching question rather than silently grading nothing (enumerate-every-state,
+    learnings "Detection that replaces a user question must enumerate every state").
+    Compared against the FULL layer set, not the melody-filtered names, so declaring
+    a profile for a real-but-non-melodic layer is not falsely flagged a typo."""
+    if not sec.profiles:
+        return []
+    present = set(sec.layers)
+    out: list[MelodyFinding] = []
+    for layer_name in sec.profiles:
+        if layer_name not in present:
+            out.append(MelodyFinding(
+                kind="declared-but-unmatched", severity="info", section=sec.name,
+                track=layer_name,
+                detail=(
+                    f"you declared a MelodicProfile for {layer_name!r} but this "
+                    f"section has no such line — a typo in the layer name, or a "
+                    f"profile left over from a different section?"
+                ),
+            ))
     return out
 
 
 def _analyze_section(sec: SectionMelody) -> SectionMelodyResult:
     names = _layer_names(sec)
-    lines = tuple(_line(t, sec.layers[t], sec) for t in names)
+    profiles = sec.profiles or {}
+    lines = tuple(_line(t, sec.layers[t], sec, profiles.get(t)) for t in names)
     findings: list[MelodyFinding] = []
     for line in lines:
-        findings.extend(_findings_for(line, sec.name))
+        findings.extend(_findings_for(line, sec.name, profiles.get(line.track_name)))
+    findings.extend(_declared_but_unmatched(sec))
     return SectionMelodyResult(section=sec.name, lines=lines, findings=tuple(findings))
 
 
@@ -407,6 +506,7 @@ def analyze_melody(
     sections: Sequence[SectionMelody],
     *,
     song_slug: str,
+    profiles: Mapping[str, MelodicProfile] | None = None,
 ) -> MelodyReport:
     """Analyze a song's authored melodic lines, section by section, line by line.
 
@@ -414,14 +514,41 @@ def analyze_melody(
     counterpart to the harmony conformance lint + performance feel lens. The
     headline is per-line ``classification`` (``active`` / ``static`` /
     ``insufficient-data`` — the genre-safe read) + the contour / interval /
-    harmony-fit facts that feed the (deferred, profile-relative) shaped-vs-aimless
-    judgment. Render-free and DB-decoupled: feed it
+    harmony-fit facts. Render-free and DB-decoupled: feed it
     ``arrangement.Arrangement.section_melody_inputs()`` at build time, or synthetic
     ``SectionMelody`` inputs in a test.
+
+    ``profiles`` (phase 2b) is a song-wide ``{layer_name: MelodicProfile}`` default
+    applied to every section that does not carry its own ``SectionMelody.profiles``
+    (the per-section map wins). ``None`` (the default) is the byte-for-byte-unchanged
+    2a no-profile path. The lens then emits profile-relative coaching questions
+    (still ``info``, still questions) on top of the unconditional neutral facts.
     """
+    if profiles:
+        sections = [
+            s if s.profiles is not None else _with_profiles(s, profiles)
+            for s in sections
+        ]
     secs = tuple(_analyze_section(s) for s in sections)
     rollup = tuple(f for s in secs for f in s.findings)
     return MelodyReport(song_slug=song_slug, sections=secs, findings=rollup)
+
+
+def _with_profiles(
+    sec: SectionMelody, profiles: Mapping[str, MelodicProfile]
+) -> SectionMelody:
+    """A copy of ``sec`` carrying the song-wide ``profiles`` default. Kept explicit
+    (not ``dataclasses.replace``) so a future ``SectionMelody`` field can't silently
+    drop here."""
+    return SectionMelody(
+        name=sec.name,
+        length_beats=sec.length_beats,
+        layers=sec.layers,
+        progression=sec.progression,
+        melody_layers=sec.melody_layers,
+        beats_per_bar=sec.beats_per_bar,
+        profiles=profiles,
+    )
 
 
 def analyze_arrangement(
@@ -430,6 +557,7 @@ def analyze_arrangement(
     song_slug: str,
     melody_layers: Sequence[str] | None = None,
     start_bar: int = 1,
+    profiles: Mapping[str, MelodicProfile] | None = None,
 ) -> MelodyReport:
     """Run the melody lens over an in-memory ``Arrangement`` — the build-time entry
     point a song's ``melody_report()`` calls (and ``tools/melody_lens.py`` surfaces
@@ -444,8 +572,15 @@ def analyze_arrangement(
 
     ``melody_layers`` names the monophonic lines to read (lead / vocal / riff);
     exclude drums and chordal pads. ``None`` reads every layer.
+
+    ``profiles`` (phase 2b) is the song's declared ``{layer_name: MelodicProfile}``
+    map (Decision-Record 1: profiles live in build.py, not on the arrangement). It
+    is threaded onto every section's ``SectionMelody.profiles`` so the lens grades
+    each line against its declared intent. ``None`` = the unchanged 2a path.
     """
     return analyze_melody(
-        arr.section_melody_inputs(melody_layers=melody_layers, start_bar=start_bar),
+        arr.section_melody_inputs(
+            melody_layers=melody_layers, start_bar=start_bar, profiles=profiles
+        ),
         song_slug=song_slug,
     )

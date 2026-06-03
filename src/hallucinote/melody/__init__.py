@@ -7,9 +7,15 @@ measures the genre-general substrate facts (contour, intervallic proximity,
 range/alphabet, harmonic fit) and classifies a line ``active`` / ``static`` /
 ``insufficient-data`` (the genre-safe read), framed as coaching questions, never a
 universal verdict — because there is no universal "good melody" function
-(melody-model.md §1). The shaped-vs-aimless verdict (profile-relative), the
-declared melodic-profile authoring surface + learn-back, and the motivic-economy
-reading are friction-driven follow-ons.
+(melody-model.md §1).
+
+Phase 2b adds the AUTHORING side (``profile``): a declared :class:`MelodicProfile`
+mirroring the proven ``performance.realization.PerformanceProfile`` — read-only
+declared intent the lens grades AGAINST (it has NO ``apply_*``; pitch is the
+musical idea). Given a profile, the lens emits profile-relative coaching QUESTIONS
+on top of the unchanged neutral facts. The within-line motivic-economy reading and
+the profile-relative shaped-vs-aimless reading land alongside it (melody-model §4,
+§7).
 
 See ``.prawduct/artifacts/melody-model.md``.
 """
@@ -41,6 +47,11 @@ from hallucinote.melody.lens import (
     analyze_arrangement,
     analyze_melody,
 )
+from hallucinote.melody.profile import (
+    Appetite,
+    ContourIntent,
+    MelodicProfile,
+)
 
 __all__ = [
     # lens (read side)
@@ -52,6 +63,10 @@ __all__ = [
     "Classification",
     "analyze_melody",
     "analyze_arrangement",
+    # profile (authoring side, phase 2b)
+    "MelodicProfile",
+    "Appetite",
+    "ContourIntent",
     # intervals
     "melodic_intervals",
     "step_leap_unison_counts",

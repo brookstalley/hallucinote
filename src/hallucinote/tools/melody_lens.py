@@ -97,9 +97,13 @@ def render(report: Any, *, section_filter: str | None = None) -> str:
                 if ln.apex_pitch is not None and ln.apex_position is not None
                 else "—"
             )
+            profile_tag = (
+                f" · profile {ln.profile_name!r}" if ln.profile_name else ""
+            )
             lines.append(
                 f"  {ln.track_name} — {ln.classification} "
                 f"(confidence {ln.confidence:.0%}, {ln.onset_count} notes)"
+                f"{profile_tag}"
             )
             lines.append(
                 f"    contour: {ln.contour_shape} · apex {apex} · "

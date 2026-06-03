@@ -27,6 +27,11 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[TST-7H2M]** Systematic `deadline=None` audit of hypothesis property tests — parallel-xdist flake CLASS
+  `effort: S · impact: M · area: tests · source: builder · added: 2026-06-03 · status: open`
+
+  A CLASS of intermittent failures surfaces only under `pytest -n auto --dist loadgroup`: hypothesis `@given` property tests whose per-example body does real work (SQLite I/O, DFA/correlation math) occasionally blow hypothesis's default 200ms per-example deadline under CPU contention — never serially. Two confirmed instances: `tests/unit/sync/test_mix.py::test_set_send_intended_rt60_validator_contract` (fixed in-PR on `fix/syn-4p2d-scenes-provisioning` / PR #136 via `@settings(deadline=None)`) and `tests/unit/performance/test_correlation.py::test_dfa_when_present_is_a_finite_number` (observed flaking during MEL-1A7K, untouched code). Both pass deterministically serial. The contract holds under the canonical SERIAL invocation; the flakes are parallel-only. **Do the systematic pass:** grep all `@given` tests; for any whose body does non-trivial I/O or compute, add `@settings(deadline=None)` (the deadline measures machine load, not the property — assertions unchanged, never weakened). **Verifiable signal:** the full `-n auto --dist loadgroup` suite passes deterministically across N consecutive runs; a grep shows every I/O/compute-bound `@given` carries `deadline=None`. **Sized:** small. (discovered SYN-4P2D + MEL-1A7K verification, 2026-06-03)
+
 - **[DOC-3P7K]** Post-split accuracy pass on the deep reference docs
   `effort: S · impact: S · area: docs · source: dogfood · added: 2026-06-03 · status: open · related: project-root-contract`
 

@@ -27,6 +27,11 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[WSP-1K4D]** Route the render captures dir through the project-root contract (`server.py` `songs/` literal)
+  `effort: S · impact: S · area: mcp-render · source: critic · added: 2026-06-03 · status: open · related: project-root-contract`
+
+  The project-root contract (`hallucinote.workspace`, shipped on `feature/project-root-contract`) routes DB-path resolution through `resolve_song_dir` so a song can live in its own repo. One `songs/` literal remains outside the contract: `hallucinote_mcp/src/hallucinote_mcp/.../server.py:244` defaults a render `output_dir` to `Path("songs")/<slug>/"captures"/<ts>`. Correct in the monorepo; wrong for a standalone song repo (captures would land under a non-existent `songs/<slug>/`). It's a render-output concern in the stdlib-only MCP server (not DB resolution), so it was deliberately left out of the DB-resolution PR. When the standalone-song path lands, route this through the contract so captures travel with the resolved song dir. **Verifiable signal:** `grep -n 'Path("songs")' hallucinote_mcp/src/hallucinote_mcp` returns nothing, or the render `output_dir` default resolves via `resolve_song_dir(<slug>)`. (cumulative Critic on `feature/project-root-contract`, 2026-06-03)
+
 - **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
   `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M`
 

@@ -482,7 +482,12 @@ def analyze_handler(
     report_path = analysis_dir / f"{_utc_timestamp()}.json"
     report_dict = report.to_json_dict()
     report_path.write_text(
-        json.dumps(report_dict, indent=2),
+        # allow_nan=False is a structural backstop (ARR-7M3D B1): the report's
+        # value objects guarantee None-or-finite by construction (the energy lens
+        # records None for an undefined Spearman ρ, never nan), so any stray nan
+        # from a future regression fails loud here instead of writing invalid
+        # JSON that strict consumers (JSON.parse, the eval judge) would reject.
+        json.dumps(report_dict, indent=2, allow_nan=False),
         encoding="utf-8",
     )
 

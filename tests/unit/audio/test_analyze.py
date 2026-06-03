@@ -12,11 +12,13 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from hallucinote.audio import (
     DeclaredEnvelope,
     DeclaredReverbSend,
+    SectionEnergy,
     SectionWindow,
     TempoSegment,
     analyze_mix,
@@ -489,6 +491,63 @@ def test_analyze_mix_populates_per_section_loudness(tmp_path: Path):
     # No section skip when sections were actually declared and covered.
     assert not any(
         s.get("kind") == "section_windowed" for s in report.skipped_analyses
+    )
+
+
+def test_analyze_mix_populates_energy_realization(tmp_path: Path):
+    """With declared_energy, analyze_mix populates MixReport.energy_realization:
+    a quiet-verse / loud-chorus render with declared verse<chorus energy reads a
+    monotonic loudness ρ (the arc tracked intent) — joined by start_beat."""
+    duration_s = 4.0
+    quiet = calibrated_pink_noise(-30.0, duration_s / 2)
+    loud = calibrated_pink_noise(-14.0, duration_s / 2)
+    stem = np.concatenate([quiet, loud], axis=0)
+    master = stem.copy()
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Synth", stem)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+    declared_energy = [
+        SectionEnergy(start_beat=0.0, name="verse", energy=0.4),
+        SectionEnergy(start_beat=8.0, name="chorus", energy=0.9),
+    ]
+    report = analyze_mix(
+        captures_dir, sections=sections, declared_energy=declared_energy,
+    )
+
+    er = report.energy_realization
+    assert er is not None
+    # Declared verse<chorus, measured verse quieter than chorus → ρ == 1.0
+    # (monotonic, within float tolerance — Spearman over n=2 lands at
+    # 0.9999999999999999) and zero loudness inversions; joined by start_beat.
+    assert er.correlate_rho["loudness"] == pytest.approx(1.0)
+    assert [i for i in er.inversions if i.correlate == "loudness"] == []
+    assert {s.start_beat for s in er.sections_ranked} == {0.0, 8.0}
+    # Serializes under the strict-JSON backstop (None-or-finite, never nan).
+    json.dumps(report.to_json_dict(), allow_nan=False)
+
+
+def test_analyze_mix_skips_energy_realization_when_none_declared(tmp_path: Path):
+    """No declared_energy → energy_realization is None + a structured
+    skipped_analyses entry (never a fabricated ρ)."""
+    duration_s = 2.0
+    stem = calibrated_pink_noise(-20.0, duration_s)
+    captures_dir = _write_synthetic_capture(
+        tmp_path, stems=[("track:1", "01 Synth", stem)], master_audio=stem,
+        start_at_beat=0.0, stop_at_beat=8.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=8.0)]
+    report = analyze_mix(captures_dir, sections=sections)
+    assert report.energy_realization is None
+    assert any(
+        s.get("kind") == "energy_realization" for s in report.skipped_analyses
     )
 
 

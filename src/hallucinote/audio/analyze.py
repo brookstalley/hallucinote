@@ -42,8 +42,10 @@ from .cross_rhythm import (
 )
 from .automation import DeclaredEnvelope, verify_envelope_realization
 from .density import section_onset_density
+from .energy import LOUDNESS, ONSET_DENSITY, realize_energy
 from .masking import analyze_masking_window
 from .report import (
+    EnergyRealization,
     EnvelopeVerification,
     Finding,
     MasterOvershoot,
@@ -53,6 +55,7 @@ from .report import (
     Phasing,
     Polymeter,
     ReverbVerification,
+    SectionEnergy,
     SectionMetrics,
     StemMetrics,
 )
@@ -124,6 +127,7 @@ def analyze_mix(
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     declared_envelopes: Sequence[DeclaredEnvelope] = (),
     sections: Sequence[SectionWindow] = (),
+    declared_energy: Sequence[SectionEnergy] = (),
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
     analyze_timing: bool = False,
@@ -221,6 +225,9 @@ def analyze_mix(
     )
     skipped.extend(section_skips)
 
+    energy_realization, energy_skips = _realize_energy(declared_energy, per_section)
+    skipped.extend(energy_skips)
+
     findings = _derive_findings(
         master=master_metrics,
         stems=stem_metrics,
@@ -244,6 +251,7 @@ def analyze_mix(
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
+        energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
     )
 
@@ -579,6 +587,52 @@ def _measure_sections(
         ))
 
     return per_section, skipped
+
+
+def _realize_energy(
+    declared_energy: Sequence[SectionEnergy],
+    per_section: Sequence[SectionMetrics],
+) -> tuple["EnergyRealization | None", list[dict]]:
+    """Build the energy-realization read from the declared curve + measured
+    per-section correlates (ARR-7M3D).
+
+    The measured correlates are lifted from ``per_section``, keyed by
+    ``start_beat`` (the lens join key — NOT name): LUFS-S median loudness and
+    onset density. The lens itself (``energy.realize_energy``) is pure and
+    DB-agnostic; this orchestrator only assembles its inputs and turns the
+    "no energy declared / too few sections" case into a structured
+    ``skipped_analyses`` entry — never a fabricated ρ.
+    """
+    declared = list(declared_energy)
+    if not declared:
+        return None, [{
+            "kind": "energy_realization",
+            "reason": (
+                "no per-section energy declared — author energy via "
+                "Arrangement.section(energy=) (or create_section(energy=)) so "
+                "the lens can rank declared intensity intent against the "
+                "rendered per-section intensity (LUFS-S + onset density)"
+            ),
+        }]
+
+    loudness_by_beat: dict[float, "float | None"] = {}
+    density_by_beat: dict[float, "float | None"] = {}
+    for sm in per_section:
+        loudness_by_beat[sm.start_beat] = sm.master.loudness.lufs_s_median
+        density_by_beat[sm.start_beat] = sm.onset_density
+
+    measured = {LOUDNESS: loudness_by_beat, ONSET_DENSITY: density_by_beat}
+    realization = realize_energy(declared, measured)
+    if realization is None:
+        return None, [{
+            "kind": "energy_realization",
+            "reason": (
+                f"only {len(declared)} energy-declared section(s) — Spearman "
+                f"rank-correlation needs at least 2 to rank declared intensity "
+                f"against measured intensity"
+            ),
+        }]
+    return realization, []
 
 
 def _window_grid_geometry(

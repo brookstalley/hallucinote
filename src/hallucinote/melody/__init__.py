@@ -44,6 +44,7 @@ from hallucinote.melody.lens import (
     MelodyReport,
     SectionMelody,
     SectionMelodyResult,
+    ShapedReading,
     analyze_arrangement,
     analyze_melody,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "MelodyReport",
     "SectionMelody",
     "Classification",
+    "ShapedReading",
     "analyze_melody",
     "analyze_arrangement",
     # profile (authoring side, phase 2b)

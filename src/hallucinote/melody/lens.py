@@ -145,6 +145,15 @@ _STEP_FRACTION_HIGH_MIN = 0.7  # PENDING by-ear calibration
 # the climax-moved question fires. PENDING by-ear calibration.
 _APEX_POSITION_TOLERANCE = 0.2  # PENDING by-ear calibration
 
+# The within-line repetition edges (the Chunk 4 economy reading grades against
+# repetition_appetite, and shaped_reading uses _REPETITION_HIGH_MIN as the "is this
+# a repeating hook?" floor). repetition-coverage at/above _REPETITION_HIGH_MIN reads
+# "high" (a cell-driven hook); at/below _REPETITION_LOW_MAX reads "low" (through-
+# composed); between is "moderate". PENDING by-ear calibration — Chunk 4 surfaces
+# the measured numbers; the user's ear sets the values.
+_REPETITION_LOW_MAX = 0.25  # PENDING by-ear calibration
+_REPETITION_HIGH_MIN = 0.5  # PENDING by-ear calibration
+
 _DEFAULT_BEATS_PER_BAR = 4.0
 
 
@@ -351,6 +360,72 @@ def _classify(ambitus_semitones: int, onset_count: int) -> Classification:
     return "active"
 
 
+def _shaped_reading(
+    profile: MelodicProfile | None,
+    *,
+    contour_shape: ContourShape,
+    onset_count: int,
+    repetition_number: float | None = None,
+) -> ShapedReading:
+    """The profile-RELATIVE shaped-vs-aimless reading (design §4) — the recorded
+    universal-verdict correction made permanent.
+
+    The metaperformer pattern (model §1): the universal is a prior, the PROFILE is
+    the truth. A line is graded against its OWN declared aim, never a universal
+    ideal — so a third-based reggae hook, a chromatic bebop head, and a folk tune
+    each read against their declared idiom, and ``aimless`` can fire ONLY against a
+    profile that declared a DEFINITE intent the line contradicts.
+
+      * ``ungraded`` — no profile, too few notes, or the profile declares neither a
+        definite ``contour_intent`` (``free`` is not definite) nor a
+        ``repetition_appetite``. The genre-safe default: the universal verdict stays
+        forbidden (the 2a behavior preserved). **``aimless`` can NEVER fire here** —
+        exactly why the reggae-hook bug cannot recur.
+      * ``aimless`` — a DEFINITE declared intent is contradicted: a definite contour
+        was declared but the line has NO net shape (measures ``level``), and/or high
+        repetition was declared but the line does not repeat its cell. The line
+        wanders relative to *its own* stated aim. NOTE this is NOT "a different
+        definite shape than declared" (that is the contour-mismatch re-shape
+        QUESTION) — only "you wanted shape and there is none."
+      * ``shaped`` — a definite intent was declared and the line is consistent with
+        it (it has a net shape when one was intended; it repeats a cell when high
+        repetition was intended). "Shaped" means "doing what it set out to do," NOT
+        "good."
+
+    Chunk 3 grades on ``contour_intent`` alone (``repetition_number`` is
+    ``None``-tolerant); Chunk 4 supplies the real repetition number and folds in the
+    ``repetition_appetite`` direction.
+    """
+    if profile is None or onset_count < _STATIC_FINDING_MIN_NOTES:
+        return "ungraded"
+
+    definite_contour = (
+        profile.contour_intent is not None and profile.contour_intent != "free"
+    )
+    declares_repetition = profile.repetition_appetite is not None
+    if not definite_contour and not declares_repetition:
+        return "ungraded"
+    if contour_shape == "insufficient-data":
+        return "ungraded"
+
+    # A definite contour intent contradicted by NO net shape (the line wanders
+    # relative to its own aim) -> aimless. A different definite shape is a re-shape
+    # QUESTION, not aimlessness, so only a measured "level" counts as contradicted.
+    if definite_contour and contour_shape == "level":
+        return "aimless"
+
+    # High repetition declared but the line does not repeat its cell -> aimless
+    # (Chunk 4 supplies the real number; until then this branch is dormant).
+    if (
+        profile.repetition_appetite == "high"
+        and repetition_number is not None
+        and repetition_number < _REPETITION_HIGH_MIN
+    ):
+        return "aimless"
+
+    return "shaped"
+
+
 def _line(
     track: str,
     notes: Sequence[NoteDict],
@@ -382,6 +457,11 @@ def _line(
             seq, sec.progression, beats_per_bar=sec.beats_per_bar
         )
 
+    shape = contour_shape(pitches)
+    shaped = _shaped_reading(
+        profile, contour_shape=shape, onset_count=onset_count
+    )
+
     return MelodicLine(
         track_name=track,
         note_count=note_count,
@@ -393,7 +473,7 @@ def _line(
         leap_fraction=leap_frac,
         unison_count=unisons,
         post_skip_reversal=reversal,
-        contour_shape=contour_shape(pitches),
+        contour_shape=shape,
         apex_pitch=apex_pitch,
         apex_position=apex_pos,
         direction_changes=direction_changes(intervals),
@@ -402,6 +482,7 @@ def _line(
         classification=_classify(amb, onset_count),
         confidence=_confidence(onset_count),
         profile_name=profile.name if profile is not None else None,
+        shaped_reading=shaped,
     )
 
 
@@ -469,8 +550,9 @@ def _profile_findings(
     coaching QUESTION ("you declared X; the line measures Y — intended?"), never a
     verdict. Fired only when the declared field has a measured counterpart, the
     measure DIVERGES, and there are enough notes to trust it (the
-    ``_STATIC_FINDING_MIN_NOTES`` gate). Chunk 1 grades ``harmonic_freedom``; the
-    remaining fields land in Chunk 2 over values the lens already computes."""
+    ``_STATIC_FINDING_MIN_NOTES`` gate). Grades ``harmonic_freedom`` / contour /
+    apex / ambitus / ``step_appetite`` divergences + the profile-relative
+    shaped-vs-aimless QUESTION (the recorded universal-verdict correction)."""
     if profile is None:
         return []
     out: list[MelodyFinding] = []
@@ -504,11 +586,15 @@ def _profile_findings(
     # contour_intent vs the measured contour_shape (string-equal by construction —
     # ContourIntent's members ARE ContourShape's, minus insufficient-data, plus free,
     # W2). "free" intent and an "insufficient-data" measured shape both suppress it:
-    # no shape was declared to diverge from / too few notes to read a shape.
+    # no shape was declared to diverge from / too few notes to read a shape. The
+    # ``level`` case is handled by the aimless finding below (a no-net-shape line
+    # against a declared shape is the "you wanted shape, there is none" question, not
+    # a "different definite shape" re-shape question), so it is excluded here to
+    # avoid double-reporting the same fact.
     if (
         profile.contour_intent is not None
         and profile.contour_intent != "free"
-        and line.contour_shape != "insufficient-data"
+        and line.contour_shape not in ("insufficient-data", "level")
         and line.contour_shape != profile.contour_intent
         and enough
     ):
@@ -519,6 +605,24 @@ def _profile_findings(
                 f"{line.track_name}: you declared a {profile.contour_intent} contour, "
                 f"but the line reads {line.contour_shape} — intended re-shape, or did "
                 f"the climax move?"
+            ),
+        ))
+
+    # The profile-relative shaped-vs-aimless QUESTION (design §4 done-when #3): when
+    # the line reads ``aimless`` (a DEFINITE declared intent the line contradicts —
+    # never a universal verdict), ask the coaching question. Still severity=info, a
+    # question, NEVER "this melody is bad / wandering". ``shaped`` / ``ungraded`` emit
+    # nothing (the line is doing what it set out to, or there is no aim to grade).
+    if line.shaped_reading == "aimless" and enough:
+        out.append(MelodyFinding(
+            kind="aimless-line", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared a shaped line "
+                f"(contour_intent={profile.contour_intent!r}, "
+                f"repetition_appetite={profile.repetition_appetite!r}), but it reads "
+                f"{line.contour_shape} with no net shape — intended, or has the line "
+                f"wandered off the shape it set out to make?"
             ),
         ))
 

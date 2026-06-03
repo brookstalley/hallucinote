@@ -439,6 +439,10 @@ artifact_manifest:
       file_path: .prawduct/artifacts/generator-altitude-policy.md
       version: 1   # GEN-1S4K — helpers are rulers not stamps; no section-archetype builders in the package
       depends_on: [arrangement-model]
+    - name: review-workflow-model
+      file_path: .prawduct/artifacts/review-workflow-model.md
+      version: 1   # REV-2W8K — one review axis per turn; 5 per-song archetypes; wired into /compose-review + /mix-review
+      depends_on: [arrangement-model]
     - name: vision
       file_path: docs/VISION.md
       version: 1

@@ -95,15 +95,23 @@ path.** The split is viable.
    are byte-identical. Proven from a foreign cwd via `CLAUDE_PROJECT_DIR` (no Ableton needed).
 3. **The two `compat.py` sites** (`_resolve_db` legacy fallback; `_cmd_write_requirements`
    output path) now route through `resolve_db_path(slug, branch=None)` / `resolve_song_dir`.
-4. **Engine `[live]` extra** — `pip install hallucinote[live]` declares the lazy
+4. **`push_cli` + `pull_cli` resolution.** Both engine CLIs now resolve the song dir via the
+   contract. `pull_cli._resolve_db_path` was pre-W12-A — it hardcoded
+   `Path("songs")/<slug>/<slug>.db` with no per-branch naming and no contract, so
+   `pull_cli --song <slug>` mislocated a song in its own repo; it now mirrors `push_cli` +
+   `build.py` (per-branch via `resolve_db_path`, legacy `<slug>.db` fallback in the same
+   resolved dir) so push and pull agree on the same DB. `push_cli`'s legacy fallback was
+   rerouted off its `Path("songs")` literal too. (Surfaced by the PR reviewer.)
+5. **Engine `[live]` extra** — `pip install hallucinote[live]` declares the lazy
    engine→`hallucinote-mcp` push coupling for a standalone song repo.
 
 ## Still deferred
 
-- **Path-coupled skills** assume cwd = monorepo: `tools/…` invocations + `songs/<slug>/…`
-  paths in compose-part, ableton-push/pull, song-new, song-context, decisions,
-  compose-review, song-snapshot, clip-humanize. They work in the monorepo today; they need
-  workspace-relative wiring before songs move out. (The resolver they'd build on now exists.)
+- **Path-coupled *skills*** (the `SKILL.md` files, distinct from the engine CLIs above)
+  assume cwd = monorepo: `tools/…` invocations + literal `songs/<slug>/…` paths in
+  compose-part, ableton-push/pull, song-new, song-context, decisions, compose-review,
+  song-snapshot, clip-humanize. The engine CLIs they shell out to are now contract-aware;
+  the skill markdown still needs workspace-relative wiring before songs move out.
 - **`song` (flat) layout end-to-end** — the resolver already supports `layout = "song"`
   (DB at the repo root), but `build.py` still hardcodes `root=Path(__file__).parent.parent`,
   so a flat repo's `build.py` would mislocate its DB. `monorepo`-with-one-song works today

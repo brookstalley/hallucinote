@@ -203,6 +203,14 @@ python -c "from hallucinote_mcp.install_paths import installed_analyzer_amxd; pr
 
 ## Step 4 — Write the MCP server config
 
+**Skip this step entirely if Hallucinote is installed as a plugin.** The
+`hallucinote` plugin already declares the `hallucinote-mcp` server (its
+`.mcp.json`), so writing a project-local entry here would create a *duplicate*
+server definition. Check first: if `/mcp` already lists `hallucinote-mcp` (or
+`/plugin` shows the `hallucinote` plugin enabled), the MCP side is done — go
+straight to Step 5. This step is only for a manual / contributor setup that is
+**not** using the plugin.
+
 Ask: project-local `.mcp.json` (default, in cwd) or global `~/.claude.json`?
 
 Entry to merge into `mcpServers`:

@@ -17,7 +17,7 @@ Refuses on:
 Returns 0 on success; non-zero exit code + stderr message on refusal.
 Successful scaffold prints the new directory + next-step hint to stdout.
 
-Designed to be invoked from `.claude/skills/song-new/SKILL.md` after the
+Designed to be invoked from `skills/song-new/SKILL.md` after the
 skill has prompted the user for slug/title/tempo/signature/sections.
 """
 from __future__ import annotations

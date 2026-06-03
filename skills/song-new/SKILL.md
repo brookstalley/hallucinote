@@ -4,7 +4,8 @@ description: Scaffold a new Hallucinote song from templates. Creates songs/<slug
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.tools.scaffold_song *), Bash(python3 songs/* --reset), Bash(pytest songs/*)
-argument-hint: <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
+argument-hint: >-
+  <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
 ---
 
 # /song-new

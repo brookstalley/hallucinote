@@ -29,7 +29,7 @@ from hallucinote_mcp.install_paths import (
 
 SKILL_PATH = (
     pathlib.Path(__file__).resolve().parents[3]
-    / ".claude" / "skills"
+    / "skills"
     / "ableton-mcp-install" / "SKILL.md"
 )
 
@@ -327,7 +327,7 @@ def test_structural_skill_has_analyzer_autoload_postlude(skill_name):
     re-runs the sweep."""
     path = (
         pathlib.Path(__file__).resolve().parents[3]
-        / ".claude" / "skills" / skill_name / "SKILL.md"
+        / "skills" / skill_name / "SKILL.md"
     )
     assert path.exists(), f"missing SKILL.md at {path}"
     text = path.read_text(encoding="utf-8")

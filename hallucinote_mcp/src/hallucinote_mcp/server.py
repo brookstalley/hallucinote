@@ -101,7 +101,7 @@ Resources (read via resources/read, no turn cost):
   ableton://reference/{scales,device-params}     static lookups
   ableton://guides/{getting-started,conventions,error-recovery,gaps}
 
-Multi-step workflows live as Claude Code skills (.claude/skills/) — not
+Multi-step workflows live as Claude Code skills (skills/) — not
 MCP prompts — so the agent can invoke them directly. Reach for:
   /song-new, /song-pick-instruments, /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /compose-part.

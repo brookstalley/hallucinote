@@ -25,6 +25,30 @@ Known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#know
 
 ## Install
 
+Hallucinote has two halves: the **plugin** (the `/hallucinote:*` skills + the
+`hallucinote-mcp` server, installed into Claude Code) and the **engine** (the
+`hallucinote` Python package that `build.py` composes against). Your **songs**
+live in their own git repo (a workspace with a `hallucinote.toml` marker), not
+in this repo — see [`docs/VISION.md`](docs/VISION.md) ("a song is a git repo").
+
+**To make music** (most people): install the plugin + the engine, then write in
+your own songs repo.
+
+```bash
+# 1. the plugin (skills + MCP server) — in Claude Code:
+#    /plugin marketplace add brookstalley/hallucinote
+#    /plugin install hallucinote@hallucinote
+# 2. the engine (so build.py can run):
+pip install hallucinote          # add [live] to push to Ableton: hallucinote[live]
+```
+
+Then `/ableton-mcp-install` once (installs the Ableton Remote Script — the one
+thing the plugin can't do for you), and `/hallucinote:song-new` in your songs repo.
+
+**To work on Hallucinote itself** (contributors): clone and editable-install
+below. Skills load from your checkout with `claude --plugin-dir .` (they live in
+`skills/`, invoked `/hallucinote:song-new`).
+
 ### 1. Clone and install 
 
 **macOS / Linux:**

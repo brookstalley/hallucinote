@@ -1,6 +1,6 @@
 """Sanity checks on the two install/uninstall skills.
 
-The skills live at the Hallucinote repo's ``.claude/skills/`` (the de facto
+The skills live at the Hallucinote repo's ``skills/`` (the de facto
 slash-command home). These tests verify the structural contract Claude Code
 expects (a name, a description, and a body that follows). If the frontmatter
 shape changes, this catches it at test time rather than at first
@@ -14,9 +14,9 @@ import re
 import pytest
 
 
-# The repo's .claude/skills/ — three parents up from this test file:
+# The repo's skills/ — three parents up from this test file:
 # tests/integration/test_skills_well_formed.py → tests/ → hallucinote_mcp/ → <repo>
-SKILLS_DIR = pathlib.Path(__file__).resolve().parents[3] / ".claude" / "skills"
+SKILLS_DIR = pathlib.Path(__file__).resolve().parents[3] / "skills"
 
 EXPECTED_SKILLS = ("ableton-mcp-install", "ableton-mcp-uninstall")
 

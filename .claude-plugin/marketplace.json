@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hallucinote",
+  "description": "Compose, arrange, sound-design, and mix songs with Claude. DB-backed MIDI authoring with live Ableton Live sync via MCP and intent-aware audio analysis.",
+  "owner": {
+    "name": "Brooks Talley",
+    "email": "brooks@tangentry.com"
+  },
+  "plugins": [
+    {
+      "name": "hallucinote",
+      "source": "./",
+      "displayName": "Hallucinote — Music Authoring",
+      "description": "Composition + production skills (/hallucinote:song-new, compose-part, mix-review, ableton-push, …) plus the hallucinote-mcp server (12 Ableton Live tools). Requires the `hallucinote` Python engine installed (see the repo README).",
+      "keywords": [
+        "music",
+        "composition",
+        "ableton",
+        "midi",
+        "audio",
+        "mcp",
+        "generative"
+      ]
+    }
+  ]
+}

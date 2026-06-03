@@ -107,7 +107,7 @@ Once the must-haves are settled (or confidently inferred + confirmed):
 1. **Scaffold** with `/song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
 2. **Pick instruments** via `/song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via `preset_query` (composer-time, portable) or via load-then-recapture.
 3. **Push the scaffold to a fresh Live set** so the device chains materialize.
-4. **Recapture** with `tools/capture_cli.py` so device URIs / params land in `captured_session.json`.
+4. **Recapture** with `python -m hallucinote.tools.capture_cli` so device URIs / params land in `captured_session.json`.
 5. **Compose** — open `build.py`'s `=== Compose-half ===` and author clips/notes/arrangement against the now-realistic snapshot.
 
 The decisions you recorded here are durable — re-opening this song in a future session, the agent reads `decisions/` and picks up where you left off without re-eliciting.
@@ -116,6 +116,6 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `.claude/skills/song-new/SKILL.md`. Sibling workflow skills under `.claude/skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
-- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `.claude/skills/ableton-push/SKILL.md` for the push flow.
+- Implementation: `skills/song-new/SKILL.md`. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
+- Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `skills/ableton-push/SKILL.md` for the push flow.
 - Decision retrieval: `/song-context` skill (queries `decisions/` + `annotations/`).

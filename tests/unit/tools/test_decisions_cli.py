@@ -12,7 +12,7 @@ import pytest
 
 from hallucinote.db import init_db, mutations as M
 
-from tools.decisions_cli import main as decisions_main
+from hallucinote.tools.decisions_cli import main as decisions_main
 
 
 @pytest.fixture

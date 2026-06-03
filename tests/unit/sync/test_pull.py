@@ -3804,7 +3804,7 @@ def test_skill_allowed_tools_cover_every_planner_emitted_tool(
     conn, song, session
 ):
     """Structural guard: every MCP tool a `_DOMAINS` planner can emit
-    must be listed in `.claude/skills/ableton-pull/SKILL.md`'s
+    must be listed in `skills/ableton-pull/SKILL.md`'s
     `allowed-tools` frontmatter. Without that, the harness blocks the
     probe even though the SKILL prose advertises the domain — same
     class of bug Critic round 1 + round 2 each caught one layer deeper
@@ -3827,7 +3827,7 @@ def test_skill_allowed_tools_cover_every_planner_emitted_tool(
         plan = planner(conn, song_id=song, session_id=session)
         emitted_tools.update(c.tool for c in plan.calls)
 
-    skill_path = Path(__file__).resolve().parents[3] / ".claude" / "skills" \
+    skill_path = Path(__file__).resolve().parents[3] / "skills" \
         / "ableton-pull" / "SKILL.md"
     frontmatter_end = skill_path.read_text().find("\n---\n", 4)
     assert frontmatter_end > 0, "SKILL.md missing closing frontmatter delimiter"
@@ -3865,7 +3865,7 @@ def test_pull_cli_domains_cover_every_public_planner():
     assert not missing, (
         "plan_pull_* functions not reachable via pull_cli._DOMAINS: "
         f"{sorted(p.__name__ for p in missing)}. Register them in "
-        "pull_cli._DOMAINS and update .claude/skills/ableton-pull/SKILL.md."
+        "pull_cli._DOMAINS and update skills/ableton-pull/SKILL.md."
     )
 
 

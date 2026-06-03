@@ -318,6 +318,15 @@ decision (2026-05-30):
   derivative shape and coaches it against arranger craft ("your build is linear;
   the masters accelerate into the chorus"), same shape as the masking analyzer.
 
+The energy curve now also has an **audio-realization lens** (ARR-7M3D):
+`MixReport.energy_realization` reports per-correlate Spearman ρ of declared
+`energy_curve` rank vs measured per-section intensity (LUFS-S + onset density)
+and names rank inversions — parallel to the harmonic-conformance lint and the
+performance lens, closing energy's BOTH-SIDES MEASURE half. The
+spectral-intensity correlate is a flagged deferral (loudness + density first).
+The lens is a ruler: it reports ranked intensity vs intent and never re-authors
+the curve. See `src/hallucinote/audio/energy.py` for the method.
+
 ---
 
 ## Pressure test — where it holds, where it strains

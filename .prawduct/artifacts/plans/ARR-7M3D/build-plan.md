@@ -332,17 +332,23 @@ The doc/skill edits that make the lens the wired read-side surface the item requ
 
 ## Status
 
-- [ ] Chunk 1 — persist declared energy + read-back (thin slice)
-- [ ] Chunk 2 — onset-density-per-section primitive (calibrate first)
-- [ ] Chunk 3 — energy-realization lens (Spearman ρ + inversions, the RULER)
-- [ ] Chunk 4 — wire declared energy through the analysis handler
-- [ ] Chunk 5 — e2e objective render + by-ear threshold calibration
-- [ ] Chunk 6 — wire into /mix-review + canonical deltas
+- [x] Chunk 1 — persist declared energy + read-back (thin slice)
+- [x] Chunk 2 — onset-density-per-section primitive (calibrate first)
+- [x] Chunk 3 — energy-realization lens (Spearman ρ + inversions, the RULER)
+- [x] Chunk 4 — wire declared energy through the analysis handler
+- [x] Chunk 5 — e2e objective render + by-ear threshold calibration (DEFERRED-RENDER)
+- [x] Chunk 6 — wire into /mix-review + canonical deltas
 
-**Context:** Not started. Design + plan complete. Thin slice (chunk 1) is the
-source-of-truth fix — declared energy is currently build-time-only and never
-persisted (the deeper root cause `research.md` did not catch). Everything downstream
-depends on chunk 1's `sections.energy` column.
+**Context:** Chunks 1–4 + 6 built FULLY; chunk 5 built in DEFERRED-RENDER form
+(Live unattended this run — no live render attempted; verify-api proven via the
+handler/report unit path, DR-5 floor set to the conservative surface-everything
+default `_ENERGY_INVERSION_SURFACING_FLOOR=0.0`, and the e2e ρ read + by-ear
+DR-5 tune + density plausibility flagged in `.prawduct/operator-verification.md`).
+Source-of-truth fix landed: `sections.energy` persists the curve that previously
+never reached the DB. Full suite green (2846 passed, 2 skipped; develop baseline
+was 2804 + 42 new tests). Per-chunk commits clean. PENDING: `/critic` (cumulative
++ final), PR, and the attended-run operator verification — all governed by the
+main agent, not run here.
 
 ## Files the plan will touch (production)
 

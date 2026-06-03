@@ -418,11 +418,31 @@ sections only via explicit `/backlog update` calls.
   (migrated from legacy P6) Land per-chunk as appetite allows; not gating any chunk's completion.
 
 - **[ARR-7M3D]** Energy-realization is unmeasured in audio (declared curve vs rendered intensity) — measurement-coverage gap
-  `effort: M · impact: L · area: energy · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K`
+  `effort: M · impact: L · area: energy · source: user · added: 2026-06-01 · status: shipped · branch: feature/arr-7m3d-energy-realization · related: ARR-8P5K, ARR-2S9D`
+
+  **Signal MET (2026-06-03, `feature/arr-7m3d-energy-realization`):** the read-side
+  check exists and is wired in. `sections.energy` is persisted (the source-of-truth
+  fix the curve never reaching the DB); `MixReport.energy_realization`
+  (`src/hallucinote/audio/energy.py::realize_energy`) joins the declared
+  `[SectionEnergy]` to measured per-section intensity BY `start_beat` and reports
+  per-correlate Spearman ρ (loudness + onset density) + rank inversions, with the
+  B1 nan contract (tied/constant → ρ `None`, never nan; `allow_nan=False` write
+  backstop) and the W2 measured-nan symmetry. Wired into `/mix-review` MEASURE +
+  INTERPRET (DR-4) and pointed at from `/compose-review` + `arrangement-model.md`.
+  Ruler-not-stamp lock test present. PENDING attended-run (Live unattended this
+  run, flagged in `.prawduct/operator-verification.md`): the e2e objective ρ read
+  on a real sun-zone-done render + the by-ear DR-5 surfacing-threshold tune
+  (currently the conservative surface-everything default). Spectral correlate
+  deferred → ARR-2S9D below (DR-3, flagged-not-dropped).
 
   **Both-sides gap (ARR-8P5K's own principle: "a dimension authored but unmeasured is half-built").** ENERGY is a first-class authored dimension — `Arrangement.section(..., energy=)` → `arr.energy_curve` (sun-zone-done declares 0.25→1.0 across 9 sections). The READ side is only *symbolic*: `/compose-review` reads whether the authored curve "builds, breathes, peaks" from build.py/arrangement (SKILL.md L61) — it never checks the audio. The MixReport measures per-section loudness (`audio/analyze.py` `_measure_sections` → `SectionMetrics`) but **nothing joins the two**: no tool confirms the declared energy[section] is actually realized as rendered intensity (loudness + spectral density + onset rate). A section authored energy=0.9 that renders quieter/sparser than an energy=0.6 section ships unflagged — the exact "is the chorus actually lifting?" question, gone dark on the audio side. Harmony (ARR-1H9C conformance lint) and performance (perf lens) both got the realization check; energy did not.
 
   **Verifiable signal:** a read-side check exists that takes the arrangement's `energy_curve` + a MixReport and reports per-section declared-vs-measured intensity divergence (rank-correlation of declared energy against measured loudness/density, flagging inversions), wired into `/mix-review`; OR a decision-record states energy-realization stays a by-ear judgment with rationale. Today: no reference to the authored `energy_curve` anywhere in `src/hallucinote/audio/` — the curve never reaches the audio analyzer (the incidental `energy` hits there are all acoustic/spectral energy, a different quantity).
+
+- **[ARR-2S9D]** Energy-realization spectral correlate (the deferred third intensity feature) — DR-3 follow-on
+  `effort: S · impact: S · area: energy · source: discovered-from-friction · added: 2026-06-03 · status: open · related: ARR-7M3D`
+
+  **Flagged deferral from ARR-7M3D (DR-3, NOT a silent drop).** The energy-realization lens ships loudness (LUFS-S median) + onset density as its two intensity correlates. The music-perception literature (ARR-7M3D `research.md` §2/§4 [1][2]) backs a THIRD: spectral density / flux / centroid — a chorus often "opens up" the spectrum at matched loudness, which LUFS alone can't see. Per DISCOVERED-FROM-FRICTION, ship the minimum that closes the headline gap (loudness + density) and add the spectral correlate when friction shows the two miss a real case. The `correlate_rho` dict is open-keyed precisely so a third correlate adds a key (`"spectral"`) without a schema change. **Verifiable signal:** `MixReport.energy_realization.correlate_rho` carries a spectral correlate key computed from a librosa spectral-flux/centroid pass over the windowed master, ranked by the same `realize_energy` Spearman path; OR a decision-record states loudness+density suffice with rationale. **Sized:** small (one new DSP primitive + a measured-correlate map entry; the lens + report shape already accept it). Build when a real song surfaces a matched-loudness spectral lift the lens misses.
 
 - **[ARR-9K4T]** Recurrence/form has no read-side — motif recall & recapitulation are authored but unverifiable — measurement-coverage gap
   `effort: M · impact: L · area: recurrence · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K, MEL-1A7K`

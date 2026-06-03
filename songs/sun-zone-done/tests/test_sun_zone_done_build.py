@@ -180,13 +180,18 @@ def test_build_produces_canonical_shape(build_module, built):
         # Rhythm gtr is monolithic — exactly 1 clip
         assert clip_counts["03 Rhythm Gtr"] == 1
 
-        # Envelopes: 8 = 1 Amp Type (device_parameter) + 5 clip-local atmosphere
-        # pan/send envelopes (intro organ + break lead/steel — MIX-3S7P) + 1 break
-        # drift pan SWEEP + 1 break drift VOLUME dip on the rhythm gtr (decisions/08 v2
-        # + mix-review 2026-06-02). Pinned in detail by test_atmosphere_envelopes_are_
-        # clip_local + test_break_drift_pans_extremely + test_break_drift_pulled_to_ghost.
+        # Envelopes: 14 = 1 Amp Type (device_parameter)
+        #   + 6 clip-local atmosphere pan/send: intro organ send+pan + intro DRUMS send
+        #     (#4 the deepening dawn reverb RAMP) + break lead send + break steel send+pan
+        #     (MIX-3S7P)
+        #   + 4 clip-local OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel —
+        #     #5 dub echo-out)
+        #   + 3 whole-song bookended rhythm-gtr lanes: break drift pan SWEEP + VOLUME dip
+        #     (decisions/08 v2 + mix-review) + the break drift deep-PLATE send (#2)
+        # Pinned in detail by test_atmosphere_envelopes_are_clip_local + the break-drift
+        # tests (incl. test_break_drift_reverb_deep) + test_outro_dub_ending.
         envs = Q.get_envelopes_for_song(conn, song_id)
-        assert len(envs) == 8, [(e["target_kind"], e["parameter_path"]) for e in envs]
+        assert len(envs) == 14, [(e["target_kind"], e["parameter_path"]) for e in envs]
         env = next(e for e in envs if e["target_kind"] == "device_parameter")
         assert env["parameter_path"] == "Amp Type"
         bps = Q.get_breakpoints(conn, env["id"])
@@ -230,52 +235,60 @@ def test_build_produces_canonical_shape(build_module, built):
 
 
 def test_atmosphere_envelopes_are_clip_local(build_module, built):
-    """Per-section pan/reverb 'space' (MIX-3S7P, the user's clip-hosted route): the
-    intro dawn cloud + break suspension get a wetter Plate + a wider image, and the
-    mix snaps back to baseline at verse/chorus AUTOMATICALLY because each envelope's
-    breakpoint range sits ENTIRELY inside the per-section clip that hosts it (the
-    organ's intro clip [0,64); the lead/steel break clips [480,544)). No song-spanning
-    envelope, so the push hosts each on its section clip and nowhere else."""
+    """Per-section 'space' (MIX-3S7P + #4 deepening reverb + #5 dub echo-out): the intro
+    dawn cloud, the break suspension, and the outro echo-out each get clip-local send/pan
+    envelopes that SNAP BACK to baseline at the section boundary AUTOMATICALLY, because
+    each envelope's breakpoint range sits ENTIRELY inside the per-section clip that hosts
+    it — intro [0,64); break [480,544); outro [672,736). The monolithic rhythm gtr's lanes
+    (pan sweep, volume dip, deep-Plate send) are a DIFFERENT mechanism (song-spanning
+    bookended automation) and are pinned by the break-drift tests — excluded here."""
     from hallucinote.db import init_db, queries as Q
     conn = init_db(build_module.DB_PATH)
     try:
         tracks = {t["id"]: t["name"] for t in Q.get_tracks_for_song(conn, built)}
-        plate = next(r["id"] for r in Q.get_returns_for_song(conn, built) if r["name"] == "Plate")
+        rets = {r["id"]: r["name"] for r in Q.get_returns_for_song(conn, built)}
+        plate = next(i for i, n in rets.items() if n == "Plate")
+        dub = next(i for i, n in rets.items() if n == "DubDelay")
         # Collect (kind, track, return) → breakpoint range, for the non-Amp envelopes.
         atmos = {}
         for e in Q.get_envelopes_for_song(conn, built):
             if e["target_kind"] == "device_parameter":
                 continue
-            # The break-drift pan SWEEP and volume DIP on the rhythm gtr are a different
-            # mechanism (song-spanning bookended automation lanes, not clip-local
-            # atmosphere envelopes) — pinned by test_break_drift_pans_extremely +
-            # test_break_drift_pulled_to_ghost, excluded here.
-            if (e["target_kind"] in ("mixer_pan", "mixer_volume")
-                    and tracks[e["target_track_id"]] == "03 Rhythm Gtr"):
+            # The monolithic rhythm gtr is one clip spanning the whole song, so ANY
+            # envelope on it is a song-spanning bookended lane (pan sweep / volume dip /
+            # deep-Plate send), NOT clip-local atmosphere — pinned by test_break_drift_*.
+            if tracks[e["target_track_id"]] == "03 Rhythm Gtr":
                 continue
             bps = Q.get_breakpoints(conn, e["id"])
             rng = (min(b["time_beats"] for b in bps), max(b["time_beats"] for b in bps))
             vals = {round(b["value"], 3) for b in bps}
             atmos[(e["target_kind"], tracks[e["target_track_id"]],
                    e["target_send_return_id"])] = (rng, vals)
-        # Exactly the intended set: organ (intro) send+pan, lead (break) send,
-        # steel (break) send+pan. Every reverb send routes to Plate.
-        assert set(atmos) == {
-            ("send_level", "04 Organ", plate), ("mixer_pan", "04 Organ", None),
-            ("send_level", "05 Lead", plate),
-            ("send_level", "06 Steel", plate), ("mixer_pan", "06 Steel", None),
-        }, set(atmos)
-        # Intro envelopes sit inside the intro clip [0,64); break inside [480,544).
-        for (kind, track, _ret), (rng, vals) in atmos.items():
+        # The intended clip-local set: intro organ send+pan + intro DRUMS send (#4 the
+        # deepening dawn reverb), break lead send + steel send+pan (the suspension floats),
+        # and the OUTRO dub-throw sends into DubDelay (drums/organ/lead/steel — #5).
+        windows = {
+            ("send_level", "04 Organ", plate): (0.0, 64.0),
+            ("mixer_pan", "04 Organ", None): (0.0, 64.0),
+            ("send_level", "01 Drums", plate): (0.0, 64.0),
+            ("send_level", "05 Lead", plate): (480.0, 544.0),
+            ("send_level", "06 Steel", plate): (480.0, 544.0),
+            ("mixer_pan", "06 Steel", None): (480.0, 544.0),
+            ("send_level", "01 Drums", dub): (672.0, 736.0),
+            ("send_level", "04 Organ", dub): (672.0, 736.0),
+            ("send_level", "05 Lead", dub): (672.0, 736.0),
+            ("send_level", "06 Steel", dub): (672.0, 736.0),
+        }
+        assert set(atmos) == set(windows), set(atmos) ^ set(windows)
+        for key, (rng, vals) in atmos.items():
             lo, hi = rng
-            if track == "04 Organ":   # intro
-                assert 0.0 <= lo and hi < 64.0, (kind, track, rng)
-            else:                      # break (lead / steel)
-                assert 480.0 <= lo and hi < 544.0, (kind, track, rng)
-            # Elevated above the static baseline (more space), and held (snap-back is
-            # the clip boundary, not a ramp).
-            if kind == "send_level":
-                assert all(v >= 0.30 for v in vals), (track, vals)  # baseline sends are ≤ 0.25
+            wlo, whi = windows[key]
+            # Sits entirely inside its hosting section clip → snaps back at the boundary.
+            assert wlo <= lo and hi < whi, (key, rng, (wlo, whi))
+            # A reverb/echo send REACHES an elevated wet peak. A ramp (#4) or throw (#5)
+            # STARTS at the dry baseline, so check the MAX, not every breakpoint.
+            if key[0] == "send_level":
+                assert max(vals) >= 0.30, (key, vals)  # baseline sends are ≤ 0.25
     finally:
         conn.close()
 
@@ -338,6 +351,70 @@ def test_break_drift_pulled_to_ghost(build_module, built):
             [(b["time_beats"], b["value"]) for b in dipped]
         # …and returns to normal by the end of the break (the drop into integration is full).
         assert abs(bps[-1]["value"] - normal) < 1e-6 and bps[-1]["time_beats"] >= 544.0
+    finally:
+        conn.close()
+
+
+def test_break_drift_reverb_deep(build_module, built):
+    """#2 (user 2026-06-02): even ghosted, the break's metal-guitar drift read too loud /
+    too foreground, so it's washed DEEP into the long dub Plate — the gtr's Plate send
+    swells up only across the break, dry (its snapshot baseline) everywhere else. A
+    song-spanning bookended lane on the monolithic gtr clip (like the pan/volume lanes).
+    Locks the shape (not the exact depth — render-tuned)."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = {t["name"]: t["id"] for t in Q.get_tracks_for_song(conn, built)}
+        plate = next(r["id"] for r in Q.get_returns_for_song(conn, built) if r["name"] == "Plate")
+        send = next(e for e in Q.get_envelopes_for_song(conn, built)
+                    if e["target_kind"] == "send_level"
+                    and e["target_track_id"] == tracks["03 Rhythm Gtr"]
+                    and e["target_send_return_id"] == plate)
+        bps = sorted(Q.get_breakpoints(conn, send["id"]), key=lambda b: b["time_beats"])
+        dry = bps[0]["value"]
+        # Dry baseline before the break (only the drift gets the deep wash)…
+        assert all(abs(b["value"] - dry) < 1e-6 for b in bps if b["time_beats"] <= 480.0)
+        # …swells WELL above the dry send, every wet breakpoint inside the break window…
+        wet = [b for b in bps if b["value"] > dry + 0.2]
+        assert wet and all(480.0 <= b["time_beats"] <= 544.0 for b in wet), \
+            [(b["time_beats"], b["value"]) for b in wet]
+        # …and returns to dry by the end (the integration drop is not washed).
+        assert abs(bps[-1]["value"] - dry) < 1e-6 and bps[-1]["time_beats"] >= 544.0
+    finally:
+        conn.close()
+
+
+def test_outro_dub_ending(build_module, built):
+    """#5 (user 2026-06-02): the outro was *great* but ended ABRUPTLY. The dub echo-out
+    lands a sustained Em9 'button' over the last 2 bars while the busy bubble groove DROPS
+    OUT, leaving the chord + a final accent to ring/echo away (the DubDelay throw is pinned
+    by test_atmosphere_envelopes_are_clip_local). Locks: a sustained Em9 lands at the
+    last-2-bars boundary, and the bubble groove has stopped before it."""
+    from hallucinote.db import init_db, queries as Q
+    conn = init_db(build_module.DB_PATH)
+    land = 56.0   # clip-local: the 16-bar (64-beat) outro's last 2 bars
+    try:
+        tracks = {t["name"]: t["id"] for t in Q.get_tracks_for_song(conn, built)}
+
+        def _outro_notes(track):
+            clips = [c for c in Q.get_clips_for_track(conn, tracks[track])
+                     if "outro" in c["name"]]
+            assert len(clips) == 1, [c["name"] for c in clips]
+            return Q.get_notes_for_clip(conn, clips[0]["id"])
+
+        organ = _outro_notes("04 Organ")
+        # A sustained Em9 button lands at `land` (held into the wash; pitch classes ⊆ Em9).
+        button = [n for n in organ
+                  if abs(n["start_beats"] - land) < 1e-6 and n["duration_beats"] >= 6.0]
+        assert len(button) >= 3, "a sustained organ chord lands the outro"
+        assert {n["pitch"] % 12 for n in button} <= {4, 7, 11, 2, 6}, "Em9 (E G B D F#)"
+        # The busy bubble groove has STOPPED before the landing (the groove drops out).
+        assert not [n for n in organ
+                    if n["start_beats"] >= land and n["duration_beats"] < 4.0], \
+            "the organ bubble groove drops out for the wash"
+        # A final drum accent lands the groove (then echoes out via the DubDelay throw).
+        assert any(abs(n["start_beats"] - land) < 1e-6 for n in _outro_notes("01 Drums")), \
+            "a final accent lands the outro"
     finally:
         conn.close()
 

@@ -612,17 +612,27 @@ def _dev_collision(kit: Kit, prog: Progression, bars: int) -> dict[str, list[dic
         drums.extend(DG.reggae_one_drop(1, kit=kit, start_beat=bs))
         bass.extend(BG.reggae_offbeat_bass(_bp(b), bars=1, start_beat=bs))
 
-    def metal_bar(b: int, *, crash: bool = False, kv: int = 108, sv: int = 115) -> None:
+    def metal_bar(b: int, *, crash: bool = False, kv: int = 90, sv: int = 96,
+                  hv: int = 46, hab: int = 8, cv: int = 100) -> None:
+        # #6 (user, 2026-06-02): the development metal drums read "too loud, too
+        # repetitive/jarring, just playing ON TOP". Pull the gallop DOWN toward the
+        # reggae one-drop bed (kick95/snare88/hat55) so it weaves IN, not over —
+        # the busy 16th hats especially (hv 70->46) were what sat on top — and the
+        # crashes (the jarring element) are softened (cv 118->100) and THINNED at the
+        # call sites to two structural hits. The gallop identity the user likes stays;
+        # only its weight changes. RENDER-GATED: tune levels + which bars crash by ear.
         bs = b * BEATS_PER_BAR
         drums.extend(DG.metal_gallop(1, kit=kit, start_beat=bs,
                                      crash_bars=(0,) if crash else (),
-                                     kick_velocity=kv, snare_velocity=sv))
+                                     kick_velocity=kv, snare_velocity=sv,
+                                     hat_velocity=hv, hat_accent_boost=hab,
+                                     crash_velocity=cv))
         bass.extend(BG.metal_pedal_16ths(_bp(b), bars=1, start_beat=bs))
 
     # --- Phase 1 (bars 0–8): settled reggae + brief metal pokes ---
     for b in range(0, 8):
         if b in (4, 7):
-            metal_bar(b, crash=(b == 4))
+            metal_bar(b, crash=False, kv=82, sv=90, hv=42)   # the poke is a SHADOW — no crash (too jarring this early)
             lead.extend(V.shift(no_time_head, b * BEATS_PER_BAR))   # the shout pokes through
         else:
             reggae_bar(b)
@@ -633,7 +643,7 @@ def _dev_collision(kit: Kit, prog: Progression, bars: int) -> dict[str, list[dic
     for b in range(8, 16):
         block_metal = ((b - 8) // 2) % 2 == 1
         if block_metal:
-            metal_bar(b, crash=((b - 8) % 2 == 0))
+            metal_bar(b, crash=(b == 10))   # one structural crash at the first trade entry, not every metal block
             if (b - 8) % 2 == 0:                                    # shout on each metal block downbeat
                 lead.extend(V.shift(_no_time_motif(), b * BEATS_PER_BAR))
         else:
@@ -653,9 +663,9 @@ def _dev_collision(kit: Kit, prog: Progression, bars: int) -> dict[str, list[dic
             lead.extend(V.shift(V.fragment(_reggae_lead_chillin(16.0), 0.0, 2.0),
                                 b * BEATS_PER_BAR))                 # chill, fragmenting
         else:
-            metal_bar(b, crash=False, kv=110, sv=118)
+            metal_bar(b, crash=False, kv=96, sv=102, hv=50)   # whiplash rises, still under the chorus engine
             lead.extend(V.shift(no_time_head, b * BEATS_PER_BAR))
-    metal_bar(22, crash=True, kv=114, sv=120)                      # the gallop crescendo
+    metal_bar(22, crash=True, kv=104, sv=110)                      # the gallop crescendo — the one big crash, launches the break drop
     lead.extend(V.shift(_no_time_motif(), 22 * BEATS_PER_BAR))
     bass.extend(BG.metal_pedal_16ths(_bp(23), bars=1, start_beat=23 * BEATS_PER_BAR))
     drums.extend(_dev_fill(kit, 23 * BEATS_PER_BAR))               # the fill → the eureka drop-out
@@ -1014,6 +1024,55 @@ def _outro_lead(bars: int, no_time_motif: list[dict]) -> list[dict]:
     return notes
 
 
+def _outro_dub_ending(layers: dict[str, list[dict]], kit: Kit, *,
+                      section_beats: float) -> dict[str, list[dict]]:
+    """#5 (user, 2026-06-02): the outro was *great* but ENDED ABRUPTLY — every part cut
+    dead at the last bar. The chosen fix is a DUB ECHO-OUT (the user's pick, and the
+    most reggae-faithful 'arrival in the sun zone'): the synthesis groove plays its
+    course, then over the LAST 2 BARS it LANDS a sustained Em9 'button' (the outro's home
+    chord) and the groove DROPS OUT, leaving the chord + a final snare to ring and ECHO
+    away — the DubDelay throw + the long 3.0s Plate tail (the throw is authored clip-local
+    in `_author_outro_throw`). Lands, then washes; not a stop.
+
+    Hand-authored — no generator lands-and-rings. The bed (drums/bass/organ bubble/steel
+    figure) is truncated at `land`; the LEAD keeps its augmented-hybrid resolution through
+    the end (the synthesis line, resolving bright to the C# 'sun zone' note over the held
+    chord, IS the point). Added AFTER `_breathe`, so the button is a clean landing while
+    the bed breathed. RENDER-GATED: tune `land`, the button voicing/length, the final
+    accent weight, and the throw depth by ear."""
+    land = section_beats - 8.0          # the last 2 bars own the landing + the wash
+
+    def _stop_at(notes: list[dict], cut: float) -> list[dict]:
+        kept: list[dict] = []
+        for n in notes:
+            if n["start_beats"] >= cut - 1e-9:
+                continue                                  # starts in the wash → dropped
+            end = n["start_beats"] + n["duration_beats"]
+            if end > cut:                                 # sustains into the wash → clipped
+                n = {**n, "duration_beats": round(cut - n["start_beats"], 6)}
+            kept.append(n)
+        return kept
+
+    out = dict(layers)
+    for name in ("01 Drums", "02 Bass", "04 Organ", "06 Steel"):
+        if name in out:
+            out[name] = _stop_at(out[name], land)
+
+    ring = section_beats - land                            # the button fills the last 2 bars;
+    em9_organ = (E3, G3, B3, D4, FS4)                      # the Plate/DubDelay tail rings past it
+    em9_steel = (B4, E5, FS4 + 12)                         # high shimmer of the chord (E5 + F#5)
+    out.setdefault("04 Organ", []).extend(
+        _note(p, land, ring, 54, tags=["organ", "outro", "button"]) for p in em9_organ)
+    out.setdefault("06 Steel", []).extend(
+        _note(p, land, ring, 60, tags=["steel", "outro", "button"]) for p in em9_steel)
+    out.setdefault("02 Bass", []).append(
+        _note(E2, land, 6.0, 96, tags=["bass", "outro", "land"]))      # the final root, felt
+    drums = out.setdefault("01 Drums", [])                             # final one-drop accent —
+    drums.append(_note(kit.kick, land, 0.4, 92, tags=["drums", "outro", "land"]))
+    drums.append(_note(kit.snare, land, 0.4, 96, tags=["drums", "outro", "land"]))  # the snare echoes out
+    return out
+
+
 def _octave_down(notes: list[dict]) -> list[dict]:
     """Recurrence delta: double a layer an octave lower (heavier / escalating)."""
     return notes + V.transpose(notes, -12)
@@ -1208,6 +1267,9 @@ def _build_arrangement(kit: Kit) -> Arrangement:
     outro = _breathe(outro, section="outro",
                      plan={"01 Drums": HUMAN, "02 Bass": HUMAN, "04 Organ": HUMAN,
                            "06 Steel": HUMAN, "05 Lead": BREATH})
+    # #5: the DUB ECHO-OUT — land a sustained Em9 button, drop the groove, ring/echo out
+    # (the throw + Plate tail). Added after breathing so the landing is clean, not wobbled.
+    outro = _outro_dub_ending(outro, kit, section_beats=ob * BEATS_PER_BAR)
 
     layers_by_name = {
         "intro": intro, "verse1": verse1, "chorus1": chorus1, "verse2": verse2,
@@ -1393,13 +1455,20 @@ def _compose_rhythm_gtr(conn, song_id, tracks, placed) -> None:
 # clip needed (the push resolves the host clip by beat range; a miss warn+skips,
 # non-fatal). Amounts are conservative — render-gated to tune by ear.
 # (section, track, plate_send, pan-or-None) — ranges derived from the plan, not
-# hardcoded. Envelope identity is (track, target_kind, return, parameter), so each
-# (track, param) can carry only ONE clip-local timeline — i.e. ONE atmospheric
-# section. The organ is the INTRO's voice; the LEAD + STEEL are the BREAK's floating
-# voices (the break's sustained pad rides its 0.20 baseline, already wet, wrapped in
-# the wetter lead/steel) — so no track is claimed by both sections (no collision).
+# hardcoded. `plate_send` is a float (a HOLD) or a (lo, hi) tuple (a linear RAMP that
+# DEEPENS across the section). Envelope identity is (track, target_kind, return,
+# parameter), so each (track, param) can carry only ONE clip-local timeline — i.e.
+# ONE atmospheric section. The organ + drums are the INTRO's voices; the LEAD + STEEL
+# are the BREAK's floating voices (the break's sustained pad rides its 0.20 baseline,
+# already wet, wrapped in the wetter lead/steel) — so no track is claimed by both
+# sections (no collision).
 _ATMOSPHERE = [
-    ("intro", "04 Organ", 0.35, -0.30),   # the dawn cloud — wider + wetter
+    # intro: a gradually DEEPENING reverb (#4, user 2026-06-02) — the dawn cloud's
+    # Plate send RAMPS up as the polyrhythm thickens toward its peak, then SNAPS BACK
+    # to each track's normal send at verse1 (the clip-local host ends at the intro
+    # boundary, so the verse arrives dry + present after the wash).
+    ("intro", "04 Organ", (0.12, 0.58), -0.30),  # the cloud — deepens + wider
+    ("intro", "01 Drums", (0.10, 0.40), None),    # the bed washes deeper, then dry at verse1
     ("break", "05 Lead",  0.42, None),     # the call-response floats (wet)
     ("break", "06 Steel", 0.40, 0.34),    # the sparkle — wide right + wet
 ]
@@ -1423,6 +1492,15 @@ def _author_atmosphere_envelopes(conn, song_id, tracks, placed) -> int:
             {"time_beats": max(start, end - 4.0), "value": value, "curve_kind": "hold"},
         ], actor="build", reason=f"hold the {what} across the section (clip-local)")
 
+    def _ramp(env_id: str, start: float, end: float, lo: float, hi: float,
+              what: str) -> None:
+        # A linear DEEPENING from lo->hi across the section; the clip-local host makes
+        # the mix SNAP BACK to the track's static send at the next section (#4).
+        M.replace_breakpoints(conn, envelope_id=env_id, breakpoints=[
+            {"time_beats": start, "value": lo, "curve_kind": "linear"},
+            {"time_beats": max(start, end - 4.0), "value": hi, "curve_kind": "linear"},
+        ], actor="build", reason=f"ramp the {what} across the section (clip-local)")
+
     n = 0
     for section, track, send, pan in _ATMOSPHERE:
         start, end = bounds[section]
@@ -1431,7 +1509,10 @@ def _author_atmosphere_envelopes(conn, song_id, tracks, placed) -> int:
             conn, song_id=song_id, target_kind="send_level", target_track_id=tid,
             target_send_return_id=plate["id"], actor="build",
             reason=f"{section} atmosphere: wetter Plate (MIX-3S7P, clip-local)")
-        _hold(send_env, start, end, send, "elevated Plate send")
+        if isinstance(send, tuple):
+            _ramp(send_env, start, end, send[0], send[1], "deepening Plate send")
+        else:
+            _hold(send_env, start, end, send, "elevated Plate send")
         n += 1
         if pan is not None:
             pan_env = M.create_envelope(
@@ -1473,7 +1554,7 @@ def _author_break_drift_pan(conn, song_id, tracks, placed) -> int:
 
 # Gtr fader volume (normalized, from captured_session.json) + the break ghost dip.
 _GTR_VOL = 0.7
-_GTR_BREAK_GHOST = 0.5
+_GTR_BREAK_GHOST = 0.40   # #2 (user 2026-06-02): 0.5 still too loud/foreground — drop further + deep Plate + Phaser
 
 
 def _author_break_drift_gain(conn, song_id, tracks, placed) -> int:
@@ -1502,6 +1583,81 @@ def _author_break_drift_gain(conn, song_id, tracks, placed) -> int:
         {"time_beats": bend,         "value": _GTR_VOL,         "curve_kind": "linear"},
     ], actor="build", reason="break drift gain dip to ghost (mix-review 2026-06-02)")
     return 1
+
+
+# Gtr Plate send: dry baseline (snapshot 0.05) + the deep dub wash on the break drift.
+_GTR_PLATE_BASE = 0.05
+_GTR_BREAK_PLATE = 0.46
+
+
+def _author_break_drift_reverb(conn, song_id, tracks, placed) -> int:
+    """Stuff the break's metal-guitar DRIFT into a DEEP dub reverb (#2, user 2026-06-02):
+    even ghosted it read 'too loud / too foreground', so push it BACK in the depth field
+    — swell the gtr's Plate send (the long 3.0s dub tail) up only across the break, dry
+    (its 0.05 snapshot baseline) everywhere else. Bookended on the monolithic gtr clip
+    like the pan/gain lanes; identity (gtr, send_level, Plate) is otherwise unused. With
+    the lower ghost gain and the break-only Phaser (Pass B), the drift becomes a distant
+    SWIRL washed deep under the suspension, not a foreground wall. RENDER-GATED: tune the
+    depth by ear so the drift haunts from far away, never up front."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    bstart, bend = bounds["break"]
+    plate = next((r for r in Q.get_returns_for_song(conn, song_id)
+                  if r["name"] == "Plate"), None)
+    if plate is None:
+        raise RuntimeError("expected a 'Plate' return for the break drift reverb")
+    env = M.create_envelope(
+        conn, song_id=song_id, target_kind="send_level",
+        target_track_id=tracks["03 Rhythm Gtr"], target_send_return_id=plate["id"],
+        actor="build", reason="break drift: deep dub Plate wash (#2)")
+    M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+        {"time_beats": 0.0,          "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+        {"time_beats": bstart,       "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+        {"time_beats": bstart + 2.0, "value": _GTR_BREAK_PLATE, "curve_kind": "linear"},
+        {"time_beats": bend - 2.0,   "value": _GTR_BREAK_PLATE, "curve_kind": "linear"},
+        {"time_beats": bend,         "value": _GTR_PLATE_BASE,  "curve_kind": "linear"},
+    ], actor="build", reason="break drift deep reverb send (#2)")
+    return 1
+
+
+# Outro dub echo-out: per-track DubDelay throw (static base_send, peak_send).
+_OUTRO_THROW = [("01 Drums", 0.0, 0.48), ("04 Organ", 0.0, 0.34),
+                ("05 Lead", 0.12, 0.36), ("06 Steel", 0.14, 0.40)]
+
+
+def _author_outro_throw(conn, song_id, tracks, placed) -> int:
+    """The DUB THROW for the outro echo-out (#5): as the groove lands its final Em9 and
+    drops (see `_outro_dub_ending`), swell drums/organ/lead/steel into the DubDelay (the
+    classic reggae echo) across the last 2 bars so the held chord + the final snare ECHO
+    out into silence. Clip-local — each outro clip exists only here, so identity (track,
+    send_level, DubDelay) is free and distinct from the break's Plate atmosphere on
+    lead/steel. Each swell rises from the track's static DubDelay send to `peak`, held to
+    the end. RENDER-GATED: tune throw depth + onset by ear (too early = the groove smears;
+    too deep = the echo swamps the tail)."""
+    first_bar = placed[0].start_bar
+    bounds = {p.name: ((p.start_bar - first_bar) * BEATS_PER_BAR,
+                       (p.end_bar - first_bar) * BEATS_PER_BAR) for p in placed}
+    ostart, oend = bounds["outro"]
+    land = oend - 8.0
+    dub = next((r for r in Q.get_returns_for_song(conn, song_id)
+                if r["name"] == "DubDelay"), None)
+    if dub is None:
+        raise RuntimeError("expected a 'DubDelay' return for the outro throw")
+    n = 0
+    for track, base, peak in _OUTRO_THROW:
+        env = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=tracks[track], target_send_return_id=dub["id"],
+            actor="build", reason="outro dub echo-out: throw into DubDelay (#5)")
+        M.replace_breakpoints(conn, envelope_id=env, breakpoints=[
+            {"time_beats": ostart,     "value": base, "curve_kind": "linear"},
+            {"time_beats": land - 2.0, "value": base, "curve_kind": "linear"},
+            {"time_beats": land,       "value": peak, "curve_kind": "linear"},
+            {"time_beats": oend - 4.0, "value": peak, "curve_kind": "hold"},
+        ], actor="build", reason="outro dub throw swell (#5)")
+        n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -1561,6 +1717,8 @@ def build(reset: bool = False) -> str:
             atmos = _author_atmosphere_envelopes(conn, song_id, tracks, placed)
             atmos += _author_break_drift_pan(conn, song_id, tracks, placed)
             atmos += _author_break_drift_gain(conn, song_id, tracks, placed)
+            atmos += _author_break_drift_reverb(conn, song_id, tracks, placed)   # #2 deep dub wash
+            atmos += _author_outro_throw(conn, song_id, tracks, placed)          # #5 dub echo-out throw
 
             # Harmony conformance — the structural gate. The bass must realize the
             # declared harmony in every section (no one-chord drone).

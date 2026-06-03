@@ -334,6 +334,34 @@ def _collect_sections(
     ]
 
 
+def _collect_declared_energy(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list[tuple[str, float, float | None]]:
+    """Lift the song's declared per-section ``energy`` (ARR-7M3D) into a list of
+    ``(name, start_beat, energy)``, using an already-open connection.
+
+    Carries each section's ``start_beat`` — derived from ``start_bar`` via the
+    same ``_position_bar_to_beats`` meter walk ``_collect_sections`` uses — so it
+    shares the energy-realization lens's join key (``start_beat``, NOT name:
+    ``vary()``/recapitulation repeats section names, so name mis-pairs; see the
+    join-key note in ``report.EnergyRealization``).
+
+    This is the chunk-1 read-through proving declared energy survives to the
+    analysis boundary. The chunk-4 handler wiring lifts the non-NULL rows into
+    ``SectionEnergy`` for the lens; NULL energy is excluded there (never coerced).
+    """
+    section_rows = Q.get_sections_for_song(conn, song_id)
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    return [
+        (
+            row["name"],
+            _position_bar_to_beats(row["start_bar"], ts_points),
+            None if row["energy"] is None else float(row["energy"]),
+        )
+        for row in section_rows
+    ]
+
+
 def _collect_tempo_map(
     conn: "sqlite3.Connection", song_id: str,
 ) -> list["TempoSegment"]:

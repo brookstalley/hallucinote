@@ -129,6 +129,97 @@ def test_update_section_rejects_unknown_field(conn, song):
         M.update_section(conn, section_id=sid, bogus=1)
 
 
+def test_create_section_defaults_energy_to_null(conn, song):
+    """A section authored without ``energy=`` persists NULL — the DB-only
+    path that never declares intent degrades gracefully (ARR-7M3D)."""
+    M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=9.0)
+    row = Q.get_sections_for_song(conn, song)[0]
+    assert row["energy"] is None
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert payload["energy"] is None
+
+
+def test_create_section_round_trips_energy(conn, song):
+    """Declared per-section energy is persisted and rides the SECTION_CREATED
+    event payload (ARR-7M3D)."""
+    M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.9,
+    )
+    row = Q.get_sections_for_song(conn, song)[0]
+    assert row["energy"] == 0.9
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert payload["energy"] == 0.9
+
+
+def test_create_section_changed_energy_is_an_update_not_unchanged(conn, song):
+    """Re-materializing with a CHANGED energy detects an update (not a stale
+    'unchanged'), so the energy column tracks re-authored intent. The
+    update-detection tuple includes energy (ARR-7M3D)."""
+    sid = M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.6,
+    )
+    # Same name/span, only energy changes -> must be an "updated" result.
+    res = M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.9,
+    )
+    assert res.kind == "updated"
+    assert res == sid
+    row = Q.get_sections_for_song(conn, song)[0]
+    assert row["energy"] == 0.9
+    last = _events(conn)[-1]
+    assert last["kind"] == E.SECTION_UPDATED
+    assert json.loads(last["payload_json"])["changes"]["energy"] == 0.9
+
+
+def test_create_section_unchanged_energy_is_noop(conn, song):
+    """Re-materializing with the SAME energy (and span) is 'unchanged' — the
+    energy column is part of the idempotency tuple, so identical re-authoring
+    doesn't churn an event."""
+    M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.6,
+    )
+    res = M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.6,
+    )
+    assert res.kind == "unchanged"
+
+
+def test_create_section_setting_energy_on_a_previously_null_row_updates(conn, song):
+    """A legacy/DB-only row created without energy, then re-authored WITH
+    energy, is detected as an update — the no-energy → energy transition is
+    not a stale 'unchanged' (the changed-energy path with a NULL baseline)."""
+    sid = M.create_section(conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0)
+    assert Q.get_sections_for_song(conn, song)[0]["energy"] is None
+    res = M.create_section(
+        conn, song_id=song, name="chorus", start_bar=1.0, end_bar=9.0, energy=0.8,
+    )
+    assert res.kind == "updated"
+    assert res == sid
+    assert Q.get_sections_for_song(conn, song)[0]["energy"] == 0.8
+
+
+def test_update_section_sets_energy_and_emits_event(conn, song):
+    """W1: the partial-update path supports energy symmetrically with
+    create_section. update_section(energy=...) persists and emits
+    SECTION_UPDATED carrying the energy change (ARR-7M3D)."""
+    sid = M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=9.0)
+    M.update_section(conn, section_id=sid, energy=0.7)
+    row = Q.get_sections_for_song(conn, song)[0]
+    assert row["energy"] == 0.7
+    last = _events(conn)[-1]
+    assert last["kind"] == E.SECTION_UPDATED
+    assert json.loads(last["payload_json"])["changes"] == {"energy": 0.7}
+
+
+def test_update_section_sets_energy_on_previously_null_row(conn, song):
+    """update_section on a section that previously had NULL energy sets it
+    (the NULL → value partial-update transition, W1)."""
+    sid = M.create_section(conn, song_id=song, name="verse", start_bar=1.0, end_bar=9.0)
+    assert Q.get_sections_for_song(conn, song)[0]["energy"] is None
+    M.update_section(conn, section_id=sid, energy=0.5)
+    assert Q.get_sections_for_song(conn, song)[0]["energy"] == 0.5
+
+
 def test_delete_section_emits_event(conn, song):
     sid = M.create_section(conn, song_id=song, name="v", start_bar=1.0, end_bar=9.0)
     M.delete_section(conn, section_id=sid)

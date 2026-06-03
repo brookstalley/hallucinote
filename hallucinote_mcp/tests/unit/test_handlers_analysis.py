@@ -572,6 +572,42 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
     )
 
 
+def test_collect_declared_energy_surfaces_energy_with_start_beat(synthetic_song: Path):
+    """_collect_declared_energy reads the sections.energy column and carries each
+    section's start_beat (the join key), including the NULL case (ARR-7M3D
+    chunk-1 read-through)."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        # 4/4 default: bar 1 -> beat 0, bar 2 -> beat 4, bar 3 -> beat 8.
+        M.create_section(
+            conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0,
+            energy=0.4,
+        )
+        M.create_section(
+            conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0,
+            energy=0.9,
+        )
+        # A section with NULL energy surfaces as (name, start_beat, None).
+        M.create_section(
+            conn, song_id=song_id, name="outro", start_bar=3.0, end_bar=4.0,
+        )
+        conn.commit()
+        declared = analysis_handlers._collect_declared_energy(conn, song_id)
+    finally:
+        conn.close()
+
+    assert declared == [
+        ("verse", 0.0, 0.4),
+        ("chorus", 4.0, 0.9),
+        ("outro", 8.0, None),
+    ]
+
+
 def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):
     """_collect_tempo_map reads the tempo_map table and converts each row's
     start_bar to a song-absolute beat (via the 4/4-default meter walk),

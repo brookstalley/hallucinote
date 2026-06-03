@@ -117,6 +117,16 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
         "intended_rt60_s",
         "REAL CHECK (intended_rt60_s IS NULL OR intended_rt60_s > 0.0)",
     ),
+    # ARR-7M3D: sections gains the authored per-section energy intent (0..1
+    # ordinal). NULL on pre-column DBs and on sections authored without an
+    # energy declaration. The energy-realization lens reads non-NULL rows to
+    # rank declared intent vs measured per-section intensity. CHECK matches
+    # schema.sql.
+    (
+        "sections",
+        "energy",
+        "REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0))",
+    ),
 )
 
 

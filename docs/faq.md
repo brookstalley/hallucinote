@@ -30,17 +30,17 @@ Install](../README.md#requirements).
 Hallucinote authors the mix as part of composing — instrument **chains**, device
 settings, sends, and per-part feel ship with the song (sound design is
 authorship, not a post-hoc to-do). You then push to Live and do hands-on mixing
-there; pull your tweaks back with `/ableton-pull` to keep them. Detailed mix
-*review* (masking, loudness, reverb, timing) is available via `/mix-review`.
+there; pull your tweaks back with `/hallucinote:ableton-pull` to keep them. Detailed mix
+*review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`.
 
 ## A push overwrote my manual Live tweaks. How do I keep them?
 
 The DB is the source of truth, so a fresh push converges Live to the DB. Before
 re-pushing, fold your manual edits back into the DB:
 
-- Faders / mutes / sends / notes → `/ableton-pull`.
-- Device-parameter knob tweaks → `/snapshot-bake-recent-changes` (lighter), or
-  `/song-snapshot` for the full mix layout.
+- Faders / mutes / sends / notes → `/hallucinote:ableton-pull`.
+- Device-parameter knob tweaks → `/hallucinote:snapshot-bake-recent-changes` (lighter), or
+  `/hallucinote:song-snapshot` for the full mix layout.
 
 See the [Quickstart](quickstart.md#5-pull-manual-edits-back-optional).
 
@@ -71,7 +71,7 @@ of stacking duplicates. Iterate freely — change something, push again.
 See [README troubleshooting](../README.md#troubleshooting). The two most common
 fixes: assign **Hallucinote** to a Control Surface slot in Live's Preferences,
 and after a `git pull` that touched `hallucinote_mcp/`, rerun
-`/ableton-mcp-install` then fully **quit and reopen Live** (a `/mcp` reconnect
+`/hallucinote:ableton-mcp-install` then fully **quit and reopen Live** (a `/mcp` reconnect
 isn't enough — Live caches Control Surface modules at startup).
 `python -m hallucinote_mcp.cli preflight` diagnoses install state.
 

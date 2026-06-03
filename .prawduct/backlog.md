@@ -27,6 +27,11 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[DOC-3P7K]** Post-split accuracy pass on the deep reference docs
+  `effort: S · impact: S · area: docs · source: dogfood · added: 2026-06-03 · status: open · related: project-root-contract`
+
+  The user-facing docs (README, quickstart, skills, collaboration, faq, song-authoring-conventions, song-new-checklist) were reoriented to the two-repo + plugin reality (`/hallucinote:*` skills, songs in their own repo) on `docs/post-split-accuracy`. The deeper engine-internal reference docs still carry pre-split framing: `docs/snapshot-schema.md`, `docs/capability-truth.md`, `docs/polyrhythms.md`, `docs/terminology.md` — mostly in-repo `songs/<slug>/` workflow examples and a few unprefixed skill names. Lower priority (engine-internal, not the composing surface). **Verifiable signal:** `grep -rlE '/(song-new|ableton-push|compose-part)\b' docs/*.md | grep -v hallucinote:` returns nothing across the active (non-archive) docs. (split dogfood, 2026-06-03)
+
 - **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
   `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M`
 

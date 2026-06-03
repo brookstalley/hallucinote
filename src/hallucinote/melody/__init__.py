@@ -29,6 +29,11 @@ from hallucinote.melody.contour import (
     gradient_stdev,
 )
 from hallucinote.melody.economy import repetition_coverage
+from hallucinote.melody.segmentation import (
+    per_phrase_contours,
+    phrase_boundaries,
+    phrase_segments,
+)
 from hallucinote.melody.harmony_fit import HarmonyFit, analyze_harmony_fit, classify_tone
 from hallucinote.melody.intervals import (
     ambitus,
@@ -85,6 +90,10 @@ __all__ = [
     "gradient_stdev",
     # economy (within-line motivic-economy / repetition)
     "repetition_coverage",
+    # segmentation (LBDM phrase boundaries + per-phrase contour)
+    "phrase_boundaries",
+    "phrase_segments",
+    "per_phrase_contours",
     # harmony fit
     "HarmonyFit",
     "analyze_harmony_fit",

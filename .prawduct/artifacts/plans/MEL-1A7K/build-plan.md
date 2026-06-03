@@ -283,7 +283,7 @@ are PENDING by-ear (Live unattended). The melody layer itself is render-free.
 - [x] Chunk 2 — remaining profile-relative gradings (contour/apex/ambitus/step)
 - [x] Chunk 3 — profile-relative `shaped_reading` (keystone; Critic `final`)
 - [x] Chunk 4 — within-line repetition reading + objective calibration (PENDING by-ear edges)
-- [ ] Chunk 5 — OPTIONAL LBDM segmentation — **BUILDING** (whole-section contour proved too coarse on the real hooks — DR-3 friction surfaced; see below)
+- [x] Chunk 5 — OPTIONAL LBDM segmentation — **BUILT** (whole-section contour proved too coarse on the real hooks — DR-3 friction surfaced; see below)
 - [ ] Chunk 6 — wire `/compose-review` + scaffold + APPLY canonical `melody-model.md` deltas (cumulative-final)
 
 ### Chunk 4 calibration — the REAL sun-zone-done hooks (PENDING by-ear, NOT resolved)

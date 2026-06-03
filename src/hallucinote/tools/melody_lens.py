@@ -114,6 +114,11 @@ def render(report: Any, *, section_filter: str | None = None) -> str:
                 f"gradient-stdev {ln.gradient_stdev:.2f} · "
                 f"repetition-coverage {_fmt_frac(ln.repetition_coverage)}"
             )
+            if ln.phrase_contours:
+                shapes = " → ".join(shape for shape, _ap, _pos in ln.phrase_contours)
+                lines.append(
+                    f"    phrases (LBDM): {len(ln.phrase_contours)} · {shapes}"
+                )
             lines.append(
                 f"    intervals: step {_fmt_frac(ln.step_fraction)} / "
                 f"leap {_fmt_frac(ln.leap_fraction)} · "

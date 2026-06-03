@@ -75,6 +75,7 @@ from hallucinote.melody.intervals import (
     step_leap_unison_counts,
 )
 from hallucinote.melody.profile import Appetite, MelodicProfile
+from hallucinote.melody.segmentation import per_phrase_contours as _per_phrase_contours
 from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
@@ -226,6 +227,12 @@ class MelodicLine:
     confidence: float
     profile_name: str | None = None
     shaped_reading: ShapedReading = "ungraded"
+    # Per-LBDM-phrase ``(contour_shape, apex_pitch, apex_position)`` — the contour
+    # facts recomputed at the PHRASE unit (research C8b), where the arch actually
+    # lives. A looping hook reads ``level`` whole-section but keeps its per-phrase
+    # shape here. Empty tuple for a line too short to segment (one phrase = the
+    # whole-line ``contour_shape``).
+    phrase_contours: tuple[tuple[ContourShape, int | None, float | None], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -250,6 +257,10 @@ class MelodicLine:
             "confidence": self.confidence,
             "profile_name": self.profile_name,
             "shaped_reading": self.shaped_reading,
+            "phrase_contours": [
+                {"contour_shape": shape, "apex_pitch": ap, "apex_position": pos}
+                for shape, ap, pos in self.phrase_contours
+            ],
         }
 
 
@@ -478,6 +489,11 @@ def _line(
 
     shape = contour_shape(pitches)
     rep_coverage = _repetition_coverage(pitches)
+    # Per-phrase contour (LBDM, research C8b): surfaced only when the line actually
+    # segments into more than one phrase — a single-phrase line's shape IS the
+    # whole-line ``contour_shape``, so an empty tuple avoids redundant noise.
+    phrases = tuple(_per_phrase_contours(notes))
+    phrase_contours = phrases if len(phrases) > 1 else ()
     shaped = _shaped_reading(
         profile,
         contour_shape=shape,
@@ -507,6 +523,7 @@ def _line(
         confidence=_confidence(onset_count),
         profile_name=profile.name if profile is not None else None,
         shaped_reading=shaped,
+        phrase_contours=phrase_contours,
     )
 
 

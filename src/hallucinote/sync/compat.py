@@ -50,6 +50,7 @@ from typing import Literal
 from hallucinote.db import queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
+from hallucinote.workspace import resolve_song_dir
 
 
 # ---------------------------------------------------------------------------
@@ -723,7 +724,7 @@ def _resolve_db(slug: str) -> Path:
     """Mirror push_cli's DB resolution: per-branch first, legacy fallback."""
     path = resolve_db_path(slug)
     if not path.exists():
-        legacy = Path("songs") / slug / f"{slug}.db"
+        legacy = resolve_db_path(slug, branch=None)  # no-branch fallback, same song dir
         if legacy.exists():
             return legacy
         raise SystemExit(
@@ -884,10 +885,10 @@ def _cmd_write_requirements(args: argparse.Namespace) -> int:
     # plugins surface as 'third_party_unverified' which the formatter
     # treats identically to missing/ok in the required-plugins section.
     report = check_song(db_path, installed_plugins=None)
-    out_path = Path("songs") / args.song / "REQUIREMENTS.md"
+    out_path = resolve_song_dir(args.song) / "REQUIREMENTS.md"
     if not out_path.parent.exists():
         raise SystemExit(
-            f"compat: songs/{args.song}/ does not exist — wrong slug?"
+            f"compat: {out_path.parent}/ does not exist — wrong slug?"
         )
     content = format_requirements_md(report)
     out_path.write_text(content)

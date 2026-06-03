@@ -1,7 +1,10 @@
 # Project-Root Contract
 
-> **Status:** spike-validated (build path). Engine/MCP changes for the standalone-song
-> path are scoped below but **not yet implemented**. Branch: `spike/project-root-contract`.
+> **Status:** implemented + validated. The engine/MCP resolution for the standalone-song
+> path landed on `feature/project-root-contract`: the `hallucinote.workspace` marker module,
+> env/marker resolution in `resolve_db_path` (which auto-fixes every MCP-server callsite),
+> the two `compat.py` sites, and the engine `[live]` extra. Remaining deferred work
+> (path-coupled skills, the flat-`song` `build.py` change) is listed under "Still deferred".
 
 ## Why this exists
 
@@ -79,38 +82,43 @@ One song (`falling-walking`) copied to `/tmp/hln-spike/songs/falling-walking/` (
 nesting (`layout = "monorepo"` with one song) — needs **zero engine changes for the build
 path.** The split is viable.
 
-## What remains (scoped, not built)
+## Implemented this phase (`feature/project-root-contract`)
 
-Findings from the path-coupling sweep + packaging/plugin research:
+1. **`hallucinote/workspace.py`** — the marker module: `find_workspace()` (walk up from
+   `CLAUDE_PROJECT_DIR`/cwd for `hallucinote.toml`), the `Workspace` dataclass (layout-aware
+   `song_dir()`), and `resolve_song_dir()` implementing precedence 2→4.
+2. **`resolve_db_path` resolves the song dir via the contract when `root` is not passed.**
+   This **auto-fixes every MCP-server callsite** — `provenance.py:49` and
+   `handlers/analysis.py:87,154` already call `resolve_db_path(slug)` with no `root`, so they
+   inherit env/marker resolution with zero edits. The branch is now probed in the *resolved
+   song dir* (the song's own repo), not the server's cwd. Explicit-`root` callers (`build.py`)
+   are byte-identical. Proven from a foreign cwd via `CLAUDE_PROJECT_DIR` (no Ableton needed).
+3. **The two `compat.py` sites** (`_resolve_db` legacy fallback; `_cmd_write_requirements`
+   output path) now route through `resolve_db_path(slug, branch=None)` / `resolve_song_dir`.
+4. **Engine `[live]` extra** — `pip install hallucinote[live]` declares the lazy
+   engine→`hallucinote-mcp` push coupling for a standalone song repo.
 
-1. **MCP server DB resolution (the real gap).** `hallucinote_mcp/.../provenance.py:48`
-   `_resolve_song_db_path(slug)` calls `resolve_db_path(slug)` with **no `root=`**, so it
-   defaults to `"songs"` relative to the *server's cwd* → assumes cwd = monorepo. Fix:
-   resolve `root` via the precedence above (env/marker), not cwd. This is the one change
-   that makes the long-running server location-independent. Untested by the spike (needs a
-   live Claude + Ableton session).
-2. **Two unparameterized `Path("songs")` sites** — `src/hallucinote/sync/compat.py:726`
-   (legacy DB fallback) and `:887` (`REQUIREMENTS.md` write). Thread the same override
-   `pull_cli` (`--db`) and `resolve_db_path` (`root=`) already accept.
-3. **Path-coupled skills** assume cwd = monorepo: `tools/…` invocations + `songs/<slug>/…`
-   paths in compose-part, ableton-push/pull, song-new, song-context, decisions,
-   compose-review, song-snapshot, clip-humanize. These become workspace-relative once the
-   resolver lands.
-4. **`song` (flat) layout** — requires `resolve_db_path` to support no-slug-nesting and
-   `build.py` to stop using `.parent.parent`. Deferred; `monorepo`-with-one-song works today.
-5. **Engine→server coupling is undeclared.** The engine lazily imports
-   `hallucinote_mcp.client` to push to Live (`sync/push_cli.py:93-94`), but never declares
-   it. Add to the **engine** `pyproject.toml`:
-   `[project.optional-dependencies] live = ["hallucinote-mcp>=0.9"]` so a song repo that
-   pushes to Live can `pip install hallucinote[live]` instead of hitting an undeclared
-   `ImportError`. (Today it only resolves because both packages coexist in the dev venv.)
+## Still deferred
+
+- **Path-coupled skills** assume cwd = monorepo: `tools/…` invocations + `songs/<slug>/…`
+  paths in compose-part, ableton-push/pull, song-new, song-context, decisions,
+  compose-review, song-snapshot, clip-humanize. They work in the monorepo today; they need
+  workspace-relative wiring before songs move out. (The resolver they'd build on now exists.)
+- **`song` (flat) layout end-to-end** — the resolver already supports `layout = "song"`
+  (DB at the repo root), but `build.py` still hardcodes `root=Path(__file__).parent.parent`,
+  so a flat repo's `build.py` would mislocate its DB. `monorepo`-with-one-song works today
+  and is what the spike + integration test exercised; flat needs a `build.py`/scaffold change.
+- **Live end-to-end** — pushing a song from its own repo into an open Ableton set. The
+  resolution layer is proven; the full DAW round-trip is a manual verification (needs Live
+  running; state-modifying).
 
 ## Decisions
 
-- **Marker file = `hallucinote.toml`** (not a `pyproject` table only): discoverable,
-  greppable, works whether or not the song repo has a `pyproject.toml`. Pyproject
-  `[tool.hallucinote]` honored as a fallback. *Alt rejected:* env-var-only — invisible,
-  no per-repo source of truth.
+- **Marker file = `hallucinote.toml`**: discoverable, greppable, works whether or not the
+  song repo has a `pyproject.toml`. *Alt rejected:* env-var-only — invisible, no per-repo
+  source of truth. *Alt deferred:* a `[tool.hallucinote]` table in `pyproject.toml` — would
+  force a TOML parse of every ancestor `pyproject.toml` on the hot resolve path; the
+  dedicated marker keeps discovery to `is_file()` stats until a marker is found.
 - **Keep the two-distribution split** (`hallucinote` engine + `hallucinote-mcp` server) —
   it already exists and keeps `uvx hallucinote-mcp` numpy-free. *Alt rejected:* one dist +
   extra — would force numpy into the lightweight server resolve.

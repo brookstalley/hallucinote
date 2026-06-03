@@ -71,6 +71,30 @@ The helper surface below is a **convenience index, not the menu of the possible.
 
 ---
 
+## Generator altitude — ruler vs stamp
+
+A generator is a **ruler, not a stamp**: it removes bookkeeping; it never makes the
+musical decision. Concretely (`.prawduct/artifacts/generator-altitude-policy.md`):
+
+- A package generator realizes **ONE part's pattern** from composer-supplied
+  parameters (a `Progression`, register, `feel`). It must **never** decide *which*
+  parts play, *how* they relate, or a section's arrangement — that is the
+  composition itself (a stamp), and it belongs to the composer, not a helper.
+- **Section / genre-archetype builders are forbidden in the package.** A "build me a
+  whole reggae section / metal section" helper bakes the arrangement decision and
+  quietly narrows the music toward the archetype (the sun-zone-done integration
+  *smash* is the worked example). If a song wants such a shortcut it lives
+  **song-local** in that song's `build.py`, as disposable scaffolding to break out
+  of the moment the music wants something between or across archetypes.
+- Package genre idioms (`reggae_skank`, `metal_gallop`, …) are single-part
+  conveniences — a shortcut, **never the only door**. Drop below them to the
+  `primitives` layer for any shape they don't cover (toolkit-reduces-work, above).
+- Interplay (call-and-response, half↔double-time dialogue, interlock) is a
+  **primitive** layer, not a "fusion section" builder — built friction-driven when a
+  second song needs it (ARR-3R8F), song-local until then.
+
+---
+
 ## Authoring API — the helper surface
 
 Notes are **authored as code, never as data**. You write the smallest correct generator *expression* in `build.py`; the build expands it to notes and persists through mutators (`M.replace_clip_notes` → one `CLIP_NOTES_REPLACED` event → one batched `clip.set_notes()` on the wire). The note array never leaves the process — it doesn't enter the agent's context, and `build.py` is the song's single authored home. This is the surface the `/compose-part` loop authors against (author → `build.py` → scoped `push-notes`); see that skill for the loop.

@@ -435,6 +435,10 @@ artifact_manifest:
       file_path: .prawduct/artifacts/gate-verdict-policy.md
       version: 1   # LNT-1V9K — BLOCKING reserved for technical errors; aesthetics never gate (ruler-not-stamp)
       depends_on: [arrangement-model]
+    - name: generator-altitude-policy
+      file_path: .prawduct/artifacts/generator-altitude-policy.md
+      version: 1   # GEN-1S4K — helpers are rulers not stamps; no section-archetype builders in the package
+      depends_on: [arrangement-model]
     - name: vision
       file_path: docs/VISION.md
       version: 1

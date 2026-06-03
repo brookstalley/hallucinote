@@ -33,6 +33,7 @@ try:
     from hallucinote.audio import (
         DeclaredEnvelope,
         DeclaredReverbSend,
+        SectionEnergy,
         SectionWindow,
         TempoSegment,
         analyze_mix,
@@ -53,6 +54,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     loaded_signature = None  # type: ignore[assignment]
     DeclaredEnvelope = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
+    SectionEnergy = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
     TempoSegment = None  # type: ignore[assignment]
     Q = None  # type: ignore[assignment]
@@ -336,29 +338,34 @@ def _collect_sections(
 
 def _collect_declared_energy(
     conn: "sqlite3.Connection", song_id: str,
-) -> list[tuple[str, float, float | None]]:
+) -> list["SectionEnergy"]:
     """Lift the song's declared per-section ``energy`` (ARR-7M3D) into a list of
-    ``(name, start_beat, energy)``, using an already-open connection.
+    ``SectionEnergy`` the energy-realization lens consumes, using an
+    already-open connection.
 
     Carries each section's ``start_beat`` — derived from ``start_bar`` via the
     same ``_position_bar_to_beats`` meter walk ``_collect_sections`` uses — so it
-    shares the energy-realization lens's join key (``start_beat``, NOT name:
-    ``vary()``/recapitulation repeats section names, so name mis-pairs; see the
-    join-key note in ``report.EnergyRealization``).
+    shares the lens's join key (``start_beat``, NOT name: ``vary()`` /
+    recapitulation repeats section names, so name mis-pairs two distinct
+    sections; see the join-key note in ``report.EnergyRealization``). Two
+    same-named sections at different ``start_bar`` therefore lift to two
+    distinct ``SectionEnergy`` rows.
 
-    This is the chunk-1 read-through proving declared energy survives to the
-    analysis boundary. The chunk-4 handler wiring lifts the non-NULL rows into
-    ``SectionEnergy`` for the lens; NULL energy is excluded there (never coerced).
+    NULL-energy sections are EXCLUDED from the lift (not coerced to a fabricated
+    value) — the lens never sees a NULL-energy declared section, and a song that
+    declared no energy at all lifts to an empty list (``analyze_mix`` then
+    records an ``energy_realization`` skip rather than a fabricated ρ).
     """
     section_rows = Q.get_sections_for_song(conn, song_id)
     ts_points = Q.get_time_signature_map(conn, song_id)
     return [
-        (
-            row["name"],
-            _position_bar_to_beats(row["start_bar"], ts_points),
-            None if row["energy"] is None else float(row["energy"]),
+        SectionEnergy(
+            start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
+            name=row["name"],
+            energy=float(row["energy"]),
         )
         for row in section_rows
+        if row["energy"] is not None
     ]
 
 
@@ -444,6 +451,7 @@ def analyze_handler(
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
+        declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
     finally:
@@ -453,6 +461,7 @@ def analyze_handler(
         declared_reverb_sends=declared_sends,
         declared_envelopes=declared_envelopes,
         sections=sections,
+        declared_energy=declared_energy,
         tempo_map=tempo_map,
         # Masking is per-section evidence; enable it whenever the song declares
         # sections (the handler already gated section work on that). It is

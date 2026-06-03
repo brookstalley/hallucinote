@@ -41,20 +41,20 @@ $ARGUMENTS
 
 **Step 1 — Identify the active song.** See `/song-context` Step 1 for the preflight rule. Use the song's DB at `songs/<name>/<name>.db`.
 
-**Step 2 — Run the query.** Invoke `tools/decisions_cli.py` via Bash:
+**Step 2 — Run the query.** Invoke `hallucinote.tools.decisions_cli` via Bash:
 
 ```bash
 # Single keyword
-python3 tools/decisions_cli.py --db songs/falling-walking/falling-walking.db "bridge"
+python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "bridge"
 
 # Multi-keyword (positional, space-separated — AND semantics)
-python3 tools/decisions_cli.py --db songs/falling-walking/falling-walking.db "bridge counter-melody"
+python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "bridge counter-melody"
 
 # Multi-keyword (explicit list)
-python3 tools/decisions_cli.py --db songs/falling-walking/falling-walking.db --keywords "bridge,dim7"
+python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db --keywords "bridge,dim7"
 
 # Cap the result count
-python3 tools/decisions_cli.py --db songs/falling-walking/falling-walking.db "sidechain" --limit 5
+python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "sidechain" --limit 5
 ```
 
 **Step 3 — Display the result.** The script outputs markdown — show it to the caller as-is. If a result looks load-bearing for the caller's current task, treat it as constraint context (the previous decision's rationale is part of the song's intent), not a checklist.

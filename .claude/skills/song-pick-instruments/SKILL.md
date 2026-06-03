@@ -59,7 +59,7 @@ Reject unknown modes with a teaching error listing the valid choices.
 
 5. **Write a signal-chain decision.** Write `songs/<slug>/decisions/NN-signal-chains.md` (next free `NN`). See `docs/song-authoring-conventions.md` for the decision-file template (or copy an existing `NN-signal-chains.md` from another song as a model). The decision IS the sound design — treat post-instrument processing as authorship, not a mix-time follow-up.
 
-6. **Capture for the DB.** Run the capture probes yourself (the sequence `tools/capture_cli.py plan` documents — session info, returns, per-track info + sends + device parameters + nested rack chains) and assemble via `compile_snapshot`, passing your accumulated `loads`:
+6. **Capture for the DB.** Run the capture probes yourself (the sequence `hallucinote.tools.capture_cli plan` documents — session info, returns, per-track info + sends + device parameters + nested rack chains) and assemble via `compile_snapshot`, passing your accumulated `loads`:
 
    ```python
    from hallucinote.capture import compile_snapshot

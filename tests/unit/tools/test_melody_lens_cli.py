@@ -20,7 +20,7 @@ from hallucinote.melody import (
     analyze_melody,
 )
 from hallucinote.theory.model import Progression
-from tools.melody_lens import main, render
+from hallucinote.tools.melody_lens import main, render
 
 
 def _n(pitch: int, start: float) -> dict:

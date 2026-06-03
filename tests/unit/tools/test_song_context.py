@@ -17,7 +17,7 @@ import pytest
 from hallucinote.db import init_db, mutations as M
 from hallucinote.markdown_refs import reindex_corpus
 
-from tools.song_context import (
+from hallucinote.tools.song_context import (
     _has_negation,
     _related_by_tags,
     main as song_context_main,

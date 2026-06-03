@@ -28,14 +28,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from hallucinote.workspace import resolve_song_dir
 
 
 def _load_build_module(slug: str):
-    """Import `songs/<slug>/build.py` as a throwaway module (the same
+    """Import a song's `build.py` as a throwaway module (the same
     spec-from-file pattern the per-song tests use; `songs/` is not a package).
-    Raises FileNotFoundError when the song / build.py is absent."""
-    build_path = _REPO_ROOT / "songs" / slug / "build.py"
+    The song dir resolves via the project-root contract (env / hallucinote.toml
+    marker / legacy `songs/<slug>`), so this finds the song whether it lives in
+    the engine monorepo or its own repo. Raises FileNotFoundError when absent."""
+    build_path = resolve_song_dir(slug) / "build.py"
     if not build_path.is_file():
         raise FileNotFoundError(build_path)
     spec = importlib.util.spec_from_file_location(f"_melody_lens_{slug}", build_path)

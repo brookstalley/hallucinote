@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.scaffold_song import (
+from hallucinote.tools.scaffold_song import (
     ScaffoldRequest,
     parse_sections,
     parse_signature,
@@ -280,7 +280,7 @@ def test_scaffolded_test_file_runs_under_pytest(tmp_path, monkeypatch):
 
 def test_cli_scaffolds_via_main(tmp_path, monkeypatch):
     """The argparse CLI plumbs through to scaffold_song correctly."""
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     code = main([
         "cli-song",
         "--title", "CLI Song",
@@ -294,7 +294,7 @@ def test_cli_scaffolds_via_main(tmp_path, monkeypatch):
 
 
 def test_cli_returns_nonzero_on_bad_slug(tmp_path, capsys):
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     code = main([
         "Bad-Slug", "--title", "x", "--tempo", "120",
         "--signature", "4/4", "--sections", "intro",
@@ -306,7 +306,7 @@ def test_cli_returns_nonzero_on_bad_slug(tmp_path, capsys):
 
 
 def test_cli_returns_nonzero_on_existing_dir(tmp_path, capsys):
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     args = [
         "dup-song", "--title", "x", "--tempo", "120",
         "--signature", "4/4", "--sections", "intro",

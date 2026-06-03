@@ -45,6 +45,13 @@ live = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# /song-new (hallucinote.tools.scaffold_song) renders these at runtime via
+# rglob, so they must ship with the wheel. Editable installs already see the
+# real source tree; this covers pip/uvx wheel installs. `.gitkeep` preserves
+# the empty decisions/ + annotations/ dirs the scaffold reproduces.
+[tool.setuptools.package-data]
+"hallucinote.tools" = ["templates/**/*", "templates/**/.gitkeep"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "hallucinote_mcp/tests", "songs"]
 python_files = ["test_*.py"]

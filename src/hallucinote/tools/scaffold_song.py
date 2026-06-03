@@ -4,7 +4,7 @@ The `/song-new` skill orchestrates user input; this module does the
 filesystem work — parameterized + unit-testable + no I/O surprises.
 
 CLI:
-    python -m tools.scaffold_song <slug> --title "..." --tempo 120 \
+    python -m hallucinote.tools.scaffold_song <slug> --title "..." --tempo 120 \
         --signature 4/4 --sections intro,verse,chorus,bridge,outro \
         [--key Cm] [--intent "your one-paragraph concept"] [--root songs]
 
@@ -223,7 +223,7 @@ class ScaffoldResult:
 
 
 def template_root() -> Path:
-    """Path to tools/templates/song/. Override-friendly for tests."""
+    """Path to hallucinote/tools/templates/song/. Override-friendly for tests."""
     return Path(__file__).resolve().parent / "templates" / "song"
 
 
@@ -244,7 +244,7 @@ def scaffold_song(
     if not template_dir.is_dir():
         raise FileNotFoundError(
             f"template directory missing: {template_dir} — "
-            "is tools/templates/song/ checked in?"
+            "is hallucinote/tools/templates/song/ shipped with the package?"
         )
     song_dir = songs_root / req.slug
     if song_dir.exists():

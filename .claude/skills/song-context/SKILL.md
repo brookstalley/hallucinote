@@ -27,7 +27,7 @@ Each song in `songs/<name>/` carries composer intent in two atomic-file director
 - `songs/<name>/decisions/YYYY-MM-DD-slug.md` — deliberate choices with rationale (ADR-shaped, dated)
 - `songs/<name>/annotations/slug.md` — timeless scoped intent (section feel, sound-design palette, don't-do warnings)
 
-Both layers are indexed into the song's SQLite DB via `markdown_refs` + an FTS5 virtual table. The retrieval surface is `tools/song_context.py` — it runs a filtered query and prints markdown-formatted matches.
+Both layers are indexed into the song's SQLite DB via `markdown_refs` + an FTS5 virtual table. The retrieval surface is `hallucinote.tools.song_context` — it runs a filtered query and prints markdown-formatted matches.
 
 See `.prawduct/artifacts/song-conventions.md` for the full frontmatter schema and authoring conventions.
 
@@ -37,26 +37,26 @@ $ARGUMENTS
 
 **Step 1 — Identify the active song.** Look at the caller's recent file activity / CWD. If a single song folder is in play (any file in `songs/<name>/` touched recently), use that song's DB: `songs/<name>/<name>.db`. If unclear, ask which song.
 
-**Step 2 — Run the query.** Invoke `tools/song_context.py` via Bash with the appropriate filters. Examples:
+**Step 2 — Run the query.** Invoke `hallucinote.tools.song_context` via Bash with the appropriate filters. Examples:
 
 ```bash
 # Fulltext search
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db "dim7 bridge"
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db "dim7 bridge"
 
 # Filter by kind
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --kind decision
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --kind decision
 
 # Filter by tags + bars
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --tags chorus --bars 33:40
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --tags chorus --bars 33:40
 
 # Combined
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --kind decision --tags pad
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --kind decision --tags pad
 
 # Defensive mode — surface contradiction signals before composing
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --defensive "sidechain"
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --defensive "sidechain"
 
 # Generative mode — also surface related-by-tag rows the caller hasn't asked for
-python3 tools/song_context.py --db songs/falling-walking/falling-walking.db --generative "chorus"
+python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --generative "chorus"
 ```
 
 Translate the caller's topic + any natural-language filters into the appropriate flag combination:
@@ -77,5 +77,5 @@ These flags are orthogonal — combine them when both apply.
 
 - This is a **read-only lookup**. Do not modify any files.
 - If the query returns nothing, say so and suggest a broader query (e.g., drop tag filter, widen bar range).
-- If the song's DB doesn't have `markdown_refs` populated yet, run `python3 tools/reindex_markdown.py <db>` first.
+- If the song's DB doesn't have `markdown_refs` populated yet, run `python3 -m hallucinote.tools.reindex_markdown <db>` first.
 - The retrieval surface filters; the LLM does the synthesis. Don't try to summarize matches across files — return the matches, optionally Read the ones that matter, and let the caller integrate them.

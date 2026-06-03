@@ -9,13 +9,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CAPTURE_CLI = REPO_ROOT / "tools" / "capture_cli.py"
 
 
 def _run(*args: str, check: bool = False) -> subprocess.CompletedProcess:
-    """Run `tools/capture_cli.py` with the given args, no shell."""
+    """Run `hallucinote.tools.capture_cli` (installed module) with the given args."""
     return subprocess.run(
-        [sys.executable, str(CAPTURE_CLI), *args],
+        [sys.executable, "-m", "hallucinote.tools.capture_cli", *args],
         capture_output=True,
         text=True,
         check=check,

@@ -514,7 +514,7 @@ class MCPConfigEntry:
         return {"path": str(self.path), "json_pointer": list(self.json_pointer)}
 
 
-def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfigEntry]:
+def existing_mcp_config_files(cwd: pathlib.Path | str | None = None) -> list[MCPConfigEntry]:
     """Located ``hallucinote-mcp`` entries across all known config scopes.
 
     Used by the uninstall skill to find every place we need to edit
@@ -533,7 +533,7 @@ def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfig
     :func:`malformed_mcp_config_files` separately so the user can decide
     whether to fix or overwrite.
     """
-    cwd = cwd if cwd is not None else pathlib.Path.cwd()
+    cwd = pathlib.Path(cwd) if cwd is not None else pathlib.Path.cwd()
     # `claude mcp add` records the project key as whatever cwd string was
     # active at the time, which may differ from the current invocation's
     # cwd by symlink resolution (macOS `/var` vs `/private/var`) or
@@ -580,7 +580,7 @@ def existing_mcp_config_files(cwd: pathlib.Path | None = None) -> list[MCPConfig
     return out
 
 
-def malformed_mcp_config_files(cwd: pathlib.Path | None = None) -> list[pathlib.Path]:
+def malformed_mcp_config_files(cwd: pathlib.Path | str | None = None) -> list[pathlib.Path]:
     """Config files that exist but failed to parse as JSON.
 
     Surfaced by both skills so the user can fix them before we proceed —
@@ -588,7 +588,7 @@ def malformed_mcp_config_files(cwd: pathlib.Path | None = None) -> list[pathlib.
     JSON-decode failures are reported; unreadable files (permission errors)
     surface later as the actual write attempt fails.
     """
-    cwd = cwd if cwd is not None else pathlib.Path.cwd()
+    cwd = pathlib.Path(cwd) if cwd is not None else pathlib.Path.cwd()
     out: list[pathlib.Path] = []
     for path in (mcp_config_local_path(cwd), mcp_config_global_path()):
         if not path.exists():

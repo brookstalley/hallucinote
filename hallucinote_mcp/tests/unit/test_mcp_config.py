@@ -153,6 +153,15 @@ def test_cli_configure_mcp_writes_user_scope(monkeypatch, tmp_path, capsys):
     assert json.loads(cfg.read_text())["mcpServers"]["hallucinote-mcp"]["command"] == "hallucinote-mcp"
 
 
+def test_existing_mcp_config_files_accepts_str_cwd(monkeypatch, tmp_path):
+    """Regression: the CLI passes --cwd as a str; install_paths must coerce to Path
+    (it previously did cwd.resolve() and raised AttributeError on a str)."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # hermetic global scan
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": {"hallucinote-mcp": {}}}', encoding="utf-8")
+    entries = P.existing_mcp_config_files(cwd=str(tmp_path))  # str, not Path
+    assert any(e.path == tmp_path / ".mcp.json" for e in entries)
+
+
 def test_cli_remove_mcp_config(monkeypatch, tmp_path, capsys):
     local = tmp_path / ".mcp.json"
     local.write_text(json.dumps({"mcpServers": {"hallucinote-mcp": {"command": "x"}}}), encoding="utf-8")

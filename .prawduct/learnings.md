@@ -2,6 +2,14 @@
 
 Accumulated wisdom from building this product.
 
+## Install/setup skills do filesystem mutations in tested Python, never hand-authored shell
+
+**A skill that copies, deletes, or edits files on the user's machine must call a tested, atomic Python helper (via a CLI subcommand), not hand-author `rsync`/`rm`/JSON-edit shell in the SKILL.md. The shell boundary is a footgun, and skill shell is untestable and non-atomic.**
+
+`/ableton-mcp-install` hand-authored its Remote Script copy as `rsync --exclude=...` interpolated into a shell line. `install_paths.rsync_exclude_args()` correctly produced `--exclude=*.pyc`, but pasted unquoted into a zsh command the `*.pyc` glob-expanded with no match → zsh aborted the whole line *after* the preceding `rm -rf` + stub-write had run, leaving a half-installed Control Surface (stub present, vendored package missing) that Live would fail to load. Three platform variants (rsync / robocopy / PowerShell) were kept in sync only by a brittle SKILL.md string-drift test. The fix moved all mutation into `install_ops.py` / `mcp_config.py` (atomic stage → verify → swap, one cross-platform code path), exposed as CLI subcommands; the skill became orchestration-only.
+
+**How to apply.** (1) The split: Python *mutates* (testable, atomic, cross-platform via `shutil`/`os.replace` — not `subprocess` to a copy tool); the skill *orchestrates* (preflight → confirm → invoke CLI → render). (2) Atomic = stage into a sibling temp dir, VERIFY it, then swap with rollback — a failure leaves the live target complete-old or complete-new, never half. (3) A SKILL.md "drift test" that asserts the doc contains the right shell *string* is a smell — assert the *behavior* in a unit test, and let the consistency test only check "the skill calls the CLI, no mutation shell in command blocks." (4) Exclude/anchoring is a value-correctness concern: reproduce it in code with a predicate, don't push it across the shell boundary where quoting/globbing can silently change it.
+
 ## A permission to collaborate must restate precedence in the same breath
 
 **When you add a norm or skill instruction that *permits* more proposing / stopping / collaborating, state the precedence guard ("but if the user directed it, or said they'll handle the rest, execute and hand back") in the same place. A bare "you may propose here" leaks into directed work as friction.**

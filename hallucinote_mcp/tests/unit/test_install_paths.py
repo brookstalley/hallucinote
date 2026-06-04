@@ -21,7 +21,6 @@ from hallucinote_mcp.install_paths import (
     analyzer_install_target,
     candidate_user_libraries,
     default_user_library,
-    describe_install_layout,
     existing_mcp_config_files,
     hallucinote_mcp_command,
     installed_analyzer_amxd,
@@ -36,8 +35,6 @@ from hallucinote_mcp.install_paths import (
     package_root,
     remote_script_install_dir,
     remote_script_stub_text,
-    robocopy_exclude_args,
-    rsync_exclude_args,
 )
 
 
@@ -104,17 +101,6 @@ def test_remote_script_install_dir_is_under_user_library(tmp_path):
     assert target == tmp_path / "Remote Scripts" / "Hallucinote"
 
 
-def test_describe_install_layout_lists_excludes(tmp_path):
-    summary = describe_install_layout(tmp_path)
-    assert "Hallucinote" in summary
-    # Top-level files surface with the anchored ``/name`` form so a reader
-    # can tell at a glance that ``server.py`` exclusion is anchored.
-    for name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES:
-        assert f"/{name}" in summary
-    for name in (*REMOTE_SCRIPT_EXCLUDE_DIRS_ANY, *REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY):
-        assert name in summary
-
-
 def test_exclude_top_level_keeps_server_py_at_package_root():
     """server.py imports FastMCP — Live's embedded Python can't load it.
 
@@ -127,131 +113,6 @@ def test_exclude_top_level_keeps_server_py_at_package_root():
     assert "server.py" not in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY
     # cli pulls in serve.py which transitively imports server.py — exclude anywhere.
     assert "cli" in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY
-
-
-# --- rsync / robocopy exclude args ----------------------------------------
-
-def test_rsync_exclude_args_anchor_top_level_files():
-    """Top-level files must be ``--exclude=/name`` (leading slash).
-
-    rsync's documented behavior: a pattern with a leading slash is
-    anchored to the transfer root. Without the slash, ``server.py``
-    matches at every directory level — including ``remote_script/`` —
-    and Live's Control Surface fails to load. This regression cost a
-    silent broken install before we structured the excludes; the test
-    pins it shut.
-    """
-    args = rsync_exclude_args()
-    for name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES:
-        assert f"--exclude=/{name}" in args, (
-            f"top-level file {name!r} must be anchored with a leading slash"
-        )
-        assert f"--exclude={name}" not in args, (
-            f"unanchored {name!r} would strip the file from every directory "
-            "(this is the bug the split-constants fix prevents)"
-        )
-    for name in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY:
-        assert f"--exclude={name}" in args
-    for glob in REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY:
-        assert f"--exclude={glob}" in args
-
-
-def _simulate_rsync_filter(paths: list[str], exclude_args: list[str]) -> list[str]:
-    """Approximate rsync's path-matching for our exclude vocabulary.
-
-    rsync's full filter language is large; this simulator handles only
-    the shapes :func:`rsync_exclude_args` actually emits — leading-``/``
-    anchored patterns (root-only basename match) and bare names / globs
-    (match basename anywhere). Enough to verify that the anchoring
-    behavior we depend on is in effect; the actual rsync binary
-    confirms in integration.
-    """
-    import fnmatch
-    keep: list[str] = []
-    patterns = [a.removeprefix("--exclude=") for a in exclude_args]
-    for path in paths:
-        parts = path.split("/")
-        basename = parts[-1]
-        excluded = False
-        for pat in patterns:
-            if pat.startswith("/"):
-                # Anchored: only matches at the root (single-segment path).
-                if len(parts) == 1 and fnmatch.fnmatch(basename, pat[1:]):
-                    excluded = True
-                    break
-            else:
-                # Unanchored: matches basename at any depth.
-                if any(fnmatch.fnmatch(seg, pat) for seg in parts):
-                    excluded = True
-                    break
-        if not excluded:
-            keep.append(path)
-    return keep
-
-
-def test_rsync_simulator_preserves_remote_script_server_py():
-    """End-to-end semantic check: applying the args to the real shape of
-    the package preserves ``remote_script/server.py`` and strips the
-    package-root ``server.py``.
-
-    Uses an in-process simulator so the test runs cross-platform without
-    requiring rsync. The simulator's contract is narrow — see its
-    docstring — but covers the exact filter shapes we emit.
-    """
-    paths = [
-        "server.py",                  # package-root — must drop
-        "remote_script/server.py",    # Live needs this — must keep
-        "remote_script/__init__.py",
-        "schema.py",
-        "cli/__init__.py",            # cli/ at root — must drop
-        "tests/test_x.py",            # tests at any depth — must drop
-        "actions/__pycache__/foo.pyc",  # __pycache__ anywhere — must drop
-        "actions/__init__.py",
-    ]
-    kept = _simulate_rsync_filter(paths, rsync_exclude_args())
-    assert "remote_script/server.py" in kept, (
-        "remote_script/server.py is the Control Surface — must survive the copy"
-    )
-    assert "server.py" not in kept, "package-root server.py is FastMCP-dependent — must drop"
-    assert "cli/__init__.py" not in kept
-    assert "tests/test_x.py" not in kept
-    assert "actions/__pycache__/foo.pyc" not in kept
-    assert "actions/__init__.py" in kept
-    assert "schema.py" in kept
-
-
-def test_robocopy_exclude_args_uses_full_path_for_top_level_files(tmp_path):
-    """robocopy ``/XF`` matches by basename anywhere unless you pass the
-    absolute source path — same anchoring problem as rsync, different
-    workaround. The args list must use the full ``<package>\\server.py``
-    path, not the bare basename."""
-    args = robocopy_exclude_args(tmp_path)
-    assert "/XF" in args
-    xf_idx = args.index("/XF")
-    # Everything between /XF and /XD (or end) is the file-exclude list.
-    end = args.index("/XD") if "/XD" in args else len(args)
-    xf_args = args[xf_idx + 1 : end]
-    for name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES:
-        full = str(tmp_path / name)
-        assert full in xf_args, (
-            f"top-level file {name!r} must be passed as absolute path "
-            f"{full!r} so robocopy doesn't strip it from every directory"
-        )
-        assert name not in xf_args, (
-            f"bare basename {name!r} in /XF would strip every file with "
-            "that name at any depth"
-        )
-    for glob in REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY:
-        assert glob in xf_args
-
-
-def test_robocopy_exclude_args_dirs_are_basename(tmp_path):
-    args = robocopy_exclude_args(tmp_path)
-    assert "/XD" in args
-    xd_idx = args.index("/XD")
-    xd_args = args[xd_idx + 1 :]
-    for name in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY:
-        assert name in xd_args, f"dir {name!r} should be in /XD"
 
 
 # --- User Library detection ----------------------------------------------

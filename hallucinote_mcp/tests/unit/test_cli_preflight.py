@@ -70,22 +70,6 @@ def test_preflight_report_package_block_includes_version_and_root():
     report = _build_report()
     assert "version" in report["package"]
     assert "root" in report["package"]
-    # The exclude structure is the load-bearing safety net the skill relies
-    # on. ``server.py`` lives under ``top_level_files`` (anchored) so it
-    # isn't stripped from ``remote_script/`` too; the unanchored shape
-    # caused a silent broken install before we split the constant.
-    excludes = report["package"]["remote_script_exclude"]
-    assert "server.py" in excludes["top_level_files"]
-    assert "cli" in excludes["dirs_any"]
-    # Pre-rendered command args carry the anchoring the skill needs verbatim.
-    assert "--exclude=/server.py" in report["package"]["rsync_exclude_args"]
-    # robocopy args use the absolute source path for top-level files —
-    # the leading ``/XF`` token plus a path that ends in /server.py.
-    rc_args = report["package"]["robocopy_exclude_args"]
-    assert "/XF" in rc_args
-    assert any(a.endswith("/server.py") for a in rc_args), (
-        f"robocopy /XF list must include an absolute path ending in /server.py: {rc_args}"
-    )
 
 
 def test_preflight_report_user_library_candidates_have_exists_flag():

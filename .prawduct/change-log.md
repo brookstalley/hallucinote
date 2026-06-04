@@ -4,6 +4,27 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
+
+<!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->
+
+The plugin-bundled `hallucinote-mcp` server timed out on a genuinely-cold first start: the spawn
+runs a full `uv` build (numpy/scipy/librosa/llvmlite, ~70 MiB) and the connection timed out at
+**30000ms** despite `plugin.json` declaring `"timeout": 60000`. **Root cause:** the per-server
+`plugin.json` `timeout` governs *tool execution*, not the *startup* handshake — startup is
+governed by the `MCP_TIMEOUT` env var (default 30000ms), which the v0.9.3 design never raised, so
+the intended 60s safety net never existed for startup. (This supersedes the v0.9.3 entry's
+"cold-cache-within-60s" residual framing.) **Fix:** a tested, atomic, idempotent config op raises
+`env.MCP_TIMEOUT` in `settings.json` to a **180000ms (3 min) floor** (`STARTUP_TIMEOUT_FLOOR_MS`),
+never downgrading a higher existing value; `/ableton-mcp-install` writes it into
+`~/.claude/settings.json` for end users, and this dev repo carries it via committed
+`.claude/settings.json`. The SessionStart pre-warm hook also emits a clean `additionalContext`
+heads-up so Claude can guide a `/mcp` reconnect when a cold build loses the spawn race; every
+non-success hook branch now routes to **stderr** so warm sessions inject nothing into Claude's
+context. **Live-verified**: the operator's clean-room `--plugin-dir .` restart completed the cold
+build and `hallucinote-mcp` reconnected (this session). 22 new unit tests pin the config-op and
+hook semantics.
+
 ## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
 
 <!-- chunks=INS-7V2D status=shipped release=v0.9.3 scope=plugin-distribution -->

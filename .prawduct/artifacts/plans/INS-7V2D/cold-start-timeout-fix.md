@@ -37,6 +37,11 @@
      declined (the raised timeout makes build size moot; warm start is 2.3s either way).
    - Changing `plugin.json`'s per-server `"timeout"` *value* — it's a tool-exec cap; no evidence
      it's wrong. Only its DOC meaning is corrected.
+5. **Requirements Confidence: High** — root cause is connection-log-proven (observed 30000ms
+   startup timeout) and corroborated by Claude Code's documented `MCP_TIMEOUT` vs per-server
+   `timeout` semantics; the two competing explanations (drop `--all-packages`, shrink the build)
+   are falsified in item 4. Residual risk is operational (cold-build duration variance), bounded
+   by the 3-min floor.
 
 ## Decision record
 

@@ -21,9 +21,12 @@
 # they cannot block it — so on a cold build the spawn can lose the race and show
 # the server "failed" in /mcp even though this hook then finishes the env. After a
 # cold build we emit a SessionStart `additionalContext` JSON object so Claude can
-# proactively tell the user to /mcp-reconnect (warm = ~2 s). Plain stdout is NOT
-# injected into Claude's context for SessionStart — only the JSON object is — so the
-# build-success branch must print ONLY that JSON (human progress goes to stderr).
+# proactively tell the user to /mcp-reconnect (warm = ~2 s). For SessionStart hooks
+# a hook's plain stdout IS injected into Claude's context — so EVERY branch must keep
+# human/progress/skip chatter on stderr; only the build-success branch emits its JSON
+# additionalContext object on stdout (Claude Code parses it and injects the guidance).
+# A stray stdout line on the common warm-start path would otherwise pollute context
+# on every normal session.
 set -uo pipefail
 
 # CLAUDE_PLUGIN_ROOT (read-only plugin payload) and CLAUDE_PLUGIN_DATA (persistent,
@@ -31,7 +34,7 @@ set -uo pipefail
 ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 DATA="${CLAUDE_PLUGIN_DATA:-}"
 if [ -z "$ROOT" ] || [ -z "$DATA" ]; then
-  echo "[hallucinote prewarm] CLAUDE_PLUGIN_ROOT/DATA unset — skipping (launch self-heals)."
+  echo "[hallucinote prewarm] CLAUDE_PLUGIN_ROOT/DATA unset — skipping (launch self-heals)." >&2
   exit 0
 fi
 
@@ -40,20 +43,20 @@ VENV="$DATA/venv"               # matches plugin.json's UV_PROJECT_ENVIRONMENT
 LOCK_COPY="$DATA/uv.lock"       # last-synced copy; the diff sentinel
 
 if [ ! -f "$LOCK_SRC" ]; then
-  echo "[hallucinote prewarm] no uv.lock at $LOCK_SRC — skipping (launch self-heals)."
+  echo "[hallucinote prewarm] no uv.lock at $LOCK_SRC — skipping (launch self-heals)." >&2
   exit 0
 fi
 
 # uv is the one prerequisite. If it's absent the install skill's preflight surfaces
 # it; warming is a best-effort no-op here.
 if ! command -v uv >/dev/null 2>&1; then
-  echo "[hallucinote prewarm] uv not on PATH — skipping (install-skill preflight covers this)."
+  echo "[hallucinote prewarm] uv not on PATH — skipping (install-skill preflight covers this)." >&2
   exit 0
 fi
 
 # Fast path: the env is already built against THIS exact lock — nothing to do.
 if [ -d "$VENV" ] && [ -f "$LOCK_COPY" ] && cmp -s "$LOCK_SRC" "$LOCK_COPY"; then
-  echo "[hallucinote prewarm] MCP env already warm for the current lock — skipping."
+  echo "[hallucinote prewarm] MCP env already warm for the current lock — skipping." >&2
   exit 0
 fi
 
@@ -73,6 +76,6 @@ if UV_PROJECT_ENVIRONMENT="$VENV" uv sync --frozen --all-packages --project "$RO
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$_ctx"
 else
   # Never fail the session — the self-healing launch retries the sync on demand.
-  echo "[hallucinote prewarm] sync failed; the server launch will retry on demand."
+  echo "[hallucinote prewarm] sync failed; the server launch will retry on demand." >&2
 fi
 exit 0

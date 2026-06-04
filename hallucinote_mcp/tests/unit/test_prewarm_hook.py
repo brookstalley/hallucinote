@@ -138,7 +138,12 @@ def test_second_run_with_unchanged_lock_skips_the_build(env):
 
     assert result.returncode == 0, result.stderr
     assert _call_count(calls) == 1, "an unchanged lock must NOT trigger a second `uv sync`"
-    assert "already warm" in result.stdout
+    assert "already warm" in result.stderr
+    # SessionStart stdout IS injected into Claude's context — the (common) warm-start
+    # fast-path must add NOTHING to context, so its skip notice goes to stderr only.
+    assert result.stdout == "", (
+        f"warm-start fast-path must keep stdout clean for SessionStart, got {result.stdout!r}"
+    )
 
 
 def test_changed_lock_triggers_a_rebuild(env):
@@ -165,7 +170,10 @@ def test_missing_uv_never_fails_the_session(env):
 
     assert result.returncode == 0, "uv absent must exit 0 (launch self-heals)"
     assert _call_count(calls) == 0
-    assert "uv not on PATH" in result.stdout
+    assert "uv not on PATH" in result.stderr
+    assert result.stdout == "", (
+        f"uv-absent skip path must keep stdout clean for SessionStart, got {result.stdout!r}"
+    )
 
 
 def test_missing_lock_never_fails_the_session(env):
@@ -177,6 +185,10 @@ def test_missing_lock_never_fails_the_session(env):
 
     assert result.returncode == 0, "a missing lock must exit 0"
     assert _call_count(calls) == 0, "no lock → nothing to sync against"
+    assert "no uv.lock" in result.stderr
+    assert result.stdout == "", (
+        f"missing-lock skip path must keep stdout clean for SessionStart, got {result.stdout!r}"
+    )
 
 
 def test_failed_sync_never_fails_the_session_and_retries_next_time(env):
@@ -186,7 +198,10 @@ def test_failed_sync_never_fails_the_session_and_retries_next_time(env):
 
     result = _run_hook(root, data, path=path)
     assert result.returncode == 0, "a failed sync must NOT fail the session"
-    assert "retry on demand" in result.stdout
+    assert "retry on demand" in result.stderr
+    assert result.stdout == "", (
+        f"failed-sync path must keep stdout clean for SessionStart, got {result.stdout!r}"
+    )
     # A failed sync must NOT record the lock copy — else a broken env would be
     # treated as warm and never retried.
     assert not (data / "uv.lock").exists(), "a failed sync must not record the synced-lock copy"

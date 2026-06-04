@@ -177,9 +177,18 @@ def unset_startup_timeout(
     """Remove ``env.MCP_TIMEOUT`` iff we set it — the symmetric uninstall step.
 
     Conservative: only deletes the key when its value equals our managed floor
-    (i.e. we wrote it). A user-customized value is left alone (``"kept-custom"``).
-    Removes a now-empty ``env`` object. Idempotent: ``"absent"`` when there's
-    nothing to remove. Other keys preserved; refuses a malformed file.
+    (i.e. we wrote it). A user-customized value *above* the floor is left alone
+    (``"kept-custom"``). Removes a now-empty ``env`` object. Idempotent:
+    ``"absent"`` when there's nothing to remove. Other keys preserved; refuses a
+    malformed file.
+
+    Known limitation (INS-7V2D): a pre-existing value *below* the floor (e.g.
+    ``30000``) is raised TO the floor by :func:`ensure_startup_timeout` on install,
+    so on uninstall it reads as "we wrote it" and is removed rather than restored to
+    the original sub-floor value. Restoring it would require recording the
+    pre-install value at install time; the symmetric step intentionally does not —
+    a value below the floor is exactly the cold-start-timeout failure this package
+    exists to prevent, so reverting to it on uninstall would reinstate the bug.
 
     Returns ``{"ok", "path", "action", "value"}``.
     """

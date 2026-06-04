@@ -72,8 +72,13 @@
 
 ## Status
 
-All three chunks built. Full suite **2800 passed, 268 skipped** (audio stack skipped — change is
-config/CLI/docs/hook only). Warm MCP handshake measured ~2.3 s. Cumulative Critic + commit next.
+All three chunks built; cumulative-Critic findings resolved (prewarm stdout→stderr discipline,
+artifact-honesty reconciliation, per-server-timeout test rationale, `base_branch: develop`). Full
+canonical suite **3066 passed, 0 failed, 2 skipped — audio stack INCLUDED** (authoritative
+`.prawduct/.test-evidence.json`; the earlier "2800 / audio-skipped" figure was an intermediate
+snapshot). Warm MCP handshake measured ~2.3 s. Cold-start survival **confirmed live this session**
+— the operator's `uv cache clean` + restart connected on first launch (operator-verification #1).
+PR into develop pending.
 
 ## Done when
 

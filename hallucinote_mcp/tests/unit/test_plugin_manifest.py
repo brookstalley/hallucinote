@@ -64,13 +64,16 @@ def test_env_redirects_venv_into_persistent_plugin_data(mcp_entry):
     )
 
 
-def test_launch_has_a_generous_init_timeout(mcp_entry):
-    # A cold first build (numpy/scipy/librosa) can exceed the default MCP init
-    # timeout and SILENTLY DROP the server's tools (CC#60224); a generous timeout
-    # backstops the pre-warm hook.
+def test_launch_declares_a_generous_tool_exec_timeout(mcp_entry):
+    # The per-server `timeout` field caps TOOL EXECUTION (e.g. long analysis renders),
+    # NOT the startup/connection handshake. INS-7V2D's root-cause correction: a cold
+    # first build (numpy/scipy/librosa) that exceeds the init timeout and SILENTLY DROPS
+    # the server's tools (CC#60224) is governed by the MCP_TIMEOUT env var (raised to the
+    # 180000ms floor; see test_startup_timeout.py), which this per-server field never
+    # touched. The field stays generous so a slow render tool isn't cut off mid-call.
     timeout = mcp_entry.get("timeout")
     assert isinstance(timeout, int) and timeout >= 60000, (
-        f"need a >=60s init timeout to survive a cold dependency build, got {timeout!r}"
+        f"need a >=60s per-server tool-exec timeout for long analysis tools, got {timeout!r}"
     )
 
 

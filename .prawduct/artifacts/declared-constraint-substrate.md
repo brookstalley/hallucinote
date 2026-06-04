@@ -250,10 +250,34 @@ finding shape, and (c) clean handling of the *intended* violation at the release
 
 It earns its keep because `missing` is **variation 1 of a planned series** of
 constraint-driven songs (`decisions/09-variation-roadmap.md`) — a body of work whose
-whole method is "declare a rule, explore the space." Recommended sequencing: ship
-`missing` on the zero-framework path (per-song predicates + tests) **first**, then build
-the substrate when the **second** constraint song lands and the `ConstraintCtx` surface
-is confirmed by two real uses — not speculatively for one.
+whole method is "declare a rule, explore the space." Recommended sequencing, in two
+refinements over the naive "ship the song, then build after song 2":
+
+**(1) Author the first song's predicates in the substrate's eventual shape — against a
+~15-line local shim in the song, NOT raw `assert`s.** A song-local `_constraint.py`
+(a `ConstraintCtx` namedtuple, a `ConstraintFinding` namedtuple, a runner loop) lets
+`missing` ship now AND exercise the real predicate ergonomics, so the first song is a
+genuine interface probe with **zero rewrite debt** — promotion to `src/` later is a
+mechanical lift, not a redo. This is song-first in *sequencing*, framework-shaped in
+*form*: the asymmetry that justifies it — wrong-interface rework ≫ a 15-line lift, and
+the song ships either way — favors the reversible path.
+
+**(2) "Confirm the surface" means a *differently-shaped* second use, not any second
+song.** `missing`'s three predicates are all the SAME shape — "absence of X before bar
+N" (vertical + temporal). They validate one corner and say almost nothing about the
+interface's riskiest unknown: **relational / cross-section** predicates ("no fifths,"
+"only inversions with the root in the middle," "this chorus's motif must differ from the
+last"), where `ConstraintCtx` is least designed. So **deliberately pick the second
+constraint song to be relational/cross-section**, and promote the shim to `src/` only
+once you've felt where `ctx` fights a differently-shaped rule — not after a second
+withholding song that merely re-confirms corner one.
+
+**When to flip to framework-first** (neither holds for `missing` today): (a) a near-term
+song needs **Register B** (the LLM prose rubric) — a per-song pytest can't evaluate a
+fuzzy aesthetic rule, so that layer isn't extractable from a shim and must be built; or
+(b) the variation series is written in **rapid succession** (3–4 back-to-back) — which
+compresses the timeline (build after song 2, not song 5) but never reverses the order,
+since you still want two *differing* uses before freezing the interface.
 
 ## Open questions / risks
 
@@ -261,7 +285,9 @@ is confirmed by two real uses — not speculatively for one.
   name + bar span + `beats_per_bar` + `key_pc`/`mode`/`progression` + `bar_of()`. Cross-
   section predicates (e.g. "this motif's pitch set must differ from the last chorus's")
   may need a song-level variant, `analyze_constraints` over the whole arrangement rather
-  than per-section. Decide from the second real constraint, not now.
+  than per-section. Decide from a second, *deliberately relational* constraint (see the
+  sequencing refinements above) — not from `missing`, which only probes the vertical+
+  temporal corner.
 - **Whole-chord (vertical) vs. line (horizontal) predicates.** `rootless` is vertical
   (what sounds together); a melody rule is horizontal. The lens passes `layers` (per-
   track note lists) and the section's combined surface; a predicate picks its slice.

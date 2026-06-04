@@ -48,47 +48,6 @@ REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY: tuple[str, ...] = (
 )
 
 
-def rsync_exclude_args() -> list[str]:
-    """``rsync --exclude=...`` args for the Remote Script copy.
-
-    Top-level files are anchored with a leading ``/`` — rsync treats a
-    leading slash on a pattern as "anchored to the transfer root" (the
-    source directory passed on the command line). So ``--exclude=/server.py``
-    excludes only the package-root ``server.py`` and preserves
-    ``remote_script/server.py``, which Live needs to load the Control
-    Surface. An unanchored ``--exclude=server.py`` would strip both.
-    """
-    args = [f"--exclude=/{name}" for name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES]
-    args.extend(f"--exclude={name}" for name in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY)
-    args.extend(f"--exclude={glob}" for glob in REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY)
-    return args
-
-
-def robocopy_exclude_args(package_root: pathlib.Path | str) -> list[str]:
-    """``robocopy /XF ... /XD ...`` args for the Remote Script copy.
-
-    robocopy's ``/XF`` (file exclude) and ``/XD`` (dir exclude) match by
-    basename anywhere in the tree by default — same footgun as rsync.
-    The anchor trick on Windows: pass the **absolute source path** to
-    ``/XF`` and robocopy matches that exact location only. So the
-    package-root ``server.py`` is excluded by its full path while
-    ``remote_script\\server.py`` survives the copy.
-    """
-    pkg = pathlib.Path(package_root)
-    xf_args: list[str] = [str(pkg / name) for name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES]
-    xf_args.extend(REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY)
-    xd_args: list[str] = list(REMOTE_SCRIPT_EXCLUDE_DIRS_ANY)
-
-    out: list[str] = []
-    if xf_args:
-        out.append("/XF")
-        out.extend(xf_args)
-    if xd_args:
-        out.append("/XD")
-        out.extend(xd_args)
-    return out
-
-
 # --- Package introspection -------------------------------------------------
 
 def package_root() -> pathlib.Path:
@@ -309,26 +268,6 @@ def installed_remote_script_version(user_library: pathlib.Path | str) -> str | N
     if not vendored_pkg.is_dir():
         return None
     return compute_version_for(vendored_pkg)
-
-
-def describe_install_layout(user_library: pathlib.Path | str) -> str:
-    """Human-readable summary of what the install will create.
-
-    Used by the install skill to preview the layout before touching the
-    filesystem. Accepts ``str`` for the same reason as
-    :func:`remote_script_install_dir`.
-    """
-    target = remote_script_install_dir(user_library)
-    top_level = ", ".join(f"/{n}" for n in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES)
-    any_pos = ", ".join(
-        list(REMOTE_SCRIPT_EXCLUDE_DIRS_ANY) + list(REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY)
-    )
-    return (
-        f"{target}/\n"
-        f"  __init__.py          (Control Surface entry stub)\n"
-        f"  hallucinote_mcp/     (vendored package; excludes top-level {top_level} "
-        f"and any-position {any_pos})\n"
-    )
 
 
 # --- Ableton Live detection ------------------------------------------------
@@ -616,7 +555,6 @@ __all__ = [
     "analyzer_install_target",
     "candidate_user_libraries",
     "default_user_library",
-    "describe_install_layout",
     "existing_mcp_config_files",
     "hallucinote_mcp_command",
     "installed_analyzer_amxd",
@@ -631,6 +569,4 @@ __all__ = [
     "package_root",
     "remote_script_install_dir",
     "remote_script_stub_text",
-    "robocopy_exclude_args",
-    "rsync_exclude_args",
 ]

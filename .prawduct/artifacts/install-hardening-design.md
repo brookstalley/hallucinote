@@ -78,8 +78,9 @@ emit a JSON result (`{"ok": bool, ...}`):
 
 ### The atomicity strategy (the core robustness win)
 
-`vendor_remote_script(package_root, install_dir, *, force)` — never mutates the live
-target until a complete, verified tree exists:
+`vendor_remote_script(install_dir, *, source_root=None, force=False)` (source defaults
+to the running package) — never mutates the live target until a complete, verified tree
+exists:
 
 1. Stage into a sibling temp dir on the **same filesystem** as the target
    (`<UL>/Remote Scripts/.Hallucinote.staging-<pid>`) so the final swap is a rename.

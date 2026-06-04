@@ -21,6 +21,14 @@ install:
    `uv` on PATH, and confirm the `hallucinote-mcp` tools appear (the env builds into
    `${CLAUDE_PLUGIN_DATA}/venv` within the 60s init timeout — watch for the CC#60224
    silent tool-drop on a cold uv cache; the C2 pre-warm hook is the mitigation).
+   **0. `uv` must resolve in the SPAWN env (the make-or-break risk).** Claude Code spawns
+   stdio MCP servers with a sanitized environment that does NOT inherit the shell's PATH.
+   `command: "uv"` (bare) therefore assumes `uv` is on whatever PATH Claude Code's spawn
+   uses. `uv` installs to a standard location (`/opt/homebrew/bin`, `~/.local/bin`,
+   `~/.cargo/bin`) so it usually resolves — but if the tools DON'T appear, this is the
+   first thing to check (run `uv --version` is not enough — it's the *spawn* PATH that
+   matters). Fix if needed: an absolute uv path in `command` (the install skill can detect
+   it — fold into C3), or add uv's dir to the server `env` PATH.
 2. **Update rebuilds the env.** Bump the plugin version / change `uv.lock`, update the
    plugin, confirm the env rebuilds (lock-diff) and the server still connects.
 3. **No abs-path override needed.** Confirm `/hallucinote:ableton-mcp-install`'s

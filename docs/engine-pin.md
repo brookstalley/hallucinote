@@ -19,14 +19,14 @@ without any error — hence this pin.
 ## Current pin (keep this row honest when versions move)
 
 - Engine `hallucinote`: **0.9.0** (`pyproject.toml`; `uv.lock` pins the same, editable).
-- Plugin: **0.9.2** (`.claude-plugin/plugin.json`).
+- Plugin: **0.9.3** (`.claude-plugin/plugin.json`).
 
 **Plugin version ≠ engine version, and that's fine.** The plugin and the engine
 version independently. The coupling guarantee is *by source*, not by the version
 string: the plugin's `uv.lock` records `hallucinote` as an **editable workspace
 member** (`editable = "."`), so the bridge always runs the engine source bundled at
 the plugin's commit. The version string is metadata; the lock + the commit are the
-pin. (So the 0.9.0/0.9.2 gap is recorded here on purpose, not a defect to "fix" with a
+pin. (So the 0.9.0/0.9.3 gap is recorded here on purpose, not a defect to "fix" with a
 no-op engine bump.)
 
 ## Checking alignment

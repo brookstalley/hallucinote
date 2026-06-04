@@ -19,5 +19,11 @@
     "mcp",
     "generative"
   ],
-  "defaultEnabled": true
+  "defaultEnabled": true,
+  "mcpServers": {
+    "hallucinote-mcp": {
+      "command": "hallucinote-mcp",
+      "args": ["serve"]
+    }
+  }
 }

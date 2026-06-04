@@ -86,16 +86,17 @@ def loaded_actions():
 
 
 _EXPECTED_SCENE_ACTIONS = {
-    "help", "list", "info", "create", "delete", "rename", "fire",
-    "set_tempo", "set_signature",
+    "help", "list", "info", "create", "ensure_count", "delete", "rename",
+    "fire", "set_tempo", "set_signature",
 }
 
 
-def test_scene_registers_nine_actions(loaded_actions):
+def test_scene_registers_ten_actions(loaded_actions):
     """Note: design doc lists `insert_at` separately; we absorbed it into
     `create` since Live's create_scene primitive handles both append and
     insert via its index arg. Locking the absence so the consolidation
-    doesn't quietly come undone.
+    doesn't quietly come undone. `ensure_count` (SYN-4P2D) is the tenth
+    action — the push 'scenes' phase's provisioning verb.
     """
     names = {a.name for a in schema.actions_for("ableton_scene")}
     assert names == _EXPECTED_SCENE_ACTIONS
@@ -265,6 +266,132 @@ def test_create_scene_with_position_handles_wrapper_recreation(loaded_actions):
     )
     assert resp.ok is True, f"unexpected error: {resp.error!r}"
     assert resp.result["scene_index"] == 3
+
+
+# ---------- ensure_count (SYN-4P2D) ----------
+
+
+def test_ensure_count_grows_to_requested_count(loaded_actions):
+    """A 9-section song into a default-3-scene fake set: ensure_count(9)
+    appends the 6-scene deficit and reports it."""
+    ctx = FakeCtx()  # default FakeSong has 3 scenes
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 9},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result == {"scene_count": 9, "created": 6}
+    assert len(ctx.song.scenes) == 9
+    # Grew via -1 append, never insert.
+    assert ctx.song._created and len(ctx.song._created) == 6
+
+
+def test_ensure_count_is_idempotent_no_op_when_enough(loaded_actions):
+    """needed <= 0 creates nothing and reports created=0 — re-running a
+    whole push is a no-op for this phase. count == current is the boundary."""
+    ctx = FakeCtx()  # 3 scenes
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 3},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result == {"scene_count": 3, "created": 0}
+    assert ctx.song._created == []
+    # Asking for fewer than current is also a no-op (grows only, never trims).
+    resp2 = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 1},
+        ),
+        context=ctx,
+    )
+    assert resp2.ok is True
+    assert resp2.result == {"scene_count": 3, "created": 0}
+    assert ctx.song._created == []
+
+
+def test_ensure_count_rejects_count_below_one(loaded_actions):
+    """count < 1 is meaningless (a set always has >= 1 scene). The schema
+    ParamSpec(minimum=1) rejects it before the handler runs, with a teaching
+    'below minimum' validation error."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "below minimum" in (resp.error or "")
+
+
+class _NoCreateSceneSong:
+    """A Live build that doesn't expose Song.create_scene. Has scenes but
+    no way to grow them."""
+
+    def __init__(self, n_scenes: int = 8) -> None:
+        self.scenes = [FakeScene(f"s{i}") for i in range(n_scenes)]
+
+
+def test_ensure_count_refuses_and_teaches_when_create_scene_absent(loaded_actions):
+    """DR-2 option (c): a deficit exists but this Live build can't provision.
+    Raise the single actionable message (one teaching error, NOT N raw
+    per-clip IndexErrors at the later clips phase)."""
+    ctx = FakeCtx(_NoCreateSceneSong(n_scenes=8))  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 9},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "song needs 9 scenes" in err
+    assert "set has 8" in err
+    assert "add 1 scenes manually" in err
+    assert "re-run the push" in err
+
+
+def test_ensure_count_no_op_does_not_touch_missing_create_scene(loaded_actions):
+    """When no deficit exists, the absence of create_scene is irrelevant —
+    the handler returns before probing for it (idempotent re-push on a build
+    that can't grow scenes but already has enough must still succeed)."""
+    ctx = FakeCtx(_NoCreateSceneSong(n_scenes=9))  # type: ignore[arg-type]
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 9},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result == {"scene_count": 9, "created": 0}
+
+
+def test_ensure_count_handles_live_wrapper_recreation(loaded_actions):
+    """Re-wrapping discipline: ensure_count reads len(song.scenes) before and
+    after and appends via create_scene(-1) — never scans for object identity.
+    The _ReWrappingSceneSong returns fresh wrappers on each scenes access, so
+    a stray `is`-scan would misbehave; len-based deficit math is immune."""
+    ctx = _SceneCtx()  # 3 scenes underlying
+    resp = dispatch(
+        Request(
+            tool="ableton_scene", action="ensure_count",
+            params={"count": 5},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result == {"scene_count": 5, "created": 2}
+    assert len(ctx.song.scenes) == 5
 
 
 def test_delete_removes_scene(loaded_actions):

@@ -18,6 +18,7 @@ Package layout (behavior-preserving split of the original `push.py`):
                     no cycles).
   - `tempo`       — tempo-map + time-signature-map planners.
   - `tracks`      — track + return create pre-passes.
+  - `scenes`      — scene-provisioning pre-pass (ensure_count before clips).
   - `clips`       — per-clip + song-wide session-clip planners.
   - `arrangement` — arrangement-clip + cue-point + section planners.
   - `mix`         — mixer state + returns + master + sends planner.
@@ -60,6 +61,9 @@ from .tracks import (
 from .clips import (
     plan_push_clip,
     plan_push_clips,
+)
+from .scenes import (
+    plan_push_scenes,
 )
 from .arrangement import (
     plan_push_arrangement,
@@ -144,6 +148,8 @@ __all__ = [
     # Clips
     "plan_push_clip",
     "plan_push_clips",
+    # Scenes
+    "plan_push_scenes",
     # Arrangement / cues / sections
     "plan_push_arrangement",
     "plan_push_cue_points",

@@ -110,6 +110,46 @@ def create_handler(
     }
 
 
+def ensure_count_handler(
+    context: LiveContext, *, count: int
+) -> dict[str, Any]:
+    """Idempotently grow the set to at least ``count`` scenes.
+
+    The push planner's ``scenes`` phase emits one of these before ``clips``
+    so a song with more sections than the set has scenes doesn't hit a raw
+    per-clip ``IndexError`` at clip-create (session clip slots are scene rows;
+    a track only has as many slots as the set has scenes). Deficit math runs
+    here — the only side that can see the current scene count — because the
+    planner is pure-DB and knows the *required* max slot but not the *current*
+    Live count (SYN-4P2D / DR-1).
+
+    Grows only, never trims: ``needed <= 0`` is a no-op, so re-running a whole
+    push is idempotent for this phase. Appends via ``create_scene(-1)`` and
+    reads ``len(song.scenes)`` before/after — no ``is``-scan for identity
+    (Live re-wraps scene wrappers on each access; the "never use ``is`` for
+    Live API object identity" trap).
+
+    Refuse-and-teach (DR-2 option (c)): if a deficit exists but this Live build
+    doesn't expose ``Song.create_scene``, raise with a single actionable
+    message rather than letting ``clips`` later fail N times.
+    """
+    song = context.song
+    current = len(song.scenes)
+    needed = max(0, count - current)
+    if needed == 0:
+        return {"scene_count": current, "created": 0}
+    create_fn = getattr(song, "create_scene", None)
+    if create_fn is None:
+        raise NotImplementedError(
+            f"song needs {count} scenes; set has {current} and this Live build "
+            f"does not expose Song.create_scene — add {needed} scenes manually, "
+            f"then re-run the push (idempotent)."
+        )
+    for _ in range(needed):
+        create_fn(-1)  # -1 == append (Live's documented semantic)
+    return {"scene_count": len(song.scenes), "created": needed}
+
+
 def delete_handler(
     context: LiveContext, *, scene_index: int
 ) -> dict[str, Any]:
@@ -219,6 +259,7 @@ __all__ = [
     "list_handler",
     "info_handler",
     "create_handler",
+    "ensure_count_handler",
     "delete_handler",
     "rename_handler",
     "fire_handler",

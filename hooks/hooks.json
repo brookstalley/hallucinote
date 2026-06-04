@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/prewarm-mcp-env.sh\"",
+            "statusMessage": "Hallucinote: pre-warming the MCP server env…"
+          }
+        ]
+      }
+    ]
+  }
+}

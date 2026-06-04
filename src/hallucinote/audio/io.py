@@ -56,6 +56,12 @@ class CaptureSet:
     sample_rate: int
     start_at_beat: float
     stop_at_beat: float
+    # Beats of pure reverb ring-out captured AFTER stop_at_beat (the render's
+    # ``ring_out_beats``). The recorded audio spans [start_at_beat,
+    # stop_at_beat + ring_out_beats]; the dry input stops at stop_at_beat, so
+    # this trailing region is where RT60 is measured. 0.0 for captures made
+    # before ring-out capture landed (no usable tail → honest RT60 skip).
+    ring_out_beats: float
     master: Surface
     stems: list[Surface] = field(default_factory=list)
     returns: list[Surface] = field(default_factory=list)
@@ -114,6 +120,7 @@ def load_capture(manifest_path: Path | str) -> CaptureSet:
         sample_rate=sample_rate,
         start_at_beat=float(manifest["start_at_beat"]),
         stop_at_beat=float(manifest["stop_at_beat"]),
+        ring_out_beats=float(manifest.get("ring_out_beats", 0.0)),
         master=master,
         stems=stems,
         returns=returns,

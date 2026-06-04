@@ -1,6 +1,6 @@
 """W10-E2: bulk push dispatcher that bypasses the agent's tool-use channel.
 
-The ten-phase push planner emits plans the agent has historically dispatched
+The eleven-phase push planner emits plans the agent has historically dispatched
 itself via MCP tool calls. For large songs that's the v1.0 ceiling: each call
 ships its full args (notably ``notes=[…]``) as inline JSON inside the agent's
 tool-use block, burning agent context budget per call. A 29-clip song measured
@@ -360,7 +360,7 @@ def execute_push(
     actor: str = "sync",
     reason: str | None = None,
 ) -> ExecuteResult:
-    """Run the full ten-phase push, dispatching each call via ``send_fn``.
+    """Run the full eleven-phase push, dispatching each call via ``send_fn``.
 
     ``send_fn`` defaults to :func:`hallucinote_mcp.client.send`. Tests pass
     their own to avoid touching the MCP package or Live.

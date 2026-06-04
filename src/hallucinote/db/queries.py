@@ -32,6 +32,21 @@ def get_track(conn: sqlite3.Connection, track_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
 
 
+def tracks_by_name(conn: sqlite3.Connection, song_id: str) -> dict[str, str]:
+    """Map track name -> id for the song (master included; returns are not).
+
+    The bookkeeping every song's build.py used to re-declare locally — a pure
+    name->id lookup over ``get_tracks_for_song``, no musical decision (a ruler;
+    see ``generator-altitude-policy.md``)."""
+    return {row["name"]: row["id"] for row in get_tracks_for_song(conn, song_id)}
+
+
+def returns_by_name(conn: sqlite3.Connection, song_id: str) -> dict[str, str]:
+    """Map return-track name -> id for the song (the return-bus analog of
+    ``tracks_by_name``)."""
+    return {row["name"]: row["id"] for row in get_returns_for_song(conn, song_id)}
+
+
 def get_clips_for_track(conn: sqlite3.Connection, track_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM clips WHERE track_id = ? ORDER BY slot",
@@ -326,6 +341,19 @@ def get_device_chains_for_return(
            WHERE parent_return_id = ? ORDER BY position""",
         (return_id,),
     ).fetchall()
+
+
+def get_device_chain(
+    conn: sqlite3.Connection,
+    chain_id: str,
+) -> sqlite3.Row | None:
+    """One device chain by id. Carries the polymorphic parent (parent_track_id
+    / parent_return_id / parent_rack_device_id) — used to resolve a device back
+    to the surface (track or return) it sits on, e.g. for the audio analyzer's
+    device-parameter automation verification."""
+    return conn.execute(
+        "SELECT * FROM device_chains WHERE id = ?", (chain_id,)
+    ).fetchone()
 
 
 def get_device_chains_for_rack_device(

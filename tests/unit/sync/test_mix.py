@@ -5,7 +5,7 @@ import json
 import sqlite3
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.db import events as E
@@ -322,6 +322,12 @@ def test_set_send_intended_rt60_rejects_non_positive(conn, song):
         )
 
 
+# deadline=None: each example does real SQLite I/O (init_db + create_* + write),
+# whose latency is CPU-contention-sensitive under `-n auto` parallel runs. The
+# default 200ms per-example deadline measures machine load, not the validator
+# contract, and caused an intermittent parallel-only DeadlineExceeded flake. The
+# assertions below are unchanged — this only removes the timing gate.
+@settings(deadline=None)
 @given(value=st.one_of(
     st.none(),
     st.floats(allow_nan=False, allow_infinity=False),

@@ -1,117 +1,156 @@
-"""Reverb send verification tests.
+"""Reverb RT60 verification — per-return decay-tail measurement (AUD-6R2M).
 
-Pins success criterion #5 from the audio-analysis MVP build plan:
-on a synthetic dry impulse + known-RT60 IR, the Wiener-deconvolved IR
-measures RT60 within ±0.15 s of the declared value.
+RT60 is measured per RETURN from its own captured ring-out via Schroeder
+backward energy integration, dry-source-free. These pin:
 
-The MVP path is the *clean* one — the analyzer's wet capture lives at
-the return-track instance, not blended back into the master, so the
-dry/wet pair deconvolves to a clean IR. Per spike §3.
+  - a known-RT60 ring-out is recovered within tolerance (the calibration);
+  - the recovered RT60 is INVARIANT to how many / which dry sources fed the
+    return — the property the old single-dry deconvolution catastrophically
+    failed (it returned 252–370 s on a real 5–6-send return);
+  - a capture with no usable ring-out yields an honest ``sufficient_tail=False``
+    / NaN skip, never a fabricated number;
+  - ``find_decay_onset`` locates the decay start after the last excitation.
 """
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from hallucinote.audio.reverb import (
     REVERB_TOLERANCE_S,
-    deconvolve_ir,
-    verify_reverb_send,
+    find_decay_onset,
+    measure_return_rt60,
 )
 
 from .fixtures import (
     SAMPLE_RATE,
     convolve,
+    kick_onset,
     pink_noise,
     silence,
+    sine,
     synthetic_ir,
 )
 
 
-def _impulse(duration_s: float = 2.0) -> np.ndarray:
-    """A clean stereo impulse — single sample at t=0, zeros elsewhere."""
-    audio = silence(duration_s)
-    audio[0, 0] = 1.0
-    audio[0, 1] = 1.0
-    return audio
+def _ring_out(
+    rt60_s: float,
+    *,
+    sources: list,
+    input_s: float = 2.0,
+    total_s: float = 5.0,
+) -> np.ndarray:
+    """A return ring-out: ``sources`` (summed dry inputs) play over
+    ``[0, input_s]`` then stop; convolved with a known-RT60 IR, the return
+    decays into silence over ``[input_s, total_s]``. The decay region's slope
+    is the IR's — independent of the source content (the physics the
+    source-invariance test exercises)."""
+    ir = synthetic_ir(rt60_s, duration_s=total_s)
+    tot_n = int(round(total_s * SAMPLE_RATE))
+    in_n = int(round(input_s * SAMPLE_RATE))
+    dry = np.zeros((tot_n, 2), dtype=np.float32)
+    for src in sources:
+        seg = src[:in_n]
+        dry[: seg.shape[0]] += seg
+    return convolve(dry, ir)
 
 
-def test_deconvolve_recovers_known_ir_from_impulse_dry():
-    """When dry is a delta, wet IS the IR — deconvolution should
-    recover the IR with very small error."""
-    declared = 0.8
-    ir = synthetic_ir(declared, duration_s=2.0)
-    dry = _impulse(duration_s=2.0)
-    wet = convolve(dry, ir)
-
-    recovered = deconvolve_ir(dry, wet, sr=SAMPLE_RATE)
-    # The deconvolution introduces some numerical noise; allow generous
-    # tolerance on per-sample IR shape but check the energy decay is right.
-    ir_mono = 0.5 * (ir[:, 0] + ir[:, 1])
-    rec_mono = 0.5 * (recovered[:, 0] + recovered[:, 1])
-    # Both should have energy front-loaded; check cumulative energy crosses
-    # 90% at roughly the same point.
-    def _e90(x):
-        cumul = np.cumsum(x**2)
-        return int(np.searchsorted(cumul, 0.9 * cumul[-1]))
-    assert abs(_e90(rec_mono) - _e90(ir_mono)) < int(0.05 * SAMPLE_RATE)
-
-
-def test_verify_reverb_send_measures_known_rt60_within_tolerance():
-    """Success criterion #5 (build plan Chunk 3-B)."""
-    declared = 1.2
-    ir = synthetic_ir(declared, duration_s=3.0)
-    dry = _impulse(duration_s=3.0)
-    wet = convolve(dry, ir)
-
-    result = verify_reverb_send(dry, wet, sample_rate=SAMPLE_RATE,
-                                declared_rt60_s=declared,
-                                dry_track_id="track:snare",
-                                wet_return_track_id="return:1")
-    assert abs(result.measured_rt60_s - declared) <= REVERB_TOLERANCE_S, (
-        f"RT60 drift: declared={declared}, measured={result.measured_rt60_s}, "
-        f"tolerance={REVERB_TOLERANCE_S}"
+def _measure(ring: np.ndarray, *, declared: float, input_s: float = 2.0):
+    onset = find_decay_onset(
+        ring,
+        search_start_sample=int(round(input_s * SAMPLE_RATE)),
+        sample_rate=SAMPLE_RATE,
     )
-    assert result.within_tolerance is True
-    assert result.dry_track_id == "track:snare"
-    assert result.wet_return_track_id == "return:1"
+    return measure_return_rt60(
+        ring,
+        sample_rate=SAMPLE_RATE,
+        decay_onset_sample=onset,
+        declared_rt60_s=declared,
+        return_track_id="return:1",
+    )
 
 
-def test_verify_reverb_send_flags_out_of_tolerance():
-    """Send a wet signal made with a 2.0 s IR but declare it was 0.5 s —
-    measured value should fall outside tolerance and within_tolerance
-    should be False."""
-    actual = 2.0
-    declared = 0.5
-    ir = synthetic_ir(actual, duration_s=4.0)
-    dry = _impulse(duration_s=4.0)
-    wet = convolve(dry, ir)
-
-    result = verify_reverb_send(dry, wet, sample_rate=SAMPLE_RATE,
-                                declared_rt60_s=declared,
-                                dry_track_id="track:snare",
-                                wet_return_track_id="return:1")
-    assert result.within_tolerance is False
-    assert result.measured_rt60_s > declared + REVERB_TOLERANCE_S
+def test_recovers_known_rt60_from_ringout():
+    """Calibration: a known-RT60 ring-out is recovered within tolerance."""
+    rt60 = 1.2
+    ring = _ring_out(rt60, sources=[sine(220.0, 2.0)], total_s=5.0)
+    r = _measure(ring, declared=rt60)
+    assert r.sufficient_tail
+    assert r.measurement_method == "decay_tail"
+    assert abs(r.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S, (
+        f"declared={rt60} measured={r.measured_rt60_s}"
+    )
+    assert r.within_tolerance is True
 
 
-def test_wiener_regularization_keeps_deconvolution_stable_on_noisy_dry():
-    """A noisy dry signal (pink noise) has near-zero spectral bins; the
-    Wiener regularization epsilon prevents the deconvolution from blowing
-    up. We assert STABILITY (finite output, no NaN/Inf) — not RT60
-    accuracy, which is the documented honest gap per spike §7. Noisy /
-    dense source material is the post-MVP P2 backlog territory for
-    section-scoped masking + improved deconvolution."""
-    declared = 1.0
-    ir = synthetic_ir(declared, duration_s=3.0)
-    dry = pink_noise(3.0, amplitude=0.5)
-    wet = convolve(dry, ir)
+def test_rt60_invariant_to_number_of_sources():
+    """The property the old single-dry deconvolution FAILED. A return fed by one
+    source and one fed by five recover the SAME RT60, because we measure the
+    return's own decay rather than deconvolving by a single dry stem."""
+    rt60 = 1.0
+    one = _ring_out(rt60, sources=[sine(330.0, 2.0)])
+    five = _ring_out(rt60, sources=[
+        sine(330.0, 2.0), sine(110.0, 2.0), pink_noise(2.0),
+        kick_onset(), sine(550.0, 2.0),
+    ])
+    r1 = _measure(one, declared=rt60)
+    r5 = _measure(five, declared=rt60)
+    assert r1.sufficient_tail and r5.sufficient_tail
+    assert abs(r1.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+    assert abs(r5.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+    # Source-count invariance: the two agree despite totally different inputs.
+    assert abs(r1.measured_rt60_s - r5.measured_rt60_s) <= REVERB_TOLERANCE_S
 
-    result = verify_reverb_send(dry, wet, sample_rate=SAMPLE_RATE,
-                                declared_rt60_s=declared,
-                                dry_track_id="track:vox",
-                                wet_return_track_id="return:1")
-    # Stability checks only — measured RT60 may be wildly off but it must
-    # be a finite real number, not a deconvolution explosion.
-    assert np.isfinite(result.measured_rt60_s)
-    assert result.measured_rt60_s >= 0.0
+
+def test_no_decay_continuous_signal_is_honest_insufficient_tail():
+    """A return that never decays (continuous content to the last sample — the
+    real sun-zone-done capture) yields an honest skip, not a fabricated RT60.
+    This is the AUD-6R2M correctness floor: no garbage 252–370 s value."""
+    ring = pink_noise(2.0, amplitude=0.5)  # stationary — no ring-out
+    r = measure_return_rt60(
+        ring, sample_rate=SAMPLE_RATE, decay_onset_sample=0,
+        declared_rt60_s=1.0, return_track_id="return:1",
+    )
+    assert r.sufficient_tail is False
+    assert np.isnan(r.measured_rt60_s)
+    assert r.within_tolerance is False
+    assert r.tail_span_db < 20.0  # below the clean-decay-span gate
+
+
+def test_short_tail_is_insufficient():
+    """A decay region shorter than a real ring-out → insufficient, no
+    extrapolation from a sliver."""
+    ring = synthetic_ir(0.8, duration_s=2.0)
+    onset = ring.shape[0] - int(round(0.1 * SAMPLE_RATE))  # < _MIN_TAIL_S left
+    r = measure_return_rt60(
+        ring, sample_rate=SAMPLE_RATE, decay_onset_sample=onset,
+        declared_rt60_s=0.8, return_track_id="return:1",
+    )
+    assert r.sufficient_tail is False
+    assert np.isnan(r.measured_rt60_s)
+
+
+def test_out_of_tolerance_when_actual_differs_from_declared():
+    """A 2.0 s ring-out declared as 0.5 s → measured outside tolerance."""
+    ring = _ring_out(2.0, sources=[sine(220.0, 2.0)], total_s=6.0)
+    r = _measure(ring, declared=0.5)
+    assert r.sufficient_tail
+    assert r.within_tolerance is False
+    assert r.measured_rt60_s > 0.5 + REVERB_TOLERANCE_S
+
+
+def test_find_decay_onset_locates_last_excitation():
+    """Onset lands near the end of input (the last excitation), not at the
+    start — so the release/buildup is kept out of the decay fit."""
+    ring = _ring_out(1.0, sources=[sine(220.0, 2.0)], input_s=2.0, total_s=5.0)
+    onset = find_decay_onset(
+        ring, search_start_sample=int(round(1.9 * SAMPLE_RATE)),
+        sample_rate=SAMPLE_RATE,
+    )
+    assert int(round(1.9 * SAMPLE_RATE)) <= onset <= int(round(2.6 * SAMPLE_RATE))
+
+
+def test_find_decay_onset_returns_n_when_search_starts_at_end():
+    """No region to search → returns n (the no-ring-out case)."""
+    ring = silence(1.0)
+    n = ring.shape[0]
+    assert find_decay_onset(ring, search_start_sample=n, sample_rate=SAMPLE_RATE) == n

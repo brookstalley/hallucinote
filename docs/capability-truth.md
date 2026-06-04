@@ -10,6 +10,10 @@ Read capabilities as **dimensions of a song**, not a skill catalog. A stylistic
 goal is almost always reachable through the dimensions we render fully; name the
 thin dimensions honestly, then deliver anyway.
 
+See `song-authoring-conventions.md` -> "The toolkit reduces work — it never limits
+what you can author" for the authoring-side counterpart (a missing helper is never
+a limit).
+
 > **Living doc.** Keep this current with the code — it must never lag. When a
 > dimension's depth changes (e.g. melody matures, vocals arrive), edit the table
 > here and the handoff/elicitation surfaces inherit it automatically. Last
@@ -27,7 +31,7 @@ thin dimensions honestly, then deliver anyway.
 | **Arrangement / structure** | ✓ full | sections, energy arc, contrast, build/drop, subtraction. |
 | **Sound design** | ✓ full | instrument *chains* (instrument + saturation + bus FX) as authorship, not a mix-time todo. |
 | **Mix** | ✓ full | intent-aware review, masking analysis, sidechain, reverb sends, loudness. |
-| **Melody — line analysis** | ✓ read-side | the symbolic **melody lens** reads any monophonic line's contour, intervals, and harmony-fit and coaches it *against your declared intent* (`/compose-review`, `tools/melody_lens.py`) — including a topline you sketched in. It measures, it never invents the hook (that's yours). No universal "good melody" verdict. |
+| **Melody — line analysis** | ✓ read-side | the symbolic **melody lens** reads any monophonic line's contour, intervals, and harmony-fit and coaches it *against your declared intent* (`/compose-review`, `hallucinote.tools.melody_lens`) — including a topline you sketched in. It measures, it never invents the hook (that's yours). No universal "good melody" verdict. |
 | **Melody — lead-line *authoring*** | ◐ thinner | I won't write your finished hook — that's your art, by design (no melody generator, ever). A generated topline is a starting point, not the finished hook. *Sketch your line in Ableton and I'll arrange under it (round-trip) — and read whether it lands its intent (line analysis above).* |
 | **Vocal topline (synthesis)** | ✗ not yet | we don't synthesize a sung vocal. A sketched vocal *melody* (MIDI) round-trips in — and the line analysis above reads it. |
 | **Round-trip / sketch-input** | ✓ full | edit in Ableton, we ingest + build around it — `/ableton-pull` `clip-notes`, stable per-note IDs. |

@@ -1,10 +1,10 @@
 """``ableton_scene`` action schema.
 
-Nine actions covering session-view scenes (rows of clip slots + per-scene
+Ten actions covering session-view scenes (rows of clip slots + per-scene
 tempo + signature):
 
   - **Read**: list, info
-  - **Lifecycle**: create (with optional position), delete, rename
+  - **Lifecycle**: create (with optional position), ensure_count, delete, rename
   - **Transport**: fire (plays all clips in the row)
   - **Per-scene state**: set_tempo, set_signature
   - **Help**: dispatcher-special
@@ -107,6 +107,30 @@ register(
         tips=(
             "Returns {scene_index, name} — capture scene_index for "
             "subsequent calls.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_scene",
+        name="ensure_count",
+        description=(
+            "Idempotently grow the set to at least `count` scenes (appends "
+            "the deficit; never trims). Used by the push 'scenes' phase before "
+            "'clips' so a song with more sections than the set has scenes "
+            "doesn't fail at clip-create (session clip slots are scene rows). "
+            "Returns {scene_count, created}; created=0 when no growth was "
+            "needed."
+        ),
+        params=(
+            ParamSpec(name="count", type="int", minimum=1),
+        ),
+        handler=scene_handlers.ensure_count_handler,
+        example="ableton_scene(action='ensure_count', count=9)",
+        tips=(
+            "Idempotent — re-running a push that already provisioned enough "
+            "scenes is a no-op (created=0).",
         ),
     )
 )

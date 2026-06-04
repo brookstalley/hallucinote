@@ -169,11 +169,11 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The ten phases are present, in order.
+    # The eleven phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "clips", "mix", "devices", "envelopes", "arrangement", "cues",
+        "scenes", "clips", "mix", "devices", "envelopes", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
     # content) or ok-with-zero-calls if the planner still emits acks.
@@ -272,7 +272,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all ten plans before dispatching)."""
+    (e.g. a refactor that pre-builds all eleven plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 
@@ -297,6 +297,183 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
         "track link must be visible to the conn at the moment the clip "
         "create call is dispatched"
     )
+
+
+# ---------------------------------------------------------------------------
+# SYN-4P2D — scene provisioning before clips (the bug's signal)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def nine_section_song(conn, song):
+    """A 9-section song: 9 session clips at slots 1..9 on one track, each
+    with a note. This is the SYN-4P2D failure case — more sections (9) than
+    a default 8-scene Live set has scenes."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    clip_ids = []
+    for slot in range(1, 10):
+        cid = M.create_clip(
+            conn, track_id=tid, slot=slot, length_beats=4.0, name=f"sec{slot}",
+        )
+        M.insert_notes(conn, clip_id=cid, notes=[
+            {"pitch": 60, "velocity": 100, "start_beats": 0.0, "duration_beats": 0.5},
+        ])
+        clip_ids.append(cid)
+    return {"track_id": tid, "clip_ids": clip_ids, "song_id": song}
+
+
+def _make_scene_aware_send_fn(*, initial_scenes: int = 8, honor_ensure_count: bool = True):
+    """Build a fake send_fn that models a Live set's scene count the way real
+    Live does (handlers/clip.py:289-293 + handlers/scene.py):
+
+    - The set starts with ``initial_scenes`` scenes. ``track.clip_slots`` has
+      one slot per scene, so a clip-create into ``clip_index > scene_count``
+      raises ``IndexError`` (the real handler's exact message shape).
+    - ``ableton_scene:ensure_count`` grows the count to ``max(count, current)``
+      — UNLESS ``honor_ensure_count`` is False, which models the PRE-FIX world
+      where nothing provisions scenes and the clips phase fails per-clip.
+
+    The fake's IndexError-on-create is what makes this a real regression: a
+    fake that always succeeds at clip-create would give false confidence (the
+    "Unit fakes that mirror an *assumed* Live API give false confidence"
+    learning).
+    """
+    state = {"scene_count": initial_scenes}
+    counters: dict[str, int] = {}
+    call_log: list[dict] = []
+
+    _LINK_KIND_FOR = {
+        ("ableton_track", "create"): "track",
+        ("ableton_return", "create"): "return",
+        ("ableton_clip", "create"): "clip",
+        ("ableton_device", "load"): "device",
+        ("ableton_arrangement", "duplicate_to_arrangement"): "arrangement_clip",
+        ("ableton_automation", "write_envelope"): "envelope",
+    }
+
+    def send(req):
+        call_log.append({
+            "tool": req.tool, "action": req.action,
+            "params": dict(req.params),
+        })
+        if req.tool == "ableton_scene" and req.action == "ensure_count":
+            if honor_ensure_count:
+                count = req.params["count"]
+                created = max(0, count - state["scene_count"])
+                state["scene_count"] = max(state["scene_count"], count)
+                return FakeResponse(
+                    ok=True,
+                    result={"scene_count": state["scene_count"], "created": created},
+                )
+            # Pre-fix world: the action exists but nothing provisions (or, in
+            # the absent-phase simulation, it's simply never called).
+            return FakeResponse(
+                ok=True, result={"scene_count": state["scene_count"], "created": 0},
+            )
+        if req.tool == "ableton_clip" and req.action == "create":
+            clip_index = req.params["clip_index"]
+            if clip_index > state["scene_count"]:
+                # Mirror handlers/clip.py:289-293 — the raw per-clip IndexError
+                # the bug produced. Surfaced as ok=False (the executor records
+                # it; the real handler raises and the dispatcher wraps it).
+                return FakeResponse(
+                    ok=False,
+                    error=(
+                        f"ableton_clip('create') failed: IndexError: clip_index "
+                        f"{clip_index} out of range [1, {state['scene_count']}] "
+                        f"for session view of track {req.params.get('track_index')}"
+                    ),
+                )
+            counters["clip"] = counters.get("clip", 0) + 1
+            return FakeResponse(ok=True, result={"clip_index": counters["clip"]})
+        kind = _LINK_KIND_FOR.get((req.tool, req.action))
+        if kind is None:
+            return FakeResponse(ok=True, result={})
+        counters[kind] = counters.get(kind, 0) + 1
+        return FakeResponse(ok=True, result={_LINK_FIELDS[kind]: counters[kind]})
+
+    send.call_log = call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_nine_section_song_provisions_scenes_before_clips(
+    conn, song, session, nine_section_song, state_dir,
+):
+    """With the fix, the scenes phase emits one ensure_count(count=9) BEFORE
+    the clips phase, the fake set grows from 8 to 9 scenes, every clip-create
+    succeeds, and the push reaches outcome='ok'. This is the SYN-4P2D
+    success signal: a >8-section song pushed into a fresh 8-scene set
+    COMPLETES."""
+    send_fn = _make_scene_aware_send_fn(initial_scenes=8)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+
+    # Exactly one ensure_count call, with count == max slot (9), and it
+    # arrived BEFORE the first clip-create.
+    ensure_calls = [
+        i for i, c in enumerate(send_fn.call_log)
+        if c["tool"] == "ableton_scene" and c["action"] == "ensure_count"
+    ]
+    clip_creates = [
+        i for i, c in enumerate(send_fn.call_log)
+        if c["tool"] == "ableton_clip" and c["action"] == "create"
+    ]
+    assert len(ensure_calls) == 1
+    assert send_fn.call_log[ensure_calls[0]]["params"]["count"] == 9
+    assert ensure_calls[0] < clip_creates[0], (
+        "scenes phase must dispatch ensure_count before the first clip-create"
+    )
+    # All 9 clips created.
+    assert len(clip_creates) == 9
+
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["scenes"]["status"] == "ok"
+    assert by_name["clips"]["status"] == "ok"
+
+
+def test_execute_nine_section_fails_without_scene_provisioning(
+    conn, song, session, nine_section_song, state_dir, monkeypatch,
+):
+    """Companion (pins what now passes): with the scenes phase REMOVED from
+    the orchestrator, the default-8-scene fake's clip-create raises the raw
+    IndexError on slots 9 (and beyond the count), the clips phase halts, and
+    the push is 'partial'. Proves the fix's teeth — the test fails without
+    the provisioning phase."""
+    real_plan_push_song = push_execute.push.plan_push_song
+
+    def plan_without_scenes(conn, *, song_id, session_id):
+        return [
+            p for p in real_plan_push_song(conn, song_id=song_id, session_id=session_id)
+            if p.name != "scenes"
+        ]
+
+    monkeypatch.setattr(push_execute.push, "plan_push_song", plan_without_scenes)
+
+    # honor_ensure_count is irrelevant here — the scenes phase is gone, so
+    # ensure_count is never dispatched; the set stays at 8 scenes.
+    send_fn = _make_scene_aware_send_fn(initial_scenes=8)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "clips"
+
+    # No ensure_count was dispatched (phase removed).
+    assert not any(
+        c["tool"] == "ableton_scene" and c["action"] == "ensure_count"
+        for c in send_fn.call_log
+    )
+    # The recorded error is the raw per-clip IndexError for the out-of-range slot.
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    assert any(
+        "out of range" in e.get("error", "") and "IndexError" in e.get("error", "")
+        for e in errors["errors"]
+    ), errors["errors"]
 
 
 # ---------------------------------------------------------------------------

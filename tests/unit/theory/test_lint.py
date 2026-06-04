@@ -1,10 +1,11 @@
-"""Chunk B — the vertical slice: chord-aware reggae_skank + the conformance lens.
+"""Chunk B / LNT-1V9K — chord-aware reggae_skank + the conformance lens.
 
-The headline is the regression test that makes "a whole song pedalling one
-chord" a BLOCKING test failure: feed the SAME declared 2-chord progression two
-ways — once through the chord-aware skank (which voices both) and once through a
-frozen single-chord progression (which pedals one) — and assert the lens flags
-the second as harmonic stasis and not the first.
+The headline regression: feed the SAME declared 2-chord progression two ways —
+once through the chord-aware skank (which voices both) and once through a frozen
+single-chord progression (which pedals one) — and assert the lens NAMES the
+second as harmonic stasis (``stasis_sections``, the signal a song's test gates
+on) and not the first. Per LNT-1V9K the lens is a ruler, not a stamp: stasis is a
+loud WARNING, never a build block — a deliberate field (or 4'33") must ship.
 """
 from __future__ import annotations
 
@@ -43,8 +44,11 @@ def test_chord_aware_skank_voices_both_chords_and_passes():
     assert report.stasis_sections == ()
 
 
-def test_frozen_skank_under_a_moving_progression_is_flagged_blocking():
-    # The OLD behavior: declare Em7->A7 but pedal one chord. This is the bug.
+def test_frozen_skank_under_a_moving_progression_warns_but_never_blocks():
+    # Pedal one chord under a declared Em7->A7 change — the realization bug-shape.
+    # A build-time lens is a ruler, not a stamp (LNT-1V9K): it surfaces a LOUD
+    # WARNING and names the section in stasis_sections (the regression signal a
+    # song asserts on), but it NEVER blocks the build.
     notes = harmony.reggae_skank(_FROZEN, bars=2, register=3)
     section = SectionLint("verse", 8.0, _DECLARED, {"03 Gtr": notes},
                           harmony_layers=("03 Gtr",))
@@ -52,16 +56,53 @@ def test_frozen_skank_under_a_moving_progression_is_flagged_blocking():
     sec = report.sections[0]
     assert sec.declared_distinct_chords == 2
     assert sec.sounded_distinct_chords == 1   # it pedalled
-    assert sec.harmonic_stasis is True
-    assert report.ok is False
-    assert report.stasis_sections == ("verse",)
-    assert any(f.kind == "harmonic-stasis" and f.severity == "blocking"
-               for f in report.blocking)
+    assert sec.harmonic_stasis is True        # the bug-shape is still NAMED...
+    assert report.stasis_sections == ("verse",)  # ...so a song's test can gate
+    assert report.ok is True                  # ...but the lens never blocks
+    assert report.blocking == ()
+    assert any(f.kind == "harmonic-stasis" and f.severity == "warning"
+               for f in report.findings)
 
 
 # ---------------------------------------------------------------------------
 # Graceful degradation + intentional stasis
 # ---------------------------------------------------------------------------
+
+
+def test_bassless_section_with_declared_movement_is_absence_not_a_block():
+    # The LNT-1V9K trigger: a deliberately bare section (drums + bass drop out)
+    # under a declared multi-chord progression. The harmony layer is present but
+    # TACET — sounded == 0. Absence is NOT stasis (nothing can realize movement
+    # with no harmonic agent present), so it is an INFO coaching question, never a
+    # block, and is NOT counted in stasis_sections.
+    section = SectionLint("break", 8.0, _DECLARED, {"03 Gtr": []},
+                          harmony_layers=("03 Gtr",))
+    report = lint_harmony([section], song_slug="toy")
+    sec = report.sections[0]
+    assert sec.sounded_distinct_chords == 0
+    assert sec.harmonic_stasis is False          # absence != the pedal bug
+    assert report.stasis_sections == ()
+    assert report.ok is True
+    assert any(f.kind == "harmonic-absence" and f.severity == "info"
+               for f in sec.findings)
+
+
+def test_no_harmony_finding_ever_blocks_the_build():
+    # The LNT-1V9K verifiable signal: ship a pedaled, a bass-less, and a long
+    # static section together — the lens reports loudly but NOTHING blocks.
+    pedaled = SectionLint("pedaled", 8.0, _DECLARED,
+                          {"g": harmony.reggae_skank(_FROZEN, bars=2, register=3)},
+                          harmony_layers=("g",))
+    bare = SectionLint("bare", 8.0, _DECLARED, {"g": []}, harmony_layers=("g",))
+    drone = SectionLint("drone", 32.0, _FROZEN,
+                        {"g": harmony.reggae_skank(_FROZEN, bars=8, register=3)},
+                        harmony_layers=("g",))
+    report = lint_harmony([pedaled, bare, drone], song_slug="toy")
+    assert report.ok is True
+    assert report.blocking == ()
+    # ...and it still SURFACES everything (a ruler measures loudly).
+    kinds = {f.kind for f in report.findings}
+    assert {"harmonic-stasis", "harmonic-absence", "ambition"} <= kinds
 
 
 def test_no_declared_harmony_is_skipped_not_failed():

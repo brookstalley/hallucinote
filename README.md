@@ -25,6 +25,39 @@ Known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#know
 
 ## Install
 
+Hallucinote has two halves: the **plugin** (the `/hallucinote:*` skills + the
+`hallucinote-mcp` server, installed into Claude Code) and the **engine** (the
+`hallucinote` Python package that `build.py` composes against). Your **songs**
+live in their own git repo (a workspace with a `hallucinote.toml` marker), not
+in this repo — see [`docs/VISION.md`](docs/VISION.md) ("a song is a git repo").
+
+**To make music — install from a local checkout** (the path today; the plugin
+and engine both live in this repo):
+
+1. Clone + editable-install this repo (see [Clone and install](#1-clone-and-install) below) — that
+   gives you the **engine** and the plugin's `skills/`.
+2. In your **songs repo**, start Claude Code with the plugin loaded from your
+   checkout:
+
+   ```bash
+   claude --plugin-dir /path/to/hallucinote
+   ```
+
+   Skills appear as `/hallucinote:song-new`, …; the `hallucinote-mcp` server
+   auto-connects.
+3. Run `/hallucinote:ableton-mcp-install` once (the Ableton Remote Script — the
+   one thing the plugin can't do for you), then `/hallucinote:song-new`.
+
+> **One-line install, once it's published.** After the first release (the plugin
+> on the default branch + the engine on PyPI), setup collapses to:
+> ```bash
+> # in Claude Code:  /plugin marketplace add brookstalley/hallucinote
+> #                  /plugin install hallucinote@hallucinote
+> pip install 'hallucinote[live]'
+> ```
+> Until then, use the local-checkout path above (the plugin currently lives on
+> `develop`, not the default branch a marketplace install reads).
+
 ### 1. Clone and install 
 
 **macOS / Linux:**
@@ -171,7 +204,7 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 
 ```
 src/hallucinote/      # composition library: db, generators, sync, capture
-hallucinote_mcp/      # in-repo MCP server (13 unified Ableton tools)
+hallucinote_mcp/      # in-repo MCP server (12 unified Ableton tools)
 songs/<slug>/         # one directory per song: build.py + snapshot + tests
 tools/                # scaffolding + maintenance scripts
 docs/                 # quickstart, skills, VISION, collaboration, FAQ, schemas, terminology

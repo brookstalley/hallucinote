@@ -31,7 +31,9 @@ from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # gated by runs_server_side=True).
 try:
     from hallucinote.audio import (
+        DeclaredEnvelope,
         DeclaredReverbSend,
+        SectionEnergy,
         SectionWindow,
         TempoSegment,
         analyze_mix,
@@ -50,7 +52,9 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     is_stale = None  # type: ignore[assignment]
     loaded_signature = None  # type: ignore[assignment]
+    DeclaredEnvelope = None  # type: ignore[assignment]
     DeclaredReverbSend = None  # type: ignore[assignment]
+    SectionEnergy = None  # type: ignore[assignment]
     SectionWindow = None  # type: ignore[assignment]
     TempoSegment = None  # type: ignore[assignment]
     Q = None  # type: ignore[assignment]
@@ -189,6 +193,89 @@ def _collect_declared_sends(
     ]
 
 
+def _collect_declared_envelopes(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredEnvelope"]:
+    """Lift DB automation envelopes into ``DeclaredEnvelope`` records for
+    ``analyze_mix``, resolving each to the capture surface it's measured on.
+
+    Surface resolution (the DB-UUID → ``track:N`` / ``return:N`` boundary):
+      - ``device_parameter`` → the track (or return) HOSTING the device
+        (device → chain → parent track/return → surface index). The pre-fader
+        stem captures the device's timbre change (e.g. the Amp Type flip).
+      - ``send_level`` → the RETURN the send feeds (more send → louder return).
+      - ``mixer_volume`` / ``mixer_pan`` → the track surface; passed through so
+        the audio module reports them unverifiable (post-fader, invisible to the
+        pre-fader stem) rather than dropping them silently.
+
+    Clip-/note-scoped MIDI automation (clip_cc, clip_pitch_bend,
+    note_expression) is not mix-audio automation — dropped here. Breakpoint
+    ``time_beats`` is already arrangement-local (song-absolute) beats for
+    mixer/send/device envelopes (schema), so no bar→beat conversion is needed.
+    Envelopes with fewer than two breakpoints carry no change to verify.
+    """
+    out: list["DeclaredEnvelope"] = []
+    for env in Q.get_envelopes_for_song(conn, song_id):
+        surface_id = _envelope_surface_id(conn, env)
+        if surface_id is None:
+            continue  # unresolvable, or a kind not verifiable from audio
+        bps = Q.get_breakpoints(conn, env["id"])
+        if len(bps) < 2:
+            continue
+        out.append(DeclaredEnvelope(
+            target_surface_id=surface_id,
+            target_kind=env["target_kind"],
+            parameter_path=env["parameter_path"],
+            breakpoints=tuple(
+                (float(b["time_beats"]), float(b["value"])) for b in bps
+            ),
+        ))
+    return out
+
+
+def _envelope_surface_id(
+    conn: "sqlite3.Connection", env: "sqlite3.Row",
+) -> "str | None":
+    """Capture surface (``track:N`` / ``return:N``) an envelope is measured on,
+    or None for kinds not verifiable from a captured surface."""
+    kind = env["target_kind"]
+    if kind in ("mixer_volume", "mixer_pan"):
+        return _track_surface(conn, env["target_track_id"])
+    if kind == "send_level":
+        return _return_surface(conn, env["target_send_return_id"])
+    if kind == "device_parameter":
+        device = Q.get_device(conn, env["target_device_id"])
+        if device is None:
+            return None
+        chain = Q.get_device_chain(conn, device["chain_id"])
+        if chain is None:
+            return None
+        if chain["parent_track_id"]:
+            return _track_surface(conn, chain["parent_track_id"])
+        if chain["parent_return_id"]:
+            return _return_surface(conn, chain["parent_return_id"])
+        return None  # device in a nested rack chain — not surface-resolvable yet
+    return None  # clip_cc / clip_pitch_bend / note_expression — not mix audio
+
+
+def _track_surface(conn: "sqlite3.Connection", track_id) -> "str | None":
+    if not track_id:
+        return None
+    track = Q.get_track(conn, track_id)
+    if track is None:
+        return None
+    return track_id_for_surface("track", int(track["track_index"]))
+
+
+def _return_surface(conn: "sqlite3.Connection", return_id) -> "str | None":
+    if not return_id:
+        return None
+    ret = Q.get_return(conn, return_id)
+    if ret is None:
+        return None
+    return track_id_for_surface("return", int(ret["position"]))
+
+
 def _collect_stem_gains(
     conn: "sqlite3.Connection", song_id: str,
 ) -> dict[str, float]:
@@ -246,6 +333,39 @@ def _collect_sections(
             end_beat=_position_bar_to_beats(row["end_bar"], ts_points),
         )
         for row in section_rows
+    ]
+
+
+def _collect_declared_energy(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["SectionEnergy"]:
+    """Lift the song's declared per-section ``energy`` (ARR-7M3D) into a list of
+    ``SectionEnergy`` the energy-realization lens consumes, using an
+    already-open connection.
+
+    Carries each section's ``start_beat`` — derived from ``start_bar`` via the
+    same ``_position_bar_to_beats`` meter walk ``_collect_sections`` uses — so it
+    shares the lens's join key (``start_beat``, NOT name: ``vary()`` /
+    recapitulation repeats section names, so name mis-pairs two distinct
+    sections; see the join-key note in ``report.EnergyRealization``). Two
+    same-named sections at different ``start_bar`` therefore lift to two
+    distinct ``SectionEnergy`` rows.
+
+    NULL-energy sections are EXCLUDED from the lift (not coerced to a fabricated
+    value) — the lens never sees a NULL-energy declared section, and a song that
+    declared no energy at all lifts to an empty list (``analyze_mix`` then
+    records an ``energy_realization`` skip rather than a fabricated ρ).
+    """
+    section_rows = Q.get_sections_for_song(conn, song_id)
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    return [
+        SectionEnergy(
+            start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
+            name=row["name"],
+            energy=float(row["energy"]),
+        )
+        for row in section_rows
+        if row["energy"] is not None
     ]
 
 
@@ -329,7 +449,9 @@ def analyze_handler(
         song = Q.get_song_by_name(conn, song_slug)
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
+        declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
+        declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
     finally:
@@ -337,7 +459,9 @@ def analyze_handler(
     report = analyze_mix(
         captures_path,
         declared_reverb_sends=declared_sends,
+        declared_envelopes=declared_envelopes,
         sections=sections,
+        declared_energy=declared_energy,
         tempo_map=tempo_map,
         # Masking is per-section evidence; enable it whenever the song declares
         # sections (the handler already gated section work on that). It is
@@ -367,7 +491,12 @@ def analyze_handler(
     report_path = analysis_dir / f"{_utc_timestamp()}.json"
     report_dict = report.to_json_dict()
     report_path.write_text(
-        json.dumps(report_dict, indent=2),
+        # allow_nan=False is a structural backstop (ARR-7M3D B1): the report's
+        # value objects guarantee None-or-finite by construction (the energy lens
+        # records None for an undefined Spearman ρ, never nan), so any stray nan
+        # from a future regression fails loud here instead of writing invalid
+        # JSON that strict consumers (JSON.parse, the eval judge) would reject.
+        json.dumps(report_dict, indent=2, allow_nan=False),
         encoding="utf-8",
     )
 

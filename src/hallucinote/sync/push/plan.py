@@ -15,6 +15,7 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
+from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
 
@@ -44,7 +45,7 @@ class PushPhase:
     description: str
 
 
-# The ten phases of the master push, in execution order. Order is
+# The eleven phases of the master push, in execution order. Order is
 # load-bearing — see :func:`plan_push_song` for the dependency
 # rationale per phase. This tuple is the single source of truth; tests
 # pin both the names and the count.
@@ -53,6 +54,7 @@ _PHASE_NAMES: tuple[str, ...] = (
     "time_signature_map",
     "tracks",
     "returns",
+    "scenes",
     "clips",
     "mix",
     "devices",
@@ -68,7 +70,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
 ) -> list[PushPhase]:
-    """Master orchestration: return the ten phases of a full song push, in order.
+    """Master orchestration: return the eleven phases of a full song push, in order.
 
     Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
     fresh :class:`PushPlan` from current DB state at call time. The
@@ -88,26 +90,33 @@ def plan_push_song(
       4. ``returns`` — :func:`plan_push_song_returns`. Creates+links
          every unlinked return. Prerequisite for mix sends, return-side
          devices, return-side envelopes.
-      5. ``clips`` — :func:`plan_push_clips`. Creates+links every
+      5. ``scenes`` — :func:`plan_push_scenes`. Ensures the set has at
+         least ``max session-clip slot`` scenes (= clip slots per track)
+         before ``clips`` creates section clips. Emits one idempotent
+         ``ableton_scene(action='ensure_count')`` call; deficit math runs
+         Live-side. No link deps. Prerequisite for ``clips`` — without it,
+         a song with more sections than the set has scenes hits a raw
+         per-clip ``IndexError`` at clip-create (SYN-4P2D).
+      6. ``clips`` — :func:`plan_push_clips`. Creates+links every
          session clip. Needs tracks linked (raises otherwise per W3-C
          strict contract). Prerequisite for envelopes (session-clip
          hosting) and arrangement (duplicate source).
-      6. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
+      7. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
          Needs tracks + returns linked. No clip dep.
-      7. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+      8. ``devices`` — :func:`plan_push_devices`. Loads instruments +
          effects and sets parameters. Needs tracks + returns linked.
          Prerequisite for ``device_parameter`` envelopes (need the
          target device linked).
-      8. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
+      9. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
          on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
          a snapshot copy, so the envelope must exist on the session
          clip BEFORE arrangement runs. Needs tracks + clips + returns
          + devices linked.
-      9. ``arrangement`` — :func:`plan_push_arrangement`. Emits
-         ``duplicate_to_arrangement`` per arrangement row. Carries
-         session-clip envelopes as snapshot copies (W4-A finding).
-         Needs clips linked (raises otherwise).
-      10. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
+      10. ``arrangement`` — :func:`plan_push_arrangement`. Emits
+          ``duplicate_to_arrangement`` per arrangement row. Carries
+          session-clip envelopes as snapshot copies (W4-A finding).
+          Needs clips linked (raises otherwise).
+      11. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
           Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
           clamped to ``[0, song.last_event_time]``; cues placed before
           arrangement exists get rejected.
@@ -116,7 +125,7 @@ def plan_push_song(
     canonical calls (Live has no section-marker concept distinct from
     cue points). Run it separately to surface its warn if needed.
 
-    Returns 10 phases regardless of whether the song actually has
+    Returns 11 phases regardless of whether the song actually has
     content for each phase — empty phases produce a plan with a
     ``no … to push`` warn instead of an empty plan, so the skill's
     progress reporting can distinguish "ran cleanly with nothing to
@@ -148,6 +157,13 @@ def plan_push_song(
                 conn, song_id=song_id, session_id=session_id,
             ),
             description="Create unlinked return tracks (pre-pass for sends/devices/envelopes).",
+        ),
+        PushPhase(
+            name="scenes",
+            plan_fn=lambda: plan_push_scenes(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Ensure the set has >= max session-clip slot scenes (pre-pass for clips; session clip slots are scene rows).",
         ),
         PushPhase(
             name="clips",
@@ -263,6 +279,11 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "send",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
+    # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
+    # session clip slots before the clips phase. Scenes are a Live-set
+    # structural property, not a Hallucinote entity — there's no per-scene DB
+    # row to link, so the key is ack-only.
+    "scene",
 })
 
 

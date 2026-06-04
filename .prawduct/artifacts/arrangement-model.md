@@ -52,8 +52,20 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 1. **Authored structure intents** — the song's *bones*: deliberate, largely-
    orthogonal decisions the composer authors. Today: **form/sections**, **energy**
    (the intensity intent), **harmony** (key/mode/progression). Candidate:
-   **meter-feel** (the felt pulse — half/double-time, compound, clave; distinct
-   from time-signature and tempo). Each is a ruler + (ideally) a read-side lens.
+   **meter-feel**, which on inspection (ARR-4M3T, 2026-06-02) is **two
+   sub-dimensions**: (i) **felt pulse level** — half/double-time, compound, clave,
+   hemiola; the felt subdivision, *distinct from* time-signature and tempo (the
+   half→double-time gear-shift is already a first-class *discontinuity* — see the
+   derivative section); and (ii) **literal meter / time-signature** — the metric
+   grid's shape per section/bar (5/4, 7/8, a borrowed 3/4 bar that shortens the
+   song). Both stay **candidates** (not built): promote (ii) to a built structure
+   intent — carried on the arrangement beside energy/harmony, with `plan()` placing
+   non-4/4 sections beat-accurately and the read-side lenses becoming meter-aware —
+   when a **second** odd-meter song forces it, OR when the user accepts the literal
+   steal's blast radius (every absolute-beat consumer) over the shipped
+   length-preserving **early-slam** interim (recorded in the ARR-4M3T backlog entry,
+   the source of truth for its shipped status). swing stays ∈ performance; the
+   metric grid ∈ meter-feel(ii). Each is a ruler + (ideally) a read-side lens.
 2. **Realization layers** — *how the bones are rendered*. **Derived from** the
    structure intents (+ a genre profile + deliberate overrides), NOT authored as
    competing dials. **Performance** (microtiming, dynamics, articulation) is the
@@ -66,6 +78,15 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 
 Underneath all three is the raw **note floor** (`_note(pitch, start, dur, vel)`),
 which every layer degrades to.
+
+**Both-sides status (2026-06-03).** The structure-intent MEASURE halves are being
+realized by named siblings — exactly as *"a dimension authored but unmeasured is
+half-built"* predicts: **energy** by **ARR-7M3D** (declared `energy_curve` vs rendered
+intensity — Spearman ρ + inversions), **recurrence/form** by **ARR-9K4T**
+(cross-instrument motif-recall + recapitulation read), with **harmony** (ARR-1H9C
+conformance lint) and **performance** (the perf lens) the shipped precedents. Each is a
+*lens* — it reports declared-vs-realized divergence as info/coaching, never a stamp or a
+verdict the composer didn't ask for. (Links to the siblings' designs; not restated here.)
 
 A fourth relationship exists: a **composite line that reads the other dimensions**.
 **Melody** is the case (decided 2026-05-31) — not an orthogonal structure intent
@@ -130,8 +151,9 @@ they are played). The decision:
   *declared* profile (today it reads what was authored, not what was declared) —
   friction-driven follow-ons, tracked (ARR-8P5K (b)–(d)).
 - **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
-  (it deviates *from* the grid); the metric grid it deviates from is *meter-feel*
-  (a structure intent). Clean split.
+  (it deviates *from* the grid); the metric grid it deviates from is *meter-feel(ii)*,
+  the literal-meter sub-dimension (a candidate structure intent — see the two-sub-dim
+  split in the taxonomy above). Clean split.
 
 ### SCOPE BOUNDARY — performance is METERED-only (a documented limitation, not a flaw)
 
@@ -196,6 +218,13 @@ decision:
   `harmony_fit`, 27 tests, validated on sun-zone-done's two hooks; classifies
   `active`/`static`, the shaped-vs-aimless verdict deferred to the profile-relative
   phase 2b). Next: the declared melodic-profile authoring surface + grading.
+- **Motivic economy — two distinct reads, one boundary (ARR-8P5K).** *Line-level*
+  motivic economy (does a single line reuse its own cells?) is the **melody lens**'s
+  (MEL-1A7K, within-line repetition). *Cross-instrument* recurrence/recapitulation (is
+  the song built from a shared recurring cell-set across instruments — which registered
+  motif recurs where, and as which variation?) is the **arrangement-level recurrence
+  read**'s (ARR-9K4T). One source of truth: the two reads never both claim the same
+  verdict.
 
 ### SCOPE BOUNDARY — melody is pitched-discrete-monophonic-line-only
 
@@ -259,6 +288,17 @@ All are **rulers**. The composer authors the music; these carry the structure.
 | **Reference / recap** | a link: "this section quotes/develops that motif" | how the fusion sounds |
 | **Energy curve** | an authored per-section/transition scalar + direction | the actual intensity intent |
 
+**Recurrence READ side (ARR-9K4T).** The recurrence/recap dimension now has a
+read-side ruler: a build-time symbolic lens (`hallucinote.recurrence`, surfaced via
+`hallucinote.tools.recurrence_lens` to `/compose-review`) reports which *registered*
+motifs recur where and as which variation, plus a motivic-economy summary — parallel
+to the harmony conformance lint / melody lens / performance lens, closing the
+both-sides gap for recurrence. It is **detect-only** (DR-1 Option A): it infers
+recalls from the realized section layers, so the **author-side "Reference / recap"
+link above remains documented-but-unbuilt** — `Arrangement` has no `reference()`
+method yet (the authored-link half is the tracked deferred work, ARR-9K4T Chunk 5).
+See the lens for the method; info-only, never a verdict (ruler-not-stamp).
+
 ### Cumulative development = per-iteration deltas
 
 The heart of the original question ("how do verse 1/2/3 stay the same yet
@@ -306,6 +346,15 @@ decision (2026-05-30):
   then owns; (b) an *analysis lens* — the arrangement review reports the curve's
   derivative shape and coaches it against arranger craft ("your build is linear;
   the masters accelerate into the chorus"), same shape as the masking analyzer.
+
+The energy curve now also has an **audio-realization lens** (ARR-7M3D):
+`MixReport.energy_realization` reports per-correlate Spearman ρ of declared
+`energy_curve` rank vs measured per-section intensity (LUFS-S + onset density)
+and names rank inversions — parallel to the harmonic-conformance lint and the
+performance lens, closing energy's BOTH-SIDES MEASURE half. The
+spectral-intensity correlate is a flagged deferral (loudness + density first).
+The lens is a ruler: it reports ranked intensity vs intent and never re-authors
+the curve. See `src/hallucinote/audio/energy.py` for the method.
 
 ---
 
@@ -360,8 +409,12 @@ second (the vertical/counterpoint constraint) remains open.
   the one-chord drone — a composer can still pedal the tonic under an "E Dorian"
   tag — so the substrate carries an authored **chord progression with harmonic
   rhythm** that the parts compose against, plus a **build-time conformance lens**
-  that fails the build when a section "declares movement but the parts play only
-  the tonic" (harmonic stasis). *Built:* `hallucinote.theory` (`Chord` — slash
+  that NAMES "declares movement but the parts play only the tonic" (harmonic
+  stasis) as the realization bug-shape. *(Originally this lens FAILED the build;
+  per LNT-1V9K it now surfaces stasis as a loud WARNING and never blocks — a
+  ruler, not a stamp — and the song's own test gates the regression via
+  `report.stasis_sections`. See `gate-verdict-policy.md`.)* *Built:*
+  `hallucinote.theory` (`Chord` — slash
   bass, polymodal `split`, free-form function labels; `Mode`; `Progression` — an
   authored harmonic-rhythm timeline, functional/modal toggle); chord-aware
   generators (skank, bass, power chords, organ bubble) that *voice* a progression;

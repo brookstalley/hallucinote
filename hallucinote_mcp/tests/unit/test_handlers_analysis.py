@@ -453,15 +453,76 @@ def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     assert len(report["reverb_verifications"]) == 1
     rv = report["reverb_verifications"][0]
-    # Verification dry/wet IDs are the capture-side surface IDs, not the
-    # DB UUIDs — that's the boundary `_collect_declared_sends` crosses.
-    assert rv["dry_track_id"] == f"track:{track_surface_index}"
-    assert rv["wet_return_track_id"] == f"return:{return_surface_index}"
+    # One verification PER RETURN. The surface IDs are capture-side, not DB
+    # UUIDs — the boundary `_collect_declared_sends` crosses. (This fixture's
+    # return is a continuous sine with no ring-out, so the RT60 itself is an
+    # honest insufficient-tail skip; the lift — surface IDs + declared value —
+    # is what this test pins.)
+    assert rv["return_track_id"] == f"return:{return_surface_index}"
+    assert rv["contributing_track_ids"] == [f"track:{track_surface_index}"]
     assert rv["declared_rt60_s"] == pytest.approx(0.8)
     # No DB intent → skip; intent present → no skip record.
     skips = [s for s in report["skipped_analyses"]
              if s["kind"] == "reverb_verification"]
     assert skips == []
+
+
+def test_collect_declared_envelopes_resolves_surfaces(synthetic_song: Path):
+    """`_collect_declared_envelopes` resolves each verifiable envelope kind to
+    its capture surface (the DB-UUID → track:N / return:N boundary):
+    device_parameter → the device's host track (device→chain→track),
+    send_level → the return it feeds, mixer_volume → the track (passed through
+    so the audio module reports it unverifiable rather than dropping it).
+    """
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        track_id = M.create_track(
+            conn, song_id=song_id, track_index=3, name="Rhythm Gtr")
+        return_id = M.create_return(
+            conn, song_id=song_id, name="A-Plate", position=1)
+        chain_id = M.create_device_chain(
+            conn, parent_track_id=track_id, position=0)
+        device_id = M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Amp", display_name="Amp")
+
+        env_dev = M.create_envelope(
+            conn, song_id=song_id, target_kind="device_parameter",
+            target_device_id=device_id, parameter_path="Amp Type")
+        M.add_breakpoint(conn, envelope_id=env_dev, time_beats=0.0, value=0.0,
+                         curve_kind="hold")
+        M.add_breakpoint(conn, envelope_id=env_dev, time_beats=8.0, value=1.0,
+                         curve_kind="hold")
+
+        M.set_send_level(conn, from_track_id=track_id, to_return_id=return_id,
+                         level=0.3)
+        env_send = M.create_envelope(
+            conn, song_id=song_id, target_kind="send_level",
+            target_track_id=track_id, target_send_return_id=return_id)
+        M.add_breakpoint(conn, envelope_id=env_send, time_beats=0.0, value=0.2)
+        M.add_breakpoint(conn, envelope_id=env_send, time_beats=8.0, value=0.8)
+
+        env_vol = M.create_envelope(
+            conn, song_id=song_id, target_kind="mixer_volume",
+            target_track_id=track_id)
+        M.add_breakpoint(conn, envelope_id=env_vol, time_beats=0.0, value=0.5)
+        M.add_breakpoint(conn, envelope_id=env_vol, time_beats=8.0, value=0.9)
+        conn.commit()
+
+        declared = analysis_handlers._collect_declared_envelopes(conn, song_id)
+    finally:
+        conn.close()
+
+    by_kind = {e.target_kind: e for e in declared}
+    assert by_kind["device_parameter"].target_surface_id == "track:3"
+    assert by_kind["device_parameter"].parameter_path == "Amp Type"
+    assert by_kind["device_parameter"].breakpoints == ((0.0, 0.0), (8.0, 1.0))
+    assert by_kind["send_level"].target_surface_id == "return:1"
+    assert by_kind["mixer_volume"].target_surface_id == "track:3"
 
 
 def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
@@ -509,6 +570,180 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
     assert not any(
         s["kind"] == "section_windowed" for s in report["skipped_analyses"]
     )
+
+
+def test_collect_declared_energy_lifts_section_energy_excluding_null(synthetic_song: Path):
+    """_collect_declared_energy reads the sections.energy column and lifts the
+    NON-NULL rows into SectionEnergy carrying start_beat (the lens join key); a
+    NULL-energy section is EXCLUDED (never coerced) — ARR-7M3D chunk 4."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        # 4/4 default: bar 1 -> beat 0, bar 2 -> beat 4, bar 3 -> beat 8.
+        M.create_section(
+            conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0,
+            energy=0.4,
+        )
+        M.create_section(
+            conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0,
+            energy=0.9,
+        )
+        # A NULL-energy section is excluded from the lift entirely.
+        M.create_section(
+            conn, song_id=song_id, name="outro", start_bar=3.0, end_bar=4.0,
+        )
+        conn.commit()
+        declared = analysis_handlers._collect_declared_energy(conn, song_id)
+    finally:
+        conn.close()
+
+    assert [(s.name, s.start_beat, s.energy) for s in declared] == [
+        ("verse", 0.0, 0.4),
+        ("chorus", 4.0, 0.9),
+    ]
+
+
+def test_collect_declared_energy_keeps_same_named_sections_distinct(synthetic_song: Path):
+    """B2 at the handler layer: a song with two same-named sections at different
+    start_bar / energy lifts to two distinct SectionEnergy rows with distinct
+    start_beat — the handler does NOT collapse repeated names (the Nobile
+    energy-drop two-Chorus case)."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        # Two "Chorus" sections at different bars and energies.
+        M.create_section(
+            conn, song_id=song_id, name="Chorus", start_bar=1.0, end_bar=3.0,
+            energy=0.9,
+        )
+        M.create_section(
+            conn, song_id=song_id, name="Verse", start_bar=3.0, end_bar=5.0,
+            energy=0.5,
+        )
+        M.create_section(
+            conn, song_id=song_id, name="Chorus", start_bar=5.0, end_bar=7.0,
+            energy=0.4,
+        )
+        conn.commit()
+        declared = analysis_handlers._collect_declared_energy(conn, song_id)
+    finally:
+        conn.close()
+
+    # 4/4 default: bar 1 -> beat 0, bar 3 -> beat 8, bar 5 -> beat 16.
+    chorus_rows = [s for s in declared if s.name == "Chorus"]
+    assert len(chorus_rows) == 2
+    assert {s.start_beat for s in chorus_rows} == {0.0, 16.0}
+    assert {s.energy for s in chorus_rows} == {0.9, 0.4}
+
+
+def test_analyze_handler_populates_energy_realization(synthetic_song: Path):
+    """A song whose sections declare energy → the report carries
+    energy_realization (the lens ran on the real handler path), and the on-disk
+    JSON parses (allow_nan=False backstop — ρ is None-or-finite, never nan).
+
+    The two 80/120 Hz sine stems read near-constant loudness across the two
+    sections, so the loudness ρ is None (tied/constant) WITH a reason in
+    skipped — which is exactly the B1 contract: None, never nan. This test
+    proves the wiring + the tied-correlate path on a real handler call."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        M.create_section(
+            conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0,
+            energy=0.4,
+        )
+        M.create_section(
+            conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0,
+            energy=0.9,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T141500Z", song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    # The on-disk report parses (proves allow_nan=False didn't choke).
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    er = report["energy_realization"]
+    assert er is not None
+    # Two energy-declared sections lifted + ranked.
+    assert {s["start_beat"] for s in er["sections_ranked"]} == {0.0, 4.0}
+    # ρ values are None-or-finite (JSON null or a number), never NaN.
+    for rho in er["correlate_rho"].values():
+        assert rho is None or isinstance(rho, (int, float))
+    # No fabricated energy_realization skip (energy WAS declared).
+    assert not any(
+        s["kind"] == "energy_realization" and "no per-section energy" in s["reason"]
+        for s in report["skipped_analyses"]
+    )
+
+
+def test_analyze_handler_skips_energy_realization_when_no_energy_declared(
+    synthetic_song: Path,
+):
+    """A song whose sections declare NO energy → energy_realization is null +
+    a structured skipped_analyses entry (never a fabricated ρ)."""
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        # Sections declared, but no energy on any of them.
+        M.create_section(conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0)
+        M.create_section(conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0)
+        conn.commit()
+    finally:
+        conn.close()
+
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T142000Z", song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert report["energy_realization"] is None
+    assert any(
+        s["kind"] == "energy_realization" for s in report["skipped_analyses"]
+    )
+
+
+def test_analyze_handler_always_emits_energy_realization_key(synthetic_song: Path):
+    """ARR-7M3D chunk-5 verify-api (deferred-render): the render→analyze handler
+    path ALWAYS writes the energy_realization key to the on-disk report — null
+    when no energy is declared, an object when it is. This is the UNIT proof that
+    the new report key reaches disk through the real handler, standing in for the
+    live render (Live unattended this run; see operator-verification.md)."""
+    slug = "test-song"
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T143000Z", song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    # Key is always present in the wire format (the song here declares no
+    # sections/energy, so it's null with a skip entry — never absent).
+    assert "energy_realization" in report
+    assert report["energy_realization"] is None
 
 
 def test_collect_tempo_map_lifts_db_rows_to_beat_segments(synthetic_song: Path):

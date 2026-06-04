@@ -3,7 +3,7 @@
 The snapshot is a JSON document describing the mix layout of an Ableton Live set. `hallucinote.capture.replay_capture` reads it and creates DB rows for tracks, returns, sends, master, devices, dialed parameters, and one level of nested rack chains.
 
 **Two roles for snapshots:**
-1. **Captured** — `tools/capture_cli.py` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
+1. **Captured** — `python -m hallucinote.tools.capture_cli` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
 2. **Synthetic** — `/song-new` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
 
 `replay_capture` is **idempotent**: re-replaying the same snapshot updates rows whose state changed and is a no-op for unchanged rows. The "song already exists" guard was removed; underlying mutators converge.
@@ -128,7 +128,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 - `class_name` (optional for Live built-ins; **REQUIRED for third-party plugins**) is Live's **internal class identifier** — `"Compressor2"`, `"PhaserNew"`, `"DrumGroupDevice"`, `"PluginDevice"`, etc. Informational for built-ins; load-bearing for plugin discrimination. compat-check classifies a device as third-party iff `class_name` is in `{PluginDevice, AuPluginDevice, Vst3PluginDevice}`. **For third-party plugins (Serum, Diva, Spitfire LABS, anything VST/AU), you MUST set `class_name` to the wrapper class** — otherwise compat falls back to `kind` (the plugin's display name like `"Serum"`), which isn't in the plugin family, and the plugin gets silently classified as a Live built-in. Capture-from-Live populates it correctly; hand-authored snapshots have to be explicit.
 - `name` is the user-set display name on the device instance (often equal to `class` for default loads; preset names like "Late Nite Kit" persist; user renames also land here).
 - `kind` (optional, **informational only**) — a free-form classification hint (`"instrument"` / `"audio_effect"` / `"midi_effect"`). The push loader does NOT read this field; it routes by `class` and `preset_query.root` only. Safe to omit; if included, treat it as author commentary, not a routing signal.
-- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `tools/capture_cli.py`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
+- `guess_uri` (optional) — Live's `preset_uri` for browser-reload. Most devices loaded via `ableton_browser` carry a URI; default empty devices may not. **Per-machine** (FileIds differ across machines for the same preset). Captured automatically by `python -m hallucinote.tools.capture_cli`; **hand-authoring URIs is unreliable** — prefer `preset_query` (below) for portable compose-time selection, OR probe via `ableton_browser` first.
 - `preset_query` (optional, mutually exclusive with `guess_uri`) — **cross-machine portable preset selector.** A JSON object `{root, pattern, mode?, path_prefix?, case_sensitive?}` resolved at push time on the consumer's machine via `ableton_browser(action='search')`. The push planner threads this into `ableton_device(action='load', preset_query=...)`, which refuses the load if 0 or 2+ matches (strict — no fuzzy match).
   - **`root` must be one of** (loader-accepted enum, NOT the resource-URI form): `instruments`, `audio_effects`, `midi_effects`, `drums`, `plugins`, `samples`, `user_library`, `packs`. Common typo: writing `effects` (the resource-URI form) instead of `audio_effects` — the loader refuses. Compat-check (`python -m hallucinote.sync.compat check <slug>`) catches this at compose time.
   - **`path_prefix` MUST be a JSON list** of name segments, NOT a string. Wrong: `"path_prefix": "Tension"`. Right: `"path_prefix": ["Tension"]`. The loader raises `preset_query.path_prefix must be a list` on the string form.
@@ -184,7 +184,7 @@ For songs that need verified-against-Live chain state (most creative product pro
 1. **Pick chains via `/song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
 2. **Push the song with `/ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.
 3. **Stage in Live** (only if the picker couldn't fully specify). Dial in params that need ear-driven tuning (Saturator Drive, Glue threshold). Most picks shouldn't need this — `/song-pick-instruments` aims to ship sound-correct defaults.
-4. **Recapture via `/song-snapshot` (or `tools/capture_cli.py`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
+4. **Recapture via `/song-snapshot` (or `python -m hallucinote.tools.capture_cli`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
 
 The recapture step is what makes step 3 ("staging in Live") part of authorship and not a sidecar. The on-disk snapshot is the source of truth for sound design once you've recaptured. See `/song-snapshot` for the diff-and-confirm flow.
 
@@ -203,7 +203,7 @@ The recapture step is what makes step 3 ("staging in Live") part of authorship a
 For built-in Live content (Operator presets, Impulse drum kits, Drum Rack content) you have three options, in order of portability:
 
 1. **`preset_query`** (most portable, recommended for hand-authored snapshots). Express the kit by name + scope: `{"root": "drums", "pattern": "Late Nite Kit"}`. The push planner resolves it on the consumer's machine via `ableton_browser(action='search')`. Strict — refuses if 0 or 2+ matches. No FileId baked in; transfers cross-machine cleanly. Best for built-ins whose names are stable across Live installations.
-2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python tools/capture_cli.py` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
+2. **Capture-then-recapture loop.** Stand up the device by hand in Live (or via `ableton_device(action='load')` directly), then run `python -m hallucinote.tools.capture_cli` against the running set. The capture pipeline records `guess_uri` for you — accurate, but per-machine.
 3. **Hand-authored `guess_uri`** — discouraged. Hand-written URIs are unreliable. If you do this, verify the URI exists via `ableton_browser(action='at_path', ...)` first.
 
 ### Default-device vs named-preset
@@ -241,7 +241,7 @@ Do **not** target a folder name in `pattern` (e.g. `pattern: "Vintage Delay"` wh
 - **Start from the `/song-new` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
 - **Names must match across `sends` keys and `returns[].name`** (after slot-prefix stripping). A `sends` entry to `"Reverb"` resolves to the return named `"Reverb"` (or originally `"A-Reverb"`).
 - **The `"index"` keys are 1-based across the board** (Live convention; also enforced by schema CHECKs on the DB side).
-- **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `tools/capture_cli.py`) once you've staged Live.
+- **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `python -m hallucinote.tools.capture_cli`) once you've staged Live.
 
 ---
 

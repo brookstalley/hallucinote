@@ -79,6 +79,53 @@ def test_git_probe_returns_none_uses_legacy_name():
 
 
 # ---------------------------------------------------------------------------
+# resolve_db_path — project-root contract (env / marker resolution)
+#
+# With no explicit `root`, the song dir resolves via the workspace contract:
+# HALLUCINOTE_SONGS_ROOT -> hallucinote.toml marker -> legacy songs/<slug>.
+# This is the path the MCP server takes for a song that lives in its own repo.
+# (See tests/unit/test_workspace.py for the resolver's own unit tests.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _no_root_env(monkeypatch):
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+
+def test_env_songs_root_drives_resolution(monkeypatch, tmp_path, _no_root_env):
+    """A long-running server with cwd != the song's repo resolves via env."""
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(tmp_path))
+    path = resolve_db_path("falling-walking", branch="main")
+    assert path == tmp_path / "falling-walking" / "falling-walking-main.db"
+
+
+def test_marker_monorepo_layout(monkeypatch, tmp_path, _no_root_env):
+    (tmp_path / "hallucinote.toml").write_text('[workspace]\nlayout = "monorepo"\n')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    path = resolve_db_path("falling-walking", branch="dev")
+    assert path == tmp_path.resolve() / "songs" / "falling-walking" / "falling-walking-dev.db"
+
+
+def test_marker_song_layout_is_flat(monkeypatch, tmp_path, _no_root_env):
+    (tmp_path / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "song"\nslug = "solo-piano"\n'
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    path = resolve_db_path("solo-piano", branch="main")
+    # flat: DB sits at the repo root, no songs/<slug>/ nesting
+    assert path == tmp_path.resolve() / "solo-piano-main.db"
+
+
+def test_explicit_root_ignores_env(monkeypatch, tmp_path, _no_root_env):
+    """build.py's explicit root short-circuits the contract entirely."""
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", "/should/be/ignored")
+    path = resolve_db_path("x", root=Path("/songs"), branch="main")
+    assert path == Path("/songs/x/x-main.db")
+
+
+# ---------------------------------------------------------------------------
 # _git_current_branch — direct probe
 # ---------------------------------------------------------------------------
 

@@ -26,10 +26,24 @@ non-JSON-safe nesting at the seam).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 SCHEMA_VERSION = "1"
+
+
+def _finite_or_none(x: float) -> float | None:
+    """Map a non-finite float (NaN / ±Inf) to ``None`` (→ JSON ``null``) so the
+    whole report is valid JSON under ``json.dumps(allow_nan=False)`` (ARR-7M3D
+    B1 backstop). Several fields carry a deliberate NaN SENTINEL — an
+    insufficient-tail RT60 measurement (``ReverbVerification.measured_rt60_s``),
+    an unmeasurable automation change (``EnvelopeVerification.before/after``) —
+    that means "honestly unmeasured", which is exactly what JSON ``null``
+    conveys. Strict consumers (``JSON.parse``, the eval judge) reject the bare
+    ``NaN`` token, so this serializes the sentinel as ``null`` at the boundary
+    rather than writing invalid JSON."""
+    return None if not math.isfinite(x) else x
 
 SurfaceKind = Literal["track", "return", "master"]
 Severity = Literal["info", "warning", "blocking"]
@@ -87,19 +101,64 @@ class MasterOvershoot:
 
 @dataclass(frozen=True)
 class ReverbVerification:
-    """One declared dry-stem → wet-return-send verification result.
+    """One per-RETURN RT60 verification result.
 
-    ``measured_rt60_s`` is the RT60 measured from the Wiener-deconvolved
-    IR via Schroeder backward energy integration
-    (``pyroomacoustics.experimental.rt60.measure_rt60``).
-    ``within_tolerance`` is ``abs(measured - declared) <= tolerance_s``.
+    RT60 is a property of the return's reverb *device*, not of any single
+    send into it — so it is measured ONCE per return, from the return's
+    own captured decay tail (ring-out) via Schroeder backward energy
+    integration (``pyroomacoustics.experimental.rt60.measure_rt60``),
+    dry-source-free. A return fed by N sends declares RT60 N times
+    (redundantly): ``contributing_track_ids`` records those dry sources and
+    ``conflicting_declarations`` is non-empty when the per-send
+    declarations disagree (one device cannot have two decay times).
+
+    Honesty fields surface measurement confidence rather than a bare
+    number. ``measurement_method`` names the technique; ``decay_db_used``
+    is the decay window actually fit (RT20/RT30 extrapolated to RT60 when
+    the tail is short); ``tail_span_db`` is the clean decay the tail
+    afforded; ``sufficient_tail`` is False when the capture has no usable
+    ring-out — then ``measured_rt60_s`` is NaN and ``within_tolerance`` is
+    False (we refuse to extrapolate RT60 from noise; the fix is a re-render
+    with a captured ring-out, see ``render`` ``ring_out_beats``).
+    ``within_tolerance`` is ``sufficient_tail and
+    abs(measured - declared) <= tolerance_s``.
     """
-    dry_track_id: str
-    wet_return_track_id: str
+    return_track_id: str
     declared_rt60_s: float
     measured_rt60_s: float
     within_tolerance: bool
     tolerance_s: float
+    measurement_method: str = "decay_tail"
+    decay_db_used: float = 60.0
+    tail_span_db: float = 0.0
+    sufficient_tail: bool = True
+    contributing_track_ids: tuple[str, ...] = ()
+    conflicting_declarations: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnvelopeVerification:
+    """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
+
+    One record per value-changing breakpoint of a declared envelope. ``metric``
+    + ``before`` / ``after`` are the measured quantity across the change
+    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db`` for
+    a send-level step). ``realized`` says whether the authored change actually
+    happened in the audio. ``measurable`` is False when the change can't be
+    verified from this capture — a post-fader kind (mixer_volume/pan) invisible
+    to the pre-fader stem, or a window too quiet to characterise; in that case
+    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is the
+    human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    target_surface_id: str
+    target_kind: str
+    parameter_path: str | None
+    at_beat: float
+    metric: str
+    before: float
+    after: float
+    measurable: bool
+    realized: bool
+    note: str
 
 
 @dataclass(frozen=True)
@@ -395,6 +454,77 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Onset/event density (onsets-per-beat summed across stems) over the section
+    # window — the second energy-realization correlate (ARR-7M3D), alongside
+    # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
+    # analysis was disabled (the density pass shares their grid geometry), 0.0
+    # when the window had no detected onsets. A RELATIVE read across sections:
+    # only the ranking feeds the energy-realization Spearman ρ.
+    onset_density: float | None = None
+
+
+@dataclass(frozen=True)
+class SectionEnergy:
+    """A declared section in the ranked energy curve, keyed by its song-unique
+    ``start_beat`` (ARR-7M3D).
+
+    ``start_beat`` (NOT name) is the join key the energy-realization lens uses
+    to pair declared intent with measured intensity: ``vary()`` /
+    recapitulation produces repeated section names (two "Chorus" rows), so name
+    alone mis-pairs. ``energy`` is the authored 0..1 ordinal intensity intent;
+    NULL-energy sections are excluded upstream and never reach here.
+    """
+    start_beat: float
+    name: str
+    energy: float
+
+
+@dataclass(frozen=True)
+class EnergyInversion:
+    """One ordered section pair where rendered intensity inverts declared intent
+    (ARR-7M3D).
+
+    Sections are identified by ``start_beat`` (the robust, song-unique key),
+    NOT by name (repeated names mis-pair). The higher-declared-energy section
+    measures LOWER intensity than the lower-declared-energy section
+    (``measured_delta`` < 0). NEUTRAL EVIDENCE, not a verdict — a deliberate
+    energy-drop (a stripped final chorus, the Nobile case) is authorship;
+    ``/mix-review`` grades the inversion against recalled intent.
+    """
+    higher_energy_start_beat: float
+    higher_energy_section: str   # display only; not the join key
+    lower_energy_start_beat: float
+    lower_energy_section: str    # display only; not the join key
+    declared_energy_delta: float  # higher.energy - lower.energy (> 0 by construction)
+    correlate: str                # "loudness" | "onset_density"
+    measured_higher: float        # measured value of the higher-energy section
+    measured_lower: float         # measured value of the lower-energy section
+    measured_delta: float         # measured_higher - measured_lower (< 0 = inverted)
+
+
+@dataclass(frozen=True)
+class EnergyRealization:
+    """Declared-energy-curve vs rendered-intensity read (ARR-7M3D).
+
+    RULER, not stamp: reports ranked intensity vs intent + names inversions; it
+    NEVER re-authors the curve, sets a target loudness, or grades pass/fail.
+    Neutral evidence — ``/mix-review`` grades it against intent.
+
+    ``correlate_rho`` is per-correlate Spearman ρ of (declared energy rank,
+    measured intensity rank) over the energy-declared sections — or ``None``
+    when ρ is undefined (a constant/tied measured correlate makes
+    ``scipy.stats.spearmanr`` return ``nan``; the lens records ``None``, NEVER
+    serializes ``nan``). The reason for each ``None`` is in ``skipped``.
+    ``inversions`` is per-pair (well-defined even when ρ is ``None``).
+    ``sections_ranked`` is the declared curve (excl. NULL energy), each carrying
+    its ``start_beat`` so repeated-name sections stay distinct. ``skipped`` names
+    every exclusion (NULL declared energy, missing/nan measured correlate,
+    undefined ρ).
+    """
+    correlate_rho: dict[str, float | None]
+    inversions: list[EnergyInversion]
+    sections_ranked: list[SectionEnergy]
+    skipped: list[str]
 
 
 @dataclass(frozen=True)
@@ -440,9 +570,19 @@ class MixReport:
     returns: list[StemMetrics] = field(default_factory=list)
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
+    automation_verifications: list[EnvelopeVerification] = field(default_factory=list)
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
+    # Declared-energy-curve vs rendered-intensity read (ARR-7M3D). None when
+    # fewer than 2 energy-declared sections remain after exclusions (Spearman
+    # needs >= 2 ranks) — recorded with a skipped_analyses entry, never a
+    # fabricated ρ. A ruler: ranked intensity vs intent + inversions, no verdict.
+    energy_realization: "EnergyRealization | None" = None
+    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
+    # analysis so the correction is visible, not silent. None when analysis ran
+    # without an alignment pass (e.g. a directly-constructed report in a test).
+    alignment: dict[str, Any] | None = None
     compare_to: dict[str, Any] | None = None
     schema_version: str = SCHEMA_VERSION
 
@@ -468,9 +608,18 @@ class MixReport:
             "reverb_verifications": [
                 _reverb_to_dict(r) for r in self.reverb_verifications
             ],
+            "automation_verifications": [
+                _envelope_to_dict(e) for e in self.automation_verifications
+            ],
             "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
+            "energy_realization": (
+                _energy_realization_to_dict(self.energy_realization)
+                if self.energy_realization is not None
+                else None
+            ),
+            "alignment": self.alignment,
             "compare_to": self.compare_to,
         }
 
@@ -481,10 +630,13 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
         "surface_kind": s.surface_kind,
         "surface_name": s.surface_name,
         "loudness": {
-            "lufs_i": s.loudness.lufs_i,
-            "lufs_s_median": s.loudness.lufs_s_median,
-            "lufs_m_peak": s.loudness.lufs_m_peak,
-            "true_peak_dbtp": s.loudness.true_peak_dbtp,
+            # BS.1770 returns -inf LUFS on pure silence; serialize the non-finite
+            # "silent / no measurable loudness" sentinel as JSON null (B1) so the
+            # report is valid JSON for strict consumers under allow_nan=False.
+            "lufs_i": _finite_or_none(s.loudness.lufs_i),
+            "lufs_s_median": _finite_or_none(s.loudness.lufs_s_median),
+            "lufs_m_peak": _finite_or_none(s.loudness.lufs_m_peak),
+            "true_peak_dbtp": _finite_or_none(s.loudness.true_peak_dbtp),
         },
     }
 
@@ -510,6 +662,7 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "onset_density": s.onset_density,
     }
 
 
@@ -589,12 +742,36 @@ def _overshoot_to_dict(o: MasterOvershoot) -> dict[str, Any]:
 
 def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
     return {
-        "dry_track_id": r.dry_track_id,
-        "wet_return_track_id": r.wet_return_track_id,
+        "return_track_id": r.return_track_id,
         "declared_rt60_s": r.declared_rt60_s,
-        "measured_rt60_s": r.measured_rt60_s,
+        # NaN when sufficient_tail=False (no usable ring-out) — a deliberate
+        # "honestly unmeasured" sentinel, serialized as JSON null (B1).
+        "measured_rt60_s": _finite_or_none(r.measured_rt60_s),
         "within_tolerance": r.within_tolerance,
         "tolerance_s": r.tolerance_s,
+        "measurement_method": r.measurement_method,
+        "decay_db_used": r.decay_db_used,
+        "tail_span_db": r.tail_span_db,
+        "sufficient_tail": r.sufficient_tail,
+        "contributing_track_ids": list(r.contributing_track_ids),
+        "conflicting_declarations": list(r.conflicting_declarations),
+    }
+
+
+def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
+    return {
+        "target_surface_id": e.target_surface_id,
+        "target_kind": e.target_kind,
+        "parameter_path": e.parameter_path,
+        "at_beat": e.at_beat,
+        "metric": e.metric,
+        # NaN when measurable=False (post-fader / too-quiet) — serialized as JSON
+        # null (B1), the "honestly unmeasured" sentinel.
+        "before": _finite_or_none(e.before),
+        "after": _finite_or_none(e.after),
+        "measurable": e.measurable,
+        "realized": e.realized,
+        "note": e.note,
     }
 
 
@@ -607,4 +784,34 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         "observed": f.observed,
         "expected": f.expected,
         "db_reference": f.db_reference,
+    }
+
+
+def _section_energy_to_dict(s: "SectionEnergy") -> dict[str, Any]:
+    return {"start_beat": s.start_beat, "name": s.name, "energy": s.energy}
+
+
+def _energy_inversion_to_dict(i: "EnergyInversion") -> dict[str, Any]:
+    return {
+        "higher_energy_start_beat": i.higher_energy_start_beat,
+        "higher_energy_section": i.higher_energy_section,
+        "lower_energy_start_beat": i.lower_energy_start_beat,
+        "lower_energy_section": i.lower_energy_section,
+        "declared_energy_delta": i.declared_energy_delta,
+        "correlate": i.correlate,
+        "measured_higher": i.measured_higher,
+        "measured_lower": i.measured_lower,
+        "measured_delta": i.measured_delta,
+    }
+
+
+def _energy_realization_to_dict(e: "EnergyRealization") -> dict[str, Any]:
+    """Serialize the energy-realization read. ``correlate_rho`` values are
+    ``None``-or-finite by construction (the lens records ``None`` for an
+    undefined ρ, never ``nan``) — emitted as JSON ``null``, never ``NaN``."""
+    return {
+        "correlate_rho": dict(e.correlate_rho),
+        "inversions": [_energy_inversion_to_dict(i) for i in e.inversions],
+        "sections_ranked": [_section_energy_to_dict(s) for s in e.sections_ranked],
+        "skipped": list(e.skipped),
     }

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.scaffold_song import (
+from hallucinote.tools.scaffold_song import (
     ScaffoldRequest,
     parse_sections,
     parse_signature,
@@ -205,6 +205,20 @@ def test_scaffolded_build_py_imports_cleanly(tmp_path):
     spec.loader.exec_module(mod)
     assert callable(mod.build)
     assert callable(mod.report)
+    assert callable(mod.melody_report)
+
+
+def test_scaffolded_build_py_carries_the_melodic_profile_example(tmp_path):
+    """MEL-1A7K: the scaffold seeds the declared-profile authoring path so new songs
+    see it. The template-as-deliverable lock (learnings: "when a doc/template IS the
+    deliverable, lock it with a parity test") — `melody_report()`'s docstring carries
+    a commented-out `profiles={...}` / `MelodicProfile` example."""
+    req = _basic_req(slug="profile-example")
+    result = scaffold_song(req, songs_root=tmp_path)
+    src = (result.song_dir / "build.py").read_text()
+    assert "MelodicProfile" in src
+    assert "profiles=" in src
+    assert "repetition_appetite" in src   # a v1 profile field, in the example
 
 
 def test_scaffolded_build_py_runs_against_synthetic_snapshot(tmp_path, monkeypatch):
@@ -280,7 +294,7 @@ def test_scaffolded_test_file_runs_under_pytest(tmp_path, monkeypatch):
 
 def test_cli_scaffolds_via_main(tmp_path, monkeypatch):
     """The argparse CLI plumbs through to scaffold_song correctly."""
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     code = main([
         "cli-song",
         "--title", "CLI Song",
@@ -294,7 +308,7 @@ def test_cli_scaffolds_via_main(tmp_path, monkeypatch):
 
 
 def test_cli_returns_nonzero_on_bad_slug(tmp_path, capsys):
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     code = main([
         "Bad-Slug", "--title", "x", "--tempo", "120",
         "--signature", "4/4", "--sections", "intro",
@@ -306,7 +320,7 @@ def test_cli_returns_nonzero_on_bad_slug(tmp_path, capsys):
 
 
 def test_cli_returns_nonzero_on_existing_dir(tmp_path, capsys):
-    from tools.scaffold_song import main
+    from hallucinote.tools.scaffold_song import main
     args = [
         "dup-song", "--title", "x", "--tempo", "120",
         "--signature", "4/4", "--sections", "intro",

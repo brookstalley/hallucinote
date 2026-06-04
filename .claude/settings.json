@@ -6,36 +6,24 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" clear",
-            "statusMessage": "Preparing session..."
-          }
-        ]
-      },
-      {
-        "matcher": "startup|clear|resume",
-        "hooks": [
-          {
-            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
             "statusMessage": "Installing dependencies..."
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" stop",
-            "statusMessage": "Checking governance gates..."
-          }
-        ]
-      }
     ]
   },
-  "companyAnnouncements": [
-    " \u2597\u259f\u2588\u2588\u2588\u2599\u2596    \u001b[1mHallucinote\u001b[0m \u001b[38;2;153;153;153m\u2014 Built with Prawduct v1.5.2\u001b[0m\n \u2590\u2518 \u2588 \u259d\u258c    \u001b[38;2;153;153;153mDescribe an idea, say \u001b[0m\u001b[1mhello\u001b[0m\u001b[38;2;153;153;153m for an overview, or say \u001b[0m\u001b[1mkeep going\u001b[0m\u001b[38;2;153;153;153m to continue WIP\u001b[0m\n \u259d\u259c\u2588\u2588\u2588\u259b\u2598    \u001b[38;2;153;153;153m\u2605 New in v1.5.1: regen-views is scope-aware + verify-resolutions exposed as CLI\u001b[0m"
-  ]
+  "extraKnownMarketplaces": {
+    "prawduct": {
+      "source": {
+        "source": "github",
+        "repo": "brookstalley/prawduct",
+        "ref": "main"
+      },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "prawduct@prawduct": true
+  }
 }

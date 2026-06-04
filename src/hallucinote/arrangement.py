@@ -34,7 +34,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
 from hallucinote.melody.lens import SectionMelody
+from hallucinote.melody.profile import MelodicProfile
 from hallucinote.performance.lens import SectionPerf
+from hallucinote.recurrence.lens import SectionRecurrenceInput
 from hallucinote.theory.lint import SectionLint
 from hallucinote.theory.model import Mode, Progression
 from hallucinote.theory.model import mode as _resolve_mode
@@ -317,7 +319,11 @@ class Arrangement:
         ]
 
     def section_melody_inputs(
-        self, *, melody_layers: Sequence[str] | None = None, start_bar: int = 1
+        self,
+        *,
+        melody_layers: Sequence[str] | None = None,
+        start_bar: int = 1,
+        profiles: Mapping[str, MelodicProfile] | None = None,
     ) -> list[SectionMelody]:
         """Adapt the planned sections into the symbolic-melody-lens inputs (the
         ``PlacedSection -> SectionMelody`` bridge, parallel to ``section_lints`` /
@@ -325,7 +331,13 @@ class Arrangement:
         lines (lead / vocal / riff) to analyze — exclude drums and chordal pads;
         ``None`` analyzes every layer. Carries the section's ``progression``
         (melody's pitch reads harmony) + ``beats_per_bar`` (the strong-beat read).
-        Feed the result to ``melody.lens.analyze_melody``."""
+
+        ``profiles`` (phase 2b) is the song's declared ``{layer_name:
+        MelodicProfile}`` map, carried onto every section so the lens grades each
+        line against its declared intent (``None`` = the unchanged 2a path). The
+        profile lives in build.py, never on the arrangement (Decision-Record 1) — so
+        it rides through here as a passthrough, not a stored field. Feed the result
+        to ``melody.lens.analyze_melody``."""
         layers_tuple = tuple(melody_layers) if melody_layers is not None else None
         return [
             SectionMelody(
@@ -335,6 +347,32 @@ class Arrangement:
                 progression=p.progression,
                 melody_layers=layers_tuple,
                 beats_per_bar=self.beats_per_bar,
+                profiles=profiles,
+            )
+            for p in self.plan(start_bar=start_bar)
+        ]
+
+    def section_recurrence_inputs(
+        self, *, start_bar: int = 1
+    ) -> list[SectionRecurrenceInput]:
+        """Adapt the planned sections into the symbolic-recurrence-lens inputs (the
+        ``PlacedSection -> SectionRecurrenceInput`` bridge, parallel to
+        ``section_lints`` / ``section_perf_inputs`` / ``section_melody_inputs``).
+
+        **Takes NO layer filter (W2) — it scans EVERY layer of every section.** This
+        is the deliberate divergence from ``section_melody_inputs(melody_layers=…)``:
+        a *line* read is meaningless on chordal/drum layers, but cross-instrument
+        recurrence is the whole point — a motif can recur on any instrument (the
+        polyrhythm recall lives on ``04 Organ``, not the lead). Carries each
+        section's absolute ``start_beat`` so a recall's section-relative offset is
+        reportable. Feed the result + ``arr.motifs`` to
+        ``recurrence.lens.analyze_recurrence`` (or use ``analyze_arrangement``)."""
+        return [
+            SectionRecurrenceInput(
+                name=p.name,
+                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                layers=p.layers,
+                start_beat=(p.start_bar - start_bar) * self.beats_per_bar,
             )
             for p in self.plan(start_bar=start_bar)
         ]
@@ -372,6 +410,7 @@ class Arrangement:
                 M.create_section(
                     conn, song_id=song_id, name=sec.name,
                     start_bar=float(sec.start_bar), end_bar=float(sec.end_bar),
+                    energy=sec.energy,
                     actor=actor, reason=f"{sec.name} section",
                 )
                 created["sections"] += 1

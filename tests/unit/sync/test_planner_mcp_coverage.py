@@ -236,6 +236,13 @@ _ALL_PLANNERS: tuple[PlannerEntry, ...] = (
         must_emit_calls=False,
     ),
     PlannerEntry(
+        name="plan_push_scenes",
+        invoke=lambda conn, **kw: push.plan_push_scenes(
+            conn, song_id=kw["song_id"], session_id=kw["session_id"],
+        ),
+        must_emit_calls=True,
+    ),
+    PlannerEntry(
         name="plan_push_clip",
         invoke=_plan_clip,
         must_emit_calls=True,

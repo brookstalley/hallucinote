@@ -3,14 +3,29 @@
 The structural fix for "the framework that let a whole song pedal one chord."
 A pure SYMBOLIC ruler over (authored notes, declared progression/mode): it runs
 on NoteDicts at BUILD time — no audio render needed (unlike the masking
-analyzer, which needs WAVs). It REPORTS; it never edits a note.
+analyzer, which needs WAVs). It REPORTS; it never edits a note — and it never
+BLOCKS a deliberate aesthetic choice (LNT-1V9K). Every finding here is WARNING or
+INFO: a coaching question, never a build gate. Harmonic choices — stasis, a
+pedaled change, a drone, an absent layer — are aesthetics, not technical errors,
+so the lens ASKS and ships the build. The realization BUG it used to gate on (a
+generator silently failing to pick up declared changes) is still NAMED, but the
+"is this a bug or a choice?" verdict moves to each song's OWN test, where the
+intent lives. See `.prawduct/artifacts/gate-verdict-policy.md`.
 
 What it checks, per section that declares harmony:
-  - **harmonic_stasis** (BLOCKING) — the declared progression has >1 distinct
-    chord but the parts only ever sound ONE. This is the exact bug. A section
-    that *declares* a single chord (a modal drone, a minimalist field) is NOT
-    stasis — declared==1 is honored, never flagged. The lens targets
-    declared-but-unrealized movement, never stasis itself.
+  - **harmonic_stasis** (WARNING) — the declared progression has >1 distinct
+    chord but the parts only ever sound ONE: the parts pedal a written change.
+    Could be a deliberate sustained field, or the realization bug — the lens
+    cannot tell intent from bug, so it ASKS (warning) and never gates. A song
+    that intends movement asserts ``report.stasis_sections == ()`` in its own
+    test. A section that *declares* a single chord (a modal drone) is NOT stasis
+    — declared==1 is honored, never flagged. (Was BLOCKING; downgraded per
+    LNT-1V9K — a ruler never vetoes a deliberate choice; we can ship 4'33".)
+  - **harmonic_absence** (INFO) — declares >1 chord but NO harmony layer sounds
+    in the section (a bass-less break, a tacet field). Absence is not stasis:
+    nothing can realize movement with no harmonic agent present, so this is never
+    a violation — a coaching question only. (This is the case that used to
+    false-block a deliberately bare section.)
   - **out_of_chord_fraction** (WARNING over threshold) — notes whose pitch class
     is outside the chord sounding at their onset (could be intended passing/
     approach tones — a warning, the composer confirms).
@@ -133,11 +148,22 @@ class HarmonyReport:
 
     @property
     def ok(self) -> bool:
-        """True iff there are no BLOCKING findings (warnings/info don't gate)."""
+        """True iff there are no BLOCKING findings.
+
+        The harmony lens emits NO blocking findings (LNT-1V9K — harmonic choices
+        are aesthetic, never a build gate), so this is always True; it is kept for
+        interface symmetry with the audio/melody/performance reports. The
+        realization regression a song actually guards is ``stasis_sections``
+        (assert it is empty where the song intends movement), not ``ok``.
+        """
         return not self.blocking
 
     @property
     def stasis_sections(self) -> tuple[str, ...]:
+        """Sections where the parts PEDAL a declared multi-chord change — the
+        realization bug-shape. This is the regression signal a song asserts in
+        its own test (the "is it a bug?" verdict the lens itself no longer makes).
+        Absence (no harmony layer sounding) is deliberately NOT counted here."""
         return tuple(s.section for s in self.sections if s.harmonic_stasis)
 
     def to_dict(self) -> dict[str, Any]:
@@ -241,15 +267,34 @@ def _lint_section(
     layers = tuple(_layer_conformance(sec, prog, t) for t in names)
     declared = prog.distinct_chords
     sounded = _sounded_distinct_chords(sec, prog)
-    stasis = declared > 1 and sounded <= 1
+    # A build-time lens is a RULER, not a stamp (LNT-1V9K): it never BLOCKS a
+    # deliberate aesthetic choice — it measures and ASKS. The two stasis shapes
+    # below surface LOUDLY (warning/info) but never gate. The pedal-a-written-
+    # change BUG is still NAMED (harmonic_stasis bool + stasis_sections) so a song
+    # that INTENDS movement asserts against it in its OWN test — where intent
+    # lives — rather than a global gate that also catches the deliberate field.
+    pedaled = declared > 1 and sounded == 1   # present but pedaled — the bug-shape
+    absent = declared > 1 and sounded == 0    # nothing realizes it (tacet/bare layer)
+    stasis = pedaled                          # the regression signal songs assert on
 
     findings: list[HarmonyFinding] = []
-    if stasis:
+    if pedaled:
         findings.append(HarmonyFinding(
-            kind="harmonic-stasis", severity="blocking", section=sec.name,
-            detail=(f"declares {declared} distinct chords but the parts sound "
-                    f"only {sounded} — the harmony never moves (the one-chord bug)"),
+            kind="harmonic-stasis", severity="warning", section=sec.name,
+            detail=(f"declares {declared} distinct chords but the parts sound only "
+                    f"one — the harmony is pedaled. A sustained field over a written "
+                    f"change (deliberate), or movement the parts failed to realize "
+                    f"(the one-chord bug)? The song's own test decides."),
             metric=float(sounded),
+        ))
+    elif absent:
+        findings.append(HarmonyFinding(
+            kind="harmonic-absence", severity="info", section=sec.name,
+            detail=(f"declares {declared} distinct chords but no harmony layer "
+                    f"sounds here — a deliberately bare / tacet section, or an "
+                    f"unrealized layer? Absence is not stasis: nothing can realize "
+                    f"movement with no harmonic agent present."),
+            metric=0.0,
         ))
     elif declared == 1 and sec.length_beats >= _AMBITION_STATIC_BEATS:
         # Intentional stasis is honored — this is a coaching QUESTION, not a gate.

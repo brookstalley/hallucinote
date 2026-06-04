@@ -91,3 +91,6 @@ tests/scenarios/results/*
 
 # Prawduct session files
 .prawduct/.advisories.json
+
+# Prawduct plugin version marker (per-repo last-seen)
+.prawduct/.prawduct-version

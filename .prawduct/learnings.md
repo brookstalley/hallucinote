@@ -402,3 +402,37 @@ In the sun-zone-done arrangement build, recurrence deltas (verse2/chorus2) used 
 `reggae_one_drop` and `metal_gallop` hard-referenced `kit.hat_open` / `kit.crash`, which raise on the wrong-sound case. That crashed the *real* sun-zone-done build: Ableton's Hot Rod Kit ships three closed hats and no dedicated open-hat chain, so `kit.hat_open` raised even though the open-hat "lift" is just a once-every-4-bars accent. The synthetic GM-default snapshot hid it (GM has note 46), so the test suite stayed green while the real `--reset` build died.
 
 **How to apply.** Classify each pad in a generator as load-bearing vs. flourish. Flourish pads → `try_pitch_of` + `if pad is not None:`. Add a degradation test with a `Kit.from_dict({kick,snare,hat_closed})` (captured-but-incomplete) asserting the generator builds and simply omits the missing flourish. This is the kit analogue of "the GM-default snapshot is not the real kit" — verify against an incomplete captured kit, not just GM defaults.
+
+## When a capability ships, audit the planning + intent artifacts — stale intent misguides tools
+
+**A new capability (a generator, an axis, an analysis) outpaces the docs and the per-song INTENT artifacts that describe it. When/after shipping, sweep the planning + intent layer (vision, conventions, per-song annotations, intent docs) — stale intent doesn't just read wrong, it can actively MISGUIDE the read-side tools that consume it.**
+
+The harmony axis + the sun-zone-done 184-bar re-author shipped, but the song's annotations still described the old 80-bar arc — and `genre-alternation-intent.md` told `/mix-review` *"genres never overlap → never flag cross-genre masking."* That instruction would have suppressed masking analysis **exactly at the new fusion climax** (the integration) — the one place fusion-vs-mud is the critical question. Separately, `docs/VISION.md` and `song-authoring-conventions.md` read ~2 arcs stale (no harmony axis, no performance layer, no analysis pipeline). The green test suite caught none of it — docs and annotations aren't exercised by tests.
+
+**How to apply.** When a capability lands, sweep the WHY/intent layer, not just the code + its tests. Highest risk: intent docs that FEED read-side tools (`/mix-review`, the conformance lenses) — stale intent there produces confidently-wrong guidance. Treat "we shipped X but forgot to update the docs/intent for X" as the same class of bug as "we forgot X."
+
+## Detect a running process with the framework's probe or `pgrep -x` — never `ps | grep name`
+
+**To check whether Ableton Live (or any process) is running, use the framework's own detector (`hallucinote_mcp.install_paths` / `python -m hallucinote_mcp.cli preflight` → `live.is_running`) or `pgrep -x "Live"`. Never `ps aux | grep -c "<name>"` — the grep process's own command line contains `<name>`, so `ps` lists it and the count includes the grep itself (and the shell wrapper), producing a false positive.**
+
+This session, `ps aux | grep -ic "Ableton Live.app/Contents/MacOS"` returned 2 and I told the user Live was running; the install preflight correctly reported `is_running: false`. The user caught the contradiction. The hand-rolled check was wrong, not the framework — which already had the answer.
+
+**How to apply.** For Live-state gates in install/push workflows, read `cli preflight`'s `live.is_running` (it's authoritative and already there). For ad-hoc shell checks, `pgrep -x` matches the exact process name and doesn't self-match; if you must `grep`, filter `grep -v grep` or match on the absolute binary path with `pgrep -fl`. Don't trust a `ps | grep -c` count.
+
+## When the render is blocked, verify compositional changes on the render-free signals — they validate, not just describe
+
+**Audio review (the ear) is the authority for composition, but when the render pipeline is down you are NOT blind: the harmony lint (`theory.lint`, ok/stasis + cross-mode questions), the symbolic melody lens (`tools/melody_lens.py` — NCT share, resolve-by-step, contour, ambitus), and the per-song shape tests together form a real proxy for whether a change COHERED. Use their deltas to validate a change, then mark the result render-gated-to-confirm.**
+
+This session, harmonizing sun-zone-done's integration (a looped Phrygian riff → a Dorian→Phrygian→fuse arc) raised the integration lead's resolve-by-step from 19%→39% in the melody lens — a measurable sign the line+harmony got MORE coherent, with no audio. The corollary that kept it honest: when a new hook (the hybrid) dropped resolve 39%→15%, the fix was to brighten the HARMONY to anchor the line (back to 21%), NOT to blandify the hook to chase the number — tune the harmony to the line, not the line to the lens. The lens is a ruler, not the verdict; the ear still rules last.
+
+**How to apply.** When audio is unavailable, drive compose changes through build → lint (`ok=True`, no stasis) → melody lens deltas → shape tests, and read the lens numbers as evidence the change landed. Never treat a lens number as a target to optimize (that blandifies); treat a regression in it as a question to diagnose. Always label the result render-gated until the ear confirms.
+
+## The toolkit removes bookkeeping — its absence is never a limit on the art
+
+**When a generator/helper/envelope-kind/device for what the music needs doesn't exist, hand-author it (notes/breakpoints/chains are plain lists) or build the capability — never scope the request down to the toolkit, and never silently substitute a lesser effect. The toolkit removes bookkeeping; it never caps what's authorable. See `docs/song-authoring-conventions.md` -> "The toolkit reduces work — it never limits what you can author".**
+
+## A file-mutating tool that errors mid-run is not a clean no-op — verify, then prefer a deterministic script
+
+**When a file-mutating skill or tool errors mid-run (e.g. the forked `/backlog` skill dying on an API socket error), VERIFY the file's actual state before retrying or proceeding — a crash can leave a partial mutation with real data loss, not a rollback. For bulk structural edits (backlog section-moves, mass reindents, multi-item status flips) prefer a deterministic, idempotent script you can re-verify (parse → transform by id → assert no dupes/leaks) over an LLM-driven multi-edit that can die halfway.**
+
+This session the `/backlog` skill crashed mid-write and left the backlog with one item DELETED-but-not-reinserted (data loss) plus four half-moved. Caught by re-reading the file (grep each target id's section + status) instead of trusting the error as a no-op, then repaired forward with a small parse-sections/move-by-id script. That same script shape then did the merged-item true-up, the ship-on-merge status flips, and (a sibling form) the helper-hoist across four song build.py files — each verified by a no-dups/no-leaks grep. Deterministic-script-for-bulk-edits became the session default once the skill proved fragile.

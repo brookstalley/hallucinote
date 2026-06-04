@@ -8,7 +8,7 @@
 
 ## What you're actually sharing
 
-A Hallucinote song is a **directory under `songs/<slug>/`** in this repository. The minimum a collaborator needs:
+A Hallucinote song is a **directory under `songs/<slug>/`** in a song workspace (your songs repo, e.g. `hallucinote-songs`). The minimum a collaborator needs:
 
 ```
 songs/<slug>/
@@ -29,17 +29,22 @@ What you're **not** sharing: the `<slug> Project/` directory (Ableton's actual `
 
 ## The round-trip, step by step
 
-### 1. Clone the repository
+### 1. Clone the songs repo + install Hallucinote
 
-The composer commits and pushes. The collaborator clones:
+The composer commits and pushes their **songs repo**. The collaborator clones it
+and installs the engine + plugin:
 
 ```bash
-git clone <repo-url>
-cd hallucinote
-pip install -e .[dev]
+git clone <songs-repo-url> && cd <songs-repo>
+pip install 'hallucinote[live]'        # the engine (or editable from a framework checkout)
+# then in Claude Code:  /plugin marketplace add brookstalley/hallucinote
+#                       /plugin install hallucinote@hallucinote
 ```
 
-If you forked a single song out of a larger Hallucinote repository, the collaborator can either clone the whole repo (full Hallucinote available) or copy just the song directory into their own Hallucinote install. The song is self-contained relative to the platform; nothing in `songs/<slug>/` references other songs.
+A song is self-contained — nothing in `songs/<slug>/` references other songs or
+the engine repo, so the collaborator can clone a whole songs repo or copy a
+single `songs/<slug>/` directory into their own workspace (any folder with a
+`hallucinote.toml` marker).
 
 ### 2. Check the requirements
 
@@ -70,7 +75,7 @@ A new empty `.als`. Don't push the song on top of someone else's work — push i
 In Claude Code, with the project loaded:
 
 ```
-/ableton-push <slug>
+/hallucinote:ableton-push <slug>
 ```
 
 The skill walks the song into Live across ten ordered phases. **Before the first phase**, it now runs a compat check:
@@ -83,7 +88,7 @@ If you confirm "no, install missing plugins first": go install them, then rerun.
 
 ### 6. Producing the song
 
-After push, you have a real `.als` mirroring the composer's intent. From there, ordinary Ableton workflow: arrange, mix, render. If you want changes to flow back into the song's DB (e.g., a fader move the composer wants to preserve), use the `/ableton-pull` skill.
+After push, you have a real `.als` mirroring the composer's intent. From there, ordinary Ableton workflow: arrange, mix, render. If you want changes to flow back into the song's DB (e.g., a fader move the composer wants to preserve), use the `/hallucinote:ableton-pull` skill.
 
 ---
 
@@ -103,7 +108,7 @@ Cross-machine song handoff has three distinct technical problems. Hallucinote tr
 
 **Symptom.** The song's DB references a plugin (say, Spitfire LABS) that the collaborator has never installed on their machine. The push would fail at device-load with a Live error pointing at the missing plugin.
 
-**Status.** Solved at preflight. The `/ableton-push` skill runs `compat check` before any phase executes; if any plugin is missing, the skill refuses-and-confirms with the collaborator. `REQUIREMENTS.md` documents what to install.
+**Status.** Solved at preflight. The `/hallucinote:ableton-push` skill runs `compat check` before any phase executes; if any plugin is missing, the skill refuses-and-confirms with the collaborator. `REQUIREMENTS.md` documents what to install.
 
 **The non-goal.** Hallucinote will **never** substitute plugins. If you need Spitfire LABS and don't have it, the answer is "install Spitfire LABS," not "let me pick a similar-sounding native Live instrument and silently swap." Substitution corrupts the composer's intent in ways that are visible only to the composer's ear — the wrong choice would ship without the collaborator knowing it was wrong.
 
@@ -123,7 +128,7 @@ Cross-machine song handoff has three distinct technical problems. Hallucinote tr
 
 The `ableton_sessions` table binds a song's DB to a specific Live set via `session_id`. When a collaborator clones the song fresh, no session yet exists for their machine. The push skill handles this automatically:
 
-- If you pass `/ableton-push <slug>` with no session id, the skill detects the gap and offers `--auto-session`. This creates an `ableton_sessions` row for the collaborator's local Live set and returns a fresh session id.
+- If you pass `/hallucinote:ableton-push <slug>` with no session id, the skill detects the gap and offers `--auto-session`. This creates an `ableton_sessions` row for the collaborator's local Live set and returns a fresh session id.
 - The collaborator typically wants **one** session per Live set: reuse the returned id for subsequent pushes of the same song. The skill prompts the next time too, so it's fine to start over if you lose track.
 
 The composer's session id is irrelevant to the collaborator — sessions are per-machine bindings, not portable identifiers. Don't try to "copy" a session id across machines; create a new one.
@@ -135,7 +140,7 @@ The composer's session id is irrelevant to the collaborator — sessions are per
 A short checklist for handoff hygiene.
 
 1. **Regenerate `REQUIREMENTS.md`** after material device changes: `python -m hallucinote.sync.compat write-requirements <slug>`. Commit the result.
-2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/song-snapshot` skill for the diff-and-confirm workflow.
+2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/hallucinote:song-snapshot` skill for the diff-and-confirm workflow.
 3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and run `python songs/<slug>/build.py`. The tests in `songs/<slug>/tests/` should pass.
 4. **Document content dependencies in `<slug>.md`** if the song needs a specific Live Pack or sample library. Compat check won't catch these (Case C).
 5. **Commit and push.** The collaborator clones; the round-trip above takes over.
@@ -146,7 +151,7 @@ A short checklist for handoff hygiene.
 
 These are surfaced as backlog items:
 
-- Automated regeneration of `REQUIREMENTS.md` as part of build.py or `/song-snapshot`.
+- Automated regeneration of `REQUIREMENTS.md` as part of build.py or `/hallucinote:song-snapshot`.
 - Compat-check coverage of Live Pack presence (would require a Live-side capability probe we don't yet have).
 - Inline iteration support — the `hallucinote://` DB read surface that lets collaborators inspect songs from within an MCP session without running `python3 -c "…"`.
 

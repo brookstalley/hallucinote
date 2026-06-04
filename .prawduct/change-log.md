@@ -4,6 +4,69 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
+
+<!-- chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 status=shipped release=unreleased scope=tools-dont-narrow-the-art+helpers-dry -->
+
+One thesis across four pieces: a build-time lens/helper is a **ruler, not a stamp** —
+it measures and asks; it never vetoes a deliberate choice or makes the musical decision.
+
+- **A1 (LNT-1V9K) gate verdicts.** `theory/lint.py`'s `harmonic-stasis` — the only
+  `severity="blocking"` verdict in the codebase — split into `harmonic-stasis` WARNING
+  (still named in `stasis_sections`) + a new `harmonic-absence` INFO (the case that
+  false-blocked a bass-less section). Removed the build raise in `sun-zone-done/build.py`;
+  the realization regression moved to the song's own test. New `gate-verdict-policy.md`
+  enumerates BLOCKING = technical/structural errors only.
+- **A2 (GEN-1S4K) generator altitude.** `generator-altitude-policy.md` — no
+  section/genre-archetype builders in the package (song-local only); package idioms are
+  single-part conveniences over exposed primitives; the interplay vocabulary is a
+  friction-driven primitive layer (ARR-3R8F), not a fusion-section builder.
+- **A3 (REV-2W8K) structured review.** `review-workflow-model.md` (one axis per turn, 5
+  archetypes) + a per-song `review_workflow` annotation (sun-zone-done = C Subtractive) +
+  `/compose-review` and `/mix-review` wired to read the archetype and edit one axis per turn.
+- **Helpers DRY.** Hoisted duplicated song-build bookkeeping into the library —
+  `Q.tracks_by_name`/`returns_by_name` (queries) and `arrange_section`/`run_build`
+  (new `hallucinote/authoring.py`). All four songs migrated to the helper functions;
+  the `/song-new` scaffold uses `run_build`. Existing composed songs' build() lifecycle
+  migration deferred (SNG-4H2D).
+- **Chunk 0.** sun-zone-done back-half Pass-A close-out (prior stale-doc Critic warning
+  resolved) + backlog true-up (6 merged items archived, scene-provision dedup).
+
+Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 blocking).
+
+## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
+
+<!-- chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M status=shipped release=unreleased scope=audio-verification -->
+
+Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
+verification surfaces trustworthy on real multi-track songs. (`release=unreleased`:
+post-v1.4.0 work, no release cut yet — see backlog VEW-9QH4. Live re-render
+validation of the real reverb tail + the Amp-flip is deferred to the user.)
+
+- **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source
+  single-dry deconvolution (which returned 252–370 s on real 5–6-send returns)
+  with a dry-source-free measurement: RT60 once **per return** from the return's
+  own captured ring-out via Schroeder backward integration. `ReverbVerification`
+  reshaped per-return with honesty fields; refuses to fabricate a number
+  (`sufficient_tail=False`/NaN) when no ring-out exists. On the real sun-zone
+  capture: 11 garbage per-send values → 2 honest per-return skips.
+- **Source-side ring-out capture (AUD-4S8T).** A measure-first check showed the
+  real capture has no ring-out (master plays to within 35 ms of the file end).
+  `render.py` now records `ring_out_beats` (default 8) past the arrangement end
+  so the reverb decays into a captured tail — Python-only, **no `.amxd` change**
+  (the device records to whatever stop-beat it's handed). Loop forced off +
+  restored; manifest records the actual rounded ring-out.
+- **Automation realization verification (AUD-8H2M).** New `audio/automation.py`
+  windows each declared envelope breakpoint and reports realized-vs-declared: a
+  device-parameter timbre flip (Amp Type) as a directional spectral-centroid
+  shift, a dynamic send as a level step. `mixer_volume`/`pan` are reported
+  unverifiable (post-fader, invisible to the pre-fader stem) — master-bus
+  windowing is a follow-up.
+
+Two cumulative `/critic` passes (0 BLOCKING each); all warnings/notes resolved.
+Full suite 2840 passed / 0 failed (18 `songs/missing` corpus-parse failures are a
+pre-existing, user-acknowledged-out-of-scope gap in a different song, deselected).
+
 ## 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
 
 <!-- chunks=arrangement-1-5 status=shipped release=v1.4.0 scope=arrangement-model -->

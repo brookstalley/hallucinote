@@ -101,7 +101,7 @@ Resources (read via resources/read, no turn cost):
   ableton://reference/{scales,device-params}     static lookups
   ableton://guides/{getting-started,conventions,error-recovery,gaps}
 
-Multi-step workflows live as Claude Code skills (.claude/skills/) — not
+Multi-step workflows live as Claude Code skills (skills/) — not
 MCP prompts — so the agent can invoke them directly. Reach for:
   /song-new, /song-pick-instruments, /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /compose-part.
@@ -153,8 +153,8 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
-    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return + master (idempotent); render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
-    _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, and declared dry->wet reverb verification (Wiener-deconvolved IR + RT60 vs intent). Writes a MixReport JSON to songs/<slug>/analysis/.")
+    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return (idempotent); the MASTER is detect-only — Live 12.4 can't add a device to the master via the API (DEV-2M9K), so place it on the Master strip by hand once and the render configures it from then on. The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
+    _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, per-return reverb RT60 measured from each return's captured ring-out (dry-source-free), and realized-vs-declared automation verification (device-parameter timbre flips, dynamic sends). Writes a MixReport JSON to songs/<slug>/analysis/.")
 
     return mcp
 
@@ -240,11 +240,13 @@ def _absolutize_render_output_dir(request: Request) -> Request:
     path, computing the slug-derived default when missing.
 
     Why: the render handler runs on the Remote Script side (inside Live),
-    whose cwd is ``/`` on macOS — a read-only filesystem. The handler's
-    pre-existing default ``Path("songs") / slug / "captures" / ts`` is
-    relative; resolved against Live's cwd it becomes ``/songs/...`` and
+    whose cwd is ``/`` on macOS — a read-only filesystem. A relative default
+    resolved against Live's cwd becomes ``/songs/...`` and
     ``mkdir(parents=True)`` raises ``OSError [Errno 30]``. The MCP server
-    process IS in the agent's repo root, so we resolve here.
+    process can see the song, so we resolve the song dir via the project-root
+    contract (``resolve_song_dir``; WSP-1K4D) and absolutize HERE — captures
+    land in the song's own repo whatever the server's cwd. Falls back to the
+    legacy cwd-relative ``songs/<slug>`` when the engine isn't importable.
 
     Picking the timestamp here (rather than letting the handler do it)
     avoids time-of-check / time-of-use drift between the directory the
@@ -265,7 +267,20 @@ def _absolutize_render_output_dir(request: Request) -> Request:
     if not isinstance(song_slug, str) or not song_slug:
         return request  # let the handler emit its own teaching error
     ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    default = pathlib.Path(os.getcwd()) / "songs" / song_slug / "captures" / ts
+    # Resolve the song dir via the project-root contract (WSP-1K4D) so captures
+    # land in the song's OWN repo regardless of the server's cwd — a song may
+    # live in its own repo, not under the server's cwd. Falls back to the legacy
+    # cwd-relative songs/<slug> when the engine isn't importable (e.g. a uvx
+    # MCP-only install with no hallucinote engine present).
+    try:
+        from hallucinote.workspace import resolve_song_dir
+
+        song_dir = resolve_song_dir(song_slug)
+        if not song_dir.is_absolute():
+            song_dir = pathlib.Path(os.getcwd()) / song_dir
+    except ImportError:
+        song_dir = pathlib.Path(os.getcwd()) / "songs" / song_slug
+    default = song_dir / "captures" / ts
     params["output_dir"] = str(default.resolve())
     return dataclasses.replace(request, params=params)
 

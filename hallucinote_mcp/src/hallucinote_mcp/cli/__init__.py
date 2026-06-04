@@ -35,6 +35,10 @@ def main(argv: list[str] | None = None) -> int:
         from .preflight import run_preflight
 
         return run_preflight(rest)
+    if command == "install-remote-script":
+        from .install import run_install_remote_script
+
+        return run_install_remote_script(rest)
     if command == "version":
         from .. import __version__
 
@@ -53,10 +57,11 @@ def _print_help(out=None) -> None:
         "hallucinote-mcp — Ableton Live MCP server\n"
         "\n"
         "Commands:\n"
-        "  serve              Start the FastMCP server (used by .mcp.json)\n"
-        "  preflight          Print install / uninstall detection report (JSON)\n"
-        "  version            Print the package version\n"
-        "  help               Show this message\n"
+        "  serve                 Start the FastMCP server (used by .mcp.json)\n"
+        "  preflight             Print install / uninstall detection report (JSON)\n"
+        "  install-remote-script Atomically vendor the Remote Script into Live's User Library\n"
+        "  version               Print the package version\n"
+        "  help                  Show this message\n"
         "\n"
         "Install is skill-mediated: open Claude Code in the Hallucinote repo,\n"
         "then run /ableton-mcp-install to set up the Remote Script and MCP\n"

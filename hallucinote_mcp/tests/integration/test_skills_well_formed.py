@@ -67,9 +67,16 @@ def test_skill_has_name_and_description(slug: str):
 @pytest.mark.parametrize("slug", EXPECTED_SKILLS)
 def test_skill_body_mentions_required_steps(slug: str):
     text = (SKILLS_DIR / slug / "SKILL.md").read_text(encoding="utf-8")
-    # Skill bodies should mention the User Library and the MCP config —
-    # those are the two filesystem changes the install touches.
+    # Both skills touch the Ableton User Library (the Remote Script vendor).
     assert "User Library" in text, f"{slug} should mention the Ableton User Library"
-    assert ".mcp.json" in text or "claude.json" in text, (
-        f"{slug} should mention the MCP config file path"
-    )
+    # The MCP touchpoint differs by direction since INS-7V2D: the install skill
+    # no longer writes config (the plugin provides the server) — it confirms the
+    # connection via `/mcp`; the uninstall skill still cleans legacy config files.
+    if slug == "ableton-mcp-install":
+        assert "/mcp" in text, (
+            f"{slug} should confirm the server via /mcp (it writes no config now)"
+        )
+    else:
+        assert ".mcp.json" in text or "claude.json" in text, (
+            f"{slug} should mention the MCP config file it cleans"
+        )

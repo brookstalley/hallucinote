@@ -1,9 +1,12 @@
 """Structural check: the install/uninstall skills orchestrate via the CLI.
 
-Every filesystem + config mutation now runs through tested, atomic CLI subcommands
-(``install-remote-script`` / ``install-analyzer`` / ``configure-mcp`` and their
-uninstall mirrors); the skill bodies must *invoke* those, not hand-author
-``rsync``/``robocopy``/``rm``/``Move-Item`` or manual JSON edits.
+Every filesystem mutation now runs through tested, atomic CLI subcommands
+(``install-remote-script`` / ``install-analyzer`` and their uninstall mirrors); the
+skill bodies must *invoke* those, not hand-author
+``rsync``/``robocopy``/``rm``/``Move-Item`` or manual JSON edits. The install skill
+no longer writes MCP config at all — since INS-7V2D the plugin provides the server
+via its bundled uv launch, so there is no ``configure-mcp`` counterpart; uninstall
+still mirrors with ``remove-mcp-config`` to clear legacy entries.
 
 This file used to assert the SKILL.md's rsync/robocopy exclude *strings* were
 anchored correctly. That contract MOVED — the excludes are now applied in Python
@@ -81,8 +84,17 @@ def _assert_no_mutation_shell(text: str, label: str) -> None:
 
 
 def test_install_skill_invokes_cli_subcommands(install_text):
-    for cmd in ("install-remote-script", "install-analyzer", "configure-mcp"):
+    for cmd in ("install-remote-script", "install-analyzer"):
         assert cmd in install_text, f"install SKILL.md must invoke `{cmd}`"
+
+
+def test_install_skill_does_not_resurrect_configure_mcp(install_text):
+    """The plugin provides the server now — the install skill must NOT call a
+    config-writing subcommand (the retired PATH-override hack)."""
+    assert "configure-mcp" not in install_text, (
+        "install SKILL.md must not invoke `configure-mcp` — the plugin provides the "
+        "server via uv; the skill writes no MCP config (INS-7V2D)"
+    )
 
 
 def test_install_skill_has_no_handauthored_mutation_shell(install_text):

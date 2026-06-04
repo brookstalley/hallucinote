@@ -4,6 +4,26 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
+
+<!-- chunks=INS-7V2D status=shipped release=v0.9.3 scope=plugin-distribution -->
+
+The Claude Code plugin now **bundles the `hallucinote-mcp` server** and launches it via
+`uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` from a committed `uv.lock`
+into `${CLAUDE_PLUGIN_DATA}/venv` — version-coupling the running bridge to the plugin *by
+source* (editable workspace members in the lock), so the bridge can never drift from the
+engine it shipped with. A SessionStart pre-warm hook (`hooks/prewarm-mcp-env.sh`) rebuilds
+the DATA venv only on lock change and never fails the session; **verified firing live** in a
+clean-room `--plugin-dir .` restart (sentinel `uv.lock` byte-matches the repo, `MCP env
+ready.` at startup). The old install-skill PATH-override config-writing path (`configure-mcp`
+/ `plan_mcp_config` / `merge_server_entry`) is retired — the plugin provides the server
+PATH-independently; install now adds a `uv`-presence preflight and only confirms `/mcp`.
+Docs (README/quickstart/collaboration), an engine-pin record (`docs/engine-pin.md`), and
+operator-verification updated. 8 commits, full suite 3043 passed / 2 skipped; cumulative
+Critic clean; independent PR review 0 blocking. (PR #150 → develop; promoted to main here.)
+Residual live checks honestly enqueued in `operator-verification.md`: cold-cache-within-60s
+on a clean machine + the plugin-update rebuild cycle.
+
 ## 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
 
 <!-- chunks=backlog-low-cost-sweep status=shipped release=v0.9.2 scope=backlog-low-cost-sweep -->

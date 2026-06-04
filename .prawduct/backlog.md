@@ -521,11 +521,16 @@ sections only via explicit `/backlog update` calls.
 
 ## Promoted
 
-_(no items)_
+_(none — INS-7V2D shipped; see Archive.)_
 
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[INS-7V2D]** Plugin-bundled MCP server via uv — version-lock the server to the plugin (kill PATH/venv fragility)
+  `effort: L · impact: M · area: install · source: user · added: 2026-06-04 · status: shipped · closed-by: feature/plugin-bundled-mcp-uv · related: TPL-2D8K, INS-4H8M, SYN-2M9P, DEV-1F9X`
+
+  **SHIPPED (C1–C4, 2026-06-04).** `plugin.json` launches the bundled server via `uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` into `UV_PROJECT_ENVIRONMENT=${CLAUDE_PLUGIN_DATA}/venv`; a committed `uv.lock` pins mcp + the engine + the server package (the version-coupling guarantee). A SessionStart pre-warm hook (`hooks/`) rebuilds the env on lock-diff to dodge CC#60224. The install skill no longer writes `mcpServers` entries — the PATH-override hack (`configure-mcp`/`plan_mcp_config`/`merge_server_entry`) was deleted; `preflight` now reports `uv` presence. The make-or-break risk (does `uv` resolve in CC's sanitized spawn env?) was CONFIRMED LIVE — the plugin loaded via `--plugin-dir` and the tools connected. Residual operator checks (cold-cache-within-60s, update/rebuild cycle) enqueued in `operator-verification.md`. Original context: `plugin.json` declared a bare PATH console-script decoupled from the plugin version; MCP subprocesses don't inherit the shell venv/PATH, `${CLAUDE_PLUGIN_ROOT}` is read-only and `${CLAUDE_PLUGIN_DATA}` is the documented venv home, `mcp` can't be vendored (compiled wheels). Design: `.prawduct/artifacts/plans/INS-7V2D/design.md`. (user version-coupling request 2026-06-04)
 
 - **[WSP-1K4D]** Route the render captures dir through the project-root contract (`server.py` `songs/` literal)
   `effort: S · impact: S · area: mcp-render · source: critic · added: 2026-06-03 · status: shipped · closed-by: feature/songs-split · related: project-root-contract`

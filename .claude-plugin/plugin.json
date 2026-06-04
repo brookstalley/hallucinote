@@ -1,7 +1,7 @@
 {
   "name": "hallucinote",
   "displayName": "Hallucinote \u2014 Music Authoring",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "DB-backed MIDI authoring with Ableton Live sync via MCP. Compose, arrange, sound-design, and mix songs with Claude \u2014 live audio feedback, structured so the model sees musical structure, not pixels.",
   "author": {
     "name": "Brooks Talley",
@@ -22,8 +22,14 @@
   "defaultEnabled": true,
   "mcpServers": {
     "hallucinote-mcp": {
-      "command": "hallucinote-mcp",
-      "args": ["serve"]
+      "command": "uv",
+      "args": [
+        "run", "--frozen", "--all-packages",
+        "--project", "${CLAUDE_PLUGIN_ROOT}",
+        "hallucinote-mcp", "serve"
+      ],
+      "env": { "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv" },
+      "timeout": 60000
     }
   }
 }

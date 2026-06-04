@@ -20,6 +20,7 @@ def _build_report() -> dict:
     so the consumer can tell "not detected" from "empty string".
     """
     cmd_path, cmd_on_path = P.hallucinote_mcp_command()
+    uv_path, uv_version = P.uv_runtime()
     pkg_root = P.package_root()
     server_version = __version__
     remote_script_candidates: list[dict] = []
@@ -76,6 +77,16 @@ def _build_report() -> dict:
             "path": str(cmd_path) if cmd_path else None,
             "on_path": cmd_on_path,
         },
+        # uv is the one prerequisite for the plugin-bundled server launch
+        # (`uv run --frozen --all-packages`, INS-7V2D). `present: false` →
+        # the install skill tells the user to `brew install uv` / curl-bootstrap
+        # before the bridge can start. (Probes the install-process PATH; the
+        # live MCP-spawn PATH is the authoritative check — see operator-verification.)
+        "uv": {
+            "present": uv_path is not None,
+            "path": str(uv_path) if uv_path else None,
+            "version": uv_version,
+        },
         # MCP/Remote Script version-match per User Library candidate.
         # Surfaces drift BEFORE the runtime handshake fires — the install
         # skill uses ``matches_mcp_server`` to suggest re-running install
@@ -110,8 +121,9 @@ def run_preflight(args: list[str]) -> int:
             "\n"
             "Prints a JSON report of everything the install / uninstall skills\n"
             "need to make decisions: package version, User Library candidates,\n"
-            "installed Live versions, whether Live is running, and which MCP\n"
-            "config files already mention hallucinote-mcp.\n"
+            "installed Live versions, whether Live is running, whether uv (the\n"
+            "bundled-server prerequisite) is present, and which MCP config files\n"
+            "already mention hallucinote-mcp.\n"
         )
         return 0
 

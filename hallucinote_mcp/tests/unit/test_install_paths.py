@@ -35,6 +35,7 @@ from hallucinote_mcp.install_paths import (
     package_root,
     remote_script_install_dir,
     remote_script_stub_text,
+    uv_runtime,
 )
 
 
@@ -453,6 +454,44 @@ def test_hallucinote_mcp_command_returns_none_when_absent(monkeypatch, tmp_path)
     path, on_path = hallucinote_mcp_command()
     assert path is None
     assert on_path is False
+
+
+# --- uv runtime detection (the bundled-server prerequisite) ----------------
+
+def test_uv_runtime_present_reads_version(monkeypatch, tmp_path):
+    fake = tmp_path / "uv"
+    fake.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(install_paths.shutil, "which", lambda name: str(fake) if name == "uv" else None)
+
+    class _Done:
+        returncode = 0
+        stdout = "uv 0.5.11\n"
+
+    monkeypatch.setattr(install_paths.subprocess, "run", lambda *a, **k: _Done())
+    path, version = uv_runtime()
+    assert path == fake.resolve()
+    assert version == "uv 0.5.11"
+
+
+def test_uv_runtime_absent(monkeypatch):
+    monkeypatch.setattr(install_paths.shutil, "which", lambda name: None)
+    path, version = uv_runtime()
+    assert path is None and version is None
+
+
+def test_uv_runtime_present_but_version_unreadable(monkeypatch, tmp_path):
+    """uv on PATH but `uv --version` fails — report the path, version None."""
+    fake = tmp_path / "uv"
+    fake.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(install_paths.shutil, "which", lambda name: str(fake) if name == "uv" else None)
+
+    def _boom(*a, **k):
+        raise install_paths.subprocess.SubprocessError("nope")
+
+    monkeypatch.setattr(install_paths.subprocess, "run", _boom)
+    path, version = uv_runtime()
+    assert path == fake.resolve()
+    assert version is None
 
 
 # --- MCP config detection -------------------------------------------------

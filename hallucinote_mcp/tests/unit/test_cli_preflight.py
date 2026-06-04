@@ -18,11 +18,25 @@ def test_preflight_report_has_expected_top_level_keys():
         "user_library",
         "live",
         "mcp_command",
+        "uv",
         "mcp_configs",
         "remote_script",
         "analyzer",
         "platform",
     }
+
+
+def test_preflight_report_uv_block_shape():
+    """uv is the bundled-server prerequisite (INS-7V2D); the install skill reads
+    `uv.present` to decide whether to prompt a `brew install uv`."""
+    report = _build_report()
+    uv = report["uv"]
+    assert set(uv.keys()) == {"present", "path", "version"}
+    assert isinstance(uv["present"], bool)
+    assert uv["path"] is None or isinstance(uv["path"], str)
+    assert uv["version"] is None or isinstance(uv["version"], str)
+    # Coherence: a path is reported iff uv is present.
+    assert uv["present"] == (uv["path"] is not None)
 
 
 def test_preflight_report_remote_script_block_has_per_candidate_match_status():

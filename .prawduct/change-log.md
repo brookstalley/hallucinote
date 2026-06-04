@@ -21,9 +21,12 @@ never downgrading a higher existing value; `/ableton-mcp-install` writes it into
 `.claude/settings.json`. The SessionStart pre-warm hook also emits a clean `additionalContext`
 heads-up so Claude can guide a `/mcp` reconnect when a cold build loses the spawn race; every
 non-success hook branch now routes to **stderr** so warm sessions inject nothing into Claude's
-context. **Live-verified**: the operator's clean-room `--plugin-dir .` restart completed the cold
-build and `hallucinote-mcp` reconnected (this session). 22 new unit tests pin the config-op and
-hook semantics.
+context. **Live-verified (this session):** the operator ran `uv cache clean` (genuinely cold uv
+cache) and restarted (`--plugin-dir .`); the cold build completed and the `hallucinote-mcp` tools
+connected **on first launch — no `/mcp` reconnect needed**, confirming the 30 000 ms
+startup-timeout failure does not recur under the 3-min floor (operator-verification check #1; the
+race→reconnect fallback, statusMessage display, and uninstall reversal remain unverified). 22 new
+unit tests pin the config-op and hook semantics.
 
 ## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
 

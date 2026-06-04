@@ -8,28 +8,29 @@ pending entries when `operator_verification_required: true`.
 
 ## INS-7V2D follow-up — MCP startup timeout survives a cold build on a real install
 
-**Status:** PENDING attended run. **Visual change:** no.
+**Status:** PARTIALLY CONFIRMED — the make-or-break check (#1, cold-start survives a real
+cold build) **passed live** this session (2026-06-04). **Visual change:** no.
 
 Root cause (this session) confirmed from the connection log: the cold-build spawn timed
 out at **30000ms** despite `plugin.json` `"timeout": 60000` — because the per-server
 field is tool-exec, not startup; startup is `MCP_TIMEOUT` (default 30000). Fix raises
 `MCP_TIMEOUT` (settings `env`, floor 180000) + the pre-warm hook now emits SessionStart
 `additionalContext` on a cold build. Unit-proven (`test_startup_timeout.py`,
-`test_prewarm_hook.py`); warm handshake measured at ~2.3 s. What needs an operator:
+`test_prewarm_hook.py`); warm handshake measured at ~2.3 s. Operator status:
 
-1. **Cold-start survives within `MCP_TIMEOUT`.** On a machine with a cold uv cache (or
-   after `rm -rf ${CLAUDE_PLUGIN_DATA}/venv` + the synced-lock copy), run
-   `hallucinote-mcp set-startup-timeout`, restart Claude Code, and confirm the
-   `hallucinote-mcp` tools connect on first launch (the cold `uv sync` now fits the 3 min
-   window) — i.e. the 30 s timeout failure does NOT recur.
-2. **Race → reconnect path.** If a build still overruns the window, confirm the env is
-   warm by then and a `/mcp` reconnect connects in ~2 s, AND that Claude proactively
-   surfaces the reconnect guidance (the pre-warm hook's `additionalContext` reached it).
-3. **`statusMessage` shows the expectation.** Confirm the SessionStart spinner shows the
-   "first run builds it — up to ~1–2 min" message during the cold build.
-4. **Uninstall reverses it.** Run `hallucinote-mcp unset-startup-timeout` and confirm
-   `env.MCP_TIMEOUT` is removed from `~/.claude/settings.json` (and a user-customized
-   higher value would be left intact).
+1. ~~**Cold-start survives within `MCP_TIMEOUT`.**~~ **CONFIRMED** (this session): the operator
+   ran `uv cache clean` (genuinely cold uv cache) and restarted Claude Code (`--plugin-dir .`)
+   with the committed `.claude/settings.json` `env.MCP_TIMEOUT=180000` floor active. The cold
+   `uv` build completed ("took a while") and the `hallucinote-mcp` tools connected **on first
+   launch — no `/mcp` reconnect needed** (operator-reported); the 30 000 ms startup-timeout
+   failure did NOT recur. Re-confirmed mid-session via `ableton_session(action='help')` → ok.
+2. **Race → reconnect path.** NOT exercised — the build did not overrun the window this session
+   (it connected on its own), so the reconnect fallback wasn't triggered. Unproven as a path;
+   lower priority now that #1 holds on a real cold cache.
+3. **`statusMessage` shows the expectation.** Still unconfirmed — the operator did not report
+   whether the SessionStart spinner showed the "first run builds it — up to ~1–2 min" message.
+4. **Uninstall reverses it.** Still unconfirmed — `hallucinote-mcp unset-startup-timeout`
+   removal of `env.MCP_TIMEOUT` from `~/.claude/settings.json` was not exercised this session.
 
 ---
 
@@ -49,10 +50,13 @@ Risk #0 + check #1 are now confirmed on this machine. What still needs an operat
 1. ~~**Fresh install connects** / **`uv` resolves in the SPAWN env (make-or-break).**~~
    **CONFIRMED** (this session, `--plugin-dir .`). Residual: the uv *cache* was warm here
    (the heavy wheels were already fetched during C1's local verification), so the
-   genuinely-cold-cache-within-60s worst case (CC#60224 silent tool-drop on a
-   first-ever numpy/scipy/librosa build) is **not yet proven**. The C2 pre-warm hook is
-   the mitigation; verify on a clean machine / fresh `~/.cache/uv` that the tools still
-   appear within the timeout (the hook should warm the env before the handshake).
+   genuinely-cold-cache worst case (CC#60224 silent tool-drop on a
+   first-ever numpy/scipy/librosa build) was **not yet proven** at v0.9.3.
+   **Update (INS-7V2D follow-up, this session): now CONFIRMED on a genuinely cold cache** —
+   the operator's `uv cache clean` + restart connected on first launch (see the follow-up entry
+   above). Note the survival window is the **180 s `MCP_TIMEOUT` floor**, not the 60 s this
+   original framing assumed: the per-server `plugin.json timeout` never governed startup — that
+   was the follow-up's root-cause correction.
 2. **Update rebuilds the env.** Bump the plugin version / change `uv.lock`, update the
    plugin, confirm the env rebuilds (the C2 lock-diff hook fires + the launch self-heals)
    and the server still connects. **Not yet exercised** — needs a real plugin update cycle.

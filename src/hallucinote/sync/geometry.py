@@ -249,14 +249,7 @@ def _resolve_envelope_session_clip(
     clip's full length is what the session clip exposes for envelope
     addressing.
     """
-    rows = conn.execute(
-        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
-           FROM arrangement_clips a
-           JOIN clips c ON c.id = a.clip_id
-           WHERE a.track_id = ?
-           ORDER BY a.start_bar, a.id""",
-        (target_track_id,),
-    ).fetchall()
+    rows = Q.get_arrangement_placements_with_clip_length(conn, target_track_id)
     if not rows:
         return None
     ts_points = Q.get_time_signature_map(conn, song_id)

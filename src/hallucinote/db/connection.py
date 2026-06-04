@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import subprocess
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -12,13 +13,52 @@ from hallucinote.workspace import resolve_song_dir
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-# sqlite3.Connection doesn't allow attribute assignment, so we track nested
-# transaction depth in a side table keyed by `id(conn)`. Depth entries are
+
+class _ThreadLocalDepth:
+    """Per-thread map of `id(conn)` -> nested-transaction depth.
+
+    sqlite3.Connection doesn't allow attribute assignment, so reentrant
+    `transaction()` tracks SAVEPOINT depth in a side mapping keyed by
+    `id(conn)`. The mapping is backed by `threading.local`, so each thread
+    sees only its own depth counter for a given connection. This matters
+    because sqlite3 connections are not safe to share across threads
+    *while a transaction is open*; even when a future caller hands a
+    connection to a worker thread, the depth bookkeeping must not interleave
+    with another thread's BEGIN/SAVEPOINT sequence on a different connection
+    whose `id()` happens to collide (Python recycles `id()` once an object
+    is GC'd). Single-threaded behavior is byte-identical to the old plain
+    dict — `.get(id(conn), 0)` returns the calling thread's depth.
+
+    Only the three operations `transaction()` uses are exposed:
+    ``get(key, default)``, ``__setitem__``, and ``pop(key, default)``.
+    """
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    def _store(self) -> dict[int, int]:
+        store = getattr(self._local, "depth", None)
+        if store is None:
+            store = {}
+            self._local.depth = store
+        return store
+
+    def get(self, key: int, default: int = 0) -> int:
+        return self._store().get(key, default)
+
+    def __setitem__(self, key: int, value: int) -> None:
+        self._store()[key] = value
+
+    def pop(self, key: int, default: int | None = None) -> int | None:
+        return self._store().pop(key, default)
+
+
+# Per-thread nested-transaction depth keyed by `id(conn)`. Entries are
 # explicitly popped when the outermost block closes (success or exception),
-# so connections that fully unwind leave no residue. Connections GC'd
-# mid-transaction (rare, abnormal) can leak one int entry, which is fine
-# at this scale — the connection's `id` doesn't recycle while it's live.
-_TRANSACTION_DEPTH: dict[int, int] = {}
+# so threads that fully unwind leave no residue. A connection GC'd
+# mid-transaction (rare, abnormal) can leak one int entry in its thread's
+# store, which is fine at this scale.
+_TRANSACTION_DEPTH = _ThreadLocalDepth()
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -285,8 +325,9 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     The outermost block drives BEGIN/COMMIT/ROLLBACK; inner blocks drive
     SAVEPOINT/RELEASE/ROLLBACK TO so an inner failure rolls back only the
     inner block, not the whole outer transaction. Reentrancy depth is
-    tracked in the module-level `_TRANSACTION_DEPTH` dict keyed by
-    `id(conn)` (sqlite3.Connection doesn't permit attribute assignment).
+    tracked in the module-level `_TRANSACTION_DEPTH` per-thread map keyed by
+    `id(conn)` (sqlite3.Connection doesn't permit attribute assignment); the
+    per-thread backing keeps the counter from interleaving across threads.
 
     Usage:
         with transaction(conn):

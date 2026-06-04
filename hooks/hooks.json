@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/prewarm-mcp-env.sh\"",
-            "statusMessage": "Hallucinote: pre-warming the MCP server env…"
+            "statusMessage": "Hallucinote: preparing the MCP server env (first run builds it — up to ~1–2 min; later starts are instant)…"
           }
         ]
       }

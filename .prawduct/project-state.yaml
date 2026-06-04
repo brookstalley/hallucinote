@@ -509,3 +509,9 @@ backlog_format_version: 2
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).
 distribution: plugin
+
+# Integration base — this repo is gitflow-on-develop: feature/fix branches PR into
+# `develop`; releases cut to `main`. Set so `resolve-base` and the Critic/PR gates
+# scope `merge-base...HEAD` against develop, not the default origin/main. (INS-7V2D
+# Critic NOTE 2026-06-04.)
+base_branch: develop

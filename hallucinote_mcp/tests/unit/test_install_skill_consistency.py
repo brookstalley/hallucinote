@@ -84,7 +84,9 @@ def _assert_no_mutation_shell(text: str, label: str) -> None:
 
 
 def test_install_skill_invokes_cli_subcommands(install_text):
-    for cmd in ("install-remote-script", "install-analyzer"):
+    # `set-startup-timeout` raises env.MCP_TIMEOUT so the first-run cold build
+    # doesn't blow Claude Code's 30 s MCP startup window (INS-7V2D follow-up).
+    for cmd in ("install-remote-script", "install-analyzer", "set-startup-timeout"):
         assert cmd in install_text, f"install SKILL.md must invoke `{cmd}`"
 
 
@@ -102,7 +104,13 @@ def test_install_skill_has_no_handauthored_mutation_shell(install_text):
 
 
 def test_uninstall_skill_invokes_cli_subcommands(uninstall_text):
-    for cmd in ("uninstall-remote-script", "uninstall-analyzer", "remove-mcp-config"):
+    # `unset-startup-timeout` reverses the install-side env.MCP_TIMEOUT raise.
+    for cmd in (
+        "uninstall-remote-script",
+        "uninstall-analyzer",
+        "remove-mcp-config",
+        "unset-startup-timeout",
+    ):
         assert cmd in uninstall_text, f"uninstall SKILL.md must invoke `{cmd}`"
 
 

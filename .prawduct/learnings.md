@@ -468,3 +468,30 @@ INS-7V2D C1 made the plugin launch its bundled MCP server with `uv run --frozen`
 INS-7V2D C2 needed a SessionStart pre-warm hook. The `claude-code-guide` agent returned an exec-form `{"type":"command","command":"bash","args":["${CLAUDE_PLUGIN_ROOT}/..."]}` shape. The installed prawduct plugin's own `hooks/hooks.json` showed the real format this CC runs: **shell-form** — a single `command` string with the path inline (`"command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/banner.py\""`), no `args` key. Following the agent's guess would have shipped a hook that never ran.
 
 **How to apply.** (1) For any format the *harness* parses (hooks, manifest keys, settings shapes), prefer a working in-cache example over prose docs or an agent answer — the cache is version-matched, docs/agents may not be. (2) `${CLAUDE_PLUGIN_ROOT}`/`${CLAUDE_PLUGIN_DATA}` are exported to plugin hook commands; the pre-warm DATA-env pattern is the uv analog of the docs' npm "diff the manifest, rebuild on change" example. (3) Treat "an agent is confident about an environment-specific format" as a prompt to find ground truth, not as the answer — the confidence is uncorrelated with the CC version you're targeting.
+
+## A plugin MCP server's STARTUP timeout is `MCP_TIMEOUT`, not the per-server `timeout` field
+
+**Claude Code applies a `mcpServers` entry's `"timeout"` field to TOOL EXECUTION, not the
+startup/connection handshake. The startup window is governed by the `MCP_TIMEOUT` env var
+(milliseconds, default 30000). A plugin manifest cannot set `MCP_TIMEOUT`; the only channel
+that reaches a plugin-provided MCP server's spawn is `env` in `~/.claude/settings.json` (or a
+trusted project `.claude/settings.json`), which Claude Code injects into spawned subprocesses.
+A SessionStart hook CANNOT cover a slow startup either — SessionStart hooks RACE the MCP spawn
+and cannot block it. So for a server with a heavy first-run build, the load-bearing fix is a
+generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
+
+INS-7V2D shipped a "generous timeout" mitigation for the bundled server's cold `uv sync`
+(~70 MiB numpy/scipy/librosa), but put `"timeout": 60000` in `plugin.json`'s per-server field.
+The connection log proved it never applied to startup: `Starting connection with timeout of
+30000ms` … `Connection timeout triggered after 30004ms` — the default `MCP_TIMEOUT`, not the
+60000 config. The follow-up raises `MCP_TIMEOUT` (floor 180000) via settings `env`
+(`hallucinote-mcp set-startup-timeout`).
+
+**How to apply.** (1) For an MCP server whose first launch builds/installs anything heavy,
+budget the STARTUP timeout via `MCP_TIMEOUT` in settings `env` — not the per-server `timeout`
+(that's tool-exec) and not a SessionStart pre-warm hook (it races the spawn). (2) A
+plugin-provided server's startup behavior is end-user-distributable only through the install
+flow writing the user's settings — the manifest can't. (3) When a cold start "silently drops
+the server's tools" (CC#60224), read the connection log under
+`~/Library/Caches/claude-cli-nodejs/<proj>/mcp-logs-*/` — it states the exact timeout value
+in force, which tells you immediately whether the config you set is the one being applied.

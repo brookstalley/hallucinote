@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import random
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from hallucinote.performance import SectionPerf, analyze_performance, pink_noise
 from hallucinote.performance.correlation import (
@@ -141,6 +141,12 @@ def test_sloppy_part_emits_an_info_finding_never_blocking():
 _floats = st.floats(min_value=-1e3, max_value=1e3, allow_nan=False, allow_infinity=False)
 
 
+# deadline=None: each example runs the lag-1 correlation math over up to 200
+# floats; that O(n) compute is steady serially but spikes past hypothesis's
+# default 200ms per-example deadline under `-n auto` CPU contention. The
+# deadline measures machine load, not the bounded-in-[-1,1] property — the
+# assertion below is unchanged.
+@settings(deadline=None)
 @given(st.lists(_floats, min_size=3, max_size=200))
 def test_lag1_is_bounded_in_unit_interval(series):
     acf = lag1_autocorr(series)
@@ -152,6 +158,12 @@ def test_dfa_is_none_below_min_points_for_any_series(series):
     assert dfa_alpha(series) is None
 
 
+# deadline=None: each example runs the full DFA exponent fit (nested
+# scale/segment loops) over up to 200 floats — the heaviest per-example
+# compute in this file, and the observed parallel-only flaker during
+# MEL-1A7K verification. The default 200ms deadline measures `-n auto`
+# CPU contention, not the finiteness property; the assertion is unchanged.
+@settings(deadline=None)
 @given(st.lists(_floats, min_size=DFA_MIN_POINTS, max_size=200))
 def test_dfa_when_present_is_a_finite_number(series):
     alpha = dfa_alpha(series)

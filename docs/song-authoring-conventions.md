@@ -144,6 +144,7 @@ from hallucinote.generators import drums, bass, harmony, primitives
 **`primitives`** (`src/hallucinote/generators/primitives.py`) — building blocks shared across the above
 - `primitives.chord_tones` — Build a chord from root + interval list (semitones).
 - `primitives.apply_feel` — Apply a within-bar feel shift (generators call this internally).
+- `primitives.polyrhythm` — Exact `Fraction` onset positions for an `n`-against-`k` cross-rhythm (3:2, 5:4, …); composes without float drift, materializes to float at the mutator boundary.
 
 For a shape no helper covers, author the note list directly in `build.py` (still as code, still through `M.replace_clip_notes`) — never inline a note array into an MCP tool call. The named patterns the retired `/pattern-compose` skill offered (tresillo / bossa / trip-hop / …) all live here as importable helpers.
 

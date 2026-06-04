@@ -4,7 +4,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 
 **Two roles for snapshots:**
 1. **Captured** — `python -m hallucinote.tools.capture_cli` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
-2. **Synthetic** — `/song-new` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
+2. **Synthetic** — `/hallucinote:song-new` generates a minimal snapshot (4 MIDI + 2 returns + master) so the build runs immediately on a brand-new song. Replace by capturing once Live is staged.
 
 `replay_capture` is **idempotent**: re-replaying the same snapshot updates rows whose state changed and is a no-op for unchanged rows. The "song already exists" guard was removed; underlying mutators converge.
 
@@ -142,7 +142,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 
 ### Multi-device chains (sound is composition)
 
-Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/song-pick-instruments`), a track's `devices[]` typically holds a *chain* — instrument + post-instrument processing — not a single device. The chain is part of authorship and ships in the snapshot, not as a "mix-time follow-up":
+Per "sound is composition" (see `docs/song-authoring-conventions.md` and `/hallucinote:song-pick-instruments`), a track's `devices[]` typically holds a *chain* — instrument + post-instrument processing — not a single device. The chain is part of authorship and ships in the snapshot, not as a "mix-time follow-up":
 
 ```json
 "devices": [
@@ -181,12 +181,12 @@ Top-to-bottom matches signal flow. `replay_capture` loads them in `index` order,
 
 For songs that need verified-against-Live chain state (most creative product prompts — a finished song to press play on), use this loop instead of pure hand-authoring:
 
-1. **Pick chains via `/song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
-2. **Push the song with `/ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.
-3. **Stage in Live** (only if the picker couldn't fully specify). Dial in params that need ear-driven tuning (Saturator Drive, Glue threshold). Most picks shouldn't need this — `/song-pick-instruments` aims to ship sound-correct defaults.
-4. **Recapture via `/song-snapshot` (or `python -m hallucinote.tools.capture_cli`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
+1. **Pick chains via `/hallucinote:song-pick-instruments`.** It proposes per-track chains, confirms with the user, and writes the picks into `captured_session.json` (composer-time, before Live touches anything).
+2. **Push the song with `/hallucinote:ableton-push`.** The push planner loads each chain device-by-device in order, applies `params_dialed`, and initializes send levels.
+3. **Stage in Live** (only if the picker couldn't fully specify). Dial in params that need ear-driven tuning (Saturator Drive, Glue threshold). Most picks shouldn't need this — `/hallucinote:song-pick-instruments` aims to ship sound-correct defaults.
+4. **Recapture via `/hallucinote:song-snapshot` (or `python -m hallucinote.tools.capture_cli`).** Writes a `captured_session.refresh.json` side-by-side; diff against the existing snapshot; confirm; overwrite. Now `captured_session.json` reflects the actual chain state — the next push from a fresh DB will reproduce it exactly.
 
-The recapture step is what makes step 3 ("staging in Live") part of authorship and not a sidecar. The on-disk snapshot is the source of truth for sound design once you've recaptured. See `/song-snapshot` for the diff-and-confirm flow.
+The recapture step is what makes step 3 ("staging in Live") part of authorship and not a sidecar. The on-disk snapshot is the source of truth for sound design once you've recaptured. See `/hallucinote:song-snapshot` for the diff-and-confirm flow.
 
 ---
 
@@ -238,7 +238,7 @@ Do **not** target a folder name in `pattern` (e.g. `pattern: "Vintage Delay"` wh
 
 ## Hand-authoring tips
 
-- **Start from the `/song-new` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
+- **Start from the `/hallucinote:song-new` scaffold's synthetic snapshot** — it's the minimal shape that satisfies `replay_capture`. Edit from there.
 - **Names must match across `sends` keys and `returns[].name`** (after slot-prefix stripping). A `sends` entry to `"Reverb"` resolves to the return named `"Reverb"` (or originally `"A-Reverb"`).
 - **The `"index"` keys are 1-based across the board** (Live convention; also enforced by schema CHECKs on the DB side).
 - **Synthetic snapshots are fine as a starting point**, but their `volume`/`panning` defaults won't match the eventual Live state. Recapture (via `python -m hallucinote.tools.capture_cli`) once you've staged Live.
@@ -248,5 +248,5 @@ Do **not** target a folder name in `pattern` (e.g. `pattern: "Vintage Delay"` wh
 ## Reference
 
 - Implementation: `src/hallucinote/capture.py` (`replay_capture` is the entry point).
-- Example: `songs/falling-walking/captured_session.json` (real capture from a populated session).
-- Scaffold template: `tools/templates/song/captured_session.json.tmpl`.
+- Example: a song's `captured_session.json` in the separate **hallucinote-songs** repo (e.g. `songs/<slug>/captured_session.json` — a real capture from a populated session). Songs no longer live in this framework repo (see `project-root-contract`).
+- Scaffold template: `src/hallucinote/tools/templates/song/captured_session.json.tmpl`.

@@ -256,10 +256,10 @@ technical_decisions:
       date: "2026-05-20 (W11-A scoping, post-v1 cumulative merge to main)"
 
   technology:
-    - decision: "Python 3.10+ stdlib-only runtime for the hallucinote library"
-      rationale: "Reduces dependency surface; library is the durable component (songs depend on it). Python 3.10+ for PEP 604 unions and modern typing."
-      alternatives_considered: "Rust core for performance — premature; SQLite WAL is already faster than any musical I/O bottleneck."
-      date: "2026-05-15"
+    - decision: "Python 3.10+ runtime for the hallucinote library; stdlib-only EXCEPT the audio-analysis foundation (numpy/scipy/soundfile/pyloudnorm/librosa/pyroomacoustics)"
+      rationale: "Originally stdlib-only to reduce dependency surface (the library is the durable component songs depend on); Python 3.10+ for PEP 604 unions and modern typing. SUPERSEDED in part: the #99/#100 audio-analysis work adopted six core deps (numpy>=1.26, scipy>=1.11, soundfile>=0.12, pyloudnorm>=0.2, librosa>=0.10, pyroomacoustics>=0.7) declared in pyproject.toml lines 18-23, because FFT / cross-correlation / true-peak oversample / per-band STFT / BS.1770-4 loudness / RT60 cannot be done in the stdlib and the audio foundation belongs alongside the platform, not behind extras. All MIT/BSD/ISC; no PyTorch, no AGPL. The hallucinote-mcp server stays stdlib-only (separate decision below)."
+      alternatives_considered: "Rust core for performance — premature; SQLite WAL is already faster than any musical I/O bottleneck. Keeping audio deps behind an [audio] extras group — rejected so the analysis stack ships as a first-class platform capability (see change-log.md ~line 430)."
+      date: "2026-05-15; audio-dep adoption noted 2026-06-04 (AUD-9D3P — decision record was lagging the shipped pyproject.toml)"
     - decision: "`mcp>=1.0` for the hallucinote-mcp server"
       rationale: "Standard MCP transport; hallucinote_mcp/pyproject.toml declares it as the only runtime dep."
       alternatives_considered: "Custom JSON-RPC — would diverge from the agent ecosystem."

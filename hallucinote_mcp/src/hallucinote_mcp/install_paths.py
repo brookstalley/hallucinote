@@ -11,6 +11,7 @@ do the copying / editing themselves, the helpers just hand them the answers.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib
@@ -220,6 +221,63 @@ def installed_analyzer_amxd(
     """
     target = analyzer_install_target(user_library)
     return target if target.is_file() else None
+
+
+def analyzer_fingerprint(path: pathlib.Path | str) -> str | None:
+    """Content fingerprint of an ``.amxd`` device — 12 hex chars of sha256, or ``None``.
+
+    The ``.amxd`` is a **binary container**, so this hashes the raw bytes
+    directly and deliberately does *not* reuse the text-normalizing
+    :func:`hallucinote_mcp.compute_version_for` path (which the Remote Script
+    uses): CRLF→LF normalization would corrupt binary content, and that path's
+    NUL-byte guard already excludes such files from line-ending munging. A pure
+    byte hash is the correct fingerprint for a binary device.
+
+    Returns ``None`` when ``path`` isn't a readable file (absent install or a
+    permission error) so the caller can distinguish "not installed" from a real
+    fingerprint — mirroring :func:`installed_remote_script_version`'s tri-state.
+    The 12-char width matches the Remote Script fingerprint suffix for
+    consistency in preflight output; collision risk at this width is negligible
+    for the drift-detection use (the alternative on a hash clash is a redundant
+    re-copy, never a silent skip of a genuinely-different device).
+    """
+    path = pathlib.Path(path)
+    if not path.is_file():
+        return None
+    hasher = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                hasher.update(chunk)
+    except OSError:
+        return None
+    return hasher.hexdigest()[:12]
+
+
+def analyzer_source_fingerprint() -> str | None:
+    """Fingerprint of the bundled source ``HallucinoteAnalyzer.amxd`` (or ``None``).
+
+    The reference the install skill compares an installed device against — if it
+    matches :func:`installed_analyzer_fingerprint` the device is byte-identical
+    and the copy + overwrite prompt can be skipped entirely.
+    """
+    return analyzer_fingerprint(analyzer_amxd_source_path())
+
+
+def installed_analyzer_fingerprint(
+    user_library: pathlib.Path | str,
+) -> str | None:
+    """Fingerprint of the analyzer installed in ``user_library`` (or ``None`` if absent).
+
+    Surfaced through preflight alongside :func:`analyzer_source_fingerprint` so
+    the install skill can detect that the installed ``.amxd`` is byte-identical
+    to (or has drifted from) the bundled source — parity with the Remote
+    Script's ``matches_mcp_server`` drift signal, but for the binary device.
+    """
+    installed = installed_analyzer_amxd(user_library)
+    if installed is None:
+        return None
+    return analyzer_fingerprint(installed)
 
 
 def max_for_live_available(live_version: str | None = None) -> bool | None:
@@ -551,13 +609,16 @@ __all__ = [
     "REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY",
     "REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES",
     "analyzer_amxd_source_path",
+    "analyzer_fingerprint",
     "analyzer_install_dir",
     "analyzer_install_target",
+    "analyzer_source_fingerprint",
     "candidate_user_libraries",
     "default_user_library",
     "existing_mcp_config_files",
     "hallucinote_mcp_command",
     "installed_analyzer_amxd",
+    "installed_analyzer_fingerprint",
     "installed_live_versions",
     "installed_remote_script_version",
     "live_is_running",

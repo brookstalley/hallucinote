@@ -211,6 +211,23 @@ def plugins_list_handler(context: LiveContext) -> dict[str, Any]:
 # silently. A pure breadth bound — depth is still _BROWSER_WALK_DEPTH.
 _INVENTORY_MAX_ENTRIES = 20000
 
+# Hard ceiling on TOTAL nodes the walk visits in ONE inventory call (DEV-6T2W).
+# ``_INVENTORY_MAX_ENTRIES`` only counts *loadable leaves*, so a root whose tree
+# is mostly non-loadable folder containers (samples / user_library packs nest
+# many folders per level within the depth-8 bound) can recurse past the
+# breadth cap without ever tripping it — visiting an unbounded number of nodes,
+# each a Live-API ``.children`` property read. The whole walk runs inside ONE
+# ``run_on_main`` bout (the inventory action has no ``runs_on_worker`` opt-out),
+# so an unbounded node count means unbounded MAIN-THREAD wall-clock, which can
+# trip the dispatcher's 15s ``_main_thread_timeout`` (a spurious TimeoutError
+# that ALSO keeps freezing Live, since Python can't interrupt the running walk).
+# This bounds the visit count so the walk always terminates in bounded work;
+# the budget is far above any real install (author's Suite: 13884 loadables)
+# yet caps the pathological case. Hitting it sets ``truncated`` exactly like the
+# breadth cap — the caller subdivides via ``path_prefix`` or records the root as
+# partially covered. Never a silent truncation.
+_INVENTORY_MAX_NODES = 200000
+
 
 def _live_version_info(context: LiveContext) -> dict[str, Any]:
     """Best-effort Live version + edition, for the inventory cache's staleness
@@ -240,7 +257,7 @@ def _live_version_info(context: LiveContext) -> dict[str, Any]:
 
 def _flatten_loadables(
     node: Any, path: list[str], depth_left: int, out: list[dict[str, Any]],
-    max_entries: int,
+    max_entries: int, budget: list[int],
 ) -> bool:
     """Append every loadable leaf under ``node`` to ``out`` with its full
     path. Recurses past loadables (a loadable rack/plugin can contain further
@@ -248,9 +265,18 @@ def _flatten_loadables(
     resolver (``device._resolve_preset_query._walk``) and ``_search_walk``
     can reach. ``path`` is the path TO AND INCLUDING ``node``.
 
-    Returns ``True`` if the ``max_entries`` breadth cap was hit (caller marks
-    the scope partially covered — never a silent truncation).
+    ``budget`` is a single-element mutable cell holding the remaining node-visit
+    allowance (DEV-6T2W); it is decremented once per node entered and bounds
+    total wall-clock work even on trees that are mostly non-loadable folders
+    (which the loadable-only ``max_entries`` cap never bounds).
+
+    Returns ``True`` if EITHER the ``max_entries`` breadth cap OR the node-visit
+    ``budget`` was hit (caller marks the scope partially covered — never a
+    silent truncation).
     """
+    budget[0] -= 1
+    if budget[0] < 0:
+        return True
     name = str(getattr(node, "name", ""))
     if bool(getattr(node, "is_loadable", False)):
         if len(out) >= max_entries:
@@ -267,7 +293,7 @@ def _flatten_loadables(
     for child in getattr(node, "children", ()) or ():
         if _flatten_loadables(
             child, path + [str(getattr(child, "name", ""))], depth_left - 1,
-            out, max_entries,
+            out, max_entries, budget,
         ):
             return True
     return False
@@ -279,6 +305,7 @@ def inventory_handler(
     root: str,
     path_prefix: list[str] | None = None,
     max_entries: int = _INVENTORY_MAX_ENTRIES,
+    max_nodes: int = _INVENTORY_MAX_NODES,
 ) -> dict[str, Any]:
     """Flattened loadable inventory for ONE root (optionally narrowed to a
     ``path_prefix`` sub-branch).
@@ -298,9 +325,12 @@ def inventory_handler(
     ``test_name_matches_matches_mcp_side``).
 
     Returns the ``scope`` walked (``[root, *path_prefix]``), ``walk_depth``,
-    the flattened ``entries``, ``count``, and ``truncated`` — ``True`` when the
-    breadth cap was hit, telling the caller to subdivide via ``path_prefix``
-    or record the root as partially covered. Never silently truncates.
+    the flattened ``entries``, ``count``, and ``truncated`` — ``True`` when
+    EITHER the ``max_entries`` breadth cap OR the ``max_nodes`` visit budget was
+    hit, telling the caller to subdivide via ``path_prefix`` or record the root
+    as partially covered. Never silently truncates. ``max_nodes`` bounds the
+    walk's MAIN-THREAD wall-clock so a folder-heavy root can't trip the
+    dispatcher's 15s ceiling (DEV-6T2W).
     """
     # Lazy import: device.py imports browser handlers at call time to avoid a
     # load cycle; importing the constant here (rather than at module level)
@@ -311,6 +341,8 @@ def inventory_handler(
         raise ValueError(f"root {root!r} not in {list(_ROOTS)}")
     if max_entries < 1:
         raise ValueError(f"max_entries {max_entries} must be >= 1")
+    if max_nodes < 1:
+        raise ValueError(f"max_nodes {max_nodes} must be >= 1")
     browser = _resolve_browser(context)
     root_node = _resolve_root(browser, root)
 
@@ -326,6 +358,7 @@ def inventory_handler(
     entries: list[dict[str, Any]] = []
     truncated = _flatten_loadables(
         scope_node, scope_path, _BROWSER_WALK_DEPTH, entries, max_entries,
+        [max_nodes],
     )
 
     return {

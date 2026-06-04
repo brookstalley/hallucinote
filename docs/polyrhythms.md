@@ -2,7 +2,7 @@
 
 > **When does this apply to me?** Read this if you're authoring a song with
 > intentional cross-rhythms or phasing (a 3-over-4 hand pattern, two parts
-> drifting in and out of phase) and want to know what `/mix-review`'s rhythm
+> drifting in and out of phase) and want to know what `/hallucinote:mix-review`'s rhythm
 > analysis can and can't detect today. It's a design/status note, not a how-to —
 > most songs never need it. **Status: single-part cross-rhythm, two-part
 > phasing, and polymeter/additive-grouping all ship today.**
@@ -10,7 +10,7 @@
 Status: **C8a (single-part cross-rhythm) + C8b (two-part phasing) + C8c
 (additive grouping + polymeter) SHIPPED** (`audio/cross_rhythm.py`,
 `audio/onsets.py`, `PartCrossRhythm`/`Phasing`/`Polymeter` on `SectionMetrics`,
-`/mix-review` consumer). C8c added the accent dimension the deferral identified
+`/hallucinote:mix-review` consumer). C8c added the accent dimension the deferral identified
 as missing: a per-onset peak-amplitude **accent strength** in `onsets.py`
 (`detect_onsets_with_strength`), an additive-grouping decoder (IOI rational-GCD
 → tiling cell → accent-anchored rotation), and a two-part polymeter detector
@@ -162,7 +162,7 @@ right** and **degrades honestly** on the hard ones:
     `grouping` cell (C8c); accent-anchored to the downbeat when dynamics allow. ✓
 
 It **names** the relationship in musician's terms ("4-against-3"), which is what
-makes `/mix-review` able to ask the right question.
+makes `/hallucinote:mix-review` able to ask the right question.
 
 ---
 
@@ -276,7 +276,7 @@ C7's "calibrate against detection accuracy" learning). Result summary:
 ## 7. How it slots into Hallucinote
 
 Mirrors the masking/timing precedent exactly — pure measurement producer →
-`MixReport` → graded by `/mix-review`.
+`MixReport` → graded by `/hallucinote:mix-review`.
 
 > **Connects to the dimension model.** Cross-rhythm is the *measurement* sibling of
 > two authoring concepts that now have design homes: it is a **feed for the
@@ -316,7 +316,7 @@ on `SectionMetrics` (or a sibling list).
 - `analyze_mix(..., analyze_cross_rhythm=False)`; `_measure_window_cross_rhythm`
   in `analyze.py` (level-blind, like timing — gain doesn't move onsets).
 - Handler gate `analyze_cross_rhythm=bool(sections)`.
-- `/mix-review`: read `cross_rhythm` per section; surface as a producer question
+- `/hallucinote:mix-review`: read `cross_rhythm` per section; surface as a producer question
   ("the guitar's in 3-over-2 against the straight-8th drums — intended hemiola,
   or do you want them locked?"). Gate on `confidence`.
 

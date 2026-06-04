@@ -6,6 +6,33 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## INS-7V2D follow-up — MCP startup timeout survives a cold build on a real install
+
+**Status:** PENDING attended run. **Visual change:** no.
+
+Root cause (this session) confirmed from the connection log: the cold-build spawn timed
+out at **30000ms** despite `plugin.json` `"timeout": 60000` — because the per-server
+field is tool-exec, not startup; startup is `MCP_TIMEOUT` (default 30000). Fix raises
+`MCP_TIMEOUT` (settings `env`, floor 180000) + the pre-warm hook now emits SessionStart
+`additionalContext` on a cold build. Unit-proven (`test_startup_timeout.py`,
+`test_prewarm_hook.py`); warm handshake measured at ~2.3 s. What needs an operator:
+
+1. **Cold-start survives within `MCP_TIMEOUT`.** On a machine with a cold uv cache (or
+   after `rm -rf ${CLAUDE_PLUGIN_DATA}/venv` + the synced-lock copy), run
+   `hallucinote-mcp set-startup-timeout`, restart Claude Code, and confirm the
+   `hallucinote-mcp` tools connect on first launch (the cold `uv sync` now fits the 3 min
+   window) — i.e. the 30 s timeout failure does NOT recur.
+2. **Race → reconnect path.** If a build still overruns the window, confirm the env is
+   warm by then and a `/mcp` reconnect connects in ~2 s, AND that Claude proactively
+   surfaces the reconnect guidance (the pre-warm hook's `additionalContext` reached it).
+3. **`statusMessage` shows the expectation.** Confirm the SessionStart spinner shows the
+   "first run builds it — up to ~1–2 min" message during the cold build.
+4. **Uninstall reverses it.** Run `hallucinote-mcp unset-startup-timeout` and confirm
+   `env.MCP_TIMEOUT` is removed from `~/.claude/settings.json` (and a user-customized
+   higher value would be left intact).
+
+---
+
 ## INS-7V2D — plugin-bundled MCP server launches via uv on a real install
 
 **Status:** PARTIALLY CONFIRMED — the **make-or-break risk passed live** this session.

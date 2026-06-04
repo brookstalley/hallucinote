@@ -16,6 +16,14 @@
 #
 # Diff/rebuild contract (the manifest-diff pattern, design §2): the env is rebuilt
 # only when the bundled lock differs from the last-synced copy in CLAUDE_PLUGIN_DATA.
+#
+# Proactive heads-up (INS-7V2D follow-up): SessionStart hooks RACE the MCP spawn —
+# they cannot block it — so on a cold build the spawn can lose the race and show
+# the server "failed" in /mcp even though this hook then finishes the env. After a
+# cold build we emit a SessionStart `additionalContext` JSON object so Claude can
+# proactively tell the user to /mcp-reconnect (warm = ~2 s). Plain stdout is NOT
+# injected into Claude's context for SessionStart — only the JSON object is — so the
+# build-success branch must print ONLY that JSON (human progress goes to stderr).
 set -uo pipefail
 
 # CLAUDE_PLUGIN_ROOT (read-only plugin payload) and CLAUDE_PLUGIN_DATA (persistent,
@@ -49,12 +57,20 @@ if [ -d "$VENV" ] && [ -f "$LOCK_COPY" ] && cmp -s "$LOCK_SRC" "$LOCK_COPY"; the
   exit 0
 fi
 
-echo "[hallucinote prewarm] building the hallucinote-mcp env (first run or lock changed)…"
+# Progress goes to stderr (debug log) — NOT stdout — so the success branch can emit
+# a clean SessionStart additionalContext JSON object as its only stdout.
+echo "[hallucinote prewarm] building the hallucinote-mcp env (first run or lock changed)…" >&2
 mkdir -p "$DATA"
-if UV_PROJECT_ENVIRONMENT="$VENV" uv sync --frozen --all-packages --project "$ROOT" >/dev/null 2>&1; then
+_start=$SECONDS
+if UV_PROJECT_ENVIRONMENT="$VENV" uv sync --frozen --all-packages --project "$ROOT" 1>&2; then
   # Record the lock we just synced against so the next session can fast-path.
   cp "$LOCK_SRC" "$LOCK_COPY"
-  echo "[hallucinote prewarm] MCP env ready."
+  _elapsed=$((SECONDS - _start))
+  echo "[hallucinote prewarm] MCP env ready (~${_elapsed}s)." >&2
+  # Hand Claude a proactive heads-up. The message is fixed text + one integer, with
+  # no characters that need JSON-escaping (no quotes/backslashes/newlines).
+  _ctx="[Hallucinote] The bundled MCP server environment was just built (first run or plugin update; ~${_elapsed}s). On a cold build the MCP connection can race the build and show hallucinote-mcp as failed in /mcp. If the hallucinote-mcp tools are not available this session, tell the user the environment is ready now and to run /mcp to reconnect the hallucinote-mcp server (it connects in ~2s once warm; a full Claude Code restart also works). This only happens after a build — normal sessions start instantly."
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$_ctx"
 else
   # Never fail the session — the self-healing launch retries the sync on demand.
   echo "[hallucinote prewarm] sync failed; the server launch will retry on demand."

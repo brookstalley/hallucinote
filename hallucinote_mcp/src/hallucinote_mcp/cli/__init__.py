@@ -55,6 +55,14 @@ def main(argv: list[str] | None = None) -> int:
         from .mcp import run_remove_mcp_config
 
         return run_remove_mcp_config(rest)
+    if command == "set-startup-timeout":
+        from .mcp import run_set_startup_timeout
+
+        return run_set_startup_timeout(rest)
+    if command == "unset-startup-timeout":
+        from .mcp import run_unset_startup_timeout
+
+        return run_unset_startup_timeout(rest)
     if command == "version":
         from .. import __version__
 
@@ -80,6 +88,8 @@ def _print_help(out=None) -> None:
         "  uninstall-remote-script  Remove the vendored Remote Script\n"
         "  uninstall-analyzer     Remove the installed analyzer device\n"
         "  remove-mcp-config      Delete legacy hallucinote-mcp entries from all config scopes\n"
+        "  set-startup-timeout    Raise env.MCP_TIMEOUT in ~/.claude/settings.json (cold-start safety)\n"
+        "  unset-startup-timeout  Remove our env.MCP_TIMEOUT from ~/.claude/settings.json\n"
         "  version                Print the package version\n"
         "  help                   Show this message\n"
         "\n"

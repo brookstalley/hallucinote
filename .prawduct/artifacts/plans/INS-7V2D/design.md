@@ -54,7 +54,15 @@ Confirmed against primary docs (2026-06-04):
    [UV_PROJECT_ENVIRONMENT](https://pydevtools.com/handbook/how-to/how-to-customize-uvs-virtual-environment-location/))
 4. **Cold-start timeout risk:** a slow first run (resolving numpy/scipy/librosa) can exceed
    the MCP init/probe timeout and **silently drop the server's tools** (CC#60224). Mitigated
-   by pre-warming in a SessionStart hook + a committed lock + a generous per-server timeout.
+   by pre-warming in a SessionStart hook + a committed lock + a generous startup timeout.
+   > **Correction (follow-up, 2026-06-04 — `cold-start-timeout-fix.md`):** the "generous
+   > timeout" below was placed in `plugin.json`'s per-server `"timeout"` field, which Claude
+   > Code applies to **tool execution**, NOT the **startup** handshake. Startup is governed by
+   > the `MCP_TIMEOUT` env var (ms, default **30000**); the per-server field never raised it,
+   > so cold starts got 30 s and timed out anyway. The fix raises `MCP_TIMEOUT` via
+   > `~/.claude/settings.json` `env` (install skill / committed dev settings). The pre-warm
+   > hook also **cannot** prevent this on its own: SessionStart hooks *race* the MCP spawn and
+   > can't block it — so the startup timeout, not the hook, is load-bearing.
 5. **`mcp` cannot be vendored:** it pulls `pydantic-core` (Rust), `cryptography`, `rpds`,
    `_cffi_backend` — platform×Python-version `.so` files. Let pip/uv fetch the right wheel;
    never commit a `vendor/` tree. (verified against the local `.venv`)
@@ -109,9 +117,11 @@ the env only when the lock changes.
    `UV_PROJECT_ENVIRONMENT` (DATA) — it never writes the root and never network-resolves
    (the lock is authoritative). When the hook HAS pre-warmed, the launch is a near-instant
    consistency no-op. `--no-sync` would be marginally faster but FAILS when the env isn't
-   pre-built, making correctness depend on hook ordering — rejected. Self-heal + the 60s
-   timeout + the C2 pre-warm hook are belt-and-suspenders; the only slow path is a
-   genuinely-cold uv cache on first launch, which C2 + the timeout cover.
+   pre-built, making correctness depend on hook ordering — rejected. Self-heal + a generous
+   **`MCP_TIMEOUT`** (the startup timeout — see the Correction in Research #4; the per-server
+   `"timeout"` field here is tool-exec only) + the C2 pre-warm hook are belt-and-suspenders;
+   the only slow path is a genuinely-cold uv cache on first launch, which `MCP_TIMEOUT` covers
+   (the hook can't — it races the spawn).
 4. **uv is the one prerequisite.** Install-skill preflight detects it and offers
    `brew install uv` / the curl bootstrap. It *replaces* the venv ritual + the separate
    server pip-install + the abs-path-override hack.
@@ -125,8 +135,12 @@ the env only when the lock changes.
 
 ## Risks & mitigations
 
-- **Cold start** (heavy first sync) → pre-warm hook + committed lock + `timeout: 60000`.
-  Residual: hook/MCP-spawn ordering race → the timeout covers it.
+- **Cold start** (heavy first sync) → pre-warm hook + committed lock + a generous
+  **`MCP_TIMEOUT`** (settings `env`; the *startup* timeout — see the Correction in Research #4.
+  The original `timeout: 60000` in `plugin.json` is tool-exec only and did NOT cover this).
+  Residual: hook/MCP-spawn ordering race → `MCP_TIMEOUT` covers it (the hook can't block the
+  spawn); if a build still overruns it, the env is warm by then → a `/mcp` reconnect is ~2 s,
+  and the pre-warm hook emits SessionStart `additionalContext` so Claude proactively says so.
 - **uv prerequisite** → one-time binary install, far less fragile than a per-launch ritual;
   preflight bootstraps.
 - **Two environments** (plugin DATA env + song env) → uv's global wheel cache dedupes the
@@ -142,5 +156,7 @@ the env only when the lock changes.
   server (clean startup) and `import hallucinote` resolves in that env. Proves the whole
   mechanism minus Claude-Code-spawns-it.
 - **Reinstall-gated (operator):** install the plugin, restart Claude, confirm the
-  `hallucinote-mcp` tools connect within the timeout on first launch and after a plugin
-  update (lock-change → rebuild). Enqueue in `.prawduct/operator-verification.md`.
+  `hallucinote-mcp` tools connect within the startup window (`MCP_TIMEOUT`) on first launch
+  and after a plugin update (lock-change → rebuild) — and that if the first launch shows the
+  server failed, a `/mcp` reconnect connects within ~2 s once the env is warm. Enqueue in
+  `.prawduct/operator-verification.md`.

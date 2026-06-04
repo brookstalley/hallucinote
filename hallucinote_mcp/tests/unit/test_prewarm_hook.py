@@ -84,6 +84,19 @@ def _call_count(calls_log: pathlib.Path) -> int:
     return len([ln for ln in calls_log.read_text(encoding="utf-8").splitlines() if ln.strip()])
 
 
+def _additional_context(result: subprocess.CompletedProcess) -> str:
+    """Parse the hook's stdout as a SessionStart additionalContext payload.
+
+    The build-success branch must print ONLY this JSON object on stdout (human
+    progress is routed to stderr), so Claude Code injects the guidance into
+    Claude's context rather than showing a bare 'hook success' line.
+    """
+    payload = json.loads(result.stdout)  # raises if stdout isn't clean JSON
+    hook_out = payload["hookSpecificOutput"]
+    assert hook_out["hookEventName"] == "SessionStart"
+    return hook_out["additionalContext"]
+
+
 def test_first_run_builds_the_env_and_records_the_lock(env):
     root, data, stub_bin, calls = env
     _make_uv_stub(stub_bin, calls)
@@ -95,6 +108,22 @@ def test_first_run_builds_the_env_and_records_the_lock(env):
     assert " sync " in f" {calls.read_text()} ", "must call `uv sync`, not another subcommand"
     # The synced copy is recorded so the next session can fast-path.
     assert (data / "uv.lock").read_text() == (root / "uv.lock").read_text()
+
+
+def test_cold_build_emits_session_start_additional_context(env):
+    root, data, stub_bin, calls = env
+    _make_uv_stub(stub_bin, calls)
+
+    result = _run_hook(root, data, path=f"{stub_bin}:{_BASE_PATH}")
+
+    # Stdout must be a clean JSON additionalContext object (no leading human text,
+    # which would make Claude Code treat the whole stream as a plain hook line).
+    ctx = _additional_context(result)
+    # It must steer Claude toward the /mcp reconnect recovery for the race.
+    assert "/mcp" in ctx
+    assert "reconnect" in ctx.lower()
+    # The human-readable progress goes to stderr, not stdout.
+    assert "building the hallucinote-mcp env" in result.stderr
 
 
 def test_second_run_with_unchanged_lock_skips_the_build(env):

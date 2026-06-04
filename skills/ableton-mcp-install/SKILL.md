@@ -1,6 +1,6 @@
 ---
 name: ableton-mcp-install
-description: Install Hallucinote MCP for use with Ableton Live. Vendors the Remote Script into Live's User Library, installs the HallucinoteAnalyzer device, confirms the plugin-provided `hallucinote-mcp` server is connected (the plugin launches it via uv — the skill writes no config), and tells the user the one-time Ableton Preferences click. Use when the user wants to set up Hallucinote MCP for the first time, reinstall after a Python or Ableton update, or move the install to a different Live version.
+description: Install Hallucinote MCP for use with Ableton Live. Vendors the Remote Script into Live's User Library, installs the HallucinoteAnalyzer device, raises the MCP startup timeout in ~/.claude/settings.json so the first-run cold build doesn't time out, confirms the plugin-provided `hallucinote-mcp` server is connected (the plugin launches it via uv — the skill writes no mcpServers entry), and tells the user the one-time Ableton Preferences click. Use when the user wants to set up Hallucinote MCP for the first time, reinstall after a Python or Ableton update, or move the install to a different Live version.
 ---
 
 # /ableton-mcp-install
@@ -111,24 +111,49 @@ Add `--force` to overwrite an existing device **only after confirming** (the
 Prints `{"ok": true, "target": ..., "replaced_existing": ...}`; on `ok: false`,
 show the error.
 
-## Step 4 — Confirm the MCP server is connected
+## Step 4 — Raise the MCP startup timeout, then confirm the server is connected
 
 The server is **provided by the `hallucinote` plugin** — it launches the bundled
 `hallucinote-mcp` via `uv run --frozen` from a committed lock, into a per-plugin
 environment (INS-7V2D). The install skill writes **no** MCP config: the old
 absolute-path-override hack is gone, because the uv launch is PATH-independent and
-already version-coupled to the plugin. Your job here is just to confirm Claude Code
-sees the server — **don't hand-author a config entry; that's exactly what the
-plugin model replaces.**
+already version-coupled to the plugin. **Don't hand-author a config entry; that's
+exactly what the plugin model replaces.**
 
-Check `/mcp` (or the session's MCP list): is `hallucinote-mcp` listed?
+> ⚠️ **The first launch builds the server's Python environment, and that can take
+> ~1–2 minutes.** The bundled server carries numpy/scipy/librosa (~70 MiB) for its
+> audio analysis. On a genuinely-cold first run — and the first run after any
+> plugin update (the lock changes) — that build can exceed Claude Code's **default
+> 30 s MCP startup window** and show `hallucinote-mcp` as **failed** in `/mcp`
+> until the env is ready (CC#60224). It is **one-time**: every later session starts
+> instantly.
+
+Raise the startup timeout once so a cold build fits (idempotent — never lowers a
+higher value you've set):
+
+```bash
+python -m hallucinote_mcp.cli set-startup-timeout
+```
+
+This writes `env.MCP_TIMEOUT` (3 min) into `~/.claude/settings.json` — the only
+channel that reaches a plugin-provided server's *startup*. It takes effect **the
+next time Claude Code starts**, so it protects future cold events (the next plugin
+update); this session's env is usually already warm by now. (The per-server
+`timeout` in the plugin manifest governs *tool execution*, not startup, so it
+cannot cover this — that was the INS-7V2D cold-start bug.) Prints
+`{"ok": true, "action": "set"|"raised"|"kept", ...}`.
+
+Then check `/mcp` (or the session's MCP list): is `hallucinote-mcp` listed?
 
 - **Listed** → done. The plugin provides it; nothing to write.
-- **Not listed** → the `hallucinote` plugin isn't loaded/enabled. Have the user
-  install or enable it — `/plugin install hallucinote@hallucinote`, or
-  `--plugin-dir .` for a source checkout — then run `/mcp` to reconnect. Confirm
-  `uv.present` was `true` in preflight (Step 1); if not, uv is the blocker, not the
-  config.
+- **Not listed / shows "failed" right after a fresh install or plugin update** →
+  it most likely **raced a cold build**. Tell the user the env builds on first run
+  (~1–2 min); once the session's pre-warm prints "MCP env ready" (or a couple of
+  minutes pass), run `/mcp` to reconnect — a warm connect is ~2 s. If it still
+  isn't listed after the env is warm, the `hallucinote` plugin isn't loaded/enabled
+  — have the user install/enable it (`/plugin install hallucinote@hallucinote`, or
+  `--plugin-dir .` for a source checkout), then `/mcp`. Confirm `uv.present` was
+  `true` in preflight (Step 1); if not, uv is the blocker, not the timeout.
 
 ## Step 5 — Hand off (the MCP connection is the gotcha, then open the conversation)
 
@@ -185,8 +210,16 @@ linger.
 - [x] ~~**Me** — Remote Script installed in the User Library (atomic, verified)~~
 - [x] ~~**Me** — HallucinoteAnalyzer device installed~~
 - [x] ~~**Me** — MCP server: provided by the `hallucinote` plugin (uv-launched), nothing written~~
+- [x] ~~**Me** — Raised the MCP startup timeout in `~/.claude/settings.json` (first-run cold-build safety)~~
 - [ ] **You** — In Ableton Live: Preferences → Link, Tempo & MIDI → select *Hallucinote* in any free Control Surface slot (Input/Output = None)
-- [ ] **You** — Load the new server in Claude Code: run `/mcp` (or restart Claude Code) so it picks up `hallucinote-mcp`
+- [ ] **You** — Load the server in Claude Code: run `/mcp` (or restart Claude Code) so it picks up `hallucinote-mcp`
+
+Then, as plain prose, set the first-run expectation: **the very first launch builds
+the server's Python environment and can take ~1–2 minutes** (it carries
+numpy/scipy/librosa for audio analysis). If `hallucinote-mcp` shows as *failed* in
+`/mcp` on that first run, it just raced the build — wait for the session's
+"MCP env ready" notice (or a couple of minutes), then run `/mcp` to reconnect. It is
+one-time; every later session starts instantly.
 
 Then point them at a first action — *"load falling-walking"* (push the bundled
 example song into Live) or *"start a new song"* (scaffold from a prompt) — and note

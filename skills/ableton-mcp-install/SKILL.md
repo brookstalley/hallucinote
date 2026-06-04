@@ -141,7 +141,8 @@ next time Claude Code starts**, so it protects future cold events (the next plug
 update); this session's env is usually already warm by now. (The per-server
 `timeout` in the plugin manifest governs *tool execution*, not startup, so it
 cannot cover this — that was the INS-7V2D cold-start bug.) Prints
-`{"ok": true, "action": "set"|"raised"|"kept", ...}`.
+`{"ok": true, "action": "set"|"raised"|"kept"|"repaired", ...}` (`"repaired"`
+replaces a pre-existing unparseable value with the floor).
 
 Then check `/mcp` (or the session's MCP list): is `hallucinote-mcp` listed?
 

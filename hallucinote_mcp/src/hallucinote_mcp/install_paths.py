@@ -457,6 +457,38 @@ def hallucinote_mcp_command() -> tuple[pathlib.Path | None, bool]:
     return None, False
 
 
+def uv_runtime() -> tuple[pathlib.Path | None, str | None]:
+    """Locate the ``uv`` binary and read its version. Returns ``(path, version)``.
+
+    ``uv`` is the one prerequisite for the plugin-bundled MCP server: the plugin
+    launches it with ``uv run --frozen --all-packages`` into a per-plugin env
+    (INS-7V2D), so if ``uv`` isn't resolvable the server can't start. The install
+    skill's preflight surfaces this so the user can ``brew install uv`` (or the
+    curl bootstrap) before relying on the bridge.
+
+    ``(None, None)`` when uv isn't found; ``(Path, None)`` when found but
+    ``uv --version`` couldn't be read.
+
+    Caveat: this probes the *install-process* PATH (``shutil.which``). Claude Code
+    spawns stdio MCP servers with a sanitized environment, so uv being here is a
+    strong proxy — but the authoritative "does the bridge launch?" check is the
+    live spawn (tracked in operator-verification).
+    """
+    found = shutil.which("uv")
+    if not found:
+        return None, None
+    path = pathlib.Path(found).resolve()
+    try:
+        out = subprocess.run(
+            [str(path), "--version"], capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return path, None
+    if out.returncode == 0:
+        return path, (out.stdout.strip() or None)
+    return path, None
+
+
 def mcp_config_global_path() -> pathlib.Path:
     """``~/.claude.json`` — global Claude Code config."""
     return pathlib.Path.home() / ".claude.json"
@@ -630,4 +662,5 @@ __all__ = [
     "package_root",
     "remote_script_install_dir",
     "remote_script_stub_text",
+    "uv_runtime",
 ]

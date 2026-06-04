@@ -1,9 +1,10 @@
-"""``hallucinote-mcp configure-mcp`` / ``remove-mcp-config`` — MCP config subcommands.
+"""``hallucinote-mcp remove-mcp-config`` — the uninstall config-cleanup subcommand.
 
-The install/uninstall skills call these instead of hand-editing JSON: the decision
-(skip vs write, bare vs absolute, which scope) and the atomic merge/delete live in
-tested Python (:mod:`mcp_config`). The skill supplies ``--registered`` from what
-``/mcp`` shows it (which sees plugin-provided servers config-file scanning can't).
+The uninstall skill calls this instead of hand-editing JSON: the atomic delete
+lives in tested Python (:mod:`mcp_config`). There is no longer an *install*
+counterpart — since INS-7V2D the ``hallucinote`` plugin provides the server via
+its bundled uv launch, so the install skill never writes an ``mcpServers`` entry.
+This command still clears any *legacy* registrations a pre-plugin install wrote.
 """
 from __future__ import annotations
 
@@ -12,57 +13,6 @@ import json
 
 from .. import install_paths as P
 from .. import mcp_config as mc
-
-
-def run_configure_mcp(args: list[str]) -> int:
-    """Plan and (if needed) write the ``hallucinote-mcp`` MCP config entry."""
-    parser = argparse.ArgumentParser(
-        prog="hallucinote-mcp configure-mcp",
-        description="Decide and apply the hallucinote-mcp MCP config entry.",
-    )
-    parser.add_argument("--scope", choices=("user", "project"), default="user")
-    parser.add_argument("--cwd", default=None, help="Project dir for project scope (default: cwd).")
-    parser.add_argument(
-        "--registered", choices=("true", "false"), required=True,
-        help="Whether /mcp already lists hallucinote-mcp (incl. plugin-provided).",
-    )
-    try:
-        ns = parser.parse_args(args)
-    except SystemExit as exc:
-        return int(exc.code or 2)
-
-    cmd_path, on_path = P.hallucinote_mcp_command()
-    plan = mc.plan_mcp_config(
-        command_path=cmd_path,
-        on_path=on_path,
-        already_registered=(ns.registered == "true"),
-        scope=ns.scope,
-        cwd=ns.cwd,
-    )
-
-    if plan.action == "error":
-        print(json.dumps({"ok": False, "action": plan.action, "reason": plan.reason}, indent=2))
-        return 1
-    if plan.action == "skip":
-        print(json.dumps({"ok": True, "action": plan.action, "reason": plan.reason}, indent=2))
-        return 0
-
-    try:
-        existing = mc.read_config(plan.path)
-        merged = mc.merge_server_entry(existing, plan.command, plan.args)
-        mc.write_config_atomic(plan.path, merged)
-    except mc.InstallError as exc:
-        print(json.dumps({"ok": False, "action": "write", "error": str(exc)}, indent=2))
-        return 1
-
-    print(json.dumps({
-        "ok": True,
-        "action": plan.action,
-        "path": str(plan.path),
-        "command": plan.command,
-        "reason": plan.reason,
-    }, indent=2))
-    return 0
 
 
 def run_remove_mcp_config(args: list[str]) -> int:
@@ -87,4 +37,4 @@ def run_remove_mcp_config(args: list[str]) -> int:
     return 0
 
 
-__all__ = ["run_configure_mcp", "run_remove_mcp_config"]
+__all__ = ["run_remove_mcp_config"]

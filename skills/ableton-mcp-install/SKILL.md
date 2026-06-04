@@ -1,6 +1,6 @@
 ---
 name: ableton-mcp-install
-description: Install Hallucinote MCP for use with Ableton Live. Vendors the Remote Script into Live's User Library, installs the HallucinoteAnalyzer device, writes the `hallucinote-mcp` MCP server config, and tells the user the one-time Ableton Preferences click. Use when the user wants to set up Hallucinote MCP for the first time, reinstall after a Python or Ableton update, or move the install to a different Live version.
+description: Install Hallucinote MCP for use with Ableton Live. Vendors the Remote Script into Live's User Library, installs the HallucinoteAnalyzer device, confirms the plugin-provided `hallucinote-mcp` server is connected (the plugin launches it via uv — the skill writes no config), and tells the user the one-time Ableton Preferences click. Use when the user wants to set up Hallucinote MCP for the first time, reinstall after a Python or Ableton update, or move the install to a different Live version.
 ---
 
 # /ableton-mcp-install
@@ -8,20 +8,22 @@ description: Install Hallucinote MCP for use with Ableton Live. Vendors the Remo
 Three pieces:
 
 1. **Remote Script** — Python files in Live's User Library, loaded as a Control Surface.
-2. **MCP server config** — the `hallucinote-mcp` entry Claude Code launches.
+2. **MCP server** — provided by the `hallucinote` plugin (it launches the bundled
+   `hallucinote-mcp` via `uv run` from a committed lock). The skill writes **no**
+   config; it just confirms Claude Code sees the server.
 3. **One Ableton Preferences click** — the user does this; you tell them how.
 
 Every filesystem mutation runs through **tested, atomic CLI subcommands** in the
-`hallucinote_mcp` package — `install-remote-script`, `install-analyzer`,
-`configure-mcp`. This skill *orchestrates*: it runs preflight, makes the decisions
-a human should confirm, and invokes those subcommands. It never hand-authors
-copy / delete / JSON-edit shell. (A previous version did, and a zsh glob once
-aborted mid-copy, leaving a half-installed Control Surface; the atomic vendor —
-stage → verify → swap — makes that structurally impossible.)
+`hallucinote_mcp` package — `install-remote-script`, `install-analyzer`. This skill
+*orchestrates*: it runs preflight, makes the decisions a human should confirm, and
+invokes those subcommands. It never hand-authors copy / delete / JSON-edit shell.
+(A previous version did, and a zsh glob once aborted mid-copy, leaving a
+half-installed Control Surface; the atomic vendor — stage → verify → swap — makes
+that structurally impossible.)
 
-The copy's excludes, the verification, the config-decision matrix, and the atomic
-writes all live in tested Python (`install_ops.py`, `mcp_config.py`); path math
-lives in `install_paths.py`. Don't re-derive any of it in the skill body.
+The copy's excludes, the verification, and the atomic vendor live in tested Python
+(`install_ops.py`); path + prerequisite (`uv`) detection lives in
+`install_paths.py`. Don't re-derive any of it in the skill body.
 
 ## Step 1 — Preflight
 
@@ -38,7 +40,8 @@ The JSON report blocks you act on:
 - **`platform == "linux"`** → warn (Live doesn't officially ship for Linux); show the Wine candidate and ask before proceeding.
 - **`user_library.candidates`** — the User Library options (Step 2).
 - **`live.installed_versions`** — multiple entries sharing one User Library is normal (one install covers all); empty → ask before continuing.
-- **`mcp_configs.malformed`** — non-empty → stop; tell the user to fix/delete those files (the CLI refuses to edit malformed JSON anyway).
+- **`uv.present`** — `false` → the bundled MCP server **can't launch** (the plugin runs it via `uv run`). Tell the user to install uv (`brew install uv`, or `curl -LsSf https://astral.sh/uv/install.sh | sh`) and restart Claude Code, then re-run. This probes the install-process PATH; the authoritative check is whether `/mcp` lists the server (Step 4).
+- **`mcp_configs.malformed`** — non-empty → stop; tell the user to fix/delete those files (uninstall's `remove-mcp-config` refuses to edit malformed JSON anyway).
 - **`remote_script.candidates[*]`** — `installed: true` with `matches_mcp_server: false` is a stale install → this run is an **update** (Step 3 replaces it). `matches_mcp_server: true` → already current; you may skip to Step 4.
 - **`mcp_command`** / **`mcp_configs.containing_entry`** — feed Step 4.
 
@@ -108,28 +111,24 @@ Add `--force` to overwrite an existing device **only after confirming** (the
 Prints `{"ok": true, "target": ..., "replaced_existing": ...}`; on `ok: false`,
 show the error.
 
-## Step 4 — Write the MCP server config
+## Step 4 — Confirm the MCP server is connected
 
-First, what does Claude Code already see? Check `/mcp` (or the session's MCP list):
-is `hallucinote-mcp` already listed? The `hallucinote` plugin declares it, so a
-plugin install usually shows it already — and `/mcp` sees that, which scanning
-config files cannot.
+The server is **provided by the `hallucinote` plugin** — it launches the bundled
+`hallucinote-mcp` via `uv run --frozen` from a committed lock, into a per-plugin
+environment (INS-7V2D). The install skill writes **no** MCP config: the old
+absolute-path-override hack is gone, because the uv launch is PATH-independent and
+already version-coupled to the plugin. Your job here is just to confirm Claude Code
+sees the server — **don't hand-author a config entry; that's exactly what the
+plugin model replaces.**
 
-Run — `--registered true` if `/mcp` lists it, else `false`:
+Check `/mcp` (or the session's MCP list): is `hallucinote-mcp` listed?
 
-```bash
-python -m hallucinote_mcp.cli configure-mcp --registered {true|false} --scope user
-```
-
-It decides and acts, printing `{"ok", "action", "reason", ...}`:
-
-- **`skip`** — already registered and the command resolves on PATH; nothing to write (the common plugin case).
-- **`write`** — writes the entry atomically (merging without clobbering other servers). If the registered command isn't on PATH — e.g. the engine is in an unactivated venv — it writes an **absolute-path override at user scope** that dominates the plugin's bare entry by Claude Code's scope precedence, so the bridge still launches.
-- **`error`** — `hallucinote-mcp` isn't installed; tell the user to `pip install hallucinote-mcp` and re-run.
-
-`--scope user` (default) writes `~/.claude.json`, so the server is available from
-any directory — the right choice in the plugin era. Use `--scope project --cwd "<dir>"`
-only for a contributor setup pinned to one project.
+- **Listed** → done. The plugin provides it; nothing to write.
+- **Not listed** → the `hallucinote` plugin isn't loaded/enabled. Have the user
+  install or enable it — `/plugin install hallucinote@hallucinote`, or
+  `--plugin-dir .` for a source checkout — then run `/mcp` to reconnect. Confirm
+  `uv.present` was `true` in preflight (Step 1); if not, uv is the blocker, not the
+  config.
 
 ## Step 5 — Hand off (the MCP connection is the gotcha, then open the conversation)
 
@@ -145,8 +144,8 @@ Classify from the preflight report you already have:
 
 - **Update / reinstall** — preflight showed a Remote Script already installed
   (`remote_script.candidates[*].installed == true`) and/or `hallucinote-mcp` was
-  already registered (Step 4 returned `skip`, or the config entry pre-existed).
-  Only the server **code** changed.
+  already listed in `/mcp` (Step 4 found it connected). Only the server **code**
+  changed.
 - **Fresh install** — neither was true before this run. Claude Code has never
   loaded this server.
 
@@ -164,13 +163,13 @@ Print the checklist for the matching case **as Markdown, NOT inside a code fence
 - something the user still must do → `- [ ] **You** — …`
 
 Fill from what you actually did (don't claim a step you skipped); interpolate real
-version strings from preflight, and the MCP line from Step 4's result.
+version strings from preflight.
 
 **Update / reinstall** — render as:
 
 - [x] ~~**Me** — Remote Script re-vendored in the User Library (old copy removed first, atomically)~~
 - [x] ~~**Me** — version handshake will match (server `<package.version>` == vendored)~~
-- [x] ~~**Me** — MCP config: *(interpolate Step 4's result — "already provided by the plugin, nothing written" for `skip`, or "override written at `<path>`" for `write`)*~~
+- [x] ~~**Me** — MCP server: provided by the `hallucinote` plugin (uv-launched from the committed lock) — nothing written~~
 - [ ] **You** — Reopen Ableton Live so it loads the refreshed Control Surface (the *Hallucinote* slot is almost certainly still assigned — just reopen; re-check Preferences only if not)
 - [ ] **You** — Run `/mcp` → `hallucinote-mcp` → reconnect *(required to finish)*
 
@@ -185,7 +184,7 @@ linger.
 
 - [x] ~~**Me** — Remote Script installed in the User Library (atomic, verified)~~
 - [x] ~~**Me** — HallucinoteAnalyzer device installed~~
-- [x] ~~**Me** — MCP config: *(interpolate Step 4's result — "provided by the `hallucinote` plugin, nothing written" for `skip`, or "written at `<path>`" for `write`)*~~
+- [x] ~~**Me** — MCP server: provided by the `hallucinote` plugin (uv-launched), nothing written~~
 - [ ] **You** — In Ableton Live: Preferences → Link, Tempo & MIDI → select *Hallucinote* in any free Control Surface slot (Input/Output = None)
 - [ ] **You** — Load the new server in Claude Code: run `/mcp` (or restart Claude Code) so it picks up `hallucinote-mcp`
 
@@ -220,7 +219,13 @@ user's next message is "I want to make…", and you continue from there.
 - **Live is running**: refuse (Step 1 caught this).
 - **Multiple Live installs**: they share one User Library by default — one install
   covers all. Ask only if the user configured per-version libraries.
-- **Malformed config**: `configure-mcp` refuses to edit it; have the user fix the JSON first.
+- **uv missing**: preflight's `uv.present == false` → the plugin can't launch the
+  server. Have the user `brew install uv` (or the curl bootstrap) and restart
+  Claude Code before relying on the bridge. The install skill writes no config, so
+  there's no fallback to a hand-authored entry — uv is the prerequisite.
+- **`hallucinote-mcp` not in `/mcp`**: the plugin isn't loaded — install/enable it
+  (`/plugin install hallucinote@hallucinote`), then `/mcp`. Nothing for this skill
+  to write.
 - **OneDrive Documents redirection (Windows)**: preflight's `user_library.candidates`
   already includes both `OneDrive\Documents\…` and `Documents\…`; use whichever
   exists, ask if both.

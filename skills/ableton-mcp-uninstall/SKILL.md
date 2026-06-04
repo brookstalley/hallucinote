@@ -1,67 +1,66 @@
 ---
 name: ableton-mcp-uninstall
-description: Cleanly remove Hallucinote MCP. Deletes the Remote Script from Ableton Live's User Library, removes the `hallucinote-mcp` entry from `.mcp.json` (or `~/.claude.json`), and tells the user the one-time Ableton Preferences click to undo. Use when the user wants to remove Hallucinote MCP, switch to a different MCP server, or troubleshoot by reinstalling from scratch.
+description: Cleanly remove Hallucinote MCP. Deletes the Remote Script and the HallucinoteAnalyzer device from Ableton Live's User Library, removes every `hallucinote-mcp` entry from `.mcp.json` / `~/.claude.json`, and tells the user the one-time Ableton Preferences click to undo. Use when the user wants to remove Hallucinote MCP, switch to a different MCP server, or troubleshoot by reinstalling from scratch.
 ---
 
 # /ableton-mcp-uninstall
 
-Symmetric counterpart to `/ableton-mcp-install`. Reverses every step using the same detection helpers.
+Symmetric counterpart to `/ableton-mcp-install`. Reverses every step through the
+same tested, atomic CLI subcommands — `uninstall-remote-script`,
+`uninstall-analyzer`, `remove-mcp-config`. The skill orchestrates; it never
+hand-authors `rm`/`Remove-Item` or JSON edits.
 
 ## Step 1 — Preflight
-
-Run from the project directory whose `.mcp.json` you want checked.
 
 ```bash
 python -m hallucinote_mcp.cli preflight
 ```
 
-(If the package has already been `pip uninstall`'d, this fails — see "Uninstall after pip uninstall" at the bottom.)
+(If the package was already `pip uninstall`'d, this fails — see the bottom section.)
 
 From the report:
 
-- **`live.is_running`** — refuse if `true`; if `null`, ask the user to confirm Live is closed.
-- **`user_library.candidates`** — every entry with `exists: true` is a place to check for `Remote Scripts/Hallucinote/`.
-- **`mcp_configs.containing_entry`** — exact `{path, json_pointer}` list of every `hallucinote-mcp` registration (covers project `.mcp.json`, global `~/.claude.json` top-level, and `projects.<cwd>.mcpServers` from `claude mcp add`). No need to ask.
-- **`mcp_configs.malformed`** — if non-empty, tell the user; we won't edit malformed files.
+- **`live.is_running`** — `true` → refuse; `null` → ask the user to confirm Live is fully quit.
+- **`user_library.candidates`** — every entry with `exists: true` is a place to remove from.
+- **`mcp_configs.containing_entry`** — every `hallucinote-mcp` registration (project `.mcp.json`, global `~/.claude.json` top-level, and `projects.<cwd>.mcpServers`); `remove-mcp-config` clears them all.
+- **`mcp_configs.malformed`** — if non-empty, tell the user; the CLI refuses to edit malformed files.
 
-## Step 2 — Remove the Remote Script
+## Step 2 — Remove the Remote Script (and the analyzer device)
 
-For each User Library candidate that exists, check for `<User Library>/Remote Scripts/Hallucinote/`. List its contents before deleting; if you see anything beyond the expected `__init__.py` + `hallucinote_mcp/` tree (see `/ableton-mcp-install` Step 3c), ask before removing.
-
-If the layout matches, delete:
+For each User Library candidate that exists, remove both:
 
 ```bash
-# macOS / Linux
-rm -rf "<User Library>/Remote Scripts/Hallucinote"
+python -m hallucinote_mcp.cli uninstall-remote-script --user-library "<User Library>"
+python -m hallucinote_mcp.cli uninstall-analyzer      --user-library "<User Library>"
 ```
 
-```powershell
-# Windows
-Remove-Item -Recurse -Force "<User Library>\Remote Scripts\Hallucinote"
+Each prints `{"ok": true, "removed": true|false, "path": ...}` — `removed: false`
+just means it wasn't there (idempotent). `uninstall-remote-script` removes the
+whole `Remote Scripts/Hallucinote/` directory but leaves `Remote Scripts/` itself
+(standard Live infrastructure). Multiple Live installs share one User Library by
+default, so one pass covers all; ask only if the user configured per-version
+libraries.
+
+If the user customized the analyzer device via the Max GUI and wants to keep it,
+skip `uninstall-analyzer`.
+
+## Step 3 — Remove the MCP server config entries
+
+```bash
+python -m hallucinote_mcp.cli remove-mcp-config
 ```
 
-Leave `Remote Scripts/` itself in place — it's standard Live infrastructure.
+(Add `--cwd "<project dir>"` if the project whose `.mcp.json` to scan isn't the
+current directory.) It deletes `hallucinote-mcp` from every scope preflight found —
+project `.mcp.json`, global top-level, and the per-project `claude mcp add` scope —
+atomically, leaving all other servers and keys untouched, and refusing any
+malformed file. Prints `{"ok": true, "removed": [ ... ]}`.
 
-Multiple Live installs share one User Library by default; one delete covers all. The exception is a user who configured per-version User Libraries — ask.
+If `hallucinote-mcp` is **plugin-provided** (no config-file entry — `remove-mcp-config`
+reports `removed: []`), there's nothing to delete here: to stop the plugin from
+providing it, the user disables/uninstalls the plugin via `/plugin`, not this skill.
 
-## Step 3 — Remove the MCP server config entry
-
-For each `{path, json_pointer}` in `mcp_configs.containing_entry`:
-
-1. Read and parse the JSON at `path`.
-2. Walk the json_pointer to reach the entry's parent dict; delete the final key. Examples:
-   - `["mcpServers", "hallucinote-mcp"]` → delete `mcpServers["hallucinote-mcp"]`.
-   - `["projects", "/path/to/proj", "mcpServers", "hallucinote-mcp"]` → delete that nested entry (the `claude mcp add` default scope).
-3. Leave every other key untouched (especially the rest of `~/.claude.json`).
-4. If the parent `mcpServers` map is now empty, leave it as `{}`.
-
-### Atomic write
-
-Write to `<config>.tmp`, then rename (`os.replace` / `mv` / `Move-Item -Force`). A partial write can corrupt `~/.claude.json` and lose project history.
-
-If `mcp_configs.malformed` listed any of these files, don't edit — tell the user to fix the JSON first.
-
-If Claude Code is open, suggest a restart so the deletion takes effect.
+If Claude Code is open, suggest a restart (or `/mcp`) so the change takes effect.
 
 ## Step 4 — Tell the user the Ableton click
 
@@ -78,19 +77,22 @@ One last step in Ableton Live (when you next open it):
 
 ## Edge cases
 
-- **User Library moved**: the preflight candidates cover the common locations (including OneDrive redirection). If the user moved their User Library inside Live, ask for the path.
-- **Multiple Live versions sharing a User Library**: one delete covers all.
-- **Customized Remote Script files**: Step 2's sanity check catches this — ask before deletion.
+- **User Library moved**: preflight's candidates cover the common locations (incl. OneDrive redirection). If moved inside Live, ask for the path.
+- **Multiple Live versions sharing a User Library**: one removal covers all.
+- **Malformed config**: `remove-mcp-config` refuses to edit it — have the user fix the JSON first.
 
 ## Uninstall after pip uninstall
 
-If the package has already been `pip uninstall`'d, preflight fails. Manual cleanup:
+If the package was already `pip uninstall`'d, preflight (and the CLI) can't run.
+Manual cleanup:
 
-1. **Remote Script** — delete `<User Library>/Remote Scripts/Hallucinote/`. User Library is typically:
+1. **Remote Script + analyzer** — delete `<User Library>/Remote Scripts/Hallucinote/`
+   and `<User Library>/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd`.
+   User Library is typically:
    - macOS: `~/Music/Ableton/User Library`
    - Windows: `~/Documents/Ableton/User Library` or `~/OneDrive/Documents/Ableton/User Library`
    - Linux: `~/Ableton/User Library` (Wine / CrossOver only)
-
-2. **MCP configs** — search for the `hallucinote-mcp` key in `<current project>/.mcp.json` and `~/.claude.json`. Edit each by hand (atomically — write to `.tmp`, then rename).
-
+2. **MCP configs** — remove the `hallucinote-mcp` key from `<project>/.mcp.json` and
+   `~/.claude.json` (top-level and any `projects.<cwd>.mcpServers`). Edit atomically
+   (write to `.tmp`, then rename).
 3. **Live Preferences click** — same as Step 4 above.

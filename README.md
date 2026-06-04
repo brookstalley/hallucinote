@@ -76,7 +76,8 @@ This installs the **engine** (`hallucinote`) plus the `hallucinote_mcp` package 
 your composing environment — `build.py`'s push path imports `hallucinote_mcp` as a
 library. This is **separate from the plugin's MCP _bridge_ server**: the plugin bundles
 its own copy of the server and runs it with uv (you don't manage that one). Same package,
-two roles; keep this checkout on the same version as your installed plugin so they agree.
+two roles; keep this checkout on the same version as your installed plugin so they agree
+(why, and how to check: [docs/engine-pin.md](docs/engine-pin.md)).
 
 **macOS / Linux:**
 ```bash

@@ -8,32 +8,31 @@ pending entries when `operator_verification_required: true`.
 
 ## INS-7V2D — plugin-bundled MCP server launches via uv on a real install
 
-**Status:** PENDING (the plugin is not loaded in the authoring session; the launch
-mechanism is proven locally via the shell, not yet via Claude Code spawning it).
-**Visual change:** no (objective: do the `hallucinote-mcp` tools connect?).
+**Status:** PARTIALLY CONFIRMED — the **make-or-break risk passed live** this session.
+The plugin was loaded via `--plugin-dir .` and the `hallucinote-mcp` tools connected;
+`ableton_session(action='help')` returned a full valid response. Since the server is
+spawned by Claude Code (tool prefix `mcp__plugin_hallucinote_…`), this proves:
+`command: "uv"` **resolved in Claude Code's sanitized spawn env** (risk #0 below), and
+C1's **self-healing launch built the `${CLAUDE_PLUGIN_DATA}/venv` on demand within the
+60s timeout** — note this happened *before* the C2 pre-warm hook existed, so the launch
+is correct standalone. **Visual change:** no.
 
-C1 proved locally that `uv run --frozen --all-packages --project <root>` with
-`UV_PROJECT_ENVIRONMENT=<dir>` builds the env and starts the server. What needs a real
-install:
+Risk #0 + check #1 are now confirmed on this machine. What still needs an operator:
 
-1. **Fresh install connects.** `/plugin marketplace add brookstalley/hallucinote` +
-   `/plugin install hallucinote@hallucinote` (or `--plugin-dir .`), restart Claude with
-   `uv` on PATH, and confirm the `hallucinote-mcp` tools appear (the env builds into
-   `${CLAUDE_PLUGIN_DATA}/venv` within the 60s init timeout — watch for the CC#60224
-   silent tool-drop on a cold uv cache; the C2 pre-warm hook is the mitigation).
-   **0. `uv` must resolve in the SPAWN env (the make-or-break risk).** Claude Code spawns
-   stdio MCP servers with a sanitized environment that does NOT inherit the shell's PATH.
-   `command: "uv"` (bare) therefore assumes `uv` is on whatever PATH Claude Code's spawn
-   uses. `uv` installs to a standard location (`/opt/homebrew/bin`, `~/.local/bin`,
-   `~/.cargo/bin`) so it usually resolves — but if the tools DON'T appear, this is the
-   first thing to check (run `uv --version` is not enough — it's the *spawn* PATH that
-   matters). Fix if needed: an absolute uv path in `command` (the install skill can detect
-   it — fold into C3), or add uv's dir to the server `env` PATH.
+1. ~~**Fresh install connects** / **`uv` resolves in the SPAWN env (make-or-break).**~~
+   **CONFIRMED** (this session, `--plugin-dir .`). Residual: the uv *cache* was warm here
+   (the heavy wheels were already fetched during C1's local verification), so the
+   genuinely-cold-cache-within-60s worst case (CC#60224 silent tool-drop on a
+   first-ever numpy/scipy/librosa build) is **not yet proven**. The C2 pre-warm hook is
+   the mitigation; verify on a clean machine / fresh `~/.cache/uv` that the tools still
+   appear within the timeout (the hook should warm the env before the handshake).
 2. **Update rebuilds the env.** Bump the plugin version / change `uv.lock`, update the
-   plugin, confirm the env rebuilds (lock-diff) and the server still connects.
-3. **No abs-path override needed.** Confirm `/hallucinote:ableton-mcp-install`'s
-   `configure-mcp` now returns `skip` (the uv launch is PATH-independent) — i.e. the old
-   override path is dead (formalized when C3 removes it).
+   plugin, confirm the env rebuilds (the C2 lock-diff hook fires + the launch self-heals)
+   and the server still connects. **Not yet exercised** — needs a real plugin update cycle.
+3. ~~**No abs-path override needed** (configure-mcp returns skip).~~ **RESOLVED in code by
+   C3** — `configure-mcp` and the absolute-path-override path are *deleted*; the install
+   skill writes no MCP config (guarded by `test_configure_mcp_subcommand_is_retired` +
+   `test_install_skill_does_not_resurrect_configure_mcp`). Nothing to verify at runtime.
 
 ## ARR-7M3D — energy-realization lens: render-based DR-5 calibration + e2e ρ read
 

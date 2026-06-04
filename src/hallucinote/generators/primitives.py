@@ -1,6 +1,7 @@
 """Low-level musical building blocks shared across drum / bass / harmony generators."""
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Mapping, Sequence
 
 # Per-part microtiming feel (W17-E). `feel` maps within-bar beat positions to
@@ -106,3 +107,39 @@ def chord_tones(root_pitch: int, intervals: Sequence[int]) -> list[int]:
     [38, 41, 45]
     """
     return [root_pitch + i for i in intervals]
+
+
+def polyrhythm(n: int, against: int, span: Fraction | int | None = None) -> list[Fraction]:
+    """Return the ``n`` onset positions (in beats) of an ``n``-against-``against``
+    cross-rhythm, as **exact** :class:`fractions.Fraction` values.
+
+    An ``n:against`` cross-rhythm plays ``n`` evenly-spaced onsets across the
+    span that ``against`` reference pulses occupy (see ``docs/polyrhythms.md`` §1
+    — "one part subdivides the beat against the meter": 3:2, 4:3, 5:4 …). With
+    the default ``span`` of one beat per reference pulse, the span is ``against``
+    beats and onset ``i`` lands at ``i * Fraction(against, n)``.
+
+    The math stays in exact rational arithmetic so composed ratios land on exact
+    beat fractions without IEEE-754 sub-LSB drift. The canonical drift case from
+    the backlog (GEN-5K2D) — composing a 7:5 against a 3:2 as
+    ``(7.0 / 5) * 3 / 2.0`` yields ``2.0999999999999996`` — becomes the exact
+    ``Fraction(21, 10)`` here. The mutator boundary (``_normalize_note`` in
+    ``db/mutations/notes.py``) calls ``float(start_beats)``, so a ``Fraction``
+    materializes to a float only at the edge — drift, if any, is introduced
+    once, at the boundary, not silently accumulated through authoring.
+
+    ``span`` overrides the default reference span (``against`` beats) — e.g.
+    ``span=2`` packs the ``n`` onsets into 2 beats instead of ``against`` beats.
+
+    >>> polyrhythm(3, 2)            # 3-against-2: three onsets across 2 beats
+    [Fraction(0, 1), Fraction(2, 3), Fraction(4, 3)]
+    >>> [float(b) for b in polyrhythm(5, 4)]   # 5:4 lands on exact 4/5 fractions
+    [0.0, 0.8, 1.6, 2.4, 3.2]
+    """
+    if n <= 0:
+        raise ValueError(f"polyrhythm: n must be a positive int, got {n!r}.")
+    if against <= 0:
+        raise ValueError(f"polyrhythm: against must be a positive int, got {against!r}.")
+    total = Fraction(against) if span is None else Fraction(span)
+    step = total / n
+    return [step * i for i in range(n)]

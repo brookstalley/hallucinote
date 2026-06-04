@@ -7,6 +7,8 @@ commas outside quoted spans.
 """
 from __future__ import annotations
 
+import pytest
+
 from hallucinote.markdown_refs import (
     _serialize_list_item,
     _serialize_markdown,
@@ -59,6 +61,18 @@ def test_serialize_list_item_quotes_only_when_needed():
     assert _serialize_list_item("plain") == "plain"
     assert _serialize_list_item("a,b") == '"a,b"'
     assert _serialize_list_item("x[y]") == '"x[y]"'
+
+
+def test_item_containing_double_quote_wraps_with_single_and_round_trips():
+    # A '"' in the item -> wrap with "'" (and vice versa); both round-trip.
+    assert _serialize_list_item('a"b,c') == "'a\"b,c'"
+    fm = {"kind": "annotation", "scope": "song", "tags": ['a"b,c', "plain"]}
+    assert _round_trip(fm).tags == ['a"b,c', "plain"]
+
+
+def test_item_with_both_quote_chars_raises_rather_than_corrupt():
+    with pytest.raises(ValueError, match="both"):
+        _serialize_list_item("a'b\",c")
 
 
 def test_split_inline_list_respects_quoted_commas():

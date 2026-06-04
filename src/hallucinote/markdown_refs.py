@@ -190,13 +190,25 @@ def _split_inline_list(inner: str) -> list[str]:
 def _serialize_list_item(x: Any) -> str:
     """Serialize one inline-list item, quoting it iff it carries a character
     the parser would otherwise mis-handle. Round-trip partner of
-    ``_split_inline_list`` + ``_strip_quotes``. Tags/related are a controlled
-    vocabulary (kebab tags, file paths, item IDs) that does not contain quote
-    characters, so a simple double-quote wrap suffices."""
+    ``_split_inline_list`` + ``_strip_quotes``.
+
+    Tags/related are a controlled vocabulary (kebab tags, file paths, item IDs)
+    that does not contain quote characters, so the wrap quote is normally ``"``.
+    If the item itself contains a ``"`` we wrap with ``'`` instead (and vice
+    versa) since this YAML-subset has no escaping. An item containing BOTH quote
+    characters is unrepresentable — we raise loudly rather than silently emit a
+    value that would not round-trip (Never Silently Drop)."""
     s = str(x)
-    if any(c in s for c in _LIST_ITEM_SPECIAL):
+    if not any(c in s for c in _LIST_ITEM_SPECIAL):
+        return s
+    if '"' not in s:
         return f'"{s}"'
-    return s
+    if "'" not in s:
+        return f"'{s}'"
+    raise ValueError(
+        f"inline-list item {s!r} contains both ' and \" — the markdown "
+        "frontmatter YAML-subset cannot represent it without escaping"
+    )
 
 
 def _build_frontmatter(raw: dict[str, Any]) -> Frontmatter:

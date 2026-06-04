@@ -35,8 +35,11 @@ The composer commits and pushes their **songs repo**. The collaborator clones it
 and installs the engine + plugin:
 
 ```bash
+# prerequisite: install uv — the plugin launches the bundled MCP server with it
+#               (see README "Requirements")
 git clone <songs-repo-url> && cd <songs-repo>
-pip install 'hallucinote[live]'        # the engine (or editable from a framework checkout)
+# install the engine (editable from a framework checkout — see README
+# "Clone and install"; not on PyPI yet)
 # then in Claude Code:  /plugin marketplace add brookstalley/hallucinote
 #                       /plugin install hallucinote@hallucinote
 ```

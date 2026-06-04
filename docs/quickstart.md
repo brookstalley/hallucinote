@@ -5,12 +5,13 @@ result. By the end you'll have composed a song from a single prompt and heard
 it play in Ableton Live.
 
 **Before you start**, finish the one-time setup in the
-[README](../README.md#install): install the **plugin** + **engine** (today:
-clone this repo, editable-install it, and load the plugin from your checkout
-with `claude --plugin-dir /path/to/hallucinote` — a one-line marketplace install
-follows the first release), run `/hallucinote:ableton-mcp-install`, and select
-**Hallucinote** as a Control Surface in Live's Preferences. This quickstart
-assumes that's done.
+[README](../README.md#install): install **uv** (the plugin launches its bundled MCP
+server with it), the **plugin** (from GitHub: `/plugin marketplace add
+brookstalley/hallucinote` then `/plugin install hallucinote@hallucinote` — or, for
+framework dev, `claude --plugin-dir /path/to/hallucinote`), and the **engine**
+(editable-install from a clone; not on PyPI yet). Then run
+`/hallucinote:ableton-mcp-install` and select **Hallucinote** as a Control Surface in
+Live's Preferences. This quickstart assumes that's done.
 
 > Hallucinote has two halves: the **plugin** (the `/hallucinote:*` skills + the
 > MCP server, installed into Claude Code) and your **songs**, which live in

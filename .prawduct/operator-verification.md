@@ -6,6 +6,27 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## INS-7V2D — plugin-bundled MCP server launches via uv on a real install
+
+**Status:** PENDING (the plugin is not loaded in the authoring session; the launch
+mechanism is proven locally via the shell, not yet via Claude Code spawning it).
+**Visual change:** no (objective: do the `hallucinote-mcp` tools connect?).
+
+C1 proved locally that `uv run --frozen --all-packages --project <root>` with
+`UV_PROJECT_ENVIRONMENT=<dir>` builds the env and starts the server. What needs a real
+install:
+
+1. **Fresh install connects.** `/plugin marketplace add brookstalley/hallucinote` +
+   `/plugin install hallucinote@hallucinote` (or `--plugin-dir .`), restart Claude with
+   `uv` on PATH, and confirm the `hallucinote-mcp` tools appear (the env builds into
+   `${CLAUDE_PLUGIN_DATA}/venv` within the 60s init timeout — watch for the CC#60224
+   silent tool-drop on a cold uv cache; the C2 pre-warm hook is the mitigation).
+2. **Update rebuilds the env.** Bump the plugin version / change `uv.lock`, update the
+   plugin, confirm the env rebuilds (lock-diff) and the server still connects.
+3. **No abs-path override needed.** Confirm `/hallucinote:ableton-mcp-install`'s
+   `configure-mcp` now returns `skip` (the uv launch is PATH-independent) — i.e. the old
+   override path is dead (formalized when C3 removes it).
+
 ## ARR-7M3D — energy-realization lens: render-based DR-5 calibration + e2e ρ read
 
 **Status:** PENDING (Live was UP but UNATTENDED this run; the new MCP analysis

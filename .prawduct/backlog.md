@@ -521,7 +521,10 @@ sections only via explicit `/backlog update` calls.
 
 ## Promoted
 
-_(no items)_
+- **[INS-7V2D]** Plugin-bundled MCP server via uv — version-lock the server to the plugin (kill PATH/venv fragility)
+  `effort: L · impact: M · area: install · source: user · added: 2026-06-04 · status: promoted · related: TPL-2D8K, INS-4H8M, SYN-2M9P, DEV-1F9X`
+
+  Today `plugin.json` declares `command: hallucinote-mcp` (a bare PATH console-script the user pip-installs separately), so the running server version is not coupled to the plugin/skills it was built against; the install skill papers over PATH fragility with an absolute-path override in `~/.claude.json` (`ableton-mcp-install/SKILL.md` L114-128 / `mcp_config.py`). **Bundle the server in the plugin and run it with uv from a committed `uv.lock` into a `${CLAUDE_PLUGIN_DATA}` env** — server code + full dependency closure match the plugin version, with no PATH dependency, no venv-activation ritual, and no separate pip install. Research-backed against primary docs (CC MCP + plugins-reference, uv): MCP subprocesses do NOT inherit the launching shell's venv/PATH (so "activate first" is broken by design); `${CLAUDE_PLUGIN_ROOT}` is read-only and `${CLAUDE_PLUGIN_DATA}` is the documented home for Python venvs with a diff-the-manifest rebuild pattern; `mcp` can't be vendored (compiled pydantic-core/cryptography wheels are platform×pyver). Design + chunked build plan: `.prawduct/artifacts/plans/INS-7V2D/design.md` + `.prawduct/artifacts/build-plan.md`. **Verifiable signal:** `plugin.json` launches the server via `uv run … --project ${CLAUDE_PLUGIN_ROOT}` with `UV_PROJECT_ENVIRONMENT=${CLAUDE_PLUGIN_DATA}/venv`; a committed `uv.lock` pins mcp + the engine; the install skill no longer writes `mcpServers` entries; on a fresh plugin install the `hallucinote-mcp` tools connect within the init timeout. **Sized:** large. (user version-coupling request 2026-06-04)
 
 ## Archive
 

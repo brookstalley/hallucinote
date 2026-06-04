@@ -22,8 +22,14 @@
   "defaultEnabled": true,
   "mcpServers": {
     "hallucinote-mcp": {
-      "command": "hallucinote-mcp",
-      "args": ["serve"]
+      "command": "uv",
+      "args": [
+        "run", "--frozen", "--all-packages",
+        "--project", "${CLAUDE_PLUGIN_ROOT}",
+        "hallucinote-mcp", "serve"
+      ],
+      "env": { "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv" },
+      "timeout": 60000
     }
   }
 }

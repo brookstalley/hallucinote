@@ -6,7 +6,7 @@
 
 ## 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
 
-<!-- chunks=backlog-low-cost-sweep status=shipped release=unreleased scope=backlog-low-cost-sweep -->
+<!-- chunks=backlog-low-cost-sweep status=shipped release=v0.9.2 scope=backlog-low-cost-sweep -->
 
 A parallel sweep of the low-cost / no-Live tier of the backlog, executed as seven
 file-disjoint clusters (verify-against-current-code, then surgical fix + narrow

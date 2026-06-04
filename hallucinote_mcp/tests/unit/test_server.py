@@ -15,6 +15,36 @@ from hallucinote_mcp.server import (
 )
 
 
+def get_registered_tool(mcp, name):
+    """Fetch a single registered FastMCP ``Tool`` by name for ``.run()``.
+
+    Symmetric with the production ``registered_tool_names`` helper: FastMCP's
+    instance attribute for the tool manager (and the manager's internal store)
+    has drifted across versions, so the lookup is centralized here in ONE place
+    rather than spread across the call sites. Prefers the manager's public
+    ``get_tool(name)`` method when present, falling back to the private dict
+    store only if the public accessor is gone — keeping the version-coupling in
+    a single, easy-to-update helper.
+    """
+    for attr in ("_tool_manager", "tool_manager"):
+        manager = getattr(mcp, attr, None)
+        if manager is None:
+            continue
+        getter = getattr(manager, "get_tool", None)
+        if callable(getter):
+            tool = getter(name)
+            if tool is not None:
+                return tool
+        for store_attr in ("_tools", "tools"):
+            store = getattr(manager, store_attr, None)
+            if isinstance(store, dict) and name in store:
+                return store[name]
+    raise RuntimeError(
+        f"Could not fetch tool {name!r} from FastMCP registry — "
+        "FastMCP API may have changed"
+    )
+
+
 def test_create_server_registers_all_tools():
     server = create_server()
     names = registered_tool_names(server)
@@ -436,8 +466,7 @@ def test_tool_call_via_fastmcp_accepts_flat_kwargs():
     tools = asyncio.run(mcp.list_tools())
     by_name = {t.name: t for t in tools}
     tool = by_name["ableton_session"]
-    mgr = mcp._tool_manager  # noqa: SLF001 — test introspection
-    runner = mgr._tools[tool.name]  # noqa: SLF001
+    runner = get_registered_tool(mcp, tool.name)
 
     forwarded = Response(ok=True, result={"tempo": 132.0})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -462,8 +491,7 @@ def test_tool_call_via_fastmcp_drops_unsupplied_optional_kwargs():
     from hallucinote_mcp.wire import Response
 
     mcp = create_server()
-    mgr = mcp._tool_manager  # noqa: SLF001
-    runner = mgr._tools["ableton_session"]  # noqa: SLF001
+    runner = get_registered_tool(mcp, "ableton_session")
 
     forwarded = Response(ok=True, result={"song_time": 16.0})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -480,8 +508,7 @@ def test_help_action_works_via_fastmcp_with_no_kwargs():
     — must succeed end-to-end through the FastMCP wrapper.
     """
     mcp = create_server()
-    mgr = mcp._tool_manager  # noqa: SLF001
-    runner = mgr._tools["ableton_session"]  # noqa: SLF001
+    runner = get_registered_tool(mcp, "ableton_session")
 
     # No client.send patching — help is dispatcher-resolved, no Live trip.
     result = asyncio.run(runner.run({"action": "help"}))

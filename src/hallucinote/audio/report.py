@@ -26,10 +26,24 @@ non-JSON-safe nesting at the seam).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 SCHEMA_VERSION = "1"
+
+
+def _finite_or_none(x: float) -> float | None:
+    """Map a non-finite float (NaN / ±Inf) to ``None`` (→ JSON ``null``) so the
+    whole report is valid JSON under ``json.dumps(allow_nan=False)`` (ARR-7M3D
+    B1 backstop). Several fields carry a deliberate NaN SENTINEL — an
+    insufficient-tail RT60 measurement (``ReverbVerification.measured_rt60_s``),
+    an unmeasurable automation change (``EnvelopeVerification.before/after``) —
+    that means "honestly unmeasured", which is exactly what JSON ``null``
+    conveys. Strict consumers (``JSON.parse``, the eval judge) reject the bare
+    ``NaN`` token, so this serializes the sentinel as ``null`` at the boundary
+    rather than writing invalid JSON."""
+    return None if not math.isfinite(x) else x
 
 SurfaceKind = Literal["track", "return", "master"]
 Severity = Literal["info", "warning", "blocking"]
@@ -440,6 +454,77 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Onset/event density (onsets-per-beat summed across stems) over the section
+    # window — the second energy-realization correlate (ARR-7M3D), alongside
+    # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
+    # analysis was disabled (the density pass shares their grid geometry), 0.0
+    # when the window had no detected onsets. A RELATIVE read across sections:
+    # only the ranking feeds the energy-realization Spearman ρ.
+    onset_density: float | None = None
+
+
+@dataclass(frozen=True)
+class SectionEnergy:
+    """A declared section in the ranked energy curve, keyed by its song-unique
+    ``start_beat`` (ARR-7M3D).
+
+    ``start_beat`` (NOT name) is the join key the energy-realization lens uses
+    to pair declared intent with measured intensity: ``vary()`` /
+    recapitulation produces repeated section names (two "Chorus" rows), so name
+    alone mis-pairs. ``energy`` is the authored 0..1 ordinal intensity intent;
+    NULL-energy sections are excluded upstream and never reach here.
+    """
+    start_beat: float
+    name: str
+    energy: float
+
+
+@dataclass(frozen=True)
+class EnergyInversion:
+    """One ordered section pair where rendered intensity inverts declared intent
+    (ARR-7M3D).
+
+    Sections are identified by ``start_beat`` (the robust, song-unique key),
+    NOT by name (repeated names mis-pair). The higher-declared-energy section
+    measures LOWER intensity than the lower-declared-energy section
+    (``measured_delta`` < 0). NEUTRAL EVIDENCE, not a verdict — a deliberate
+    energy-drop (a stripped final chorus, the Nobile case) is authorship;
+    ``/mix-review`` grades the inversion against recalled intent.
+    """
+    higher_energy_start_beat: float
+    higher_energy_section: str   # display only; not the join key
+    lower_energy_start_beat: float
+    lower_energy_section: str    # display only; not the join key
+    declared_energy_delta: float  # higher.energy - lower.energy (> 0 by construction)
+    correlate: str                # "loudness" | "onset_density"
+    measured_higher: float        # measured value of the higher-energy section
+    measured_lower: float         # measured value of the lower-energy section
+    measured_delta: float         # measured_higher - measured_lower (< 0 = inverted)
+
+
+@dataclass(frozen=True)
+class EnergyRealization:
+    """Declared-energy-curve vs rendered-intensity read (ARR-7M3D).
+
+    RULER, not stamp: reports ranked intensity vs intent + names inversions; it
+    NEVER re-authors the curve, sets a target loudness, or grades pass/fail.
+    Neutral evidence — ``/mix-review`` grades it against intent.
+
+    ``correlate_rho`` is per-correlate Spearman ρ of (declared energy rank,
+    measured intensity rank) over the energy-declared sections — or ``None``
+    when ρ is undefined (a constant/tied measured correlate makes
+    ``scipy.stats.spearmanr`` return ``nan``; the lens records ``None``, NEVER
+    serializes ``nan``). The reason for each ``None`` is in ``skipped``.
+    ``inversions`` is per-pair (well-defined even when ρ is ``None``).
+    ``sections_ranked`` is the declared curve (excl. NULL energy), each carrying
+    its ``start_beat`` so repeated-name sections stay distinct. ``skipped`` names
+    every exclusion (NULL declared energy, missing/nan measured correlate,
+    undefined ρ).
+    """
+    correlate_rho: dict[str, float | None]
+    inversions: list[EnergyInversion]
+    sections_ranked: list[SectionEnergy]
+    skipped: list[str]
 
 
 @dataclass(frozen=True)
@@ -489,6 +574,11 @@ class MixReport:
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
+    # Declared-energy-curve vs rendered-intensity read (ARR-7M3D). None when
+    # fewer than 2 energy-declared sections remain after exclusions (Spearman
+    # needs >= 2 ranks) — recorded with a skipped_analyses entry, never a
+    # fabricated ρ. A ruler: ranked intensity vs intent + inversions, no verdict.
+    energy_realization: "EnergyRealization | None" = None
     # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
     # analysis so the correction is visible, not silent. None when analysis ran
     # without an alignment pass (e.g. a directly-constructed report in a test).
@@ -524,6 +614,11 @@ class MixReport:
             "per_section": [_section_to_dict(s) for s in self.per_section],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
+            "energy_realization": (
+                _energy_realization_to_dict(self.energy_realization)
+                if self.energy_realization is not None
+                else None
+            ),
             "alignment": self.alignment,
             "compare_to": self.compare_to,
         }
@@ -535,10 +630,13 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
         "surface_kind": s.surface_kind,
         "surface_name": s.surface_name,
         "loudness": {
-            "lufs_i": s.loudness.lufs_i,
-            "lufs_s_median": s.loudness.lufs_s_median,
-            "lufs_m_peak": s.loudness.lufs_m_peak,
-            "true_peak_dbtp": s.loudness.true_peak_dbtp,
+            # BS.1770 returns -inf LUFS on pure silence; serialize the non-finite
+            # "silent / no measurable loudness" sentinel as JSON null (B1) so the
+            # report is valid JSON for strict consumers under allow_nan=False.
+            "lufs_i": _finite_or_none(s.loudness.lufs_i),
+            "lufs_s_median": _finite_or_none(s.loudness.lufs_s_median),
+            "lufs_m_peak": _finite_or_none(s.loudness.lufs_m_peak),
+            "true_peak_dbtp": _finite_or_none(s.loudness.true_peak_dbtp),
         },
     }
 
@@ -564,6 +662,7 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "onset_density": s.onset_density,
     }
 
 
@@ -645,7 +744,9 @@ def _reverb_to_dict(r: ReverbVerification) -> dict[str, Any]:
     return {
         "return_track_id": r.return_track_id,
         "declared_rt60_s": r.declared_rt60_s,
-        "measured_rt60_s": r.measured_rt60_s,
+        # NaN when sufficient_tail=False (no usable ring-out) — a deliberate
+        # "honestly unmeasured" sentinel, serialized as JSON null (B1).
+        "measured_rt60_s": _finite_or_none(r.measured_rt60_s),
         "within_tolerance": r.within_tolerance,
         "tolerance_s": r.tolerance_s,
         "measurement_method": r.measurement_method,
@@ -664,8 +765,10 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
         "metric": e.metric,
-        "before": e.before,
-        "after": e.after,
+        # NaN when measurable=False (post-fader / too-quiet) — serialized as JSON
+        # null (B1), the "honestly unmeasured" sentinel.
+        "before": _finite_or_none(e.before),
+        "after": _finite_or_none(e.after),
         "measurable": e.measurable,
         "realized": e.realized,
         "note": e.note,
@@ -681,4 +784,34 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         "observed": f.observed,
         "expected": f.expected,
         "db_reference": f.db_reference,
+    }
+
+
+def _section_energy_to_dict(s: "SectionEnergy") -> dict[str, Any]:
+    return {"start_beat": s.start_beat, "name": s.name, "energy": s.energy}
+
+
+def _energy_inversion_to_dict(i: "EnergyInversion") -> dict[str, Any]:
+    return {
+        "higher_energy_start_beat": i.higher_energy_start_beat,
+        "higher_energy_section": i.higher_energy_section,
+        "lower_energy_start_beat": i.lower_energy_start_beat,
+        "lower_energy_section": i.lower_energy_section,
+        "declared_energy_delta": i.declared_energy_delta,
+        "correlate": i.correlate,
+        "measured_higher": i.measured_higher,
+        "measured_lower": i.measured_lower,
+        "measured_delta": i.measured_delta,
+    }
+
+
+def _energy_realization_to_dict(e: "EnergyRealization") -> dict[str, Any]:
+    """Serialize the energy-realization read. ``correlate_rho`` values are
+    ``None``-or-finite by construction (the lens records ``None`` for an
+    undefined ρ, never ``nan``) — emitted as JSON ``null``, never ``NaN``."""
+    return {
+        "correlate_rho": dict(e.correlate_rho),
+        "inversions": [_energy_inversion_to_dict(i) for i in e.inversions],
+        "sections_ranked": [_section_energy_to_dict(s) for s in e.sections_ranked],
+        "skipped": list(e.skipped),
     }

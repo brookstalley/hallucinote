@@ -41,8 +41,11 @@ from .cross_rhythm import (
     analyze_polymeter_window,
 )
 from .automation import DeclaredEnvelope, verify_envelope_realization
+from .density import section_onset_density
+from .energy import LOUDNESS, ONSET_DENSITY, realize_energy
 from .masking import analyze_masking_window
 from .report import (
+    EnergyRealization,
     EnvelopeVerification,
     Finding,
     MasterOvershoot,
@@ -52,6 +55,7 @@ from .report import (
     Phasing,
     Polymeter,
     ReverbVerification,
+    SectionEnergy,
     SectionMetrics,
     StemMetrics,
 )
@@ -103,6 +107,24 @@ _PHASING_MIN_CONFIDENCE = 0.6
 # trust — the confidence is the weaker part's accent-autocorrelation peak.
 _POLYMETER_MIN_CONFIDENCE = 0.5
 
+# DR-5 (ARR-7M3D) — the "notable inversion" surfacing gate for the
+# energy-realization lens. How big a measured inversion (the magnitude of a
+# wrong-direction rank flip) before /mix-review treats it as worth a producer
+# question (vs DSP noise) is a PERCEPTUAL judgment, calibrated like
+# _MASKING_REPORTING_FLOOR / _TIMING_MIN_CONFIDENCE — NOT guessed.
+#
+# PENDING CALIBRATION: Live was unattended this run, so the final value awaits a
+# human-ear pass against the measured inversion distribution from a real
+# sun-zone-done render (declared 0.25→1.0 across 9 sections). Until then this is
+# the CONSERVATIVE SURFACE-EVERYTHING default (0.0): the lens records EVERY
+# measured inversion as neutral evidence and /mix-review's intent gate (not a
+# magnitude floor) decides what becomes a question. Surfacing-everything can
+# never hide a real inversion; it only risks surfacing trivia, which the
+# intent gate already filters. See .prawduct/operator-verification.md for the
+# queued render-based calibration. The lens itself (energy.realize_energy)
+# reports all inversions; this floor is the integration-level surfacing gate.
+_ENERGY_INVERSION_SURFACING_FLOOR = 0.0
+
 
 @dataclass(frozen=True)
 class DeclaredReverbSend:
@@ -123,6 +145,7 @@ def analyze_mix(
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     declared_envelopes: Sequence[DeclaredEnvelope] = (),
     sections: Sequence[SectionWindow] = (),
+    declared_energy: Sequence[SectionEnergy] = (),
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
     analyze_timing: bool = False,
@@ -220,6 +243,9 @@ def analyze_mix(
     )
     skipped.extend(section_skips)
 
+    energy_realization, energy_skips = _realize_energy(declared_energy, per_section)
+    skipped.extend(energy_skips)
+
     findings = _derive_findings(
         master=master_metrics,
         stems=stem_metrics,
@@ -243,6 +269,7 @@ def analyze_mix(
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
+        energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
     )
 
@@ -525,10 +552,22 @@ def _measure_sections(
         cross_rhythm = []
         phasing = []
         polymeter = []
+        onset_density = None
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
                 start_beat, bpm = geom
+                # Onset density (ARR-7M3D's second energy correlate) shares the
+                # window's grid geometry. window_beats = the covered slice length
+                # in beats at the window's effective tempo. Level-blind, so it
+                # reads the raw sliced stems (no stem_gains), like the timing pass.
+                window_beats = (
+                    (sl.end_sample - sl.start_sample) / capture.sample_rate
+                    * bpm / 60.0
+                )
+                onset_density = section_onset_density(
+                    sliced_stems, capture.sample_rate, window_beats=window_beats,
+                )
                 timing_parts = _all_window_timing(
                     sliced_stems, capture, start_beat, bpm,
                 )
@@ -562,9 +601,59 @@ def _measure_sections(
             cross_rhythm=cross_rhythm,
             phasing=phasing,
             polymeter=polymeter,
+            onset_density=onset_density,
         ))
 
     return per_section, skipped
+
+
+def _realize_energy(
+    declared_energy: Sequence[SectionEnergy],
+    per_section: Sequence[SectionMetrics],
+) -> tuple["EnergyRealization | None", list[dict]]:
+    """Build the energy-realization read from the declared curve + measured
+    per-section correlates (ARR-7M3D).
+
+    The measured correlates are lifted from ``per_section``, keyed by
+    ``start_beat`` (the lens join key — NOT name): LUFS-S median loudness and
+    onset density. The lens itself (``energy.realize_energy``) is pure and
+    DB-agnostic; this orchestrator only assembles its inputs and turns the
+    "no energy declared / too few sections" case into a structured
+    ``skipped_analyses`` entry — never a fabricated ρ.
+    """
+    declared = list(declared_energy)
+    if not declared:
+        return None, [{
+            "kind": "energy_realization",
+            "reason": (
+                "no per-section energy declared — author energy via "
+                "Arrangement.section(energy=) (or create_section(energy=)) so "
+                "the lens can rank declared intensity intent against the "
+                "rendered per-section intensity (LUFS-S + onset density)"
+            ),
+        }]
+
+    loudness_by_beat: dict[float, "float | None"] = {}
+    density_by_beat: dict[float, "float | None"] = {}
+    for sm in per_section:
+        loudness_by_beat[sm.start_beat] = sm.master.loudness.lufs_s_median
+        density_by_beat[sm.start_beat] = sm.onset_density
+
+    measured = {LOUDNESS: loudness_by_beat, ONSET_DENSITY: density_by_beat}
+    realization = realize_energy(
+        declared, measured,
+        surfacing_floor=_ENERGY_INVERSION_SURFACING_FLOOR,
+    )
+    if realization is None:
+        return None, [{
+            "kind": "energy_realization",
+            "reason": (
+                f"only {len(declared)} energy-declared section(s) — Spearman "
+                f"rank-correlation needs at least 2 to rank declared intensity "
+                f"against measured intensity"
+            ),
+        }]
+    return realization, []
 
 
 def _window_grid_geometry(

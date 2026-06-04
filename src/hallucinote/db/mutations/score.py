@@ -30,37 +30,47 @@ def create_section(
     end_bar: float,
     color: int | None = None,
     notes_md: str | None = None,
+    energy: float | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
     """Mark a named span of bars (verse, chorus, bridge, ...). DB-only metadata
-    unless Live exposes section markers; surfaces in event log either way."""
+    unless Live exposes section markers; surfaces in event log either way.
+
+    ``energy`` is the authored per-section intensity intent (0..1 ordinal,
+    ARR-7M3D) — NULL when undeclared. It is excluded from the energy-realization
+    correlation when NULL, never coerced to a value.
+    """
     _require_bar_floor("start_bar", start_bar)
     if end_bar <= start_bar:
         raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        """SELECT id, end_bar, color, notes_md FROM sections
+        """SELECT id, end_bar, color, notes_md, energy FROM sections
            WHERE song_id = ? AND name = ? AND start_bar = ?""",
         (song_id, name, start_bar),
     ).fetchone()
     if existing is not None:
         sid = existing["id"]
-        if (existing["end_bar"], existing["color"], existing["notes_md"]) == (
-            end_bar, color, notes_md,
+        if (
+            existing["end_bar"], existing["color"], existing["notes_md"],
+            existing["energy"],
+        ) == (
+            end_bar, color, notes_md, energy,
         ):
             _record_touch_if_session("section", sid)
             return MutatorResult(sid, "unchanged")
         conn.execute(
-            """UPDATE sections SET end_bar = ?, color = ?, notes_md = ?
+            """UPDATE sections SET end_bar = ?, color = ?, notes_md = ?,
+                   energy = ?
                WHERE id = ?""",
-            (end_bar, color, notes_md, sid),
+            (end_bar, color, notes_md, energy, sid),
         )
         _emit(
             conn, E.SECTION_UPDATED,
             {"section_id": sid, "changes": {"end_bar": end_bar,
-             "color": color, "notes_md": notes_md}},
+             "color": color, "notes_md": notes_md, "energy": energy}},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
         _touch_song(conn, song_id)
@@ -69,9 +79,9 @@ def create_section(
     sid = _uuid()
     conn.execute(
         """INSERT INTO sections
-               (id, song_id, name, start_bar, end_bar, color, notes_md)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (sid, song_id, name, start_bar, end_bar, color, notes_md),
+               (id, song_id, name, start_bar, end_bar, color, notes_md, energy)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, song_id, name, start_bar, end_bar, color, notes_md, energy),
     )
     _emit(
         conn,
@@ -83,6 +93,7 @@ def create_section(
             "end_bar": end_bar,
             "color": color,
             "notes_md": notes_md,
+            "energy": energy,
         },
         song_id=song_id,
         actor=actor,
@@ -94,7 +105,7 @@ def create_section(
     return MutatorResult(sid, "created")
 
 
-_SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md"}
+_SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md", "energy"}
 
 
 def update_section(

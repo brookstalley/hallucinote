@@ -84,7 +84,11 @@ Read the song's structure from `songs/<slug>/build.py` and the arrangement
 - **Register / range** — where the parts sit (a chorus that "opens up" usually
   widens range or adds a high element).
 - **The energy arc across sections** — does it build, breathe, peak, and leave
-  somewhere to come back from? Compare each section to its neighbours.
+  somewhere to come back from? Compare each section to its neighbours. This is
+  the **symbolic, render-free** read of the authored `energy_curve` (the
+  compose-axis this skill owns); its render-time complement is `/mix-review`'s
+  `energy_realization` lens (ARR-7M3D), which checks whether that authored arc
+  actually rendered as measured intensity (Spearman ρ + inversions).
 - **Contrast** — does the verse give the chorus something to win *against*? The
   single most common novice miss is no subtraction: everything plays everywhere,
   so nothing lifts.

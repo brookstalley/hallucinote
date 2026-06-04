@@ -133,6 +133,12 @@ CREATE TABLE IF NOT EXISTS sections (
     end_bar         REAL NOT NULL,
     color           INTEGER,
     notes_md        TEXT,
+    -- Authored per-section energy intent (0..1 ordinal; ARR-7M3D). NULL when
+    -- the section was authored without declaring energy (the DB-only path, or
+    -- a pre-column DB migrated in). The energy-realization lens reads non-NULL
+    -- rows to rank declared intent against measured per-section intensity;
+    -- NULL rows are excluded from the correlation, never coerced to a value.
+    energy          REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0)),
     CHECK (end_bar > start_bar)
 );
 

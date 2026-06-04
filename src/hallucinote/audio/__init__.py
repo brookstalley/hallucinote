@@ -33,14 +33,18 @@ from __future__ import annotations
 from .analyze import DeclaredReverbSend, analyze_mix
 from .automation import DeclaredEnvelope
 from .codeversion import disk_signature, is_stale, loaded_signature
+from .energy import realize_energy
 from .report import (
     BandContribution,
+    EnergyInversion,
+    EnergyRealization,
     EnvelopeVerification,
     Finding,
     LoudnessMetrics,
     MasterOvershoot,
     MixReport,
     ReverbVerification,
+    SectionEnergy,
     SectionMetrics,
     StemMetrics,
 )
@@ -51,6 +55,8 @@ __all__ = [
     "DeclaredEnvelope",
     "DeclaredReverbSend",
     "disk_signature",
+    "EnergyInversion",
+    "EnergyRealization",
     "EnvelopeVerification",
     "Finding",
     "is_stale",
@@ -58,7 +64,9 @@ __all__ = [
     "LoudnessMetrics",
     "MasterOvershoot",
     "MixReport",
+    "realize_energy",
     "ReverbVerification",
+    "SectionEnergy",
     "SectionMetrics",
     "SectionWindow",
     "StemMetrics",

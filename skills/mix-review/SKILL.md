@@ -163,6 +163,19 @@ first — see "Refreshing the analysis"). For each section, you have:
   surface it. `measurable=false` means it can't be checked from this capture
   (mixer_volume/pan are post-fader-invisible; or the window was silent) — report
   the gap, don't read it as a failure. The `note` field explains each verdict.
+- `energy_realization` — declared-energy-curve vs rendered-intensity (ARR-7M3D):
+  did the per-section `energy` the composer authored actually render as
+  intensity? `correlate_rho` is Spearman ρ per correlate (`loudness`,
+  `onset_density`): near +1 = the arc tracked intent, ~0 = no relationship,
+  negative = the arc *inverted* vs intent; a correlate's ρ is `null` when it's
+  undefined (a constant/tied render — the reason is in `skipped`). `inversions`
+  is the ordered section pairs (each identified by `start_beat`, not name —
+  repeated `vary()`/recap names stay distinct) where the higher-declared-energy
+  section renders *lower* intensity — well-defined even when ρ is `null`.
+  Neutral evidence: a deliberate energy-drop chorus (a stripped final chorus) is
+  authorship, not a defect. The whole `energy_realization` is `null` when fewer
+  than 2 sections declare energy. It is a RULER — it never re-authors the curve
+  or names a target loudness.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid
@@ -200,6 +213,15 @@ For each notable finding (above the report's floor), decide:
 
 Severity is YOUR judgment from intent + magnitude — there is deliberately no
 severity number in the report (it's neutral evidence; you grade it).
+
+Energy-realization inversions gate exactly the same way: an inversion that
+**matches intent** (a declared energy-drop / a `density` wash section authored
+quieter than its neighbour) → stay quiet; one that **contradicts a clear intent**
+(a `focal`/lift section that renders quieter than the section it should top) →
+surface it as the song's lift question with the cheapest musical fix; **intent
+unknown** → ask one good question, then learn it back. "The chorus reads 2 LU
+under verse 2 though you authored it hotter — landing, or does the arrangement
+need to open up?"
 
 ### 4. Fix order (diagnose, propose, get out of the way — never auto-apply)
 

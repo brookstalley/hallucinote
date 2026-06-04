@@ -23,6 +23,8 @@ def _build_report() -> dict:
     pkg_root = P.package_root()
     server_version = __version__
     remote_script_candidates: list[dict] = []
+    analyzer_source_fp = P.analyzer_source_fingerprint()
+    analyzer_candidates: list[dict] = []
     for cand in P.candidate_user_libraries():
         rs_dir = P.remote_script_install_dir(cand)
         installed = (rs_dir / "hallucinote_mcp").is_dir()
@@ -36,6 +38,21 @@ def _build_report() -> dict:
             "version": vendored_version,
             "matches_mcp_server": (
                 vendored_version == server_version if vendored_version else None
+            ),
+        })
+        installed_fp = P.installed_analyzer_fingerprint(cand)
+        analyzer_candidates.append({
+            "user_library": str(cand),
+            "target": str(P.analyzer_install_target(cand)),
+            "installed": installed_fp is not None,
+            "installed_fingerprint": installed_fp,
+            # True/False only when the device is installed *and* we have a
+            # source to compare against; None means "nothing to compare"
+            # (no install, or the bundled source is unreadable).
+            "matches": (
+                installed_fp == analyzer_source_fp
+                if (installed_fp is not None and analyzer_source_fp is not None)
+                else None
             ),
         })
     return {
@@ -65,6 +82,15 @@ def _build_report() -> dict:
         # when the vendored copy is stale (W12-D MCP/Live drift visibility).
         "remote_script": {
             "candidates": remote_script_candidates,
+        },
+        # M4L analyzer device drift, parity with `remote_script` above. The
+        # `.amxd` is binary, so the fingerprint is a raw-byte sha256 (not the
+        # text-normalizing version path). The install skill uses `matches` to
+        # skip the copy + overwrite prompt when the installed device is
+        # byte-identical to the bundled source (INS-4H8M).
+        "analyzer": {
+            "source_fingerprint": analyzer_source_fp,
+            "candidates": analyzer_candidates,
         },
         "mcp_configs": {
             "local_path": str(P.mcp_config_local_path()),

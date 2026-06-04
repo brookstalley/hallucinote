@@ -65,6 +65,14 @@ class VendorResult:
     verify: VerifyResult
 
 
+@dataclasses.dataclass(frozen=True)
+class AnalyzerResult:
+    """Outcome of :func:`install_analyzer`."""
+
+    target: pathlib.Path
+    replaced_existing: bool
+
+
 # --- internal helpers ------------------------------------------------------
 
 def _make_ignore(source_root: pathlib.Path):
@@ -260,10 +268,78 @@ def vendor_remote_script(
     return VendorResult(install_dir=install_dir, replaced_existing=replaced, verify=result)
 
 
+# --- Analyzer device --------------------------------------------------------
+
+def install_analyzer(
+    src: pathlib.Path | str,
+    dst: pathlib.Path | str,
+    *,
+    force: bool = False,
+) -> AnalyzerResult:
+    """Atomically copy the ``HallucinoteAnalyzer.amxd`` device into place.
+
+    Copies to a sibling temp file, then ``os.replace`` — so a partial copy never
+    becomes a half-written ``.amxd`` Live would fail to load. ``force`` is
+    required to overwrite an existing device (the user may have customized it via
+    the Max GUI); the skill confirms first. Raises :class:`InstallError` on a
+    missing source or an unforced overwrite.
+    """
+    src = pathlib.Path(src)
+    dst = pathlib.Path(dst)
+    if not src.is_file():
+        raise InstallError(
+            f"analyzer source not found: {src} — reinstall the engine "
+            f"(pip install --force-reinstall hallucinote-mcp)."
+        )
+    replaced = dst.exists()
+    if replaced and not force:
+        raise InstallError(
+            f"{dst} already exists; pass force=True to overwrite it "
+            f"(it may be customized via the Max GUI — the install skill confirms first)."
+        )
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.tmp-{os.getpid()}")
+    try:
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        _rmtree_quiet(tmp)
+        raise
+    return AnalyzerResult(target=dst, replaced_existing=replaced)
+
+
+# --- Removals (uninstall, the mirror of the installs above) -----------------
+
+def remove_remote_script(install_dir: pathlib.Path | str) -> bool:
+    """Remove the vendored Remote Script directory. Returns whether it existed.
+
+    A safe no-op when absent (returns ``False``) so uninstall is idempotent.
+    ``OSError`` (e.g. permission denied) propagates — the skill surfaces it.
+    """
+    install_dir = pathlib.Path(install_dir)
+    if install_dir.is_dir():
+        shutil.rmtree(install_dir)
+        return True
+    return False
+
+
+def remove_analyzer(target: pathlib.Path | str) -> bool:
+    """Remove the installed analyzer ``.amxd``. Returns whether it existed."""
+    target = pathlib.Path(target)
+    if target.is_file():
+        target.unlink()
+        return True
+    return False
+
+
 __all__ = [
+    "AnalyzerResult",
     "InstallError",
     "VendorResult",
     "VerifyResult",
+    "install_analyzer",
+    "remove_analyzer",
+    "remove_remote_script",
     "vendor_remote_script",
     "verify_remote_script",
     "write_remote_script_stub",

@@ -235,3 +235,96 @@ def test_cli_install_remote_script_dispatch(tmp_path, capsys):
     assert payload["replaced_existing"] is False
     install_dir = user_library / "Remote Scripts" / "Hallucinote"
     assert (install_dir / "hallucinote_mcp" / "remote_script" / "__init__.py").is_file()
+
+
+# --- analyzer + removals (Chunk 2) -----------------------------------------
+
+def _analyzer_src(tmp_path):
+    src = tmp_path / "src.amxd"
+    src.write_bytes(b"MAXAMXD-binary-content")
+    return src
+
+
+def test_install_analyzer_fresh(tmp_path):
+    src = _analyzer_src(tmp_path)
+    dst = tmp_path / "UL" / "Presets" / "Audio Effects" / "Max Audio Effect" / "HallucinoteAnalyzer.amxd"
+    result = ops.install_analyzer(src, dst)
+    assert result.replaced_existing is False
+    assert result.target == dst
+    assert dst.read_bytes() == b"MAXAMXD-binary-content"
+
+
+def test_install_analyzer_refuses_overwrite_without_force(tmp_path):
+    src = _analyzer_src(tmp_path)
+    dst = tmp_path / "dst.amxd"
+    dst.write_bytes(b"user-customized")
+    with pytest.raises(ops.InstallError):
+        ops.install_analyzer(src, dst, force=False)
+    assert dst.read_bytes() == b"user-customized", "existing device must be untouched"
+
+
+def test_install_analyzer_force_overwrites(tmp_path):
+    src = _analyzer_src(tmp_path)
+    dst = tmp_path / "dst.amxd"
+    dst.write_bytes(b"old")
+    result = ops.install_analyzer(src, dst, force=True)
+    assert result.replaced_existing is True
+    assert dst.read_bytes() == b"MAXAMXD-binary-content"
+
+
+def test_install_analyzer_missing_source(tmp_path):
+    with pytest.raises(ops.InstallError):
+        ops.install_analyzer(tmp_path / "nope.amxd", tmp_path / "dst.amxd")
+
+
+def test_install_analyzer_no_partial_on_copy_failure(tmp_path, monkeypatch):
+    src = _analyzer_src(tmp_path)
+    dst = tmp_path / "dst.amxd"
+
+    def boom(s, d):
+        raise OSError("copy failed")
+
+    monkeypatch.setattr(ops.shutil, "copyfile", boom)
+    with pytest.raises(OSError):
+        ops.install_analyzer(src, dst)
+    assert not dst.exists(), "no partial .amxd left on copy failure"
+    assert list(dst.parent.glob(".*.tmp-*")) == [], "temp file should be cleaned"
+
+
+def test_remove_remote_script_idempotent(tmp_path):
+    d = tmp_path / "Hallucinote"
+    (d / "hallucinote_mcp").mkdir(parents=True)
+    assert ops.remove_remote_script(d) is True
+    assert not d.exists()
+    assert ops.remove_remote_script(d) is False
+
+
+def test_remove_analyzer_idempotent(tmp_path):
+    f = tmp_path / "HallucinoteAnalyzer.amxd"
+    f.write_bytes(b"x")
+    assert ops.remove_analyzer(f) is True
+    assert not f.exists()
+    assert ops.remove_analyzer(f) is False
+
+
+def test_cli_install_analyzer_real_bundled(tmp_path, capsys):
+    """Installs the actual bundled .amxd — catches a missing/renamed source."""
+    ul = tmp_path / "UL"
+    code = main(["install-analyzer", "--user-library", str(ul)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["ok"] is True
+    target = ul / "Presets" / "Audio Effects" / "Max Audio Effect" / "HallucinoteAnalyzer.amxd"
+    assert target.is_file()
+    assert target.read_bytes() == P.analyzer_amxd_source_path().read_bytes()
+
+
+def test_cli_uninstall_remote_script_dispatch(tmp_path, capsys):
+    ul = tmp_path / "UL"
+    main(["install-remote-script", "--user-library", str(ul)])
+    capsys.readouterr()
+    code = main(["uninstall-remote-script", "--user-library", str(ul)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["ok"] is True and payload["removed"] is True
+    assert not (ul / "Remote Scripts" / "Hallucinote").exists()
+    main(["uninstall-remote-script", "--user-library", str(ul)])
+    assert json.loads(capsys.readouterr().out)["removed"] is False

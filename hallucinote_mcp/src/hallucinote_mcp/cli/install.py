@@ -57,4 +57,78 @@ def run_install_remote_script(args: list[str]) -> int:
     return 0
 
 
-__all__ = ["run_install_remote_script"]
+def run_install_analyzer(args: list[str]) -> int:
+    """Atomically install the HallucinoteAnalyzer.amxd into the User Library."""
+    parser = argparse.ArgumentParser(
+        prog="hallucinote-mcp install-analyzer",
+        description="Atomically copy HallucinoteAnalyzer.amxd into Live's Max Audio Effect presets.",
+    )
+    parser.add_argument("--user-library", required=True)
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing device (the skill confirms first — it may be Max-GUI-customized).",
+    )
+    try:
+        ns = parser.parse_args(args)
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    src = P.analyzer_amxd_source_path()
+    dst = P.analyzer_install_target(ns.user_library)
+    try:
+        result = ops.install_analyzer(src, dst, force=ns.force)
+    except ops.InstallError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "target": str(result.target),
+        "replaced_existing": result.replaced_existing,
+    }, indent=2))
+    return 0
+
+
+def run_uninstall_remote_script(args: list[str]) -> int:
+    """Remove the vendored Remote Script directory (idempotent)."""
+    parser = argparse.ArgumentParser(prog="hallucinote-mcp uninstall-remote-script")
+    parser.add_argument("--user-library", required=True)
+    try:
+        ns = parser.parse_args(args)
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    install_dir = P.remote_script_install_dir(ns.user_library)
+    try:
+        removed = ops.remove_remote_script(install_dir)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": str(exc), "path": str(install_dir)}, indent=2))
+        return 1
+    print(json.dumps({"ok": True, "removed": removed, "path": str(install_dir)}, indent=2))
+    return 0
+
+
+def run_uninstall_analyzer(args: list[str]) -> int:
+    """Remove the installed analyzer .amxd (idempotent)."""
+    parser = argparse.ArgumentParser(prog="hallucinote-mcp uninstall-analyzer")
+    parser.add_argument("--user-library", required=True)
+    try:
+        ns = parser.parse_args(args)
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    target = P.analyzer_install_target(ns.user_library)
+    try:
+        removed = ops.remove_analyzer(target)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": str(exc), "path": str(target)}, indent=2))
+        return 1
+    print(json.dumps({"ok": True, "removed": removed, "path": str(target)}, indent=2))
+    return 0
+
+
+__all__ = [
+    "run_install_analyzer",
+    "run_install_remote_script",
+    "run_uninstall_analyzer",
+    "run_uninstall_remote_script",
+]

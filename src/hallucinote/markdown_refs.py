@@ -135,7 +135,7 @@ def _parse_value(key: str, raw: str, line_no: int) -> Any:
         inner = raw[1:-1].strip()
         if not inner:
             return []
-        items = [s.strip() for s in inner.split(",")]
+        items = _split_inline_list(inner)
         if key == "bars":
             try:
                 return [float(s) for s in items]
@@ -150,6 +150,52 @@ def _parse_value(key: str, raw: str, line_no: int) -> Any:
 def _strip_quotes(s: str) -> str:
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
         return s[1:-1]
+    return s
+
+
+# Characters that force an inline-list item to be quoted on serialize so the
+# parser does not mis-split (',') or mis-bracket ('[' / ']') on it. (SYN-8H2W)
+_LIST_ITEM_SPECIAL = (",", "[", "]", '"', "'")
+
+
+def _split_inline_list(inner: str) -> list[str]:
+    """Split an inline-list body on commas that are NOT inside a quoted span.
+
+    Quote characters are kept in the returned items so the caller's
+    ``_strip_quotes`` removes them; a quoted item may therefore carry an
+    embedded comma without being split. Round-trip partner of
+    ``_serialize_list_item`` (SYN-8H2W: items containing ',' / '[' / ']'
+    previously broke the YAML-subset round-trip).
+    """
+    items: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    for ch in inner:
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            items.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    items.append("".join(buf).strip())
+    return items
+
+
+def _serialize_list_item(x: Any) -> str:
+    """Serialize one inline-list item, quoting it iff it carries a character
+    the parser would otherwise mis-handle. Round-trip partner of
+    ``_split_inline_list`` + ``_strip_quotes``. Tags/related are a controlled
+    vocabulary (kebab tags, file paths, item IDs) that does not contain quote
+    characters, so a simple double-quote wrap suffices."""
+    s = str(x)
+    if any(c in s for c in _LIST_ITEM_SPECIAL):
+        return f'"{s}"'
     return s
 
 
@@ -322,7 +368,7 @@ def _serialize_markdown(fm: dict[str, Any], body: str) -> str:
             continue
         v = fm[k]
         if isinstance(v, list):
-            inner = ", ".join(str(x) for x in v)
+            inner = ", ".join(_serialize_list_item(x) for x in v)
             lines.append(f"{k}: [{inner}]")
         else:
             lines.append(f"{k}: {v}")

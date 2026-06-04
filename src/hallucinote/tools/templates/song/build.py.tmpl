@@ -137,6 +137,24 @@ def melody_report() -> MelodyReport:
         return analyze_arrangement(
             arr, song_slug="{{slug}}", melody_layers=("Lead",))
 
+    To GRADE a line against what it is *trying to be* (profile-relative, still a
+    coaching question — never a verdict), declare a `MelodicProfile` per line and
+    pass it as `profiles={layer_name: profile}`. The declaration IS the learn-back
+    (melody-model.md §4): once declared, a deliberate genre choice never re-flags.
+
+        from hallucinote.melody import MelodicProfile, analyze_arrangement
+        return analyze_arrangement(
+            arr, song_slug="{{slug}}", melody_layers=("Lead",),
+            profiles={
+                "Lead": MelodicProfile(
+                    name="singable-hook",      # a reusable declared-intent label
+                    contour_intent="arch",     # arch/ascending/descending/valley/level/free
+                    step_appetite="high",      # low | moderate | high (proximity vs leap)
+                    harmonic_freedom="low",    # low (chord-tone-locked) .. high (chromatic)
+                    repetition_appetite="high",# low (through-composed) .. high (cell hook)
+                ),
+            })
+
     Until this song has a composed melodic line wired here, it returns an empty
     report (the CLI then shows "0 lines" rather than failing).
     """

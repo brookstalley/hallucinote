@@ -1,21 +1,28 @@
 # Melody Model — the line layer (contour · expectation · motivic economy · harmonic fit)
 
-**Status:** **read-side lens SHIPPED + WIRED into `/compose-review` (phase 2a); authoring side designed, pre-build.**
-The verified research foundation, the taxonomy placement, and the governing thesis
-are settled, and the FIRST both-sides primitive — the symbolic **melody lens**
-(`src/hallucinote/melody/`: `lens` + `contour` + `intervals` + `harmony_fit`) — is
-built: a pure-stdlib, render-free read-side analyzer that measures the genre-general
-substrate facts and classifies a line `active` / `static` / `insufficient-data`,
-validated on sun-zone-done's two hand-authored hooks (§9); 27 tests, full suite
-green. Built **read-side-first**, as performance was — it quantifies the gap and
-becomes the authoring side's executable acceptance test. Wired into the read-side
-**`/compose-review`** surface (the render-free compositional sibling to `/mix-review`)
-via a per-song `melody_report()` convention + the `tools/melody_lens.py` CLI — see
-§7 *Read-side surface*. Still pre-build (friction-driven follow-ons): the declared
-melodic-PROFILE authoring surface + profile-relative grading + learn-back (§4), the
-motivic-economy reading + the shaped-vs-aimless verdict (§7), and any thin authoring
-rulers. See `arrangement-model.md` § *The dimension taxonomy* for where melody sits
-among the song's dimensions; read that first.
+**Status:** **read-side lens (phase 2a) + the declared-PROFILE authoring side (phase
+2b) BOTH SHIPPED + WIRED into `/compose-review`.** The verified research foundation,
+the taxonomy placement, and the governing thesis are settled, and BOTH SIDES are now
+built. (a, phase 2a) The symbolic **melody lens** (`src/hallucinote/melody/`: `lens`
++ `contour` + `intervals` + `harmony_fit`) — a pure-stdlib, render-free read-side
+analyzer that measures the genre-general substrate facts and classifies a line
+`active` / `static` / `insufficient-data`, validated on sun-zone-done's two hand-
+authored hooks (§9). (b, phase 2b — MEL-1A7K) the declared **`MelodicProfile`**
+(`melody/profile.py`, mirroring the proven `performance.realization.PerformanceProfile`
+— read-only declared intent, NO `apply_*` because pitch is the musical idea),
+**profile-relative grading** (each declared field graded against its measured value
+as an info QUESTION), the profile-relative **`shaped_reading`** (`shaped` / `aimless`
+/ `ungraded` — resolving the recorded universal-verdict bug, NOT a universal rule),
+the within-line **motivic-economy / repetition** reading (`economy.py`), and **LBDM
+phrase segmentation + per-phrase contour** (`segmentation.py`). Built **read-side-
+first**, as performance was. Wired into the read-side **`/compose-review`** surface
+(the render-free compositional sibling to `/mix-review`) via a per-song
+`melody_report()` convention + the `tools/melody_lens.py` CLI — see §7 *Read-side
+surface*. **PENDING by-ear (a creative lock-in, not a gap):** the appetite→fraction
+grading edges + which profile each sun-zone-done hook declares — the build surfaces
+the objective numbers and stops at the threshold/profile decision (§8). See
+`arrangement-model.md` § *The dimension taxonomy* for where melody sits among the
+song's dimensions; read that first.
 
 **Sources.** TWO verified deep-research passes (2026-05-31), same adversarial
 discipline as the performance pass (3-vote, majority-refute kills). Pass 1
@@ -350,20 +357,45 @@ distinctiveness), genre-relative, never a universal "make it catchier."
 **3.B — Killed (recorded for transparency):** "motivic m-type **rarity** is the
 strongest shared memorability predictor" *(0-3)* and "**lyrics/chorus** dominate
 earworm content (≈50% more, ≈90% chorus fragments)" *(0-3)* — do **not** treat
-motivic-rarity-as-primary-lever or verbal/chorus dominance as established.
+motivic-rarity-as-primary-lever or verbal/chorus dominance as established. **The
+motivic-rarity kill is RE-CONFIRMED on the primary source** (pass-3 C7): Jakubowski
+et al. computed the FANTASTIC m-type repetition features (mean productivity, m-type
+entropy, Yule's K) and *none* survived into the top earworm predictors — global
+contour + turning-point gradient + tempo won. **Caveat tightened on the chorus/lyrics
+kill** (C7): that paper *extracted the chorus* as its canonical excerpt and *did not
+separate sections*, so it is **silent on chorus-dominance, not evidence for it** —
+the kill stays "not established," never "refuted." This is why the within-line
+repetition reading (§7) ships as a profile-relative appetite, never a "make it
+catchier" memorability lever.
 
-**3.C — Angle C (motivic transformation, phrase structure, melodic rhythm):
-NO surviving verified claims.** Schoenberg's developing variation / Grundgestalt,
-Caplin's sentence/period & cadential function, and the perceptual salience of the
-transformation operations (the classic "retrograde is hard to hear" — Dowling) were
-fetched but **none survived** this pass's top-25 verification. Recorded honestly as
-**open**. *This is not a blocker for the lens v1*: the **canonical six variation
-ops** (transposition, inversion, retrograde, augmentation, diminution,
-fragmentation) were **already verified and shipped** by the arrangement pass
-(`arrangement-model.md` § *Research foundation*; `generators.variations`), and the
-melody layer **reuses** them rather than re-deriving them. A dedicated third pass
-on phrase-structure + transform-perceptual-salience is a **candidate follow-on**
-(backlog), needed only if/when the line layer grows a phrase-architecture reading.
+**3.C — Angle C (motivic transformation, phrase structure, melodic rhythm): the
+THEORY of motivic development resists computation, but adjacent COMPUTABLE facts
+survive.** A first pass framed this angle as "is there a validated *theory of
+motivic development*" and returned **no surviving claims**. A dedicated pass-3
+(`.prawduct/artifacts/plans/MEL-1A7K/research.md`, deep + adversarially verified)
+reframed it as "is there a *computable, perceptually-grounded structural fact about
+repetition and phrasing*" and found a sharp split:
+
+- **The THEORY of motivic development resists computation from a bare line.**
+  Réti's "thematic process" is judged *non-falsifiable / analyst-subjective* by its
+  own discipline (research C9); Caplin's sentence/period is defined by *harmony and
+  cadence*, which a single line does not carry (C8). No verdict-bearing
+  developing-variation or sentence-vs-period classifier is buildable from a
+  monophonic line — so these enter the profile as **DECLARED intents the lens reports
+  against**, never computed classifications.
+- **The adjacent COMPUTABLE facts DO survive** and are now SHIPPED (phase 2b):
+  **phrase segmentation** (LBDM — Cambouropoulos, deterministic, corpus-free; research
+  C1–C3, IDyOM/Grouper named as the heavyweight theory, not shipped — `segmentation.py`),
+  **within-line repetition structure** (n-gram self-similarity over the interval
+  sequence, Temperley-shaped: metrically-parallel / short-distance / multi-interval;
+  research C4 — `economy.py`), and **compression-as-economy** as the grounding (C5–C6,
+  COSIATEC + Kolmogorov simplicity named, not shipped). With two honest caveats:
+  compression is perceptually anchored only **pairwise** (NCD), never as an intrinsic
+  single-line score (C4) — so the repetition number ships as a *profile-relative
+  descriptive fact*, never "economical = good"; and **motivic-rarity does NOT predict
+  memorability** (C7, kill upheld — §3.B). The canonical six variation ops
+  (`generators.variations`) were already verified + shipped by the arrangement pass and
+  the melody layer **reuses** them rather than re-deriving a Réti metric (C9).
 
 ---
 
@@ -373,8 +405,17 @@ A **melodic profile** is the declared intent (the ruler's input); the line itsel
 is authored by the LLM at the note floor (or via thin contour/transform rulers).
 Authored **per melodic part**, modulated **per-section** (the metal lead and the
 reggae lead in sun-zone-done are different profiles; a verse and a final-chorus
-lift are different sections of one profile). Anticipated components, all
-**declared, none computed-for-you**:
+lift are different sections of one profile).
+
+**BUILT (phase 2b — MEL-1A7K): the `MelodicProfile` frozen dataclass
+(`melody/profile.py`) declares these intents and the lens grades each against its
+measured value as an info QUESTION (§7 grading table).** It mirrors the proven
+`performance.realization.PerformanceProfile` (frozen, `name`, `__post_init__`
+validation, `to_dict()`) with ONE decisive difference — the ruler-not-stamp line:
+`PerformanceProfile` has an `apply_profile()` that *realizes* it (micro-timing is
+arithmetic), but **the melodic profile has NO `apply_*` that writes pitches**,
+because pitch IS the musical idea. It is **read-only declared intent the lens grades
+against** — declared, none computed-for-you. The v1 fields:
 
 - **Idiom / genre baseline** — a named reference point (singable-pop-hook,
   bebop-head, modal-chant-like, riff-motif, through-composed-line) that sets
@@ -394,10 +435,25 @@ lift are different sections of one profile). Anticipated components, all
   But the coupling **flattens in rock/modal** (3.A1 caveat) — so the default is a
   *profile setting*, not a baked rule; a modal or chromatic idiom declares looser.
 - **Repetition appetite / motivic economy** — how much the line is built from a
-  small developed cell vs. through-composed (reusing the arrangement layer's six
-  variation ops, 3.C). The memorability levers (3.B) — a *conventional* overall
-  contour with *distinctive* local detail — are an **optional, genre-bound** aim a
-  pop-hook profile may declare, never a universal "make it catchier."
+  small developed cell vs. through-composed, **graded against the within-line
+  repetition reading (`economy.py`, C4)**. Temperley's three structural facts
+  (metrically-parallel, short-distance, multi-interval) are the *coaching prior* for
+  what real repetition looks like — never a gate. The memorability levers (3.B) — a
+  *conventional* overall contour with *distinctive* local detail — are an **optional,
+  genre-bound** aim a pop-hook profile may declare, never a universal "make it
+  catchier" (the C7 kill, §3.B / §3.C).
+
+**DECLARED-FUTURE, deferred from the v1 profile (W3): `phrase_arch` + `motif_dna`.**
+Both are named here as future declared intents but are **NOT** in the v1
+`MelodicProfile`, because neither has a guaranteed read side yet: `phrase_arch`
+(declared phrase-arc intent) awaits the per-phrase contour read (the LBDM
+`segmentation.py` ships the *measurement*, but the arc *intent* enters the profile
+only when the friction for declaring one appears); `motif_dna` (a declared cell +
+the `generators.variations` ops that develop it) awaits a reading that *consumes* it
+(likely the ARR-9K4T cross-instrument recurrence boundary, not this line-level item).
+They are NOT computed classifications (C8/C9) and enter the profile as declared
+intents the lens reports against only when their read side lands — DISCOVERED-FROM-
+FRICTION, never the speculative catalog the thesis forbids.
 
 **The ruler/stamp boundary (decisive):** there is **no `melody()` generator** that
 *invents* a line — that is the art, and inventing it would be the stamp that kills
@@ -499,11 +555,22 @@ facts, reported as neutral measurements):
   distribution, **post-skip reversal** rate (gap-fill, 3.4), **pitch-alphabet
   size** (the ≤7 tendency, 3.6).
 - **Range / tessitura**: total span, register.
-- **Motivic economy / repetition**: within-line **n-gram self-similarity** — a
-  *corpus-free* proxy for within-melody information/entropy (3.1, 3.8): a highly
-  repetitive line is low-entropy/"hooky-or-boring", a through-composed line high-
-  entropy. (This is the cheap, render-free analog of performance's lag-1-acf
-  proxy for the 1/f theory — see the design note below.)
+- **Motivic economy / within-line repetition** *(SHIPPED, phase 2b — `economy.py`)*:
+  `repetition_coverage`, the fraction of the line covered by its most-repeated
+  multi-interval n-gram over the INTERVAL sequence (Temperley-shaped, C4): interval-
+  based (a transposed repeat counts), multi-interval (a single repeated interval does
+  NOT inflate it). The cheap proxy; **COSIATEC + Kolmogorov simplicity named as the
+  heavyweight theory, NOT shipped** (C5/C6). Reported as a *profile-relative*
+  descriptive fact graded against `repetition_appetite`, **never "economical = good"**
+  (C4: compression is perceptually anchored only pairwise) and **never a "make it
+  catchier" lever** (the C7 null — motivic-rarity does not predict memorability).
+- **Phrase contour** *(SHIPPED, phase 2b — `segmentation.py`)*: **LBDM** phrase
+  segmentation (Cambouropoulos, deterministic, corpus-free — C2; IDyOM/Grouper named
+  as the heavyweight theory, NOT shipped — C1/C3) recomputes the existing contour
+  facts PER PHRASE (C8b: the arch is a phrase-level tendency). This *relocates* an
+  existing fact, adding no new measurable: a looping hook reads `level` whole-section
+  but keeps its per-cycle shape per phrase — the friction the sun-zone-done
+  calibration surfaced (§9), which is why this optional reading was built.
 - **Harmony fit** *(reuses `theory.model`)*: each note classified **chord-tone /
   scale-tone / chromatic** against `Progression.chord_at(onset)` and the mode
   (3.A1, 3.A3). Reported: non-chord-tone fraction; the **chord-tone-on-strong-beat**
@@ -513,20 +580,39 @@ facts, reported as neutral measurements):
   counterpart to `theory.lint`'s vertical conformance, graded against the profile's
   declared harmonic-freedom (§5), never as a universal gate.
 
-**The classification (as shipped, phase 2a) is deliberately genre-SAFE:** `static`
-(a near-monotone — tiny ambitus), `active` (a line with real melodic range), or
-`insufficient-data` (too few notes). It does **not** verdict *shaped vs aimless/
-random-walk* — that split is genre-relative (a third-based reggae hook, a chromatic
-bebop head, and a folk tune each read against their own idiom) and needs the
-**declared profile** to grade against, so it is a **phase-2b** capability. v1 instead
-REPORTS the facts that feed that judgment (step↔leap, post-skip reversal, contour
-shape, alphabet, harmony fit) without imposing a universal verdict — the same
-honesty as `performance.lens` deferring declared-profile grading (and *more*
-deferred, because melody is more genre-relative than feel). A deliberately static
-line surfaces only as a coaching QUESTION, never a fail. This was a deliberate
-build-time correction: an early `step_fraction ≥ 0.5 → shaped, else wandering`
-rule mislabeled the genuine third-based reggae hook as "wandering" — exactly the
-universal verdict the thesis (§1) forbids — so the verdict was dropped to 2b.
+**The genre-SAFE classification (phase 2a):** `static` (a near-monotone — tiny
+ambitus), `active` (a line with real melodic range), or `insufficient-data` (too few
+notes). It deliberately does **not** verdict shaped-vs-aimless — that split is
+genre-relative and needs the declared profile to grade against.
+
+**The profile-relative `shaped_reading` (phase 2b, SHIPPED — the recorded
+universal-verdict correction made permanent).** `MelodicLine.shaped_reading` is
+`shaped` / `aimless` / `ungraded`, graded against the line's OWN declared profile:
+`ungraded` with no profile / no definite declared aim (the genre-safe default —
+the universal verdict stays forbidden, the 2a behavior); `shaped` when the line
+SATISFIES at least one declared aim (a net shape when a definite contour was
+intended; a repeated cell when high repetition was intended); `aimless` ONLY when
+EVERY declared aim is contradicted (a no-net-shape `level` line against a declared
+shape, and/or no cell against a declared high-repetition). **`aimless` can NEVER fire
+on a silent or `free` profile** — which is exactly why the recorded bug cannot recur:
+an early `step_fraction ≥ 0.5 → shaped, else wandering` rule mislabeled the genuine
+third-based reggae hook as "wandering" (a universal verdict the thesis §1 forbids).
+Now the third-based reggae hook with an arch + high-repetition profile reads `shaped`
+(it satisfies its contour aim), never `aimless` — graded against ITS idiom, never a
+universal ideal. Even an `aimless` reading emits only a coaching QUESTION, never a
+verdict. This is the metaperformer pattern (§1): the universal is a prior, the
+profile is the truth, intent is learned back.
+
+**Profile-relative grading (phase 2b, SHIPPED).** Given a `MelodicProfile`, each
+declared field is graded against its measured value and fires at most one info
+QUESTION on divergence (beyond tolerance, with enough notes): `contour_intent` vs
+`contour_shape`, `apex_position` vs measured apex, `ambitus_min/max` vs `ambitus`,
+`step_appetite` vs `step_fraction`, `harmonic_freedom` vs the non-chord-tone share
+(declared `high` instead SUPPRESSES the unresolved-NCT finding — floating color is
+then intended), and `repetition_appetite` vs the within-line repetition number. With
+no profile, the lens reports the neutral facts exactly as 2a. The appetite→fraction
+edges are PENDING by-ear calibration (§8) — surfaced as named placeholder constants,
+not guessed.
 
 > **Design note — why proxies, not IDyOM.** Information content (3.1) is the
 > theoretical north star for "shaped vs random," but IDyOM needs a trained corpus
@@ -590,14 +676,24 @@ Strictly sequenced, mirroring the performance layer's proven order:
    into `/compose-review`** (see §7 *Read-side surface* for why compose-review, not
    mix-review): `analyze_arrangement()` + the `tools/melody_lens.py` CLI + a per-song
    `melody_report()` convention (sun-zone-done + the scaffold template).
-   (b) the **declared melodic profile** authoring surface (§4) + grading the lens
-   against it + learn-back + the shaped-vs-aimless verdict. (c) any thin authoring
-   rulers discovered from friction (contour→scale-degree, chord-tone snap) — never
-   a `melody()` generator.
-3. **Bring it to a song.** Run the lens on sun-zone-done; tune by ear. Which
-   profile each line declares, and any rewrite, is a creative lock-in left to the
-   user's ear — deliberately not auto-applied (as the performance tune-by-ear pass
-   was).
+   (b) **DONE (MEL-1A7K)** — the **declared melodic profile** authoring surface
+   (`melody/profile.py`, §4) + profile-relative grading of the lens against it
+   (§7 grading table) + the profile-relative **`shaped_reading`** (the recorded
+   universal-verdict correction made permanent) + the within-line **motivic-economy /
+   repetition** reading (`economy.py`) + **LBDM per-phrase contour**
+   (`segmentation.py`). Learn-back = declaring the `MelodicProfile` in build.py (the
+   declaration IS the learn-back — no separate markdown-annotation surface this
+   phase). `phrase_arch` / `motif_dna` stay declared-future, deferred until their read
+   side lands (§4, W3). (c) any thin authoring rulers discovered from friction
+   (contour→scale-degree, chord-tone snap) — still friction-driven, never a
+   `melody()` generator.
+3. **Bring it to a song (PENDING by-ear, NOT this run).** The build SURFACED the
+   objective measurements of sun-zone-done's two hooks (§9) — but the
+   appetite→fraction grading edges and which profile each line declares are a creative
+   lock-in left to the user's ear, deliberately **not auto-applied** (as the
+   performance tune-by-ear pass was). With Live unattended, the build stops at the
+   threshold/profile decision; the numbers are surfaced (the MEL-1A7K build-plan
+   Status records them), the by-ear call is the user's.
 
 ---
 
@@ -620,6 +716,20 @@ forcing function (the same role sun-zone-done played for harmony + performance):
 
 Together they are the both-sides acceptance test: one lens, two profiles, neither
 graded against the other's ideal.
+
+> **Measured facts vs authored intent (MEL-1A7K calibration).** The bullets above
+> describe the hooks' *authored intent*; the lens's *measured* facts (surfaced by the
+> Chunk-4 calibration, recorded verbatim in the MEL-1A7K build-plan Status) differ in
+> instructive ways, which is exactly the point of measuring. The reggae hook's
+> onset-reduced top-voice reads leap-DOMINANT (`step_fraction` ≈ 0.17) and contour
+> `descending` over one cycle — its "stepwise" feel lives in cells the monophonic
+> reduction widens — and over the looped section its contour flattens to `level`
+> (the friction that motivated the LBDM per-phrase reading, §7). Its within-line
+> repetition reads 0.0 over ONE cycle but 1.0 over the loop: the *unit* the
+> `repetition_appetite` grades against (one cycle vs the looped section) is itself a
+> by-ear lock-in. These are the inputs to the PENDING by-ear call (§8 step 3) — the
+> lens SURFACES them; the user's ear sets the thresholds and picks each hook's
+> profile. The hooks are NOT auto-profiled here.
 
 ---
 
@@ -701,4 +811,6 @@ graded against the other's ideal.
 [`performance-model.md`](performance-model.md) (the sibling realization/feel layer
 melody's rhythm reads), `theory` (`model.py`/`lint.py` — the harmonic substrate
 melody's pitch reads), and memory `project_melody_model_meta_answer` (the
-substrate+profile thesis). Status advances to "in build" only when phase 2 begins.*
+substrate+profile thesis). Phase 2(a) read side + phase 2(b) declared-profile
+authoring side both SHIPPED (MEL-1A7K); phase 3 (bring it to a song, tune by ear)
+is the PENDING by-ear creative lock-in (§8 step 3).*

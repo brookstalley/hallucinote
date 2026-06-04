@@ -65,6 +65,7 @@ from hallucinote.melody.contour import (
     direction_changes,
     gradient_stdev,
 )
+from hallucinote.melody.economy import repetition_coverage as _repetition_coverage
 from hallucinote.melody.harmony_fit import HarmonyFit, analyze_harmony_fit
 from hallucinote.melody.intervals import (
     ambitus,
@@ -73,6 +74,8 @@ from hallucinote.melody.intervals import (
     post_skip_reversal_rate,
     step_leap_unison_counts,
 )
+from hallucinote.melody.profile import Appetite, MelodicProfile
+from hallucinote.melody.segmentation import per_phrase_contours as _per_phrase_contours
 from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
@@ -81,6 +84,14 @@ Severity = Literal["info", "warning", "blocking"]
 _VALID_SEVERITIES = ("info", "warning", "blocking")
 
 Classification = Literal["active", "static", "insufficient-data"]
+
+# The profile-RELATIVE shaped-vs-aimless reading (design §4, the recorded
+# universal-verdict correction). ``ungraded`` (no definite declared intent — the
+# genre-safe default), ``shaped`` (the measured contour/repetition are consistent
+# with the declared intents), ``aimless`` (a DEFINITE declared intent is
+# contradicted). ``aimless`` can NEVER fire on a silent or ``free`` profile — that
+# is exactly why the reggae-hook universal-verdict bug cannot recur (model §7).
+ShapedReading = Literal["shaped", "aimless", "ungraded"]
 
 # Onsets closer than this (beats) are treated as ONE melodic event — a melody is
 # monophonic, so a block-chord onset collapses to its TOP voice (the melody note).
@@ -105,6 +116,45 @@ _STATIC_FINDING_MIN_NOTES = 8
 # unresolved (stranded dissonance) — high NCT alone is normal melodic color.
 _NCT_COACH_MIN = 0.4
 _NCT_RESOLVE_MIN = 0.5
+
+# A declared ``harmonic_freedom="low"`` (chord-tone-locked) is contradicted when the
+# line's non-chord-tone share rises above this — the profile-relative grading edge
+# for the harmonic-freedom field (design §4). Chosen to align with the 2a
+# ``_NCT_COACH_MIN`` "abundant NCT" threshold so the two readings speak one notion
+# of "a lot of non-chord-tones".
+_HARMONIC_FREEDOM_LOW_NCT_MAX = 0.4
+
+# ---------------------------------------------------------------------------
+# Appetite -> fraction grading edges (design §4 / §8).
+#
+# PENDING by-ear calibration — see build-plan Chunk 4 / design §8. These map a
+# coarse declared appetite band (low/moderate/high) to a measured-fraction range.
+# The VALUES below are PLACEHOLDERS: Chunk 4 renders + measures sun-zone-done's two
+# hooks objectively and SURFACES the numbers, but the threshold VALUES (and which
+# profile each hook declares) are a creative lock-in left to the user's ear — they
+# are NOT finalized here. Isolated as named constants so the ear-set values land in
+# ONE place (no magic numbers scattered through the grading).
+#
+# Semantics: a declared "low" step appetite expects step_fraction at/below
+# ``_STEP_FRACTION_LOW_MAX`` (leap-driven); "high" expects at/above
+# ``_STEP_FRACTION_HIGH_MIN`` (proximity-driven); "moderate" is the band between.
+# A finding fires only when the MEASURED band disagrees with the DECLARED band.
+_STEP_FRACTION_LOW_MAX = 0.4   # PENDING by-ear calibration
+_STEP_FRACTION_HIGH_MIN = 0.7  # PENDING by-ear calibration
+
+# The apex-position tolerance: a measured apex within this (normalized 0..1)
+# distance of the declared apex_position reads as "where you intended"; beyond it
+# the climax-moved question fires. PENDING by-ear calibration.
+_APEX_POSITION_TOLERANCE = 0.2  # PENDING by-ear calibration
+
+# The within-line repetition edges (the Chunk 4 economy reading grades against
+# repetition_appetite, and shaped_reading uses _REPETITION_HIGH_MIN as the "is this
+# a repeating hook?" floor). repetition-coverage at/above _REPETITION_HIGH_MIN reads
+# "high" (a cell-driven hook); at/below _REPETITION_LOW_MAX reads "low" (through-
+# composed); between is "moderate". PENDING by-ear calibration — Chunk 4 surfaces
+# the measured numbers; the user's ear sets the values.
+_REPETITION_LOW_MAX = 0.25  # PENDING by-ear calibration
+_REPETITION_HIGH_MIN = 0.5  # PENDING by-ear calibration
 
 _DEFAULT_BEATS_PER_BAR = 4.0
 
@@ -147,10 +197,14 @@ class MelodicLine:
     excluded) and are ``None`` for a line that never moves; ``post_skip_reversal``
     is ``None`` when there is no leap with a successor. ``contour_shape`` is a
     COARSE continuous-summary label (not a discrete type — §3.7); ``apex_pitch`` /
-    ``apex_position`` locate the climax. ``harmony`` is ``None`` when the section
+    ``apex_position`` locate the climax. ``repetition_coverage`` is the within-line
+    motivic-economy number (``economy.repetition_coverage`` — ``None`` for a line too
+    short for a cell to repeat). ``harmony`` is ``None`` when the section
     declared no progression. ``classification`` is the genre-safe active/static
     read (shaped-vs-aimless is profile-relative, deferred); ``confidence`` (0..1)
-    scales with note count."""
+    scales with note count. ``profile_name`` is the declared ``MelodicProfile``'s
+    name when this line was graded against one (``None`` = the unchanged 2a
+    no-profile path)."""
 
     track_name: str
     note_count: int
@@ -167,9 +221,18 @@ class MelodicLine:
     apex_position: float | None
     direction_changes: int
     gradient_stdev: float
+    repetition_coverage: float | None
     harmony: HarmonyFit | None
     classification: Classification
     confidence: float
+    profile_name: str | None = None
+    shaped_reading: ShapedReading = "ungraded"
+    # Per-LBDM-phrase ``(contour_shape, apex_pitch, apex_position)`` — the contour
+    # facts recomputed at the PHRASE unit (research C8b), where the arch actually
+    # lives. A looping hook reads ``level`` whole-section but keeps its per-phrase
+    # shape here. Empty tuple for a line too short to segment (one phrase = the
+    # whole-line ``contour_shape``).
+    phrase_contours: tuple[tuple[ContourShape, int | None, float | None], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,9 +251,16 @@ class MelodicLine:
             "apex_position": self.apex_position,
             "direction_changes": self.direction_changes,
             "gradient_stdev": self.gradient_stdev,
+            "repetition_coverage": self.repetition_coverage,
             "harmony": self.harmony.to_dict() if self.harmony is not None else None,
             "classification": self.classification,
             "confidence": self.confidence,
+            "profile_name": self.profile_name,
+            "shaped_reading": self.shaped_reading,
+            "phrase_contours": [
+                {"contour_shape": shape, "apex_pitch": ap, "apex_position": pos}
+                for shape, ap, pos in self.phrase_contours
+            ],
         }
 
 
@@ -250,7 +320,14 @@ class SectionMelody:
     analyze — drums and chordal pads are NOT melodic lines; ``None`` analyzes every
     layer. ``progression=None`` means no declared harmony — the harmony-fit read is
     skipped (``harmony`` reports ``None``), a graceful degradation to the contour /
-    interval substrate. ``beats_per_bar`` feeds the strong-beat read."""
+    interval substrate. ``beats_per_bar`` feeds the strong-beat read.
+
+    ``profiles`` (phase 2b) maps a layer NAME to its declared ``MelodicProfile`` —
+    the authoring side the lens grades each line AGAINST (design §4, Decision-Record
+    1). ``None`` (the default) is the byte-for-byte-unchanged 2a no-profile path: no
+    profile-relative findings, every line reads as unconstrained substrate facts. A
+    profile keyed to a layer name absent from this section surfaces a
+    ``declared-but-unmatched`` typo finding (enumerate-every-state)."""
 
     name: str
     length_beats: float
@@ -258,6 +335,7 @@ class SectionMelody:
     progression: Progression | None = None
     melody_layers: tuple[str, ...] | None = None
     beats_per_bar: float = _DEFAULT_BEATS_PER_BAR
+    profiles: Mapping[str, MelodicProfile] | None = None
 
 
 def _melodic_sequence(notes: Sequence[NoteDict]) -> list[tuple[float, int]]:
@@ -298,7 +376,92 @@ def _classify(ambitus_semitones: int, onset_count: int) -> Classification:
     return "active"
 
 
-def _line(track: str, notes: Sequence[NoteDict], sec: SectionMelody) -> MelodicLine:
+def _shaped_reading(
+    profile: MelodicProfile | None,
+    *,
+    contour_shape: ContourShape,
+    onset_count: int,
+    repetition_number: float | None = None,
+) -> ShapedReading:
+    """The profile-RELATIVE shaped-vs-aimless reading (design §4) — the recorded
+    universal-verdict correction made permanent.
+
+    The metaperformer pattern (model §1): the universal is a prior, the PROFILE is
+    the truth. A line is graded against its OWN declared aim, never a universal
+    ideal — so a third-based reggae hook, a chromatic bebop head, and a folk tune
+    each read against their declared idiom, and ``aimless`` can fire ONLY against a
+    profile that declared a DEFINITE intent the line contradicts.
+
+      * ``ungraded`` — no profile, too few notes, or the profile declares neither a
+        definite ``contour_intent`` (``free`` is not definite) nor a
+        ``repetition_appetite``. The genre-safe default: the universal verdict stays
+        forbidden (the 2a behavior preserved). **``aimless`` can NEVER fire here** —
+        exactly why the reggae-hook bug cannot recur.
+      * ``shaped`` — a definite intent was declared and the line SATISFIES at least
+        one of its declared aims: it has a net shape (any non-``level`` measured
+        contour) when a definite contour was intended, OR it repeats a cell when high
+        repetition was intended. "Shaped" means "doing what it set out to do," NOT
+        "good." A line that satisfies ANY declared aim is shaped — it is not wandering.
+      * ``aimless`` — EVERY declared aim is contradicted: the line has NO net shape
+        (measures ``level``) where a definite contour was intended, AND it does not
+        repeat its cell where high repetition was intended. The line wanders relative
+        to *its own* stated aim. NOTE a DIFFERENT definite shape than declared is the
+        contour-mismatch re-shape QUESTION, NOT aimlessness — only a no-net-shape
+        ``level`` line counts as a contradicted contour. Satisfying ONE aim is enough
+        to be ``shaped``: this is why a third-based reggae hook with a real
+        descending shape but loop-level (not cell-level) repetition reads ``shaped``,
+        never ``aimless`` (the recorded universal-verdict bug, made impossible).
+
+    Chunk 3 graded on ``contour_intent`` alone (``repetition_number`` was
+    ``None``-tolerant); Chunk 4 supplies the real repetition number and folds in the
+    ``repetition_appetite`` direction.
+    """
+    if profile is None or onset_count < _STATIC_FINDING_MIN_NOTES:
+        return "ungraded"
+
+    definite_contour = (
+        profile.contour_intent is not None and profile.contour_intent != "free"
+    )
+    declares_repetition = profile.repetition_appetite is not None
+    if not definite_contour and not declares_repetition:
+        return "ungraded"
+    if contour_shape == "insufficient-data":
+        return "ungraded"
+
+    # Per-aim satisfaction. A definite contour aim is SATISFIED by any net shape (a
+    # non-"level" measured contour) — a different shape than declared is a re-shape
+    # question, not a failure of the "have a shape" aim. The high-repetition aim is
+    # satisfied by a cell-covered line (the PENDING by-ear edge; an unmeasurable
+    # repetition number does not contradict the aim, so it counts as satisfied —
+    # never invent a verdict from missing data).
+    contour_satisfied = definite_contour and contour_shape != "level"
+    contour_contradicted = definite_contour and contour_shape == "level"
+    repetition_satisfied = (
+        profile.repetition_appetite == "high"
+        and (repetition_number is None or repetition_number >= _REPETITION_HIGH_MIN)
+    )
+    repetition_contradicted = (
+        profile.repetition_appetite == "high"
+        and repetition_number is not None
+        and repetition_number < _REPETITION_HIGH_MIN
+    )
+
+    # Satisfying ANY declared aim => shaped (the line is doing something it set out
+    # to do — it is not wandering). aimless only when EVERY declared aim is
+    # contradicted and none is satisfied.
+    if contour_satisfied or repetition_satisfied:
+        return "shaped"
+    if contour_contradicted or repetition_contradicted:
+        return "aimless"
+    return "shaped"
+
+
+def _line(
+    track: str,
+    notes: Sequence[NoteDict],
+    sec: SectionMelody,
+    profile: MelodicProfile | None = None,
+) -> MelodicLine:
     seq = _melodic_sequence(notes)
     pitches = [p for _start, p in seq]
     onset_count = len(seq)
@@ -324,6 +487,20 @@ def _line(track: str, notes: Sequence[NoteDict], sec: SectionMelody) -> MelodicL
             seq, sec.progression, beats_per_bar=sec.beats_per_bar
         )
 
+    shape = contour_shape(pitches)
+    rep_coverage = _repetition_coverage(pitches)
+    # Per-phrase contour (LBDM, research C8b): surfaced only when the line actually
+    # segments into more than one phrase — a single-phrase line's shape IS the
+    # whole-line ``contour_shape``, so an empty tuple avoids redundant noise.
+    phrases = tuple(_per_phrase_contours(notes))
+    phrase_contours = phrases if len(phrases) > 1 else ()
+    shaped = _shaped_reading(
+        profile,
+        contour_shape=shape,
+        onset_count=onset_count,
+        repetition_number=rep_coverage,
+    )
+
     return MelodicLine(
         track_name=track,
         note_count=note_count,
@@ -335,14 +512,18 @@ def _line(track: str, notes: Sequence[NoteDict], sec: SectionMelody) -> MelodicL
         leap_fraction=leap_frac,
         unison_count=unisons,
         post_skip_reversal=reversal,
-        contour_shape=contour_shape(pitches),
+        contour_shape=shape,
         apex_pitch=apex_pitch,
         apex_position=apex_pos,
         direction_changes=direction_changes(intervals),
         gradient_stdev=gradient_stdev(intervals),
+        repetition_coverage=rep_coverage,
         harmony=harmony,
         classification=_classify(amb, onset_count),
         confidence=_confidence(onset_count),
+        profile_name=profile.name if profile is not None else None,
+        shaped_reading=shaped,
+        phrase_contours=phrase_contours,
     )
 
 
@@ -352,13 +533,16 @@ def _layer_names(sec: SectionMelody) -> list[str]:
     return list(sec.layers)
 
 
-def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
+def _findings_for(
+    line: MelodicLine, section: str, profile: MelodicProfile | None = None
+) -> list[MelodyFinding]:
     out: list[MelodyFinding] = []
     # Each finding is a coaching QUESTION — a static line may be an intended drone;
     # the lens asks, the composer decides (the harmony lint honors an intentional
     # drone the same way). Gated on enough notes to trust the call. NOTE: there is
-    # deliberately NO "aimless/random-walk" finding — that verdict is genre-relative
-    # and needs the declared profile (phase 2b); v1 reports the facts, never nags a
+    # deliberately NO "aimless/random-walk" finding here — that verdict is
+    # genre-relative and needs the declared profile (the profile-relative
+    # ``shaped_reading``, Chunk 3); v1's findings report the facts, never nag a
     # leap-driven idiom (a line built on 3rds is not "wrong").
     if line.classification == "static" and line.onset_count >= _STATIC_FINDING_MIN_NOTES:
         out.append(MelodyFinding(
@@ -371,15 +555,19 @@ def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
             metric=float(line.ambitus),
         ))
     # Harmony coaching: only when non-chord-tones are BOTH abundant AND mostly
-    # unresolved (stranded dissonance) — high NCT alone is normal melodic color, and
-    # is graded against the (future) declared harmonic-freedom, never a verdict.
+    # unresolved (stranded dissonance) — high NCT alone is normal melodic color. A
+    # declared ``harmonic_freedom="high"`` SUPPRESSES this (design §4): high freedom
+    # means floating, freely-chromatic color is the intended idiom, so stranded-
+    # dissonance coaching would nag exactly what the profile declared on purpose.
     hf = line.harmony
+    declared_freedom = profile.harmonic_freedom if profile is not None else None
     if (
         hf is not None
         and hf.nct_resolves_by_step is not None
         and hf.non_chord_tone_fraction > _NCT_COACH_MIN
         and hf.nct_resolves_by_step < _NCT_RESOLVE_MIN
         and line.onset_count >= _MIN_MELODIC_NOTES
+        and declared_freedom != "high"
     ):
         out.append(MelodyFinding(
             kind="unresolved-nct", severity="info", section=section, track=line.track_name,
@@ -391,15 +579,246 @@ def _findings_for(line: MelodicLine, section: str) -> list[MelodyFinding]:
             ),
             metric=hf.nct_resolves_by_step,
         ))
+    out.extend(_profile_findings(line, section, profile))
+    return out
+
+
+def _profile_findings(
+    line: MelodicLine, section: str, profile: MelodicProfile | None
+) -> list[MelodyFinding]:
+    """Profile-RELATIVE findings — the line's measured values graded AGAINST its
+    declared intent (design §4). Each is still ``severity="info"`` and phrased as a
+    coaching QUESTION ("you declared X; the line measures Y — intended?"), never a
+    verdict. Fired only when the declared field has a measured counterpart, the
+    measure DIVERGES, and there are enough notes to trust it (the
+    ``_STATIC_FINDING_MIN_NOTES`` gate). Grades ``harmonic_freedom`` / contour /
+    apex / ambitus / ``step_appetite`` divergences + the profile-relative
+    shaped-vs-aimless QUESTION (the recorded universal-verdict correction)."""
+    if profile is None:
+        return []
+    out: list[MelodyFinding] = []
+
+    # All profile-relative findings gate on enough notes to trust the call (the 2a
+    # _STATIC_FINDING_MIN_NOTES discipline) — a short line never false-nags.
+    enough = line.onset_count >= _STATIC_FINDING_MIN_NOTES
+
+    # harmonic_freedom="low" (chord-tone-locked) contradicted by abundant NCT share.
+    # (declared "high" instead SUPPRESSES the 2a unresolved-nct finding above — that
+    # is the high-freedom direction; the low direction asks the opposite question.)
+    hf = line.harmony
+    if (
+        profile.harmonic_freedom == "low"
+        and hf is not None
+        and hf.non_chord_tone_fraction > _HARMONIC_FREEDOM_LOW_NCT_MAX
+        and enough
+    ):
+        out.append(MelodyFinding(
+            kind="harmonic-freedom-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared chord-tone-locked harmony "
+                f"(harmonic_freedom=low), but {hf.non_chord_tone_fraction:.0%} of "
+                f"notes are non-chord-tones — intended looser color, or has the line "
+                f"drifted off its declared harmonic anchor?"
+            ),
+            metric=hf.non_chord_tone_fraction,
+        ))
+
+    # contour_intent vs the measured contour_shape (string-equal by construction —
+    # ContourIntent's members ARE ContourShape's, minus insufficient-data, plus free,
+    # W2). "free" intent and an "insufficient-data" measured shape both suppress it:
+    # no shape was declared to diverge from / too few notes to read a shape. The
+    # ``level`` case is handled by the aimless finding below (a no-net-shape line
+    # against a declared shape is the "you wanted shape, there is none" question, not
+    # a "different definite shape" re-shape question), so it is excluded here to
+    # avoid double-reporting the same fact.
+    if (
+        profile.contour_intent is not None
+        and profile.contour_intent != "free"
+        and line.contour_shape not in ("insufficient-data", "level")
+        and line.contour_shape != profile.contour_intent
+        and enough
+    ):
+        out.append(MelodyFinding(
+            kind="contour-intent-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared a {profile.contour_intent} contour, "
+                f"but the line reads {line.contour_shape} — intended re-shape, or did "
+                f"the climax move?"
+            ),
+        ))
+
+    # The profile-relative shaped-vs-aimless QUESTION (design §4 done-when #3): when
+    # the line reads ``aimless`` (a DEFINITE declared intent the line contradicts —
+    # never a universal verdict), ask the coaching question. Still severity=info, a
+    # question, NEVER "this melody is bad / wandering". ``shaped`` / ``ungraded`` emit
+    # nothing (the line is doing what it set out to, or there is no aim to grade).
+    if line.shaped_reading == "aimless" and enough:
+        # mode-aware evidence: name the contradicted aim(s) so the question is
+        # precise (a no-net-shape line vs an un-repeating high-repetition line).
+        evidence: list[str] = []
+        if profile.contour_intent not in (None, "free") and line.contour_shape == "level":
+            evidence.append(f"reads {line.contour_shape} with no net shape")
+        if (
+            profile.repetition_appetite == "high"
+            and line.repetition_coverage is not None
+            and line.repetition_coverage < _REPETITION_HIGH_MIN
+        ):
+            evidence.append(
+                f"repeats a cell across only {line.repetition_coverage:.0%} of itself"
+            )
+        out.append(MelodyFinding(
+            kind="aimless-line", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you declared a shaped line "
+                f"(contour_intent={profile.contour_intent!r}, "
+                f"repetition_appetite={profile.repetition_appetite!r}), but it "
+                f"{' and '.join(evidence)} — intended, or has the line wandered off "
+                f"the shape it set out to make?"
+            ),
+        ))
+
+    # apex_position vs the measured apex position (tolerance band).
+    if (
+        profile.apex_position is not None
+        and line.apex_position is not None
+        and abs(line.apex_position - profile.apex_position) > _APEX_POSITION_TOLERANCE
+        and enough
+    ):
+        out.append(MelodyFinding(
+            kind="apex-position-mismatch", severity="info", section=section,
+            track=line.track_name,
+            detail=(
+                f"{line.track_name}: you intended the climax at {profile.apex_position:.0%} "
+                f"of the line, but it crests at {line.apex_position:.0%} — intended "
+                f"lift placement, or has the peak drifted?"
+            ),
+            metric=line.apex_position,
+        ))
+
+    # ambitus band: measured range outside the declared [min, max] window.
+    if (
+        (profile.ambitus_min is not None or profile.ambitus_max is not None)
+        and enough
+    ):
+        below = profile.ambitus_min is not None and line.ambitus < profile.ambitus_min
+        above = profile.ambitus_max is not None and line.ambitus > profile.ambitus_max
+        if below or above:
+            band = (
+                f"{profile.ambitus_min if profile.ambitus_min is not None else '—'}"
+                f"..{profile.ambitus_max if profile.ambitus_max is not None else '—'}"
+            )
+            out.append(MelodyFinding(
+                kind="ambitus-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {band}-semitone range, but the "
+                    f"line spans {line.ambitus} — intended register, or has the line "
+                    f"outgrown / shrunk from its declared ambitus?"
+                ),
+                metric=float(line.ambitus),
+            ))
+
+    # step_appetite vs the measured step_fraction band (the PENDING by-ear edges).
+    if (
+        profile.step_appetite is not None
+        and line.step_fraction is not None
+        and enough
+    ):
+        measured_band = _step_fraction_band(line.step_fraction)
+        if measured_band != profile.step_appetite:
+            out.append(MelodyFinding(
+                kind="step-appetite-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {profile.step_appetite} step "
+                    f"appetite, but {line.step_fraction:.0%} of moving intervals are "
+                    f"steps ({measured_band}) — intended proximity/leap balance, or has "
+                    f"the line's motion drifted?"
+                ),
+                metric=line.step_fraction,
+            ))
+
+    # repetition_appetite vs the within-line repetition number (economy.py — the
+    # motivic-economy BOTH-SIDES pairing). Graded against the PENDING by-ear edges.
+    if (
+        profile.repetition_appetite is not None
+        and line.repetition_coverage is not None
+        and enough
+    ):
+        measured_band = _repetition_band(line.repetition_coverage)
+        if measured_band != profile.repetition_appetite:
+            out.append(MelodyFinding(
+                kind="repetition-appetite-mismatch", severity="info", section=section,
+                track=line.track_name,
+                detail=(
+                    f"{line.track_name}: you declared a {profile.repetition_appetite} "
+                    f"repetition appetite, but {line.repetition_coverage:.0%} of the line "
+                    f"is covered by its most-repeated cell ({measured_band}) — intended "
+                    f"economy, or has the cell-vs-through-composed balance drifted?"
+                ),
+                metric=line.repetition_coverage,
+            ))
+    return out
+
+
+def _repetition_band(coverage: float) -> Appetite:
+    """Map a measured within-line repetition coverage to a coarse appetite band
+    using the PENDING by-ear edges. Higher coverage = more cell-driven = HIGHER
+    repetition appetite. (The edge VALUES are calibration placeholders — design §8.)"""
+    if coverage <= _REPETITION_LOW_MAX:
+        return "low"
+    if coverage >= _REPETITION_HIGH_MIN:
+        return "high"
+    return "moderate"
+
+
+def _step_fraction_band(step_fraction: float) -> Appetite:
+    """Map a measured step-fraction to a coarse appetite band using the PENDING
+    by-ear edges. Higher step-fraction = more proximity-driven = HIGHER step
+    appetite. (The edge VALUES are calibration placeholders — design §8.)"""
+    if step_fraction <= _STEP_FRACTION_LOW_MAX:
+        return "low"
+    if step_fraction >= _STEP_FRACTION_HIGH_MIN:
+        return "high"
+    return "moderate"
+
+
+def _declared_but_unmatched(sec: SectionMelody) -> list[MelodyFinding]:
+    """A declared profile keyed to a layer NAME absent from this section is almost
+    always a typo (the binding is by string — Decision-Record 1) — surface it as a
+    coaching question rather than silently grading nothing (enumerate-every-state,
+    learnings "Detection that replaces a user question must enumerate every state").
+    Compared against the FULL layer set, not the melody-filtered names, so declaring
+    a profile for a real-but-non-melodic layer is not falsely flagged a typo."""
+    if not sec.profiles:
+        return []
+    present = set(sec.layers)
+    out: list[MelodyFinding] = []
+    for layer_name in sec.profiles:
+        if layer_name not in present:
+            out.append(MelodyFinding(
+                kind="declared-but-unmatched", severity="info", section=sec.name,
+                track=layer_name,
+                detail=(
+                    f"you declared a MelodicProfile for {layer_name!r} but this "
+                    f"section has no such line — a typo in the layer name, or a "
+                    f"profile left over from a different section?"
+                ),
+            ))
     return out
 
 
 def _analyze_section(sec: SectionMelody) -> SectionMelodyResult:
     names = _layer_names(sec)
-    lines = tuple(_line(t, sec.layers[t], sec) for t in names)
+    profiles = sec.profiles or {}
+    lines = tuple(_line(t, sec.layers[t], sec, profiles.get(t)) for t in names)
     findings: list[MelodyFinding] = []
     for line in lines:
-        findings.extend(_findings_for(line, sec.name))
+        findings.extend(_findings_for(line, sec.name, profiles.get(line.track_name)))
+    findings.extend(_declared_but_unmatched(sec))
     return SectionMelodyResult(section=sec.name, lines=lines, findings=tuple(findings))
 
 
@@ -407,6 +826,7 @@ def analyze_melody(
     sections: Sequence[SectionMelody],
     *,
     song_slug: str,
+    profiles: Mapping[str, MelodicProfile] | None = None,
 ) -> MelodyReport:
     """Analyze a song's authored melodic lines, section by section, line by line.
 
@@ -414,14 +834,41 @@ def analyze_melody(
     counterpart to the harmony conformance lint + performance feel lens. The
     headline is per-line ``classification`` (``active`` / ``static`` /
     ``insufficient-data`` — the genre-safe read) + the contour / interval /
-    harmony-fit facts that feed the (deferred, profile-relative) shaped-vs-aimless
-    judgment. Render-free and DB-decoupled: feed it
+    harmony-fit facts. Render-free and DB-decoupled: feed it
     ``arrangement.Arrangement.section_melody_inputs()`` at build time, or synthetic
     ``SectionMelody`` inputs in a test.
+
+    ``profiles`` (phase 2b) is a song-wide ``{layer_name: MelodicProfile}`` default
+    applied to every section that does not carry its own ``SectionMelody.profiles``
+    (the per-section map wins). ``None`` (the default) is the byte-for-byte-unchanged
+    2a no-profile path. The lens then emits profile-relative coaching questions
+    (still ``info``, still questions) on top of the unconditional neutral facts.
     """
+    if profiles:
+        sections = [
+            s if s.profiles is not None else _with_profiles(s, profiles)
+            for s in sections
+        ]
     secs = tuple(_analyze_section(s) for s in sections)
     rollup = tuple(f for s in secs for f in s.findings)
     return MelodyReport(song_slug=song_slug, sections=secs, findings=rollup)
+
+
+def _with_profiles(
+    sec: SectionMelody, profiles: Mapping[str, MelodicProfile]
+) -> SectionMelody:
+    """A copy of ``sec`` carrying the song-wide ``profiles`` default. Kept explicit
+    (not ``dataclasses.replace``) so a future ``SectionMelody`` field can't silently
+    drop here."""
+    return SectionMelody(
+        name=sec.name,
+        length_beats=sec.length_beats,
+        layers=sec.layers,
+        progression=sec.progression,
+        melody_layers=sec.melody_layers,
+        beats_per_bar=sec.beats_per_bar,
+        profiles=profiles,
+    )
 
 
 def analyze_arrangement(
@@ -430,6 +877,7 @@ def analyze_arrangement(
     song_slug: str,
     melody_layers: Sequence[str] | None = None,
     start_bar: int = 1,
+    profiles: Mapping[str, MelodicProfile] | None = None,
 ) -> MelodyReport:
     """Run the melody lens over an in-memory ``Arrangement`` — the build-time entry
     point a song's ``melody_report()`` calls (and ``tools/melody_lens.py`` surfaces
@@ -444,8 +892,15 @@ def analyze_arrangement(
 
     ``melody_layers`` names the monophonic lines to read (lead / vocal / riff);
     exclude drums and chordal pads. ``None`` reads every layer.
+
+    ``profiles`` (phase 2b) is the song's declared ``{layer_name: MelodicProfile}``
+    map (Decision-Record 1: profiles live in build.py, not on the arrangement). It
+    is threaded onto every section's ``SectionMelody.profiles`` so the lens grades
+    each line against its declared intent. ``None`` = the unchanged 2a path.
     """
     return analyze_melody(
-        arr.section_melody_inputs(melody_layers=melody_layers, start_bar=start_bar),
+        arr.section_melody_inputs(
+            melody_layers=melody_layers, start_bar=start_bar, profiles=profiles
+        ),
         song_slug=song_slug,
     )

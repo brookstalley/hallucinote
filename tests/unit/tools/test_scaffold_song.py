@@ -205,6 +205,20 @@ def test_scaffolded_build_py_imports_cleanly(tmp_path):
     spec.loader.exec_module(mod)
     assert callable(mod.build)
     assert callable(mod.report)
+    assert callable(mod.melody_report)
+
+
+def test_scaffolded_build_py_carries_the_melodic_profile_example(tmp_path):
+    """MEL-1A7K: the scaffold seeds the declared-profile authoring path so new songs
+    see it. The template-as-deliverable lock (learnings: "when a doc/template IS the
+    deliverable, lock it with a parity test") — `melody_report()`'s docstring carries
+    a commented-out `profiles={...}` / `MelodicProfile` example."""
+    req = _basic_req(slug="profile-example")
+    result = scaffold_song(req, songs_root=tmp_path)
+    src = (result.song_dir / "build.py").read_text()
+    assert "MelodicProfile" in src
+    assert "profiles=" in src
+    assert "repetition_appetite" in src   # a v1 profile field, in the example
 
 
 def test_scaffolded_build_py_runs_against_synthetic_snapshot(tmp_path, monkeypatch):

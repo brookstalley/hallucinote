@@ -97,15 +97,28 @@ def render(report: Any, *, section_filter: str | None = None) -> str:
                 if ln.apex_pitch is not None and ln.apex_position is not None
                 else "—"
             )
+            profile_tag = (
+                f" · profile {ln.profile_name!r}" if ln.profile_name else ""
+            )
+            shaped_tag = (
+                f" · {ln.shaped_reading}" if ln.shaped_reading != "ungraded" else ""
+            )
             lines.append(
                 f"  {ln.track_name} — {ln.classification} "
                 f"(confidence {ln.confidence:.0%}, {ln.onset_count} notes)"
+                f"{profile_tag}{shaped_tag}"
             )
             lines.append(
                 f"    contour: {ln.contour_shape} · apex {apex} · "
                 f"{ln.direction_changes} direction-changes · "
-                f"gradient-stdev {ln.gradient_stdev:.2f}"
+                f"gradient-stdev {ln.gradient_stdev:.2f} · "
+                f"repetition-coverage {_fmt_frac(ln.repetition_coverage)}"
             )
+            if ln.phrase_contours:
+                shapes = " → ".join(shape for shape, _ap, _pos in ln.phrase_contours)
+                lines.append(
+                    f"    phrases (LBDM): {len(ln.phrase_contours)} · {shapes}"
+                )
             lines.append(
                 f"    intervals: step {_fmt_frac(ln.step_fraction)} / "
                 f"leap {_fmt_frac(ln.leap_fraction)} · "

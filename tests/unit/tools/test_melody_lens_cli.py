@@ -55,6 +55,23 @@ def test_render_shows_harmony_fit_when_progression_present():
     assert "no declared progression" not in out
 
 
+def test_render_shows_profile_name_and_relative_finding():
+    """Phase 2b: when a line declares a MelodicProfile, render() shows the profile
+    tag on the line + the profile-relative coaching question."""
+    from hallucinote.melody import MelodicProfile
+
+    prog = Progression.of("C", "Ionian", ["C"], beats_per_chord=16.0)
+    # an NCT-heavy line declared chord-tone-locked -> harmonic-freedom-mismatch
+    nct = [_n(p, i * 0.5) for i, p in enumerate([60, 61, 63, 66, 69, 70, 71, 66, 63, 61])]
+    sec = SectionMelody(
+        name="verse", length_beats=8.0, layers={"05 Lead": nct}, progression=prog,
+        profiles={"05 Lead": MelodicProfile(name="locked", harmonic_freedom="low")},
+    )
+    out = render(analyze_melody([sec], song_slug="t"))
+    assert "profile 'locked'" in out
+    assert "harmonic_freedom=low" in out   # the profile-relative coaching question
+
+
 def test_render_section_filter_miss_is_explicit():
     out = render(_report(), section_filter="nope")
     assert "no section named 'nope'" in out

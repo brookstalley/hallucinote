@@ -21,44 +21,63 @@ Known limitations are listed at the bottom of [`CHANGELOG.md`](CHANGELOG.md#know
 
 - **Ableton Live 12** on **macOS or Windows**. 
 - **Python 3.10 or newer.** On Windows, if `python` opens the Microsoft Store, use `py -3` everywhere `python` appears below.
+- **[uv](https://docs.astral.sh/uv/)** — the Python package/environment manager. The plugin launches the bundled `hallucinote-mcp` server with uv, which builds an isolated, **version-locked** environment from the plugin's committed `uv.lock` (so the running server always matches the plugin you installed — no separate install, no PATH/venv juggling). Install with `brew install uv` (macOS), `winget install astral-sh.uv` (Windows), or the [official installer](https://docs.astral.sh/uv/getting-started/installation/).
 - **Claude Code.** Install instructions: <https://claude.ai/code>.
 
 ## Install
 
-Hallucinote has two halves: the **plugin** (the `/hallucinote:*` skills + the
-`hallucinote-mcp` server, installed into Claude Code) and the **engine** (the
-`hallucinote` Python package that `build.py` composes against). Your **songs**
-live in their own git repo (a workspace with a `hallucinote.toml` marker), not
-in this repo — see [`docs/VISION.md`](docs/VISION.md) ("a song is a git repo").
+Hallucinote has two halves:
 
-**To make music — install from a local checkout** (the path today; the plugin
-and engine both live in this repo):
+- the **plugin** — the `/hallucinote:*` skills **plus the bundled `hallucinote-mcp`
+  server**. The plugin carries the server's source and a committed `uv.lock`, and
+  Claude Code launches it with **uv** into a version-locked, isolated environment.
+  You do **not** install the server separately, and there's no PATH/venv to
+  activate — see [Requirements](#requirements) for the one-time `uv` install.
+- the **engine** — the `hallucinote` Python package that your songs' `build.py`
+  composes against. This still needs installing in the environment that runs
+  `build.py` (it isn't on PyPI yet, so install it from a clone — below).
 
-1. Clone + editable-install this repo (see [Clone and install](#1-clone-and-install) below) — that
-   gives you the **engine** and the plugin's `skills/`.
-2. In your **songs repo**, start Claude Code with the plugin loaded from your
-   checkout:
+Your **songs** live in their own git repo (a workspace with a `hallucinote.toml`
+marker), not in this repo — see [`docs/VISION.md`](docs/VISION.md) ("a song is a git repo").
 
-   ```bash
-   claude --plugin-dir /path/to/hallucinote
+**To just use Hallucinote** (not hack on the framework):
+
+1. **Install `uv`** if you don't have it (see [Requirements](#requirements)).
+2. **Install the plugin from GitHub** — in Claude Code:
+   ```text
+   /plugin marketplace add brookstalley/hallucinote
+   /plugin install hallucinote@hallucinote
    ```
-
-   Skills appear as `/hallucinote:song-new`, …; the `hallucinote-mcp` server
-   auto-connects.
-3. Run `/hallucinote:ableton-mcp-install` once (the Ableton Remote Script — the
+   This installs the `/hallucinote:*` skills and the bundled MCP server; uv builds
+   the server's locked environment on first launch (pre-warmed at session start).
+3. **Install the engine** for composing — clone this repo and editable-install it
+   (see [Clone and install](#1-clone-and-install)). Until it ships to PyPI this local
+   install is required for `build.py`. (This is the *composing* environment and is
+   separate from the plugin's bridge server above — see the note in that section.)
+4. Run `/hallucinote:ableton-mcp-install` once (the Ableton Remote Script — the
    one thing the plugin can't do for you), then `/hallucinote:song-new`.
 
-> **One-line install, once it's published.** After the first release (the plugin
-> on the default branch + the engine on PyPI), setup collapses to:
-> ```bash
-> # in Claude Code:  /plugin marketplace add brookstalley/hallucinote
-> #                  /plugin install hallucinote@hallucinote
-> pip install 'hallucinote[live]'
-> ```
-> Until then, use the local-checkout path above (the plugin currently lives on
-> `develop`, not the default branch a marketplace install reads).
+**To develop the framework** (live-edit the `skills/` and server in this checkout),
+load the plugin from your working tree instead of installing it — Claude Code,
+started from your **songs repo**:
+
+```bash
+claude --plugin-dir /path/to/hallucinote
+```
+
+Skills appear as `/hallucinote:song-new`, …; uv launches the bundled server from
+your checkout. (`--plugin-dir` is per-session — it doesn't persist across launches;
+alias it if you use it often.) You still install the engine (step 3) and run the
+Remote Script installer (step 4).
 
 ### 1. Clone and install 
+
+This installs the **engine** (`hallucinote`) plus the `hallucinote_mcp` package into
+your composing environment — `build.py`'s push path imports `hallucinote_mcp` as a
+library. This is **separate from the plugin's MCP _bridge_ server**: the plugin bundles
+its own copy of the server and runs it with uv (you don't manage that one). Same package,
+two roles; keep this checkout on the same version as your installed plugin so they agree
+(why, and how to check: [docs/engine-pin.md](docs/engine-pin.md)).
 
 **macOS / Linux:**
 ```bash
@@ -83,7 +102,7 @@ To enable development (mostly to enable running the test suite), add the `[dev]`
 pip install -e '.[dev]' -e './hallucinote_mcp[dev]'
 ```
 
-### 2. Install the Ableton Remote Script and MCP entry
+### 2. Install the Ableton Remote Script
 
 > ⚠️ **Quit Ableton Live before this step.** The installer refuses to copy into a running Live (on Windows the copy may fail silently because Live holds the old files locked).
 
@@ -95,7 +114,7 @@ claude
 
 > *"/ableton-mcp-install"*
 
-The skill copies the Remote Script into Live's User Library, writes `.mcp.json` for this project, and tells you how to enable the MCP plugin in Live's settings. It has interactive checkpoints (which Live version to target, whether to overwrite, project vs. global config) so don't try to run it headlessly.
+The skill copies the Remote Script into Live's User Library, installs the HallucinoteAnalyzer device, and tells you how to enable the **Hallucinote** Control Surface in Live's settings. (The `hallucinote-mcp` server itself is provided by the plugin and launched via uv — the skill doesn't wire that up.) It has interactive checkpoints (which Live version to target, whether to overwrite) so don't try to run it headlessly.
 
 ### 3. Wire up Ableton, restart Claude Code
 
@@ -107,7 +126,7 @@ In Ableton Live's menu bar:
 4. Leave the **Input** and **Output** columns set to **None** — Hallucinote talks to Live through the Control Surface socket only.
 5. Close Preferences.
 
-Then **quit and reopen Claude Code in this repo** so it picks up the new `.mcp.json`. Leave Ableton running.
+Then **quit and reopen Claude Code** so the plugin's `hallucinote-mcp` server connects (uv builds its locked environment on first launch). Leave Ableton running.
 
 ### 4. Verify the bridge
 

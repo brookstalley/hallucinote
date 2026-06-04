@@ -39,10 +39,14 @@ def test_full_install_uninstall_roundtrip(tmp_path, monkeypatch, capsys):
     assert code == 0 and out["ok"]
     assert amxd.is_file()
 
-    code, out = _run(capsys, "configure-mcp", "--registered", "false",
-                     "--scope", "project", "--cwd", str(project))
-    assert code == 0 and out["ok"] and out["action"] == "write"
-    assert "hallucinote-mcp" in json.loads(local_cfg.read_text())["mcpServers"]
+    # No configure-mcp step: since INS-7V2D the plugin provides the server via its
+    # bundled uv launch (PATH-independent), so install never writes an mcpServers
+    # entry. `remove-mcp-config` still clears any LEGACY entry a pre-plugin install
+    # wrote — seed one directly to exercise that cleanup path on the uninstall side.
+    local_cfg.write_text(
+        json.dumps({"mcpServers": {"hallucinote-mcp": {"command": "hallucinote-mcp", "args": ["serve"]}}}),
+        encoding="utf-8",
+    )
 
     # --- uninstall (the mirror) ---
     code, out = _run(capsys, "uninstall-remote-script", "--user-library", str(ul))

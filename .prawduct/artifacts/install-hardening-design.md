@@ -1,5 +1,12 @@
 # Install Hardening — move every install mutation into tested, atomic Python
 
+> **Superseded in part by INS-7V2D (2026-06-04).** The MCP-config write path
+> described below (`configure-mcp` / `plan_mcp_config` / `merge_server_entry` +
+> the absolute-path override) was **retired** when the plugin began providing the
+> server via its bundled uv launch — the install skill no longer writes any
+> `mcpServers` entry. The Remote-Script / analyzer vendor and `remove-mcp-config`
+> portions remain accurate. See `.prawduct/artifacts/plans/INS-7V2D/design.md` §5.
+
 **Status:** designed (2026-06-04). Build plan: `.prawduct/artifacts/build-plan.md`.
 **Area:** `hallucinote_mcp` (the stdlib-only, isolated MCP package). **Type:** refactor +
 hardening (behavior-preserving for a *successful* install; behavior-*correcting* for the

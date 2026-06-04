@@ -1,8 +1,11 @@
-"""Tests for mcp_config.py — the MCP-config decision table and atomic mutations.
+"""Tests for mcp_config.py — the uninstall config-cleanup mutations.
 
-The decision is a pure 5-row truth table; merge/write/delete are atomic and never
-clobber sibling servers. CLI tests redirect the global config path so they never
-touch the real ~/.claude.json.
+Since INS-7V2D the ``hallucinote`` plugin provides the MCP server via its bundled
+uv launch (PATH-independent), so there is no *install* write path: the old
+PATH-detection truth table + absolute-path-override hack (``plan_mcp_config`` /
+``merge_server_entry`` / ``configure-mcp``) retired. What remains is the atomic
+delete/read/write the uninstall skill uses to clear *legacy* registrations.
+CLI tests redirect the config paths so they never touch the real ~/.claude.json.
 """
 from __future__ import annotations
 
@@ -16,73 +19,19 @@ from hallucinote_mcp import mcp_config as mc
 from hallucinote_mcp.cli import main
 
 
-# --- plan_mcp_config truth table -------------------------------------------
+# --- the install write path is gone (new contract) -------------------------
 
-def test_plan_error_when_command_missing():
-    plan = mc.plan_mcp_config(command_path=None, on_path=False, already_registered=False)
-    assert plan.action == "error"
-
-
-def test_plan_skip_when_registered_and_on_path():
-    plan = mc.plan_mcp_config(
-        command_path=pathlib.Path("/usr/bin/hallucinote-mcp"),
-        on_path=True, already_registered=True,
-    )
-    assert plan.action == "skip"
-    assert plan.path is None
+def test_configure_mcp_subcommand_is_retired():
+    """The plugin provides the server now — the install skill never writes config,
+    so `configure-mcp` no longer exists. (Regression guard against re-introducing
+    the PATH-override hack.)"""
+    assert not hasattr(mc, "plan_mcp_config"), "the PATH-detection truth table must be gone"
+    assert not hasattr(mc, "merge_server_entry"), "the install merge/write helper must be gone"
+    # The CLI no longer dispatches it: unknown command → exit 2.
+    assert main(["configure-mcp", "--registered", "true"]) == 2
 
 
-def test_plan_registered_not_on_path_writes_absolute_at_user_scope(monkeypatch, tmp_path):
-    monkeypatch.setattr(mc, "mcp_config_global_path", lambda: tmp_path / ".claude.json")
-    abs_cmd = pathlib.Path("/venv/bin/hallucinote-mcp")
-    plan = mc.plan_mcp_config(
-        command_path=abs_cmd, on_path=False, already_registered=True,
-        scope="project", cwd=tmp_path,  # scope is ignored — override forces user scope
-    )
-    assert plan.action == "write"
-    assert plan.path == tmp_path / ".claude.json"      # user scope, not project
-    assert plan.command == str(abs_cmd)                 # absolute
-
-
-def test_plan_unregistered_on_path_writes_bare(monkeypatch, tmp_path):
-    monkeypatch.setattr(mc, "mcp_config_local_path", lambda cwd=None: tmp_path / ".mcp.json")
-    plan = mc.plan_mcp_config(
-        command_path=pathlib.Path("/usr/bin/hallucinote-mcp"),
-        on_path=True, already_registered=False, scope="project", cwd=tmp_path,
-    )
-    assert plan.action == "write"
-    assert plan.path == tmp_path / ".mcp.json"
-    assert plan.command == "hallucinote-mcp"            # bare
-
-
-def test_plan_unregistered_not_on_path_writes_absolute(monkeypatch, tmp_path):
-    monkeypatch.setattr(mc, "mcp_config_global_path", lambda: tmp_path / ".claude.json")
-    abs_cmd = pathlib.Path("/venv/bin/hallucinote-mcp")
-    plan = mc.plan_mcp_config(
-        command_path=abs_cmd, on_path=False, already_registered=False, scope="user",
-    )
-    assert plan.action == "write"
-    assert plan.command == str(abs_cmd)
-
-
-def test_plan_unknown_scope_raises():
-    with pytest.raises(mc.InstallError):
-        mc.plan_mcp_config(
-            command_path=pathlib.Path("/x"), on_path=True, already_registered=False, scope="bogus",
-        )
-
-
-# --- merge / write / read / delete -----------------------------------------
-
-def test_merge_preserves_siblings_and_top_level():
-    config = {"otherKey": 1, "mcpServers": {"someone-else": {"command": "x"}}}
-    merged = mc.merge_server_entry(config, "hallucinote-mcp", ("serve",))
-    assert merged["otherKey"] == 1
-    assert merged["mcpServers"]["someone-else"] == {"command": "x"}
-    assert merged["mcpServers"]["hallucinote-mcp"] == {"command": "hallucinote-mcp", "args": ["serve"]}
-    # original not mutated
-    assert "hallucinote-mcp" not in config["mcpServers"]
-
+# --- read / write / delete (uninstall still needs these) -------------------
 
 def test_write_config_atomic(tmp_path):
     path = tmp_path / "nested" / ".mcp.json"
@@ -133,25 +82,6 @@ def test_delete_entry_malformed_raises(tmp_path):
 
 
 # --- CLI (redirected away from the real ~/.claude.json) --------------------
-
-def test_cli_configure_mcp_skip(monkeypatch, capsys):
-    monkeypatch.setattr(P, "hallucinote_mcp_command",
-                        lambda: (pathlib.Path("/usr/bin/hallucinote-mcp"), True))
-    code = main(["configure-mcp", "--registered", "true"])
-    payload = json.loads(capsys.readouterr().out)
-    assert code == 0 and payload["ok"] is True and payload["action"] == "skip"
-
-
-def test_cli_configure_mcp_writes_user_scope(monkeypatch, tmp_path, capsys):
-    cfg = tmp_path / ".claude.json"
-    monkeypatch.setattr(P, "hallucinote_mcp_command",
-                        lambda: (pathlib.Path("/usr/bin/hallucinote-mcp"), True))
-    monkeypatch.setattr(mc, "mcp_config_global_path", lambda: cfg)
-    code = main(["configure-mcp", "--scope", "user", "--registered", "false"])
-    payload = json.loads(capsys.readouterr().out)
-    assert code == 0 and payload["action"] == "write"
-    assert json.loads(cfg.read_text())["mcpServers"]["hallucinote-mcp"]["command"] == "hallucinote-mcp"
-
 
 def test_existing_mcp_config_files_accepts_str_cwd(monkeypatch, tmp_path):
     """Regression: the CLI passes --cwd as a str; install_paths must coerce to Path

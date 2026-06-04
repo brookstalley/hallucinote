@@ -23,9 +23,10 @@ venv/
 build/
 dist/
 
-# uv lockfiles — project install path is `pip install -e`; uv.lock is
-# ambient when contributors use uv locally, not a tracked dependency lock.
-uv.lock
+# NOTE: uv.lock IS tracked (INS-7V2D). The plugin bundles the MCP server and runs
+# it with uv from this committed lock into a ${CLAUDE_PLUGIN_DATA} env, so the lock
+# IS the version-coupling guarantee — it must ship with the plugin. Do not ignore it.
+# (The editable dev install via `pip install -e` doesn't read it; both coexist.)
 
 # Ableton Live project directories — local DAW state, not source of truth.
 # Captured snapshots ARE source of truth (build.py replays them) and are

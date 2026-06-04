@@ -51,10 +51,6 @@ def main(argv: list[str] | None = None) -> int:
         from .install import run_uninstall_analyzer
 
         return run_uninstall_analyzer(rest)
-    if command == "configure-mcp":
-        from .mcp import run_configure_mcp
-
-        return run_configure_mcp(rest)
     if command == "remove-mcp-config":
         from .mcp import run_remove_mcp_config
 
@@ -83,14 +79,14 @@ def _print_help(out=None) -> None:
         "  install-analyzer       Atomically install HallucinoteAnalyzer.amxd\n"
         "  uninstall-remote-script  Remove the vendored Remote Script\n"
         "  uninstall-analyzer     Remove the installed analyzer device\n"
-        "  configure-mcp          Write/skip the hallucinote-mcp MCP config entry\n"
-        "  remove-mcp-config      Delete hallucinote-mcp from all config scopes\n"
+        "  remove-mcp-config      Delete legacy hallucinote-mcp entries from all config scopes\n"
         "  version                Print the package version\n"
         "  help                   Show this message\n"
         "\n"
         "Install is skill-mediated: open Claude Code in the Hallucinote repo,\n"
-        "then run /ableton-mcp-install to set up the Remote Script and MCP\n"
-        "config. The skill body lives at skills/ableton-mcp-install/.\n",
+        "then run /ableton-mcp-install to set up the Remote Script (the MCP\n"
+        "server is provided by the plugin). The skill body lives at\n"
+        "skills/ableton-mcp-install/.\n",
         file=out,
     )
 

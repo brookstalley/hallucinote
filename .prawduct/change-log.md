@@ -4,6 +4,43 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
+
+<!-- chunks=install-hardening status=shipped release=unreleased scope=install-hardening -->
+
+Moved every `/ableton-mcp-install` + `/ableton-mcp-uninstall` filesystem and
+MCP-config mutation out of hand-authored skill shell into tested, atomic,
+cross-platform Python in the stdlib-only `hallucinote_mcp` package, exposed via CLI
+subcommands. Triggered by a zsh-glob abort (`--exclude=*.pyc`) that left a
+half-installed Control Surface (the `rm` ran, the copy didn't).
+
+- **`install_ops.py`** — `vendor_remote_script` (stage → verify → swap with rollback;
+  the half-install is now structurally impossible), `verify_remote_script`
+  (source-derived completeness + held excludes, drift-proof — no hardcoded file
+  list), `install_analyzer` (atomic file swap + overwrite-guard),
+  `remove_remote_script`/`remove_analyzer`. The rsync anchoring (package-root
+  `server.py` out, `remote_script/server.py` kept) is reproduced as a pure-Python
+  `copytree` ignore predicate — no shell, no glob expansion.
+- **`mcp_config.py`** — `plan_mcp_config` (pure 5-row truth table keyed on `on_path`
+  + `already_registered`, NOT plugin-detection — closes the venv-not-on-PATH gap with
+  a user-scope absolute-path override that dominates a plugin entry by precedence),
+  `merge_server_entry` (preserves siblings), `write_config_atomic`, `delete_entry`.
+- **CLI** — `install-remote-script`, `install-analyzer`, `uninstall-remote-script`,
+  `uninstall-analyzer`, `configure-mcp`, `remove-mcp-config`.
+- **Skills** — `/ableton-mcp-install` + `/ableton-mcp-uninstall` rewritten to
+  orchestration-only (preflight → confirm → CLI → hand-off); zero hand-authored
+  mutation shell. The consistency test's exclude-STRING drift checks consolidated
+  into behavioral tests in `test_install_ops.py` + a "skills invoke the CLI, no
+  mutation shell in command blocks" contract (contract moved, not weakened).
+- **Bug fix** — `existing_mcp_config_files`/`malformed_mcp_config_files` coerce a str
+  `cwd` to `Path` (the CLI passes `--cwd` as a str; was an `AttributeError`),
+  surfaced by the round-trip integration test.
+
++42 tests (excludes, atomicity incl. rollback + backup-preservation, the config
+truth table, hermetic install→uninstall round-trip). Full `hallucinote_mcp` suite
+938 passed. Cumulative Critic: 0 blocking. INS-4H8M (analyzer fingerprinting) is
+adjacent but unresolved — left open.
+
 ## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
 
 <!-- chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 status=shipped release=unreleased scope=tools-dont-narrow-the-art+helpers-dry -->

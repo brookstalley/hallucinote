@@ -43,7 +43,7 @@ The JSON report blocks you act on:
 - **`uv.present`** — `false` → the bundled MCP server **can't launch** (the plugin runs it via `uv run`). Tell the user to install uv (`brew install uv`, or `curl -LsSf https://astral.sh/uv/install.sh | sh`) and restart Claude Code, then re-run. This probes the install-process PATH; the authoritative check is whether `/mcp` lists the server (Step 4).
 - **`mcp_configs.malformed`** — non-empty → stop; tell the user to fix/delete those files (uninstall's `remove-mcp-config` refuses to edit malformed JSON anyway).
 - **`remote_script.candidates[*]`** — `installed: true` with `matches_mcp_server: false` is a stale install → this run is an **update** (Step 3 replaces it). `matches_mcp_server: true` → already current; you may skip to Step 4.
-- **`mcp_command`** / **`mcp_configs.containing_entry`** — feed Step 4.
+- **`mcp_configs.containing_entry`** — pre-existing `hallucinote-mcp` registrations from a *legacy* (pre-plugin) install; not needed for install (the plugin provides the server), but worth noting so the user can clean them via `/ableton-mcp-uninstall` if a stale entry shadows the plugin.
 
 ## Step 2 — Choose the User Library
 

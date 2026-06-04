@@ -81,15 +81,32 @@ Today this returns `None` (Live's edition isn't reliably detectable) — ask:
 ships only with Suite."* If it isn't Suite, you may still install it — non-render
 workflows work without it; let the user decide.
 
+**First, check `preflight`'s `analyzer` block for the chosen User Library** (it
+mirrors `remote_script`: `analyzer.source_fingerprint` + one
+`analyzer.candidates[*]` entry per candidate, each with `installed`,
+`installed_fingerprint`, and a `matches` bool). The `.amxd` is binary, so this is
+a raw-byte content fingerprint, not the Remote Script's version string. Branch on
+the candidate matching the chosen User Library:
+
+- **`installed: true` and `matches: true`** → the installed device is
+  byte-identical to the bundled source. **Skip this step entirely** — no copy, no
+  overwrite prompt. (Re-running install used to blindly re-prompt to overwrite an
+  identical device — INS-4H8M.)
+- **`installed: true` and `matches: false`** → the installed device differs
+  (newer, or Max-GUI-customized). Confirm the overwrite with the user, then
+  install with `--force` below.
+- **`installed: false`** → fresh install; run without `--force`.
+
 Install atomically:
 
 ```bash
 python -m hallucinote_mcp.cli install-analyzer --user-library "<chosen User Library>"
 ```
 
-Add `--force` to overwrite an existing device **only after confirming** — the user
-may have customized it via the Max GUI. Prints
-`{"ok": true, "target": ..., "replaced_existing": ...}`; on `ok: false`, show the error.
+Add `--force` to overwrite an existing device **only after confirming** (the
+`matches: false` case above) — the user may have customized it via the Max GUI.
+Prints `{"ok": true, "target": ..., "replaced_existing": ...}`; on `ok: false`,
+show the error.
 
 ## Step 4 — Write the MCP server config
 

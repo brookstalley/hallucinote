@@ -150,6 +150,23 @@ def _emit_device_calls(
         parent_kv = {"track_index": parent_at}
     else:
         parent_kv = {"return_index": parent_at}
+    # SYN-2M9P: master devices are CONFIGURE-ONLY across the whole stack.
+    # Ableton Live 12.4 has no LOM path to load a device onto the master
+    # strip, so DEV-2M9K made the load_handler + render setup refuse master
+    # loads ("place by hand once" contract). The planner must mirror that:
+    # emitting `device.load(master=True)` for an unlinked master device is an
+    # impossible call that FAILS at execute time and HALTS the devices phase
+    # (outcome='partial'), leaving every downstream phase PENDING. Skip the
+    # load with a place-by-hand note; set_parameter writes (below) still fire
+    # once the hand-placed device is linked.
+    if parent_kind == "master" and device_at is None:
+        plan.warn(
+            f"master device {device['display_name']!r} (kind {device['kind']!r}) "
+            "not loadable via LOM — Live 12.4 has no master-strip load path; "
+            "place it on the master by hand once, then re-run push to record "
+            "its index and write parameters"
+        )
+        return
     if device_at is None:
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.

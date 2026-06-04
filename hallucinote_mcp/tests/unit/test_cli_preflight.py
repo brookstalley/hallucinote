@@ -20,6 +20,7 @@ def test_preflight_report_has_expected_top_level_keys():
         "mcp_command",
         "mcp_configs",
         "remote_script",
+        "analyzer",
         "platform",
     }
 

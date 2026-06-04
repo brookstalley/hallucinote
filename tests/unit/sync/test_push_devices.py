@@ -499,11 +499,17 @@ def master_track(conn, song):
 def test_plan_push_devices_walks_master_chain(
     conn, song, session, master_track,
 ):
-    """plan_push_devices no longer skips kind='master' tracks. With a master
-    device chain in the DB, the planner emits a load ToolCall addressed via
-    master=True (no track_index, no return_index). Closes the P0 backlog
-    entry "Master-strip device chains" (`src/hallucinote/sync/push.py:928-966`,
-    pre-Chunk-2)."""
+    """plan_push_devices walks kind='master' tracks but — per SYN-2M9P /
+    DEV-2M9K — must NOT emit an impossible ``device.load(master=True)`` for an
+    UNLINKED master device: Ableton Live 12.4 has no LOM path to load a device
+    onto the master strip, so that call fails at execute time and HALTS the
+    devices phase (outcome='partial'), stranding every downstream phase. The
+    corrected contract: skip the load and surface a place-by-hand note. (An
+    earlier chunk asserted exactly one master load here, encoding the behavior
+    DEV-2M9K later proved impossible; that assertion is now corrected. Param
+    writes on a hand-placed+linked master device still fire — see
+    test_plan_push_devices_master_set_parameter_uses_master_kv. Fuller coverage
+    of the corrected contract lives in test_syn_2m9p_master_load.py.)"""
     cid = M.create_device_chain(conn, parent_track_id=master_track)
     M.create_device(
         conn, chain_id=cid, position=1,
@@ -512,12 +518,10 @@ def test_plan_push_devices_walks_master_chain(
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     loads = [c for c in plan.calls if c.args.get("action") == "load"]
-    assert len(loads) == 1
-    call = loads[0]
-    assert call.args.get("master") is True
-    assert "track_index" not in call.args
-    assert "return_index" not in call.args
-    assert call.args["kind"] == "Limiter"
+    assert loads == [], f"unlinked master device must emit zero loads, got {loads}"
+    assert any(
+        "not loadable via LOM" in n and "by hand" in n for n in plan.notes
+    ), plan.notes
 
 
 def test_plan_push_devices_master_chain_no_unlinked_track_warn(

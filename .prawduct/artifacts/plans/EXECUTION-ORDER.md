@@ -8,6 +8,16 @@ This document is the orchestration layer ON TOP of the per-item plans: collision
 graph, the single-Live-instance serialization, dependency/coupling order, and the
 recommended sequence. It does not restate the chunk specs (LINK-DON'T-SUMMARIZE).
 
+> **Wave-plan header convention (MET-9D4H, 2026-06-04):** every build/wave plan
+> header carries a top-level `## Requirements Confidence: High|Medium|Low`
+> declaration (`planning.md §Requirements Confidence` — the symptom this field
+> exists to catch is a Medium-confidence plan that builds before its open dial is
+> resolved). It is the wave-level rollup of the per-chunk Confidence checks, NOT a
+> substitute for them. This is already satisfied by all six per-item build-plans
+> under `plans/<ID>/build-plan.md` (ARR-7M3D Medium, ARR-8P5K High, ARR-9K4T
+> Medium, MEL-1A7K High, MIX-3S7P High, SYN-4P2D High); the field is added to new
+> wave headers going forward rather than retrofitted onto already-shipped plans.
+
 ---
 
 ## 1. COLLISION GRAPH (shared edit surfaces → separate PRs that rebase on merge)

@@ -372,21 +372,29 @@ def _apply_session_clips_for_track(
         if empty:
             # Ableton slot empty; if DB has a clip, delete it.
             if db_clip is not None:
-                M.delete_clip(
-                    conn, clip_id=db_clip["id"],
-                    actor=actor, request_id=request_id, reason=reason,
-                )
-                out.mutations += 1
-                out.details.append(
-                    f"track {track_row['name']!r}: session slot {slot} "
-                    f"cleared in Ableton -> deleted DB clip "
-                    f"(clip_id={db_clip['id'][:8]} {db_clip['name']!r})"
+                _delete_session_clip_observing_cascade(
+                    conn, track_row=track_row, slot=slot, db_clip=db_clip,
+                    out=out, actor=actor, request_id=request_id, reason=reason,
+                    cause="cleared in Ableton",
                 )
             else:
                 out.no_ops += 1
             continue
 
-        # Ableton slot populated.
+        # Ableton slot populated. SYN-9K5T parity: the arrangement-clip
+        # apply warns when a populated entry is missing the fields it diffs
+        # on. The session apply diffs on `name` + `length`; a populated entry
+        # carrying neither can't drift-match, so it would silently no-op.
+        # Warn explicitly (matching `_apply_arrangement_clips_for_track`'s
+        # "entry missing ..." warning) rather than tolerate the asymmetry.
+        if entry.get("name") is None and entry.get("length") is None:
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} reported "
+                f"populated but missing both 'name' and 'length' — cannot "
+                f"diff; skipping (entry={entry!r})"
+            )
+            continue
+
         if db_clip is None:
             # Ableton has content the DB doesn't know about. Same V1
             # limitation as the arrangement-clip case: positional
@@ -432,16 +440,52 @@ def _apply_session_clips_for_track(
     for slot, db_clip in db_by_slot.items():
         if slot in seen:
             continue
-        M.delete_clip(
-            conn, clip_id=db_clip["id"],
-            actor=actor, request_id=request_id, reason=reason,
+        _delete_session_clip_observing_cascade(
+            conn, track_row=track_row, slot=slot, db_clip=db_clip,
+            out=out, actor=actor, request_id=request_id, reason=reason,
+            cause="out of Ableton range",
         )
-        out.mutations += 1
-        out.details.append(
-            f"track {track_row['name']!r}: session slot {slot} out of "
-            f"Ableton range -> deleted DB clip "
-            f"(clip_id={db_clip['id'][:8]} {db_clip['name']!r})"
+
+
+def _delete_session_clip_observing_cascade(
+    conn: sqlite3.Connection,
+    *,
+    track_row: sqlite3.Row,
+    slot: int,
+    db_clip: sqlite3.Row,
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+    cause: str,
+) -> None:
+    """Delete a session-view DB clip and make its arrangement-clip cascade
+    observable (SYN-3D7M).
+
+    `delete_clip` removes the `clips` row, which cascades to every
+    `arrangement_clips` placement that referenced it
+    (``ON DELETE CASCADE``). That cross-domain side effect leaves no
+    per-row detail of its own, so per the "never silently drop"
+    discipline we count the placements *before* the delete and append a
+    `details` line when any were removed by the cascade.
+    """
+    cascaded = Q.count_arrangement_clips_for_clip(conn, db_clip["id"])
+    M.delete_clip(
+        conn, clip_id=db_clip["id"],
+        actor=actor, request_id=request_id, reason=reason,
+    )
+    out.mutations += 1
+    detail = (
+        f"track {track_row['name']!r}: session slot {slot} {cause} -> "
+        f"deleted DB clip (clip_id={db_clip['id'][:8]} {db_clip['name']!r})"
+    )
+    if cascaded:
+        plural = "placement" if cascaded == 1 else "placements"
+        detail += (
+            f"; cascade removed {cascaded} arrangement {plural} "
+            f"referencing this clip"
         )
+    out.details.append(detail)
 
 
 __all__ = [

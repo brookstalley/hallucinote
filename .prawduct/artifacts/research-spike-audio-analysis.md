@@ -193,6 +193,16 @@ librosa 0.11     — STFT, spectral_centroid/flatness/rolloff, onset
 pyroomacoustics  — pull just .experimental.rt60.measure_rt60 (Schroeder)
 ```
 
+> **Decision-record update (2026-06-04, AUD-9D3P):** this proposed stack SHIPPED
+> as core (not optional) dependencies. `pyproject.toml` (lines 18-23) now declares
+> `numpy>=1.26`, `scipy>=1.11`, `soundfile>=0.12`, `pyloudnorm>=0.2`,
+> `librosa>=0.10`, `pyroomacoustics>=0.7` as main deps — the `src/hallucinote/audio/`
+> modules import them directly. The earlier "Python 3.10+ stdlib-only runtime"
+> framing for the *library* is therefore superseded for the audio layer
+> (`project-state.yaml` technology decision updated to match); the
+> **hallucinote-mcp server** remains stdlib-only. `change-log.md` (~line 430)
+> carries the dep-adoption justification.
+
 Deliberately excluded: **essentia** (AGPL — contaminates downstream),
 **aubio** (dormant, GPL), **madmom** (NumPy-2 incompat, inactive),
 **spleeter** (dead since TF1.x), **demucs** (deferred until a stemless-input

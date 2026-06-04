@@ -165,6 +165,49 @@ def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[s
     ).fetchall()
 
 
+def get_arrangement_placements_with_clip_length(
+    conn: sqlite3.Connection, track_id: str
+) -> list[sqlite3.Row]:
+    """Arrangement placements on one track, joined with the source clip's
+    ``length_beats`` for envelope-coverage resolution.
+
+    The sync layer resolves envelope addressing against the SOURCE session
+    clip's natural length (not the placement's trimmed ``end_bar``), so it
+    needs ``clips.length_beats`` alongside each placement. Columns:
+    ``(id, clip_id, start_bar, end_bar, length_beats)``, ordered
+    ``(start_bar, id)`` for deterministic earliest-placement matching.
+    Factors the inline ``arrangement_clips JOIN clips`` read out of the
+    sync caller, consistent with the read-helper discipline.
+    """
+    return conn.execute(
+        """SELECT a.id, a.clip_id, a.start_bar, a.end_bar, c.length_beats
+           FROM arrangement_clips a
+           JOIN clips c ON c.id = a.clip_id
+           WHERE a.track_id = ?
+           ORDER BY a.start_bar, a.id""",
+        (track_id,),
+    ).fetchall()
+
+
+def count_arrangement_clips_for_clip(
+    conn: sqlite3.Connection, clip_id: str
+) -> int:
+    """Count arrangement placements that reference one `clips` row.
+
+    A `clips` row can back multiple arrangement-clip placements; deleting
+    the clip cascades (`arrangement_clips.clip_id REFERENCES clips ON DELETE
+    CASCADE`) and removes every placement. Callers that need the cascade to
+    be observable (the session-clip pull deletes clips and must not silently
+    drop arrangement placements) read this count *before* the delete so they
+    can report what the cascade removed.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM arrangement_clips WHERE clip_id = ?",
+        (clip_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
 def get_events_for_song(
     conn: sqlite3.Connection,
     song_id: str,

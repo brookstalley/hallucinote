@@ -4,6 +4,14 @@ Implements `.prawduct/artifacts/onboarding-and-teaching-model.md`. Read that fir
 it is the durable design. This plan is the **what/sequencing**; build-governance.md
 is the **how**.
 
+## Requirements Confidence: **High** (two chunks Medium)
+
+Wave-level rollup of the per-chunk Confidence checks already declared inline (MET-9D4H
+header-convention backfill, 2026-06-04 — level taken from the plan's own per-chunk text,
+not fabricated): the format is settled in the design doc and most chunks are High; the
+two Medium chunks are the `song-new` open→proposal split (C5, this header's §line 142)
+and the revision-flow surface that reuses the mix-review INTERPRET loop (C9, §line 183).
+
 **Scope this plan:** the *sitting-down-to-write-a-song* (create) experience.
 **Deferred (next plans):** revision-flow polish, the learn-the-tool flow, and
 distribution / the non-technical entry gate.

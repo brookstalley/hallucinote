@@ -4,6 +4,62 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
+
+<!-- chunks=backlog-low-cost-sweep status=shipped release=v0.9.2 scope=backlog-low-cost-sweep -->
+
+A parallel sweep of the low-cost / no-Live tier of the backlog, executed as seven
+file-disjoint clusters (verify-against-current-code, then surgical fix + narrow
+tests) since the backlog's file references had drifted (`sync/push.py` was split
+into `sync/push/` + `sync/pull/`). 9 commits, +~1840/-92, full suite 3033 passed
+across 3 consecutive `-n auto --dist loadgroup` runs.
+
+- **SYN-2M9P** — `plan_push_devices` no longer emits an impossible
+  `device.load(master=True)` for an unlinked master device (Live 12.4 has no LOM
+  master-load path). It skips the load with a place-by-hand note; `set_parameter`
+  still fires on a hand-placed+linked master device. Removes the reliably-PARTIAL
+  push (devices-phase halt stranding envelopes/arrangement/cues) for any song
+  authoring a master-strip chain. Mirrors DEV-2M9K's "configure-only" contract.
+- **SYN-8H2W** — markdown frontmatter inline-list items containing `,` / `[` / `]`
+  now survive the serialize→parse round-trip (quote-aware split + conditional item
+  quoting; loud raise on the unrepresentable both-quote-chars case).
+- **SYN-1T4K** — `_TRANSACTION_DEPTH` moved to a `threading.local`-backed map; the
+  single-thread nesting contract is byte-identical.
+- **SYN-3D7M / SYN-9K5T** — session-clip `delete_clip → arrangement_clips` cascade
+  is now counted + reported in `out.details`; a populated entry missing BOTH name
+  and length now warns (parity with the arrangement path) instead of silent no-op.
+- **SYN-2K8T** — the one raw `arrangement_clips JOIN clips` read factored into
+  `Q.get_arrangement_placements_with_clip_length` (read-helper discipline).
+- **DEV-6T2W** — the `inventory_handler` device-walk is now bounded by a node-visit
+  budget (`max_nodes`, default 200000) vs the 15s main-thread ceiling; returns
+  `truncated=True` (never-silently-truncate) and the misleading "raise read_timeout"
+  tip was corrected to "subdivide via `path_prefix`".
+- **GEN-5K2D** — new exact-rational `generators.primitives.polyrhythm()` via
+  `fractions.Fraction` (composed ratios land exact; float→edge at the mutator only).
+- **INS-4H8M** — analyzer `HallucinoteAnalyzer.amxd` raw-byte sha256 fingerprint +
+  a preflight `analyzer` drift block; `/ableton-mcp-install` Step 3d branches on
+  `matches` to skip the redundant overwrite prompt (parity with the Remote Script
+  verify). Verified on the real machine.
+- **TST-7H2M** — `@settings(deadline=None)` on the two compute-bound `@given`
+  correlation/DFA tests (the parallel-xdist flake class; assertions unchanged).
+- **TST-4M9D** — FastMCP single-tool lookup centralized in a `get_registered_tool`
+  helper that prefers the public `get_tool()` accessor (was reaching into `_tools`).
+- **DOC-3P7K / AUD-9D3P / MET-9D4H** — deep reference docs reprefixed to
+  `/hallucinote:*` + songs-repo paths (post-split); the audio dep-adoption recorded
+  in `project-state.yaml` (the stack uses numpy/scipy/librosa as CORE deps — the
+  "stdlib-only" decision was superseded, not reversed); Requirements-Confidence
+  header convention documented.
+- **TST-7K3H** — verified already-fixed-and-tested (the W6-A note-expression
+  validate-before-gap precedence + its three tests predate the stale item).
+
+Deferred with rationale (NOT silently dropped): **DEV-1F9X** (plugin-discriminator
+dedup) stays open — correctly gated on the unshipped W11-A `hallucinote-core`
+extraction so the move happens once, not twice. Also filed **TPL-2D8K** (a project
+`.als` template with the master-bus chain pre-placed — the user-requested workaround
+for "LOM can't add master devices"). Cumulative Critic: 0 blocking, 2 warnings
+(stale evidence + this change-log entry — both resolved here), 2 notes (markdown
+write-boundary hardened; backlog reconciled).
+
 ## 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
 
 <!-- chunks=install-hardening status=shipped release=unreleased scope=install-hardening -->

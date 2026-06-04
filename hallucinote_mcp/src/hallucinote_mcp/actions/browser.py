@@ -232,8 +232,17 @@ register(
                 name="max_entries", type="int", required=False, minimum=1,
                 description=(
                     "Breadth cap on loadables returned (default 20000). Keeps "
-                    "one response under the 16 MiB wire cap and bounds the "
-                    "main-thread walk. truncated=True when hit."
+                    "one response under the 16 MiB wire cap. truncated=True "
+                    "when hit."
+                ),
+            ),
+            ParamSpec(
+                name="max_nodes", type="int", required=False, minimum=1,
+                description=(
+                    "Visit budget on TOTAL nodes walked (default 200000). "
+                    "Bounds the main-thread wall-clock so a folder-heavy root "
+                    "can't trip the server's 15s ceiling. truncated=True when "
+                    "hit — subdivide via path_prefix."
                 ),
             ),
         ),
@@ -241,8 +250,13 @@ register(
         example="ableton_browser(action='inventory', root='drums')",
         tips=(
             "Built for `python -m hallucinote.inventory refresh`, which calls "
-            "this per root and writes ~/.hallucinote/inventory. Pass a higher "
-            "read_timeout — a large root walk can exceed the 15s default.",
+            "this per root and writes ~/.hallucinote/inventory. The whole walk "
+            "runs in ONE main-thread bout under the server's 15s ceiling; "
+            "max_nodes (default 200000) bounds it and max_entries (default "
+            "20000) caps loadables. A pack-heavy root that returns "
+            "truncated=True should be subdivided via path_prefix, NOT retried "
+            "with a longer client wait — the client read_timeout only extends "
+            "the wire wait, not main-thread completion.",
         ),
     )
 )

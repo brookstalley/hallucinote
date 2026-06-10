@@ -213,6 +213,35 @@ def get_handler(context: LiveContext, path: str) -> dict[str, Any]:
     }
 
 
+def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
+    """Write a property at ``path``; return old + read-back values.
+
+    Settability is itself a probe finding (e.g. "is ``count_in_duration``
+    read-only?") — a refusal from Live propagates as a structured error,
+    which IS the result. ``value`` may be ``{"$path": ...}`` for LOM-object
+    properties (e.g. ``song.view.highlighted_clip_slot``).
+    """
+    parent_path, sep, attr = path.strip().rpartition(".")
+    if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", attr):
+        raise ValueError(
+            f"invalid set path {path!r}: must end in '.attribute' "
+            f"(indexes cannot be assigned)"
+        )
+    parent = resolve_path(context, parent_path)
+    try:
+        old = getattr(parent, attr)
+    except AttributeError:
+        raise AttributeError(
+            f"{parent_path} ({type(parent).__name__}) has no attribute {attr!r}"
+        ) from None
+    setattr(parent, attr, _resolve_arg(context, value))
+    return {
+        "path": path,
+        "old": serialize(old),
+        "new": serialize(getattr(parent, attr)),
+    }
+
+
 def call_handler(
     context: LiveContext,
     path: str,

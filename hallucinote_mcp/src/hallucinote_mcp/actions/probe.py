@@ -76,6 +76,27 @@ register(
 register(
     Action(
         tool="ableton_probe",
+        name="set",
+        description=(
+            "Write a property at a LOM path (path must end in '.attribute'). "
+            "Returns old + read-back values. A refusal from Live (read-only "
+            "property, invalid value) is a structured error — settability is "
+            "itself a probe finding. value may be {\"$path\": ...} for "
+            "LOM-object properties. CAN MUTATE the Live set — probe in "
+            "scratch sets."
+        ),
+        params=(
+            ParamSpec(name="path", type="str"),
+            ParamSpec(name="value", type="any"),
+        ),
+        handler=probe_handlers.set_handler,
+        example="ableton_probe(action='set', path='song.record_mode', value=True)",
+    )
+)
+
+register(
+    Action(
+        tool="ableton_probe",
         name="call",
         description=(
             "Invoke a method on the LOM object at a path. args is a JSON "

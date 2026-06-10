@@ -12,6 +12,7 @@ from hallucinote_mcp.handlers.probe import (
     get_handler,
     resolve_path,
     serialize,
+    set_handler,
 )
 from hallucinote_mcp.schema import actions_for
 from hallucinote_mcp.testing import isolated_actions
@@ -241,6 +242,43 @@ class TestGet:
     def test_lom_object(self):
         out = get_handler(FakeCtx(), "song.tracks[0].mixer_device.volume")
         assert out["value"]["__lom__"] == "FakeVolume"
+
+
+# ---------- set ----------
+
+
+class TestSet:
+    def test_primitive_write_returns_old_and_new(self):
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tempo", 140.0)
+        assert out == {"path": "song.tempo", "old": 120.0, "new": 140.0}
+        assert ctx.song.tempo == 140.0
+
+    def test_bool_write(self):
+        ctx = FakeCtx()
+        set_handler(ctx, "song.tracks[0].arm", True)
+        assert ctx.song.tracks[0].arm is True
+
+    def test_dollar_path_value(self):
+        ctx = FakeCtx()
+        set_handler(
+            ctx,
+            "song.tracks[0].mixer_device.volume",
+            {"$path": "song.tracks[1].mixer_device.volume"},
+        )
+        assert (
+            ctx.song.tracks[0].mixer_device.volume
+            is ctx.song.tracks[1].mixer_device.volume
+        )
+
+    def test_unknown_attribute_rejected_before_write(self):
+        with pytest.raises(AttributeError, match="no attribute 'nonexistent'"):
+            set_handler(FakeCtx(), "song.nonexistent", 1)
+
+    @pytest.mark.parametrize("bad", ["song", "song.tracks[0]"])
+    def test_path_must_end_in_attribute(self, bad):
+        with pytest.raises(ValueError, match="must end in '.attribute'"):
+            set_handler(FakeCtx(), bad, 1)
 
 
 # ---------- call ----------

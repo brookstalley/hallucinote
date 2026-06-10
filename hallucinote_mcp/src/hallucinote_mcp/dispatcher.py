@@ -140,6 +140,11 @@ def validate_params(action: schema.Action, params: dict[str, Any]) -> dict[str, 
     cleaned: dict[str, Any] = {}
     for name, value in params.items():
         spec = spec_by_name[name]
+        if spec.type == "any":
+            # Polymorphic param (e.g. ableton_probe set's value) — any JSON
+            # shape is valid; enum/min/max don't apply.
+            cleaned[name] = value
+            continue
         expected = _TYPE_MAP[spec.type]
         # bool is a subclass of int in Python — special-case so int param doesn't
         # accept True/False silently.

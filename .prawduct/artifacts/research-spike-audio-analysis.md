@@ -389,7 +389,7 @@ Prove the end-to-end shape works on one known song. *Structural* validation — 
 3. **Reverb verification (one declared send).** For one snare→reverb-return pair with declared decay time in the DB, Wiener-deconvolve the IR, compute RT60, compare to intent.
 
 **Output**
-- `MixReport` JSON at `songs/<slug>/analysis/<timestamp>.json`. Schema: per-stem metrics, master metrics, top-3 master overshoots with attribution, reverb verification result, `findings` list keyed to DB intent (track role, send target). `compare_to` field present in schema but not implemented (skeleton only).
+- `MixReport` JSON at `songs/<slug>/analysis/<timestamp>.json`. Schema: per-stem metrics, master metrics, top-3 master overshoots with attribution, reverb verification result, `findings` list keyed to DB intent (track role, send target). `compare_to` field present in schema but not implemented (skeleton only). *(Decision-record update 2026-06-10, AUD-4W7K: implemented — see the defer-list note below.)*
 
 **MCP surface**
 - `ableton_render` — capture stems.
@@ -402,6 +402,15 @@ Prove the end-to-end shape works on one known song. *Structural* validation — 
 - Tonal-balance reference curves and genre reference corpus.
 - Realtime streaming UI / live mix coaching (OSC features land but only basic three; no live dashboard).
 - `compare_to` baseline diffing (field reserved; implementation deferred).
+  > **Decision-record update (2026-06-10, AUD-4W7K):** SHIPPED for the
+  > take-over-take form — `analyze_mix(compare_to=<seq>)` resolves the
+  > baseline by `db_seq` (captures tag the song's latest audit-log seq in
+  > `manifest.db_seq` at render time) and emits per-surface loudness deltas
+  > + calibrated significance flags into `MixReport.compare_to`. Reference-
+  > track / genre-target baselines from §2 remain out of scope (the §2
+  > example's ratio metrics aren't in the loudness schema; deltas cover
+  > LUFS-I/S/M + true peak + overshoot count). Deltas are neutral evidence —
+  > no finding kinds derive from them.
 - Candidate mutation proposals (sidechain, EQ carves, limiter inserts) — MVP diagnoses, does not propose.
 - Multi-song validation; pin/unpin for take retention; rolling-window cleanup.
 - Source separation fallback for stemless input.

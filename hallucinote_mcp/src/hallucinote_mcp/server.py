@@ -206,6 +206,7 @@ def handle_tool_call(
     # before forwarding.
     if request.tool == "ableton_render" and request.action == "render":
         request = _absolutize_render_output_dir(request)
+        request = _attach_render_db_seq(request)
 
     # Forward to the Remote Script. ableton_render(render) drives full-
     # arrangement playback before responding (minutes for a long song),
@@ -282,6 +283,58 @@ def _absolutize_render_output_dir(request: Request) -> Request:
         song_dir = pathlib.Path(os.getcwd()) / "songs" / song_slug
     default = song_dir / "captures" / ts
     params["output_dir"] = str(default.resolve())
+    return dataclasses.replace(request, params=params)
+
+
+def _attach_render_db_seq(request: Request) -> Request:
+    """Tag the forwarded render call with the song's latest audit-log seq.
+
+    The render handler runs inside Live's vendored env (no hallucinote
+    package), so the seq is read HERE — the MCP server process has the
+    engine — and forwarded as the ``db_seq`` param the handler writes
+    into ``manifest.json``. Read at render-trigger time, which matches
+    the audio ONLY when the DB state has been pushed to Live first (the
+    normal flow). Mutate-without-push leaves the tag pointing at DB
+    state the audio doesn't reflect — the seq is "latest DB state at
+    render time", not a proof of what Live played; consumers comparing
+    by seq inherit that caveat (it's surfaced in the analyze action's
+    compare_to description).
+
+    Degrades to no tag (``manifest.db_seq`` absent → loads as None) when
+    the engine isn't importable, the song DB doesn't exist yet, or an
+    explicit ``db_seq`` was already supplied — never blocks a render over
+    provenance.
+    """
+    params = dict(request.params)
+    if params.get("db_seq") is not None:
+        return request
+    song_slug = params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return request  # let the handler emit its own teaching error
+    try:
+        from hallucinote.db.connection import connect, resolve_db_path
+        from hallucinote.db import queries as Q
+
+        db_path = resolve_db_path(song_slug)
+        if not db_path.exists():
+            return request
+        conn = connect(db_path)
+        try:
+            song = Q.get_song_by_name(conn, song_slug)
+            if song is None:
+                return request
+            seq = Q.get_latest_seq_for_song(conn, song["id"])
+        finally:
+            conn.close()
+    except Exception:  # prawduct:allow prawduct/broad-except -- provenance is best-effort; a render must never fail because the seq read did
+        logger.warning(
+            "render: could not read latest db seq for %r; manifest will "
+            "carry no db_seq", song_slug, exc_info=True,
+        )
+        return request
+    if seq is None:
+        return request
+    params["db_seq"] = seq
     return dataclasses.replace(request, params=params)
 
 

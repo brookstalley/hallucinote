@@ -1022,3 +1022,39 @@ def test_render_stops_and_disarms_in_separate_bouts(
         analyzer = next(d for d in t.devices if d.name == "HallucinoteAnalyzer")
         arm = next(p for p in analyzer.parameters if p.name == "Arm")
         assert arm.value == 0.0
+
+
+def test_render_manifest_records_db_seq_param(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """AUD-4W7K: the server-attached db_seq param lands in manifest.json —
+    the audit-log key baseline diffs resolve by. Absent param → null (the
+    loader treats both as untagged)."""
+    def _clock():
+        return 999.0
+
+    common = dict(
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=_clock,
+        _now_iso=lambda: "20260610T120000Z",
+    )
+
+    tagged = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(tmp_path / "a"),
+        song_slug="test-song",
+        db_seq=4823,
+        **common,
+    )
+    manifest = json.loads(Path(tagged["manifest_path"]).read_text())
+    assert manifest["db_seq"] == 4823
+
+    untagged = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(tmp_path / "b"),
+        song_slug="test-song",
+        **common,
+    )
+    manifest = json.loads(Path(untagged["manifest_path"]).read_text())
+    assert manifest["db_seq"] is None

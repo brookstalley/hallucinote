@@ -1096,3 +1096,67 @@ def test_analyze_mix_missing_baseline_fails_fast(tmp_path: Path):
     )
     with pytest.raises(FileNotFoundError):
         analyze_mix(captures_dir, compare_to=tmp_path / "nope.json")
+
+
+def test_analyze_mix_compare_to_seq_resolves_via_analysis_dir(tmp_path: Path):
+    """The seq form end-to-end: a manifest tagged db_seq=7 produces a report
+    carrying db_seq=7; a later analyze with compare_to=7 resolves that report
+    from the analysis dir and diffs against it."""
+    duration_s = 4.0
+
+    def _capture(subdir: str, db_seq: int | None) -> Path:
+        captures_dir = _write_synthetic_capture(
+            tmp_path / subdir,
+            stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+            master_audio=calibrated_pink_noise(-22.0, duration_s),
+        )
+        if db_seq is not None:
+            manifest_file = captures_dir / "manifest.json"
+            raw = json.loads(manifest_file.read_text(encoding="utf-8"))
+            raw["db_seq"] = db_seq
+            manifest_file.write_text(json.dumps(raw), encoding="utf-8")
+        return captures_dir
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+
+    baseline_report = analyze_mix(_capture("a", db_seq=7))
+    assert baseline_report.db_seq == 7  # manifest tag flows into the report
+    (analysis_dir / "20260610T010000Z.json").write_text(
+        json.dumps(baseline_report.to_json_dict(), allow_nan=False),
+        encoding="utf-8",
+    )
+
+    report = analyze_mix(
+        _capture("b", db_seq=9), compare_to=7, analysis_dir=analysis_dir,
+    )
+    assert report.db_seq == 9
+    assert report.compare_to is not None
+    assert report.compare_to["baseline"]["ref"].endswith("20260610T010000Z.json")
+
+
+def test_analyze_mix_seq_without_analysis_dir_refuses(tmp_path: Path):
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    with pytest.raises(ValueError, match="analysis_dir"):
+        analyze_mix(captures_dir, compare_to=7)
+
+
+def test_analyze_mix_wrong_song_baseline_refuses_up_front(tmp_path: Path):
+    """A baseline from another song refuses before the DSP passes — the
+    up-front copy of the diff_reports invariants (Critic chunk-1 note)."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    baseline_path = tmp_path / "other.json"
+    baseline_path.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION,
+        "song_slug": "some-other-song",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="cross-song"):
+        analyze_mix(captures_dir, compare_to=baseline_path)

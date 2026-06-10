@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alignment import trim_to_common_length
-from .compare import diff_reports
+from .compare import diff_reports, resolve_baseline
 from .attribution import (
     band_attribution,
     find_master_overshoots,
@@ -47,6 +47,7 @@ from .density import section_onset_density
 from .energy import LOUDNESS, ONSET_DENSITY, realize_energy
 from .masking import analyze_masking_window
 from .report import (
+    SCHEMA_VERSION,
     EnergyRealization,
     EnvelopeVerification,
     Finding,
@@ -153,7 +154,8 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
-    compare_to: Path | str | None = None,
+    compare_to: int | Path | str | None = None,
+    analysis_dir: Path | str | None = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -176,23 +178,53 @@ def analyze_mix(
     populated lists. This function stays DB-agnostic so synthetic-fixture
     tests can drive it without a song DB.
 
-    ``compare_to`` is a path to a previously-written analysis JSON to use as
-    the baseline: the finished report is diffed against it (per-surface
-    loudness deltas + significance flags, see ``compare.diff_reports``) and
-    the result lands in ``MixReport.compare_to``. Deltas are neutral
-    evidence graded against intent by the consumer — no findings are
-    derived from them.
+    ``compare_to`` selects a baseline for a before/after diff: an ``int`` is
+    a song audit-log seq, resolved against ``analysis_dir`` (the directory
+    of previously-written analysis JSONs — required for the seq form) via
+    ``compare.resolve_baseline``; a path names a baseline JSON directly.
+    The finished report is diffed against it (per-surface loudness deltas +
+    significance flags, see ``compare.diff_reports``) and the result lands
+    in ``MixReport.compare_to``. Deltas are neutral evidence graded against
+    intent by the consumer — no findings are derived from them.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
 
-    # Load the baseline up front so a bad path / unreadable JSON fails fast,
-    # before the expensive DSP passes — the diff itself runs at the end.
+    # Resolve + load + validate the baseline up front so a bad seq / path /
+    # song fails fast, before the expensive DSP passes — the diff itself
+    # runs at the end. diff_reports re-checks the same invariants (it is
+    # callable on raw dicts); this earlier copy just moves the refusal
+    # ahead of the analysis cost.
     baseline: dict | None = None
+    baseline_ref: str | None = None
     if compare_to is not None:
-        baseline_path = Path(compare_to)
+        if isinstance(compare_to, bool):
+            raise TypeError("compare_to must be a seq int or a path, not a bool")
+        if isinstance(compare_to, int):
+            if analysis_dir is None:
+                raise ValueError(
+                    "compare_to=<seq> requires analysis_dir — the directory "
+                    "of previous analysis JSONs to resolve the seq against"
+                )
+            baseline_path = resolve_baseline(analysis_dir, compare_to)
+        else:
+            baseline_path = Path(compare_to)
+        baseline_ref = str(baseline_path)
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if baseline.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(
+                f"baseline {baseline_path} has schema_version="
+                f"{baseline.get('schema_version')!r}; this analyzer writes "
+                f"{SCHEMA_VERSION!r} — incomparable shapes refuse up front"
+            )
+        if baseline.get("song_slug") != capture.song_slug:
+            raise ValueError(
+                f"baseline {baseline_path} is for song "
+                f"{baseline.get('song_slug')!r}, capture is "
+                f"{capture.song_slug!r} — cross-song baselines are not "
+                "supported"
+            )
 
     # Trim every surface to the common length (AUD-1C7K). Per-surface sfrecord~
     # instances finalize at staggered times, so the raw WAVs differ in length;
@@ -289,11 +321,12 @@ def analyze_mix(
         skipped_analyses=skipped,
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
+        db_seq=capture.db_seq,
     )
 
     if baseline is not None:
         report.compare_to = diff_reports(
-            report.to_json_dict(), baseline, baseline_ref=str(Path(compare_to))
+            report.to_json_dict(), baseline, baseline_ref=baseline_ref
         )
 
     return report

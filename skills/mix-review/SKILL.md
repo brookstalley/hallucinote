@@ -292,6 +292,18 @@ when the song declares sections. (If `ableton_analysis` returns a report with no
 `masking`/`attribution` keys, the MCP server is running stale code — tell the
 user to run `/mcp` to respawn it.)
 
+**Verifying a mix change (A/B):** after applying a fix, re-render + re-analyze
+with `compare_to=<db_seq of the before-report>` — each report carries its
+`db_seq` (the audit-log state its capture reflects). The new report's
+`compare_to` field lists per-surface loudness deltas with significance flags:
+read it to confirm the change did what it predicted instead of re-arguing from
+the absolute numbers. Deltas are neutral evidence — grade them against the
+declared intent, and remember the same caveats below apply to both sides of
+the diff. Significance floors are calibrated for master/stem surfaces;
+near-silent surfaces (quiet reverb returns) can flag large dB deltas that are
+capture-tail variance, not mix moves — weigh the before/after absolutes in
+each row.
+
 ## Honest confidence — caveats you MUST carry
 
 State these when they bear on a finding; never present masking as ground truth:

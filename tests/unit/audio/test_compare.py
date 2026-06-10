@@ -171,3 +171,57 @@ def _find(out: dict, track_id: str, metric: str) -> dict:
     ]
     assert len(matches) == 1, f"expected one row for {track_id}/{metric}"
     return matches[0]
+
+
+# ---------------------------------------------------------------------------
+# resolve_baseline — seq → analysis-JSON resolution
+# ---------------------------------------------------------------------------
+
+
+def _write_analysis(dir_: "Path", name: str, *, db_seq: int | None) -> "Path":
+    import json
+    dir_.mkdir(parents=True, exist_ok=True)
+    payload = _report()
+    payload["db_seq"] = db_seq
+    path = dir_ / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_resolve_baseline_matches_seq(tmp_path):
+    from hallucinote.audio.compare import resolve_baseline
+    _write_analysis(tmp_path, "20260601T010000Z.json", db_seq=10)
+    target = _write_analysis(tmp_path, "20260602T010000Z.json", db_seq=20)
+    assert resolve_baseline(tmp_path, 20) == target
+
+
+def test_resolve_baseline_tie_breaks_to_latest(tmp_path):
+    """Same seq on several reports (re-analyses of one capture) → the
+    newest wins; ISO filenames make lex order chronological."""
+    from hallucinote.audio.compare import resolve_baseline
+    _write_analysis(tmp_path, "20260601T010000Z.json", db_seq=10)
+    latest = _write_analysis(tmp_path, "20260603T010000Z.json", db_seq=10)
+    assert resolve_baseline(tmp_path, 10) == latest
+
+
+def test_resolve_baseline_no_match_teaches_available_seqs(tmp_path):
+    from hallucinote.audio.compare import resolve_baseline
+    _write_analysis(tmp_path, "a.json", db_seq=10)
+    _write_analysis(tmp_path, "b.json", db_seq=20)
+    with pytest.raises(ValueError, match=r"db_seq=15.*\[10, 20\]"):
+        resolve_baseline(tmp_path, 15)
+
+
+def test_resolve_baseline_skips_pre_tagging_reports(tmp_path):
+    """Reports with db_seq=null (pre-tagging) are never seq-matched —
+    the teaching error points at the explicit-path fallback."""
+    from hallucinote.audio.compare import resolve_baseline
+    _write_analysis(tmp_path, "old.json", db_seq=None)
+    with pytest.raises(ValueError, match="predate seq tagging"):
+        resolve_baseline(tmp_path, 10)
+
+
+def test_resolve_baseline_empty_dir_refuses(tmp_path):
+    from hallucinote.audio.compare import resolve_baseline
+    with pytest.raises(ValueError, match="no analysis reports"):
+        resolve_baseline(tmp_path / "missing", 10)

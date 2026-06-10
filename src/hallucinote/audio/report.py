@@ -592,6 +592,12 @@ class MixReport:
     # without an alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
     compare_to: dict[str, Any] | None = None
+    # Song audit-log seq the analyzed capture reflects (copied from
+    # manifest.db_seq — AUD-4W7K). The key ``compare.resolve_baseline``
+    # matches when ``analyze_mix(compare_to=<seq>)`` resolves a baseline.
+    # None for pre-tagging captures — such reports can still be baselines
+    # via an explicit path, just not by seq.
+    db_seq: int | None = None
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -609,6 +615,7 @@ class MixReport:
             "captures_dir": self.captures_dir,
             "captured_at": self.captured_at,
             "analyzer_signature": self.analyzer_signature,
+            "db_seq": self.db_seq,
             "master": _stem_to_dict(self.master),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],

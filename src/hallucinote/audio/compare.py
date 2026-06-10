@@ -23,6 +23,8 @@ arrangement timing), so it carries a 1.0 dB threshold of its own.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 # Calibrated significance floors (dB). See module docstring for evidence.
@@ -100,6 +102,52 @@ def diff_reports(
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
     }
+
+
+def resolve_baseline(analysis_dir: Path | str, seq: int) -> Path:
+    """Find the analysis JSON whose ``db_seq`` matches ``seq``.
+
+    Analysis filenames are ISO-8601 UTC (lex order == chronological), so
+    when several reports carry the same seq (re-analyses of one capture,
+    or re-renders with no DB change between), the LATEST wins — it
+    reflects the newest capture/analysis of that DB state.
+
+    Raises ``ValueError`` with the available seqs when nothing matches —
+    explicit refusal, no fuzzy nearest-seq matching. Reports without a
+    ``db_seq`` (pre-tagging) are skipped here but remain usable as
+    explicit-path baselines.
+    """
+    analysis_dir = Path(analysis_dir)
+    candidates = sorted(analysis_dir.glob("*.json")) if analysis_dir.exists() else []
+    if not candidates:
+        raise ValueError(
+            f"no analysis reports in {analysis_dir} — baselines are the "
+            f"JSONs ableton_analysis(analyze) writes there"
+        )
+    available: list[int] = []
+    match: Path | None = None
+    for path in candidates:
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue  # an unreadable report can't be a baseline; keep scanning
+        report_seq = report.get("db_seq")
+        if not isinstance(report_seq, int) or isinstance(report_seq, bool):
+            continue  # None, or a malformed/hand-edited value — not a key
+        available.append(report_seq)
+        if report_seq == seq:
+            match = path  # keep scanning — latest match wins
+    if match is None:
+        seqs_note = (
+            str(sorted(set(available)))
+            if available
+            else "none (reports predate seq tagging — pass an explicit baseline path)"
+        )
+        raise ValueError(
+            f"no analysis report in {analysis_dir} has db_seq={seq}; "
+            f"available seqs: {seqs_note}"
+        )
+    return match
 
 
 def _by_track_id(report: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -406,3 +406,19 @@ def test_stem_metrics_surface_kind_is_validated():
             surface_name="X",
             loudness=_make_loudness(),
         )
+
+
+def test_db_seq_serializes_and_defaults_none():
+    """db_seq (the capture's audit-log provenance, AUD-4W7K) rides the
+    report verbatim; None for pre-tagging captures."""
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[],
+        master=_make_stem("master"),
+    )
+    assert report.to_json_dict()["db_seq"] is None
+    report.db_seq = 4823
+    assert report.to_json_dict()["db_seq"] == 4823

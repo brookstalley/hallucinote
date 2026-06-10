@@ -63,7 +63,7 @@ significance constant (~15 min, planned in).
 ## Status
 
 - [x] Chunk 01: diff engine + `compare_to` end-to-end via explicit baseline path
-- [ ] Chunk 02: db_seq provenance + seq resolver + surfacing sweep
+- [x] Chunk 02: db_seq provenance + seq resolver + surfacing sweep
 Context: plan authored 2026-06-10; branch stacked on AUD-3F8M (PR #154).
 **Chunk 01 done 2026-06-10. Calibration evidence (Done-when 1):** master-loudness
 deltas across the 6 sun-zone-done analysis JSONs (2026-05-29..06-03) —
@@ -83,6 +83,24 @@ absolute-level floor is a listening-day question. Critic (final-mode run on
 the chunk): 0 blocking / 1 warning (this evidence record) / 2 notes —
 missing-baseline error test added; baseline schema/song validation before the
 DSP pass deferred to Chunk 02 (noted there).
+**Chunk 02 done 2026-06-10.** **Explicit deviation from the plan's wording
+(governance checkpoint):** the plan said "the render handler reads the
+song's latest event seq" — the render handler runs inside Live's vendored
+env with no hallucinote package, so the read lives in the MCP server's
+forward-time preprocessor (`server._attach_render_db_seq`, mirroring the
+established `_absolutize_render_output_dir` pattern) and the handler just
+writes the forwarded param into the manifest. Provenance is best-effort
+(no DB / engine → untagged manifest, never a blocked render) and the seq
+is "latest DB state at render time", NOT proof of what Live played —
+mutate-without-push mislabels the key; caveat surfaced in the server
+docstring + the analyze action's compare_to description. Critic final:
+0 blocking / 3 warnings (tagged change-log entries added for both chunks;
+provenance overclaim softened; summary now carries overshoot_delta and
+counts the overshoot change in significant_delta_count) / 4 notes
+(deviation recorded here; `connection.connect()` adopted; explicit-db_seq
+passthrough test + non-int db_seq resolver guard added; backlog flips
+stay pending merge per Done-when 4). Remaining: cumulative Critic vs the
+stack base + PR; backlog pass (AUD-4W7K shipped on merge, MIX-6D2N note).
 
 ## Scaffolding
 

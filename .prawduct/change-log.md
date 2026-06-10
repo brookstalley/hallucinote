@@ -4,6 +4,37 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
+
+<!-- chunks=AUD-4W7K-02 status=shipped release=unreleased scope=aud-4w7k -->
+
+The seq keying layer: the MCP server reads the song's latest audit-log seq
+at render-forward time (`server._attach_render_db_seq` — the render handler
+runs in Live's hallucinote-less env, so the read lives server-side, a
+deviation from the plan's handler-side wording) and the handler writes it
+as `manifest.db_seq`; `CaptureSet` and `MixReport` carry it (old manifests
+load as None). `compare.resolve_baseline(analysis_dir, seq)` finds the
+matching report (latest tie-break, teaching error otherwise);
+`analyze_mix(compare_to=<seq>, analysis_dir=...)` and
+`ableton_analysis(analyze, compare_to=<seq>)` complete the loop, with the
+baseline validated before the DSP passes. Surfacing sweep: render-handler
+"deferred" paragraph, analyze action description/tips, `/mix-review` A/B
+recipe, spike decision-record updates. AUD-4W7K complete pending merge.
+
+## 2026-06-10 — AUD-4W7K chunk 1: compare_to baseline diffs via explicit path
+
+<!-- chunks=AUD-4W7K-01 status=shipped release=unreleased scope=aud-4w7k -->
+
+`MixReport.compare_to` is no longer a reserved skeleton: `audio/compare.py`
+diffs two serialized reports — per-surface loudness deltas keyed by
+track_id (added/removed surfaces explicit), overshoot count, significance
+floors calibrated on the six real sun-zone-done analysis JSONs (0.5 dB
+default; 1.0 dB for the timing-sensitive lufs_s_median). Deltas are neutral
+evidence — no finding kinds derive from them. `analyze_mix(compare_to=<path>)`
+loads the baseline fail-fast and populates the field. The v3→v4 real-pair
+diff tells the known story exactly (true peak 1.52→−0.96 dBTP, 8
+overshoots→0). Seq keying lands next chunk.
+
 ## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
 
 <!-- chunks=AUD-3F8M-02 status=shipped release=unreleased scope=aud-3f8m -->

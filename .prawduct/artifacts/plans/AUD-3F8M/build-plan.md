@@ -46,7 +46,7 @@ on an existing sun-zone-done capture before freezing the threshold (~30 min, pla
 ## Status
 
 - [x] Chunk 01: mixer_volume end-to-end via master windowing
-- [ ] Chunk 02: mixer_pan + report surfacing
+- [x] Chunk 02: mixer_pan + report surfacing
 Context: Chunk 01 done 2026-06-10. **Spike evidence (Done-when 1):** on the
 sun-zone-done `v4-full-aligned` capture, pre-fader stem/master power ratios
 span 0.0–3.3 across stems and 6 windows — a fixed share threshold is
@@ -67,8 +67,19 @@ cannot speak, which IS unmeasurability; Honest Confidence favors the
 existing channel over a new tri-state. Critic chunk findings resolved:
 model-breakdown guard (negative predicted power → honest unmeasurable, not
 a false NOT-realized), analyze-level mixer_volume end-to-end test, dead
-`_POST_FADER_KINDS` removed. Next: Chunk 02 mixer_pan + report surfacing,
-building pan on the same prediction-gate semantics.
+`_POST_FADER_KINDS` removed. **Chunk 02 done 2026-06-10:** `_verify_mixer_pan`
+(constant-power pan gains × static `stem_gain` from the snapshot mixer state,
+threaded from `analyze_mix`'s existing `stem_gains`), `master_balance_db`
+metric, same floor/breakdown/0.3× semantics. **Real-capture run:** the
+sun-zone-done break pan sweep (±0.95) reports 4/4 measurable change-points
+REALIZED on the master; the two static pan envelopes correctly carry 0
+change-points. Critic final's blocking finding (contract-drift sweep: tool
+description, collector docstring, mix-review skill, module comments) fixed
+tree-wide; pan guard tests (quiet master, model breakdown) added;
+`_VOLUME_REALIZED_FRACTION` renamed `_MIXER_REALIZED_FRACTION`. Remaining:
+cumulative Critic vs develop + PR; backlog flips post-merge (AUD-3F8M shipped,
+AUD-8H2M archived-note, MIX-3S7P stale "can't verify time-varying" line).
+Pan-floor question flagged for QLT-3D8R listening day.
 
 ## Scaffolding
 

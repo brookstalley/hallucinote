@@ -4,6 +4,20 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
+
+<!-- chunks=AUD-3F8M-02 status=shipped release=unreleased scope=aud-3f8m -->
+
+`mixer_pan` joins `mixer_volume` on the master-bus verification path:
+constant-power pan gains × the stem's static fader gain (threaded from
+`analyze_mix`'s existing `stem_gains`) predict the expected L−R balance
+shift (`master_balance_db`); same detectability floor / model-breakdown /
+direction+0.3× semantics as volume. Real-capture evidence: sun-zone-done's
+break pan sweep (±0.95) verifies 4/4 measurable change-points REALIZED.
+Contract text updated everywhere the old "mixer kinds are unverifiable"
+claim lived (tool description, envelope collector, `/mix-review` skill,
+module docs). AUD-3F8M complete pending merge.
+
 ## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
 
 <!-- chunks=AUD-3F8M-01 status=shipped release=unreleased scope=aud-3f8m -->

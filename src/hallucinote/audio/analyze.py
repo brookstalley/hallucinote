@@ -229,6 +229,7 @@ def analyze_mix(
         capture=capture,
         declared_envelopes=declared_envelopes,
         beat_map=beat_map,
+        stem_gains=stem_gains or {},
     )
     skipped.extend(automation_skips)
 
@@ -408,14 +409,16 @@ def _run_automation_verifications(
     capture: CaptureSet,
     declared_envelopes: Sequence[DeclaredEnvelope],
     beat_map: BeatSampleMap,
+    stem_gains: Mapping[str, float],
 ) -> tuple[list[EnvelopeVerification], list[dict]]:
     """Verify each declared automation envelope was realized in the audio.
 
     Looks each envelope's target surface up in the capture, windows it around
     every value-changing breakpoint, and confirms the expected change (timbre
-    shift for device_parameter, level step for send_level, master-bus level
-    step for mixer_volume — AUD-3F8M; mixer_pan is still reported
-    unverifiable pending master-bus pan windowing).
+    shift for device_parameter, level step for send_level, master-bus level /
+    L−R balance step for mixer_volume / mixer_pan — AUD-3F8M; pan's
+    prediction uses the stem's static fader gain from ``stem_gains``, unity
+    when unknown).
 
     Empty ``declared_envelopes`` produces a structured skip teaching the caller
     to author automation — symmetric with the reverb and section skips.
@@ -451,6 +454,7 @@ def _run_automation_verifications(
             sample_rate=capture.sample_rate,
             beat_map=beat_map,
             master_audio=capture.master.audio,
+            stem_gain=stem_gains.get(env.target_surface_id, 1.0),
         ))
     return verifications, skipped
 

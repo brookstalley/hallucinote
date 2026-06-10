@@ -26,8 +26,11 @@ What's verifiable depends on where the analyzer taps — **pre-fader**, per
     ``measurable=False`` rather than a false verdict. The realized check is
     directional + a lenient fraction of the predicted magnitude, because
     master-chain processing (the house limiter) compresses level deltas.
-  - ``mixer_pan`` — post-fader; master-bus pan verification is the next chunk
-    of AUD-3F8M. Still reported ``measurable=False`` with a teaching note.
+  - ``mixer_pan`` — post-fader; verified on the master's L−R balance
+    (AUD-3F8M). Constant-power pan gains + the stem's static fader gain
+    (``stem_gain``, from the snapshot's mixer state) predict the expected
+    balance shift; the same detectability floor / model-breakdown honesty
+    rules as ``mixer_volume`` apply.
 
 DB-agnostic and beat-domain, like ``DeclaredReverbSend`` / ``SectionWindow``:
 the MCP handler resolves DB envelopes into ``DeclaredEnvelope`` records (capture
@@ -69,19 +72,23 @@ _QUIET_RMS = 1e-5
 # (or silent around the breakpoint) for the master to speak — calibrated on
 # the sun-zone-done v4-full-aligned capture (2026-06-10 spike: pre-fader
 # stem/master power ratios span 0.0–3.3 across stems and windows, so a fixed
-# share threshold is meaningless; predict per-breakpoint instead).
+# share threshold is meaningless; predict per-breakpoint instead). The
+# same floor gates pan's predicted L−R balance shift — a balance shift is
+# ~2× a single channel's change, so the floor is effectively more lenient
+# there; whether pan deserves its own floor is a QLT-3D8R listening-day
+# question.
 _MIN_DETECTABLE_MASTER_DB = 0.75
 
-# Realized when the measured master step is at least this fraction of the
-# predicted step (and in the predicted direction). Lenient on purpose:
-# master-chain processing (the house limiter) compresses level deltas, and
-# program content differs across the breakpoint.
-_VOLUME_REALIZED_FRACTION = 0.3
+# Realized when the measured master step (level for mixer_volume, L−R
+# balance for mixer_pan) is at least this fraction of the predicted step
+# (and in the predicted direction). Lenient on purpose: master-chain
+# processing (the house limiter) compresses level deltas, and program
+# content differs across the breakpoint.
+_MIXER_REALIZED_FRACTION = 0.3
 
-# Envelope kinds verified on the captured surface itself; mixer_volume is
-# verified on the MASTER (post-fader sum), and mixer_pan is still honestly
-# reported unverifiable (next AUD-3F8M chunk) — both dispatched by name in
-# verify_envelope_realization.
+# Envelope kinds verified on the captured surface itself; the post-fader
+# mixer kinds (mixer_volume / mixer_pan) are verified on the MASTER
+# (post-fader sum) and dispatched by name in verify_envelope_realization.
 _TIMBRE_KINDS = frozenset({"device_parameter"})
 _LEVEL_KINDS = frozenset({"send_level"})
 
@@ -112,6 +119,22 @@ def _mono_window(
         return np.zeros(0, dtype=np.float64)
     seg = audio[a:b]
     return (0.5 * (seg[:, 0] + seg[:, 1])).astype(np.float64)
+
+
+def _stereo_window(
+    audio: np.ndarray, beat_map: BeatSampleMap, lo_beat: float, hi_beat: float
+) -> np.ndarray:
+    a = beat_map.beat_to_sample(lo_beat)
+    b = beat_map.beat_to_sample(hi_beat)
+    if b <= a:
+        return np.zeros((0, 2), dtype=np.float64)
+    return audio[a:b].astype(np.float64)
+
+
+def _pan_gains(pan: float) -> tuple[float, float]:
+    """Live pan (−1 hard left … +1 hard right) → constant-power (gL, gR)."""
+    theta = (float(pan) + 1.0) * math.pi / 4.0
+    return math.cos(theta), math.sin(theta)
 
 
 def _spectral_centroid_hz(mono: np.ndarray, sample_rate: int) -> float:
@@ -150,35 +173,19 @@ def verify_envelope_realization(
     sample_rate: int,
     beat_map: BeatSampleMap,
     master_audio: np.ndarray,
+    stem_gain: float = 1.0,
 ) -> list[EnvelopeVerification]:
     """One verification per value-changing breakpoint in ``env``.
 
     For each change at beat B, window the surface ``before`` ``[B-W, B)`` and
     ``after`` ``[B, B+W)`` (clamped to neighbouring breakpoints) and compare the
-    kind-appropriate metric. ``mixer_volume`` measures the MASTER windows
-    (post-fader sum) against a prediction built from the declared fader values
-    and the pre-fader stem window (AUD-3F8M); ``mixer_pan`` still returns a
-    single ``measurable=False`` record (master-bus pan windowing is the next
-    chunk).
+    kind-appropriate metric. The post-fader mixer kinds measure the MASTER
+    windows (post-fader sum) against a prediction built from the pre-fader
+    stem window (AUD-3F8M): ``mixer_volume`` from its own declared fader
+    values, ``mixer_pan`` from constant-power pan gains scaled by
+    ``stem_gain`` (the stem's static fader gain from the snapshot's mixer
+    state; unity when unknown).
     """
-    if env.target_kind == "mixer_pan":
-        return [EnvelopeVerification(
-            target_surface_id=env.target_surface_id,
-            target_kind=env.target_kind,
-            parameter_path=env.parameter_path,
-            at_beat=env.breakpoints[0][0] if env.breakpoints else 0.0,
-            metric="n/a",
-            before=float("nan"),
-            after=float("nan"),
-            measurable=False,
-            realized=False,
-            note=(
-                "mixer_pan is post-fader — invisible to the pre-fader "
-                "stem capture, so its realization can't be verified here. "
-                "Master-bus pan windowing is the next AUD-3F8M chunk."
-            ),
-        )]
-
     bps = env.breakpoints
     results: list[EnvelopeVerification] = []
     for i in _change_points(bps):
@@ -198,6 +205,16 @@ def verify_envelope_realization(
                 stem_before=before,
                 master_before=master_before,
                 master_after=master_after,
+            ))
+            continue
+
+        if env.target_kind == "mixer_pan":
+            results.append(_verify_mixer_pan(
+                env, bps, i,
+                stem_before=before,
+                master_before=_stereo_window(master_audio, beat_map, lo, b_beat),
+                master_after=_stereo_window(master_audio, beat_map, b_beat, hi),
+                stem_gain=stem_gain,
             ))
             continue
 
@@ -351,7 +368,7 @@ def _verify_mixer_volume(
     delta_db = db_after - db_before
     realized = (
         (delta_db > 0) == (expected_db > 0)
-        and abs(delta_db) >= _VOLUME_REALIZED_FRACTION * abs(expected_db)
+        and abs(delta_db) >= _MIXER_REALIZED_FRACTION * abs(expected_db)
     )
     direction = "up" if expected_db > 0 else "down"
     note = (
@@ -368,6 +385,107 @@ def _verify_mixer_volume(
         metric="master_rms_db",
         before=db_before,
         after=db_after,
+        measurable=True,
+        realized=realized,
+        note=note,
+    )
+
+
+def _verify_mixer_pan(
+    env, bps, i, *, stem_before, master_before, master_after, stem_gain,
+) -> EnvelopeVerification:
+    """AUD-3F8M: verify a post-fader pan move on the MASTER's L−R balance.
+
+    Declared breakpoints are Live pan values (−1…+1). Constant-power pan
+    gains + the stem's static fader gain predict the expected per-channel
+    power change, hence the expected balance shift:
+
+        P_ch_after ≈ P_ch − P_stem·g²·g_ch1² + P_stem·g²·g_ch2²
+
+    Same honesty rules as mixer_volume: predicted shift below the floor →
+    ``measurable=False`` (too diluted); a channel where the model breaks
+    down (stem-at-gain exceeding measured channel power) → honest skip.
+    """
+    b_beat = bps[i][0]
+
+    def _ch_rms(seg: np.ndarray, ch: int) -> float:
+        if seg.shape[0] == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(seg[:, ch] ** 2)))
+
+    def _unmeasurable(note: str) -> EnvelopeVerification:
+        return EnvelopeVerification(
+            target_surface_id=env.target_surface_id,
+            target_kind=env.target_kind,
+            parameter_path=env.parameter_path,
+            at_beat=b_beat,
+            metric="n/a",
+            before=float("nan"),
+            after=float("nan"),
+            measurable=False,
+            realized=False,
+            note=note,
+        )
+
+    rms_lb, rms_rb = _ch_rms(master_before, 0), _ch_rms(master_before, 1)
+    rms_la, rms_ra = _ch_rms(master_after, 0), _ch_rms(master_after, 1)
+    if min(rms_lb, rms_rb, rms_la, rms_ra) < _QUIET_RMS:
+        return _unmeasurable(
+            "master window too quiet to characterise around this "
+            "breakpoint — can't confirm or refute the pan move here"
+        )
+
+    gl1, gr1 = _pan_gains(bps[i - 1][1])
+    gl2, gr2 = _pan_gains(bps[i][1])
+    p_stem = (_rms(stem_before) * stem_gain) ** 2
+    p_l, p_r = rms_lb ** 2, rms_rb ** 2
+    exp_l = p_l - p_stem * gl1 * gl1 + p_stem * gl2 * gl2
+    exp_r = p_r - p_stem * gr1 * gr1 + p_stem * gr2 * gr2
+    if exp_l <= 0.01 * p_l or exp_r <= 0.01 * p_r:
+        return _unmeasurable(
+            f"declared pan move ({bps[i - 1][1]:+.2f}→{bps[i][1]:+.2f}): the "
+            "stem at its gain accounts for more power than a measured master "
+            "channel (master-chain compression/limiting) — the prediction "
+            "model breaks down here, so master-bus windowing can't confirm "
+            "or refute this move"
+        )
+
+    predicted_db = (
+        10.0 * math.log10(exp_l / p_l) - 10.0 * math.log10(exp_r / p_r)
+    )
+    if abs(predicted_db) < _MIN_DETECTABLE_MASTER_DB:
+        return _unmeasurable(
+            f"declared pan move ({bps[i - 1][1]:+.2f}→{bps[i][1]:+.2f}) "
+            f"predicts only {predicted_db:+.2f} dB of L−R balance shift on "
+            "the master — the stem is too diluted in the mix (or silent) "
+            "around this breakpoint for master-bus windowing to confirm or "
+            "refute it"
+        )
+
+    balance_before = 20.0 * math.log10(rms_lb / rms_rb)
+    balance_after = 20.0 * math.log10(rms_la / rms_ra)
+    delta_db = balance_after - balance_before
+    realized = (
+        (delta_db > 0) == (predicted_db > 0)
+        and abs(delta_db) >= _MIXER_REALIZED_FRACTION * abs(predicted_db)
+    )
+    direction = "left" if predicted_db > 0 else "right"
+    note = (
+        f"pan declared toward the {direction} "
+        f"({bps[i - 1][1]:+.2f}→{bps[i][1]:+.2f}, predicting "
+        f"{predicted_db:+.1f} dB L−R shift); master balance moved "
+        f"{delta_db:+.1f} dB ({balance_before:+.1f}→{balance_after:+.1f} dB "
+        "L−R) — "
+        + ("realized" if realized else "NOT realized in the declared direction")
+    )
+    return EnvelopeVerification(
+        target_surface_id=env.target_surface_id,
+        target_kind=env.target_kind,
+        parameter_path=env.parameter_path,
+        at_beat=b_beat,
+        metric="master_balance_db",
+        before=balance_before,
+        after=balance_after,
         measurable=True,
         realized=realized,
         note=note,

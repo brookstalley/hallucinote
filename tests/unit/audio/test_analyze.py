@@ -460,6 +460,76 @@ def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
     assert v.measurable is True and v.realized is True
 
 
+def test_analyze_mix_unrealized_mixer_volume_produces_finding(tmp_path: Path):
+    """AUD-3F8M report surfacing: a declared-but-flat mixer swell is
+    measurable on the master and produces the automation_not_realized
+    finding (previously unreachable for mixer kinds)."""
+    from hallucinote.audio.levels import live_fader_gain
+
+    stem_half = sine(220.0, 2.0, amplitude=0.4)
+    rest_half = sine(660.0, 2.0, amplitude=0.3)
+    stem = concat(stem_half, stem_half)
+    g_before = live_fader_gain(0.5)
+    flat_master = concat(rest_half + stem_half * g_before,
+                         rest_half + stem_half * g_before)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Bass", stem)],
+        master_audio=flat_master,
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:1",
+        target_kind="mixer_volume",
+        parameter_path=None,
+        breakpoints=((0.0, 0.5), (8.0, 0.85)),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    v = report.automation_verifications[0]
+    assert v.measurable is True and v.realized is False
+    assert any(f.kind == "automation_not_realized" for f in report.findings)
+
+
+def test_analyze_mix_pan_prediction_uses_stem_gains(tmp_path: Path):
+    """AUD-3F8M: analyze_mix threads stem_gains into pan verification — a
+    hot pre-fader stem whose fader is pulled way down is honestly gated as
+    too diluted rather than falsely judged."""
+    from hallucinote.audio.automation import _pan_gains
+
+    stem_half = sine(220.0, 2.0, amplitude=0.6)
+    rest_half = sine(660.0, 2.0, amplitude=0.5)
+    stem = concat(stem_half, stem_half)
+    tiny_gain = 0.01
+
+    def half(pan):
+        gl, gr = _pan_gains(pan)
+        out = rest_half.astype(np.float64).copy()
+        out[:, 0] += stem_half[:, 0] * tiny_gain * gl
+        out[:, 1] += stem_half[:, 1] * tiny_gain * gr
+        return out.astype(np.float32)
+
+    master = concat(half(-0.5), half(0.5))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Bass", stem)],
+        master_audio=master,
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:1",
+        target_kind="mixer_pan",
+        parameter_path=None,
+        breakpoints=((0.0, -0.5), (8.0, 0.5)),
+    )]
+    report = analyze_mix(
+        captures_dir, declared_envelopes=envs,
+        stem_gains={"track:1": tiny_gain},
+    )
+    v = report.automation_verifications[0]
+    assert v.measurable is False
+    assert "too diluted" in v.note
+
+
 def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):
     """No declared envelopes → a teaching skip, symmetric with reverb/section."""
     flat = sine(440.0, 2.0, amplitude=0.5)

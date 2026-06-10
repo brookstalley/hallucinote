@@ -45,9 +45,30 @@ on an existing sun-zone-done capture before freezing the threshold (~30 min, pla
 
 ## Status
 
-- [ ] Chunk 01: mixer_volume end-to-end via master windowing
+- [x] Chunk 01: mixer_volume end-to-end via master windowing
 - [ ] Chunk 02: mixer_pan + report surfacing
-Context: plan authored 2026-06-10; nothing built yet.
+Context: Chunk 01 done 2026-06-10. **Spike evidence (Done-when 1):** on the
+sun-zone-done `v4-full-aligned` capture, pre-fader stem/master power ratios
+span 0.0–3.3 across stems and 6 windows — a fixed share threshold is
+meaningless, so the design predicts the expected master dB step per
+breakpoint from the declared fader values (`levels.live_fader_gain`) + the
+measured pre-fader stem power (uncorrelated power model), gates
+measurability at 0.75 dB predicted, and requires direction + ≥0.3× predicted
+magnitude (lenient for the house master limiter). **Real-capture run:** the
+song's one declared mixer_volume envelope (Rhythm Gtr amp-coupled trim,
+0.70→0.64 ≈ −1.1 dB stem-side) predicts only ±0.06–0.39 dB on the master —
+all 12 change-points honestly gated as too-diluted, no false verdicts; the
+detection path (real swells, e.g. 0.5→0.85) is pinned by synthetic tests.
+**Explicit divergence from plan assumption 1 (governance checkpoint):** the
+below-threshold gate reports `measurable=False` (the existing honest-skip
+channel report consumers already understand), NOT the assumed
+`measurable=True + inconclusive` — sub-threshold means the master genuinely
+cannot speak, which IS unmeasurability; Honest Confidence favors the
+existing channel over a new tri-state. Critic chunk findings resolved:
+model-breakdown guard (negative predicted power → honest unmeasurable, not
+a false NOT-realized), analyze-level mixer_volume end-to-end test, dead
+`_POST_FADER_KINDS` removed. Next: Chunk 02 mixer_pan + report surfacing,
+building pan on the same prediction-gate semantics.
 
 ## Scaffolding
 

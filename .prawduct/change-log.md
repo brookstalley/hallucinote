@@ -4,6 +4,23 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
+
+<!-- chunks=AUD-3F8M-01 status=shipped release=unreleased scope=aud-3f8m -->
+
+`mixer_volume` envelopes are no longer skipped as post-fader-invisible:
+`audio/automation.py` windows the MASTER (post-fader sum) around each
+breakpoint and checks the level step against a prediction built from the
+declared fader values (`levels.live_fader_gain` calibration) + the measured
+pre-fader stem power (uncorrelated power model). Predicted step < 0.75 dB →
+honest `measurable=False` (stem too diluted/silent); model breakdown
+(stem-at-gain exceeding limited master power) is also an honest skip, never
+a false verdict; realized = declared direction + ≥0.3× predicted (lenient
+for the house master limiter). `master_audio` is a required kwarg through
+`analyze_mix`. Spike + real-capture evidence in the AUD-3F8M plan Status
+(sun-zone-done's one mixer_volume envelope is a subtle trim — honestly
+gated at all 12 change points). `mixer_pan` lands next chunk.
+
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
 <!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->

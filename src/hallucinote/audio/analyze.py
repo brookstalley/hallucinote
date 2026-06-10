@@ -413,8 +413,9 @@ def _run_automation_verifications(
 
     Looks each envelope's target surface up in the capture, windows it around
     every value-changing breakpoint, and confirms the expected change (timbre
-    shift for device_parameter, level step for send_level; mixer_volume/pan are
-    reported unverifiable — post-fader, invisible to the pre-fader stem).
+    shift for device_parameter, level step for send_level, master-bus level
+    step for mixer_volume — AUD-3F8M; mixer_pan is still reported
+    unverifiable pending master-bus pan windowing).
 
     Empty ``declared_envelopes`` produces a structured skip teaching the caller
     to author automation — symmetric with the reverb and section skips.
@@ -449,6 +450,7 @@ def _run_automation_verifications(
             env, surface.audio,
             sample_rate=capture.sample_rate,
             beat_map=beat_map,
+            master_audio=capture.master.audio,
         ))
     return verifications, skipped
 

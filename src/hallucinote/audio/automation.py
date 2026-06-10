@@ -16,9 +16,18 @@ What's verifiable depends on where the analyzer taps — **pre-fader**, per
     isn't a single number with a known target (Honest Confidence).
   - ``send_level`` — visible on the RETURN surface (more send → louder return).
     Numeric, so the expected direction (up/down) is known and checked.
-  - ``mixer_volume`` / ``mixer_pan`` — POST-fader, so invisible to the pre-fader
-    stem. Reported ``measurable=False`` with a teaching note rather than a false
-    "not realized"; verifying them needs master-bus windowing (a follow-up).
+  - ``mixer_volume`` — POST-fader, invisible to the pre-fader stem, but visible
+    on the MASTER (the post-fader sum). AUD-3F8M: window the master around the
+    breakpoint and check the level step. The declared fader values + the
+    measured pre-fader stem power *predict* the expected master dB step
+    (uncorrelated power model, ``levels.live_fader_gain`` calibration); when
+    the prediction is below the detectability floor (stem too diluted in the
+    mix, or the stem silent there), the breakpoint is honestly
+    ``measurable=False`` rather than a false verdict. The realized check is
+    directional + a lenient fraction of the predicted magnitude, because
+    master-chain processing (the house limiter) compresses level deltas.
+  - ``mixer_pan`` — post-fader; master-bus pan verification is the next chunk
+    of AUD-3F8M. Still reported ``measurable=False`` with a teaching note.
 
 DB-agnostic and beat-domain, like ``DeclaredReverbSend`` / ``SectionWindow``:
 the MCP handler resolves DB envelopes into ``DeclaredEnvelope`` records (capture
@@ -33,6 +42,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .levels import live_fader_gain
 from .report import EnvelopeVerification
 from .section import BeatSampleMap
 
@@ -54,11 +64,26 @@ _SEND_DB_THRESHOLD = 1.5
 # misread as "not realized".
 _QUIET_RMS = 1e-5
 
-# Envelope kinds this module can verify on a captured surface, vs. those it
-# honestly reports as unverifiable (post-fader → invisible to the pre-fader tap).
+# A declared mixer_volume move must predict at least this much master-level
+# change to be measurable there. Below it the stem is too diluted in the mix
+# (or silent around the breakpoint) for the master to speak — calibrated on
+# the sun-zone-done v4-full-aligned capture (2026-06-10 spike: pre-fader
+# stem/master power ratios span 0.0–3.3 across stems and windows, so a fixed
+# share threshold is meaningless; predict per-breakpoint instead).
+_MIN_DETECTABLE_MASTER_DB = 0.75
+
+# Realized when the measured master step is at least this fraction of the
+# predicted step (and in the predicted direction). Lenient on purpose:
+# master-chain processing (the house limiter) compresses level deltas, and
+# program content differs across the breakpoint.
+_VOLUME_REALIZED_FRACTION = 0.3
+
+# Envelope kinds verified on the captured surface itself; mixer_volume is
+# verified on the MASTER (post-fader sum), and mixer_pan is still honestly
+# reported unverifiable (next AUD-3F8M chunk) — both dispatched by name in
+# verify_envelope_realization.
 _TIMBRE_KINDS = frozenset({"device_parameter"})
 _LEVEL_KINDS = frozenset({"send_level"})
-_POST_FADER_KINDS = frozenset({"mixer_volume", "mixer_pan"})
 
 
 @dataclass(frozen=True)
@@ -124,15 +149,19 @@ def verify_envelope_realization(
     *,
     sample_rate: int,
     beat_map: BeatSampleMap,
+    master_audio: np.ndarray,
 ) -> list[EnvelopeVerification]:
     """One verification per value-changing breakpoint in ``env``.
 
     For each change at beat B, window the surface ``before`` ``[B-W, B)`` and
     ``after`` ``[B, B+W)`` (clamped to neighbouring breakpoints) and compare the
-    kind-appropriate metric. Post-fader kinds (mixer_volume/pan) return a single
-    ``measurable=False`` record (no per-breakpoint measurement) explaining why.
+    kind-appropriate metric. ``mixer_volume`` measures the MASTER windows
+    (post-fader sum) against a prediction built from the declared fader values
+    and the pre-fader stem window (AUD-3F8M); ``mixer_pan`` still returns a
+    single ``measurable=False`` record (master-bus pan windowing is the next
+    chunk).
     """
-    if env.target_kind in _POST_FADER_KINDS:
+    if env.target_kind == "mixer_pan":
         return [EnvelopeVerification(
             target_surface_id=env.target_surface_id,
             target_kind=env.target_kind,
@@ -144,9 +173,9 @@ def verify_envelope_realization(
             measurable=False,
             realized=False,
             note=(
-                f"{env.target_kind} is post-fader — invisible to the pre-fader "
+                "mixer_pan is post-fader — invisible to the pre-fader "
                 "stem capture, so its realization can't be verified here. "
-                "Needs master-bus windowing (follow-up)."
+                "Master-bus pan windowing is the next AUD-3F8M chunk."
             ),
         )]
 
@@ -160,6 +189,17 @@ def verify_envelope_realization(
             hi = min(bps[i + 1][0], hi)
         before = _mono_window(surface_audio, beat_map, lo, b_beat)
         after = _mono_window(surface_audio, beat_map, b_beat, hi)
+
+        if env.target_kind == "mixer_volume":
+            master_before = _mono_window(master_audio, beat_map, lo, b_beat)
+            master_after = _mono_window(master_audio, beat_map, b_beat, hi)
+            results.append(_verify_mixer_volume(
+                env, bps, i,
+                stem_before=before,
+                master_before=master_before,
+                master_after=master_after,
+            ))
+            continue
 
         if _rms(before) < _QUIET_RMS or _rms(after) < _QUIET_RMS:
             results.append(EnvelopeVerification(
@@ -216,6 +256,118 @@ def _verify_timbre(env, b_beat, before, after, sample_rate) -> EnvelopeVerificat
         metric="spectral_centroid_hz",
         before=c_before,
         after=c_after,
+        measurable=True,
+        realized=realized,
+        note=note,
+    )
+
+
+def _verify_mixer_volume(
+    env, bps, i, *, stem_before, master_before, master_after,
+) -> EnvelopeVerification:
+    """AUD-3F8M: verify a post-fader volume move on the MASTER.
+
+    The declared breakpoints are Live normalized fader values; with the
+    measured pre-fader stem power around the move, the uncorrelated power
+    model predicts the master step:
+
+        P_after ≈ P_master − P_stem·g₁² + P_stem·g₂²
+
+    A prediction below ``_MIN_DETECTABLE_MASTER_DB`` means the stem is too
+    diluted (or silent) there for the master to speak — honest
+    ``measurable=False``, never a false verdict.
+    """
+    b_beat = bps[i][0]
+    if _rms(master_before) < _QUIET_RMS or _rms(master_after) < _QUIET_RMS:
+        return EnvelopeVerification(
+            target_surface_id=env.target_surface_id,
+            target_kind=env.target_kind,
+            parameter_path=env.parameter_path,
+            at_beat=b_beat,
+            metric="n/a",
+            before=float("nan"),
+            after=float("nan"),
+            measurable=False,
+            realized=False,
+            note=(
+                "master window too quiet to characterise around this "
+                "breakpoint — can't confirm or refute the fader move here"
+            ),
+        )
+
+    g1 = live_fader_gain(bps[i - 1][1])
+    g2 = live_fader_gain(bps[i][1])
+    p_master = _rms(master_before) ** 2
+    p_stem = _rms(stem_before) ** 2
+    expected_after_p = p_master - p_stem * g1 * g1 + p_stem * g2 * g2
+    if expected_after_p <= 0.01 * p_master:
+        # Model breakdown: the pre-fader stem at its declared gain accounts
+        # for (nearly) all the measured master power — master-chain
+        # compression/limiting makes the uncorrelated sum overshoot. A
+        # prediction from a broken model would manufacture a false
+        # "NOT realized"; report honestly unmeasurable instead.
+        return EnvelopeVerification(
+            target_surface_id=env.target_surface_id,
+            target_kind=env.target_kind,
+            parameter_path=env.parameter_path,
+            at_beat=b_beat,
+            metric="n/a",
+            before=float("nan"),
+            after=float("nan"),
+            measurable=False,
+            realized=False,
+            note=(
+                f"declared fader move ({bps[i - 1][1]:.2f}→{bps[i][1]:.2f}): "
+                "the pre-fader stem at its declared gain accounts for more "
+                "power than the measured master window (master-chain "
+                "compression/limiting) — the uncorrelated prediction model "
+                "breaks down here, so master-bus windowing can't confirm or "
+                "refute this move"
+            ),
+        )
+    expected_db = 10.0 * math.log10(expected_after_p / p_master)
+
+    if abs(expected_db) < _MIN_DETECTABLE_MASTER_DB:
+        return EnvelopeVerification(
+            target_surface_id=env.target_surface_id,
+            target_kind=env.target_kind,
+            parameter_path=env.parameter_path,
+            at_beat=b_beat,
+            metric="n/a",
+            before=float("nan"),
+            after=float("nan"),
+            measurable=False,
+            realized=False,
+            note=(
+                f"declared fader move ({bps[i - 1][1]:.2f}→{bps[i][1]:.2f}) "
+                f"predicts only {expected_db:+.2f} dB on the master — the "
+                "stem is too diluted in the mix (or silent) around this "
+                "breakpoint for master-bus windowing to confirm or refute it"
+            ),
+        )
+
+    db_before = 20.0 * math.log10(max(_rms(master_before), 1e-12))
+    db_after = 20.0 * math.log10(max(_rms(master_after), 1e-12))
+    delta_db = db_after - db_before
+    realized = (
+        (delta_db > 0) == (expected_db > 0)
+        and abs(delta_db) >= _VOLUME_REALIZED_FRACTION * abs(expected_db)
+    )
+    direction = "up" if expected_db > 0 else "down"
+    note = (
+        f"fader declared {direction} ({bps[i - 1][1]:.2f}→{bps[i][1]:.2f}, "
+        f"predicting {expected_db:+.1f} dB on the master); master moved "
+        f"{delta_db:+.1f} dB ({db_before:.1f}→{db_after:.1f} dBFS) — "
+        + ("realized" if realized else "NOT realized in the declared direction")
+    )
+    return EnvelopeVerification(
+        target_surface_id=env.target_surface_id,
+        target_kind=env.target_kind,
+        parameter_path=env.parameter_path,
+        at_beat=b_beat,
+        metric="master_rms_db",
+        before=db_before,
+        after=db_after,
         measurable=True,
         realized=realized,
         note=note,

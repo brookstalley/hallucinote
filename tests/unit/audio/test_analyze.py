@@ -429,6 +429,37 @@ def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
     assert any(f.kind == "automation_not_realized" for f in report.findings)
 
 
+def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
+    """AUD-3F8M end-to-end: a declared mixer_volume swell whose level step is
+    in the master reports measurable=True + realized=True through analyze_mix
+    (the master plumb-through, not just the unit-level verifier)."""
+    from hallucinote.audio.levels import live_fader_gain
+
+    stem_half = sine(220.0, 2.0, amplitude=0.4)
+    rest_half = sine(660.0, 2.0, amplitude=0.3)
+    stem = concat(stem_half, stem_half)
+    v1, v2 = 0.5, 0.85
+    master = concat(rest_half + stem_half * live_fader_gain(v1),
+                    rest_half + stem_half * live_fader_gain(v2))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Bass", stem)],
+        master_audio=master,
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:1",
+        target_kind="mixer_volume",
+        parameter_path=None,
+        breakpoints=((0.0, v1), (8.0, v2)),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    assert len(report.automation_verifications) == 1
+    v = report.automation_verifications[0]
+    assert v.metric == "master_rms_db"
+    assert v.measurable is True and v.realized is True
+
+
 def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):
     """No declared envelopes → a teaching skip, symmetric with reverb/section."""
     flat = sine(440.0, 2.0, amplitude=0.5)

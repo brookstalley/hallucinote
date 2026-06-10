@@ -5,7 +5,9 @@ in the audio:
   - a device-parameter flip with a real timbre step is detected (directional);
   - a flat stem at a declared flip → honest "not realized";
   - a send-level step on the return is verified in the declared direction;
-  - post-fader (mixer_volume/pan) is reported unverifiable, not falsely failed;
+  - mixer_volume is verified on the MASTER via the fader-calibrated
+    prediction model (AUD-3F8M); diluted/quiet cases honestly unmeasurable;
+  - mixer_pan is still reported unverifiable (next AUD-3F8M chunk);
   - a near-silent window is reported unmeasurable, not misread.
 """
 from __future__ import annotations
@@ -49,7 +51,8 @@ def test_device_parameter_timbre_shift_is_detected():
         breakpoints=((0.0, 0.0), (8.0, 1.0)),  # Clean→Heavy at beat 8
     )
     results = verify_envelope_realization(
-        env, audio, sample_rate=SAMPLE_RATE, beat_map=_beat_map(audio),
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
     )
     assert len(results) == 1
     v = results[0]
@@ -71,7 +74,8 @@ def test_device_parameter_no_change_is_not_realized():
         breakpoints=((0.0, 0.0), (8.0, 1.0)),
     )
     results = verify_envelope_realization(
-        env, flat, sample_rate=SAMPLE_RATE, beat_map=_beat_map(flat),
+        env, flat, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(flat), master_audio=flat,
     )
     assert len(results) == 1
     assert results[0].measurable is True
@@ -90,7 +94,8 @@ def test_send_level_step_realized_in_declared_direction():
         breakpoints=((0.0, 0.2), (8.0, 0.8)),  # send declared UP at beat 8
     )
     results = verify_envelope_realization(
-        env, audio, sample_rate=SAMPLE_RATE, beat_map=_beat_map(audio),
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
     )
     assert len(results) == 1
     v = results[0]
@@ -110,25 +115,123 @@ def test_send_level_not_realized_when_level_flat():
         breakpoints=((0.0, 0.2), (8.0, 0.8)),
     )
     results = verify_envelope_realization(
-        env, flat, sample_rate=SAMPLE_RATE, beat_map=_beat_map(flat),
+        env, flat, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(flat), master_audio=flat,
     )
     assert results[0].measurable is True
     assert results[0].realized is False
 
 
-def test_mixer_volume_is_reported_unverifiable():
-    """Post-fader automation is invisible to the pre-fader stem — reported
-    measurable=False, not falsely failed."""
+def _mixer_volume_env(v_before: float, v_after: float) -> DeclaredEnvelope:
+    return DeclaredEnvelope(
+        target_surface_id="track:1",
+        target_kind="mixer_volume",
+        parameter_path=None,
+        breakpoints=((0.0, v_before), (8.0, v_after)),
+    )
+
+
+def _master_from(stem_half: np.ndarray, rest_half: np.ndarray,
+                 g_before: float, g_after: float) -> np.ndarray:
+    """Synthesize a master: rest-of-mix + the stem at its post-fader gain,
+    per half (the fader move lands at the half boundary, beat 8)."""
+    return concat(rest_half + stem_half * g_before,
+                  rest_half + stem_half * g_after)
+
+
+def test_mixer_volume_swell_realized_on_master():
+    """AUD-3F8M verifiable signal: a declared mixer_volume swell whose level
+    step IS in the master reports measurable=True + realized=True from
+    master-bus windowing — not the old post-fader skip."""
+    from hallucinote.audio.levels import live_fader_gain
+
+    stem_half = sine(220.0, 2.0, amplitude=0.4)   # pre-fader stem, constant
+    rest_half = sine(660.0, 2.0, amplitude=0.3)   # the rest of the mix
+    stem = concat(stem_half, stem_half)
+    v1, v2 = 0.5, 0.85  # fader swell: ~-14 dB -> unity
+    master = _master_from(
+        stem_half, rest_half, live_fader_gain(v1), live_fader_gain(v2),
+    )
+    env = _mixer_volume_env(v1, v2)
+    results = verify_envelope_realization(
+        env, stem, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(stem), master_audio=master,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.measurable is True
+    assert v.realized is True
+    assert v.metric == "master_rms_db"
+    assert v.after > v.before  # master got louder where the fader rose
+    assert "realized" in v.note
+    assert "post-fader" not in v.note  # the old teaching note is gone
+
+
+def test_mixer_volume_declared_but_master_flat_is_not_realized():
+    """The fader move is declared and predictable, but the master never
+    moves -> measurable=True, realized=False (finding-worthy)."""
+    stem_half = sine(220.0, 2.0, amplitude=0.4)
+    rest_half = sine(660.0, 2.0, amplitude=0.3)
+    stem = concat(stem_half, stem_half)
+    # Master stays at the BEFORE gain on both halves — move never happened.
+    flat_master = _master_from(stem_half, rest_half, 0.2, 0.2)
+    env = _mixer_volume_env(0.5, 0.85)
+    results = verify_envelope_realization(
+        env, stem, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(stem), master_audio=flat_master,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is True
+    assert results[0].realized is False
+    assert "NOT realized" in results[0].note
+
+
+def test_mixer_volume_diluted_stem_is_unmeasurable_not_guessed():
+    """A stem far below the mix can't move the master detectably — the
+    prediction gate reports measurable=False with the dilution note, never
+    a false verdict."""
+    stem_half = sine(220.0, 2.0, amplitude=0.005)  # tiny in the mix
+    rest_half = sine(660.0, 2.0, amplitude=0.5)
+    stem = concat(stem_half, stem_half)
+    master = _master_from(stem_half, rest_half, 0.2, 1.0)
+    env = _mixer_volume_env(0.5, 0.85)
+    results = verify_envelope_realization(
+        env, stem, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(stem), master_audio=master,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is False
+    assert "too diluted" in results[0].note
+
+
+def test_mixer_volume_quiet_master_is_unmeasurable():
+    """A near-silent master window can't be characterised — honest skip."""
+    stem = concat(sine(220.0, 2.0, amplitude=0.4),
+                  sine(220.0, 2.0, amplitude=0.4))
+    master = silence(4.0)
+    env = _mixer_volume_env(0.5, 0.85)
+    results = verify_envelope_realization(
+        env, stem, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(stem), master_audio=master,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is False
+    assert "too quiet" in results[0].note
+
+
+def test_mixer_pan_still_reported_unverifiable():
+    """Pan stays the honest post-fader skip until the next AUD-3F8M chunk."""
     audio = _two_half_audio(sine(220.0, 2.0, amplitude=0.1),
                             sine(220.0, 2.0, amplitude=0.6))
     env = DeclaredEnvelope(
         target_surface_id="track:1",
-        target_kind="mixer_volume",
+        target_kind="mixer_pan",
         parameter_path=None,
-        breakpoints=((0.0, 0.5), (8.0, 0.9)),
+        breakpoints=((0.0, -0.5), (8.0, 0.5)),
     )
     results = verify_envelope_realization(
-        env, audio, sample_rate=SAMPLE_RATE, beat_map=_beat_map(audio),
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
     )
     assert len(results) == 1
     assert results[0].measurable is False
@@ -146,7 +249,8 @@ def test_silent_window_is_unmeasurable_not_failed():
         breakpoints=((0.0, 0.0), (8.0, 1.0)),
     )
     results = verify_envelope_realization(
-        env, audio, sample_rate=SAMPLE_RATE, beat_map=_beat_map(audio),
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
     )
     assert len(results) == 1
     assert results[0].measurable is False
@@ -163,6 +267,27 @@ def test_no_value_change_yields_no_verification():
         breakpoints=((0.0, 1.0), (8.0, 1.0)),  # constant
     )
     results = verify_envelope_realization(
-        env, audio, sample_rate=SAMPLE_RATE, beat_map=_beat_map(audio),
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
     )
     assert results == []
+
+
+def test_mixer_volume_model_breakdown_is_unmeasurable_not_false_verdict():
+    """Hot stem + heavily limited master + fader-down: the uncorrelated model
+    predicts non-positive after-power. That is model breakdown — honest
+    measurable=False, never a manufactured 'NOT realized'."""
+    # Pre-fader stem far hotter than the (limited) master it feeds.
+    stem_half = sine(220.0, 2.0, amplitude=0.8)
+    stem = concat(stem_half, stem_half)
+    master = concat(sine(220.0, 2.0, amplitude=0.2),
+                    sine(220.0, 2.0, amplitude=0.2))
+    # Fader down from unity (0.85 -> 0.5): p_stem*g1^2 exceeds master power.
+    env = _mixer_volume_env(0.85, 0.5)
+    results = verify_envelope_realization(
+        env, stem, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(stem), master_audio=master,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is False
+    assert "breaks down" in results[0].note

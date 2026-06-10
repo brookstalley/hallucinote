@@ -33,9 +33,7 @@ Then verify the bridge is live:
 
 On connection errors: see `ableton://guides/error-recovery`.
 
-Resolve the song's session_id: if the user gave one, use it; otherwise just omit it — the pull/push CLIs auto-select the only / most-recent session and echo the choice on stderr (WFL-7Q2N). No manual `sqlite3` listing needed.
-
-Pick the most recent one or ask the user to confirm. If none exist, refuse — they need `push_cli probe-and-link --auto-session` first.
+Resolve the song's session_id: if the user gave one, use it; otherwise just omit it — the pull/push CLIs auto-select the only / most-recent session and echo the choice on stderr (WFL-7Q2N). No manual `sqlite3` listing needed. If no sessions exist, the CLI refuses with bootstrap guidance (`push_cli probe-and-link --auto-session` first).
 
 ## Step 1 — Preview the diff (`--dry-run`)
 

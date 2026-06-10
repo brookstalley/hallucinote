@@ -4,6 +4,21 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
+
+<!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->
+
+`session_id` may now be omitted on every session-taking `push_cli` /
+`pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
+it from the DB the command already opened: explicit id wins; one session →
+used; several → most recent, echoed on stderr with alternatives; apply
+commands treat a plan file's embedded `session_id` as authoritative (and
+refuse a conflicting explicit id); multi-song DBs refuse to guess; zero
+sessions → bootstrap guidance. New `db.queries.list_ableton_sessions`
+(newest-first). Render takes no session id — out of scope by inspection.
+Also: fixed a latent Hypothesis flake (per-example 200ms deadline under
+xdist load) by setting `deadline=None` in both profiles.
+
 ## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
 
 <!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->

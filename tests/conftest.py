@@ -83,10 +83,17 @@ def pytest_report_header(config):
 
 from hypothesis import settings, HealthCheck
 
-# CI profile: more examples, stricter deadlines
+# Both profiles disable the per-example wall-clock deadline (default 200ms):
+# under pytest-xdist the workers contend for CPU and an example that takes
+# 2ms idle can blow 200ms under load — observed as a flaky DeadlineExceeded
+# on test_sorted_breakpoints_are_always_accepted (2026-06-10). The deadline
+# is a perf tripwire, not a property contract; the invariants are unchanged.
+
+# CI profile: more examples
 settings.register_profile(
     "ci",
     max_examples=200,
+    deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
 
@@ -94,6 +101,7 @@ settings.register_profile(
 settings.register_profile(
     "dev",
     max_examples=20,
+    deadline=None,
 )
 
 # Default to dev; CI sets HYPOTHESIS_PROFILE=ci

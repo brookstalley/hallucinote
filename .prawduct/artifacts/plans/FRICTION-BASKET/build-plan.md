@@ -41,13 +41,17 @@ are confirmed firsthand); WFL-7Q2N's *song-context* source is inferred, not conf
 ## Status
 
 - [x] Chunk 01: PSH-4E2W — human-readable push-halt summary
-- [ ] Chunk 02: WFL-7Q2N — session auto-discovery
+- [x] Chunk 02: WFL-7Q2N — session auto-discovery
 - [ ] Chunk 03: DOC-5W8B — auto-regen REQUIREMENTS.md after device-changing push
-Context: Chunk 01 done 2026-06-10 — `_group_errors` enriched (tool/action/hint),
-`_suggest_next_step` (hint > connection checklist > device.load→REQUIREMENTS.md >
-generic), `format_summary` renders "Halt cause" block; skill doc + design doc
-updated; Critic chunk-mode passed (2 warnings resolved: redaction test added,
-test evidence refreshed). Next: Chunk 02 session auto-discovery.
+Context: Chunks 01+02 done 2026-06-10. 02: `session_resolve.resolve_session_id`
+(explicit wins / only / most-recent-with-echo / plan-file session authoritative
+for apply / multi-song refuse / none→bootstrap guidance) wired into all 9
+push_cli + 3 pull_cli session-taking subcommands; positionals now optional.
+Plan assumption 1 resolved simpler than assumed: --song/--db is already
+required, DBs are per-song, so no new --song plumbing. Critic warnings
+resolved (apply prefers plan-embedded session; push_cli docstring; fresh
+evidence). Also fixed latent Hypothesis deadline flake (tests/conftest.py
+deadline=None). Next: Chunk 03 auto-regen REQUIREMENTS.md.
 
 ## Scaffolding
 

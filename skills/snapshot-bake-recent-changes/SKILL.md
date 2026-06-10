@@ -33,13 +33,7 @@ Then verify the bridge is live:
 
 On connection errors: see `ableton://guides/error-recovery`.
 
-Resolve the song's session_id. If the user gave one, use it; otherwise list the song's sessions. Always resolve the DB path via `resolve_db_path()` (per-branch convention: `songs/<slug>/<slug>-<branch>.db`; see `docs/snapshot-schema.md`):
-
-```bash
-DB_PATH=$(python3 -c "from hallucinote.db.connection import resolve_db_path; print(resolve_db_path('<slug>'))")
-sqlite3 "$DB_PATH" \
-  "SELECT id, name FROM ableton_sessions WHERE song_id IN (SELECT id FROM songs WHERE name = '<slug>') ORDER BY rowid DESC LIMIT 5"
-```
+Resolve the song's session_id: if the user gave one, use it; otherwise just omit it — the pull/push CLIs auto-select the only / most-recent session and echo the choice on stderr (WFL-7Q2N). No manual `sqlite3` listing needed.
 
 Pick the most recent one or ask the user to confirm. If none exist, refuse — they need `push_cli probe-and-link --auto-session` first.
 

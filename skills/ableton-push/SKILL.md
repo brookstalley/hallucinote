@@ -15,12 +15,13 @@ $ARGUMENTS
 You need TWO pieces of information from `$ARGUMENTS`:
 
 1. **The song slug** — filesystem-safe identifier. DB path: `songs/<slug>/<slug>-<branch>.db` (per-branch isolation; see `docs/snapshot-schema.md`). Outside a repo / detached HEAD falls back to `songs/<slug>/<slug>.db`.
-2. **The session_id** — `ableton_sessions.id` binding the DB to the open Live set. Three paths:
+2. **The session_id** — `ableton_sessions.id` binding the DB to the open Live set. Four paths:
    - **User passed an id**: use it.
+   - **Omitted (the common case, WFL-7Q2N)**: just omit it — every subcommand auto-selects the only / most-recent session in the DB and echoes the choice on stderr (multi-song DBs refuse to guess). Relay the echo to the user.
    - **"New session" / first push**: pass `--auto-session` to `probe-and-link`; CLI mints the row and returns its id (`session_id`, `auto_session_created: true`). Tell the user the new id — one session per Live set, not per push.
    - **"Create a session named X"**: run `push_cli create-session --song <slug> --name X` first; capture the printed id.
 
-If slug is missing, ask. For session, default to `--auto-session` only if the user explicitly signaled "first push" — otherwise ask.
+If slug is missing, ask. For session, omit it unless the user signaled "first push" (then `--auto-session`) — don't ask the user for an id the CLI can discover.
 
 ## Workflow overview
 

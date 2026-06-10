@@ -54,10 +54,10 @@ If the request is ambiguous, ask one targeted question rather than guessing.
 Three pieces from `$ARGUMENTS`:
 
 1. **Song slug** — DB lives at `songs/<slug>/<slug>-<branch>.db` (per-branch isolation; see `docs/snapshot-schema.md`). The CLI resolves the path via `--song <slug>`.
-2. **session_id** — never default it.
+2. **session_id** — optional (WFL-7Q2N): when omitted, the CLI auto-selects the only / most-recent session in the DB and echoes the choice on stderr (multi-song DBs refuse to guess). An explicit id always wins; `apply` treats the plan file's embedded session as authoritative.
 3. **Domain or NL request**.
 
-If any is missing, ask — never invent.
+If slug or domain is missing, ask — never invent. For session, omission is fine; relay the CLI's auto-selection echo to the user.
 
 ## Workflow
 

@@ -97,10 +97,12 @@ _LEVEL_KINDS = frozenset({"send_level"})
 class DeclaredEnvelope:
     """One declared automation envelope to verify, beat-domain.
 
-    ``target_surface_id`` is the capture surface to MEASURE — for
+    ``target_surface_id`` is the capture surface the verification reads — for
     ``device_parameter`` the track (or return) hosting the device; for
     ``send_level`` the return the send feeds; for ``mixer_volume``/``mixer_pan``
-    the track. ``target_kind`` is the DB envelope kind. ``breakpoints`` are
+    the track whose pre-fader stem FEEDS THE PREDICTION (the measurement
+    itself happens on the master, AUD-3F8M). ``target_kind`` is the DB
+    envelope kind. ``breakpoints`` are
     ``(song_absolute_beat, value)`` pairs in time order. The MCP handler builds
     these; fixtures construct them directly.
     """

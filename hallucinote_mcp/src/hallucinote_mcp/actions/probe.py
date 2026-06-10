@@ -90,6 +90,17 @@ register(
             ParamSpec(name="method", type="str"),
             ParamSpec(name="args", type="list", required=False),
             ParamSpec(name="kwargs", type="dict", required=False),
+            ParamSpec(
+                name="then",
+                type="list",
+                required=False,
+                description=(
+                    "Chain of {method[, args][, kwargs]} steps applied to "
+                    "each successive RETURN value — reaches objects with no "
+                    "LOM path (e.g. the AutomationEnvelope returned by "
+                    "create_automation_envelope)."
+                ),
+            ),
         ),
         handler=probe_handlers.call_handler,
         example=(
@@ -99,6 +110,9 @@ register(
         tips=(
             "For LOM-object arguments: "
             "args=[{\"$path\": \"song.tracks[0].mixer_device.volume\"}].",
+            "Chaining: method='create_automation_envelope', "
+            "args=[{\"$path\": \"...volume\"}], then=[{\"method\": "
+            "\"insert_step\", \"args\": [0.0, 4.0, 0.5]}].",
             "Exceptions propagate as structured errors — an error IS a "
             "probe result (records what Live refuses).",
         ),

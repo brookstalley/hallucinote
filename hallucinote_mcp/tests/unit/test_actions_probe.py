@@ -33,16 +33,29 @@ class FakeMixer:
         self.volume = FakeVolume()
 
 
+class FakeEnvelope:
+    def __init__(self) -> None:
+        self.steps: list[tuple] = []
+
+    def insert_step(self, time: float, length: float, value: float) -> None:
+        self.steps.append((time, length, value))
+
+    def value_at_time(self, time: float) -> float:
+        return 0.5
+
+
 class FakeClip:
     def __init__(self) -> None:
         self.name = "Probe Clip"
         self.is_audio_clip = True
         self.envelope_args: list = []
+        self.last_envelope: FakeEnvelope | None = None
 
     def create_automation_envelope(self, parameter):
         """create_automation_envelope( (Clip)self, (DeviceParameter)p) -> object"""
         self.envelope_args.append(parameter)
-        return object()
+        self.last_envelope = FakeEnvelope()
+        return self.last_envelope
 
 
 class FakeClipSlot:
@@ -297,6 +310,59 @@ class TestCall:
     def test_property_not_callable_is_type_error(self):
         with pytest.raises(TypeError, match="not a\\s+method"):
             call_handler(FakeCtx(), "song", "tempo")
+
+    def test_then_step_runs_on_returned_object(self):
+        ctx = FakeCtx()
+        slot = ctx.song.tracks[0].clip_slots[0]
+        slot.create_audio_clip("/tmp/probe.wav")
+        out = call_handler(
+            ctx,
+            "song.tracks[0].clip_slots[0].clip",
+            "create_automation_envelope",
+            args=[{"$path": "song.tracks[0].mixer_device.volume"}],
+            then=[{"method": "insert_step", "args": [0.0, 4.0, 0.5]}],
+        )
+        assert slot.clip.last_envelope.steps == [(0.0, 4.0, 0.5)]
+        assert out["then"] == [{"method": "insert_step", "result": None}]
+
+    def test_then_step_result_serialized(self):
+        ctx = FakeCtx()
+        slot = ctx.song.tracks[0].clip_slots[0]
+        slot.create_audio_clip("/tmp/probe.wav")
+        out = call_handler(
+            ctx,
+            "song.tracks[0].clip_slots[0].clip",
+            "create_automation_envelope",
+            args=[{"$path": "song.tracks[0].mixer_device.volume"}],
+            then=[{"method": "value_at_time", "args": [2.0]}],
+        )
+        assert out["then"] == [{"method": "value_at_time", "result": 0.5}]
+
+    def test_then_step_on_none_return_is_clear_error(self):
+        ctx = FakeCtx()
+        slot = ctx.song.tracks[0].clip_slots[0]
+        slot.create_audio_clip("/tmp/probe.wav")
+        with pytest.raises(ValueError, match=r"then\[1\].*returned\s+None"):
+            call_handler(
+                ctx,
+                "song.tracks[0].clip_slots[0].clip",
+                "create_automation_envelope",
+                args=[{"$path": "song.tracks[0].mixer_device.volume"}],
+                then=[
+                    {"method": "insert_step", "args": [0.0, 4.0, 0.5]},
+                    {"method": "value_at_time", "args": [2.0]},
+                ],
+            )
+
+    def test_then_malformed_step_rejected(self):
+        with pytest.raises(ValueError, match=r"then\[0\].*'method'"):
+            call_handler(
+                FakeCtx(),
+                "song.tracks[0].clip_slots[0]",
+                "create_audio_clip",
+                args=["/tmp/probe.wav"],
+                then=["not-a-dict"],
+            )
 
     def test_method_exception_propagates(self):
         ctx = FakeCtx()

@@ -219,31 +219,82 @@ def call_handler(
     method: str,
     args: list[Any] | None = None,
     kwargs: dict[str, Any] | None = None,
+    then: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """Invoke ``method`` on the object at ``path`` with JSON (or $path) args."""
-    obj = resolve_path(context, path)
-    try:
-        fn = getattr(obj, method)
-    except AttributeError:
-        raise AttributeError(
-            f"{path} ({type(obj).__name__}) has no attribute {method!r}"
-        ) from None
-    if not callable(fn):
-        raise TypeError(
-            f"{path}.{method} is a property ({type(fn).__name__}), not a "
-            f"method — use action='get'"
-        )
+    """Invoke ``method`` on the object at ``path`` with JSON (or $path) args.
 
-    resolved_args = [_resolve_arg(context, a) for a in (args or [])]
-    resolved_kwargs = {
-        str(k): _resolve_arg(context, v) for k, v in (kwargs or {}).items()
-    }
-    result = fn(*resolved_args, **resolved_kwargs)
-    return {
+    ``then`` chains further calls on each successive RETURN value — the only
+    way to reach objects that have no LOM path. The motivating probe:
+    ``create_automation_envelope`` returns an AutomationEnvelope that is not
+    addressable from ``song``; ``insert_step``/``value_at_time`` must be
+    called on that returned object. Each step is
+    ``{"method": str[, "args": list][, "kwargs": dict]}``; a step's target is
+    the previous step's return value.
+    """
+    obj = resolve_path(context, path)
+    result = _invoke(context, obj, method, args, kwargs, where=path)
+    out: dict[str, Any] = {
         "path": path,
         "method": method,
         "result": serialize(result),
     }
+
+    if then:
+        steps_out: list[dict[str, Any]] = []
+        target = result
+        for i, step in enumerate(then):
+            if not isinstance(step, dict) or "method" not in step:
+                raise ValueError(
+                    f"then[{i}] must be an object with a 'method' key, "
+                    f"got {step!r}"
+                )
+            if target is None:
+                raise ValueError(
+                    f"then[{i}] ({step['method']!r}): previous step returned "
+                    f"None — nothing to call on"
+                )
+            target = _invoke(
+                context,
+                target,
+                str(step["method"]),
+                step.get("args"),
+                step.get("kwargs"),
+                where=f"{path}.{method}(...) then[{i}]",
+            )
+            steps_out.append(
+                {"method": step["method"], "result": serialize(target)}
+            )
+        out["then"] = steps_out
+
+    return out
+
+
+def _invoke(
+    context: LiveContext,
+    obj: Any,
+    method: str,
+    args: list[Any] | None,
+    kwargs: dict[str, Any] | None,
+    *,
+    where: str,
+) -> Any:
+    """Shared invoke for ``call`` and its ``then`` steps."""
+    try:
+        fn = getattr(obj, method)
+    except AttributeError:
+        raise AttributeError(
+            f"{where} ({type(obj).__name__}) has no attribute {method!r}"
+        ) from None
+    if not callable(fn):
+        raise TypeError(
+            f"{where}.{method} is a property ({type(fn).__name__}), not a "
+            f"method — use action='get'"
+        )
+    resolved_args = [_resolve_arg(context, a) for a in (args or [])]
+    resolved_kwargs = {
+        str(k): _resolve_arg(context, v) for k, v in (kwargs or {}).items()
+    }
+    return fn(*resolved_args, **resolved_kwargs)
 
 
 def _resolve_arg(context: LiveContext, value: Any) -> Any:

@@ -6,13 +6,17 @@ Produced by ``analyze_mix(captures_dir)`` and serialized to
 ``analyze_mix`` and writes this report.
 
 Schema version is pinned in the report itself; downstream consumers
-(future ``compare_to`` differs, dashboards) discriminate by
+(the ``compare_to`` differ, dashboards) discriminate by
 ``schema_version`` rather than file path or git tag.
 
-The MVP carries skeleton fields that aren't yet populated:
+Two fields carry honesty/optional payloads:
 
-  ``compare_to``         — baseline-diff field. Reserved per spike §9
-                            (P2 backlog). Always ``None`` in MVP output.
+  ``compare_to``         — baseline-diff payload (AUD-4W7K): per-surface
+                            loudness deltas + significance flags against a
+                            previous analysis JSON, populated when the
+                            caller passes ``analyze_mix(compare_to=...)``
+                            (see ``compare.diff_reports``). ``None`` when
+                            no baseline was requested.
   ``skipped_analyses``   — explicit record when a declared analysis
                             couldn't run (e.g. no declared decay times
                             in the song DB for the reverb check). Keeps

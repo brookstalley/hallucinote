@@ -21,12 +21,14 @@ the reverb-verification section is emitted as a structured
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alignment import trim_to_common_length
+from .compare import diff_reports
 from .attribution import (
     band_attribution,
     find_master_overshoots,
@@ -151,6 +153,7 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
+    compare_to: Path | str | None = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -172,10 +175,24 @@ def analyze_mix(
     ``sections`` table converted to beats (for ``sections``), then passes
     populated lists. This function stays DB-agnostic so synthetic-fixture
     tests can drive it without a song DB.
+
+    ``compare_to`` is a path to a previously-written analysis JSON to use as
+    the baseline: the finished report is diffed against it (per-surface
+    loudness deltas + significance flags, see ``compare.diff_reports``) and
+    the result lands in ``MixReport.compare_to``. Deltas are neutral
+    evidence graded against intent by the consumer — no findings are
+    derived from them.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
+
+    # Load the baseline up front so a bad path / unreadable JSON fails fast,
+    # before the expensive DSP passes — the diff itself runs at the end.
+    baseline: dict | None = None
+    if compare_to is not None:
+        baseline_path = Path(compare_to)
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
     # Trim every surface to the common length (AUD-1C7K). Per-surface sfrecord~
     # instances finalize at staggered times, so the raw WAVs differ in length;
@@ -256,7 +273,7 @@ def analyze_mix(
         sections=sections,
     )
 
-    return MixReport(
+    report = MixReport(
         song_slug=capture.song_slug,
         captures_dir=str(capture.captures_dir),
         captured_at=capture.captured_at,
@@ -273,6 +290,13 @@ def analyze_mix(
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
     )
+
+    if baseline is not None:
+        report.compare_to = diff_reports(
+            report.to_json_dict(), baseline, baseline_ref=str(Path(compare_to))
+        )
+
+    return report
 
 
 def _measure_surface(surface) -> StemMetrics:

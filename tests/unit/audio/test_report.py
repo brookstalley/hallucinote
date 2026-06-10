@@ -134,7 +134,7 @@ def test_to_json_dict_round_trips_through_json():
     assert av["metric"] == "spectral_centroid_hz"
     assert av["measurable"] is True and av["realized"] is True
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
-    assert deserialized["compare_to"] is None  # reserved skeleton
+    assert deserialized["compare_to"] is None  # no baseline requested
 
 
 def test_per_section_serializes_with_scoped_surfaces():
@@ -337,7 +337,11 @@ def test_nonfinite_sentinels_serialize_as_null_under_allow_nan_false():
     assert parsed["automation_verifications"][0]["after"] is None
 
 
-def test_compare_to_field_is_reserved_skeleton():
+def test_compare_to_defaults_none_and_serializes_when_populated():
+    """``compare_to`` is None when no baseline was requested, and passes
+    through serialization verbatim when ``analyze_mix(compare_to=...)``
+    populated it (the payload is built by ``compare.diff_reports``, which
+    is already JSON-shaped — no re-encoding at this boundary)."""
     report = MixReport(
         song_slug="s",
         captures_dir="/x",
@@ -346,9 +350,19 @@ def test_compare_to_field_is_reserved_skeleton():
         stems=[],
         master=_make_stem("master"),
     )
-    # Reserved per spike §9 — implementation deferred to P2 backlog.
     assert report.compare_to is None
-    assert "compare_to" in report.to_json_dict()
+    assert report.to_json_dict()["compare_to"] is None
+
+    report.compare_to = {
+        "baseline": {"ref": "/songs/s/analysis/a.json"},
+        "deltas": [],
+        "overshoot_count": {"before": 0, "after": 0, "delta": 0,
+                            "significant": False},
+        "added_surfaces": [],
+        "missing_surfaces": [],
+    }
+    out = json.loads(json.dumps(report.to_json_dict(), allow_nan=False))
+    assert out["compare_to"]["baseline"]["ref"] == "/songs/s/analysis/a.json"
 
 
 def test_skipped_analyses_records_dropped_work():

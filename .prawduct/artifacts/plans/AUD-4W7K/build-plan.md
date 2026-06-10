@@ -62,9 +62,27 @@ significance constant (~15 min, planned in).
 
 ## Status
 
-- [ ] Chunk 01: diff engine + `compare_to` end-to-end via explicit baseline path
+- [x] Chunk 01: diff engine + `compare_to` end-to-end via explicit baseline path
 - [ ] Chunk 02: db_seq provenance + seq resolver + surfacing sweep
 Context: plan authored 2026-06-10; branch stacked on AUD-3F8M (PR #154).
+**Chunk 01 done 2026-06-10. Calibration evidence (Done-when 1):** master-loudness
+deltas across the 6 sun-zone-done analysis JSONs (2026-05-29..06-03) —
+same-mix re-capture pairs (06-03 02:41→03:34; 05-29→05-30) sit at
+|Δ| 0.02–0.13 dB for lufs_i / lufs_m_peak / true_peak_dbtp, real mix-version
+bumps at 0.36–2.5 dB, so the planned 0.5 dB constant is KEPT for those three.
+**Adjusted from the plan's single-constant assumption:** lufs_s_median wobbles
+0.38–0.63 dB between near-identical takes (3 s short-term blocks are
+arrangement-timing sensitive) — it gets its own 1.0 dB floor
+(`SIGNIFICANCE_SHORT_TERM_DB`), or 0.5 dB would flag noise. Real-pair
+verification: the v3→v4 diff (06-02→06-03) flags exactly the known story —
+master true peak 1.52→−0.96 dBTP, 8 overshoots→0. **Honest caveat for
+QLT-3D8R:** near-silent reverb returns (−50..−67 LUFS) flag large dB deltas
+that may be capture-tail variance, not mix moves — before/after absolutes are
+in each row so consumers can weigh it; whether quiet surfaces deserve an
+absolute-level floor is a listening-day question. Critic (final-mode run on
+the chunk): 0 blocking / 1 warning (this evidence record) / 2 notes —
+missing-baseline error test added; baseline schema/song validation before the
+DSP pass deferred to Chunk 02 (noted there).
 
 ## Scaffolding
 
@@ -137,7 +155,10 @@ none). `analyze_mix`'s `compare_to` now also accepts an int seq (requires the ne
 `analysis_dir` param); the MCP analyze action
 (`hallucinote_mcp/src/hallucinote_mcp/actions/analysis.py` +
 `handlers/analysis.py`) exposes `compare_to` and passes the analysis dir it already
-writes to.
+writes to. Also take the Chunk 01 Critic note: validate the baseline's
+schema_version/song_slug right after the fail-fast load (against
+`capture.song_slug` / `SCHEMA_VERSION`) so a wrong baseline refuses *before*
+the DSP passes, not after.
 
 **Surfacing sweep (the contract-drift class that blocked twice on 2026-06-10):**
 grep-driven sweep of every surface that teaches the old "compare_to reserved /

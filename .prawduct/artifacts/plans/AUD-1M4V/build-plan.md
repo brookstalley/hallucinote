@@ -122,7 +122,10 @@ once; all probes then run over the TCP bridge with no further restarts.
 ## Chunk 03 — discovery artifact + staged plan
 
 `discovery.md` in this dir: LOM probe results (evidence), producer-practice research
-synthesis (requirements source), the user's four locks, the staged plan across children
+synthesis (requirements source — raw research lives in
+`docs/research/audio-first-class/` per user direction 2026-06-10: producer-practice
+deep research, mastering gap-fill, two LOM passes; LINK, don't restate), the user's
+four locks, the staged plan across children
 (CLP-AUD1, CLP-AUD2, ENV-8H1T, ENV-3M7K, ENV-4M2T, AUD-6T2K; TPL-2D8K referenced, never
 duplicated), and explicit requirement→mechanism traceability. Then
 `/prawduct:backlog update` AUD-1M4V `stage=design refs=…` + children `refs:`.

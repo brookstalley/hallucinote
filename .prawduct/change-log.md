@@ -4,6 +4,21 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
+
+<!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute` failures previously printed only the errors-file path plus
+bare "top error patterns", forcing a read of `.last-push-errors.json` on every
+halt. `_group_errors` now carries a representative `tool`/`action` and the
+first non-null responder `hint` per pattern, and `format_summary` renders a
+"Halt cause" block: `tool.action: error (N calls)` + a `next:` line
+(responder hint first; hint-less `device.load` failures point at
+REQUIREMENTS.md; connection-class halts at the Live-running checklist;
+otherwise the generic fix→rebuild→re-execute loop). Summary redaction is now
+test-pinned (large payloads can never leak past the 60-char grouping prefix).
+`skills/ableton-push/SKILL.md` + `push-execute-design.md` updated to match.
+
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
 <!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->

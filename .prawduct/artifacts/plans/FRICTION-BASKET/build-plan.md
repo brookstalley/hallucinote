@@ -40,10 +40,14 @@ are confirmed firsthand); WFL-7Q2N's *song-context* source is inferred, not conf
 
 ## Status
 
-- [ ] Chunk 01: PSH-4E2W — human-readable push-halt summary
+- [x] Chunk 01: PSH-4E2W — human-readable push-halt summary
 - [ ] Chunk 02: WFL-7Q2N — session auto-discovery
 - [ ] Chunk 03: DOC-5W8B — auto-regen REQUIREMENTS.md after device-changing push
-Context: plan authored 2026-06-10; nothing built yet.
+Context: Chunk 01 done 2026-06-10 — `_group_errors` enriched (tool/action/hint),
+`_suggest_next_step` (hint > connection checklist > device.load→REQUIREMENTS.md >
+generic), `format_summary` renders "Halt cause" block; skill doc + design doc
+updated; Critic chunk-mode passed (2 warnings resolved: redaction test added,
+test evidence refreshed). Next: Chunk 02 session auto-discovery.
 
 ## Scaffolding
 

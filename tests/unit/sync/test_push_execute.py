@@ -86,7 +86,12 @@ def tiny_song(conn, song):
     return {"track_id": tid, "clip_id": cid, "song_id": song}
 
 
-def _make_send_fn(*, fail_keys: set[str] = frozenset(), raise_on_key: str | None = None):
+def _make_send_fn(
+    *,
+    fail_keys: set[str] = frozenset(),
+    raise_on_key: str | None = None,
+    fail_hint: str | None = None,
+):
     """Build a fake send_fn that returns synthetic ok results with monotonic
     link indexes per kind, unless the call's key is in ``fail_keys`` (returns
     ok=False) or matches ``raise_on_key`` (raises — simulates connection loss).
@@ -134,7 +139,11 @@ def _make_send_fn(*, fail_keys: set[str] = frozenset(), raise_on_key: str | None
         if raise_on_key and composite == raise_on_key:
             raise ConnectionRefusedError("simulated Live unreachable")
         if composite in fail_keys:
-            return FakeResponse(ok=False, error=f"simulated failure for {composite}")
+            return FakeResponse(
+                ok=False,
+                error=f"simulated failure for {composite}",
+                hint=fail_hint,
+            )
 
         kind = _kind_for(req.tool, req.action)
         if kind is None:
@@ -679,9 +688,11 @@ def test_format_summary_ok_path(conn, song, session, tiny_song, state_dir):
     assert "clips" in text
 
 
-def test_format_summary_partial_includes_top_patterns(
+def test_format_summary_partial_includes_halt_cause_and_next_step(
     conn, song, session, tiny_song, state_dir,
 ):
+    """PSH-4E2W: a failed push's output names the halt cause (tool.action +
+    error) and a suggested next step — no JSON spelunking required."""
     send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
@@ -690,8 +701,61 @@ def test_format_summary_partial_includes_top_patterns(
     text = push_execute.format_summary(result)
     assert "PARTIAL" in text
     assert "halted" in text
-    assert "Top error patterns" in text
+    assert "Halt cause" in text
+    assert "ableton_clip.create" in text
     assert "simulated failure" in text
+    assert "next:" in text
+    # No responder hint → generic fix-rebuild-rerun suggestion.
+    assert "re-run" in text
+
+
+def test_format_summary_next_step_prefers_responder_hint(
+    conn, song, session, tiny_song, state_dir,
+):
+    """When the failing response carries a hint, the summary's next step IS
+    that hint — the responder knows the cause better than any heuristic."""
+    send_fn = _make_send_fn(
+        fail_keys={"ableton_clip:create"},
+        fail_hint="slot 1 is occupied; delete the clip in Live first",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    text = push_execute.format_summary(result)
+    assert "next: slot 1 is occupied; delete the clip in Live first" in text
+
+
+def test_format_summary_stays_payload_free_for_large_errors(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Governance checkpoint for PSH-4E2W: the richer summary must not
+    reintroduce bulk payloads. A failing response whose error message embeds
+    a large dump renders at most the 60-char grouping prefix."""
+    payload = "notes=[" + ", ".join(f"{{'pitch': {60 + i}}}" for i in range(500)) + "]"
+    send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
+
+    # Wrap the fake so the failure carries the giant message.
+    inner = send_fn
+
+    def send(req):
+        resp = inner(req)
+        if not resp.ok:
+            return FakeResponse(ok=False, error=f"clip rejected: {payload}")
+        return resp
+
+    send.call_log = inner.call_log  # type: ignore[attr-defined]
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    text = push_execute.format_summary(result)
+    assert "Halt cause" in text
+    assert payload not in text
+    # Only the 60-char grouping prefix of the error may appear.
+    assert ("clip rejected: " + payload)[:60] in text
+    assert all(len(line) < 200 for line in text.splitlines())
 
 
 def test_format_summary_connection_lost(
@@ -704,6 +768,38 @@ def test_format_summary_connection_lost(
     )
     text = push_execute.format_summary(result)
     assert "CONNECTION LOST" in text
+    # PSH-4E2W: connection-class halts point at the Live-side checklist.
+    assert "Live is running" in text
+
+
+def test_group_errors_carries_representative_tool_action_hint():
+    """PSH-4E2W: grouped patterns carry enough context (tool, action, first
+    non-null hint) for the summary to name the cause without the errors file."""
+    records = [
+        {"key": "clip:1", "tool": "ableton_clip", "action": "create",
+         "error": "boom A", "hint": None},
+        {"key": "clip:2", "tool": "ableton_clip", "action": "create",
+         "error": "boom A", "hint": "try deleting the slot"},
+        {"key": "dev:1", "tool": "ableton_device", "action": "load",
+         "error": "no such preset", "hint": None},
+    ]
+    grouped = push_execute._group_errors(records)
+    by_substr = {g["error_substring"]: g for g in grouped}
+    boom = by_substr["boom A"]
+    assert boom["count"] == 2
+    assert boom["tool"] == "ableton_clip"
+    assert boom["action"] == "create"
+    assert boom["hint"] == "try deleting the slot"
+    assert boom["affected_keys"] == ["clip:1", "clip:2"]
+
+
+def test_suggest_next_step_device_load_points_at_requirements():
+    """A hint-less device.load failure suggests the not-installed path —
+    the canonical cross-machine failure — and names REQUIREMENTS.md."""
+    pattern = {"tool": "ableton_device", "action": "load",
+               "error_substring": "preset not found", "hint": None, "count": 1}
+    step = push_execute._suggest_next_step(pattern, outcome="partial")
+    assert "REQUIREMENTS.md" in step
 
 
 # ---------------------------------------------------------------------------

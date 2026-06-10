@@ -137,7 +137,8 @@ errors:
     }
   ],
   "grouped_by_error": [
-    {"error_substring": "Couldn't create clip", "count": 2, "affected_keys": ["clip:abc-123", "clip:def-456"]}
+    {"error_substring": "Couldn't create clip", "count": 2, "affected_keys": ["clip:abc-123", "clip:def-456"],
+     "tool": "ableton_clip", "action": "create", "hint": null}
   ]
 }
 ```
@@ -170,9 +171,16 @@ push_cli execute: PARTIAL — halted at phase 'clips' (4/10 phases ok)
 errors: songs/neon-feedback/.last-push-errors.json
 state:  songs/neon-feedback/.last-push-state.json
 
-Top error patterns:
-  · "Couldn't create clip — slot occupied" (2 occurrences)
+Halt cause (phase 'clips'):
+  - ableton_clip.create: "Couldn't create clip — slot occupied" (2 calls)
+    next: fix the cause in build.py / the snapshot, rebuild, then re-run execute (idempotent — applied rows skip)
 ```
+
+The "Halt cause" block (PSH-4E2W) names cause + suggested next step per
+grouped pattern so the agent acts without opening the errors file. The
+`next:` line prefers the responder's `hint`; hint-less device.load
+failures point at REQUIREMENTS.md, connection-class halts at the
+Live-side checklist, anything else at the generic fix-rebuild-rerun loop.
 
 ### Exit codes
 

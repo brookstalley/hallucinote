@@ -104,7 +104,7 @@ python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 | Code | Meaning | What to do |
 |------|---------|------------|
 | 0 | All phases ok | Step 3. |
-| 1 | Partial — halted at a phase boundary | Read `.last-push-errors.json`, diagnose, fix in `build.py`, rebuild, re-execute. Re-run is idempotent. |
+| 1 | Partial — halted at a phase boundary | The summary's "Halt cause" block names the failing tool.action, the error, and a next step — act on that. Fix in `build.py`, rebuild, re-execute. Re-run is idempotent. `.last-push-errors.json` has per-call forensics if the summary isn't enough. |
 | 2 | Connection lost | See `ableton://guides/error-recovery`. Re-execute. |
 
 `execute` writes:
@@ -131,7 +131,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 
 1. **Outcome + totals.** `outcome` field + per-phase counts.
 2. **Per-domain summary.** `"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written"`.
-3. **On partial / connection_lost:** cite `.last-push-errors.json` path. Tell the user the loop: read errors → fix → rebuild → re-execute. Idempotent.
+3. **On partial / connection_lost:** relay the summary's "Halt cause" lines (cause + next step) verbatim. Tell the user the loop: act on the next step → fix → rebuild → re-execute. Idempotent. Cite `.last-push-errors.json` only when per-call forensics are needed.
 4. **Live 12.4 UI heads-up — conditional, only emit rows that apply:**
    - **Empty mixer column.** If any track has zero devices: *"Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders."*
    - **Hidden mixer envelopes on MIDI clips.** If `envelopes` wrote any `mixer_volume` / `mixer_pan` / `send_level` on a MIDI clip: *"Mixer envelope(s) on MIDI clip 'Y' are playing but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider and choose 'Show Modulation'. Live remembers the choice per-set."*
@@ -156,7 +156,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 ## Failure modes
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
-- **`execute` exits 1 (partial)**: read `.last-push-errors.json`, fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip.
+- **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 

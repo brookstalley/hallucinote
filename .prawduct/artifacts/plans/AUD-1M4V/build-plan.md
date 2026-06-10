@@ -54,14 +54,19 @@ Branch: `feature/aud-1m4v-discovery` off `develop` (gitflow — pass the develop
 
 ## Status
 
-- [ ] Chunk 01: `ableton_probe` — permanent constrained LOM introspection action
+- [x] Chunk 01: `ableton_probe` — permanent constrained LOM introspection action
 - [ ] Chunk 02: Execute prioritized LOM probe suite in real Live (operator-assisted:
       Remote Script reinstall + Live quit/reopen, then scripted probes via TCP bridge)
 - [ ] Chunk 03: Discovery/requirements artifact (`discovery.md` in this dir) +
       staged plan + backlog children `refs:` updates via `/prawduct:backlog`
-Context: plan authored 2026-06-10; nothing built yet. Research inputs for chunk 03
-in flight: LOM web research (recording + automation-record mechanics) and
-producer-practice deep research, both running in background.
+Context: chunk 01 committed (c469580) + chunk-Critic clean (1 process warning:
+stale findings anchor from previous branch, corrected; run a FRESH cumulative
+before PR — old AUD-4W7K record does not vouch for this branch). Research landed:
+producer-practice deep research (verified synthesis; mastering stage produced no
+surviving claims — gap-fill agent running) and LOM deep-dive (begin/end_gesture +
+record_mode is the master/group automation candidate; 7-probe priority list).
+Next: operator reinstalls Remote Script (`hallucinote-mcp install-remote-script`)
++ quits/reopens Live, then chunk 02 probes over the TCP bridge.
 
 ## Chunk 01 — `ableton_probe` (the only code chunk)
 

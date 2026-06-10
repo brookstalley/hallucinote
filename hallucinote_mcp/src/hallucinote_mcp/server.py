@@ -1,4 +1,4 @@
-"""FastMCP server — 12 unified tools + 11 resources (all static) as MCP entry points.
+"""FastMCP server — 13 unified tools + 11 resources (all static) as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -78,7 +78,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 12 unified tools + 11 resources (all static) for Ableton Live,
+hallucinote-mcp — 13 unified tools + 11 resources (all static) for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -94,6 +94,7 @@ Tools (call action='help' on any tool for its action menu):
   ableton_browser       instruments, effects, plugins
   ableton_render        audio capture: HallucinoteAnalyzer auto-load + WAV capture pass
   ableton_analysis      MixReport from a captures dir (loudness, master attribution, reverb verification)
+  ableton_probe         LOM introspection: describe/get/call on a constrained path grammar
 
 Resources (read via resources/read, no turn cost):
   ableton://session/snapshot          session+tracks+returns in one read
@@ -117,7 +118,7 @@ Hard constraints:
 
 
 def create_server(name: str = "hallucinote-mcp") -> FastMCP:
-    """Construct the FastMCP server with all 12 tools registered.
+    """Construct the FastMCP server with all 13 tools registered.
 
     Side-effect-light — safe to call from tests. The actual ``serve()`` /
     ``run()`` loop is started by the CLI entry point.
@@ -155,6 +156,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
     _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return (idempotent); the MASTER is detect-only — Live 12.4 can't add a device to the master via the API (DEV-2M9K), so place it on the Master strip by hand once and the render configures it from then on. The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
     _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, per-return reverb RT60 measured from each return's captured ring-out (dry-source-free), and realized-vs-declared automation verification (device-parameter timbre flips, dynamic sends). Writes a MixReport JSON to songs/<slug>/analysis/.")
+    _register_tool(mcp, "ableton_probe", "LOM capability probing: describe (class/properties/methods with signature docstrings), get (one property), call (invoke a method; can mutate — probe in scratch sets). Constrained path grammar: 'song'/'application' roots + '.attr'/'[index]' steps only.")
 
     return mcp
 

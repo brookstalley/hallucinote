@@ -26,6 +26,7 @@ TOOLS: tuple[str, ...] = (
     "ableton_browser",
     "ableton_render",
     "ableton_analysis",
+    "ableton_probe",
 )
 
 

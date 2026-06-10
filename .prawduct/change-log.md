@@ -4,6 +4,19 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+<!-- chunks=FRICTION-03 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
+whenever the devices phase applied at least one call — including pushes that
+halted at a later phase (the doc tracks current set state, not push success).
+`compat.regen_requirements(song_slug)` is the extracted callable seam; the
+`write-requirements` CLI command is a thin wrapper. `--db`-only pushes print a
+stale-notice with the manual command instead of guessing the song dir; regen
+failures degrade to a stderr notice (waivered broad catch) so the push's exit
+code is never masked. `docs/collaboration.md` handoff checklist updated.
+
 ## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
 
 <!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->

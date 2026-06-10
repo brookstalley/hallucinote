@@ -598,6 +598,38 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         reason=args.reason or f"push_cli execute (session={args.session_id})",
     )
     sys.stdout.write(push_execute.format_summary(result))
+
+    # DOC-5W8B: a push whose devices phase applied anything leaves
+    # REQUIREMENTS.md fresh in the same flow. Regen is content-idempotent,
+    # so parameter-only device pushes regenerate harmlessly; a halted push
+    # that still applied device changes regenerates too (the doc tracks
+    # current set state, not push success). Regen failure must never mask
+    # the push outcome — it degrades to a stderr notice.
+    devices_phase = next(
+        (p for p in result.phases if p.name == "devices"), None,
+    )
+    if devices_phase is not None and devices_phase.calls_ok > 0:
+        if getattr(args, "song", None):
+            from hallucinote.sync.compat import regen_requirements
+            try:
+                req_path = regen_requirements(args.song)
+                sys.stderr.write(
+                    f"push_cli execute: REQUIREMENTS.md regenerated "
+                    f"({req_path})\n"
+                )
+            except (SystemExit, Exception) as exc:  # prawduct:allow prawduct/broad-except -- a docs-regen failure (bad slug, DB read, file write) must degrade to a notice, never replace the push's exit code
+                sys.stderr.write(
+                    f"push_cli execute: REQUIREMENTS.md regen skipped — "
+                    f"{exc}\n"
+                )
+        else:
+            sys.stderr.write(
+                "push_cli execute: devices changed — REQUIREMENTS.md may be "
+                "stale; re-run `python3 -m hallucinote.sync.compat "
+                "write-requirements <slug>` (no --song given, can't locate "
+                "the song dir)\n"
+            )
+
     # A5: surface the verbatim recovery command on a non-clean exit so the
     # agent doesn't have to reassemble flags from the failure context.
     # Push is idempotent (W10-A + W20-A device binding by class/position) —

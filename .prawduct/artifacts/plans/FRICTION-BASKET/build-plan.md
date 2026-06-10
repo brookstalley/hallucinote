@@ -42,16 +42,14 @@ are confirmed firsthand); WFL-7Q2N's *song-context* source is inferred, not conf
 
 - [x] Chunk 01: PSH-4E2W — human-readable push-halt summary
 - [x] Chunk 02: WFL-7Q2N — session auto-discovery
-- [ ] Chunk 03: DOC-5W8B — auto-regen REQUIREMENTS.md after device-changing push
-Context: Chunks 01+02 done 2026-06-10. 02: `session_resolve.resolve_session_id`
-(explicit wins / only / most-recent-with-echo / plan-file session authoritative
-for apply / multi-song refuse / none→bootstrap guidance) wired into all 9
-push_cli + 3 pull_cli session-taking subcommands; positionals now optional.
-Plan assumption 1 resolved simpler than assumed: --song/--db is already
-required, DBs are per-song, so no new --song plumbing. Critic warnings
-resolved (apply prefers plan-embedded session; push_cli docstring; fresh
-evidence). Also fixed latent Hypothesis deadline flake (tests/conftest.py
-deadline=None). Next: Chunk 03 auto-regen REQUIREMENTS.md.
+- [x] Chunk 03: DOC-5W8B — auto-regen REQUIREMENTS.md after device-changing push
+Context: All three chunks done 2026-06-10. 03: `compat.regen_requirements`
+extracted; `push_cli execute` regenerates after a devices phase with applied
+calls (--song), prints a stale-notice on --db-only, degrades regen failures to
+a notice (waivered broad catch) so the push exit code survives; halted-push
+regen pinned by test. Critic final passed (3 warnings resolved: broad-catch
+contract, halted-push test, docs/collaboration.md). Remaining: cumulative
+Critic vs develop + PR; backlog shipped-flips post-merge.
 
 ## Scaffolding
 

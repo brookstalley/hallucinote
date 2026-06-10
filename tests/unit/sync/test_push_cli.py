@@ -2159,3 +2159,154 @@ def test_cli_prune_apply_deletes_only_the_orphan(
     assert out["deleted"] == [{"track_index": 1, "clip_index": 2, "name": "orphan"}]
     # exactly the orphan slot deleted — never the DB-backed slot 1
     assert send.deletes == [{"track_index": 1, "location": "session", "clip_index": 2}]
+
+
+# ---------------------------------------------------------------------------
+# DOC-5W8B: auto-regen REQUIREMENTS.md after a device-changing push
+# ---------------------------------------------------------------------------
+
+
+def _fake_execute_result(*, devices_calls_ok: int):
+    from hallucinote.sync.push_execute import ExecuteResult, PhaseOutcome
+    return ExecuteResult(
+        outcome="ok", exit_code=0, phase_halted=None,
+        phases=[
+            PhaseOutcome(name="tracks", status="ok", calls_ok=1),
+            PhaseOutcome(
+                name="devices",
+                status="ok" if devices_calls_ok else "skipped",
+                calls_ok=devices_calls_ok,
+            ),
+        ],
+    )
+
+
+def test_cli_execute_regenerates_requirements_after_device_push(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """DOC-5W8B: a push whose devices phase applied calls leaves
+    REQUIREMENTS.md regenerated in the same flow (--song path)."""
+    import hallucinote.sync.compat as compat
+
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=2),
+    )
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    regen_calls: list[str] = []
+
+    def fake_regen(slug):
+        regen_calls.append(slug)
+        return tmp_path / "REQUIREMENTS.md"
+
+    monkeypatch.setattr(compat, "regen_requirements", fake_regen)
+
+    rc = push_cli.main([
+        "execute", session, "--song", "t", "--no-coherence-check",
+    ])
+    assert rc == 0
+    assert regen_calls == ["t"]
+    assert "REQUIREMENTS.md regenerated" in capsys.readouterr().err
+
+
+def test_cli_execute_no_regen_when_devices_phase_idle(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """No device calls applied -> REQUIREMENTS.md untouched, no notice."""
+    import hallucinote.sync.compat as compat
+
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=0),
+    )
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: pytest.fail("regen must not run for an idle devices phase"),
+    )
+    rc = push_cli.main([
+        "execute", session, "--song", "t", "--no-coherence-check",
+    ])
+    assert rc == 0
+    assert "REQUIREMENTS.md" not in capsys.readouterr().err
+
+
+def test_cli_execute_db_only_prints_stale_notice_instead_of_regen(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """--db escape hatch has no slug to resolve the song dir; the flow says
+    so instead of guessing (DOC-5W8B's explicit-prompt fallback)."""
+    import hallucinote.sync.compat as compat
+
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=1),
+    )
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: pytest.fail("regen must not run without --song"),
+    )
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--no-coherence-check",
+    ])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "REQUIREMENTS.md may be stale" in err
+    assert "write-requirements" in err
+
+
+def test_cli_execute_regen_failure_never_masks_push_outcome(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """A regen SystemExit (e.g. song dir missing) degrades to a notice; the
+    push's own exit code survives."""
+    import hallucinote.sync.compat as compat
+
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=1),
+    )
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+
+    def failing_regen(slug):
+        raise SystemExit("compat: songs/t/ does not exist — wrong slug?")
+
+    monkeypatch.setattr(compat, "regen_requirements", failing_regen)
+    rc = push_cli.main([
+        "execute", session, "--song", "t", "--no-coherence-check",
+    ])
+    assert rc == 0
+    assert "regen skipped" in capsys.readouterr().err
+
+
+def test_cli_execute_halted_push_with_device_changes_still_regenerates(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """A push that applied device changes then halted at a later phase still
+    regenerates (the doc tracks current set state, not push success) — and
+    the push's own non-zero exit code survives the regen."""
+    import hallucinote.sync.compat as compat
+    from hallucinote.sync.push_execute import ExecuteResult, PhaseOutcome
+
+    halted = ExecuteResult(
+        outcome="partial", exit_code=1, phase_halted="envelopes",
+        phases=[
+            PhaseOutcome(name="devices", status="ok", calls_ok=1),
+            PhaseOutcome(name="envelopes", status="halted", calls_failed=1),
+        ],
+    )
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push", lambda **kw: halted,
+    )
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    regen_calls: list[str] = []
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: regen_calls.append(slug) or (tmp_path / "REQUIREMENTS.md"),
+    )
+    rc = push_cli.main([
+        "execute", session, "--song", "t", "--no-coherence-check",
+    ])
+    assert rc == 1
+    assert regen_calls == ["t"]
+    assert "REQUIREMENTS.md regenerated" in capsys.readouterr().err

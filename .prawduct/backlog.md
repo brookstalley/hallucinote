@@ -530,6 +530,11 @@ sections only via explicit `/backlog update` calls.
 
   (migrated from legacy P6) Land per-chunk as appetite allows; not gating any chunk's completion.
 
+- **[VEW-7T2C]** Change-log tag lines predate the canonical "prawduct:" form — invisible to stamp-merged/regen-views
+  `effort: S · impact: S · area: governance · source: friction · added: 2026-06-10 · status: open · stage: ready · related: VEW-3M8F, VEW-9QH4`
+
+  Discovered at PR#155 merge: stamp-merged reported "nothing to stamp" because the new entry mimicked this repo's historical tag form (`<!-- chunks=... status=... -->`) which lacks the "prawduct:" prefix `TAG_LINE_RE` requires; every historical entry is equally invisible to the parser (they carry status=shipped inline so releases handled them manually). Fixed the AUD-1M4V entry in place (now canonical + stamped merged). Remaining: canonicalize the historical tag lines (mechanical sweep) so the lifecycle tooling sees the whole log, and note the canonical form where entries get authored. **Verifiable signal:** stamp-merged/typo-guard parse every tagged entry in change-log.md.
+
 ## Promoted
 
 _(none — INS-7V2D shipped; see Archive.)_

@@ -4,6 +4,33 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
+
+<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio -->
+
+AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
+`'audio'`) plus the user-locked wave-1 audio field set — `audio_file`
+(song-relative POSIX or absolute, stored as-given), `audio_gain` (0–1 linear),
+`pitch_coarse`/`pitch_fine`, `warping`, `warp_mode` (Live enum ints, named via
+`WARP_MODES`), `start_marker`/`end_marker` (beats when warped, seconds when
+not) — via canonical `schema.sql` definitions + `_ADDED_COLUMNS` migration.
+New event-emitting `create_audio_clip` mutator (audio-host-track guard,
+audio_file required, idempotent rebuild). **Kind-guards at every
+MIDI-assuming surface:** `kind` immutable everywhere (MIDI<->audio is
+delete+create — `create_clip`/`create_audio_clip` both refuse a foreign-kind
+slot; `update_clip` refuses `kind`); `update_clip` whitelist gains the audio
+fields, refused on MIDI rows (and `audio_file` can't be cleared);
+`insert_notes`/`replace_clip_notes` refuse audio targets (notes live on MIDI
+clips); push planner refuses `kind='audio'` loudly — warn naming CLP-AUD2, no
+MIDI create emitted — with a matching kind-aware warn in the arrangement
+planner; pull exempts audio-clip rows (session-slot diff, arrangement-
+placement removal, note probes) so authored-but-unsynced state can't be
+clobbered. New pure `hallucinote.paths.resolve_audio_path(song_dir, ref)`
+(top-level home keeps it importable without the numpy-bound
+`hallucinote.audio` package). Docs: `docs/terminology.md` clips section gains
+the kind/audio-field semantics. Push/pull of audio clips is CLP-AUD2; envelope
+hosting ENV-8H1T; take lanes AUD-9R3V; warp markers deferred (lock 3).
+
 ## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
 
 <!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->

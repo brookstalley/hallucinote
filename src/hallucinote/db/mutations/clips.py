@@ -46,14 +46,31 @@ def create_clip(
     gen_json = json.dumps(generator_call, separators=(",", ":")) if generator_call else None
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     song_row = conn.execute(
-        "SELECT t.song_id FROM tracks t WHERE t.id = ?", (track_id,)
+        "SELECT t.song_id, t.kind FROM tracks t WHERE t.id = ?", (track_id,)
     ).fetchone()
+    if song_row is not None and song_row["kind"] == "audio":
+        raise ValueError(
+            f"MIDI clip on a track of kind='audio' is not valid: Live "
+            "hosts MIDI clips only on MIDI tracks. Use create_audio_clip "
+            f"for audio material on track {track_id}, or create a "
+            "kind='midi' host track."
+        )
     existing = conn.execute(
-        """SELECT id, length_beats, name, section_role, generator_call_json
+        """SELECT id, kind, length_beats, name, section_role, generator_call_json
            FROM clips WHERE track_id = ? AND slot = ?""",
         (track_id, slot),
     ).fetchone()
     if existing is not None:
+        # `kind` is immutable — the idempotent-rebuild path must never
+        # silently "update" an audio row as MIDI (mirror of
+        # create_audio_clip's MIDI-slot refusal).
+        if existing["kind"] != "midi":
+            raise ValueError(
+                f"slot {slot} on track {track_id} already holds a "
+                f"kind={existing['kind']!r} clip: clip kind is immutable. "
+                "Delete the existing clip first (delete+create), or pick "
+                "another slot."
+            )
         cid = existing["id"]
         if (existing["length_beats"], existing["name"], existing["section_role"],
                 existing["generator_call_json"]) == (length_beats, name,
@@ -241,6 +258,19 @@ def create_audio_clip(
 
 _CLIP_UPDATE_FIELDS = frozenset({"name", "length_beats", "section_role"})
 
+# Audio-only columns (CLP-AUD1 wave 1) — updatable on kind='audio' rows
+# only; a MIDI clip carrying any of these is a kind-guard violation.
+_AUDIO_CLIP_UPDATE_FIELDS = frozenset({
+    "audio_file",
+    "audio_gain",
+    "pitch_coarse",
+    "pitch_fine",
+    "warping",
+    "warp_mode",
+    "start_marker",
+    "end_marker",
+})
+
 
 def update_clip(
     conn: sqlite3.Connection,
@@ -251,25 +281,47 @@ def update_clip(
     reason: str | None = None,
     **changes: Any,
 ) -> None:
-    """Partial update by id. `changes` keys must be in _CLIP_UPDATE_FIELDS.
+    """Partial update by id. `changes` keys must be in _CLIP_UPDATE_FIELDS
+    (both kinds) or _AUDIO_CLIP_UPDATE_FIELDS (kind='audio' rows only).
 
     Deliberately excludes `track_id` (moving a clip between tracks is
-    delete+create), `slot` (slot relocation is delete+create), and
+    delete+create), `slot` (slot relocation is delete+create), `kind`
+    (MIDI<->audio conversion is delete+create — same doctrine), and
     `generator_call_json` (provenance — append-only-ish). Notes are
     written via `replace_clip_notes` / `insert_notes`, not here.
     """
-    bad = set(changes) - _CLIP_UPDATE_FIELDS
+    if "kind" in changes:
+        raise ValueError(
+            "clip `kind` is immutable: converting between MIDI and audio "
+            "is delete+create, same doctrine as track_id/slot relocation."
+        )
+    bad = set(changes) - _CLIP_UPDATE_FIELDS - _AUDIO_CLIP_UPDATE_FIELDS
     if bad:
         raise ValueError(f"unsupported fields: {sorted(bad)}")
     if not changes:
         return
     row = conn.execute(
-        """SELECT c.track_id, t.song_id FROM clips c
+        """SELECT c.track_id, c.kind, t.song_id FROM clips c
            JOIN tracks t ON t.id = c.track_id WHERE c.id = ?""",
         (clip_id,),
     ).fetchone()
     if row is None:
         return
+    audio_changes = set(changes) & _AUDIO_CLIP_UPDATE_FIELDS
+    if audio_changes and row["kind"] != "audio":
+        raise ValueError(
+            f"audio fields {sorted(audio_changes)} on a "
+            f"kind={row['kind']!r} clip are not valid: audio columns live "
+            "on kind='audio' clips only (MIDI clips ignore audio fields "
+            "by contract). Author audio material via create_audio_clip "
+            "on an audio track."
+        )
+    if row["kind"] == "audio" and "audio_file" in changes and not changes["audio_file"]:
+        raise ValueError(
+            "audio_file cannot be cleared on an audio clip: the row must "
+            "always answer 'what does this clip play?'. To retire the "
+            "clip, delete it (delete+create doctrine)."
+        )
     sets = [f"{k} = ?" for k in changes]
     vals = list(changes.values()) + [clip_id]
     conn.execute(f"UPDATE clips SET {', '.join(sets)} WHERE id = ?", vals)

@@ -278,9 +278,14 @@ def test_create_audio_clip_is_idempotent_and_updates_in_place(conn, audio_track)
 
 
 def test_create_audio_clip_refuses_existing_midi_clip_in_slot(conn, audio_track):
-    # Seed a MIDI row directly (create_clip's host-kind guard is CLP-AUD1
-    # chunk-02 scope; the immutability doctrine holds regardless).
-    M.create_clip(conn, track_id=audio_track, slot=1, length_beats=4.0)
+    # Seed a MIDI row via raw INSERT: chunk 02's create_clip host-kind
+    # guard refuses authoring MIDI on an audio track, but legacy rows of
+    # that shape can exist — the immutability doctrine holds regardless.
+    conn.execute(
+        """INSERT INTO clips (id, track_id, slot, length_beats, kind)
+           VALUES ('legacy-midi', ?, 1, 4.0, 'midi')""",
+        (audio_track,),
+    )
     with pytest.raises(ValueError, match="kind is immutable"):
         M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
 
@@ -301,6 +306,120 @@ def test_delete_audio_clip_emits_event_and_removes_row(conn, audio_track):
     M.delete_clip(conn, clip_id=cid)
     assert Q.get_clip(conn, cid) is None
     assert _events(conn)[-1]["kind"] == E.CLIP_DELETED
+
+
+# ---------- kind-guards across MIDI-assuming surfaces (CLP-AUD1 C2) ----------
+
+
+@pytest.fixture
+def audio_clip(conn, audio_track):
+    return M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+
+
+def test_create_clip_refuses_audio_host_track(conn, audio_track):
+    # Mirror of create_audio_clip's MIDI-host refusal: Live hosts MIDI
+    # clips only on MIDI tracks.
+    with pytest.raises(ValueError, match="create_audio_clip"):
+        M.create_clip(conn, track_id=audio_track, slot=3, length_beats=4.0)
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+
+
+def test_create_clip_refuses_existing_audio_clip_in_slot(conn, song, audio_clip):
+    """The idempotent-rebuild path must never silently 'update' an audio
+    row as MIDI (flagged in C1). Seed the collision via raw INSERT of an
+    audio row on a MIDI track — the host-kind guard fires first on a real
+    audio track, but kind immutability must hold independently of it."""
+    midi_track = M.create_track(conn, song_id=song, track_index=5, name="Keys")
+    conn.execute(
+        """INSERT INTO clips (id, track_id, slot, length_beats, kind, audio_file)
+           VALUES ('legacy-audio', ?, 1, 4.0, 'audio', 'assets/x.wav')""",
+        (midi_track,),
+    )
+    before = len(_events(conn))
+    with pytest.raises(ValueError, match="kind is immutable"):
+        M.create_clip(conn, track_id=midi_track, slot=1, length_beats=4.0)
+    # Refusal is write-free: the audio row is untouched, no event emitted.
+    row = conn.execute(
+        "SELECT kind, audio_file FROM clips WHERE id = 'legacy-audio'"
+    ).fetchone()
+    assert (row["kind"], row["audio_file"]) == ("audio", "assets/x.wav")
+    assert len(_events(conn)) == before
+
+
+def test_update_clip_audio_fields_on_audio_clip(conn, audio_clip):
+    M.update_clip(
+        conn, clip_id=audio_clip, audio_gain=0.5,
+        warp_mode=M.WARP_MODES["beats"], warping=0,
+        start_marker=0.25, end_marker=12.0,
+    )
+    row = Q.get_clip(conn, audio_clip)
+    assert row["audio_gain"] == pytest.approx(0.5)
+    assert row["warp_mode"] == M.WARP_MODES["beats"]
+    assert row["warping"] == 0
+    # Markers are seconds now (warping=0) — units travel with `warping`.
+    assert row["start_marker"] == pytest.approx(0.25)
+    assert row["end_marker"] == pytest.approx(12.0)
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.CLIP_UPDATED
+    changes = json.loads(ev["payload_json"])["changes"]
+    assert changes["audio_gain"] == pytest.approx(0.5)
+
+
+def test_update_clip_common_fields_still_work_on_audio_clip(conn, audio_clip):
+    """The kind-guard must not over-reach: name/length/section_role are
+    both-kinds fields."""
+    M.update_clip(conn, clip_id=audio_clip, name="gtr2", length_beats=32.0)
+    row = Q.get_clip(conn, audio_clip)
+    assert row["name"] == "gtr2"
+    assert row["length_beats"] == 32.0
+
+
+def test_update_clip_refuses_audio_fields_on_midi_clip(conn, clip):
+    before = Q.get_clip(conn, clip)
+    with pytest.raises(ValueError, match="kind='midi'"):
+        M.update_clip(conn, clip_id=clip, audio_gain=0.5)
+    with pytest.raises(ValueError, match="audio fields"):
+        M.update_clip(conn, clip_id=clip, name="ok-too", audio_file="x.wav")
+    # Refusal is atomic: the both-kinds field in the mixed call did not land.
+    after = Q.get_clip(conn, clip)
+    assert after["name"] == before["name"]
+    assert after["audio_gain"] is None
+
+
+def test_update_clip_refuses_kind_change_on_both_kinds(conn, clip, audio_clip):
+    for cid in (clip, audio_clip):
+        with pytest.raises(ValueError, match="immutable"):
+            M.update_clip(conn, clip_id=cid, kind="audio")
+    assert Q.get_clip(conn, clip)["kind"] == "midi"
+    assert Q.get_clip(conn, audio_clip)["kind"] == "audio"
+
+
+def test_update_clip_refuses_clearing_audio_file(conn, audio_clip):
+    for empty in (None, ""):
+        with pytest.raises(ValueError, match="audio_file cannot be cleared"):
+            M.update_clip(conn, clip_id=audio_clip, audio_file=empty)
+    assert Q.get_clip(conn, audio_clip)["audio_file"] == "assets/guitar_take3.wav"
+
+
+def test_update_clip_can_repoint_audio_file(conn, audio_clip):
+    M.update_clip(conn, clip_id=audio_clip, audio_file="assets/guitar_take4.wav")
+    assert Q.get_clip(conn, audio_clip)["audio_file"] == "assets/guitar_take4.wav"
+
+
+def test_insert_notes_refuses_audio_clip(conn, audio_clip):
+    with pytest.raises(ValueError, match="kind='audio'"):
+        M.insert_notes(conn, clip_id=audio_clip, notes=[_make_note()])
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+
+
+def test_replace_clip_notes_refuses_audio_clip(conn, audio_clip):
+    with pytest.raises(ValueError, match="notes live on MIDI clips only"):
+        M.replace_clip_notes(conn, clip_id=audio_clip, notes=[_make_note()])
+    # The empty-set form is refused too: "this clip's notes are now []"
+    # is meaningless for an audio clip.
+    with pytest.raises(ValueError, match="kind='audio'"):
+        M.replace_clip_notes(conn, clip_id=audio_clip, notes=[])
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
 
 
 # ---------- notes ----------

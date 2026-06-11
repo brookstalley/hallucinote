@@ -41,7 +41,12 @@ are established house conventions; no foreign API is touched.
 
 - [ ] Chunk 01: schema + audio-clip mutators + events (thin slice)
 - [ ] Chunk 02: kind-guards across surfaces, path helper, planner refusal, docs
-Context: plan authored 2026-06-10; nothing built yet. Parallel item ENV-7G4K is
+Context: chunk 01 committed (b1a3330): wave-1 columns + create_audio_clip mutator.
+Chunk 02 built 2026-06-10: kind-guards sweep closed TWO holes beyond the named spec —
+pull would have DELETED audio rows on every sync (session + arrangement apply paths,
+now exempted+warned) and push_notes would have misreported audio clips as pushed.
+Path helper landed package-top-level (`src/hallucinote/paths.py`) to stay stdlib-only
+(audio/ drags numpy). 3154 passed. Next: cumulative Critic → PR. Parallel item ENV-7G4K is
 file-disjoint except `src/hallucinote/db/schema.sql` (different regions — clips vs
 envelopes CHECK); mechanical rebase-on-merge, whichever lands second.
 

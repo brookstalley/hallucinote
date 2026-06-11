@@ -49,6 +49,25 @@ def _normalize_note(n: NoteDict) -> tuple:
     return (pitch, start, dur, vel, mute, tags_json)
 
 
+def _require_midi_clip(conn: sqlite3.Connection, clip_id: str, op: str) -> None:
+    """Refuse note writes against non-MIDI clips (CLP-AUD1 kind-guard).
+
+    Notes live on MIDI clips only; an audio clip's content is its
+    ``audio_file``. Unknown clip ids pass through unchanged — the
+    ``notes.clip_id`` FK owns that failure, same as before this guard.
+    """
+    row = conn.execute(
+        "SELECT kind FROM clips WHERE id = ?", (clip_id,)
+    ).fetchone()
+    if row is not None and row["kind"] != "midi":
+        raise ValueError(
+            f"{op}: clip {clip_id} has kind={row['kind']!r} — notes live "
+            "on MIDI clips only; an audio clip's content is its "
+            "audio_file. Conform audio via update_clip's audio fields "
+            "(gain / pitch / warp / markers) instead."
+        )
+
+
 def insert_notes(
     conn: sqlite3.Connection,
     *,
@@ -58,9 +77,12 @@ def insert_notes(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> list[str]:
-    """Append notes to a clip. Returns new note ids in insertion order."""
+    """Append notes to a clip. Returns new note ids in insertion order.
+
+    Refuses kind='audio' targets (notes live on MIDI clips only)."""
     if not notes:
         return []
+    _require_midi_clip(conn, clip_id, "insert_notes")
     new_ids: list[str] = []
     for n in notes:
         pitch, start, dur, vel, mute, tags_json = _normalize_note(n)
@@ -100,7 +122,10 @@ def replace_clip_notes(
     already match the incoming set, the function is a no-op and emits no
     event. Returns the existing note ids in that case (preserves the
     list[str] return contract — same length, same ordering by start_beats).
+
+    Refuses kind='audio' targets (notes live on MIDI clips only).
     """
+    _require_midi_clip(conn, clip_id, "replace_clip_notes")
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     # Idempotency check: compare normalized incoming set vs existing notes.
     incoming = [_normalize_note(n) for n in notes]

@@ -390,6 +390,21 @@ def test_perform_batch_windows_overlapping_arcs():
     assert b_param.own[0] == ("begin",) and b_param.own[-1] == ("end",)
 
 
+def test_perform_batch_rejects_same_target_collision():
+    """Two arcs resolving to the SAME parameter would fight for one gesture
+    in the shared pass — rejected up front, naming both arc_ids, before any
+    transport state is touched."""
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="same parameter"):
+        perform_batch_handler(ctx, arcs=[
+            {"arc_id": "A", "target_kind": "mixer_volume", "master": True,
+             "breakpoints": [_bp(0.0, 0.2), _bp(8.0, 0.9)]},
+            {"arc_id": "B", "target_kind": "mixer_volume", "master": True,
+             "breakpoints": [_bp(0.0, 0.5), _bp(8.0, 0.7)]},
+        ])
+    assert ctx.events == []
+
+
 def test_perform_batch_one_pass_for_all_arcs():
     """All arcs record in a SINGLE transport pass — one arm/seek/play/stop,
     regardless of arc count (the performance win)."""

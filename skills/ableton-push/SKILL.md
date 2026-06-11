@@ -100,7 +100,7 @@ python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 
 `--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all twelve phases in order, dispatching every MCP call directly over TCP.
 
-**The transport PLAYS during the `performed_automation` phase.** Master/group/return arcs are gesture-recorded in real time — each changed arc plays its span (the plan names the per-arc and total wall-clock). Audible playback during push is expected, not a bug. Unchanged arcs are fingerprint-skipped; a `--reset` DB or a new session re-performs everything.
+**The transport PLAYS during the `performed_automation` phase.** Master/group/return arcs are gesture-recorded in real time — all changed arcs record in ONE pass over their union span (the plan names that union-span wall-clock and a loud alert lists every span it will overwrite). Audible playback during push is expected, not a bug. Unchanged arcs are fingerprint-skipped (so a hand-edited lane survives); a `--reset` DB or a new session re-performs everything.
 
 **Exit codes:**
 
@@ -154,7 +154,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 | `mix` | `ableton_track(set_property / set_send)`, `ableton_return(set_property)`, `ableton_session(set_master_property)` |
 | `devices` | `ableton_device(action='load' / 'set_parameter')` |
 | `envelopes` | `ableton_automation(action='write_envelope')` |
-| `performed_automation` | `ableton_automation(action='perform')` — realtime gesture recording; transport plays |
+| `performed_automation` | `ableton_automation(action='perform_batch')` — realtime gesture recording, all changed arcs in one union-span pass; transport plays |
 | `arrangement` | `ableton_clip(action='duplicate_to_arrangement')` |
 | `cues` | `ableton_arrangement(action='cue_create_batch')` |
 

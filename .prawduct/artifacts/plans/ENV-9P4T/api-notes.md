@@ -17,11 +17,12 @@ in ONE transport pass. The plan offered "extend `perform` or add
 `perform`, and the single-arc `perform` action + handler are removed.**
 
 - **Why supersede, not coexist:** the planner (`plan_push_performed_automation`)
-  is the *only* consumer of the `perform` action (verified by grep; the sole
-  other reference is a doc line in `guides/gaps.md`). A 1-arc batch is the
-  degenerate case of `perform_batch`, so keeping single-arc `perform` would be
-  dead-on-the-planner-path code with a parallel test burden — the
-  *no-back-compat-to-throwaway* norm says remove it.
+  is the *only code* consumer of the `perform` action (verified by grep). The
+  remaining references were docs — `guides/gaps.md` and
+  `skills/ableton-push/SKILL.md` (both updated to `perform_batch`). A 1-arc
+  batch is the degenerate case of `perform_batch`, so keeping single-arc
+  `perform` would be dead-on-the-planner-path code with a parallel test burden
+  — the *no-back-compat-to-throwaway* norm says remove it.
 - **Mechanism preserved, not rewritten:** the proven gesture lifecycle
   (save → arm → seek → `begin_gesture` → play → ramp → `end_gesture` → stop →
   restore, beat-space interp, `re_enable_automation` set-wide, async

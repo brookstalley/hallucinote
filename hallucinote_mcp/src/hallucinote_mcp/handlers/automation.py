@@ -57,6 +57,7 @@ from __future__ import annotations
 import logging
 import math as _math
 import time
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..dispatcher import LiveContext
@@ -1456,6 +1457,44 @@ _PERFORM_WALL_CLOCK_FACTOR = 3.0
 _PERFORM_WALL_CLOCK_FLOOR_S = 10.0
 
 
+@dataclass
+class _PreparedArc:
+    """One arc inside a perform_batch pass. ``state`` is the single source of
+    truth for the gesture lifecycle — ``pending`` (gesture not yet opened) →
+    ``open`` (begin_gesture done, ramping values) → ``closed`` (end_gesture
+    done) — so there is no multi-boolean combination to keep consistent as the
+    windowing loop mutates it. ``opened`` derives from state (anything past
+    ``pending``); only opened arcs are verified post-pass."""
+
+    arc_id: Any
+    target_kind: str
+    master: bool
+    track_index: int | None
+    return_index: int | None
+    device_index: int | None
+    parameter_name: str | None
+    cleaned: list[dict[str, Any]]
+    span_start: float
+    span_end: float
+    param: Any = None
+    state: str = "pending"  # pending -> open -> closed
+    updates_written: int = 0
+    automation_state: int | None = None
+
+    @property
+    def opened(self) -> bool:
+        return self.state != "pending"
+
+    def addressing_key(self) -> tuple:
+        """Identity of the Live parameter this arc rides — two arcs with the
+        same key resolve to the SAME param and would fight for one gesture in
+        a single pass (a same-target collision)."""
+        return (
+            self.target_kind, self.master, self.track_index,
+            self.return_index, self.device_index, self.parameter_name,
+        )
+
+
 def _interp_performed_value(
     breakpoints: list[dict[str, Any]], beat: float
 ) -> float:
@@ -1676,7 +1715,7 @@ def perform_batch_handler(
 
     # Validate + normalize every arc up front (no Live touch yet) so a
     # malformed arc raises before any transport state is armed.
-    prepared: list[dict[str, Any]] = []
+    prepared: list[_PreparedArc] = []
     for i, arc in enumerate(arcs):
         target_kind = arc.get("target_kind")
         if target_kind not in PERFORM_TARGET_KINDS:
@@ -1695,41 +1734,52 @@ def perform_batch_handler(
                 f"({span_start}..{span_end}) — a single-point arc is a static "
                 "value, not an automation ride; dial the parameter instead"
             )
-        prepared.append({
-            "arc_id": arc.get("arc_id"),
-            "target_kind": target_kind,
-            "master": bool(arc.get("master", False)),
-            "track_index": arc.get("track_index"),
-            "return_index": arc.get("return_index"),
-            "device_index": arc.get("device_index"),
-            "parameter_name": arc.get("parameter_name"),
-            "cleaned": cleaned,
-            "span_start": span_start,
-            "span_end": span_end,
-            "param": None,
-            "gesture_open": False,
-            "opened": False,
-            "closed": False,
-            "updates_written": 0,
-            "automation_state": None,
-        })
+        prepared.append(_PreparedArc(
+            arc_id=arc.get("arc_id"),
+            target_kind=target_kind,
+            master=bool(arc.get("master", False)),
+            track_index=arc.get("track_index"),
+            return_index=arc.get("return_index"),
+            device_index=arc.get("device_index"),
+            parameter_name=arc.get("parameter_name"),
+            cleaned=cleaned,
+            span_start=span_start,
+            span_end=span_end,
+        ))
 
-    union_start = min(a["span_start"] for a in prepared)
-    union_end = max(a["span_end"] for a in prepared)
+    # Same-target collision guard: two arcs resolving to ONE Live parameter
+    # would fight for a single gesture in the shared pass (interleaved
+    # begin/end on the same param → undefined recording). Reject up front,
+    # naming both colliding ids. (Two arcs on one param was unreachable when
+    # each arc had its own transport pass; batching makes it reachable.)
+    seen_targets: dict[tuple, Any] = {}
+    for a in prepared:
+        key = a.addressing_key()
+        if key in seen_targets:
+            raise ValueError(
+                f"perform_batch: two arcs target the same parameter "
+                f"({a.target_kind} {key[1:]!r}) — arc_id {seen_targets[key]!r} "
+                f"and {a.arc_id!r}. One parameter carries one performed arc per "
+                "pass; merge them into a single arc."
+            )
+        seen_targets[key] = a.arc_id
+
+    union_start = min(a.span_start for a in prepared)
+    union_end = max(a.span_end for a in prepared)
 
     with context.live_state_lock:
         # Bout 1 — resolve every arc's param. Addressing errors land here,
         # before any transport state is touched (nothing has mutated yet).
         def _resolve_all() -> None:
             for a in prepared:
-                a["param"] = _resolve_perform_target(
+                a.param = _resolve_perform_target(
                     context,
-                    target_kind=a["target_kind"],
-                    master=a["master"],
-                    track_index=a["track_index"],
-                    return_index=a["return_index"],
-                    device_index=a["device_index"],
-                    parameter_name=a["parameter_name"],
+                    target_kind=a.target_kind,
+                    master=a.master,
+                    track_index=a.track_index,
+                    return_index=a.return_index,
+                    device_index=a.device_index,
+                    parameter_name=a.parameter_name,
                 )
 
         context.run_on_main(_resolve_all)
@@ -1755,29 +1805,23 @@ def perform_batch_handler(
 
         # Windowing primitives — both run inside a single main-thread bout
         # (with the playhead beat just read), so an open/close/write can't
-        # lag a stale beat.
+        # lag a stale beat. State transitions: pending → open → closed.
         def _open_entering(beat: float) -> None:
             for a in prepared:
-                if a["closed"] or a["opened"]:
-                    continue
-                if beat >= a["span_start"]:
-                    a["param"].begin_gesture()
-                    a["gesture_open"] = True
-                    a["opened"] = True
+                if a.state == "pending" and beat >= a.span_start:
+                    a.param.begin_gesture()
+                    a.state = "open"
 
         def _write_or_close(beat: float) -> None:
             for a in prepared:
-                if not a["gesture_open"]:
+                if a.state != "open":
                     continue
-                if beat >= a["span_end"]:
-                    a["param"].end_gesture()
-                    a["gesture_open"] = False
-                    a["closed"] = True
+                if beat >= a.span_end:
+                    a.param.end_gesture()
+                    a.state = "closed"
                 else:
-                    a["param"].value = _interp_performed_value(
-                        a["cleaned"], beat
-                    )
-                    a["updates_written"] += 1
+                    a.param.value = _interp_performed_value(a.cleaned, beat)
+                    a.updates_written += 1
 
         try:
             # Bout 3 — arm + seek to the union span start (first mutation;
@@ -1849,13 +1893,12 @@ def perform_batch_handler(
                     )
 
             for a in prepared:
-                if a["gesture_open"]:
+                if a.state == "open":
                     _attempt(
-                        f"end_gesture[{a['arc_id']}]",
-                        lambda p=a["param"]: p.end_gesture(),
+                        f"end_gesture[{a.arc_id}]",
+                        lambda p=a.param: p.end_gesture(),
                     )
-                    a["gesture_open"] = False
-                    a["closed"] = True
+                    a.state = "closed"
             _attempt("stop_playing", lambda: context.song.stop_playing())
             _attempt(
                 "record_mode",
@@ -1889,41 +1932,41 @@ def perform_batch_handler(
         # record), but only for arcs that actually opened a gesture. A non-1
         # read is reported per arc, not raised.
         state_deadline = time.monotonic() + settle_timeout_s
-        pending = [a for a in prepared if a["opened"]]
+        to_verify = [a for a in prepared if a.opened]
         while True:
-            for a in list(pending):
-                a["automation_state"] = context.run_on_main(
-                    lambda p=a["param"]: (
+            for a in list(to_verify):
+                a.automation_state = context.run_on_main(
+                    lambda p=a.param: (
                         int(p.automation_state)
                         if getattr(p, "automation_state", None) is not None
                         else None
                     )
                 )
-                if a["automation_state"] == 1:
-                    pending.remove(a)
-            if not pending or time.monotonic() >= state_deadline:
+                if a.automation_state == 1:
+                    to_verify.remove(a)
+            if not to_verify or time.monotonic() >= state_deadline:
                 break
             time.sleep(_PERFORM_SETTLE_POLL_S)
 
     arcs_result: list[dict[str, Any]] = []
     for a in prepared:
         entry: dict[str, Any] = {
-            "target_kind": a["target_kind"],
-            "automation_state": a["automation_state"],
-            "span_beats": [a["span_start"], a["span_end"]],
-            "beats_performed": a["span_end"] - a["span_start"],
-            "updates_written": a["updates_written"],
-            "breakpoint_count": len(a["cleaned"]),
+            "target_kind": a.target_kind,
+            "automation_state": a.automation_state,
+            "span_beats": [a.span_start, a.span_end],
+            "beats_performed": a.span_end - a.span_start,
+            "updates_written": a.updates_written,
+            "breakpoint_count": len(a.cleaned),
         }
-        if a["arc_id"] is not None:
-            entry["arc_id"] = a["arc_id"]
+        if a.arc_id is not None:
+            entry["arc_id"] = a.arc_id
         _echo_addressing_args(
             entry,
-            master=a["master"] or None,
-            track_index=a["track_index"],
-            return_index=a["return_index"],
-            device_index=a["device_index"],
-            parameter_name=a["parameter_name"],
+            master=a.master or None,
+            track_index=a.track_index,
+            return_index=a.return_index,
+            device_index=a.device_index,
+            parameter_name=a.parameter_name,
         )
         arcs_result.append(entry)
 

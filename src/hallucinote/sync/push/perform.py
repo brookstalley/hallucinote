@@ -375,6 +375,19 @@ def record_perform_result(
             "If it never verifies, check the parameter isn't "
             "automation-overridden or locked in Live."
         )
+    # A verified state with zero value writes means the playhead crossed the
+    # arc's whole span between ramp ticks (sub-tick / degenerate window): the
+    # gesture opened and closed but nothing was recorded, so automation_state=1
+    # reflects the STALE pre-edit lane, not this arc. Don't trust it — leave
+    # the fingerprint unwritten so the next push re-performs. (updates_written
+    # absent → a caller that doesn't report it; don't second-guess that case.)
+    if result.get("updates_written") == 0:
+        return (
+            f"perform {envelope_id}: automation_state=1 but updates_written=0 "
+            "— the playhead crossed the arc's span between ticks, so no value "
+            "was recorded this pass and the '1' reflects a stale lane. "
+            "Fingerprint left unwritten; the next push retries this arc."
+        )
     env = Q.get_envelope(conn, envelope_id)
     if env is None:
         return (

@@ -367,6 +367,15 @@ def test_read_timeout_render_is_unbounded():
     assert _read_timeout_for("ableton_render", "render") is None
 
 
+def test_read_timeout_perform_batch_is_unbounded():
+    """perform_batch plays the transport over the union span in record
+    (minutes at mix scale); a bounded socket timeout would sever the only
+    verification this write-only surface has (per-arc automation_state) and
+    misreport it as connection_lost while Live keeps recording (ENV-9P4T)."""
+    from hallucinote_mcp.server import _read_timeout_for
+    assert _read_timeout_for("ableton_automation", "perform_batch") is None
+
+
 def test_read_timeout_ensure_loaded_is_generous_but_bounded():
     from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
     t = _read_timeout_for("ableton_render", "ensure_loaded")

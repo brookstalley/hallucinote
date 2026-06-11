@@ -584,3 +584,93 @@ def test_full_cycle_perform_then_skip_then_change_then_perform(
         "SELECT kind FROM events WHERE kind = ?", (E.AUTOMATION_PERFORMED,),
     ).fetchall()
     assert len(events) == 2
+
+
+def test_apply_perform_batch_missing_arc_id_raises(conn, song, session):
+    """A batched result arc with no arc_id can't be correlated to a DB
+    envelope — apply raises rather than silently dropping the record."""
+    bad = {
+        "key": f"perform_batch:{song}", "ok": True,
+        "tool": "ableton_automation",
+        "result": {"arcs": [{"automation_state": 1}]},  # no arc_id
+    }
+    with pytest.raises(ValueError, match="arc_id"):
+        push.apply_push_results(conn, [bad], session_id=session)
+
+
+def test_apply_perform_batch_empty_arcs_is_noop(conn, song, session, master_arc):
+    """A batched result with an empty arcs list records nothing and warns
+    nothing — a benign no-op (no arc to gate)."""
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"perform_batch:{song}", "ok": True,
+          "tool": "ableton_automation", "result": {"arcs": []}}],
+        session_id=session,
+    )
+    assert warnings == []
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_apply_zero_write_arc_leaves_fingerprint_unwritten(
+    conn, song, session, master_arc,
+):
+    """automation_state==1 but updates_written==0 means the playhead crossed
+    the arc's span between ticks — the '1' reflects a stale lane, not this
+    arc. The fingerprint must stay unwritten so the next push re-performs."""
+    arc = {"arc_id": master_arc, "automation_state": 1, "updates_written": 0}
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"perform_batch:{song}", "ok": True,
+          "tool": "ableton_automation", "result": {"arcs": [arc]}}],
+        session_id=session,
+    )
+    assert len(warnings) == 1
+    assert master_arc in warnings[0]
+    assert "updates_written=0" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+    # And it re-emits on the next plan.
+    _, arcs = _batch_arcs(_plan(conn, song, session))
+    assert [a["arc_id"] for a in arcs] == [master_arc]
+
+
+def test_apply_surfaces_restore_failures(conn, song, session, master_arc):
+    """A restore failure (set possibly left armed) must reach the operator
+    as a warning, not vanish — even when the arc itself verified."""
+    result = {
+        "arcs": [{"arc_id": master_arc, "automation_state": 1,
+                  "updates_written": 5}],
+        "restore_failures": ["record_mode: Live unreachable"],
+    }
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"perform_batch:{song}", "ok": True,
+          "tool": "ableton_automation", "result": result}],
+        session_id=session,
+    )
+    assert any("restore step FAILED" in w and "record_mode" in w
+               for w in warnings), warnings
+    # The arc still recorded (the failure is a separate, additive warning).
+    assert Q.get_performed_automation(conn, master_arc, session) is not None
+
+
+def test_phase_degenerate_arc_does_not_poison_batch(
+    conn, song, session, master, linked_group,
+):
+    """A degenerate (single-point) arc is filtered by the planner and never
+    reaches the handler — so it can't make the whole batch span-empty-fatal.
+    Valid arcs alongside it still record."""
+    valid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_group,
+    )
+    _two_point_ramp(conn, valid)
+    degenerate = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=degenerate,
+        breakpoints=[{"time_beats": 4.0, "value": 0.5}],  # single point
+    )
+    _, arcs = _batch_arcs(_plan(conn, song, session))
+    assert [a["arc_id"] for a in arcs] == [valid]
+    assert any("static value" in n for n in _plan(conn, song, session).notes)

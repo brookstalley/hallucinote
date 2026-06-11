@@ -63,9 +63,9 @@ device parameters through its performed-automation phase automatically
 (fingerprint-gated — unchanged arcs are skipped and listed, so a hand-edited
 lane survives).
 **Restrictions:** write-only (recorded arrangement automation has no LOM read
-surface; verify via the returned `automation_state == 1`), real wall-clock
-per arc (the span plays in real time), and nested-rack device parameters are
-unreachable on this route too.
+surface; verify via each arc's returned `automation_state == 1`), real
+wall-clock for the UNION span (the changed arcs play once together in real
+time), and nested-rack device parameters are unreachable on this route too.
 
 ### MIDI CC + pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
 Live 12.4's LOM exposes neither `Clip.envelope_target_for_cc(N)` nor

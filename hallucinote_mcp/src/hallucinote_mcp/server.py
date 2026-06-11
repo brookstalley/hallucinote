@@ -169,6 +169,13 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
 #   - ableton_render(render): drives full-arrangement playback before
 #     responding (minutes for a long song) → unbounded; only the operator
 #     stopping playback ends it.
+#   - ableton_automation(perform_batch): plays the transport once over the
+#     UNION span of all changed arcs in record (ENV-9P4T — minutes at mix
+#     scale) before returning the per-arc verification. Unbounded: the handler
+#     owns the timeout via its own ramp wall-clock deadline + finally-restore,
+#     so a 15s socket cutoff here would sever the ONLY verification this
+#     write-only surface has (per-arc automation_state) while Live keeps
+#     recording, and misreport it as connection_lost.
 #   - ableton_render(ensure_loaded): loads the analyzer M4L device onto every
 #     audio track + return (25+ surfaces on a large set), each load a few
 #     seconds on Live's main thread → routinely past the 15s default while the
@@ -178,6 +185,7 @@ _DEFAULT_READ_TIMEOUT: float = 15.0
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
     ("ableton_render", "render"): None,
+    ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
 }
 

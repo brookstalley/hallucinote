@@ -368,6 +368,15 @@ def apply_push_results(
                 # (record_perform_result owns the per-arc policy). The
                 # perform handler RETURNS a non-1 state rather than raising.
                 res = r.get("result") or {}
+                # A restore failure means the pass may have left the set
+                # ARMED (record_mode / a gesture / playhead not restored) —
+                # operator-actionable, never swallowed.
+                for failure in res.get("restore_failures", []):
+                    warnings.append(
+                        f"perform_batch: a transport-state restore step "
+                        f"FAILED ({failure}) — the Live set may be left armed "
+                        "or the playhead moved; check record_mode in Live."
+                    )
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:

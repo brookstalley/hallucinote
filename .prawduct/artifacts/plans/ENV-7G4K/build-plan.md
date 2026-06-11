@@ -54,13 +54,13 @@ tests + LOCK_USERS audit entry. Chunk 01 step 0 verdicts landed 2026-06-11
 (lom-probe-results.md rows 12/13): (b) re-record overwrite **CONFIRMED** —
 same-span re-perform fully replaces the prior arc, automation_state stays 1 —
 the HIGH-impact fingerprint-gate assumption holds; chunk 03 unblocked. (a)
-group-host recording remains **blocked on one human action** (no group track
-exists, LOM can't create one, Accessibility not granted for a scripted Cmd+G);
-`env7g4k-probe-driver.py group` runs it unattended once a group exists. Per the
-original probe doc this is opportunistic re-verification of a track-kind-
-agnostic mechanism — carried into chunk 03's Live smoke (real song sets have
-groups), NOT a chunk 02 blocker; chunk 02 group eligibility ships per design
-decision 3 with the verdict noted pending.
+group-host recording **CONFIRMED** later the same day (row 13) after the user
+granted Accessibility: group created agent-side (LOM select + Up-arrow focus
+onto the track header + scripted Cmd+G — Live's Group menu item needs header
+focus, LOM selection alone leaves it disabled), probe-4 recipe verified
+automation_state 0→1 + playback tracking on the group's mixer volume. BOTH
+chunk-01 probe verdicts landed; every design assumption confirmed; no
+re-plan needed at the chunk-01 governance checkpoint.
 Chunk 02 built + Critic-clean (0/0/0) 2026-06-11: return_mixer_volume/pan
 kinds + performed_automation table (schema.sql), eligibility replaces the
 W10-F refusal (mutator allows master/group, audio keeps ENV-8H1T teaching,

@@ -24,6 +24,12 @@ def plan_push_clip(
       2. Clip already linked  -> ``ableton_clip(action='replace_notes')``
          (in-place; gap #1's renamed action, unified via Wave M-3).
 
+    Refuse-loudly path (CLP-AUD1): ``kind='audio'`` clips are authorable
+    in the DB but have no push path until CLP-AUD2 ships placement sync.
+    The planner emits a warn (plan-warn pattern, same as
+    ``plan_push_envelopes``'s unreachable-track-kind skips) and NO calls
+    — emitting the MIDI create would corrupt the slot in Live.
+
     Precondition (W3-C — strict): the clip's track must already be
     linked in this session. Run :func:`plan_push_song_tracks` first to
     create+link all unlinked tracks, ``apply_push_results``, then call
@@ -41,6 +47,19 @@ def plan_push_clip(
     track_row = Q.get_track(conn, clip["track_id"])
     if track_row is None:
         raise ValueError(f"track {clip['track_id']} not found for clip {clip_id}")
+
+    if clip["kind"] == "audio":
+        # CLP-AUD1: the row is authored but not synced. Refuse loudly —
+        # the MIDI create below would write an empty MIDI clip into the
+        # slot Live should eventually hold this audio clip.
+        plan.warn(
+            f"clip {clip_id} ({clip['name']!r}, slot {clip['slot']}) is "
+            "kind='audio': audio-clip push is CLP-AUD2 scope — the row "
+            "is authored but not synced. No Live clip is created (a "
+            "MIDI create would corrupt the slot). Skipping."
+        )
+        return plan
+
     notes = Q.get_notes_for_clip(conn, clip_id)
 
     track_at = Q.get_ableton_link(

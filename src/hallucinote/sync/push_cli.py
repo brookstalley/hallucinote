@@ -1,21 +1,21 @@
 """CLI bridge between the ``/ableton-push`` skill and the pure Python push layer.
 
 Mirror of :mod:`hallucinote.sync.pull_cli`. The push side has a more
-elaborate flow because :func:`push.plan_push_song` returns eleven ordered
+elaborate flow because :func:`push.plan_push_song` returns twelve ordered
 phases (vs. pull's flat domain set), and probe-and-link runs before
 the phases to bind any Live tracks/returns that already match DB rows.
 
 Subcommands:
 
-    push_cli phases <session_id> (--song SLUG | --db PATH)
+    push_cli phases [session_id] (--song SLUG | --db PATH)
         -> emit {"phases": [{"name", "description"}, ...]} for the skill
            to enumerate. The push skill drives them in order.
 
-    push_cli plan <phase> <session_id> (--song SLUG | --db PATH)
+    push_cli plan <phase> [session_id] (--song SLUG | --db PATH)
         -> emit one phase's PushPlan as JSON (same shape as pull_cli's
            plan output).
 
-    push_cli apply <session_id> (--song SLUG | --db PATH) --results R [--plan P]
+    push_cli apply [session_id] (--song SLUG | --db PATH) --results R [--plan P]
         -> read the results array, call apply_push_results, emit a
            {"applied", "failed", "details"} summary.
            W10-E: results may use the MINIMAL format (list of {ok, result}
@@ -23,7 +23,7 @@ Subcommands:
            the original plan.json so keys + tools get re-derived. The legacy
            full format ({key, ok, tool, result}) still works without --plan.
 
-    push_cli probe-and-link <session_id> (--song SLUG | --db PATH) (--probe | --snapshot S)
+    push_cli probe-and-link [session_id] (--song SLUG | --db PATH) (--probe | --snapshot S)
         -> probe Live for {"tracks": [...], "returns": [...]} (default via
            ``--probe``: in-process MCP TCP call; W18-B canonical path with no
            tmp-file staleness risk), or accept a pre-probed snapshot via
@@ -32,8 +32,8 @@ Subcommands:
            ableton_index no longer matches the fresh probe, emit a
            ProbeAndLinkResult JSON. Re-runnable.
 
-    push_cli execute <session_id> (--song SLUG | --db PATH) [--state-dir D]
-        -> W10-E2: dispatches the full eleven-phase push directly against
+    push_cli execute [session_id] (--song SLUG | --db PATH) [--state-dir D]
+        -> W10-E2: dispatches the full twelve-phase push directly against
            Live's Remote Script via :mod:`hallucinote_mcp.client`,
            bypassing the agent's tool-use channel. Writes
            ``.last-push-state.json`` (always) + ``.last-push-errors.json``
@@ -48,7 +48,10 @@ Script directly; the historical per-phase agent loop is preserved as a
 debugging path. DB resolution mirrors :mod:`pull_cli`: ``--song <slug>``
 resolves via :func:`hallucinote.db.resolve_db_path` (per-branch path under
 W12-A; legacy ``songs/<slug>/<slug>.db`` fallback outside a repo / on
-detached HEAD); ``--db PATH`` is the escape hatch.
+detached HEAD); ``--db PATH`` is the escape hatch. ``session_id`` may be
+omitted on every subcommand (WFL-7Q2N): the only / most-recent session in
+the DB is auto-selected and echoed on stderr (apply prefers the plan
+file's embedded session); multi-song DBs refuse to guess.
 """
 from __future__ import annotations
 
@@ -61,6 +64,7 @@ from typing import Any
 from hallucinote.db import mutations as M, queries as Q, resolve_db_path
 from hallucinote.db.connection import connect
 from hallucinote.sync import push, push_execute, push_notes
+from hallucinote.sync.session_resolve import resolve_session_id
 
 
 def _resolve_send_fn():
@@ -233,8 +237,19 @@ def _resolve_song_id(conn, session_id: str) -> str:
     return session["song_id"]
 
 
+def _session_for(conn, args: argparse.Namespace, *, subcmd: str) -> str:
+    """WFL-7Q2N: resolve the positional session_id, auto-discovering from the
+    DB (echoed on stderr) when omitted. Mutates ``args.session_id`` so the
+    rest of the command reads the resolved id."""
+    args.session_id = resolve_session_id(
+        conn, args.session_id, prog=f"push_cli {subcmd}",
+    )
+    return args.session_id
+
+
 def _cmd_phases(args: argparse.Namespace) -> int:
     conn = connect(_resolve_db_path(args))
+    _session_for(conn, args, subcmd="phases")
     song_id = _resolve_song_id(conn, args.session_id)
     phases = push.plan_push_song(conn, song_id=song_id, session_id=args.session_id)
     out = {
@@ -251,6 +266,7 @@ def _cmd_phases(args: argparse.Namespace) -> int:
 
 def _cmd_plan(args: argparse.Namespace) -> int:
     conn = connect(_resolve_db_path(args))
+    _session_for(conn, args, subcmd="plan")
     song_id = _resolve_song_id(conn, args.session_id)
     phases = push.plan_push_song(conn, song_id=song_id, session_id=args.session_id)
     chosen = next((p for p in phases if p.name == args.phase), None)
@@ -278,6 +294,16 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             "{ok, result} dicts (use --plan to enrich)"
         )
     conn = connect(_resolve_db_path(args))
+    # When --plan is passed, its embedded session_id is authoritative for an
+    # omitted positional id (and a conflicting explicit id is refused) — the
+    # plan was produced against that session.
+    plan_doc: dict | None = None
+    if args.plan:
+        plan_doc = json.loads(Path(args.plan).read_text())
+    args.session_id = resolve_session_id(
+        conn, args.session_id, prog="push_cli apply",
+        plan_session_id=(plan_doc or {}).get("session_id"),
+    )
 
     # W10-E: support the minimal results format (positional {ok, result}
     # list, no per-entry key/tool). Agent assembles roughly half as much
@@ -303,8 +329,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
                     "so keys + tools can be re-derived. Pass --plan or fall "
                     "back to legacy {key, ok, tool, result} entries."
                 )
-            plan = json.loads(Path(args.plan).read_text())
-            calls = plan.get("calls") or []
+            calls = (plan_doc or {}).get("calls") or []
             if len(results) != len(calls):
                 raise SystemExit(
                     f"push_cli apply: minimal results length {len(results)} "
@@ -325,11 +350,12 @@ def _cmd_apply(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
-    # apply_push_results is void on success; raises on unknown key kinds.
+    # apply_push_results raises on unknown key kinds and returns apply-layer
+    # warnings (e.g. an unverified perform that recorded no fingerprint).
     # Surface a tiny summary so the skill can report per-phase progress.
     applied = sum(1 for r in results if r.get("ok"))
     failed = [r for r in results if not r.get("ok")]
-    push.apply_push_results(
+    apply_warnings = push.apply_push_results(
         conn, results,
         session_id=args.session_id,
         actor="sync",
@@ -342,6 +368,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             {"key": r.get("key"), "tool": r.get("tool"), "error": r.get("error")}
             for r in failed
         ],
+        "apply_warnings": apply_warnings,
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -410,9 +437,10 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         auto_created = True
 
     if session_id is None:
-        raise SystemExit(
-            "push_cli probe-and-link: pass session_id positionally OR use "
-            "--auto-session (with --song <slug>) to bootstrap one"
+        # WFL-7Q2N: no positional id and no --auto-session — discover from
+        # the DB (only / most-recent session; echoed on stderr).
+        session_id = resolve_session_id(
+            conn, None, prog="push_cli probe-and-link",
         )
 
     song_id = _resolve_song_id(conn, session_id)
@@ -487,6 +515,7 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
     before retrying.
     """
     conn = connect(_resolve_db_path(args))
+    _session_for(conn, args, subcmd="check-coherence")
     live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
         args, subcmd="check-coherence",
     )
@@ -504,7 +533,7 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
 
 
 def _cmd_execute(args: argparse.Namespace) -> int:
-    """W10-E2: dispatch the full eleven-phase push directly against Live's
+    """W10-E2: dispatch the full twelve-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
 
     See ``.prawduct/artifacts/push-execute-design.md`` for the contract.
@@ -534,6 +563,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     """
     db_path = _resolve_db_path(args)
     conn = connect(db_path)
+    _session_for(conn, args, subcmd="execute")
     song_id = _resolve_song_id(conn, args.session_id)
 
     if not args.no_coherence_check:
@@ -570,6 +600,38 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         reason=args.reason or f"push_cli execute (session={args.session_id})",
     )
     sys.stdout.write(push_execute.format_summary(result))
+
+    # DOC-5W8B: a push whose devices phase applied anything leaves
+    # REQUIREMENTS.md fresh in the same flow. Regen is content-idempotent,
+    # so parameter-only device pushes regenerate harmlessly; a halted push
+    # that still applied device changes regenerates too (the doc tracks
+    # current set state, not push success). Regen failure must never mask
+    # the push outcome — it degrades to a stderr notice.
+    devices_phase = next(
+        (p for p in result.phases if p.name == "devices"), None,
+    )
+    if devices_phase is not None and devices_phase.calls_ok > 0:
+        if getattr(args, "song", None):
+            from hallucinote.sync.compat import regen_requirements
+            try:
+                req_path = regen_requirements(args.song)
+                sys.stderr.write(
+                    f"push_cli execute: REQUIREMENTS.md regenerated "
+                    f"({req_path})\n"
+                )
+            except (SystemExit, Exception) as exc:  # prawduct:allow prawduct/broad-except -- a docs-regen failure (bad slug, DB read, file write) must degrade to a notice, never replace the push's exit code
+                sys.stderr.write(
+                    f"push_cli execute: REQUIREMENTS.md regen skipped — "
+                    f"{exc}\n"
+                )
+        else:
+            sys.stderr.write(
+                "push_cli execute: devices changed — REQUIREMENTS.md may be "
+                "stale; re-run `python3 -m hallucinote.sync.compat "
+                "write-requirements <slug>` (no --song given, can't locate "
+                "the song dir)\n"
+            )
+
     # A5: surface the verbatim recovery command on a non-clean exit so the
     # agent doesn't have to reassemble flags from the failure context.
     # Push is idempotent (W10-A + W20-A device binding by class/position) —
@@ -599,6 +661,7 @@ def _cmd_push_notes(args: argparse.Namespace) -> int:
     """
     db_path = _resolve_db_path(args)
     conn = connect(db_path)
+    _session_for(conn, args, subcmd="push-notes")
     song_id = _resolve_song_id(conn, args.session_id)
 
     state_dir = Path(args.state_dir) if args.state_dir else db_path.parent
@@ -636,6 +699,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     matching the scoped-push compose loop; arrangement prune is out of scope.
     """
     conn = connect(_resolve_db_path(args))
+    _session_for(conn, args, subcmd="prune")
     song_id = _resolve_song_id(conn, args.session_id)
     send_fn = _resolve_send_fn()
 
@@ -725,6 +789,7 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
             "push_cli cleanup-default-scaffold: need --song <slug> or --db <path>"
         )
     conn = connect(_resolve_db_path(args))
+    _session_for(conn, args, subcmd="cleanup-default-scaffold")
     song_id = _resolve_song_id(conn, args.session_id)
 
     live_tracks, live_returns = _probe_live_via_mcp()
@@ -880,19 +945,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hallucinote.sync.push_cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_phases = sub.add_parser("phases", help="emit the eleven-phase metadata list")
-    p_phases.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_phases = sub.add_parser("phases", help="emit the twelve-phase metadata list")
+    p_phases.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_phases)
     p_phases.set_defaults(func=_cmd_phases)
 
     p_plan = sub.add_parser("plan", help="emit one phase's PushPlan as JSON")
     p_plan.add_argument("phase", help="phase name (e.g. tempo_map, tracks, clips)")
-    p_plan.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_plan.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_plan)
     p_plan.set_defaults(func=_cmd_plan)
 
     p_apply = sub.add_parser("apply", help="apply MCP results to the DB")
-    p_apply.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_apply.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_apply)
     p_apply.add_argument("--results", required=True,
                          help="path to the results JSON the skill assembled")
@@ -938,10 +1009,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_exec = sub.add_parser(
         "execute",
-        help="W10-E2: dispatch the full eleven-phase push directly against Live "
+        help="W10-E2: dispatch the full twelve-phase push directly against Live "
              "(bypasses agent tool-use channel for bulk-data phases)",
     )
-    p_exec.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_exec.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_exec)
     p_exec.add_argument("--state-dir", default=None,
                         help="directory for .last-push-state.json + "
@@ -978,7 +1051,9 @@ def main(argv: list[str] | None = None) -> int:
              "content-changed (--changed) clips' notes to Live, in-process "
              "(notes never enter the agent's tool-use channel)",
     )
-    p_pn.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_pn.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_pn)
     p_pn.add_argument("--clip", action="append", default=None,
                       help="clip id to push (repeatable); omit to consider every "
@@ -997,7 +1072,9 @@ def main(argv: list[str] | None = None) -> int:
         help="B1b: opt-in deletion of orphan Live session clips (in Live, not "
              "in the DB). Dry-run by default; --apply to delete.",
     )
-    p_prune.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_prune.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_prune)
     p_prune.add_argument("--apply", action="store_true",
                          help="actually delete the listed orphan clips "
@@ -1011,7 +1088,9 @@ def main(argv: list[str] | None = None) -> int:
         help="W18-A: refuse-and-teach validation of ableton_sessions + "
              "ableton_links against a freshly-probed Live snapshot",
     )
-    p_cc.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_cc.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_cc)
     # W18-B: --probe (canonical) | --snapshot (test/debug). Mutually exclusive,
     # exactly one required — same shape as probe-and-link.
@@ -1029,7 +1108,9 @@ def main(argv: list[str] | None = None) -> int:
         help="R-1.2: delete Live's brand-new-set default tracks/returns and "
              "re-reconcile links (refuses if non-canonical unmatched parents present)",
     )
-    p_cleanup.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_cleanup.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_cleanup)
     p_cleanup.add_argument("--reason", default=None,
                            help="optional reason annotation for emitted events")

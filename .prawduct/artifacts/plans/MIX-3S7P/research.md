@@ -161,10 +161,12 @@ Live 12.4." Confirmed by **reading source** (the preferred verify-api mode), not
    but a build-plan verification step should assert single-placement for the hosts.
 
 6. **Track-kind gate.** Only `kind='midi'` tracks host these session-clip-routed
-   envelopes; master/audio/group are refused at BOTH the mutator and planner layers
-   (`_warn_unreachable_track_kind`, envelopes.py line 167). The atmosphere tracks
-   (Organ/Drums/Lead/Steel) are MIDI, so this is satisfied — but a build-plan check
-   should confirm no atmosphere lane is accidentally targeted at a non-MIDI track.
+   envelopes. (Updated 2026-06-11: ENV-7G4K replaced the old refusal with routing —
+   `classify_envelope_route` in envelopes.py partitions midi→session_clip,
+   master/group→perform, audio→refused. The session-clip mechanics this research
+   relies on are unchanged.) The atmosphere tracks (Organ/Drums/Lead/Steel) are
+   MIDI, so this is satisfied — but a build-plan check should confirm no atmosphere
+   lane is accidentally targeted at a non-MIDI track.
 
 7. **DB mutator signature (DB-side, no Live needed to author):** `create_envelope`
    (`src/hallucinote/db/mutations/devices.py` line 742) takes `target_kind` +

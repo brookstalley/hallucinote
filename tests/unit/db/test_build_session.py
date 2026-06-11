@@ -660,3 +660,44 @@ def test_tombstone_preserves_touched_nested_rack_chain(conn):
     ).fetchone()
     assert rack_id_after is not None
     assert rack_id_after["id"] == rack_id_before
+
+
+def test_audio_clip_survives_identical_rebuild_reconcile(conn):
+    """CLP-AUD1: an authored audio clip touched by the build survives the
+    build-session tombstone sweep on an identical re-run (the sweep is
+    kind-agnostic; `create_audio_clip`'s touch recording is what protects
+    the row — this pins it)."""
+
+    def build():
+        with M.build_session(conn, song_name="s"):
+            sid = M.create_song(conn, name="s")
+            atid = M.create_track(
+                conn, song_id=sid, track_index=1, name="Vox", kind="audio",
+            )
+            M.create_audio_clip(
+                conn, track_id=atid, slot=1, length_beats=16.0,
+                audio_file="assets/vox_take3.wav", gain=0.8,
+            )
+        return sid
+
+    sid = build()
+    sid = build()  # identical re-run — sweep must keep the touched audio clip
+    rows = conn.execute(
+        """SELECT c.kind, c.audio_file FROM clips c
+           JOIN tracks t ON t.id = c.track_id WHERE t.song_id = ?""",
+        (sid,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "audio"
+    assert rows[0]["audio_file"] == "assets/vox_take3.wav"
+
+    # And the sweep still owns it: a rebuild WITHOUT the clip tombstones it.
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        M.create_track(conn, song_id=sid, track_index=1, name="Vox", kind="audio")
+    rows = conn.execute(
+        """SELECT c.id FROM clips c JOIN tracks t ON t.id = c.track_id
+           WHERE t.song_id = ?""",
+        (sid,),
+    ).fetchall()
+    assert rows == []

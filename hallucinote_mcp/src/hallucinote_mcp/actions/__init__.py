@@ -24,6 +24,7 @@ from . import scene as scene  # noqa: F401
 from . import browser as browser  # noqa: F401
 from . import render as render  # noqa: F401
 from . import analysis as analysis  # noqa: F401
+from . import probe as probe  # noqa: F401
 
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "device", "automation", "arrangement", "scene", "browser",
     "render",
     "analysis",
+    "probe",
 ]

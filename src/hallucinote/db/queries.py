@@ -154,9 +154,13 @@ def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[s
     duplicate-position detection deterministic per-DB (it doesn't matter
     *which* row of a colliding pair the apply layer treats as the
     keeper, but the choice must be stable across runs to keep tests +
-    debugging tractable)."""
+    debugging tractable).
+
+    Also joins ``c.kind AS clip_kind`` (CLP-AUD1) so the pull-side apply
+    can exempt audio-clip placements (authored but unsynced until
+    CLP-AUD2) from its removal diff without a second query per row."""
     return conn.execute(
-        """SELECT a.*, c.name AS clip_name
+        """SELECT a.*, c.name AS clip_name, c.kind AS clip_kind
            FROM arrangement_clips a
            JOIN clips c ON c.id = a.clip_id
            WHERE a.track_id = ?
@@ -623,6 +627,19 @@ def get_breakpoints(
     ).fetchall()
 
 
+def get_performed_automation(
+    conn: sqlite3.Connection, envelope_id: str, session_id: str,
+) -> sqlite3.Row | None:
+    """Last-performed state for a perform-routed envelope in ONE bound
+    Live session (ENV-7G4K), or None if the arc has never been
+    successfully performed into that session."""
+    return conn.execute(
+        """SELECT * FROM performed_automation
+           WHERE envelope_id = ? AND session_id = ?""",
+        (envelope_id, session_id),
+    ).fetchone()
+
+
 # ---------------------------------------------------------------------------
 # Ableton projection
 # ---------------------------------------------------------------------------
@@ -635,6 +652,15 @@ def get_ableton_session(
     return conn.execute(
         "SELECT * FROM ableton_sessions WHERE id = ?", (session_id,)
     ).fetchone()
+
+
+def list_ableton_sessions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Sessions newest-first (created_at, rowid tiebreak). WFL-7Q2N: the
+    auto-discovery resolver leans on this ordering — index 0 is "most
+    recent"."""
+    return conn.execute(
+        "SELECT * FROM ableton_sessions ORDER BY created_at DESC, rowid DESC"
+    ).fetchall()
 
 
 def get_ableton_link(

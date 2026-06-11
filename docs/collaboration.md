@@ -142,7 +142,7 @@ The composer's session id is irrelevant to the collaborator — sessions are per
 
 A short checklist for handoff hygiene.
 
-1. **Regenerate `REQUIREMENTS.md`** after material device changes: `python -m hallucinote.sync.compat write-requirements <slug>`. Commit the result.
+1. **Regenerate `REQUIREMENTS.md`** after material device changes: `python -m hallucinote.sync.compat write-requirements <slug>`. Commit the result. (A `push_cli execute --song <slug>` whose devices phase applied changes already regenerates it in the same flow (DOC-5W8B) — the manual command covers `--db`-only pushes and out-of-band edits.)
 2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/hallucinote:song-snapshot` skill for the diff-and-confirm workflow.
 3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and run `python songs/<slug>/build.py`. The tests in `songs/<slug>/tests/` should pass.
 4. **Document content dependencies in `<slug>.md`** if the song needs a specific Live Pack or sample library. Compat check won't catch these (Case C).

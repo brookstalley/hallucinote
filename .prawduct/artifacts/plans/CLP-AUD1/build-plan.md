@@ -41,7 +41,12 @@ are established house conventions; no foreign API is touched.
 
 - [ ] Chunk 01: schema + audio-clip mutators + events (thin slice)
 - [ ] Chunk 02: kind-guards across surfaces, path helper, planner refusal, docs
-Context: plan authored 2026-06-10; nothing built yet. Parallel item ENV-7G4K is
+Context: chunk 01 committed (b1a3330): wave-1 columns + create_audio_clip mutator.
+Chunk 02 built 2026-06-10: kind-guards sweep closed TWO holes beyond the named spec —
+pull would have DELETED audio rows on every sync (session + arrangement apply paths,
+now exempted+warned) and push_notes would have misreported audio clips as pushed.
+Path helper landed package-top-level (`src/hallucinote/paths.py`) to stay stdlib-only
+(audio/ drags numpy). 3154 passed. Next: cumulative Critic → PR. Parallel item ENV-7G4K is
 file-disjoint except `src/hallucinote/db/schema.sql` (different regions — clips vs
 envelopes CHECK); mechanical rebase-on-merge, whichever lands second.
 
@@ -101,9 +106,11 @@ table semantics (locate by grep at build time) gains the kind/audio-field rows.
 
 - **Type:** cumulative-final
 - **Deliverables:** `src/hallucinote/db/mutations/clips.py` (+ notes mutators
-  file), `src/hallucinote/sync/push/clips.py`, new path helper module; tests in
-  `tests/unit/db/test_mutations.py`, `tests/unit/sync/test_push_song.py`,
-  `tests/unit/audio/`; doc + `.prawduct/change-log.md` entry.
+  file), `src/hallucinote/sync/push/clips.py`, new path helper module (landed as
+  `src/hallucinote/paths.py` — package top-level so it stays stdlib-only; audio/
+  drags numpy); tests in `tests/unit/db/test_mutations.py`,
+  `tests/unit/sync/test_push_song.py`, `tests/unit/test_paths.py`; doc +
+  `.prawduct/change-log.md` entry.
 - **Tests:** update guards both directions; kind immutability; notes-on-audio
   refusal; planner refusal (warn text + no MIDI create emitted); path helper
   (relative resolves under song_dir, absolute passes through, POSIX separators);

@@ -2938,6 +2938,79 @@ def test_apply_session_clips_deletes_db_clip_when_ableton_slot_empty(
     assert any("cleared in Ableton" in d for d in out.details)
 
 
+def test_apply_session_clips_leaves_audio_clip_rows_untouched(
+    conn, song, session
+):
+    """CLP-AUD1: audio-clip rows are authored but unsynced until CLP-AUD2,
+    so Live's slot state says nothing about them. An empty Live slot must
+    NOT delete the row, and a populated foreign clip in that slot must NOT
+    drift-update it — both exempt with a teaching warn."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr", gain=0.8,
+    )
+
+    # Pass 1: Live reports the slot empty (the truth until CLP-AUD2).
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_session_clips:{tid}", _session_payload(("empty", 2)))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert Q.get_clip(conn, cid) is not None
+    assert any("CLP-AUD2" in w for w in out.warnings)
+
+    # Pass 2: Live reports a foreign clip in that slot — must not be
+    # mis-ingested as a drift-update onto the audio row.
+    out2 = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("populated", 2, "SomethingElse", 4.0)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out2.mutations == 0
+    row = Q.get_clip(conn, cid)
+    assert row["name"] == "gtr"
+    assert row["length_beats"] == 16.0
+    assert row["audio_file"] == "assets/gtr.wav"
+
+
+def test_apply_arrangement_clips_leaves_audio_placements_untouched(
+    conn, song, session
+):
+    """CLP-AUD1: an arrangement placement of an unsynced audio clip is
+    never reported by Live; the removal diff must exempt it (with a warn)
+    instead of deleting authored state on every pull."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    arr_id = M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    remaining = [r["id"] for r in Q.get_arrangement_for_track(conn, tid)]
+    assert remaining == [arr_id]
+    assert any("CLP-AUD2" in w for w in out.warnings)
+
+
 def test_apply_session_clips_updates_name_when_drifted(conn, song, session):
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
@@ -3164,6 +3237,54 @@ def test_plan_pull_notes_emits_per_linked_clip(conn, song, session):
         "location": "session", "clip_index": 2,
     }
     assert c.key == f"clip_notes:{cid}"
+
+
+def test_plan_pull_notes_skips_audio_clip_with_warning(conn, song, session):
+    """CLP-AUD1 defense-in-depth: notes live on MIDI clips only, so a
+    linked audio clip (CLP-AUD2 will create these links) must not get a
+    note probe."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=8.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=2)
+
+    plan = pull.plan_pull_notes_for_clips(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("kind='audio'" in n for n in plan.notes)
+
+
+def test_apply_notes_skips_audio_clip_with_warning(conn, song, session):
+    """Apply-side parallel of the planner guard: a note payload addressed
+    at an audio clip is never ingested (insert_notes would refuse anyway;
+    the apply layer must warn-and-skip, not crash mid-apply)."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=8.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    _link_clip(conn, session=session, db_id=cid, ableton_index=2)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"clip_notes:{cid}",
+            _notes_payload((101, 36, 0.0, 0.25, 100, 0), clip_index=2),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    assert any("kind='audio'" in w for w in out.warnings)
 
 
 def test_plan_pull_notes_skips_unlinked_track_with_warning(

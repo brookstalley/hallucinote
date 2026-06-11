@@ -193,6 +193,17 @@ def push_notes(
     for row in candidates:
         cid = row["id"]
         name = row["name"]
+        if row["kind"] == "audio":
+            # CLP-AUD1: audio clips host no notes and have no push path
+            # until CLP-AUD2. Without this skip, plan_push_clip's
+            # refuse-loudly path (a warn, zero calls) would fall through
+            # the empty-calls loop and misreport the clip as pushed.
+            result.skipped.append({
+                "clip_id": cid, "name": name,
+                "reason": "kind='audio': audio-clip push is CLP-AUD2 "
+                          "scope — the row is authored but not synced",
+            })
+            continue
         notes = Q.get_notes_for_clip(conn, cid)
         fp = clip_fingerprint(notes)
 

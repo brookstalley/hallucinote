@@ -364,7 +364,7 @@ For non-4/4 sections:
 Two structural non-supports the planner refuses:
 
 - **Master envelopes** can't be authored. Live LOM has no path. Workaround: route the sources to a sub-bus group track and automate the group's volume.
-- **Mixer envelopes on audio tracks** can't be authored. The DB doesn't model audio session clips; the existing envelope-emitter family needs a session clip on the target track. Workaround: same sub-bus pattern.
+- **Mixer envelopes on audio tracks** can't be authored yet. The DB now models audio session clips (CLP-AUD1 wave 1 — `create_audio_clip`), but the envelope routing change that lets them host envelopes is ENV-8H1T scope. Until that ships, workaround: same sub-bus pattern.
 
 Long envelopes spanning multiple session clips are also refused — author them with a per-section partition pattern (a future version may auto-partition).
 

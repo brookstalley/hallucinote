@@ -432,6 +432,83 @@ def test_plan_push_clips_empty_song_warns(conn, song, session):
     assert any("no clips" in n for n in plan.notes), plan.notes
 
 
+def test_plan_push_clip_refuses_audio_clip_loudly(conn, song, session):
+    """CLP-AUD1: a kind='audio' clip must never emit the MIDI create —
+    warn (naming CLP-AUD2 + authored-but-not-synced) and emit no calls."""
+    track = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=1,
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=track, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+    assert plan.calls == []
+    assert len(plan.notes) == 1
+    note = plan.notes[0]
+    assert "CLP-AUD2" in note
+    assert "authored but not synced" in note
+
+
+def test_plan_push_clips_audio_skip_leaves_midi_siblings_unchanged(
+    conn, song, session
+):
+    """Regression: the audio refusal must not perturb the MIDI emission —
+    the sibling MIDI clip still gets its kind='midi' create call, and the
+    audio warn rides through the aggregator with the clip-name prefix."""
+    midi_track = M.create_track(
+        conn, song_id=song, track_index=1, name="T", kind="midi",
+    )
+    audio_track = M.create_track(
+        conn, song_id=song, track_index=2, name="Stems", kind="audio",
+    )
+    for tid, idx in ((midi_track, 1), (audio_track, 2)):
+        M.link_db_to_ableton(
+            conn, session_id=session, db_kind="track", db_id=tid,
+            ableton_index=idx,
+        )
+    mc = M.create_clip(
+        conn, track_id=midi_track, slot=1, length_beats=4.0, name="loop_a",
+    )
+    M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    plan = push.plan_push_clips(conn, song_id=song, session_id=session)
+    assert [c.key for c in plan.calls] == [f"clip:{mc}"]
+    assert plan.calls[0].args["action"] == "create"
+    assert plan.calls[0].args["kind"] == "midi"
+    assert any(n.startswith("[gtr] ") and "CLP-AUD2" in n for n in plan.notes)
+
+
+def test_plan_push_arrangement_names_audio_kind_in_unlinked_skip(
+    conn, song, session
+):
+    """An arrangement placement of an audio clip can't reach Live until
+    CLP-AUD2; the skip-warn must name the real blocker, not loop the
+    caller back to the clip-create phase (which refuses audio clips)."""
+    track = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=1,
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=track, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("kind='audio'" in n and "CLP-AUD2" in n for n in plan.notes)
+
+
 # ---------------------------------------------------------------------------
 # plan_push_scenes (SYN-4P2D — scene-provisioning pre-pass)
 # ---------------------------------------------------------------------------

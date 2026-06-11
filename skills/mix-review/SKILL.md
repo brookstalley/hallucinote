@@ -292,9 +292,12 @@ when the song declares sections. (If `ableton_analysis` returns a report with no
 `masking`/`attribution` keys, the MCP server is running stale code — tell the
 user to run `/mcp` to respawn it.)
 
-**Verifying a mix change (A/B):** after applying a fix, re-render + re-analyze
-with `compare_to=<db_seq of the before-report>` — each report carries its
-`db_seq` (the audit-log state its capture reflects). The new report's
+**Verifying a mix change (A/B):** after applying a fix, PUSH the change to
+Live before re-rendering (fixes land DB-first through mutators; `db_seq`
+asserts, not verifies, that Live matched the DB — a mutate→render without the
+push mislabels the report's own audio), then re-render + re-analyze with
+`compare_to=<db_seq of the before-report>` — each report carries its `db_seq`
+(the audit-log state its capture reflects). The new report's
 `compare_to` field lists per-surface loudness deltas with significance flags:
 read it to confirm the change did what it predicted instead of re-arguing from
 the absolute numbers. Deltas are neutral evidence — grade them against the

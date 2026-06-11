@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alignment import trim_to_common_length
-from .compare import diff_reports, resolve_baseline
+from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
     band_attribution,
     find_master_overshoots,
@@ -193,9 +193,9 @@ def analyze_mix(
 
     # Resolve + load + validate the baseline up front so a bad seq / path /
     # song fails fast, before the expensive DSP passes — the diff itself
-    # runs at the end. diff_reports re-checks the same invariants (it is
-    # callable on raw dicts); this earlier copy just moves the refusal
-    # ahead of the analysis cost.
+    # runs at the end. diff_reports re-checks via the same shared
+    # ensure_comparable; this earlier call just moves the refusal ahead of
+    # the analysis cost.
     baseline: dict | None = None
     baseline_ref: str | None = None
     if compare_to is not None:
@@ -212,19 +212,9 @@ def analyze_mix(
             baseline_path = Path(compare_to)
         baseline_ref = str(baseline_path)
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-        if baseline.get("schema_version") != SCHEMA_VERSION:
-            raise ValueError(
-                f"baseline {baseline_path} has schema_version="
-                f"{baseline.get('schema_version')!r}; this analyzer writes "
-                f"{SCHEMA_VERSION!r} — incomparable shapes refuse up front"
-            )
-        if baseline.get("song_slug") != capture.song_slug:
-            raise ValueError(
-                f"baseline {baseline_path} is for song "
-                f"{baseline.get('song_slug')!r}, capture is "
-                f"{capture.song_slug!r} — cross-song baselines are not "
-                "supported"
-            )
+        ensure_comparable(
+            SCHEMA_VERSION, capture.song_slug, baseline, baseline_ref=baseline_ref
+        )
 
     # Trim every surface to the common length (AUD-1C7K). Per-surface sfrecord~
     # instances finalize at staggered times, so the raw WAVs differ in length;

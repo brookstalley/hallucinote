@@ -225,3 +225,25 @@ def test_resolve_baseline_empty_dir_refuses(tmp_path):
     from hallucinote.audio.compare import resolve_baseline
     with pytest.raises(ValueError, match="no analysis reports"):
         resolve_baseline(tmp_path / "missing", 10)
+
+
+def test_resolve_baseline_skips_corrupt_json(tmp_path):
+    """An unreadable report can't be a baseline — the scan continues past
+    it to a valid match instead of crashing."""
+    from hallucinote.audio.compare import resolve_baseline
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / "corrupt.json").write_text("{not json", encoding="utf-8")
+    target = _write_analysis(tmp_path, "20260601T010000Z.json", db_seq=10)
+    assert resolve_baseline(tmp_path, 10) == target
+
+
+def test_resolve_baseline_skips_non_int_db_seq(tmp_path):
+    """A malformed/hand-edited db_seq (string, bool) is never a seq key —
+    skipped like None, not coerced (True must not match seq=1)."""
+    from hallucinote.audio.compare import resolve_baseline
+    _write_analysis(tmp_path, "stringseq.json", db_seq="10")
+    _write_analysis(tmp_path, "boolseq.json", db_seq=True)
+    target = _write_analysis(tmp_path, "20260601T010000Z.json", db_seq=10)
+    assert resolve_baseline(tmp_path, 10) == target
+    with pytest.raises(ValueError, match=r"db_seq=1;"):
+        resolve_baseline(tmp_path, 1)

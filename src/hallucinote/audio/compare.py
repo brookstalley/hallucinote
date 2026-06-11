@@ -39,6 +39,38 @@ SIGNIFICANCE_DB: dict[str, float] = {
 }
 
 
+def ensure_comparable(
+    schema_version: Any,
+    song_slug: Any,
+    baseline: dict[str, Any],
+    *,
+    baseline_ref: str | None = None,
+) -> None:
+    """Refuse a comparison that can't be made honestly.
+
+    The single home for the two comparability invariants (schema_version
+    equality, same song) — called by ``diff_reports`` at diff time and by
+    ``analyze_mix`` up front so the refusal lands before the expensive DSP
+    passes. If the semantics ever loosen (e.g. schema-version range
+    tolerance), this is the one place to change.
+
+    Raises ``ValueError`` on schema-version or song mismatch.
+    """
+    where = f"baseline {baseline_ref}" if baseline_ref else "baseline"
+    if baseline.get("schema_version") != schema_version:
+        raise ValueError(
+            f"cannot diff schema_version={schema_version!r} against "
+            f"{where} schema_version={baseline.get('schema_version')!r} — "
+            "incomparable shapes refuse up front"
+        )
+    if baseline.get("song_slug") != song_slug:
+        raise ValueError(
+            f"{where} is for song {baseline.get('song_slug')!r}, current is "
+            f"for {song_slug!r} — cross-song baselines are not supported "
+            "(reference-track comparison is a separate backlog item)"
+        )
+
+
 def diff_reports(
     current: dict[str, Any],
     baseline: dict[str, Any],
@@ -60,17 +92,12 @@ def diff_reports(
     that can't be made honestly is refused, not approximated. (Cross-song /
     reference-track baselines are explicitly out of AUD-4W7K's scope.)
     """
-    if current.get("schema_version") != baseline.get("schema_version"):
-        raise ValueError(
-            f"cannot diff schema_version={current.get('schema_version')!r} "
-            f"against baseline schema_version={baseline.get('schema_version')!r}"
-        )
-    if current.get("song_slug") != baseline.get("song_slug"):
-        raise ValueError(
-            f"baseline is for song {baseline.get('song_slug')!r}, current report "
-            f"is for {current.get('song_slug')!r} — cross-song baselines are not "
-            "supported (reference-track comparison is a separate backlog item)"
-        )
+    ensure_comparable(
+        current.get("schema_version"),
+        current.get("song_slug"),
+        baseline,
+        baseline_ref=baseline_ref,
+    )
 
     deltas = _surface_deltas(current["master"], baseline["master"])
 

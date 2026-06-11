@@ -1160,3 +1160,32 @@ def test_analyze_mix_wrong_song_baseline_refuses_up_front(tmp_path: Path):
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="cross-song"):
         analyze_mix(captures_dir, compare_to=baseline_path)
+
+
+def test_analyze_mix_wrong_schema_version_baseline_refuses_up_front(tmp_path: Path):
+    """The schema_version twin of the wrong-song up-front refusal — an
+    incomparable shape refuses before the DSP passes, not at diff time."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    baseline_path = tmp_path / "old-schema.json"
+    baseline_path.write_text(json.dumps({
+        "schema_version": "0-not-current",
+        "song_slug": "some-song",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema_version"):
+        analyze_mix(captures_dir, compare_to=baseline_path)
+
+
+def test_analyze_mix_bool_compare_to_refuses(tmp_path: Path):
+    """compare_to=True is a malformed call (bool is an int subtype) — it
+    must refuse as a TypeError, never resolve as seq 1."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    with pytest.raises(TypeError, match="bool"):
+        analyze_mix(captures_dir, compare_to=True, analysis_dir=tmp_path)

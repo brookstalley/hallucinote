@@ -622,6 +622,60 @@ def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
     assert send.call_args.args[0].params["db_seq"] == 99
 
 
+def test_render_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
+    """A DB that exists but has no row for the slug degrades to no tag
+    (the get_song_by_name -> None branch), never an error."""
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+        )
+    assert "db_seq" not in send.call_args.args[0].params
+
+
+def test_render_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
+    """The waivered broad catch: a corrupt song DB logs a warning and
+    degrades to no tag — a render is never blocked over provenance."""
+    import logging
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with caplog.at_level(logging.WARNING):
+        with patch(
+            "hallucinote_mcp.server.client.send", return_value=forwarded
+        ) as send:
+            handle_tool_call(
+                "ableton_render", "render",
+                {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+            )
+    assert "db_seq" not in send.call_args.args[0].params
+    assert "could not read latest db seq" in caplog.text
+
+
 def test_annotated_param_type_any_is_explicit_not_fallback():
     # 'any' must be a first-class _PARAM_TYPE_MAP entry; regressing to the
     # .get() fallback would still work today, but the explicit entry is the

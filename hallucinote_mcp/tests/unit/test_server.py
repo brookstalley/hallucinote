@@ -620,3 +620,12 @@ def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
             {"song_slug": "demo", "output_dir": str(tmp_path), "db_seq": 99},
         )
     assert send.call_args.args[0].params["db_seq"] == 99
+
+
+def test_annotated_param_type_any_is_explicit_not_fallback():
+    # 'any' must be a first-class _PARAM_TYPE_MAP entry; regressing to the
+    # .get() fallback would still work today, but the explicit entry is the
+    # documented contract for polymorphic params (ableton_probe set's value).
+    from hallucinote_mcp.server import _PARAM_TYPE_MAP
+    from typing import Any
+    assert _PARAM_TYPE_MAP["any"] is Any

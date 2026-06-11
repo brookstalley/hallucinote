@@ -878,20 +878,32 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return 1 if report.has_issues else 0
 
 
-def _cmd_write_requirements(args: argparse.Namespace) -> int:
-    db_path = _resolve_db(args.song)
-    # write_requirements is author-side: ignore installed_plugins
-    # (REQUIREMENTS.md is consumer-side-agnostic). All third-party
-    # plugins surface as 'third_party_unverified' which the formatter
-    # treats identically to missing/ok in the required-plugins section.
+def regen_requirements(song_slug: str) -> Path:
+    """Regenerate ``songs/<slug>/REQUIREMENTS.md`` from the song's DB.
+
+    Author-side: ``installed_plugins`` is ignored (REQUIREMENTS.md is
+    consumer-side-agnostic). All third-party plugins surface as
+    'third_party_unverified' which the formatter treats identically to
+    missing/ok in the required-plugins section.
+
+    Callable seam for DOC-5W8B (auto-regen after a device-changing push)
+    and the ``write-requirements`` CLI command. Returns the written path;
+    raises ``SystemExit`` when the song dir doesn't resolve.
+    """
+    db_path = _resolve_db(song_slug)
     report = check_song(db_path, installed_plugins=None)
-    out_path = resolve_song_dir(args.song) / "REQUIREMENTS.md"
+    out_path = resolve_song_dir(song_slug) / "REQUIREMENTS.md"
     if not out_path.parent.exists():
         raise SystemExit(
             f"compat: {out_path.parent}/ does not exist — wrong slug?"
         )
     content = format_requirements_md(report)
     out_path.write_text(content)
+    return out_path
+
+
+def _cmd_write_requirements(args: argparse.Namespace) -> int:
+    out_path = regen_requirements(args.song)
     sys.stdout.write(f"wrote {out_path}\n")
     return 0
 

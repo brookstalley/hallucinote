@@ -1,6 +1,6 @@
 """W10-E2: bulk push dispatcher that bypasses the agent's tool-use channel.
 
-The eleven-phase push planner emits plans the agent has historically dispatched
+The twelve-phase push planner emits plans the agent has historically dispatched
 itself via MCP tool calls. For large songs that's the v1.0 ceiling: each call
 ships its full args (notably ``notes=[…]``) as inline JSON inside the agent's
 tool-use block, burning agent context budget per call. A 29-clip song measured
@@ -339,15 +339,52 @@ def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     The substring is the first 60 chars of the error message — long enough
     to disambiguate distinct failures, short enough that ``RuntimeError:
     Couldn't create clip — slot 3`` and ``... slot 7`` group together.
+
+    Each group also carries a representative ``tool``/``action`` (the first
+    record's) and the first non-null ``hint`` in the group, so the CLI
+    summary can name the halt cause without the agent opening the errors
+    file (PSH-4E2W).
     """
-    groups: dict[str, list[str]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for e in errors:
         substr = (e.get("error") or "")[:60]
-        groups.setdefault(substr, []).append(e["key"])
+        groups.setdefault(substr, []).append(e)
     return [
-        {"error_substring": substr, "count": len(keys), "affected_keys": keys}
-        for substr, keys in sorted(groups.items(), key=lambda kv: -len(kv[1]))
+        {
+            "error_substring": substr,
+            "count": len(recs),
+            "affected_keys": [r["key"] for r in recs],
+            "tool": recs[0].get("tool"),
+            "action": recs[0].get("action"),
+            "hint": next((r.get("hint") for r in recs if r.get("hint")), None),
+        }
+        for substr, recs in sorted(groups.items(), key=lambda kv: -len(kv[1]))
     ]
+
+
+def _suggest_next_step(pattern: dict[str, Any], *, outcome: str) -> str:
+    """One actionable line per halt cause (PSH-4E2W).
+
+    Prefer the responder's own hint — it knows the cause better than any
+    heuristic here. Fall back to a per-class suggestion so the summary
+    always says what to do next, not just what broke.
+    """
+    if pattern.get("hint"):
+        return str(pattern["hint"])
+    if outcome == "connection_lost":
+        return (
+            "check Live is running with the Hallucinote control surface "
+            "loaded, then re-run execute (idempotent)"
+        )
+    if pattern.get("tool") == "ableton_device" and pattern.get("action") == "load":
+        return (
+            "device failed to load — likely not installed on this machine; "
+            "see REQUIREMENTS.md"
+        )
+    return (
+        "fix the cause in build.py / the snapshot, rebuild, then re-run "
+        "execute (idempotent — applied rows skip)"
+    )
 
 
 def execute_push(
@@ -360,7 +397,7 @@ def execute_push(
     actor: str = "sync",
     reason: str | None = None,
 ) -> ExecuteResult:
-    """Run the full eleven-phase push, dispatching each call via ``send_fn``.
+    """Run the full twelve-phase push, dispatching each call via ``send_fn``.
 
     ``send_fn`` defaults to :func:`hallucinote_mcp.client.send`. Tests pass
     their own to avoid touching the MCP package or Live.
@@ -545,7 +582,7 @@ def execute_push(
         # connection-lost the loop broke before any subsequent ok rows could
         # accumulate, so this is safe.
         if results:
-            push.apply_push_results(
+            apply_warnings = push.apply_push_results(
                 conn,
                 results,
                 session_id=session_id,
@@ -553,6 +590,20 @@ def execute_push(
                 request_id=request_id,
                 reason=reason or f"push_cli execute phase={phase.name}",
             )
+            # Apply-layer warnings (e.g. a perform whose write Live could
+            # not verify — nothing recorded, next push retries) ride the
+            # errors file so the agent sees them. They don't flip the
+            # phase status: the wire call succeeded; what failed is the
+            # verification-gated DB record.
+            for w in apply_warnings:
+                error_records.append({
+                    "key": None,
+                    "tool": "apply_push_results",
+                    "action": "apply",
+                    "args_summary": {"phase": phase.name},
+                    "error": w,
+                    "hint": None,
+                })
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
@@ -715,11 +766,16 @@ def format_summary(result: ExecuteResult) -> str:
         lines.append(f"errors: {result.errors_file}")
     if result.top_error_patterns:
         lines.append("")
-        lines.append("Top error patterns:")
+        lines.append(f"Halt cause (phase {result.phase_halted!r}):")
         for pat in result.top_error_patterns:
             substr = pat["error_substring"]
             count = pat["count"]
-            lines.append(f"  - {substr!r} ({count} occurrences)")
+            tool = pat.get("tool")
+            action = pat.get("action")
+            target = f"{tool}.{action}" if tool and action else (tool or "call")
+            plural = "s" if count != 1 else ""
+            lines.append(f"  - {target}: {substr!r} ({count} call{plural})")
+            lines.append(f"    next: {_suggest_next_step(pat, outcome=result.outcome)}")
     return "\n".join(lines) + "\n"
 
 

@@ -282,6 +282,10 @@ technical_decisions:
       rationale: "Every mutator calls `_emit` exactly once in the same DB transaction as its state write. The event row carries `actor`, `reason`, `request_id`, `seq` (monotonic). This is the load-bearing invariant for a future event-store flip."
       alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
       date: "2026-05-15"
+    - decision: "Audio clips share the `clips` table via a `kind` discriminator (CLP-AUD1 wave 1)"
+      rationale: "Audio material is a clip row with kind='audio' + the locked wave-1 audio columns (audio_file song-relative-or-absolute stored as-authored, audio_gain LINEAR 0-1, pitch semitones/cents, warping + warp_mode as Live's enum int with WARP_MODES named constants, start/end markers in Live's dual unit — beats when warped, seconds when not). Invariants live in the mutators dual-layer (kind immutable; audio_file required; LOM value domains validated at authoring time), not schema CHECKs (ALTERed columns + house style). Path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path` (top-level home so neither the MCP startup path nor the sync layer drags numpy). Unsynced audio rows are exempted from pull's reconcile-delete and refused loudly by push until CLP-AUD2."
+      alternatives_considered: "Separate audio_clips table (rejected — slot uniqueness, arrangement placement, and reconcile sweeps all operate on clips; a second table would duplicate every constraint); warp_mode as TEXT enum (rejected — drifts from the LOM int domain); absolute-only file paths (rejected — breaks hallucinote-songs portability across machines)."
+      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/design.md)"
     - decision: "ableton_sessions + ableton_links projection separation"
       rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
       alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
@@ -471,6 +475,10 @@ artifact_manifest:
 
 build_state:
   source_root: "src/hallucinote/"
+
+# Active build plan pointer (.prawduct/-relative). AUD-1M4V stage 0 executes
+# serially: CLP-AUD1 first, then ENV-7G4K (repoint when that cycle starts).
+active_build_plan: artifacts/plans/ENV-7G4K/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

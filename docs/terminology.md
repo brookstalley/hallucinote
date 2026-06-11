@@ -83,6 +83,23 @@ is what triggered this doc.
 | **Clip placement** | An instance of a Clip in a session slot OR on the arrangement timeline | DB `arrangement` table (for arrangement placements); session-side: today the `clips` row carries the `slot` column directly (no separate placements table — a session clip IS a clip definition bound to one slot via `ableton_links`) |
 | **Live `Clip` object** | The Live API's runtime representation | `track.clip_slots[i].clip` or `track.arrangement_clips[i]` — no separation of definition vs. placement on Live's side |
 
+### Clip `kind` — MIDI vs. audio (CLP-AUD1)
+
+The `clips` table carries a `kind` discriminator: `'midi'` (default; every
+legacy row) or `'audio'`. MIDI clips host notes; audio clips host an
+`audio_file` reference (song-relative POSIX path or absolute, stored
+as-given — resolved via `hallucinote.paths.resolve_audio_path`) plus the
+wave-1 conform fields (`audio_gain`, `pitch_coarse`/`pitch_fine`, `warping`,
+`warp_mode`, `start_marker`/`end_marker`). See
+`src/hallucinote/db/schema.sql` for column truth, including the
+beats-when-warped / seconds-when-not marker-unit duality. `kind` is
+immutable — converting a slot between MIDI and audio is delete+create, same
+doctrine as `track_id`/`slot`. Kind-guards hold at every MIDI-assuming
+surface: note mutators refuse audio targets, `update_clip` refuses audio
+fields on MIDI rows, and the push planner refuses `kind='audio'` clips
+loudly (audio-clip push/pull is CLP-AUD2 scope — rows are authorable but
+unsynced until it ships).
+
 Our DB **splits** definition from arrangement-side placement (so one Clip
 content can be placed multiple times on the timeline). Live does not split
 them. The sync layer reconciles by:
@@ -116,7 +133,7 @@ matching field names.
 | Concept | Live API | MCP tool / action | DB table | Mutator(s) | Event kind | Link kind |
 |---|---|---|---|---|---|---|
 | Arrangement clip placement | `track.arrangement_clips[i]` | `ableton_clip(action='list', location='arrangement', …)` | `arrangement_clips` | `add_arrangement_clip` / `remove_arrangement_clip` | `ARRANGEMENT_CLIP_ADDED` / `ARRANGEMENT_CLIP_REMOVED` | `arrangement_clip` |
-| Session-view clip slot | `track.clip_slots[i].clip` | `ableton_clip(location='session', …)` | `clips` (with link to slot via `ableton_links`) | `create_clip` / `delete_clip` / `replace_clip_notes` | `CLIP_CREATED` / `CLIP_DELETED` / `CLIP_NOTES_REPLACED` | `clip` |
+| Session-view clip slot | `track.clip_slots[i].clip` | `ableton_clip(location='session', …)` | `clips` (with link to slot via `ableton_links`) | `create_clip` / `create_audio_clip` / `delete_clip` / `replace_clip_notes` (MIDI only) | `CLIP_CREATED` / `CLIP_DELETED` / `CLIP_NOTES_REPLACED` | `clip` |
 | Arrangement-view metadata | `Live.Song.Song.{loop_*, view, …}` | `ableton_arrangement(action='info'/'set_loop'/'control_view')` | — (no single DB home; tempo/sig live in maps; loop has no DB home today) | — | — | — |
 | Set-level state (the Live document) | `Live.Song.Song.{tempo, signature, master_track, transport}` | `ableton_session(action='info'/'set_tempo'/'set_signature'/'play'/'stop'/'seek'/'snapshot'/'set_master_property')` | varies (`tempo_map`, `time_signature_map`, master via `tracks(kind='master')`) | `set_master_*`, tempo/sig-map mutators | various | — |
 | Sync session (DB↔Live binding) | — | — | `ableton_sessions` + `ableton_links` | `create_ableton_session`, link mutators | — | — |

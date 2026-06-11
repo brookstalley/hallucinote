@@ -100,6 +100,20 @@ def plan_push_arrangement(
             conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
         )
         if clip_at is None:
+            # CLP-AUD1: an audio clip is never linked (its push is
+            # CLP-AUD2 scope), so the generic "run the clip-create
+            # phase" advice would send the caller in a loop — name the
+            # real blocker instead.
+            clip_row = Q.get_clip(conn, row["clip_id"])
+            if clip_row is not None and clip_row["kind"] == "audio":
+                plan.warn(
+                    f"arrangement_clip {row['id']!r}: session clip "
+                    f"{row['clip_id']!r} is kind='audio' — audio-clip "
+                    "push is CLP-AUD2 scope (the row is authored but not "
+                    "synced), so this placement can't reach Live yet. "
+                    "Skipping this placement."
+                )
+                continue
             plan.warn(
                 f"arrangement_clip {row['id']!r}: session clip {row['clip_id']!r} "
                 f"not linked in session {session_id!r}. Run the clip-create "

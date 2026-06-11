@@ -4,6 +4,128 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
+
+<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=merged -->
+
+AUD-1M4V stage 0b: the automation surface session clips can't reach —
+master/group mixer (volume, pan), group sends, return mixer, master- and
+return-chain device parameters — becomes authorable via gesture-recorded
+**performed automation**. **Bridge:** `ableton_automation(action='perform')`
+plays the transport through the arc's span in record while stepping the
+parameter (runs_on_worker, `live_state_lock`, settle-poll on `record_mode`,
+per-step `finally` restore incl. `re_enable_automation`, beat-space interp
+with linear/hold/fast/slow). Probe-verified end-to-end first (probes 4/4b/
+10/12/13: group-host recording + same-span re-record overwrite both
+CONFIRMED). **Engine:** `return_mixer_volume`/`return_mixer_pan` kinds +
+`performed_automation` state table; W10-F's dual-layer master/group refusal
+replaced by routing eligibility — `classify_envelope_route` is the single
+partition source (clip_scoped / session_clip / perform / refused_audio /
+unroutable); audio hosts keep their ENV-8H1T refusal; the false "route to a
+sub-bus" master teaching deleted. **Push:** twelfth phase
+`performed_automation` (after envelopes) — fingerprint-gated (unchanged arcs
+skip + are listed), per-arc tempo-map-aware wall-clock estimates in the plan
+(Visible Costs), apply records state + `AUTOMATION_PERFORMED` event gated on
+`automation_state == 1` (unverified writes retry next push). **Evidence:**
+S-7 wire smoke PASS on real Live 12.4.1 — 5 arc families, skip-all re-push,
+targeted re-perform; `.als` dump verdict: all 5 arcs faithful (~3 Hz step
+rate). Docs/gaps guide updated from "can't" to "performed via push". Scope
+notes: return→return sends not in wave-1 vocab; nested-rack device params
+unreachable on either route; pull/read of arrangement automation has no LOM
+surface.
+
+## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
+
+<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=merged -->
+
+AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
+`'audio'`) plus the user-locked wave-1 audio field set — `audio_file`
+(song-relative POSIX or absolute, stored as-given), `audio_gain` (0–1 linear),
+`pitch_coarse`/`pitch_fine`, `warping`, `warp_mode` (Live enum ints, named via
+`WARP_MODES`), `start_marker`/`end_marker` (beats when warped, seconds when
+not) — via canonical `schema.sql` definitions + `_ADDED_COLUMNS` migration.
+New event-emitting `create_audio_clip` mutator (audio-host-track guard,
+audio_file required, idempotent rebuild). **Kind-guards at every
+MIDI-assuming surface:** `kind` immutable everywhere (MIDI<->audio is
+delete+create — `create_clip`/`create_audio_clip` both refuse a foreign-kind
+slot; `update_clip` refuses `kind`); `update_clip` whitelist gains the audio
+fields, refused on MIDI rows (and `audio_file` can't be cleared);
+`insert_notes`/`replace_clip_notes` refuse audio targets (notes live on MIDI
+clips); push planner refuses `kind='audio'` loudly — warn naming CLP-AUD2, no
+MIDI create emitted — with a matching kind-aware warn in the arrangement
+planner; pull exempts audio-clip rows (session-slot diff, arrangement-
+placement removal, note probes) so authored-but-unsynced state can't be
+clobbered. New pure `hallucinote.paths.resolve_audio_path(song_dir, ref)`
+(top-level home keeps it importable without the numpy-bound
+`hallucinote.audio` package). Docs: `docs/terminology.md` clips section gains
+the kind/audio-field semantics. Push/pull of audio clips is CLP-AUD2; envelope
+hosting ENV-8H1T; take lanes AUD-9R3V; warp markers deferred (lock 3).
+
+## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
+
+<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->
+
+The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
+`ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with
+`then` chaining and `{"$path": …}` LOM-object args) over a regex path grammar (no
+eval); makes capability probing a wire call instead of throwaway Remote Script code
+plus a Live restart per iteration. Adds the `any` ParamType for polymorphic params.
+55 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
+probe suite executed against real Live 12.4.1 (`docs/research/audio-first-class/
+lom-probe-results.md` + raw JSONL): audio clip creation native since 12.2 (browser
+workaround obsolete), mixer envelopes on audio session clips confirmed end-to-end,
+scripted master/return automation via `record_mode` + `begin/end_gesture` ramps
+playback-verified, recording via `fire(record_length)` confirmed incl. take lanes +
+comping substitute. **Research corpus:** adversarially verified producer practice,
+primary-source mastering norms, two LOM research passes (same dir). **Artifact:**
+`.prawduct/artifacts/plans/AUD-1M4V/discovery.md` — producer-led requirements
+(R1–R5) traced to mechanisms + staged plan. **Backlog:** AUD-1M4V → design;
+CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
+(performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
+
+## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+<!-- chunks=FRICTION-03 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
+whenever the devices phase applied at least one call — including pushes that
+halted at a later phase (the doc tracks current set state, not push success).
+`compat.regen_requirements(song_slug)` is the extracted callable seam; the
+`write-requirements` CLI command is a thin wrapper. `--db`-only pushes print a
+stale-notice with the manual command instead of guessing the song dir; regen
+failures degrade to a stderr notice (waivered broad catch) so the push's exit
+code is never masked. `docs/collaboration.md` handoff checklist updated.
+
+## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
+
+<!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->
+
+`session_id` may now be omitted on every session-taking `push_cli` /
+`pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
+it from the DB the command already opened: explicit id wins; one session →
+used; several → most recent, echoed on stderr with alternatives; apply
+commands treat a plan file's embedded `session_id` as authoritative (and
+refuse a conflicting explicit id); multi-song DBs refuse to guess; zero
+sessions → bootstrap guidance. New `db.queries.list_ableton_sessions`
+(newest-first). Render takes no session id — out of scope by inspection.
+Also: fixed a latent Hypothesis flake (per-example 200ms deadline under
+xdist load) by setting `deadline=None` in both profiles.
+
+## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
+
+<!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute` failures previously printed only the errors-file path plus
+bare "top error patterns", forcing a read of `.last-push-errors.json` on every
+halt. `_group_errors` now carries a representative `tool`/`action` and the
+first non-null responder `hint` per pattern, and `format_summary` renders a
+"Halt cause" block: `tool.action: error (N calls)` + a `next:` line
+(responder hint first; hint-less `device.load` failures point at
+REQUIREMENTS.md; connection-class halts at the Live-running checklist;
+otherwise the generic fix→rebuild→re-execute loop). Summary redaction is now
+test-pinned (large payloads can never leak past the 60-char grouping prefix).
+`skills/ableton-push/SKILL.md` + `push-execute-design.md` updated to match.
+
 ## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
 
 <!-- chunks=AUD-4W7K-02 status=shipped release=unreleased scope=aud-4w7k -->
@@ -68,7 +190,7 @@ gated at all 12 change points). `mixer_pan` lands next chunk.
 
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
-<!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->
+<!-- prawduct: type=bugfix | chunks=INS-7V2D-cold-start-timeout | scope=plugin-distribution | status=shipped | release=v0.9.4 -->
 
 The plugin-bundled `hallucinote-mcp` server timed out on a genuinely-cold first start: the spawn
 runs a full `uv` build (numpy/scipy/librosa/llvmlite, ~70 MiB) and the connection timed out at

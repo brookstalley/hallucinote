@@ -119,6 +119,21 @@ def test_error_recovery_guide_documents_version_pin_recovery():
     assert "preflight" in content
 
 
+def test_conventions_guide_documents_chain_rebuild_pattern():
+    """DEV-5R8Q: the delete-descending / reload-in-order recipe for reordering
+    a materialized device chain (no Live reorder API) must be discoverable in
+    the conventions guide. Locks the descending-delete ordering rule and the
+    transient-empty-chain caveat."""
+    content = _read_guide("conventions").lower()
+    assert "descending" in content, (
+        "guide should name descending delete order (so indices stay stable)"
+    )
+    assert "reload" in content
+    assert "empty" in content, (
+        "guide should warn about the transient empty-chain window"
+    )
+
+
 def test_scales_json_loads_with_expected_shape():
     raw = _read_reference_json("scales")
     data = json.loads(raw)

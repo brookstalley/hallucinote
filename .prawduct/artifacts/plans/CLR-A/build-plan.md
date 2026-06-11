@@ -63,7 +63,24 @@ params_dialed drop (cheapest concrete probe; written before the fix).
 - [x] Chunk 02: SYN-6B4Q — skeleton-push cues skip-with-warning past arrangement extent
 - [x] Chunk 03: INV-3K8W — preset_query teaching errors point at the actual fix
 - [x] Chunk 04: SYN-5C3J + MCP-4T6Y — version-pin recovery teaching + long-action read window
-- [ ] Chunk 05: DEV-5R8Q + INS-2Q7F + SKL-8N3V — chain-rebuild decision + doc fixes (cumulative-final)
+- [x] Chunk 05: DEV-5R8Q + INS-2Q7F + SKL-8N3V — chain-rebuild decision + doc fixes (cumulative-final)
+Context (chunk 05): DEV-5R8Q — documented the delete-descending/reload-in-order
+chain-rebuild pattern in `conventions.md` ("Reordering / inserting mid-chain")
+and DECIDED against a `rebuild_chain` convenience: it is NOT a pure-planner
+emission (the planner binds devices idempotently by class+position with no
+"reorder existing chain" diff; a convenience needs new Remote-Script-side
+orchestration to sequence delete+reload and manage the transient-empty-chain
+window) → deferred with rationale recorded in the guide note + backlog.
+SKL-8N3V — `/song-new` postlude now says call `ensure_loaded` with NO params
+(verified against the action: no ParamSpec; `song_slug` errors unknown-param).
+INS-2Q7F — OBSOLETE ON ARRIVAL: the install-hardening refactor already replaced
+the hand-authored rsync with `install_ops.py`'s `shutil.copytree` + Python
+`fnmatch` exclude predicate (no shell glob boundary → the zsh `--exclude=*.pyc`
+abort is structurally impossible; the module docstring names that exact
+friction). No change needed; recorded with evidence rather than inventing one.
+Conventions section content-pinned in test_resources; skill docs have no test
+harness (expected). All chunks [x]. Suite 3338 passed / 2 skipped. NEXT: commit,
+then `/prawduct:critic cumulative` (develop base) — the PR-gate review.
 Context (chunk 04): SYN-5C3J — push_cli now detects a version-handshake refusal
 in `ExecuteResult.top_error_patterns` and prints the pin recovery (worktree +
 PYTHONPATH + preflight verify) instead of the misleading generic "fix build.py

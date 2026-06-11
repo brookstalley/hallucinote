@@ -408,8 +408,10 @@ def test_plan_push_devices_ambiguous_param_writes_display(
 def test_plan_push_devices_warns_for_unwritable_params(
     conn, song, session, linked_track,
 ):
-    """SYN-9F2L: a params_dialed write that cannot be planned in ANY form
-    must surface as a warn, never drop silently."""
+    """SYN-9F2L: a params_dialed write that cannot be planned in ANY form must
+    surface as an operator-actionable ALERT (drained into the push report's
+    warnings), never drop silently and never get buried in the diagnostic
+    `notes` channel that the executor discards."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(conn, chain_id=cid, position=1, kind="Operator", display_name="Op")
     M.set_device_parameter(conn, device_id=did, name="Mystery",
@@ -420,7 +422,9 @@ def test_plan_push_devices_warns_for_unwritable_params(
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     by_action = _calls_by_action(plan)
     assert "set_parameter" not in by_action
-    assert any("Mystery" in n and "no writable form" in n for n in plan.notes)
+    assert any("Mystery" in a and "no writable form" in a for a in plan.alerts)
+    # Must NOT also land in the diagnostic notes channel (which execute drops).
+    assert not any("no writable form" in n for n in plan.notes)
 
 
 # ---------- returns ----------

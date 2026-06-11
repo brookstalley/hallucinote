@@ -1481,6 +1481,68 @@ def test_devices_second_pass_failure_halts_partial(
     assert result.phase_halted == "devices"
 
 
+def test_devices_unwritable_param_surfaces_warning_already_linked(
+    conn, song, session, state_dir,
+):
+    """SYN-9F2L's 'OR warns' half, on the execute path: a param with no
+    writable form (no display, no normalized, no enum items) on an
+    already-linked device must surface a warning in the push report — not be
+    silently dropped. The planner warns into ``plan.notes``; before the fix
+    ``execute`` never drained ``plan.notes`` into ``ExecuteResult.warnings``, so
+    the warn was discarded and the silent drop SYN-9F2L was filed to kill
+    survived on the primary push path."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator", display_name="Saturator",
+    )
+    # No display, no normalized, no items → unwritable.
+    M.set_device_parameter(conn, device_id=did, name="Drive", value_display="")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    # Benign warning — the push is still OK (exit 0), not a PARTIAL halt.
+    assert result.outcome == "ok"
+    assert any(
+        "no writable form" in w and "Saturator" in w for w in result.warnings
+    ), f"unwritable-param warning not surfaced: {result.warnings!r}"
+
+
+def test_devices_unwritable_param_surfaces_warning_same_pass_load(
+    conn, song, session, state_dir,
+):
+    """The acute SYN-9F2L case: a device loaded THIS pass (track not pre-linked)
+    is unlinked when the primary plan runs, so its unwritable param only becomes
+    visible in the convergence re-plan. The re-plan's notes must drain too —
+    and the warning must appear exactly ONCE (the re-plan regenerates the full
+    plan, so a naive drain would double-report)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Glitch", kind="midi")
+    # Deliberately NOT linked — forces a same-pass load + convergence re-plan.
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator", display_name="Saturator",
+    )
+    M.set_device_parameter(conn, device_id=did, name="Drive", value_display="")
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    matching = [w for w in result.warnings if "no writable form" in w and "Saturator" in w]
+    assert len(matching) == 1, (
+        f"expected exactly one unwritable-param warning (deduped), got: {result.warnings!r}"
+    )
+
+
 def test_set_parameter_enum_fallback_retries_display_as_enum(
     conn, song, session, state_dir,
 ):

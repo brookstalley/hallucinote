@@ -6,7 +6,7 @@
 
 ## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
 
-<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability -->
+<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=merged -->
 
 Triaged from the 2026-06-10 swell first-compose friction log: one silent
 correctness bug plus reliability/teaching holes that tax every song's

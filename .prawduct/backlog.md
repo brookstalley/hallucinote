@@ -20,6 +20,17 @@ Prior-format discipline that still applies (load-bearing):
 3. **Trust-but-verify on scrub.** A scrub re-reads code against each item, not
    just the item's text. Items with `added`/`reviewed` > 60 days are suspect.
 
+Metadata-bar field legend (canonical /backlog v2 format):
+  effort/impact (S/M/L) · area · source (builder|critic|reflection|janitor|user)
+  · added/reviewed (YYYY-MM-DD) · status (open|promoted|shipped|dropped — shipped/
+  dropped items live in ## Archive, never inline in Open).
+  Optional: `stage:` (idea|research|requirements|design|ready — only `ready` is
+  implementable; no stage = not-yet-ready, assess clarity before code) ·
+  `refs:` (links to governing requirement/design docs) · `related:` (item→item) ·
+  `closes:` (this item supersedes another) · `closed-by:` (the chunk/PR/release
+  that shipped this item) · `accepted-by:` (@actor soft claim — someone is working
+  it; cleared on ship/drop).
+
 Three canonical sections below: ## Open (pickable) · ## Promoted (in an active
 build plan) · ## Archive (shipped/dropped, kept for search). Items move between
 sections only via explicit `/backlog update` calls.
@@ -28,7 +39,7 @@ sections only via explicit `/backlog update` calls.
 ## Open
 
 - **[CON-7K3D]** Declared-constraint substrate — the framework verifies a rule it never knows (**HIGH PRIORITY**)
-  `effort: M · impact: L · area: constraint · source: user · added: 2026-06-03 · status: open · related: LNT-1V9K, MEL-1A7K, ARR-1H9C`
+  `effort: M · impact: L · area: constraint · source: user · added: 2026-06-03 · status: open · related: LNT-1V9K, MEL-1A7K, ARR-1H9C · stage: design · refs: .prawduct/artifacts/declared-constraint-substrate.md · reviewed: 2026-06-09`
 
   **Design:** `.prawduct/artifacts/declared-constraint-substrate.md` (the spec). Reviewing the `missing` song (built on "every chord voiced without its root") raised: should the framework gain a "rootless voicing" capability? User answer, verbatim: *"we DO NOT want to promote rootless voicings to a high level framework capability. Tomorrow I'll say 'no fifths', or 'only inversions where the root is in the middle'… How can this be generalized, while supporting creativity?"* A named/registry constraint is a whitelist that caps creativity at what someone enumerated, and is the framework making a musical decision (a stamp — `feedback_great_art_not_software` forbids). **The generalization: mechanism not policy — the framework knows how to VERIFY a composer-declared rule against composed notes; it never knows what the rule IS. The rule lives in the song.** This is the 4th application of the existing declared-intent-lens pattern (harmony `theory.lint` / melody `melody.lens` / performance `performance.lens`), with an OPEN schema (arbitrary predicate) instead of a fixed one (`MelodicProfile`); curated profiles become sugar on top of the substrate.
 
@@ -36,38 +47,23 @@ sections only via explicit `/backlog update` calls.
 
   **Proportionality (build when, not now):** the zero-framework version works today (per-song pytest + LLM-in-context). It earns the abstraction because `missing` is variation 1 of a planned constraint-driven series (`decisions/09-variation-roadmap.md`). **Recommended sequencing, two refinements over naive "ship song then build after song 2":** (1) author `missing`'s predicates in the substrate's EVENTUAL shape against a ~15-line song-local shim (`ConstraintCtx`/`ConstraintFinding` namedtuples + runner), NOT raw asserts — so the first song ships now AND is a zero-rewrite interface probe (asymmetry: wrong-interface rework ≫ a 15-line lift, song ships either way); (2) "confirm the surface" means a DIFFERENTLY-shaped second use — `missing`'s three withheld axes (root pitch-class / sub-octave register / kick-on-3 rhythm) are all the same vertical+temporal shape, so deliberately pick the second constraint song to be RELATIONAL/cross-section ("no fifths," "root in the middle," "motif must differ from last chorus") where `ConstraintCtx` is least designed, and promote to `src/` only after that. Flip to framework-first only if (a) a near-term song needs Register B (the LLM prose rubric — not extractable from a pytest shim) or (b) the series is written 3–4 back-to-back (compresses timeline, doesn't reverse order). Don't let `src/` grow a constraint *library* — predicates live in songs (shared ones go in a songs-repo helper, never the framework). **Verifiable signal:** `src/hallucinote/constraint/` exists with `analyze_constraints` + `ConstraintFinding` (6-field, never `blocking` on a choice) + an `Arrangement.section_constraint_inputs()` passthrough adapter (mirroring `section_melody_inputs` at `arrangement.py:321`), and a song declares a predicate that the framework runs without containing any named constraint type (`grep -ri 'rootless\|no.fifth' src/hallucinote/constraint/` returns nothing). **Sized:** medium (one lens + adapter + finding, on a proven pattern). (missing-review generalization, user, 2026-06-03)
 
-- **[TST-7H2M]** Systematic `deadline=None` audit of hypothesis property tests — parallel-xdist flake CLASS
-  `effort: S · impact: M · area: tests · source: builder · added: 2026-06-03 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  A CLASS of intermittent failures surfaces only under `pytest -n auto --dist loadgroup`: hypothesis `@given` property tests whose per-example body does real work (SQLite I/O, DFA/correlation math) occasionally blow hypothesis's default 200ms per-example deadline under CPU contention — never serially. Two confirmed instances: `tests/unit/sync/test_mix.py::test_set_send_intended_rt60_validator_contract` (fixed in-PR on `fix/syn-4p2d-scenes-provisioning` / PR #136 via `@settings(deadline=None)`) and `tests/unit/performance/test_correlation.py::test_dfa_when_present_is_a_finite_number` (observed flaking during MEL-1A7K, untouched code). Both pass deterministically serial. The contract holds under the canonical SERIAL invocation; the flakes are parallel-only. **Do the systematic pass:** grep all `@given` tests; for any whose body does non-trivial I/O or compute, add `@settings(deadline=None)` (the deadline measures machine load, not the property — assertions unchanged, never weakened). **Verifiable signal:** the full `-n auto --dist loadgroup` suite passes deterministically across N consecutive runs; a grep shows every I/O/compute-bound `@given` carries `deadline=None`. **Sized:** small. (discovered SYN-4P2D + MEL-1A7K verification, 2026-06-03)
-
-- **[DOC-3P7K]** Post-split accuracy pass on the deep reference docs
-  `effort: S · impact: S · area: docs · source: dogfood · added: 2026-06-03 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04 · related: project-root-contract`
-
-  The user-facing docs (README, quickstart, skills, collaboration, faq, song-authoring-conventions, song-new-checklist) were reoriented to the two-repo + plugin reality (`/hallucinote:*` skills, songs in their own repo) on `docs/post-split-accuracy`. The deeper engine-internal reference docs still carry pre-split framing: `docs/snapshot-schema.md`, `docs/capability-truth.md`, `docs/polyrhythms.md`, `docs/terminology.md` — mostly in-repo `songs/<slug>/` workflow examples and a few unprefixed skill names. Lower priority (engine-internal, not the composing surface). **Verifiable signal:** `grep -rlE '/(song-new|ableton-push|compose-part)\b' docs/*.md | grep -v hallucinote:` returns nothing across the active (non-archive) docs. (split dogfood, 2026-06-03)
-
 - **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
-  `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M`
+  `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/AUD-3F8M/build-plan.md`
+
+  Build plan authored 2026-06-10 (2 chunks: mixer_volume thin slice, then mixer_pan + report surfacing).
 
   AUD-8H2M verifies `device_parameter` (timbre) and `send_level` (return level) automation, but `mixer_volume` / `mixer_pan` are **post-fader** — invisible to the pre-fader stem tap (`audio/levels.py`), so `audio/automation.verify_envelope_realization` reports them `measurable=False` rather than verifying them. A volume swell or pan move IS visible on the **master** (post-fader sum) and in attribution. A master-bus-windowing pass — window the master (and/or the post-fader contribution) around a declared mixer envelope breakpoint and confirm the level/balance change — would close the gap. Scope: extend `_run_automation_verifications` to route mixer kinds to a master-windowed measurement; needs the per-stem post-fader contribution (attribution already estimates this) or a post-fader tap. **Verifiable signal:** a declared `mixer_volume` swell on a real capture reports `measurable=True` + `realized` from master-bus windowing, not the current post-fader skip. (cumulative Critic + AUD-8H2M scoping, 2026-06-02)
 
+  **Repo-wide review 2026-06-09:** ranked next after the daily-loop friction basket (PSH-4E2W / WFL-7Q2N / DOC-5W8B) — post-fader `mixer_volume`/`mixer_pan` verification is the hole exactly where mix authorship lives under "sound design is composition".
+
 - **[AUD-4S8T]** Source-side fix: make capture STOP transport-bracketed (kill the per-surface length ramp)
-  `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · reviewed: 2026-06-03 · related: AUD-1C7K`
+  `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · reviewed: 2026-06-09 · related: AUD-1C7K · stage: research`
 
   AUD-1C7K is handled read-side by `trim_to_common_length` (starts are sample-aligned; only tails differ). But the underlying cause remains: per-surface `sfrecord~` recordings STOP at staggered times — a measured ~20ms/surface wall-clock ramp (buffer-INDEPENDENT: 512→128 left the 170ms spread unchanged) tied to the render's sequential per-surface disarm (`handlers/render.py` `_set_arm_on_all(arm=False)`), NOT the transport stop-crossing the spec intends. Fixing it at the source would make captures equal-length by construction (no trim, and sample-exact tails for any future cross-surface tail analysis). The spec's transport-bracketed stop already works for at least one surface (the master, in sun-zone-done), so the mechanism is achievable — but the master-stop is INCONSISTENT (shortest in sun-zone-done, longest in the calibration set), so why some surfaces' stop-crossing fires and others fall through to the disarm isn't pinned. **Likely touches the `.amxd` observer (Max GUI, human-authored) + render disarm sequence.** Low priority — trim handles the read side. **Verifiable signal:** a full render produces per-surface WAVs of equal (or ≤1-buffer-spread) length with no read-side trim. (AUD-1C7K source investigation, 2026-06-02)
   **PARTIALLY SHIPPED (the ring-out half) on develop (commit 515c6ab, merge `fix/reverb-rt60-decay-tail`).** `render.py` now records `ring_out_beats` past the arrangement end (analyzer `set_stop_at_beat(end_beat + ring_out)`, transport target extended, loop off+restored, manifest carries it) so the reverb tail is captured — no `.amxd` change. **STILL OPEN (the residual this item now tracks):** the ORIGINAL equal-length-by-construction goal — killing the ~20ms/surface wall-clock stop ramp so per-surface WAVs come out the same length by construction — is NOT addressed. The read-side `trim_to_common_length` from AUD-1C7K handles that residual for now; this item stays open for the source-side stop-ramp fix (the `.amxd` observer + render disarm sequence work described above).
 
-- **[SYN-2M9P]** Push planner emits master device-LOAD calls that can never execute (DEV-2M9K follow-up)
-  `effort: S · impact: M · area: sync · source: critic · added: 2026-06-02 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04 · related: DEV-2M9K`
-
-  Follow-up to the DEV-2M9K fix (commit on `fix/master-load-bridge`): Ableton Live 12.4 has no LOM path to load a device onto the master track, so `ableton_device(action='load', master=true)` now refuses up front. But `plan_push_devices` (`src/hallucinote/sync/push/devices.py` ~47-61) still walks the master strip and emits a `device.load(master=true)` for every *unbound* master-strip device chain. At execute time that load fails, and `push_execute.py:577-591` marks the **devices phase HALTED** (`outcome='partial'`, `EXIT_PARTIAL`) and all downstream phases (envelopes / arrangement / cues) **PENDING** — so any song that authors a master-strip device chain in its DB gets a reliably PARTIAL push, re-planned on every run. (Latent today: sun-zone-done's master limiter+EQ live in the saved `.als`, not the DB, so no current song triggers it. This halt also existed pre-DEV-2M9K — the old silent mis-load raised the misleading `_raise_silent_noop` — but it now fails cleanly without corrupting a regular track.)
-
-  **Fix direction:** the planner should NOT emit `device.load` for master-strip chains (they're impossible), while STILL emitting master device-PARAMETER writes (`set_parameter` works on a hand-placed master device). I.e. master devices are configure-only across the whole stack — `load_handler`, render setup, and now the push planner — mirroring the "place by hand once" contract. Consider a one-line push-state note when a master chain is skipped so the user knows to place it by hand.
-
-  **Verifiable signal:** `plan_push_devices` on a song with a master-strip device chain emits zero `device.load` calls addressed `master=true` (only `set_parameter`/param calls), and an execute-path regression test drives a refused-master scenario through `push_execute` asserting the devices phase is NOT halted by it. (No such regression test exists today — the sync tests only assert plan-level emission; Critic note, DEV-2M9K review 2026-06-02.)
-
 - **[TPL-2D8K]** Project Ableton set template (.als) with the master-bus chain pre-placed (analyzer + limiter + common master devices) — the LOM-can't-add-master-devices workaround
-  `effort: M · impact: M · area: install · source: user · added: 2026-06-04 · status: open · related: SYN-2M9P, DEV-2M9K, INS-4H8M`
+  `effort: M · impact: M · area: install · source: user · added: 2026-06-04 · status: open · related: SYN-2M9P, DEV-2M9K, INS-4H8M · stage: requirements · reviewed: 2026-06-09`
 
   **Raised by the user (2026-06-04):** ship a project Ableton Live set template that *already has* the common master-track devices added — HallucinoteAnalyzer, a master limiter, and whatever else belongs on every Hallucinote song's master — because **we can't place master devices through LOM.** Live 12.4 has no LOM path to load a device onto the master track (proven by DEV-2M9K's load-refusal and the SYN-2M9P planner follow-up): master devices are *configure-only* across the whole stack ("place by hand once"). A hand-built template set captures that one-time hand placement as a committed, reusable artifact so every new song starts from a set that already carries the master chain.
 
@@ -78,7 +74,7 @@ sections only via explicit `/backlog update` calls.
   **Verifiable signal:** a committed template set (or a documented, reproducible recipe + the template file) exists; opening it shows HallucinoteAnalyzer + a limiter (+ agreed common devices) already on the master track; `/song-new` (or the setup flow) starts a new song from it; and a push of a song that authors master-device *parameters* against that template completes WITHOUT emitting any `device.load(master=true)` and without a PARTIAL halt. **Sized:** medium (hand-author the `.als` in Live + wire it into scaffolding + a decision-record on placement/consumption). (user template request 2026-06-04)
 
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
-  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: in-progress · related: ARR-8P5K, ARR-1H9C, ARR-3R8F`
+  `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: open · related: ARR-8P5K, ARR-1H9C, ARR-3R8F · stage: ready · refs: .prawduct/artifacts/melody-model.md · reviewed: 2026-06-09`
 
   **Progress (2026-05-31): phase 1 (research + model artifact) DONE.** Two verified
   deep-research passes (45 confirmed claims; pass 1 22/25 on expectation/contour/
@@ -111,8 +107,10 @@ sections only via explicit `/backlog update` calls.
 
   **Update (2026-06-03): phase 2b authoring side SHIPPED (`feature/mel-1a7k-melody-profile`).** The declared **`MelodicProfile`** (`melody/profile.py`, mirroring the proven `performance.realization.PerformanceProfile` — read-only declared intent, NO `apply_*` because pitch is the musical idea; nine v1 fields, `phrase_arch`/`motif_dna` DEFERRED until their read side lands), **profile-relative grading** (each declared field graded against its measured value as an info QUESTION: harmonic-freedom / contour / apex / ambitus / step-appetite / repetition-appetite), the profile-relative **`shaped_reading`** (`shaped`/`aimless`/`ungraded` — the recorded universal-verdict bug made permanently impossible: a `free`/silent profile can NEVER read `aimless`, the third-based reggae hook reads `shaped`), the within-line **motivic-economy** reading (`economy.py` — n-gram self-similarity over the interval sequence; COSIATEC/Kolmogorov named, not shipped; C7 null pinned), and **LBDM per-phrase contour** (`segmentation.py`, OPTIONAL — built because calibration proved whole-section contour too coarse on the looping hooks). Wired into `/compose-review` + the scaffold template; `melody-model.md` §3.B/§3.C/§4/§7/§8/§9 updated to shipped reality. Full suite green (2854). **PENDING by-ear (a creative lock-in, not a gap):** the appetite→fraction grading edges (named `# PENDING by-ear calibration` placeholder constants in `lens.py`) + which profile each sun-zone-done hook declares — the build SURFACED the objective hook measurements (build-plan Status table) and STOPPED at the threshold/profile decision; Live unattended, NOT auto-applied. See EVL-9R3T for refreshing the stale pre-change eval snapshots.
 
+  **Status normalized `in-progress` → `open` (2026-06-09 triage):** not a canonical status. Remaining work = the PENDING by-ear calibration locks (grading-edge constants + per-hook profile declarations), consciously deferred to a listening day.
+
 - **[MIX-3S7P]** Per-section pan + reverb-send automation (atmospheric space that snaps back) — host-clip strategy DECIDED + shipped + verified-pending-render
-  `effort: M · impact: M · area: mix · source: user · added: 2026-06-01 · status: done-verified-pending-render · related: AUD-8H2M, ENV-3M7K, MIX-7K2D`
+  `effort: M · impact: M · area: mix · source: user · added: 2026-06-01 · status: open · related: AUD-8H2M, ENV-3M7K, MIX-7K2D · stage: ready · refs: .prawduct/artifacts/plans/MIX-3S7P/design.md · reviewed: 2026-06-09`
 
   **Raised by the user (2026-06-01, sun-zone-done back-half rework):** *"Let's play with pan and reverb a bit more, especially in intro and break. Nothing cheesy or annoying, just… a little more space. Then snap back to the baseline when we get to verse/chorus."* The intent: the atmospheric sections (intro = the dawn polyrhythm cloud; break = the ethereal eureka suspension) get a wider image + a wetter Plate tail, returning to the baseline mix at verse1 and integration.
 
@@ -128,30 +126,32 @@ sections only via explicit `/backlog update` calls.
   - **Render-level verification BLOCKED-pending-render** (Live up but unattended; the multi-stem capture pipeline is the gate). The three by-ear amounts (pan width, the "nothing cheesy" Plate-send wetness, the boundary-snap feel) are surfaced as PENDING-by-ear in `decisions/08` "MIX-3S7P verification" — NOT guessed (Honest Confidence).
   - **PENDING USER DECISION (NOT a chunk, do not fork):** the **song-spanning dynamic DubDelay send** (dry-reggae / wet-metal across the whole arc) is the ONE case the clip-local trick does not solve — it crosses the metal-chorus gaps where the source track is tacet. The user directed v1 to keep the **static Lead DubDelay send** ("stays a static send for v1"). Carried as a creative fork the user owns; do not build without a re-lock. The candidate general mechanism is **ENV-3M7K** (planner auto-partition — split a song-spanning envelope into per-host-clip sub-envelopes; the planner already names this as its own v1.1 follow-up at `src/hallucinote/sync/push/envelopes.py:469`), or a monolithic host clip on a never-tacet track. (MIX-3S7P VERIFY+RECORD, 2026-06-03)
 
+  **Status normalized `done-verified-pending-render` → `open` (2026-06-09 triage):** not a canonical status. Remaining work = the render-level by-ear verification (pan width / Plate wetness / boundary snap) + the deferred song-spanning DubDelay creative lock (user-owned).
+
 - **[MIX-7K2D]** Per-`(track, return)`-per-section mixer/send envelope identities (the single-timeline model gap)
-  `effort: M · impact: S · area: mix · source: friction · added: 2026-06-03 · status: open · related: MIX-3S7P, ENV-3M7K`
+  `effort: M · impact: S · area: mix · source: friction · added: 2026-06-03 · status: open · related: MIX-3S7P, ENV-3M7K · stage: design · reviewed: 2026-06-09`
 
   **Discovered-from-friction during MIX-3S7P (not a speculative axis — do not build now).** Envelope identity is `(song, target_kind, target_track_id, target_send_return_id, parameter_path)` and `create_envelope` is find-or-create on it, so a track carries exactly **ONE** clip-local timeline per `(return, param)`. Consequence: a track cannot be wet via the *same* return in *two different* sections with *different* amounts — the second author would clobber the first. sun-zone-done dodged this by allocating identities so they don't collide (organ+drums → intro Plate; lead+steel → break Plate; the outro's extra reverb rides the **Room** return — a free identity), so it is NOT blocking current authoring. If a future song needs the same track wet via the same return in two sections at different amounts, the fix is an envelope-model change (a section-scoped or placement-scoped envelope key, or per-section sub-envelope identities). **Verifiable signal:** a decision-record either extends the envelope identity to admit per-section timelines OR records that single-timeline-per-identity is intended with the allocation discipline as the workaround. **Sized:** medium. (MIX-3S7P friction, 2026-06-03)
 
 - **[ARR-4V7P]** Vertical (inter-layer) harmonic constraint — the counterpoint near-miss
-  `effort: M · impact: M · area: arrangement · source: review · added: 2026-05-30 · status: open · related: ARR-1H9C`
+  `effort: M · impact: M · area: arrangement · source: review · added: 2026-05-30 · status: open · related: ARR-1H9C · stage: requirements · reviewed: 2026-06-09`
 
   Fugue/Bach is an instructive near-miss: the model's HORIZONTAL devices map beautifully (subject = motif, answer = transpose, stretto = overlapping motif references, augmentation/inversion = literal variation ops) — but the model is BLIND to the vertical constraint. Voices must form valid counterpoint when combined, and nothing represents or enforces consonance/dissonance BETWEEN layers. It scaffolds the entrances and gives zero help with the actual hard part. Per ruler/stamp a counterpoint GENERATOR is out (a stamp); the ruler-consistent move is a read-side vertical-interval / consonance ANALYSIS lens ("layers X and Y clash here — intended dissonance or error?"), the same shape as the masking analyzer. Representation of inter-layer harmonic constraint is tied to the harmony-axis decision (ARR-1H9C). **Verifiable signal:** a vertical-consonance analysis exists OR a decision-record says inter-layer correctness stays composer-owned at the note floor. **Sized:** medium. (arrangement-model counter-example review, 2026-05-30)
 
 - **[ARR-3R8F]** Rhythm/feel collision as a first-class structural axis (the rhythm analog of ARR-1H9C)
-  `effort: L · impact: M · area: arrangement · source: user · added: 2026-05-30 · status: open · related: ARR-1H9C`
+  `effort: L · impact: M · area: arrangement · source: user · added: 2026-05-30 · status: open · related: ARR-1H9C · stage: requirements · reviewed: 2026-06-09`
 
   Raised by the user (2026-05-30, sun-zone-done): "rhythm is just as important in the world as harmony or melody." The harmony axis (ARR-1H9C) made tonal collision/resolution a recorded structural intent that the build realizes + a lens verifies. Feel/microtiming, by contrast, is per-generator-call only (deliberately, per `docs/song-authoring-conventions.md` — punk drums + lazy bluegrass guitar in one section is valid) — the arrangement model carries NO structural representation of a rhythmic *collision* or *resolution*. sun-zone-done needed exactly that (the development trades feel cell-by-cell mirroring its harmonic trade; the outro resolves into a new synthesized feel) and realized it via per-call feel + hand-recorded intent (`songs/sun-zone-done/decisions/07-rhythmic-collision-and-resolution.md`). The open question: is there a ruler-consistent first-class representation — e.g. a per-section / per-cell *feel intent* (drag / push / grid / swing) co-equal to energy + harmony that the build realizes and a read-side timing lens verifies (the rhythm analog of the harmony conformance lens, related to the cross-rhythm analyzer C8) — OR does feel correctly stay per-call with intent recorded in markdown? Grain is part of the decision (per-section? per-cell? per-part?). **Verifiable signal:** `arrangement-model.md` records a decision (substrate vs per-call+markdown) with rationale; if substrate, sections/cells can carry a feel-intent attribute. **Sized:** large. (sun-zone-done rhythmic-collision work, 2026-05-30)
 
   **Update (2026-06-01): second concrete data point — the integration PLAYGROUND.** Reinventing sun-zone-done's integration (decisions/08) needed exactly the missing thing: two worlds *interplaying* (call-response, half↔double-time trade, simultaneous interlock) at the bar/cell grain — not a whole-section genre, not a whole-bar harmony-driven trade (the development's `_dev_collision`). It was authored song-local (`_integration_play` + `INTEG_CELLS` in build.py), per the confirmed framework decision to keep interplay song-local until a second song needs it. This is now the SECOND song-local interplay site (development was the first). When this axis is designed, both should generalize from it. Tightly coupled to **GEN-1S4K** (the same gap viewed as generator-altitude — the toolkit's section-archetype builders forced the old "smash").
 
 - **[ARR-2B6K]** Arrangement-model honest boundaries — unmetered / non-musical-axis / texture-mass
-  `effort: M · impact: S · area: arrangement · source: review · added: 2026-05-30 · status: open`
+  `effort: M · impact: S · area: arrangement · source: review · added: 2026-05-30 · status: open · stage: idea · reviewed: 2026-06-09`
 
   Three known boundaries from the counter-example review, recorded so they're tracked rather than silently assumed (the model degrades to the raw note floor for all three). (a) **Unmetered / free-rhythm** (Gregorian chant, Indian alap, recitative, rubato ambient): the bar-centric scaffold is ill-fitting; a future time-based (seconds / free-pulse) authoring mode could help. (b) **Non-musical organizing axis** (film/game picture-sync, text/liturgy through-composed, and generative/aleatoric/interactive where the piece is a process/ruleset — Eno, Cage, adaptive scores): OUT OF SCOPE BY DESIGN — process-as-primitive was deliberately excluded (ruler/stamp); document, don't build, unless product scope changes. (c) **Texture-mass / spectral** (Ligeti, Xenakis): the unit is a mass, not a motif/note; a future cloud/mass authoring helper could help. All three already noted in `arrangement-model.md` "What is deliberately NOT modeled." **Verifiable signal:** revisit only when a real target song needs (a) or (c); (b) stays documented-out. **Sized:** medium if ever built. (arrangement-model counter-example review, 2026-05-30)
 
 - **[ARR-4M3T]** Meter changes as a first-class arrangement primitive (per-section / per-bar time signature — incl. a single 3/4 bar)
-  `effort: L · impact: M · area: arrangement · source: user · added: 2026-06-02 · status: open · related: ARR-3R8F, ARR-8P5K, ARR-2B6K`
+  `effort: L · impact: M · area: arrangement · source: user · added: 2026-06-02 · status: open · related: ARR-3R8F, ARR-8P5K, ARR-2B6K · stage: design · reviewed: 2026-06-09`
 
   Raised by the user (2026-06-02, sun-zone-done back-half). The arrangement model assumes one global 4/4 meter and places sections on **integer bar lines** — `src/hallucinote/arrangement.py` `plan()` accumulates `bar += s.bars` (ints), `section()` validates/stores int `bars`, and every song does its own arithmetic against a `BEATS_PER_BAR = 4.0` constant. There is no representation of a time-signature *change*, an odd meter (5/4, 7/8), or a single borrowed bar (e.g. one bar of 3/4). Note the DB layer is already ahead of the authoring layer: the mutators `add_arrangement_clip` / `create_section` / `add_cue_point` already take **float** bars, so the persistence model can represent odd boundaries today — the gap is in `plan()` / `section()` / the per-song beat math, not the store.
 
@@ -168,7 +168,7 @@ sections only via explicit `/backlog update` calls.
   **Update 2026-06-03 (ARR-8P5K taxonomy coherence):** the taxonomy-level decision is now recorded in `arrangement-model.md` — meter-feel = TWO sub-dimensions (felt-pulse vs literal-meter); the **literal-meter** half (this item) stays a CANDIDATE, promoted to a built structure intent when a SECOND odd-meter song forces it OR the user accepts the literal-3/4 blast radius over the shipped length-preserving early-slam interim. This discharges ARR-4M3T's verifiable-signal disjunct at the *taxonomy* level ("a decision-record states meter stays globally-4/4 with the early-slam as the sanctioned interruption idiom"); the *implementation-level* decision (early-slam interim vs literal `plan()` rework) stays this item's to record when it lands. (ARR-8P5K coherence pass)
 
 - **[ARR-8P5K]** Axis model — candidate neglected musical dimensions + possible refactor of "axes"
-  `effort: L · impact: L · area: arrangement · source: user · added: 2026-05-30 · status: open · related: ARR-1H9C, ARR-3R8F, ARR-4V7P, ARR-2B6K`
+  `effort: L · impact: L · area: arrangement · source: user · added: 2026-05-30 · status: open · related: ARR-1H9C, ARR-3R8F, ARR-4V7P, ARR-2B6K · stage: design · refs: .prawduct/artifacts/arrangement-model.md · reviewed: 2026-06-09`
 
   Umbrella design investigation (user + builder, 2026-05-30, sun-zone-done). Hallucinote models a few structural dimensions (form/recurrence, ENERGY, HARMONY [ARR-1H9C, shipped]); timbre is the separate instrument-chain subsystem. The microtiming "feels-quantized" finding raised the question: what OTHER dimensions are neglected, and is a flat list of *orthogonal* axes even the right mental model? Likely NOT — the dimensions COUPLE — so the deliverable is the minimal set of authored intents with the right coupling/derivation, **explicitly NOT 1000 axes**. Governed by ruler-not-stamp, one-source-of-truth (no "inconsistent triple"), *discovered-from-friction-not-speculative* (do NOT pre-build; let genres force each gap), and **BOTH-SIDES** — every dimension needs an AUTHORING surface (express the song's intent) AND a MEASUREMENT/ANALYSIS lens (determine whether the song is actually doing it). This is already the house pattern: harmony = `Progression` author + conformance-lint read; mix = per-section intent + masking analyzer; energy = authored curve + a read-side derivative-shape coaching lens. A dimension authored but unmeasured (or measured but un-authorable) is half-built.
 
@@ -191,333 +191,349 @@ sections only via explicit `/backlog update` calls.
   **Update 2026-06-03 (coherence pass, branch `docs/arr-8p5k-taxonomy-coherence`):** the umbrella's DESIGN obligation is discharged — `arrangement-model.md`'s taxonomy now (**D1**) names meter-feel's **two sub-dimensions** (felt-pulse vs literal-meter), keeps both CANDIDATES with the promotion trigger recorded (a 2nd odd-meter song OR the user accepting the literal-3/4 blast radius over the shipped early-slam interim) + cross-refs ARR-4M3T; (**D2**) records the structure-intent MEASURE halves being realized by named siblings — energy → ARR-7M3D (PR #139), recurrence/form → ARR-9K4T (PR #137) — with harmony (ARR-1H9C) + performance (perf lens) as precedents; (**D3**) states the line-level (MEL-1A7K, PR #138) vs arrangement-level (ARR-9K4T) motivic-economy boundary canonically in the doc's own text. **D4 = no-op** (meter changes are a deferred candidate, NOT in the "deliberately NOT modeled" list — confirmed, no edit needed). **Decision: ARR-8P5K owes NO new code** — every realization is owned by a named sibling with its own verifiable signal; the umbrella stays `open` as the recurring coherence guard (re-run as each sibling lands). No new axes invented; text/flow + unmetered-time-base stay candidates/boundaries; ARR-3R8F stays folded-into-performance-later.
 
 - **[BLG-7K2Q]** Backlog accuracy structural enforcement — `product-hook backlog-stale-check` + Critic "closed-but-not-removed" goal
-  `effort: S · impact: M · area: backlog-tooling · source: builder · added: 2026-05-21 · status: open`
+  `effort: S · impact: M · area: backlog-tooling · source: builder · added: 2026-05-21 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Both target files (`tools/product-hook`, `.prawduct/critic-review.md`) carry uncommitted v1.5 framework WIP introducing `/critic verify-resolutions` mode — landing this as a sibling would PR the framework work per memory `project_prawduct_framework_authorship`. **Two parts:** (a) `product-hook backlog-stale-check` subcommand — parses backlog entries, surfaces > 60-day candidates + diff-grep against recent PRs flags shipped-but-not-removed candidates; output rides the session briefing; (b) Critic / PR-reviewer goal extension — for cumulative reviews, grep diff for keywords matching open backlog headlines + named files/functions; flag PRs that ship work matching an entry without deleting it in the same diff. **Verifiable signal:** `python3 tools/product-hook backlog-stale-check` exists and exits 0; `.claude/skills/critic/SKILL.md` (or `.prawduct/critic-review.md`) contains a goal block naming "backlog closed-but-not-removed". **Sized:** small once unblocked. **Land after** v1.5 framework sync (verify-resolutions) ships, or coordinate with the user to bundle into that sync. (Arc 5 P0 deferral 2026-05-21)
 
 - **[VEW-3M8F]** Derived-views drift: `regen-views` no longer errors but still emits nothing (and now errors post-merge on missing build-plan)
-  `effort: M · impact: M · area: views · source: critic · added: 2026-05-19 · status: open`
+  `effort: M · impact: M · area: views · source: critic · added: 2026-05-19 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Refreshed 2026-05-22: `python3 tools/product-hook regen-views` now exits 0 (no `ModuleNotFoundError`), and `tools/lib/` exists. The source-of-truth side is healthy — tagged change-log entries (`chunks=...|status=...|release=...|scope=...`) land in `.prawduct/change-log.md` for every entry since 2026-05-20. The view-derivation side is still inert: `scope_rollups: {}` in `.prawduct/project-state.yaml` stays empty, and `.prawduct/release-notes.md` is never created. Likely a tag-parsing or write-side bug in the regen logic. Two paths: (a) fix the regen path (likely in the framework-WIP `tools/product-hook` — coordinate with the upstream sync); (b) flip `views_enabled: false` in `project-state.yaml` until the fix lands. **Verifiable signal:** `scope_rollups` block in `project-state.yaml` is non-empty AND `.prawduct/release-notes.md` exists after a `regen-views` run. (W10-B/C/D + W12-C/W15-D + W15-B Critic notes, 2026-05-19/20; refreshed 2026-05-22) **Update 2026-05-29 (v1.4.0 release):** `regen-views` now *errors* (`ERROR: build-plan not found`, exit 2) when run after a completed build-plan was deleted — but governance ("Completing Work") + `/pr merge` delete `build-plan.md` on merge, so the Status view input is legitimately gone at exactly the moment a release wants to regen release-notes. `plan_regen` is all-or-nothing: the missing build-plan blocks the release-notes + scope-rollup views too. Release proceeded with change-log.md as the canonical store (release tags flipped to `v1.4.0` by hand) + the git tag. Fix candidate: make `plan_regen` treat a missing build-plan as "no Status view to regen" (skip, don't raise) so release-notes/scope-rollups still derive post-merge.
 
 - **[VEW-9QH4]** Change-log entries missing for post-v1.4.0 unreleased batch + no release-tag vocab for unreleased work
-  `effort: S · impact: M · area: views · source: critic · added: 2026-05-29 · status: open · related: VEW-3M8F`
+  `effort: S · impact: M · area: views · source: critic · added: 2026-05-29 · status: open · related: VEW-3M8F · stage: ready · reviewed: 2026-06-09`
 
   Build-cycle step 10 calls for a tagged change-log entry when `views_enabled: true`, but C8 (#106), C8c (#108), and analysis-code-version (this PR) added none — partly because every existing tag uses a concrete *shipped* version (`release=v0.9.0 … v1.4.0`) and there's no `unreleased`/`next` convention, so post-release work can't be tagged without either pre-bumping (against `feedback_no_premature_version_bump`) or mislabeling as the shipped v1.4.0. Decide a convention (e.g. `release=unreleased`, flipped to the real version at release cut — mirrors how v1.4.0 tags were flipped by hand) and backfill the batch. Couples with the regen-views drift item above. **Verifiable signal:** the unreleased develop commits since v1.4.0 each have a `## ` change-log entry, and the tag vocab documents an unreleased-work value. (analysis-code-version PR reviewer note, 2026-05-29)
 
 - **[ARR-5T1W]** Arrangement-VIEW state pull (loop region, follow mode, view zoom)
-  `effort: M · impact: M · area: arrangement · source: reflection · added: 2026-05-17 · status: open`
+  `effort: M · impact: M · area: arrangement · source: reflection · added: 2026-05-17 · status: open · stage: requirements · reviewed: 2026-06-09`
 
   Distinct from arrangement-clip-placement pull (which M+1-3b shipped). `ableton_arrangement(action='info')` exposes the view state but there is no DB home for loop region or view zoom today; tempo/signature are better diffed against `tempo_map`/`time_signature_map` via dedicated probes. Needs an explicit decision: add DB columns for view state (probably on `ableton_sessions` — it's session-bound view state, not authored song data) or leave view state non-round-tripped per "DB is the score, not the rehearsal-room state." Filed for explicit decision, not silent drop. **Verifiable signal:** a `ableton_sessions` column for loop region exists OR a decision-record in `decisions/` says "view state intentionally not round-tripped." (reflection, M+1-3 re-plan 2026-05-17)
 
 - **[DOC-2P6J]** W8-C framework-coupled wiring — session briefing + CLAUDE.md addendum for song context
-  `effort: M · impact: M · area: framework-wiring · source: reflection · added: 2026-05-19 · status: open`
+  `effort: M · impact: M · area: framework-wiring · source: reflection · added: 2026-05-19 · status: open · stage: ready · reviewed: 2026-06-09`
 
   The Wave 8 plan named two targets: (a) extend `tools/product-hook` so the session briefing surfaces in-scope song decisions + annotations; (b) add a CLAUDE.md addendum mirroring the existing `/learnings [topic]` guidance for song context. Both files are in the parked-upstream-framework set per memory `project_prawduct_framework_authorship` — adding hallucinote-specific behavior conflicts with the in-flight upstream sync. W8-C shipped only the SKILL.md guidance enhancement; the framework-coupled pieces are deferred. Then: (1) `product-hook` should detect "song in-scope" (any file touched in `songs/<slug>/`) and inject a `Song context:` block with the song's 5 most-recent markdown decisions + structural-fact annotations + `Q.get_annotations_for_song(..., kind='intent'|'structure')` from the W23-B annotations table; (2) CLAUDE.md should add a line: "Before non-trivial composition, run `/song-context [topic]` and read DB annotations via `ableton_annotation(action='list')`." **Verifiable signal:** session in a `songs/<slug>/` touch injects a `Song context:` block; CLAUDE.md mentions `ableton_annotation(action='list')`. (W8-C descope 2026-05-19; expanded for W23-B 2026-05-22)
 
 - **[EVL-9R3T]** Refresh the stale pre-melody-analysis scenario-eval snapshots (retention policy DONE)
-  `effort: S · impact: S · area: eval-harness · source: critic · added: 2026-06-01 · status: open · related: MEL-1A7K`
+  `effort: S · impact: S · area: eval-harness · source: critic · added: 2026-06-01 · status: open · related: MEL-1A7K · stage: ready · reviewed: 2026-06-09`
 
   (1) **Retention policy — DONE (2026-06-01).** `tests/scenarios/results/` now pins the latest-passing `canonical-<brief>.json` per brief (committed, durable evidence for the non-unit-testable onboarding work) + its `canonical-<brief>.transcript.md` (the latest transcript, reviewable for judge-tuning); ad-hoc timestamped runs are gitignored. `write_result(canonical=True)` writes the stable name; policy documented in `tests/scenarios/results/README.md`; the 10 prior timestamped results were migrated (latest per brief → canonical, older dupes dropped). (2) **Stale snapshots — OPEN.** `canonical-priya.json` + `canonical-elena.json` were judged on 2026-05-31 under the *old* melody framing ("melody is my thin spot" as PASS); the briefs now carry the two-sided authoring-vs-analysis rubric (MEL-1A7K phase 2a), so a fresh scenario-eval pass should re-grade them (LLM-simulated persona role-play + judge — not deterministically regenerable, hence deferred, never hand-edited; canonicalize the passing re-run via `write_result(canonical=True)` + save its transcript). **Verifiable signal:** fresh `canonical-priya.json`/`canonical-elena.json` dated post-2026-06-01 against the updated briefs. (Critic cumulative note + melody phase-2a 2026-06-01)
 
 - **[MSK-8R3D]** Masking level-reconstruction refinements (masking C3 follow-ons)
-  `effort: M · impact: M · area: masking · source: critic · added: 2026-05-29 · status: open`
+  `effort: M · impact: M · area: masking · source: critic · added: 2026-05-29 · status: open · stage: ready · reviewed: 2026-06-09`
 
   (a) **Volume automation**: C3 applies only the STATIC fader gain; a stem that ducks under one section reads slightly hot — evaluate the per-section volume envelope. (b) **Attribution/loudness level-correction**: C3 corrects the masking input only; `band_attribution`/`master_bus_attribution`/per-stem loudness still run on pre-fader stems (same F1 property) — decide whether to correct them too (changes shipped metrics, so separate). (c) **>15.5 kHz analysis ceiling** (Critic NOTE): bins above the top Bark edge are dropped while the "air" label runs to ∞ — document or extend the table. (d) Reindex tombstone-prefix uses POSIX `/` (Windows edge; macOS-only today). **Sized:** small-medium. (masking 2026-05-29)
 
 - **[AUD-4W7K]** `compare_to` baseline diffs for MixReports
-  `effort: M · impact: M · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: M · impact: M · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Skeleton field reserved in audio-analysis MVP schema; implementation deferred. Diff two MixReports keyed to DB audit-log seq numbers, surface metric deltas with significance flags ("low-mid ratio went from 0.31 → 0.24, ∆ -0.07 — meaningful improvement"). Enables A/B verification workflow described in audio-analysis spike §2 (`.prawduct/artifacts/research-spike-audio-analysis.md`). **Verifiable signal:** `analyze_mix(..., compare_to=<seq>)` populates `MixReport.deltas` with per-metric ∆ values + significance flags. (spike §9 defer 2026-05-23)
 
 - **[MIX-6D2N]** Candidate mutation proposals — the "fix" side of master-bus diagnosis
-  `effort: L · impact: M · area: mix · source: reflection · added: 2026-05-23 · status: open`
+  `effort: L · impact: M · area: mix · source: reflection · added: 2026-05-23 · status: open · stage: design · reviewed: 2026-06-09`
 
   Audio-analysis MVP diagnoses; this proposes ranked mutations with predicted metric deltas ("Lower rhythm guitar 1.5 dB in chorus — predicted master peak drops ~0.6 dB"). Requires a mutation-template library (sidechain insert, EQ carve, mixer-level adjust, limiter ceiling) + a predictor estimating post-mutation metric. Each proposal must cite which DB intent it's verifying or improving. **Verifiable signal:** `MixReport.proposals: list[Proposal]` populated with named mutations + predicted deltas + DB-intent citations. (spike §9 defer 2026-05-23)
 
 - **[DEV-1F9X]** W13-B follow-up: extract shared plugin-discriminator into a single module
-  `effort: S · impact: M · area: device · source: critic · added: 2026-05-20 · status: open`
+  `effort: S · impact: M · area: device · source: critic · added: 2026-05-20 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Both `src/hallucinote/sync/compat.py:_PLUGIN_CLASSES` + `_is_plugin_class()` and `hallucinote_mcp/.../handlers/device.py:1236-1241` (`is_third_party_plugin`) implement the same logic (explicit set + `"Plugin" in class_name` substring). Lock-tests keep them consistent (`test_plugin_classes_lock_matches_mcp_side` + `test_classify_device_substring_branch_routes_to_third_party`) — sufficient short-term, but drift-prone long-term. Natural home: W11-A's `hallucinote-core` shared package. **Verifiable signal:** a `hallucinote-core` package exists; both compat.py and device.py import the discriminator from it. **Defer until** W11-A's extraction lands so the move happens once rather than twice. (v0.9.0 cumulative Critic note + PR reviewer note 3, 2026-05-20)
 
 - **[DEV-4X2N]** `ableton_analysis(action='extract')` flattens only top-level device chains; no test pins the exclusion
-  `effort: S · impact: S · area: device · source: critic · added: 2026-06-01 · status: open · related: DEV-7K4H`
+  `effort: S · impact: S · area: device · source: critic · added: 2026-06-01 · status: open · related: DEV-7K4H · stage: ready · reviewed: 2026-06-09`
 
   The structural-dump handler (`hallucinote_mcp/.../handlers/analysis.py:_extract_song_structure`) collects devices via `get_devices_for_track` / `get_devices_for_return`, which by design don't recurse into nested rack chains (one-level via `get_device_chains_for_rack_device`; recursive racks unmodeled — see DEV-7K4H). The caveat is documented in the handler docstring + action tips, but the `_seed_full_song` test fixture builds only a top-level chain, so a regression that started dropping rack containers wouldn't be caught. When nested-rack pull lands (gated on `hallucinote-mcp` `get_device_chains`), extend the extract to flatten nested chains and add a seed with an Instrument/Audio-Effect Rack. **Verifiable signal:** `_seed_full_song` (or a sibling fixture) builds a nested rack and a test asserts the extract's device shape for it. (Critic note, extract-action 2026-06-01)
 
 - **[SNG-7H4M]** Future sibling skill: `/song-import` — ingest an existing Ableton Live set into a new Hallucinote song dir
-  `effort: L · impact: M · area: song-tooling · source: builder · added: 2026-05-20 · status: open`
+  `effort: L · impact: M · area: song-tooling · source: builder · added: 2026-05-20 · status: open · stage: requirements · reviewed: 2026-06-09`
 
   Sibling to `/song-new`. `/song-new` scaffolds from templates (no Live required); `/song-import` would capture an open Live set + pull notes / arrangement / envelopes into a fresh DB + generate a build.py thin wrapper. Today the agent can do this manually by chaining `tools.scaffold_song` + `tools/capture.py` + `/ableton-pull`, but `/ableton-pull` is built for state diffs on an existing DB, not first-ingest of clips/notes/arrangement. Needs a "pull first-time everything" path (gated on pull-side scope items below). Naming chosen to match the `<scope>-<action>` convention. **Verifiable signal:** `.claude/skills/song-import/` exists. (skills-replace-prompts refactor, 2026-05-20)
 
 - **[KIT-3Q8B]** Cross-song shared drum-kit mappings (post-M1-C)
-  `effort: M · impact: M · area: drum-kit · source: builder · added: 2026-05-20 · status: open`
+  `effort: M · impact: M · area: drum-kit · source: builder · added: 2026-05-20 · status: open · stage: design · reviewed: 2026-06-09`
 
   M1-C ships `drum_pad_mappings` scoped per-song (rows reference `devices.id`, which is per-song). The same Drum Rack `.adg` loaded on machine A and machine B has the same pad layout (chain names + MIDI notes are kit-intrinsic). Hoisting mappings into a shared layer keyed on `(preset_uri OR preset_query OR plugin_identity)` would let one capture run benefit every song using that kit. Aligns with memory `project_cross_song_reuse` (shared kits/grooves/templates). Non-trivial schema + ownership design (who owns the mapping when two captures disagree). **Verifiable signal:** `drum_pad_mappings` table has a shared/hoisted layer keyed on preset identity, not per-song device_id. **Sized:** medium. (M1-C scoping 2026-05-20)
 
 - **[TMP-5K1R]** Per-scene tempo/signature as the supported workaround for the multi-bar tempo gap
-  `effort: M · impact: M · area: tempo · source: reflection · added: 2026-05-19 · status: open · related: TMP-9X2D`
+  `effort: M · impact: M · area: tempo · source: reflection · added: 2026-05-19 · status: open · related: TMP-9X2D · stage: design · reviewed: 2026-06-09`
 
   Hallucinote DB stores `tempo_map` and `time_signature_map` keyed by `start_bar`. Live exposes per-scene tempo/sig (each session-view scene can override the global values when launched). A sync-side change could map "bar X starts a new section" → "create a scene with tempo Y at that bar boundary," giving users multi-bar tempo/sig in the supported architecture without the missing LOM envelope API. Scope: schema-level decision on scene-bar binding, planner emit logic in `plan_push_tempo_map` (use scene path when non-bar-1 rows are present + scenes are part of the song's structure), test coverage. **Verifiable signal:** `plan_push_tempo_map` emits scene-create calls for non-bar-1 rows. **Defer until** a song actually needs multi-bar tempo (falling-walking doesn't). (W6-F 2026-05-19)
 
 - **[SCF-2N6T]** Clean-default-scaffold: option (a) "rename last instead of delete last" path
-  `effort: M · impact: S · area: scaffold · source: builder · added: 2026-05-20 · status: open`
+  `effort: M · impact: S · area: scaffold · source: builder · added: 2026-05-20 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Today's `cleanup-default-scaffold` ships option (b): push the song first (which creates the song's tracks), then delete the four defaults. Option (a) — delete N-1 defaults, rename the last to absorb one of the song's DB tracks — is cheaper at the LOM level (avoids creating then deleting tracks) but requires probe-and-link rerun to pick up the renamed track. Worth adopting if the cleanup latency becomes user-visible. **Verifiable signal:** `cleanup-default-scaffold` documents both modes and lets the caller choose. **Sized:** medium. (neon-feedback test session 2026-05-20)
 
-- **[AUD-9D3P]** Audio-pipeline cumulative-Critic cleanup: propagate stdlib-only reversal to the decision record
-  `effort: S · impact: S · area: audio-analysis · source: critic · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Findings the cumulative Critic surfaced against `main`; live in the #99/#100 audio code on develop. (c) **Propagate the stdlib-only reversal** to the decision record at `.prawduct/project-state.yaml:258` ("Python 3.10+ stdlib-only runtime") — the branch added six core deps; `change-log.md` justifies it but the decision record wasn't updated. **Signal:** project-state.yaml decision reflects the dep adoption. _((a) "drop unused librosa" pruned 2026-05-29 — masking.py + timing.py now import librosa for STFT + onset detection, so it is load-bearing, not droppable. (b) dead `OvershootWindow` import shipped on feature/variable-tempo-windowing 2026-05-29.)_ (cumulative Critic, offline-cache PR 2026-05-28)
-
-- **[DEV-6T2W]** `inventory_handler` 15s server-side main-thread ceiling vs. the walk
-  `effort: S · impact: S · area: device · source: critic · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  The `inventory` action runs inside `run_on_main`, whose server-side `done.wait` uses the default `_main_thread_timeout=15.0s` (not overridden); the client-side `_INVENTORY_READ_TIMEOUT=180.0` only extends the wire-response wait, not main-thread completion. A genuinely pack-heavy single root could trip a spurious `TimeoutError` (and keep freezing Live, since Python can't interrupt the running walk) before the 20000-entry breadth cap engages. Untriggered on the author's Suite install (13884 loadables, no partials). **Signal:** inventory action passes an extended `_main_thread_timeout`, or a doc line documents the ceiling. (PR reviewer, offline-cache PR 2026-05-28)
-
-- **[INS-4H8M]** Fingerprint `HallucinoteAnalyzer.amxd` for install drift detection (parity with the Remote Script)
-  `effort: S · impact: S · area: install · source: builder · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Preflight already reports Remote Script drift via `installed_remote_script_version` → `compute_version_for` → `remote_script.candidates[*].matches_mcp_server`, so the install skill knows when the vendored package is stale. The `.amxd` has no equivalent: `installed_analyzer_amxd` only reports presence (path-or-None), so the install skill must *blindly ask* the user to overwrite even when source and installed are byte-identical. Add a content fingerprint for the binary device (it's a binary container — hash the bytes, e.g. sha256, don't reuse the text-normalizing `compute_version_for` path which the P3 NUL-byte guard already excludes from fingerprinting). Surface `source_fingerprint` + `installed_fingerprint` (+ a `matches` bool) in preflight alongside the M4L block, and teach `/ableton-mcp-install` Step 3d to **skip the copy + the overwrite prompt entirely when they match**, only prompting when the installed device differs (newer-or-customized-vs-repo). **Verifiable signal:** an `analyzer_fingerprint(path)` (or similar) helper exists in `install_paths.py`; preflight JSON carries an analyzer `matches`/fingerprint field; `/ableton-mcp-install` Step 3d branches on it. (install session 2026-05-28 — reinstall blindly re-prompted to overwrite an identical .amxd)
-
 - **[AUD-3K9D]** Tonal balance reference curves + small internal genre corpus
-  `effort: M · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: M · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Compute long-window average spectra for a handful of professionally-mixed reference tracks per genre tag; surface as comparison targets in MixReports. Stem-level LUFS targets within a mix are *not* standardized in literature — building this internally is the honest path per audio-analysis spike §5. **Verifiable signal:** `tests/fixtures/audio/references/<genre>/*.wav` exists + `MixReport.reference_curve_delta` populated when song carries a genre tag. (spike §9 defer 2026-05-23)
 
 - **[AUD-7W1N]** Full realtime audio-feature set + streaming dashboard
-  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: requirements · reviewed: 2026-06-09`
 
   Audio-analysis MVP emits 3 OSC features (LUFS-M, sample peak, low-mid band power). Post-MVP: add LUFS-S, all six bands, spectral centroid, spectral flatness; expose the OSC sidecar's ring buffer via an MCP resource (e.g. `ableton://audio/features/stream`) for live mix coaching during playback. Currently the sidecar collects but doesn't expose externally. **Verifiable signal:** MCP resource yielding per-track frames at ≥20 Hz exists; MVP's 3-feature emit replaced or extended with the fuller set. (spike §9 defer 2026-05-23)
 
 - **[AUD-2D6T]** Audio-capture take retention: rolling window + pinned takes
-  `effort: M · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: M · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Captures are heavy (~165 MB per song per take); audio-analysis MVP keeps everything indefinitely. Add a rolling-window cleanup (keep last N captures per song) with explicit "pin this take" marker for important reference points. Analysis JSONs always retained (cheap). **Verifiable signal:** a `tools/audio-prune` (or similar) exists with `--keep N` + pinned captures have a `.pinned` marker file. (spike §9 defer 2026-05-23)
 
 - **[AUD-5M8H]** `AUDIO_CAPTURED` event kind for capture audit trail
-  `effort: S · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: S · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Audio-analysis MVP records DB seq number in the capture manifest but emits no event. Adding an event kind would put capture timestamps into the audit log, supporting "when was this take captured" queries via the existing `queries.get_events_for_song`. Additive (event-kinds are append-only per boundary-patterns). **Verifiable signal:** `events.AUDIO_CAPTURED` constant exists; emitted by `ableton_render` on capture-success with `{captures_dir, manifest_seq, track_count}` payload. (spike §9 defer 2026-05-23)
 
-- **[SYN-1T4K]** `_TRANSACTION_DEPTH` module-level state may leak under thread/async patterns
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  W7-A's SAVEPOINT-based reentrant `transaction()` keeps depth in a module-level `dict[int, int]` keyed by `id(conn)`. Single-threaded today (per project preferences "Sync throughout. SQLite WAL + timeout=10.0. No async planned"), but multi-threaded use would interleave the counter. Defensive options: (a) `WeakKeyDictionary` keyed by the connection object; (b) attach the counter to the connection via a wrapper; (c) `threading.local`. **Sized:** ~5 LoC + 1 thread-safety test. (W7 cumulative-Critic note 3, 2026-05-19)
-
-- **[SYN-8H2W]** `_serialize_markdown` defensive: list items may contain `,` / `[` / `]`
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  W8-B's `write_markdown_ref` calls `_serialize_markdown` to round-trip frontmatter through the YAML-subset parser. List items (`tags`, `related`, `bars`) get serialized as `[a, b, c]` without quoting. If a future tag or `related` path contains `,` or `[` / `]`, the parser silently splits or fails. Today's tags are slug-shaped so this isn't exercised, but the wrap is the LLM-facing surface. Defensive fix: (a) quote list items containing those chars, (b) reject at serialization with a teaching error, or (c) switch to multi-line list format. **Sized:** ~10 LoC + 2 tests. (W8-B Critic cumulative note 3, 2026-05-19)
-
-- **[SYN-3D7M]** `_apply_session_clips_for_track` cascades `delete_clip` → `arrangement_clips` silently
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Design-consistent with the project's cascade discipline, but the cross-domain side effect is invisible in `out.details` (no per-row events for the cascaded placements). Worth counting + logging cascaded arrangement-clip placements when a session-clip delete fires during pull. (PR review #22, 2026-05-17)
-
-- **[SYN-9K5T]** `_apply_session_clips_for_track` silently tolerates missing `length` / `name` on populated entries
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Via `_floats_differ(None, X) → False`, unlike `_apply_arrangement_clips_for_track` which warns explicitly on missing fields. Asymmetry, not a correctness bug. Tighten for parity. (PR review #22, 2026-05-17)
-
 - **[ARR-6T8N]** `duplicate_to_arrangement` spurious-clip detection is start-time-only
-  `effort: S · impact: S · area: arrangement · source: critic · added: 2026-05-18 · status: open`
+  `effort: S · impact: S · area: arrangement · source: critic · added: 2026-05-18 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Chunk W2-H detects the B-24 side effect by comparing arrangement_clips' start_times before vs after the call. If a pre-existing clip already sits at exactly `dest_beats + source.length`, its start_time is already in the before-set and the new spurious clip slips past detection. Object-identity diff (`id(c)`) would be more robust — though Live's wrapper recreation (B-1) makes that fragile too. Unlikely in real songs. (critic W2 N2, Chunk W2-H 2026-05-18)
 
 - **[DEV-2H6K]** Confirm Phaser/Flanger and Eq3/FilterEQ3 round-trip class_name preservation in real Live
-  `effort: S · impact: S · area: device · source: critic · added: 2026-05-18 · status: open`
+  `effort: S · impact: S · area: device · source: critic · added: 2026-05-18 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Chunk W2-B's `device_names` mapping merged `Phaser`/`Flanger` to display `Phaser-Flanger` (similarly `Eq3`/`FilterEQ3` → `EQ Three`, `AutoPan` → `Auto Pan-Tremolo`) because Live 12.x merged these device families under one browser node. Load works for either source class_name; but when the device is captured (`device.list`), the reported `class_name` may be the merged form, breaking deterministic re-push. Post-D4 (commit `305742c`, "structural display-name shift — delete `_CLASS_TO_DISPLAY`"), the mapping was restructured to `device_names.py` with rack-root lookup only — the round-trip may be structurally solved. Real-Live verify path: load via `kind='Flanger'`, re-capture, confirm class_name preserved. If not, planner needs `preset_uri` for merged-display devices. **Verifiable signal:** real-Live smoke confirms class_name preservation; or a unit test pins the post-D4 invariant. (critic W2 N1, Chunk W2-B 2026-05-18; D4 context added 2026-05-22)
 
-- **[TST-4M9D]** FastMCP private-API access in `test_server.py`
-  `effort: S · impact: S · area: tests · source: critic · added: 2026-05-18 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Three tests reach into `mcp._tool_manager._tools[name]` directly to fetch a `Tool` for `.run()`. The existing `registered_tool_names` helper tries multiple attribute names for FastMCP version-drift resilience; a symmetric `get_registered_tool(mcp, name)` would centralize the version-coupling. **Verifiable signal:** `get_registered_tool` helper exists in tests. (critic W2 N1, Chunk W2-1 2026-05-18)
-
-- **[TST-7K3H]** Clear + note_expression: omit-required-args path untested
-  `effort: S · impact: S · area: tests · source: critic · added: 2026-05-18 · status: shipped (already-fixed) · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  `ableton_automation(action='clear', target_kind='note_expression')` raises the gap-citing `NotImplementedError` regardless of whether note_pitch / note_start_beats / axis were supplied (gap check fires before parameter validation). Asymmetric with `write_envelope` which validates first. Either add a docstring note or a one-line test pinning the precedence. (critic, Chunk D 2026-05-18)
-
 - **[DEV-5T1M]** W6-K real-Live smoke — remaining surfaces
-  `effort: M · impact: S · area: device · source: reflection · added: 2026-05-19 · status: open`
+  `effort: M · impact: S · area: device · source: reflection · added: 2026-05-19 · status: open · stage: ready · reviewed: 2026-06-09`
 
   Wave 6 shipped a substantial MCP-side surface validated against fakes. Sidechain smoke landed with `c80d4a6` (2026-05-22 — S/C Gain refusal fix). Still wants real-Live empirical confirmation: (a) `read_envelope` round-trips on a mixer_volume / device_parameter envelope; (b) `get_device_chains` structure on a real Drum Rack; (c) `load_in_rack` + `set_parameter_in_rack` on an InstrumentGroupDevice; (d) `set_input_routing` finds the right RoutingType by display_name; (e) W5-F deferred — round-trip parity on parameter-dialed native instruments via the W5-D pull path. (W6 close-out 2026-05-19; sidechain shipped 2026-05-22)
 
-- **[SYN-2K8T]** One raw `conn.execute("SELECT ...")` JOIN read in `sync/push.py:1452`
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  The original two-SELECT concern (PR #24) is down to one — the remaining read is a join between `arrangement_clips` and `clips` to resolve envelope addressing; harder to factor into a `queries.py` helper because of the JOIN. Worth doing for consistency, but lower-leverage than when there were two. (PR review #24, 2026-05-17; refreshed 2026-05-22)
-
-- **[MET-9D4H]** Wave plan headers missing top-level `Requirements Confidence` field
-  `effort: S · impact: S · area: methodology · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  Each M+1 chunk has an inline Confidence check, but the wave-level header in `build-plan.md` lacks a `Requirements Confidence: High|Medium|Low` declaration. Methodology cleanup — apply to the next wave header rather than retrofitting. (critic, M+1 final 2026-05-17)
-
 - **[AUD-6T2K]** Source separation fallback for stemless audio inputs (lazy-import demucs)
-  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open`
+  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · related: AUD-1M4V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   When users want to analyze an imported reference track (not authored in Hallucinote — no stems available), use HT-Demucs v4 to derive vocals/drums/bass/other pseudo-stems. PyTorch dep + ~9.2 dB SDR; lazy-import only when invoked so the dep stays optional. Audio-analysis MVP's normal mode is "we have the stems via `sfrecord~`" — separation is the fallback for analyzing reference tracks, not the primary path. **Verifiable signal:** `src/hallucinote/audio/separation.py` exists with `separate_stems(mixed_audio) -> dict[str, ndarray]` gated behind a `[audio-separation]` extras group. (spike §9 defer 2026-05-23)
 
+  **Note (2026-06-10, AUD-1M4V discovery):** scope unchanged; referenced by the umbrella's staged plan as the stemless-reference FALLBACK, not part of the build spine.
+
 - **[ENV-3M7K]** Wave 0 / D1 v1.1: planner auto-partition envelopes across per-section session clips
-  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: MIX-3S7P`
+  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: MIX-3S7P, AUD-1M4V · stage: ready · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   v1 ships refuse-with-teaching (W10-F) for long envelopes whose range exceeds any single session clip. v1.1: planner detects the multi-clip case, splits the DB's logical envelope at session-clip boundaries, emits one sub-envelope per covering session clip; pull stitches adjacent identical envelopes back. Natural Hallucinote shape. Requires push-side split + pull-side stitch + round-trip test coverage. (Wave 0 triage Group D 2026-05-19)
 
   **Surfaced as the candidate general answer for MIX-3S7P's deferred song-spanning DubDelay send (2026-06-03).** That gesture must persist across sections where the source track is tacet — the one case the clip-local strategy can't host. Auto-partition (or a monolithic never-tacet host clip) is the general mechanism if/when the user un-defers the dry→wet DubDelay arc. Pending a user creative lock; not pulled into MIX-3S7P.
 
+  **Note (2026-06-10, AUD-1M4V discovery):** scope unchanged — auto-partition remains the answer for song-spanning envelopes over per-section clips; the umbrella's staged plan references it (refs: added per cumulative-Critic finding — it was the only child missing the link).
+
 - **[ENV-8H1T]** Wave 0 / D3 v1.1: mixer envelopes on audio tracks via audio-clip DB model
-  `effort: M · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: P6-AUD-CLIP`
+  `effort: M · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: CLP-AUD1, AUD-1M4V · stage: ready · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   Gated on `scope.later` "audio clips: clip kind discriminator, file references, warp metadata." Once audio session clips are addressable, the envelope-emitter family can host mixer/send envelopes on audio session clips the same way it does for MIDI session clips. v1 ships refuse-with-teaching (W10-F). (Wave 0 triage Group D 2026-05-19)
 
-- **[GEN-5K2D]** Wave 0 paper-cut: polyrhythm helper using `fractions.Fraction`
-  `effort: S · impact: S · area: generators · source: builder · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-04`
-
-  `(7.0 / 5) * 3 / 2.0` yields `2.0999999999999996` (IEEE 754 sub-LSB drift). The SQLite REAL column round-trips it faithfully, but authoring introduces it without warning. A future `hallucinote.polyrhythm(n, against=k)` helper should compute via `fractions.Fraction(against, n)` and float-convert only at the mutator boundary. (Wave 0 canary `odd-meter-experimental` runbook step 8, 2026-05-19)
+  **REDUCED by probe evidence (2026-06-10, AUD-1M4V discovery):** a mixer envelope on an audio session clip was confirmed end-to-end in Live 12.4.1. Once CLP-AUD1 lands, this item is mostly deleting the refusal at `sync/push/envelopes.py:193` + tests. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
 
 - **[ENV-1T9M]** Envelope discovery on pull — envelopes authored only in Live
-  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open`
+  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · stage: idea · reviewed: 2026-06-09`
 
   W7-A (2026-05-19) ships `plan_pull_envelopes` in DB-mirrored mode. It does NOT discover envelopes the user authored *only* in Live — that would explode the read surface (~10s-100s of probes per pull). A future "envelope discovery" pass could batch-probe likely surfaces (clips/devices/tracks mutated recently per `events` log). Not blocking V1. (W7-A 2026-05-19)
 
 - **[DEV-7K4H]** Recursive nested-nested rack chain support
-  `effort: L · impact: S · area: device · source: builder · added: 2026-05-19 · status: open`
+  `effort: L · impact: S · area: device · source: builder · added: 2026-05-19 · status: open · stage: idea · reviewed: 2026-06-09`
 
   W6-I/J ship one-level-deep nested-rack support. Live allows racks-inside-racks-inside-racks; addressing beyond one level requires a path-style API (e.g., `chain_path=[2, 1, 3]`). Not exercised by today's songs. (W6-I/J 2026-05-19)
 
 - **[ENV-4M2T]** Return-side device_parameter envelopes need a return-track session-clip model
-  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-18 · status: open`
+  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-18 · status: open · stage: requirements · related: AUD-1M4V, ENV-7G4K · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   W4-B routes track-side mixer/pan/send/device_parameter envelopes through session clips on the parent track. Return tracks have arrangement-side mixer state but the DB has no session-clip model for returns (`clips.track_id` references `tracks(id)` only). Live 12.4 only accepts device_parameter envelopes on session clips, so return-side envelopes get warn+skip today. Non-trivial: schema branch + mutators + push/pull routing. (W4-B 2026-05-18)
 
+  **PARTIALLY SUPERSEDED (2026-06-10, AUD-1M4V discovery):** performed automation (ENV-7G4K) covers return mixer/send arcs WITHOUT a return session-clip model — probe-confirmed on a return track in Live 12.4.1. This item stays open only for **clip-locked return device envelopes**; revisit after performed automation ships. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
 - **[NOT-9H3K]** Live API residual on gap #4: true surgical Ableton-side note writes
-  `effort: M · impact: S · area: note · source: builder · added: 2026-05-17 · status: open`
+  `effort: M · impact: S · area: note · source: builder · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
 
   V1 close-out shipped READ-with-stable-IDs + WRITE-whole-clip (sufficient for compose/produce). Residual: per-note Ableton writes that preserve playback continuity (Live retriggers a clip on `set_notes` during playback) — would land via `apply_note_modifications` / `add_new_notes` / `remove_notes_by_id`. Out of V1 scope per `scope.never` (no live-performance use case). Re-open if performance use cases enter scope. (V1 close-out 2026-05-17)
 
 - **[GEN-2T8M]** Hallucinote-side quantize / swing / groove module — REVISIT WHETHER NEEDED
-  `effort: M · impact: S · area: generators · source: reflection · added: 2026-05-17 · status: open`
+  `effort: M · impact: S · area: generators · source: reflection · added: 2026-05-17 · status: open · stage: requirements · reviewed: 2026-06-09`
 
   Original M-3 scoping reaffirmed the DB-as-source-of-truth principle for note timing. But memory `feedback_prefer_llm_over_deterministic_module` says: before proposing a transform module (quantize/groove/timing math), ask whether the LLM can do it directly. The microtiming-as-authorship note (`feedback_microtiming_is_authorship`) reinforces this — feel is baked at pattern-helper generation time, not via a post-hoc transform. **Decision needed:** does this module still earn its keep, or should it be removed from backlog entirely in favor of LLM-direct timing offset authorship + the per-helper `feel` parameter? Defer until a real song needs structured grooves; downgrade-or-remove on the next scrub. (reflection, Wave M-3 user pivot 2026-05-17; flagged for re-decision 2026-05-22)
 
 - **[INS-6K1T]** Native Linux support — gated on Ableton shipping a Linux build
-  `effort: L · impact: S · area: install · source: builder · added: 2026-05-19 · status: open`
+  `effort: L · impact: S · area: install · source: builder · added: 2026-05-19 · status: open · stage: idea · reviewed: 2026-06-09`
 
   Today: README + install skill warn-and-confirm; `_live_preferences_root()` returns `None` on Linux (existing Wine/CrossOver branch in `install_paths.candidate_user_libraries()` is best-guess). If Ableton ships native Linux: real preferences root, `live_is_running()` Linux branch (`pgrep -i -f 'Ableton Live'`), `live_log_path()` mapping, decision on Wine fallback. (W15-C 2026-05-19)
 
-### Future / event-store era (P6 — far horizon, kept open)
-
-- **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
-  `effort: L · impact: M · area: clip · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6) Gates several deferred envelope + import items above.
-
-- **[CLP-AUD2]** Session-view audio clip placement via browser-load workaround
-  `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open`
-
-  Live 10–12 has no `ClipSlot.create_audio_clip`. The only path is async browser-load: set `song.view.highlighted_clip_slot = target_slot`, then `application.browser.load_item(audio_browser_item)`. Caveats: async (no completion callback), audio must be addressable as a BrowserItem (Library/User/Places — not arbitrary filesystem path), browser-indexing dependent. Could expose as `ableton_clip(action='load_audio_to_session', track_index, clip_index, browser_uri)`. (W6-D investigation 2026-05-19)
-
-- **[RTE-1K9T]** Track routing: sidechain, parallel busses, input/output routing config
-  `effort: L · impact: S · area: routing · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6) Schema + sync work.
-
-- **[TRK-2H6K]** Group tracks (`tracks.parent_track_id` + Live group semantics)
-  `effort: L · impact: S · area: track · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6)
-
-- **[SYN-7T3M]** Pull-side sync follow-on
-  `effort: M · impact: S · area: sync · source: builder · added: 2026-05-17 · status: open`
-
-  (status W5-D 2026-05-19) **Shipped:** mix-state, cue points + score globals, device chain structure, arrangement-clip placements, session-view clip slots, note pull via stable-ID read + whole-clip write, device-parameter values. **Deferred (above):** envelope pull (gated on `hallucinote-mcp` envelope read surface), nested rack chain pull (gated on `hallucinote-mcp` `get_device_chains`). (migrated; rewritten 2026-05-17; W5-D update 2026-05-19)
-
-- **[EVT-4K8H]** Event replay function (`replay(events) → state`) and merge tooling
-  `effort: L · impact: S · area: event-store · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6) Required for cross-DB event-stream merges; only useful after the event-store flip.
-
-- **[EVT-9M2T]** Post-hoc event annotation (`event_annotations` table) for narrative on-the-fly addition to history
-  `effort: M · impact: S · area: event-store · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6)
-
-- **[MIG-3T7K]** Real-time concurrent editing / cloud DB migration
-  `effort: L · impact: S · area: migration · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6) Out of foreseeable scope; mutator-discipline + storage abstraction keep the door open.
-
-- **[TST-8K1M]** Song tests (on-demand layer): DB consistency + mix hygiene + audio/spectral
-  `effort: M · impact: S · area: tests · source: user · added: 2026-05-17 · status: open`
-
-  (migrated from legacy P6) Land per-chunk as appetite allows; not gating any chunk's completion.
-
-- **[ARR-7M3D]** Energy-realization is unmeasured in audio (declared curve vs rendered intensity) — measurement-coverage gap
-  `effort: M · impact: L · area: energy · source: user · added: 2026-06-01 · status: shipped · branch: feature/arr-7m3d-energy-realization · related: ARR-8P5K, ARR-2S9D`
-
-  **Signal MET (2026-06-03, `feature/arr-7m3d-energy-realization`):** the read-side
-  check exists and is wired in. `sections.energy` is persisted (the source-of-truth
-  fix the curve never reaching the DB); `MixReport.energy_realization`
-  (`src/hallucinote/audio/energy.py::realize_energy`) joins the declared
-  `[SectionEnergy]` to measured per-section intensity BY `start_beat` and reports
-  per-correlate Spearman ρ (loudness + onset density) + rank inversions, with the
-  B1 nan contract (tied/constant → ρ `None`, never nan; `allow_nan=False` write
-  backstop) and the W2 measured-nan symmetry. Wired into `/mix-review` MEASURE +
-  INTERPRET (DR-4) and pointed at from `/compose-review` + `arrangement-model.md`.
-  Ruler-not-stamp lock test present. PENDING attended-run (Live unattended this
-  run, flagged in `.prawduct/operator-verification.md`): the e2e objective ρ read
-  on a real sun-zone-done render + the by-ear DR-5 surfacing-threshold tune
-  (currently the conservative surface-everything default). Spectral correlate
-  deferred → ARR-2S9D below (DR-3, flagged-not-dropped).
-
-  **Both-sides gap (ARR-8P5K's own principle: "a dimension authored but unmeasured is half-built").** ENERGY is a first-class authored dimension — `Arrangement.section(..., energy=)` → `arr.energy_curve` (sun-zone-done declares 0.25→1.0 across 9 sections). The READ side is only *symbolic*: `/compose-review` reads whether the authored curve "builds, breathes, peaks" from build.py/arrangement (SKILL.md L61) — it never checks the audio. The MixReport measures per-section loudness (`audio/analyze.py` `_measure_sections` → `SectionMetrics`) but **nothing joins the two**: no tool confirms the declared energy[section] is actually realized as rendered intensity (loudness + spectral density + onset rate). A section authored energy=0.9 that renders quieter/sparser than an energy=0.6 section ships unflagged — the exact "is the chorus actually lifting?" question, gone dark on the audio side. Harmony (ARR-1H9C conformance lint) and performance (perf lens) both got the realization check; energy did not.
-
-  **Verifiable signal:** a read-side check exists that takes the arrangement's `energy_curve` + a MixReport and reports per-section declared-vs-measured intensity divergence (rank-correlation of declared energy against measured loudness/density, flagging inversions), wired into `/mix-review`; OR a decision-record states energy-realization stays a by-ear judgment with rationale. Today: no reference to the authored `energy_curve` anywhere in `src/hallucinote/audio/` — the curve never reaches the audio analyzer (the incidental `energy` hits there are all acoustic/spectral energy, a different quantity).
-
-- **[ARR-2S9D]** Energy-realization spectral correlate (the deferred third intensity feature) — DR-3 follow-on
-  `effort: S · impact: S · area: energy · source: discovered-from-friction · added: 2026-06-03 · status: open · related: ARR-7M3D`
-
-  **Flagged deferral from ARR-7M3D (DR-3, NOT a silent drop).** The energy-realization lens ships loudness (LUFS-S median) + onset density as its two intensity correlates. The music-perception literature (ARR-7M3D `research.md` §2/§4 [1][2]) backs a THIRD: spectral density / flux / centroid — a chorus often "opens up" the spectrum at matched loudness, which LUFS alone can't see. Per DISCOVERED-FROM-FRICTION, ship the minimum that closes the headline gap (loudness + density) and add the spectral correlate when friction shows the two miss a real case. The `correlate_rho` dict is open-keyed precisely so a third correlate adds a key (`"spectral"`) without a schema change. **Verifiable signal:** `MixReport.energy_realization.correlate_rho` carries a spectral correlate key computed from a librosa spectral-flux/centroid pass over the windowed master, ranked by the same `realize_energy` Spearman path; OR a decision-record states loudness+density suffice with rationale. **Sized:** small (one new DSP primitive + a measured-correlate map entry; the lens + report shape already accept it). Build when a real song surfaces a matched-loudness spectral lift the lens misses.
-
 - **[ARR-9K4T]** Recurrence/form has no read-side — motif recall & recapitulation are authored but unverifiable — measurement-coverage gap
-  `effort: M · impact: L · area: recurrence · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K, MEL-1A7K`
+  `effort: M · impact: L · area: recurrence · source: user · added: 2026-06-01 · status: open · related: ARR-8P5K, MEL-1A7K · stage: design · reviewed: 2026-06-09`
 
   **Both-sides gap.** RECURRENCE/FORM is a first-class authored dimension — `Arrangement.motif()` + `vary()` + reference — and recapitulation is load-bearing in sun-zone-done (the integration QUOTES the registered `polyrhythm-cloud` motif; the outro AUGMENTS the `no-time-stab` motif via `V.augment`). The AUTHORING side is shipped; the READ side does not exist. **No tool verifies a registered motif was actually recalled, detects a recapitulation, or measures motivic economy** (is the song built from a small recurring cell-set, or scattered?). The melody lens's motivic/n-gram reading is explicitly NOT-YET (`melody/lens.py:48-50`) and is line-level anyway; this gap is the *cross-instrument / arrangement-level* recurrence read (e.g. "the integration organ's notes ARE `shift`s of the polyrhythm motif — confirmed"). MEL-1A7K owns the melodic-LINE motivic-economy slice; this is the structural recurrence-realization sibling under ARR-8P5K.
 
   **Verifiable signal:** a read-side that, given an arrangement, reports which registered motifs recur where (and as which variation: transpose/augment/invert/…) plus a motivic-economy summary, wired into `/compose-review`; OR a decision-record states recurrence-realization stays composer-owned with rationale. Today: no motif-recall / recapitulation reader exists in `src/hallucinote/` analysis or lens code (the few incidental `recur` substring hits are unrelated).
 
-- **[SYN-4P2D]** First push of a >8-section song into a fresh default Live set hard-fails — set ships with only 8 scenes, push doesn't auto-create them, raw per-clip IndexError
-  `effort: S · impact: L · area: sync · source: user · added: 2026-06-01 · status: open`
+- **[ARR-2S9D]** Energy-realization spectral correlate (the deferred third intensity feature) — DR-3 follow-on
+  `effort: S · impact: S · area: energy · source: discovered-from-friction · added: 2026-06-03 · status: open · related: ARR-7M3D · stage: ready · reviewed: 2026-06-09`
 
-  **Recurring first-push trap (user, 2026-06-01: "a real gap that will bite us over and
-  over").** A default Ableton Live set ALWAYS ships with exactly 8 scenes, so the FIRST
-  push (auto-session, fresh set) of ANY song with >8 sections fails *deterministically*
-  at the `clips` phase — this is the common new-song path, not an edge case.
-  Hit live pushing sun-zone-done (9 sections) into a fresh default Live set (8 scenes,
-  2026-06-01). The `clips` phase creates one session clip per section in scene slots
-  1..N; if the set has fewer than N scenes, every section-N clip fails with
-  `ableton_clip('create') failed: IndexError: clip_index 9 out of range [1, 8]` (one per
-  affected track — here 5), halting `execute` at `clips` (4/10 phases). The push does
-  NOT create the scenes it needs, and the failure surfaces as N raw per-clip IndexErrors
-  rather than one actionable message. Workaround that unblocked it:
-  `ableton_scene(action='create')` to add the 9th scene, then re-run execute (idempotent).
-  Fix options (pick one): (a) the planner emits a `scenes` phase ensuring
-  `scene_count >= max section slot` before `clips`; (b) `clips` auto-creates a missing
-  slot on demand; (c) at minimum a pre-flight coherence check that fails fast with "song
-  needs N scenes; set has M — add N−M" instead of per-clip IndexErrors. **Verifiable
-  signal:** push a ≥9-section song into a default 8-scene set and it completes (or fails
-  with the single actionable message), not 5 raw IndexErrors.
-
-  **Dedup note (2026-06-03):** absorbs the PSH-1S9C dogfood duplicate (same bug — a >8-section song pushed into a fresh default 8-scene set hard-fails at the `clips` phase because the push doesn't auto-provision scenes). PSH-1S9C dropped with `closes: SYN-4P2D`.
+  **Flagged deferral from ARR-7M3D (DR-3, NOT a silent drop).** The energy-realization lens ships loudness (LUFS-S median) + onset density as its two intensity correlates. The music-perception literature (ARR-7M3D `research.md` §2/§4 [1][2]) backs a THIRD: spectral density / flux / centroid — a chorus often "opens up" the spectrum at matched loudness, which LUFS alone can't see. Per DISCOVERED-FROM-FRICTION, ship the minimum that closes the headline gap (loudness + density) and add the spectral correlate when friction shows the two miss a real case. The `correlate_rho` dict is open-keyed precisely so a third correlate adds a key (`"spectral"`) without a schema change. **Verifiable signal:** `MixReport.energy_realization.correlate_rho` carries a spectral correlate key computed from a librosa spectral-flux/centroid pass over the windowed master, ranked by the same `realize_energy` Spearman path; OR a decision-record states loudness+density suffice with rationale. **Sized:** small (one new DSP primitive + a measured-correlate map entry; the lens + report shape already accept it). Build when a real song surfaces a matched-loudness spectral lift the lens misses.
 
 - **[SNG-4H2D]** Migrate the existing composed songs' `build()` lifecycle to the shared `run_build` harness
-  `effort: S · impact: S · area: song-tooling · source: builder · added: 2026-06-03 · status: open · related: GEN-1S4K`
+  `effort: S · impact: S · area: song-tooling · source: builder · added: 2026-06-03 · status: open · related: GEN-1S4K · stage: ready · reviewed: 2026-06-09`
 
   Follow-up to the 2026-06-03 helpers DRY hoist (user-raised: "every song's build.py duplicates helpers like get-track-id-from-name"). That pass hoisted the duplicated HELPER FUNCTIONS into the library (`Q.tracks_by_name` / `Q.returns_by_name` in `db/queries.py`, `arrange_section` in `hallucinote/authoring.py`) and migrated all four songs to use them; it also added `hallucinote.authoring.run_build` (the open-DB → optional soft-reset → `build_session` → close lifecycle every `build()` repeats) and adopted it in the `/song-new` scaffold template (so every NEW song is DRY by construction) + covered it with unit + scaffold-e2e tests.
 
   **Deferred here:** the three *existing composed* songs (`falling-walking`, `full-band-rock`, `sun-zone-done`) + `missing` still carry the explicit `conn = init_db; try; … with build_session; finally close` harness inline. Migrating them to `run_build` means wrapping each `build()` body in a `compose(conn)` closure — a whole-body reindent (sun-zone's is ~90 lines), which is churn-heavy and reindent-risky for modest gain, so it was left as its own focused change rather than bundled into the philosophy PR. Behavior-preserving + fully test-caught (each song's build test + the converger test rebuild it). **Verifiable signal:** no song `build.py` contains `conn = init_db(DB_PATH)` / `with M.build_session(` inline — all delegate to `run_build`. **Sized:** small (mechanical, per-song, test-gated). (helpers DRY hoist follow-up, 2026-06-03)
+
+- **[AUD-3T6L]** Reverb RT60 tolerance (±0.15 s) is too tight for in-mix intent-matching
+  `effort: S · impact: M · area: audio · source: verification · added: 2026-06-02 · status: open · stage: ready · reviewed: 2026-06-09`
+
+  Reverb verification compares the measured decay-tail RT60 against the composer's declared INTENT (Plate 3.0 s, Room 0.8 s) with a fixed ±0.15 s band (`REVERB_TOLERANCE_S`). With the ring-out anchor fixed, sun-zone-done measured A-Plate **3.37 s vs 3.0** and B-Room **1.26 s vs 0.8** — both flagged out-of-tolerance. But (a) Live's Reverb RT60 is a nonlinear function of Decay Time + Room Size + diffusion, so the realized RT60 legitimately diverges from the nominal device knob, and (b) in-mix measurement at low wet SNR carries real error. A ±0.15 s ABSOLUTE band is unrealistically tight. Consider a relative tolerance (~±15–20 %), an SNR/span-aware confidence band, or reframing as a "decays N % longer/shorter than intent" producer's note rather than a binary verdict. **Verifiable signal:** a sub-0.5 s realized-vs-intent gap on a clean (high-span) capture no longer reads as a hard warning. **Sized:** small. (reverb verification session 2026-06-02)
+
+  **Moved Archive → Open (2026-06-09 triage):** `pending` is not an archive status; this is open, un-started work.
+
+- **[AUD-7D2P]** sun-zone-done open set diverges from the authored reverb device (stock Reverb vs Hybrid Reverb)
+  `effort: M · impact: M · area: audio · source: verification · added: 2026-06-02 · status: open · stage: ready · reviewed: 2026-06-09`
+
+  During reverb verification the open Live set's A-Plate return carried Live's **stock Reverb** (Decay Time knob 2.5 s), but `captured_session.json` authored a **Hybrid Reverb**. So the in-mix RT60 verdicts (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against a device that ISN'T the authored one — the set was never re-pushed from the rebuilt DB, or the Hybrid Reverb load fell back to stock. Before treating any reverb-vs-intent gap as a real authorship issue: re-push sun-zone-done from the DB so the AUTHORED devices are measured, then re-run render+analysis and re-assess. Also confirm whether the Hybrid Reverb load path is reliable (did the push silently fall back to stock?). **Verifiable signal:** the A-Plate return device class matches `captured_session.json` (Hybrid Reverb) after a fresh push. **Sized:** medium. (reverb verification session 2026-06-02)
+
+  **Moved Archive → Open (2026-06-09 triage):** `pending` is not an archive status; this is open, un-started work.
+
+- **[SNG-D1FF]** "Diffusion" — a denoising-as-form song (+ a target-chord noise-schedule generator)
+  `effort: L · impact: M · area: song · source: user · added: 2026-06-03 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  **Concept:** the song is structured like a diffusion/denoising model. There is a single massive
+  TARGET chord the whole piece resolves to at the very end. Over the song, the music plays only tiny
+  fragments of it — and at the start those fragments are deliberately "wrong" notes (noisy, out-of-chord,
+  scattered). As it progresses the fragments coalesce toward the true chord: wrong notes get rarer,
+  in-chord notes denser/more confident, until the final reveal lands the full sonority cleanly.
+
+  **Why it's interesting:** form = a denoising schedule. The "noise level" is a real, authorable curve
+  (probability of a wrong note + scatter of timing/register), monotonically decreasing — maps naturally
+  onto authoring-as-code (a per-section noise parameter that biases pitch selection toward/away from the
+  target chord's tones).
+
+  **Open design questions:** what's the target chord (rich/polytonal?); is the schedule linear or does it
+  have plateaus/setbacks (a few "reverse-diffusion" moments where it gets noisier for drama?); do rhythm +
+  density also denoise (arrhythmic → locked)? single timbre or does instrumentation resolve too? how long
+  (the reveal needs runway to feel earned).
+
+  **Possible new capability:** a "target-chord-with-noise-schedule" generator primitive (bias note pitches
+  toward a chord by a 0→1 coalescence parameter) — reusable beyond this song. (user idea 2026-06-03)
+
+  **Moved Archive → Open (2026-06-09 triage):** `pending` is not an archive status; this is an open song idea (stage: idea — needs the design questions answered before it is buildable).
+
+- **[AUD-1M4V]** Audio as first-class material — umbrella discovery (vocal ingest, sampling, audio/master automation) (**HIGH PRIORITY**)
+  `effort: L · impact: L · area: clip/audio · source: review · added: 2026-06-09 · status: open · stage: design · related: CLP-AUD1, CLP-AUD2, ENV-8H1T, ENV-3M7K, ENV-4M2T, AUD-6T2K, TPL-2D8K, ENV-7G4K, AUD-9R3V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+
+  **From the 2026-06-09 repo-wide review (three-agent deep review of creative surface / quality loops / workflow, accepted by the user) — the review's #1 recommended investment.** The clips-are-MIDI-only v1 architecture is the single biggest creative ceiling: no envelope automation on audio tracks / group tracks / master (`sync/push/envelopes.py:183-208`), no session-view audio clips, no sampling/resampling/recorded-vocal workflow. Closing it converts capability-truth.md's vocal "✗ not yet" into "sing it, I'll ingest it" — the vision explicitly promises "audio recorded against a click flows back". Arrangement-view audio already exists and is barely exploited. Needs a real discovery pass first (LOM capability-probing per the third-party-device rule, `feedback_third_party_devices_require_capability_probing`). Children/related: CLP-AUD1 (audio-clip DB model), CLP-AUD2 (session audio-clip placement), ENV-8H1T (mixer envelopes on audio tracks), ENV-3M7K (envelope auto-partition), ENV-4M2T (return-side envelope clips), AUD-6T2K (source separation). For master-chain device placement, TPL-2D8K's `.als`-template workaround is the existing answer — this umbrella references it, never duplicates it. **Verifiable signal:** a discovery/requirements artifact exists recording the LOM probe results + a staged plan covering audio clips, audio-track/group/master automation, and vocal ingest; the children carry `refs:` to it. (repo-wide review 2026-06-09)
+
+  **Update (2026-06-10): discovery pass COMPLETE — stage requirements→design; the verifiable signal is MET.** `.prawduct/artifacts/plans/AUD-1M4V/discovery.md` records producer-led requirements + empirical LOM probe results (`docs/research/audio-first-class/`) + the staged plan. Children updated with `refs:` to it; two new children filed from the discovery (ENV-7G4K performed automation, AUD-9R3V recording workflow). Key probe outcomes: Live 12.2+ has `create_audio_clip(abs_path)` (CLP-AUD2 redefined — browser-load workaround retired), mixer envelopes on audio session clips confirmed end-to-end (ENV-8H1T reduced), and performed automation via `session_automation_record` + gestures verified on master/return (ENV-4M2T partially superseded). (AUD-1M4V discovery completion, 2026-06-10)
+
+- **[ENV-7G4K]** Performed automation — master/group/return mixer automation via gesture-recorded scripted ramps
+  `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md · reviewed: 2026-06-10`
+
+  The verified mechanism for the one automation surface clips can't reach: `session_automation_record` + `record_mode` (**ASYNC apply — poll, don't trust same-call read-back**) + `begin_gesture`/`end_gesture` + a scripted value ramp during playback. Verification via `DeviceParameter.automation_state` (0/1/2) + playback observation + `.als` XML dump. **Empirically confirmed on master and return tracks in Live 12.4.1** (playback-verified: the parameter moves by itself). **User lock 2026-06-10: must-have early.** **Staging corrected (cumulative-Critic, 2026-06-10):** probe 4 shows performed automation has ZERO dependency on audio clips, so it is staged **0b — PARALLEL to CLP-AUD1, can start immediately** — not behind CLP-AUD2. This is the strongest honoring of the must-have-early lock; the literal "right after the DB model" wording predated the probe evidence, and the deviation is recorded in discovery.md's staged plan. Master-bus filter sweeps are established electronic transition craft (producer research) — this is what makes them authorable. (AUD-1M4V discovery, 2026-06-10)
+
+- **[AUD-9R3V]** Recording workflow — in-Live vocal/audio takes with comping staging
+  `effort: L · impact: L · area: clip/audio · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md`
+
+  Routing verify/teach (**arm silently no-ops with no input device — probe-confirmed**), arm, metronome, `clip_slot.fire(record_length=beats)`, poll, ingest `file_path` (valid during recording) into the DB; take lanes + `duplicate_clip_to_arrangement` as the comping-execution shape. Comp SELECTION stays directed — comping is curation (producer research: 4–8 takes, section-scoped). Resampling routing confirmed (records master with no input device) — also serves resampling-as-material (R2.3). **User lock 2026-06-10: in-Live recording first; file-import entry falls out of CLP-AUD2 for free.** (AUD-1M4V discovery, 2026-06-10)
+
+- **[QLT-3D8R]** Listening day — ear-validate shipped analyzers before building more (**HIGH PRIORITY**, user-owned)
+  `effort: S · impact: L · area: quality · source: review · added: 2026-06-09 · status: open · stage: ready · related: MEL-1A7K, MIX-3S7P, ARR-9K4T`
+
+  **From the 2026-06-09 repo-wide review.** Effort S = a day of listening, not code; user-owned (the locks are creative lock-ins that need the user's ears, not agent guesses). MEL-1A7K's appetite→fraction thresholds, sun-zone-done's by-ear locks (incl. MIX-3S7P's user-owned DubDelay lock), and Live verification of the arrangement-model song are all consciously deferred. Every analyzer added before validating the existing ones compounds the risk that coaching is confidently miscalibrated. Cheapest quality ROI on the board; also the empirical test of the "structure unlocks competence" bet. **Verifiable signal:** the `# PENDING by-ear calibration` placeholder constants in `melody/lens.py` carry ear-validated values, and MIX-3S7P's render-level by-ear pendings are resolved or consciously re-locked. (repo-wide review 2026-06-09)
+
+- **[PSH-4E2W]** Push failure UX — skill summarizes the halt instead of pointing at `.last-push-errors.json`
+  `effort: S · impact: M · area: sync/workflow · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
+
+  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
+
+  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** exit 1 → "read `.last-push-errors.json`" makes the agent spelunk raw JSON on every failure. Have the push skill summarize the halt cause in its output (e.g. "Serum failed to load — not installed; see REQUIREMENTS.md"). Daily-loop friction; every song pays the tax. **Verifiable signal:** a failed push's skill output contains a human-readable halt summary (cause + suggested next step) without the agent having to read the JSON file. (repo-wide review 2026-06-09)
+
+- **[WFL-7Q2N]** Session-ID auto-discovery — list the song's sessions, default to most recent when unambiguous
+  `effort: S · impact: M · area: workflow · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
+
+  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
+
+  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** Today the user must remember a DB row ID. Auto-list sessions for the song and default to the most recent when unambiguous. **Verifiable signal:** the push/pull/render flows resolve the session without the user supplying a numeric ID when exactly one unambiguous candidate exists. (repo-wide review 2026-06-09)
+
+- **[DOC-5W8B]** Auto-regenerate REQUIREMENTS.md after a push that changed devices
+  `effort: S · impact: S · area: sync/docs · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
+
+  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
+
+  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** One-liner; collaboration correctness for free — REQUIREMENTS.md drifts whenever a push changes the device set. **Verifiable signal:** a push that changes the device set leaves REQUIREMENTS.md regenerated (or explicitly prompts the regeneration) in the same flow. (repo-wide review 2026-06-09)
+
+- **[DEV-3W9R]** Rack macros are unmodeled — DB representation + push/pull for macro mappings
+  `effort: M · impact: M · area: device · source: review · added: 2026-06-09 · status: open · stage: requirements · related: DEV-7K4H`
+
+  **From the 2026-06-09 repo-wide review.** One macro modulating cutoff + send is a basic sound-design idiom with zero DB representation today. Under "sound design is composition" (`feedback_sound_is_composition`), macro mappings are authorship and belong in the snapshot. Distinct from DEV-7K4H (nested chains). Needs a LOM capability probe for macro-mapping read/write before schema design. **Verifiable signal:** a macro mapping (one macro → ≥2 parameter targets) round-trips DB→push→pull; OR a probe-backed decision-record states the LOM can't express it. (repo-wide review 2026-06-09)
+
+- **[ENV-6P3R]** LOM probe: clip pitch-bend / CC automation + smooth envelope curves (Live 12.5+, M4L escape hatch)
+  `effort: S · impact: M · area: envelope · source: review · added: 2026-06-09 · status: open · stage: research · related: ENV-2M9K, NOT-9H3K, DEV-9C4L`
+
+  **From the 2026-06-09 repo-wide review.** Live 12.4 doesn't expose `create_automation_envelope` for clip pitch-bend/CC targets, and all envelope curves render as steps (ENV-2M9K shipped a plan-time warn). These are Live's gaps, not ours — but per the research-first rule (`feedback_generalize_research_first`) they deserve a deliberate probe of the Live 12.5+ LOM and the M4L bridge (DEV-9C4L) as an escape hatch rather than standing acceptance. **Verifiable signal:** a probe record (decision-record or research note) stating what Live 12.5+ exposes for pitch-bend/CC envelope targets + curve shapes, and whether M4L can bridge the residual gap. (repo-wide review 2026-06-09)
+
+- **[DEV-9C4L]** M4L bridge — model Max for Live as a first-class escape hatch
+  `effort: L · impact: L · area: device/architecture · source: review · added: 2026-06-09 · status: open · stage: idea · related: ENV-6P3R, DEV-2M9K`
+
+  **From the 2026-06-09 repo-wide review.** M4L is the vision's named path to microtonal/polytempic reach and the escape hatch for LOM gaps (pitch-bend/CC envelopes, smooth curves, master-device loads), and it is currently completely unmodeled (the HallucinoteAnalyzer `.amxd` is the only M4L touchpoint, and it's analysis-only). **Gate on ENV-6P3R's probe findings** before any design. **Verifiable signal:** a design/requirements artifact scoping what an M4L bridge covers (and what stays LOM-native); until then this stays an idea. (repo-wide review 2026-06-09)
+
+- **[ANA-2J6F]** Holistic intent rollup — "did this song realize its declared intent overall?"
+  `effort: M · impact: M · area: analysis · source: review · added: 2026-06-09 · status: open · stage: idea · related: QLT-3D8R`
+
+  **From the 2026-06-09 repo-wide review.** Findings coach per-dimension (harmony lint, melody lens, performance lens, energy realization, masking), but nothing synthesizes an overall verdict against declared intent. Mostly an interpretation/prompt layer, not DSP. **Explicitly gated on QLT-3D8R (listening-day calibration) — do not build before the per-dimension analyzers are ear-validated.** **Verifiable signal:** a review-skill-level rollup exists that reads the per-dimension findings + declared intents and produces an overall reading; OR a decision-record keeps synthesis at the LLM-orchestration layer with rationale. (repo-wide review 2026-06-09)
+
+- **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
+  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: design · related: AUD-1M4V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+
+  (migrated from legacy P6) Gates several deferred envelope + import items above.
+
+  **Relocated out of the P6 far-horizon subsection + impact bumped M→L (repo-wide review 2026-06-09):** the review promotes audio-as-first-class-material to the #1 recommended investment; this item is a core child of the AUD-1M4V umbrella, not event-store-era work.
+
+  **Update (2026-06-10, AUD-1M4V discovery): wave-1 field set LOCKED — stage→design.** The discovery artifact fixes the v1 schema scope: kind discriminator, file ref, gain, pitch, warping + warp mode, start/end markers. **Warp markers deferred per user lock** (not in wave 1). See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
+- **[CLP-AUD2]** Session-view audio clip creation — thin create handlers + push/pull surface for audio-clip rows
+  `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+
+  **REDEFINED by probe evidence (2026-06-10, AUD-1M4V discovery).** Live 12.2+ has `ClipSlot.create_audio_clip(abs_path)` (also on `Track` and `TakeLane`) — empirically confirmed by the LOM probe pass. The original async browser-load workaround design (below, retained for the record) is **obsolete and retired**. The item is now thin create handlers + the push/pull surface for CLP-AUD1's audio-clip rows. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
+  *Retired original design (pre-12.2 assumption, W6-D investigation 2026-05-19):* Live 10–12 has no `ClipSlot.create_audio_clip`. The only path is async browser-load: set `song.view.highlighted_clip_slot = target_slot`, then `application.browser.load_item(audio_browser_item)`. Caveats: async (no completion callback), audio must be addressable as a BrowserItem (Library/User/Places — not arbitrary filesystem path), browser-indexing dependent. Could expose as `ableton_clip(action='load_audio_to_session', track_index, clip_index, browser_uri)`.
+
+  **Relocated out of the P6 far-horizon subsection (repo-wide review 2026-06-09):** child of the AUD-1M4V audio-as-first-class umbrella, not event-store-era work.
+
+### Future / event-store era (P6 — far horizon, kept open)
+
+- **[RTE-1K9T]** Track routing: sidechain, parallel busses, input/output routing config
+  `effort: L · impact: S · area: routing · source: user · added: 2026-05-17 · status: open · stage: requirements · reviewed: 2026-06-09`
+
+  (migrated from legacy P6) Schema + sync work.
+
+- **[TRK-2H6K]** Group tracks (`tracks.parent_track_id` + Live group semantics)
+  `effort: L · impact: S · area: track · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (migrated from legacy P6)
+
+- **[SYN-7T3M]** Pull-side sync follow-on
+  `effort: M · impact: S · area: sync · source: builder · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (status W5-D 2026-05-19) **Shipped:** mix-state, cue points + score globals, device chain structure, arrangement-clip placements, session-view clip slots, note pull via stable-ID read + whole-clip write, device-parameter values. **Deferred (above):** envelope pull (gated on `hallucinote-mcp` envelope read surface), nested rack chain pull (gated on `hallucinote-mcp` `get_device_chains`). (migrated; rewritten 2026-05-17; W5-D update 2026-05-19)
+
+- **[EVT-4K8H]** Event replay function (`replay(events) → state`) and merge tooling
+  `effort: L · impact: S · area: event-store · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (migrated from legacy P6) Required for cross-DB event-stream merges; only useful after the event-store flip.
+
+- **[EVT-9M2T]** Post-hoc event annotation (`event_annotations` table) for narrative on-the-fly addition to history
+  `effort: M · impact: S · area: event-store · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (migrated from legacy P6)
+
+- **[MIG-3T7K]** Real-time concurrent editing / cloud DB migration
+  `effort: L · impact: S · area: migration · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (migrated from legacy P6) Out of foreseeable scope; mutator-discipline + storage abstraction keep the door open.
+
+- **[TST-8K1M]** Song tests (on-demand layer): DB consistency + mix hygiene + audio/spectral
+  `effort: M · impact: S · area: tests · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+
+  (migrated from legacy P6) Land per-chunk as appetite allows; not gating any chunk's completion.
+
+- **[VEW-7T2C]** Change-log tag lines predate the canonical "prawduct:" form — invisible to stamp-merged/regen-views
+  `effort: S · impact: S · area: governance · source: friction · added: 2026-06-10 · status: open · stage: ready · related: VEW-3M8F, VEW-9QH4`
+
+  Discovered at PR#155 merge: stamp-merged reported "nothing to stamp" because the new entry mimicked this repo's historical tag form (`<!-- chunks=... status=... -->`) which lacks the "prawduct:" prefix `TAG_LINE_RE` requires; every historical entry is equally invisible to the parser (they carry status=shipped inline so releases handled them manually). Fixed the AUD-1M4V entry in place (now canonical + stamped merged). Remaining: canonicalize the historical tag lines (mechanical sweep) so the lifecycle tooling sees the whole log, and note the canonical form where entries get authored. **Verifiable signal:** stamp-merged/typo-guard parse every tagged entry in change-log.md.
 
 ## Promoted
 
@@ -530,7 +546,7 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
 - **[INS-7V2D]** Plugin-bundled MCP server via uv — version-lock the server to the plugin (kill PATH/venv fragility)
   `effort: L · impact: M · area: install · source: user · added: 2026-06-04 · status: shipped · closed-by: feature/plugin-bundled-mcp-uv · related: TPL-2D8K, INS-4H8M, SYN-2M9P, DEV-1F9X`
 
-  **SHIPPED (C1–C4, 2026-06-04).** `plugin.json` launches the bundled server via `uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` into `UV_PROJECT_ENVIRONMENT=${CLAUDE_PLUGIN_DATA}/venv`; a committed `uv.lock` pins mcp + the engine + the server package (the version-coupling guarantee). A SessionStart pre-warm hook (`hooks/`) rebuilds the env on lock-diff to dodge CC#60224. The install skill no longer writes `mcpServers` entries — the PATH-override hack (`configure-mcp`/`plan_mcp_config`/`merge_server_entry`) was deleted; `preflight` now reports `uv` presence. The make-or-break risk (does `uv` resolve in CC's sanitized spawn env?) was CONFIRMED LIVE — the plugin loaded via `--plugin-dir` and the tools connected. Residual operator checks (cold-cache-within-60s, update/rebuild cycle) enqueued in `operator-verification.md`. Original context: `plugin.json` declared a bare PATH console-script decoupled from the plugin version; MCP subprocesses don't inherit the shell venv/PATH, `${CLAUDE_PLUGIN_ROOT}` is read-only and `${CLAUDE_PLUGIN_DATA}` is the documented venv home, `mcp` can't be vendored (compiled wheels). Design: `.prawduct/artifacts/plans/INS-7V2D/design.md`. (user version-coupling request 2026-06-04)
+  **SHIPPED (C1–C4, 2026-06-04).** `plugin.json` launches the bundled server via `uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` into `UV_PROJECT_ENVIRONMENT=${CLAUDE_PLUGIN_DATA}/venv`; a committed `uv.lock` pins mcp + the engine + the server package (the version-coupling guarantee). A SessionStart pre-warm hook (`hooks/`) rebuilds the env on lock-diff to dodge CC#60224. The install skill no longer writes `mcpServers` entries — the PATH-override hack (`configure-mcp`/`plan_mcp_config`/`merge_server_entry`) was deleted; `preflight` now reports `uv` presence. The make-or-break risk (does `uv` resolve in CC's sanitized spawn env?) was CONFIRMED LIVE — the plugin loaded via `--plugin-dir` and the tools connected. Residual operator checks enqueued in `operator-verification.md`: cold-cache survival is now **CONFIRMED** (the INS-7V2D follow-up corrected the lever to `MCP_TIMEOUT`/180s and the operator's `uv cache clean` restart connected on first launch); the update/rebuild cycle remains unverified. Original context: `plugin.json` declared a bare PATH console-script decoupled from the plugin version; MCP subprocesses don't inherit the shell venv/PATH, `${CLAUDE_PLUGIN_ROOT}` is read-only and `${CLAUDE_PLUGIN_DATA}` is the documented venv home, `mcp` can't be vendored (compiled wheels). Design: `.prawduct/artifacts/plans/INS-7V2D/design.md`. (user version-coupling request 2026-06-04)
 
 - **[WSP-1K4D]** Route the render captures dir through the project-root contract (`server.py` `songs/` literal)
   `effort: S · impact: S · area: mcp-render · source: critic · added: 2026-06-03 · status: shipped · closed-by: feature/songs-split · related: project-root-contract`
@@ -581,37 +597,6 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
 
   Empirical (W7-0 2026-05-19): `kind='Drum Rack'` actually loaded an `InstrumentGroupDevice` because that machine had a saved Instrument Rack preset named "Drum Rack" higher in the browser walk. Per-machine library state, not a code bug. **Mitigations shipped:** Arc 7 / P5 surfaces `loaded_class_name` in the load response so callers can detect mismatches; Arc 7-tail E2 confirmed the symmetric replace-in-place case. **Workaround today:** use `preset_uri` for unambiguous loads; verify the returned `loaded_class_name` matches the snapshot's expected class. **Remaining fix candidates if it resurfaces:** restrict display-name walks to canonical category roots, or prefer the empty-rack canonical URI when the name matches a built-in rack class. (W7-0 session 2026-05-19; refreshed 2026-05-22)
 
-- **[AUD-3T6L]** Reverb RT60 tolerance (±0.15 s) is too tight for in-mix intent-matching
-  `effort: S · impact: M · area: audio · source: verification · added: 2026-06-02 · status: pending`
-
-  Reverb verification compares the measured decay-tail RT60 against the composer's declared INTENT (Plate 3.0 s, Room 0.8 s) with a fixed ±0.15 s band (`REVERB_TOLERANCE_S`). With the ring-out anchor fixed, sun-zone-done measured A-Plate **3.37 s vs 3.0** and B-Room **1.26 s vs 0.8** — both flagged out-of-tolerance. But (a) Live's Reverb RT60 is a nonlinear function of Decay Time + Room Size + diffusion, so the realized RT60 legitimately diverges from the nominal device knob, and (b) in-mix measurement at low wet SNR carries real error. A ±0.15 s ABSOLUTE band is unrealistically tight. Consider a relative tolerance (~±15–20 %), an SNR/span-aware confidence band, or reframing as a "decays N % longer/shorter than intent" producer's note rather than a binary verdict. **Verifiable signal:** a sub-0.5 s realized-vs-intent gap on a clean (high-span) capture no longer reads as a hard warning. **Sized:** small. (reverb verification session 2026-06-02)
-
-- **[AUD-7D2P]** sun-zone-done open set diverges from the authored reverb device (stock Reverb vs Hybrid Reverb)
-  `effort: M · impact: M · area: audio · source: verification · added: 2026-06-02 · status: pending`
-
-  During reverb verification the open Live set's A-Plate return carried Live's **stock Reverb** (Decay Time knob 2.5 s), but `captured_session.json` authored a **Hybrid Reverb**. So the in-mix RT60 verdicts (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against a device that ISN'T the authored one — the set was never re-pushed from the rebuilt DB, or the Hybrid Reverb load fell back to stock. Before treating any reverb-vs-intent gap as a real authorship issue: re-push sun-zone-done from the DB so the AUTHORED devices are measured, then re-run render+analysis and re-assess. Also confirm whether the Hybrid Reverb load path is reliable (did the push silently fall back to stock?). **Verifiable signal:** the A-Plate return device class matches `captured_session.json` (Hybrid Reverb) after a fresh push. **Sized:** medium. (reverb verification session 2026-06-02)
-
-- **[SNG-D1FF]** "Diffusion" — a denoising-as-form song (+ a target-chord noise-schedule generator)
-  `effort: L · impact: M · area: song · source: user · added: 2026-06-03 · status: pending`
-
-  **Concept:** the song is structured like a diffusion/denoising model. There is a single massive
-  TARGET chord the whole piece resolves to at the very end. Over the song, the music plays only tiny
-  fragments of it — and at the start those fragments are deliberately "wrong" notes (noisy, out-of-chord,
-  scattered). As it progresses the fragments coalesce toward the true chord: wrong notes get rarer,
-  in-chord notes denser/more confident, until the final reveal lands the full sonority cleanly.
-
-  **Why it's interesting:** form = a denoising schedule. The "noise level" is a real, authorable curve
-  (probability of a wrong note + scatter of timing/register), monotonically decreasing — maps naturally
-  onto authoring-as-code (a per-section noise parameter that biases pitch selection toward/away from the
-  target chord's tones).
-
-  **Open design questions:** what's the target chord (rich/polytonal?); is the schedule linear or does it
-  have plateaus/setbacks (a few "reverse-diffusion" moments where it gets noisier for drama?); do rhythm +
-  density also denoise (arrhythmic → locked)? single timbre or does instrumentation resolve too? how long
-  (the reveal needs runway to feel earned).
-
-  **Possible new capability:** a "target-chord-with-noise-schedule" generator primitive (bias note pitches
-  toward a chord by a 0→1 coalescence parameter) — reusable beyond this song. (user idea 2026-06-03)
 - **[AUD-6R2M]** Reverb verification is ill-posed for multi-source returns (the real RT60 blocker)
   `effort: M · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: shipped · reviewed: 2026-06-03 · closed-by: 515c6ab (merge fix/reverb-rt60-decay-tail) · related: AUD-1C7K, AUD-4S8T`
 
@@ -687,6 +672,7 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
   from the LOM if exposed. Fail in seconds with the real cause, not minutes with a vague one.
   **Verifiable signal:** start a render with the audio engine off → it aborts within a few
   seconds naming the audio-engine cause, not after the full song-length window.
+
 - **[GEN-1S4K]** Generators operate at too high an altitude — section-archetype builders lock composition into "sections" instead of musicality (creativity ceiling) (**HIGH PRIORITY** — user)
   `effort: L · impact: L · area: generators · source: user · added: 2026-06-01 · status: shipped · reviewed: 2026-06-03 · closed-by: feature/sun-zone-back-half · related: ARR-3R8F, GEN-2T8M, ARR-8P5K, GEN-5K2D`
 
@@ -763,3 +749,130 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
   **What it should produce.** A `.prawduct/artifacts/` review-workflow model (parallel to harmony/performance/melody models) recording the axis taxonomy + the archetypes + the one-axis-per-turn rule; a per-song `review_workflow` intent annotation (the config); and `/compose-review` + `/mix-review` reading the archetype and **refusing cross-axis edits in a single turn**. House disciplines apply: ruler-not-stamp (the workflow guides, never makes the musical decision), one-source-of-truth (the archetype declared once), both-sides (a config surface + the skills that read it), discovered-from-friction (start with the archetypes the research names; add when a real song needs one). **Verifiable signal:** a review-workflow model artifact exists naming the axes + archetypes + the one-axis-per-turn rule; AND a per-song archetype annotation is read by at least one review skill that enforces its axis. **Sized:** medium (model + a per-song config + wiring the two review skills). (user structured-review-workflow ask, 2026-06-01; research-backed)
 
   **SHIPPED (2026-06-03, feature/sun-zone-back-half):** A3 — review-workflow-model.md (one axis per turn, 5 archetypes) wired into /compose-review + /mix-review; per-song review_workflow annotation.
+
+- **[TST-7H2M]** Systematic `deadline=None` audit of hypothesis property tests — parallel-xdist flake CLASS
+  `effort: S · impact: M · area: tests · source: builder · added: 2026-06-03 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  A CLASS of intermittent failures surfaces only under `pytest -n auto --dist loadgroup`: hypothesis `@given` property tests whose per-example body does real work (SQLite I/O, DFA/correlation math) occasionally blow hypothesis's default 200ms per-example deadline under CPU contention — never serially. Two confirmed instances: `tests/unit/sync/test_mix.py::test_set_send_intended_rt60_validator_contract` (fixed in-PR on `fix/syn-4p2d-scenes-provisioning` / PR #136 via `@settings(deadline=None)`) and `tests/unit/performance/test_correlation.py::test_dfa_when_present_is_a_finite_number` (observed flaking during MEL-1A7K, untouched code). Both pass deterministically serial. The contract holds under the canonical SERIAL invocation; the flakes are parallel-only. **Do the systematic pass:** grep all `@given` tests; for any whose body does non-trivial I/O or compute, add `@settings(deadline=None)` (the deadline measures machine load, not the property — assertions unchanged, never weakened). **Verifiable signal:** the full `-n auto --dist loadgroup` suite passes deterministically across N consecutive runs; a grep shows every I/O/compute-bound `@given` carries `deadline=None`. **Sized:** small. (discovered SYN-4P2D + MEL-1A7K verification, 2026-06-03)
+
+- **[DOC-3P7K]** Post-split accuracy pass on the deep reference docs
+  `effort: S · impact: S · area: docs · source: dogfood · added: 2026-06-03 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09 · related: project-root-contract`
+
+  The user-facing docs (README, quickstart, skills, collaboration, faq, song-authoring-conventions, song-new-checklist) were reoriented to the two-repo + plugin reality (`/hallucinote:*` skills, songs in their own repo) on `docs/post-split-accuracy`. The deeper engine-internal reference docs still carry pre-split framing: `docs/snapshot-schema.md`, `docs/capability-truth.md`, `docs/polyrhythms.md`, `docs/terminology.md` — mostly in-repo `songs/<slug>/` workflow examples and a few unprefixed skill names. Lower priority (engine-internal, not the composing surface). **Verifiable signal:** `grep -rlE '/(song-new|ableton-push|compose-part)\b' docs/*.md | grep -v hallucinote:` returns nothing across the active (non-archive) docs. (split dogfood, 2026-06-03)
+
+- **[SYN-2M9P]** Push planner emits master device-LOAD calls that can never execute (DEV-2M9K follow-up)
+  `effort: S · impact: M · area: sync · source: critic · added: 2026-06-02 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09 · related: DEV-2M9K`
+
+  Follow-up to the DEV-2M9K fix (commit on `fix/master-load-bridge`): Ableton Live 12.4 has no LOM path to load a device onto the master track, so `ableton_device(action='load', master=true)` now refuses up front. But `plan_push_devices` (`src/hallucinote/sync/push/devices.py` ~47-61) still walks the master strip and emits a `device.load(master=true)` for every *unbound* master-strip device chain. At execute time that load fails, and `push_execute.py:577-591` marks the **devices phase HALTED** (`outcome='partial'`, `EXIT_PARTIAL`) and all downstream phases (envelopes / arrangement / cues) **PENDING** — so any song that authors a master-strip device chain in its DB gets a reliably PARTIAL push, re-planned on every run. (Latent today: sun-zone-done's master limiter+EQ live in the saved `.als`, not the DB, so no current song triggers it. This halt also existed pre-DEV-2M9K — the old silent mis-load raised the misleading `_raise_silent_noop` — but it now fails cleanly without corrupting a regular track.)
+
+  **Fix direction:** the planner should NOT emit `device.load` for master-strip chains (they're impossible), while STILL emitting master device-PARAMETER writes (`set_parameter` works on a hand-placed master device). I.e. master devices are configure-only across the whole stack — `load_handler`, render setup, and now the push planner — mirroring the "place by hand once" contract. Consider a one-line push-state note when a master chain is skipped so the user knows to place it by hand.
+
+  **Verifiable signal:** `plan_push_devices` on a song with a master-strip device chain emits zero `device.load` calls addressed `master=true` (only `set_parameter`/param calls), and an execute-path regression test drives a refused-master scenario through `push_execute` asserting the devices phase is NOT halted by it. (No such regression test exists today — the sync tests only assert plan-level emission; Critic note, DEV-2M9K review 2026-06-02.)
+
+- **[AUD-9D3P]** Audio-pipeline cumulative-Critic cleanup: propagate stdlib-only reversal to the decision record
+  `effort: S · impact: S · area: audio-analysis · source: critic · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Findings the cumulative Critic surfaced against `main`; live in the #99/#100 audio code on develop. (c) **Propagate the stdlib-only reversal** to the decision record at `.prawduct/project-state.yaml:258` ("Python 3.10+ stdlib-only runtime") — the branch added six core deps; `change-log.md` justifies it but the decision record wasn't updated. **Signal:** project-state.yaml decision reflects the dep adoption. _((a) "drop unused librosa" pruned 2026-05-29 — masking.py + timing.py now import librosa for STFT + onset detection, so it is load-bearing, not droppable. (b) dead `OvershootWindow` import shipped on feature/variable-tempo-windowing 2026-05-29.)_ (cumulative Critic, offline-cache PR 2026-05-28)
+
+- **[DEV-6T2W]** `inventory_handler` 15s server-side main-thread ceiling vs. the walk
+  `effort: S · impact: S · area: device · source: critic · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  The `inventory` action runs inside `run_on_main`, whose server-side `done.wait` uses the default `_main_thread_timeout=15.0s` (not overridden); the client-side `_INVENTORY_READ_TIMEOUT=180.0` only extends the wire-response wait, not main-thread completion. A genuinely pack-heavy single root could trip a spurious `TimeoutError` (and keep freezing Live, since Python can't interrupt the running walk) before the 20000-entry breadth cap engages. Untriggered on the author's Suite install (13884 loadables, no partials). **Signal:** inventory action passes an extended `_main_thread_timeout`, or a doc line documents the ceiling. (PR reviewer, offline-cache PR 2026-05-28)
+
+- **[INS-4H8M]** Fingerprint `HallucinoteAnalyzer.amxd` for install drift detection (parity with the Remote Script)
+  `effort: S · impact: S · area: install · source: builder · added: 2026-05-28 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Preflight already reports Remote Script drift via `installed_remote_script_version` → `compute_version_for` → `remote_script.candidates[*].matches_mcp_server`, so the install skill knows when the vendored package is stale. The `.amxd` has no equivalent: `installed_analyzer_amxd` only reports presence (path-or-None), so the install skill must *blindly ask* the user to overwrite even when source and installed are byte-identical. Add a content fingerprint for the binary device (it's a binary container — hash the bytes, e.g. sha256, don't reuse the text-normalizing `compute_version_for` path which the P3 NUL-byte guard already excludes from fingerprinting). Surface `source_fingerprint` + `installed_fingerprint` (+ a `matches` bool) in preflight alongside the M4L block, and teach `/ableton-mcp-install` Step 3d to **skip the copy + the overwrite prompt entirely when they match**, only prompting when the installed device differs (newer-or-customized-vs-repo). **Verifiable signal:** an `analyzer_fingerprint(path)` (or similar) helper exists in `install_paths.py`; preflight JSON carries an analyzer `matches`/fingerprint field; `/ableton-mcp-install` Step 3d branches on it. (install session 2026-05-28 — reinstall blindly re-prompted to overwrite an identical .amxd)
+
+- **[SYN-1T4K]** `_TRANSACTION_DEPTH` module-level state may leak under thread/async patterns
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  W7-A's SAVEPOINT-based reentrant `transaction()` keeps depth in a module-level `dict[int, int]` keyed by `id(conn)`. Single-threaded today (per project preferences "Sync throughout. SQLite WAL + timeout=10.0. No async planned"), but multi-threaded use would interleave the counter. Defensive options: (a) `WeakKeyDictionary` keyed by the connection object; (b) attach the counter to the connection via a wrapper; (c) `threading.local`. **Sized:** ~5 LoC + 1 thread-safety test. (W7 cumulative-Critic note 3, 2026-05-19)
+
+- **[SYN-8H2W]** `_serialize_markdown` defensive: list items may contain `,` / `[` / `]`
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  W8-B's `write_markdown_ref` calls `_serialize_markdown` to round-trip frontmatter through the YAML-subset parser. List items (`tags`, `related`, `bars`) get serialized as `[a, b, c]` without quoting. If a future tag or `related` path contains `,` or `[` / `]`, the parser silently splits or fails. Today's tags are slug-shaped so this isn't exercised, but the wrap is the LLM-facing surface. Defensive fix: (a) quote list items containing those chars, (b) reject at serialization with a teaching error, or (c) switch to multi-line list format. **Sized:** ~10 LoC + 2 tests. (W8-B Critic cumulative note 3, 2026-05-19)
+
+- **[SYN-3D7M]** `_apply_session_clips_for_track` cascades `delete_clip` → `arrangement_clips` silently
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Design-consistent with the project's cascade discipline, but the cross-domain side effect is invisible in `out.details` (no per-row events for the cascaded placements). Worth counting + logging cascaded arrangement-clip placements when a session-clip delete fires during pull. (PR review #22, 2026-05-17)
+
+- **[SYN-9K5T]** `_apply_session_clips_for_track` silently tolerates missing `length` / `name` on populated entries
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Via `_floats_differ(None, X) → False`, unlike `_apply_arrangement_clips_for_track` which warns explicitly on missing fields. Asymmetry, not a correctness bug. Tighten for parity. (PR review #22, 2026-05-17)
+
+- **[TST-4M9D]** FastMCP private-API access in `test_server.py`
+  `effort: S · impact: S · area: tests · source: critic · added: 2026-05-18 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Three tests reach into `mcp._tool_manager._tools[name]` directly to fetch a `Tool` for `.run()`. The existing `registered_tool_names` helper tries multiple attribute names for FastMCP version-drift resilience; a symmetric `get_registered_tool(mcp, name)` would centralize the version-coupling. **Verifiable signal:** `get_registered_tool` helper exists in tests. (critic W2 N1, Chunk W2-1 2026-05-18)
+
+- **[TST-7K3H]** Clear + note_expression: omit-required-args path untested
+  `effort: S · impact: S · area: tests · source: critic · added: 2026-05-18 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  `ableton_automation(action='clear', target_kind='note_expression')` raises the gap-citing `NotImplementedError` regardless of whether note_pitch / note_start_beats / axis were supplied (gap check fires before parameter validation). Asymmetric with `write_envelope` which validates first. Either add a docstring note or a one-line test pinning the precedence. (critic, Chunk D 2026-05-18)
+
+- **[SYN-2K8T]** One raw `conn.execute("SELECT ...")` JOIN read in `sync/push.py:1452`
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  The original two-SELECT concern (PR #24) is down to one — the remaining read is a join between `arrangement_clips` and `clips` to resolve envelope addressing; harder to factor into a `queries.py` helper because of the JOIN. Worth doing for consistency, but lower-leverage than when there were two. (PR review #24, 2026-05-17; refreshed 2026-05-22)
+
+- **[MET-9D4H]** Wave plan headers missing top-level `Requirements Confidence` field
+  `effort: S · impact: S · area: methodology · source: critic · added: 2026-05-17 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  Each M+1 chunk has an inline Confidence check, but the wave-level header in `build-plan.md` lacks a `Requirements Confidence: High|Medium|Low` declaration. Methodology cleanup — apply to the next wave header rather than retrofitting. (critic, M+1 final 2026-05-17)
+
+- **[GEN-5K2D]** Wave 0 paper-cut: polyrhythm helper using `fractions.Fraction`
+  `effort: S · impact: S · area: generators · source: builder · added: 2026-05-19 · status: shipped · closed-by: fix/backlog-low-cost-sweep · reviewed: 2026-06-09`
+
+  `(7.0 / 5) * 3 / 2.0` yields `2.0999999999999996` (IEEE 754 sub-LSB drift). The SQLite REAL column round-trips it faithfully, but authoring introduces it without warning. A future `hallucinote.polyrhythm(n, against=k)` helper should compute via `fractions.Fraction(against, n)` and float-convert only at the mutator boundary. (Wave 0 canary `odd-meter-experimental` runbook step 8, 2026-05-19)
+
+- **[ARR-7M3D]** Energy-realization is unmeasured in audio (declared curve vs rendered intensity) — measurement-coverage gap
+  `effort: M · impact: L · area: energy · source: user · added: 2026-06-01 · status: shipped · closed-by: feature/arr-7m3d-energy-realization · related: ARR-8P5K, ARR-2S9D · reviewed: 2026-06-09`
+
+  **Signal MET (2026-06-03, `feature/arr-7m3d-energy-realization`):** the read-side
+  check exists and is wired in. `sections.energy` is persisted (the source-of-truth
+  fix the curve never reaching the DB); `MixReport.energy_realization`
+  (`src/hallucinote/audio/energy.py::realize_energy`) joins the declared
+  `[SectionEnergy]` to measured per-section intensity BY `start_beat` and reports
+  per-correlate Spearman ρ (loudness + onset density) + rank inversions, with the
+  B1 nan contract (tied/constant → ρ `None`, never nan; `allow_nan=False` write
+  backstop) and the W2 measured-nan symmetry. Wired into `/mix-review` MEASURE +
+  INTERPRET (DR-4) and pointed at from `/compose-review` + `arrangement-model.md`.
+  Ruler-not-stamp lock test present. PENDING attended-run (Live unattended this
+  run, flagged in `.prawduct/operator-verification.md`): the e2e objective ρ read
+  on a real sun-zone-done render + the by-ear DR-5 surfacing-threshold tune
+  (currently the conservative surface-everything default). Spectral correlate
+  deferred → ARR-2S9D below (DR-3, flagged-not-dropped).
+
+  **Both-sides gap (ARR-8P5K's own principle: "a dimension authored but unmeasured is half-built").** ENERGY is a first-class authored dimension — `Arrangement.section(..., energy=)` → `arr.energy_curve` (sun-zone-done declares 0.25→1.0 across 9 sections). The READ side is only *symbolic*: `/compose-review` reads whether the authored curve "builds, breathes, peaks" from build.py/arrangement (SKILL.md L61) — it never checks the audio. The MixReport measures per-section loudness (`audio/analyze.py` `_measure_sections` → `SectionMetrics`) but **nothing joins the two**: no tool confirms the declared energy[section] is actually realized as rendered intensity (loudness + spectral density + onset rate). A section authored energy=0.9 that renders quieter/sparser than an energy=0.6 section ships unflagged — the exact "is the chorus actually lifting?" question, gone dark on the audio side. Harmony (ARR-1H9C conformance lint) and performance (perf lens) both got the realization check; energy did not.
+
+  **Verifiable signal:** a read-side check exists that takes the arrangement's `energy_curve` + a MixReport and reports per-section declared-vs-measured intensity divergence (rank-correlation of declared energy against measured loudness/density, flagging inversions), wired into `/mix-review`; OR a decision-record states energy-realization stays a by-ear judgment with rationale. Today: no reference to the authored `energy_curve` anywhere in `src/hallucinote/audio/` — the curve never reaches the audio analyzer (the incidental `energy` hits there are all acoustic/spectral energy, a different quantity).
+
+- **[SYN-4P2D]** First push of a >8-section song into a fresh default Live set hard-fails — set ships with only 8 scenes, push doesn't auto-create them, raw per-clip IndexError
+  `effort: S · impact: L · area: sync · source: user · added: 2026-06-01 · status: shipped · closed-by: #136 (fix/syn-4p2d-scenes-provisioning) · reviewed: 2026-06-09`
+
+  **Recurring first-push trap (user, 2026-06-01: "a real gap that will bite us over and
+  over").** A default Ableton Live set ALWAYS ships with exactly 8 scenes, so the FIRST
+  push (auto-session, fresh set) of ANY song with >8 sections fails *deterministically*
+  at the `clips` phase — this is the common new-song path, not an edge case.
+  Hit live pushing sun-zone-done (9 sections) into a fresh default Live set (8 scenes,
+  2026-06-01). The `clips` phase creates one session clip per section in scene slots
+  1..N; if the set has fewer than N scenes, every section-N clip fails with
+  `ableton_clip('create') failed: IndexError: clip_index 9 out of range [1, 8]` (one per
+  affected track — here 5), halting `execute` at `clips` (4/10 phases). The push does
+  NOT create the scenes it needs, and the failure surfaces as N raw per-clip IndexErrors
+  rather than one actionable message. Workaround that unblocked it:
+  `ableton_scene(action='create')` to add the 9th scene, then re-run execute (idempotent).
+  Fix options (pick one): (a) the planner emits a `scenes` phase ensuring
+  `scene_count >= max section slot` before `clips`; (b) `clips` auto-creates a missing
+  slot on demand; (c) at minimum a pre-flight coherence check that fails fast with "song
+  needs N scenes; set has M — add N−M" instead of per-clip IndexErrors. **Verifiable
+  signal:** push a ≥9-section song into a default 8-scene set and it completes (or fails
+  with the single actionable message), not 5 raw IndexErrors.
+
+  **Dedup note (2026-06-03):** absorbs the PSH-1S9C dogfood duplicate (same bug — a >8-section song pushed into a fresh default 8-scene set hard-fails at the `clips` phase because the push doesn't auto-provision scenes). PSH-1S9C dropped with `closes: SYN-4P2D`.
+
+  **SHIPPED on develop (#136, commit eff5398, merge `fix/syn-4p2d-scenes-provisioning`):** the push now auto-provisions scenes before the `clips` phase. Closed + archived in the 2026-06-09 triage (the close was missed at merge time — close-in-the-same-PR discipline).

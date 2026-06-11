@@ -26,10 +26,11 @@ TOOLS: tuple[str, ...] = (
     "ableton_browser",
     "ableton_render",
     "ableton_analysis",
+    "ableton_probe",
 )
 
 
-ParamType = Literal["str", "int", "float", "bool", "list", "dict"]
+ParamType = Literal["str", "int", "float", "bool", "list", "dict", "any"]
 LiveOpKind = Literal["property_read", "property_write", "method_call"]
 
 

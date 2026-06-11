@@ -69,6 +69,14 @@ def _action_with_params(*params: ParamSpec) -> Action:
     )
 
 
+def test_validate_any_type_accepts_every_json_shape():
+    # "any" is deliberately absent from _TYPE_MAP — the short-circuit must
+    # fire before the lookup or every any-typed param dies with KeyError.
+    action = _action_with_params(ParamSpec(name="value", type="any"))
+    for value in [1, 1.5, True, "x", [1, 2], {"k": 1}, None]:
+        assert validate_params(action, {"value": value}) == {"value": value}
+
+
 def test_validate_missing_required():
     action = _action_with_params(ParamSpec(name="bpm", type="float"))
     with pytest.raises(ParamValidationError) as exc:

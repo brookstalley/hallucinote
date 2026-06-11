@@ -4,6 +4,52 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
+
+<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->
+
+The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
+`ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with
+`then` chaining and `{"$path": …}` LOM-object args) over a regex path grammar (no
+eval); makes capability probing a wire call instead of throwaway Remote Script code
+plus a Live restart per iteration. Adds the `any` ParamType for polymorphic params.
+55 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
+probe suite executed against real Live 12.4.1 (`docs/research/audio-first-class/
+lom-probe-results.md` + raw JSONL): audio clip creation native since 12.2 (browser
+workaround obsolete), mixer envelopes on audio session clips confirmed end-to-end,
+scripted master/return automation via `record_mode` + `begin/end_gesture` ramps
+playback-verified, recording via `fire(record_length)` confirmed incl. take lanes +
+comping substitute. **Research corpus:** adversarially verified producer practice,
+primary-source mastering norms, two LOM research passes (same dir). **Artifact:**
+`.prawduct/artifacts/plans/AUD-1M4V/discovery.md` — producer-led requirements
+(R1–R5) traced to mechanisms + staged plan. **Backlog:** AUD-1M4V → design;
+CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
+(performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
+
+## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
+
+<!-- prawduct: type=bugfix | chunks=INS-7V2D-cold-start-timeout | scope=plugin-distribution | status=shipped | release=v0.9.4 -->
+
+The plugin-bundled `hallucinote-mcp` server timed out on a genuinely-cold first start: the spawn
+runs a full `uv` build (numpy/scipy/librosa/llvmlite, ~70 MiB) and the connection timed out at
+**30000ms** despite `plugin.json` declaring `"timeout": 60000`. **Root cause:** the per-server
+`plugin.json` `timeout` governs *tool execution*, not the *startup* handshake — startup is
+governed by the `MCP_TIMEOUT` env var (default 30000ms), which the v0.9.3 design never raised, so
+the intended 60s safety net never existed for startup. (This supersedes the v0.9.3 entry's
+"cold-cache-within-60s" residual framing.) **Fix:** a tested, atomic, idempotent config op raises
+`env.MCP_TIMEOUT` in `settings.json` to a **180000ms (3 min) floor** (`STARTUP_TIMEOUT_FLOOR_MS`),
+never downgrading a higher existing value; `/ableton-mcp-install` writes it into
+`~/.claude/settings.json` for end users, and this dev repo carries it via committed
+`.claude/settings.json`. The SessionStart pre-warm hook also emits a clean `additionalContext`
+heads-up so Claude can guide a `/mcp` reconnect when a cold build loses the spawn race; every
+non-success hook branch now routes to **stderr** so warm sessions inject nothing into Claude's
+context. **Live-verified (this session):** the operator ran `uv cache clean` (genuinely cold uv
+cache) and restarted (`--plugin-dir .`); the cold build completed and the `hallucinote-mcp` tools
+connected **on first launch — no `/mcp` reconnect needed**, confirming the 30 000 ms
+startup-timeout failure does not recur under the 3-min floor (operator-verification check #1; the
+race→reconnect fallback, statusMessage display, and uninstall reversal remain unverified). 22 new
+unit tests pin the config-op and hook semantics.
+
 ## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
 
 <!-- chunks=INS-7V2D status=shipped release=v0.9.3 scope=plugin-distribution -->

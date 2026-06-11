@@ -1,6 +1,6 @@
 ---
 name: ableton-mcp-uninstall
-description: Cleanly remove Hallucinote MCP. Deletes the Remote Script and the HallucinoteAnalyzer device from Ableton Live's User Library, removes every `hallucinote-mcp` entry from `.mcp.json` / `~/.claude.json`, and tells the user the one-time Ableton Preferences click to undo. Use when the user wants to remove Hallucinote MCP, switch to a different MCP server, or troubleshoot by reinstalling from scratch.
+description: Cleanly remove Hallucinote MCP. Deletes the Remote Script and the HallucinoteAnalyzer device from Ableton Live's User Library, removes every `hallucinote-mcp` entry from `.mcp.json` / `~/.claude.json` plus the MCP startup-timeout the install added to `~/.claude/settings.json`, and tells the user the one-time Ableton Preferences click to undo. Use when the user wants to remove Hallucinote MCP, switch to a different MCP server, or troubleshoot by reinstalling from scratch.
 ---
 
 # /ableton-mcp-uninstall
@@ -60,6 +60,16 @@ If `hallucinote-mcp` is **plugin-provided** (no config-file entry — `remove-mc
 reports `removed: []`), there's nothing to delete here: to stop the plugin from
 providing it, the user disables/uninstalls the plugin via `/plugin`, not this skill.
 
+Then reverse the startup-timeout the install raised:
+
+```bash
+python -m hallucinote_mcp.cli unset-startup-timeout
+```
+
+This removes `env.MCP_TIMEOUT` from `~/.claude/settings.json` **only if it still
+equals the value we set** — a value you customized higher is left untouched
+(prints `{"action": "kept-custom"}`); absent is a no-op (`{"action": "absent"}`).
+
 If Claude Code is open, suggest a restart (or `/mcp`) so the change takes effect.
 
 ## Step 4 — Tell the user the Ableton click
@@ -95,4 +105,7 @@ Manual cleanup:
 2. **MCP configs** — remove the `hallucinote-mcp` key from `<project>/.mcp.json` and
    `~/.claude.json` (top-level and any `projects.<cwd>.mcpServers`). Edit atomically
    (write to `.tmp`, then rename).
-3. **Live Preferences click** — same as Step 4 above.
+3. **Startup timeout** — if `~/.claude/settings.json` has `env.MCP_TIMEOUT` set to
+   `180000` (the value install added), remove that key (and the `env` object if it's
+   now empty). Leave a different value alone — you may have set it yourself.
+4. **Live Preferences click** — same as Step 4 above.

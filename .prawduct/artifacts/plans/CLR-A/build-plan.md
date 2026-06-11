@@ -79,8 +79,25 @@ the hand-authored rsync with `install_ops.py`'s `shutil.copytree` + Python
 abort is structurally impossible; the module docstring names that exact
 friction). No change needed; recorded with evidence rather than inventing one.
 Conventions section content-pinned in test_resources; skill docs have no test
-harness (expected). All chunks [x]. Suite 3338 passed / 2 skipped. NEXT: commit,
-then `/prawduct:critic cumulative` (develop base) — the PR-gate review.
+harness (expected). All chunks [x]. Suite 3338 passed / 2 skipped.
+
+Cumulative Critic (base develop, `3b5a82d...9d50cd9`): 1 BLOCKING + 3 WARNING +
+6 NOTE. BLOCKER (all three tracks independently found it): SYN-9F2L's own
+silent-drop survived on the execute path — the devices planner warned a
+no-writable-form params_dialed write into `plan.notes`, but `push_execute` never
+drained `plan.notes`, so the warning was discarded on the PRIMARY push path.
+Resolved (commit 24d7774) with a severity-scoped fix: `PushPlan.alert()` channel
+(operator-actionable, drained into the benign `warnings` channel) distinct from
+`notes` (diagnostic noise) and `errors` (halt); regression-tested end-to-end for
+already-linked + same-pass-load (convergence) cases. WARNINGS resolved: stale
+artifacts refreshed (devices docstring + push-execute-design #3/#7 +
+boundary-patterns 4-channel), triplicated halt bookkeeping collapsed into
+`_halt()` (+ redundant `error_phase` deleted), backlog recordings landed
+(DEV-5R8Q deferral, INS-2Q7F archived obsolete). NOTES: fallback/pad-probe
+broad-excepts now log; conventions wording tightened. `verify-resolutions`
+(24d7774 vs 9d50cd9): all findings resolved, 0 blocking/0 warning, chain record
+extends the cumulative → satisfies the PR gate (CRT-4J8W). Suite 3340 passed /
+2 skipped. NEXT: branch ready for `/prawduct:pr` when the user asks.
 Context (chunk 04): SYN-5C3J — push_cli now detects a version-handshake refusal
 in `ExecuteResult.top_error_patterns` and prints the pin recovery (worktree +
 PYTHONPATH + preflight verify) instead of the misleading generic "fix build.py

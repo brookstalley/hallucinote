@@ -46,9 +46,18 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 - [ ] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
 - [ ] Chunk 03: push phase + fingerprint gate + Live smoke
 - [ ] Chunk 04: docs, guides, backlog closeout
-Context: plan authored 2026-06-10; nothing built yet. Parallel item CLP-AUD1 is
-file-disjoint (db schema CHECK regions differ; no shared push phase) — see
-"Coordination" below.
+Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
+`perform` action + handler (runs_on_worker, lock under live_state_lock,
+record_mode settle-poll per probe 10, per-step finally restore incl.
+re_enable_automation, beat-space interp with linear/hold/fast/slow) + 24 unit
+tests + LOCK_USERS audit entry. Chunk 01 step 0 (the two wire probes:
+group-host recording, re-record overwrite) is BLOCKED — the hallucinote MCP
+bridge is not connected in this session (Live must be running + `/mcp`
+reconnect). Probes gate chunk 02's group eligibility + chunk 03's fingerprint
+model, NOT the chunk-01 handler shape (mechanism probe-verified on
+master/return). Chunk stays [ ] until verdicts land in lom-probe-results.md.
+Parallel item CLP-AUD1 already merged (PR #157); schema.sql rebase burden
+now falls on this branch.
 
 ## Scaffolding
 

@@ -4,6 +4,28 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
+
+<!-- type=feature chunks=AUD-1M4V-discovery scope=mcp-bridge,discovery -->
+
+The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
+`ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with
+`then` chaining and `{"$path": …}` LOM-object args) over a regex path grammar (no
+eval); makes capability probing a wire call instead of throwaway Remote Script code
+plus a Live restart per iteration. Adds the `any` ParamType for polymorphic params.
+55 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
+probe suite executed against real Live 12.4.1 (`docs/research/audio-first-class/
+lom-probe-results.md` + raw JSONL): audio clip creation native since 12.2 (browser
+workaround obsolete), mixer envelopes on audio session clips confirmed end-to-end,
+scripted master/return automation via `record_mode` + `begin/end_gesture` ramps
+playback-verified, recording via `fire(record_length)` confirmed incl. take lanes +
+comping substitute. **Research corpus:** adversarially verified producer practice,
+primary-source mastering norms, two LOM research passes (same dir). **Artifact:**
+`.prawduct/artifacts/plans/AUD-1M4V/discovery.md` — producer-led requirements
+(R1–R5) traced to mechanisms + staged plan. **Backlog:** AUD-1M4V → design;
+CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
+(performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
+
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
 <!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->

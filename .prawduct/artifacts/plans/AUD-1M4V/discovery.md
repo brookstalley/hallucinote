@@ -136,17 +136,22 @@ land in the mix/production skill guidance, not as code.
 
 ## Staged plan (the children, re-scoped by evidence)
 
-Order respects lock 2 (master automation early) and the dependency spine
-(DB model → placement → envelopes → performed automation → recording workflow).
+Order honors lock 2 (master automation is a must-have early). The lock's literal
+wording was "right after the audio-clip DB model" — phrased when we believed the
+mechanism would depend on audio clips. Probe 4 shows performed automation has
+**zero dependency on audio clips** (it writes through `record_mode` + gestures,
+no clip anywhere), so the strongest reading of the lock moves it to stage 0,
+**parallel to CLP-AUD1**, not behind it. *(Deviation from the literal wording
+recorded here; user can re-order.)*
 
 | Stage | Item | Re-scope from evidence |
 |---|---|---|
-| 0 | **CLP-AUD1** — audio-clip DB model | Foundation, unchanged in spirit; wave-1 fields per lock 3: kind discriminator, file ref, gain, pitch, warping+mode, start/end markers. Warp markers deferred (R2.2). |
+| 0a | **CLP-AUD1** — audio-clip DB model | Foundation, unchanged in spirit; wave-1 fields per lock 3: kind discriminator, file ref, gain, pitch, warping+mode, start/end markers. Warp markers deferred (R2.2). |
+| 0b | **ENV-7G4K — performed automation** (master/group/return) | R3.2's mechanism: gesture-recorded scripted ramps + automation_state/.als verification. **Independent of CLP-AUD1** (probe 4) — can start immediately, in parallel (lock 2: must-have early). |
 | 1 | **CLP-AUD2** — audio clip placement | **REDEFINED:** browser-load workaround is obsolete (probe 1); becomes thin `create_audio_clip` handlers (session + arrangement + take lane) + push/pull surface for CLP-AUD1 rows. |
 | 2 | **ENV-8H1T** — envelopes on audio tracks | **REDUCES to a routing change:** existing session-clip envelope family works on audio clips (probe 3). Mostly deleting the refusal at `sync/push/envelopes.py:193` + tests. |
-| 3 | **NEW: performed automation** (master/group/return) | R3.2's mechanism: gesture-recorded scripted ramps + automation_state/.als verification. Needs a new backlog child (no existing ID covers it). Lock 2 places it immediately after stage 1. |
-| 4 | **NEW: recording workflow** (vocal ingest) | R1.1–R1.3: routing verify/teach, arm, record_length takes, take-lane staging, comp execution, DB ingest. In-Live first (lock 1); file-import entry point falls out of stage 1 for free. |
-| 5 | **R5 verification additions** | Incremental additions to the existing analyzer (genre-declared loudness check, mono-fold, limiter GR, deliverable staging). Stageable independently; gated on QLT-3D8R listening-day calibration discipline for any new coaching. |
+| 3 | **AUD-9R3V — recording workflow** (vocal ingest) | R1.1–R1.3: routing verify/teach, arm, record_length takes, take-lane staging, comp execution, DB ingest. In-Live first (lock 1); file-import entry point falls out of stage 1 for free. |
+| 4 | **R5 verification additions** | Incremental additions to the existing analyzer (genre-declared loudness check, mono-fold, limiter GR, deliverable staging). Stageable independently; gated on QLT-3D8R listening-day calibration discipline for any new coaching. |
 | — | **ENV-3M7K** (auto-partition) | Unchanged; still the answer for song-spanning envelopes over per-section clips (MIX-3S7P's deferred DubDelay arc). |
 | — | **ENV-4M2T** (return-side envelope clips) | **Partially superseded:** performed automation (stage 3) covers return mixer/send arcs without a return session-clip model. Keep open only for *clip-locked* return device envelopes; revisit after stage 3. |
 | — | **AUD-6T2K** (source separation) | Unchanged; fallback for stemless reference analysis, not part of this spine. |

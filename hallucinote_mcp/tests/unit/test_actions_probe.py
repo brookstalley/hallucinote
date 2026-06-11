@@ -420,7 +420,60 @@ class TestRegistration:
     def test_actions_registered(self):
         with isolated_actions():
             names = {a.name for a in actions_for("ableton_probe")}
-            assert {"help", "describe", "get", "call"} <= names
+            assert {"help", "describe", "get", "set", "call"} <= names
+
+    def test_dispatch_set_through_wire(self):
+        # The 'any'-typed value param must survive wire validation for every
+        # JSON shape — a regression here kills every set call on the wire
+        # while the handler-level suite stays green.
+        with isolated_actions():
+            ctx = FakeCtx()
+            for value, expect in [(140.0, 140.0), (True, True), ("x", "x")]:
+                resp = dispatch(
+                    Request(
+                        tool="ableton_probe",
+                        action="set",
+                        params={"path": "song.tempo", "value": value},
+                    ),
+                    context=ctx,
+                )
+                assert resp.ok, resp.error
+                assert resp.result["new"] == expect
+
+    def test_dispatch_set_readonly_style_failure_is_structured(self):
+        with isolated_actions():
+            resp = dispatch(
+                Request(
+                    tool="ableton_probe",
+                    action="set",
+                    params={"path": "song.nonexistent", "value": 1},
+                ),
+                context=FakeCtx(),
+            )
+            assert not resp.ok
+            assert "nonexistent" in resp.error
+
+    def test_dispatch_call_with_then_through_wire(self):
+        with isolated_actions():
+            ctx = FakeCtx()
+            ctx.song.tracks[0].clip_slots[0].create_audio_clip("/tmp/probe.wav")
+            resp = dispatch(
+                Request(
+                    tool="ableton_probe",
+                    action="call",
+                    params={
+                        "path": "song.tracks[0].clip_slots[0].clip",
+                        "method": "create_automation_envelope",
+                        "args": [{"$path": "song.tracks[0].mixer_device.volume"}],
+                        "then": [{"method": "value_at_time", "args": [2.0]}],
+                    },
+                ),
+                context=ctx,
+            )
+            assert resp.ok, resp.error
+            assert resp.result["then"] == [
+                {"method": "value_at_time", "result": 0.5}
+            ]
 
     def test_dispatch_get_through_wire(self):
         with isolated_actions():

@@ -10,10 +10,13 @@ each probe round-trip cost a restart. This tool makes probing a wire call:
     (with values), methods (with Boost.Python docstrings, which carry the
     authoritative signatures).
   - ``get(path)`` — read one property, serialized.
-  - ``call(path, method, args, kwargs)`` — invoke a LOM method. Args are
-    JSON values; an arg of shape ``{"$path": "song...."}`` resolves to the
-    live LOM object first (e.g. ``create_automation_envelope`` takes a
-    DeviceParameter).
+  - ``set(path, value)`` — write one property; settability is itself a
+    finding (read-only properties refuse with a structured error).
+  - ``call(path, method, args, kwargs, then)`` — invoke a LOM method. Args
+    are JSON values; an arg of shape ``{"$path": "song...."}`` resolves to
+    the live LOM object first (e.g. ``create_automation_envelope`` takes a
+    DeviceParameter). ``then`` chains follow-up calls on returned objects
+    that have no LOM path.
 
 **Path grammar (deliberately not eval).** A path is a root (``song`` |
 ``application`` | ``app``) followed by ``.attr`` and ``[int]`` steps only,
@@ -329,9 +332,10 @@ def _invoke(
 def _resolve_arg(context: LiveContext, value: Any) -> Any:
     """``{"$path": "song...."}`` args become live LOM objects; rest pass through.
 
-    One level only — nested ``$path`` inside lists/dicts is resolved too,
-    because warp-marker calls take dict args and future probes may take
-    lists of parameters.
+    Resolution recurses through lists and dicts (warp-marker calls take dict
+    args; future probes may take lists of parameters), so a ``$path`` works
+    at any nesting depth. A dict whose ONLY key is ``$path`` is the marker;
+    any other dict is plain data whose values are resolved recursively.
     """
     if isinstance(value, dict):
         if set(value.keys()) == {"$path"}:

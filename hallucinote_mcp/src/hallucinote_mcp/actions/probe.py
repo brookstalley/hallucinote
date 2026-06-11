@@ -1,12 +1,14 @@
 """``ableton_probe`` action schema — constrained LOM introspection.
 
-Three actions plus help:
+Four actions plus help:
 
   - **describe** — class, properties (with values), methods (with
     Boost.Python signature docstrings) of the object at a LOM path.
   - **get** — read one property.
+  - **set** — write one property (settability is itself a probe finding).
   - **call** — invoke a LOM method with JSON args; ``{"$path": ...}``
-    args resolve to live LOM objects.
+    args resolve to live LOM objects; ``then`` chains calls on returned
+    objects that have no LOM path.
 
 This is the bridge's permanent capability-probing surface (AUD-1M4V
 discovery; the third-party-device rule makes probing a recurring need).

@@ -57,7 +57,7 @@ Live's Control Surface slot.
 | `ableton_browser` | Instruments, effects, plugins |
 | `ableton_render` | Audio capture: HallucinoteAnalyzer auto-load + WAV capture pass (per-track + returns + master) |
 | `ableton_analysis` | MixReport from a captures dir: loudness, master-bus contribution attribution, reverb verification (requires `hallucinote`) |
-| `ableton_probe` | LOM capability probing: describe / get / call on a constrained path grammar (can mutate — probe in scratch sets) |
+| `ableton_probe` | LOM capability probing: describe / get / set / call (with `then` chaining) on a constrained path grammar (can mutate — probe in scratch sets) |
 
 Every tool answers `action='help'` with a structured menu — required / optional
 params, examples, tips — generated from the shared schema. Errors carry recovery

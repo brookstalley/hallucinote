@@ -654,6 +654,15 @@ def get_ableton_session(
     ).fetchone()
 
 
+def list_ableton_sessions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Sessions newest-first (created_at, rowid tiebreak). WFL-7Q2N: the
+    auto-discovery resolver leans on this ordering — index 0 is "most
+    recent"."""
+    return conn.execute(
+        "SELECT * FROM ableton_sessions ORDER BY created_at DESC, rowid DESC"
+    ).fetchall()
+
+
 def get_ableton_link(
     conn: sqlite3.Connection,
     *,

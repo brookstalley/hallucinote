@@ -83,6 +83,49 @@ primary-source mastering norms, two LOM research passes (same dir). **Artifact:*
 CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
 (performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
 
+## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+<!-- chunks=FRICTION-03 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
+whenever the devices phase applied at least one call — including pushes that
+halted at a later phase (the doc tracks current set state, not push success).
+`compat.regen_requirements(song_slug)` is the extracted callable seam; the
+`write-requirements` CLI command is a thin wrapper. `--db`-only pushes print a
+stale-notice with the manual command instead of guessing the song dir; regen
+failures degrade to a stderr notice (waivered broad catch) so the push's exit
+code is never masked. `docs/collaboration.md` handoff checklist updated.
+
+## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
+
+<!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->
+
+`session_id` may now be omitted on every session-taking `push_cli` /
+`pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
+it from the DB the command already opened: explicit id wins; one session →
+used; several → most recent, echoed on stderr with alternatives; apply
+commands treat a plan file's embedded `session_id` as authoritative (and
+refuse a conflicting explicit id); multi-song DBs refuse to guess; zero
+sessions → bootstrap guidance. New `db.queries.list_ableton_sessions`
+(newest-first). Render takes no session id — out of scope by inspection.
+Also: fixed a latent Hypothesis flake (per-example 200ms deadline under
+xdist load) by setting `deadline=None` in both profiles.
+
+## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
+
+<!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute` failures previously printed only the errors-file path plus
+bare "top error patterns", forcing a read of `.last-push-errors.json` on every
+halt. `_group_errors` now carries a representative `tool`/`action` and the
+first non-null responder `hint` per pattern, and `format_summary` renders a
+"Halt cause" block: `tool.action: error (N calls)` + a `next:` line
+(responder hint first; hint-less `device.load` failures point at
+REQUIREMENTS.md; connection-class halts at the Live-running checklist;
+otherwise the generic fix→rebuild→re-execute loop). Summary redaction is now
+test-pinned (large payloads can never leak past the 60-char grouping prefix).
+`skills/ableton-push/SKILL.md` + `push-execute-design.md` updated to match.
+
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
 <!-- prawduct: type=bugfix | chunks=INS-7V2D-cold-start-timeout | scope=plugin-distribution | status=shipped | release=v0.9.4 -->

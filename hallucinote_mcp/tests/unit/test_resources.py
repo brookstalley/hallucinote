@@ -103,6 +103,22 @@ def test_error_recovery_guide_documents_render_capture_preconditions():
     )
 
 
+def test_error_recovery_guide_documents_version_pin_recovery():
+    """SYN-5C3J: the parallel-engine-dev pin recovery must be discoverable in
+    the guide (the friction was reaching for it from scratch). Locks the
+    worktree + PYTHONPATH + preflight recipe and the no-`--pin`-flag rationale.
+    The subsection name is also cross-referenced by push_cli's recovery footer,
+    so this pins that link target too.
+    """
+    content = _read_guide("error-recovery").lower()
+    assert "engine version drift during a live compose session" in content, (
+        "guide should carry the subsection push_cli's recovery footer links to"
+    )
+    assert "git worktree add" in content
+    assert "pythonpath" in content
+    assert "preflight" in content
+
+
 def test_scales_json_loads_with_expected_shape():
     raw = _read_reference_json("scales")
     data = json.loads(raw)

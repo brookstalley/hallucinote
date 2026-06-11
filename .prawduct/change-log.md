@@ -6,7 +6,7 @@
 
 ## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
 
-<!-- type=feature chunks=AUD-1M4V-discovery scope=mcp-bridge,discovery -->
+<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=merged -->
 
 The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
 `ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with

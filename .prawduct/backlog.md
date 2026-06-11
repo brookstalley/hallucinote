@@ -47,15 +47,6 @@ sections only via explicit `/backlog update` calls.
 
   **Proportionality (build when, not now):** the zero-framework version works today (per-song pytest + LLM-in-context). It earns the abstraction because `missing` is variation 1 of a planned constraint-driven series (`decisions/09-variation-roadmap.md`). **Recommended sequencing, two refinements over naive "ship song then build after song 2":** (1) author `missing`'s predicates in the substrate's EVENTUAL shape against a ~15-line song-local shim (`ConstraintCtx`/`ConstraintFinding` namedtuples + runner), NOT raw asserts — so the first song ships now AND is a zero-rewrite interface probe (asymmetry: wrong-interface rework ≫ a 15-line lift, song ships either way); (2) "confirm the surface" means a DIFFERENTLY-shaped second use — `missing`'s three withheld axes (root pitch-class / sub-octave register / kick-on-3 rhythm) are all the same vertical+temporal shape, so deliberately pick the second constraint song to be RELATIONAL/cross-section ("no fifths," "root in the middle," "motif must differ from last chorus") where `ConstraintCtx` is least designed, and promote to `src/` only after that. Flip to framework-first only if (a) a near-term song needs Register B (the LLM prose rubric — not extractable from a pytest shim) or (b) the series is written 3–4 back-to-back (compresses timeline, doesn't reverse order). Don't let `src/` grow a constraint *library* — predicates live in songs (shared ones go in a songs-repo helper, never the framework). **Verifiable signal:** `src/hallucinote/constraint/` exists with `analyze_constraints` + `ConstraintFinding` (6-field, never `blocking` on a choice) + an `Arrangement.section_constraint_inputs()` passthrough adapter (mirroring `section_melody_inputs` at `arrangement.py:321`), and a song declares a predicate that the framework runs without containing any named constraint type (`grep -ri 'rootless\|no.fifth' src/hallucinote/constraint/` returns nothing). **Sized:** medium (one lens + adapter + finding, on a proven pattern). (missing-review generalization, user, 2026-06-03)
 
-- **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
-  `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: open · related: AUD-8H2M · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/AUD-3F8M/build-plan.md`
-
-  Build plan authored 2026-06-10 (2 chunks: mixer_volume thin slice, then mixer_pan + report surfacing).
-
-  AUD-8H2M verifies `device_parameter` (timbre) and `send_level` (return level) automation, but `mixer_volume` / `mixer_pan` are **post-fader** — invisible to the pre-fader stem tap (`audio/levels.py`), so `audio/automation.verify_envelope_realization` reports them `measurable=False` rather than verifying them. A volume swell or pan move IS visible on the **master** (post-fader sum) and in attribution. A master-bus-windowing pass — window the master (and/or the post-fader contribution) around a declared mixer envelope breakpoint and confirm the level/balance change — would close the gap. Scope: extend `_run_automation_verifications` to route mixer kinds to a master-windowed measurement; needs the per-stem post-fader contribution (attribution already estimates this) or a post-fader tap. **Verifiable signal:** a declared `mixer_volume` swell on a real capture reports `measurable=True` + `realized` from master-bus windowing, not the current post-fader skip. (cumulative Critic + AUD-8H2M scoping, 2026-06-02)
-
-  **Repo-wide review 2026-06-09:** ranked next after the daily-loop friction basket (PSH-4E2W / WFL-7Q2N / DOC-5W8B) — post-fader `mixer_volume`/`mixer_pan` verification is the hole exactly where mix authorship lives under "sound design is composition".
-
 - **[AUD-4S8T]** Source-side fix: make capture STOP transport-bracketed (kill the per-surface length ramp)
   `effort: M · impact: S · area: audio-analysis · source: dogfood · added: 2026-06-02 · status: open · reviewed: 2026-06-09 · related: AUD-1C7K · stage: research`
 
@@ -63,7 +54,7 @@ sections only via explicit `/backlog update` calls.
   **PARTIALLY SHIPPED (the ring-out half) on develop (commit 515c6ab, merge `fix/reverb-rt60-decay-tail`).** `render.py` now records `ring_out_beats` past the arrangement end (analyzer `set_stop_at_beat(end_beat + ring_out)`, transport target extended, loop off+restored, manifest carries it) so the reverb tail is captured — no `.amxd` change. **STILL OPEN (the residual this item now tracks):** the ORIGINAL equal-length-by-construction goal — killing the ~20ms/surface wall-clock stop ramp so per-surface WAVs come out the same length by construction — is NOT addressed. The read-side `trim_to_common_length` from AUD-1C7K handles that residual for now; this item stays open for the source-side stop-ramp fix (the `.amxd` observer + render disarm sequence work described above).
 
 - **[TPL-2D8K]** Project Ableton set template (.als) with the master-bus chain pre-placed (analyzer + limiter + common master devices) — the LOM-can't-add-master-devices workaround
-  `effort: M · impact: M · area: install · source: user · added: 2026-06-04 · status: open · related: SYN-2M9P, DEV-2M9K, INS-4H8M · stage: requirements · reviewed: 2026-06-09`
+  `effort: M · impact: L · area: install · source: user · added: 2026-06-04 · status: open · related: SYN-2M9P, DEV-2M9K, INS-4H8M · stage: requirements · reviewed: 2026-06-11`
 
   **Raised by the user (2026-06-04):** ship a project Ableton Live set template that *already has* the common master-track devices added — HallucinoteAnalyzer, a master limiter, and whatever else belongs on every Hallucinote song's master — because **we can't place master devices through LOM.** Live 12.4 has no LOM path to load a device onto the master track (proven by DEV-2M9K's load-refusal and the SYN-2M9P planner follow-up): master devices are *configure-only* across the whole stack ("place by hand once"). A hand-built template set captures that one-time hand placement as a committed, reusable artifact so every new song starts from a set that already carries the master chain.
 
@@ -72,6 +63,8 @@ sections only via explicit `/backlog update` calls.
   **Why it's not trivial.** A `.als` is a gzipped binary Live project — the template must be authored *in Live by hand* (the exact thing LOM can't do), then committed and wired into scaffolding. Open questions to settle in the item: where the template lives (framework repo vs install payload vs songs repo), how `/song-new` consumes it (copy-and-rename vs documented open-this-first), whether the master devices' *parameters* are then DB-authorable via `set_parameter` (they are — SYN-2M9P fix direction), and how this composes with INS-4H8M (analyzer fingerprint/drift detection — a committed template makes the analyzer's expected state checkable). Couples to the "master devices are place-by-hand-once" contract that DEV-2M9K / SYN-2M9P establish.
 
   **Verifiable signal:** a committed template set (or a documented, reproducible recipe + the template file) exists; opening it shows HallucinoteAnalyzer + a limiter (+ agreed common devices) already on the master track; `/song-new` (or the setup flow) starts a new song from it; and a push of a song that authors master-device *parameters* against that template completes WITHOUT emitting any `device.load(master=true)` and without a PARTIAL halt. **Sized:** medium (hand-author the `.als` in Live + wire it into scaffolding + a decision-record on placement/consumption). (user template request 2026-06-04)
+
+  **Friction-log evidence (2026-06-10, swell first-compose — impact raised M→L):** item 8 of `incoming-bugs/2026-06-10-swell-first-compose-friction.md` confirms end-to-end that the master-analyzer gap blocks fully-unattended render→MixReport→mix-review cycles on a fresh set — the analyzer can't be placed on the master through the bridge (DEV-2M9K), so a fresh set needs a human in the loop before the first render. A template set with the analyzer pre-placed would unlock overnight mix iteration.
 
 - **[MEL-1A7K]** Melody as a first-class structural dimension — author + analyze + master it (**URGENT**)
   `effort: L · impact: L · area: melody · source: user · added: 2026-05-31 · status: open · related: ARR-8P5K, ARR-1H9C, ARR-3R8F · stage: ready · refs: .prawduct/artifacts/melody-model.md · reviewed: 2026-06-09`
@@ -224,11 +217,6 @@ sections only via explicit `/backlog update` calls.
   `effort: M · impact: M · area: masking · source: critic · added: 2026-05-29 · status: open · stage: ready · reviewed: 2026-06-09`
 
   (a) **Volume automation**: C3 applies only the STATIC fader gain; a stem that ducks under one section reads slightly hot — evaluate the per-section volume envelope. (b) **Attribution/loudness level-correction**: C3 corrects the masking input only; `band_attribution`/`master_bus_attribution`/per-stem loudness still run on pre-fader stems (same F1 property) — decide whether to correct them too (changes shipped metrics, so separate). (c) **>15.5 kHz analysis ceiling** (Critic NOTE): bins above the top Bark edge are dropped while the "air" label runs to ∞ — document or extend the table. (d) Reindex tombstone-prefix uses POSIX `/` (Windows edge; macOS-only today). **Sized:** small-medium. (masking 2026-05-29)
-
-- **[AUD-4W7K]** `compare_to` baseline diffs for MixReports
-  `effort: M · impact: M · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
-
-  Skeleton field reserved in audio-analysis MVP schema; implementation deferred. Diff two MixReports keyed to DB audit-log seq numbers, surface metric deltas with significance flags ("low-mid ratio went from 0.31 → 0.24, ∆ -0.07 — meaningful improvement"). Enables A/B verification workflow described in audio-analysis spike §2 (`.prawduct/artifacts/research-spike-audio-analysis.md`). **Verifiable signal:** `analyze_mix(..., compare_to=<seq>)` populates `MixReport.deltas` with per-metric ∆ values + significance flags. (spike §9 defer 2026-05-23)
 
 - **[MIX-6D2N]** Candidate mutation proposals — the "fix" side of master-bus diagnosis
   `effort: L · impact: M · area: mix · source: reflection · added: 2026-05-23 · status: open · related: AUD-4W7K · stage: design · reviewed: 2026-06-10`
@@ -439,27 +427,6 @@ sections only via explicit `/backlog update` calls.
 
   **From the 2026-06-09 repo-wide review.** Effort S = a day of listening, not code; user-owned (the locks are creative lock-ins that need the user's ears, not agent guesses). MEL-1A7K's appetite→fraction thresholds, sun-zone-done's by-ear locks (incl. MIX-3S7P's user-owned DubDelay lock), and Live verification of the arrangement-model song are all consciously deferred. Every analyzer added before validating the existing ones compounds the risk that coaching is confidently miscalibrated. Cheapest quality ROI on the board; also the empirical test of the "structure unlocks competence" bet. **Verifiable signal:** the `# PENDING by-ear calibration` placeholder constants in `melody/lens.py` carry ear-validated values, and MIX-3S7P's render-level by-ear pendings are resolved or consciously re-locked. (repo-wide review 2026-06-09)
 
-- **[PSH-4E2W]** Push failure UX — skill summarizes the halt instead of pointing at `.last-push-errors.json`
-  `effort: S · impact: M · area: sync/workflow · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
-
-  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
-
-  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** exit 1 → "read `.last-push-errors.json`" makes the agent spelunk raw JSON on every failure. Have the push skill summarize the halt cause in its output (e.g. "Serum failed to load — not installed; see REQUIREMENTS.md"). Daily-loop friction; every song pays the tax. **Verifiable signal:** a failed push's skill output contains a human-readable halt summary (cause + suggested next step) without the agent having to read the JSON file. (repo-wide review 2026-06-09)
-
-- **[WFL-7Q2N]** Session-ID auto-discovery — list the song's sessions, default to most recent when unambiguous
-  `effort: S · impact: M · area: workflow · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
-
-  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
-
-  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** Today the user must remember a DB row ID. Auto-list sessions for the song and default to the most recent when unambiguous. **Verifiable signal:** the push/pull/render flows resolve the session without the user supplying a numeric ID when exactly one unambiguous candidate exists. (repo-wide review 2026-06-09)
-
-- **[DOC-5W8B]** Auto-regenerate REQUIREMENTS.md after a push that changed devices
-  `effort: S · impact: S · area: sync/docs · source: review · added: 2026-06-09 · status: open · stage: ready · reviewed: 2026-06-10 · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md`
-
-  Build plan authored 2026-06-10 (daily-loop friction basket, one PR into develop).
-
-  **From the 2026-06-09 repo-wide review (daily-loop friction basket).** One-liner; collaboration correctness for free — REQUIREMENTS.md drifts whenever a push changes the device set. **Verifiable signal:** a push that changes the device set leaves REQUIREMENTS.md regenerated (or explicitly prompts the regeneration) in the same flow. (repo-wide review 2026-06-09)
-
 - **[DEV-3W9R]** Rack macros are unmodeled — DB representation + push/pull for macro mappings
   `effort: M · impact: M · area: device · source: review · added: 2026-06-09 · status: open · stage: requirements · related: DEV-7K4H`
 
@@ -538,6 +505,46 @@ sections only via explicit `/backlog update` calls.
 
   From the ENV-7G4K cumulative Critic (note finding): the host-kind→push-route mapping is encoded in two places — `sync/push/envelopes.py` `_route_for_host_kind` and the DB-mutator eligibility layer in `db/mutations` — so the two partitions can drift independently. Dedup to one shared source of truth (chunk 02 already named `classify_envelope_route` as "the single partition source"; make that literally true by having both sites consume it). Low priority, code-health. **Verifiable signal:** exactly one module encodes the host-kind→route partition; `grep` for the mapping table finds a single definition, with `sync/push/envelopes.py` and `db/mutations` both importing it.
 
+- **[INV-3K8W]** preset_query teaching errors point away from the fix (pattern-with-`/` + path_prefix[0]==root)
+  `effort: S · impact: M · area: inventory · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell first-compose friction log (item 1). When a `preset_query` pattern contains a `/`, the error should teach name-only matching + `path_prefix` (the actual fix), not point elsewhere; and `path_prefix[0]==root` should be detected and taught explicitly. Today the teaching errors send the agent away from the correct call shape. **Verifiable signal:** a pattern-with-`/` query and a root-leading `path_prefix` each return an error that names the correct call shape (name-only pattern + path_prefix; drop the root segment).
+
+- **[SYN-6B4Q]** Skeleton push goes PARTIAL at cues phase — cues planner should skip-with-warning beyond current arrangement extent
+  `effort: S · impact: M · area: sync · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 2). A skeleton push (arrangement not yet composed to full length) halts PARTIAL at the cues phase because cue points land beyond the current arrangement extent. The cues planner should **skip-with-warning** cues beyond the current arrangement extent — idempotently picked up on the next push once the arrangement grows — and hard-error only for cues past the composed song length. **Verifiable signal:** a skeleton push with cues beyond the current arrangement extent completes (cues skipped with a warning), and a subsequent push after the arrangement grows places them.
+
+- **[DEV-5R8Q]** No replace-instrument-keep-FX-chain path — device load is append-only, Live 12.4 has no reorder API
+  `effort: M · impact: M · area: device · source: dogfood · added: 2026-06-10 · status: open · stage: requirements · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 3). Swapping a track's instrument while keeping its FX chain has no supported path: device load is append-only and Live 12.4 exposes no device-reorder API, so a replaced instrument lands at the END of the chain. Candidate fix: a `rebuild_chain` convenience (delete-descending + reload-in-order from the `devices[]` spec) — or, at minimum, document the rebuild pattern in the conventions guide. **Verifiable signal:** either `rebuild_chain` exists and a replace-instrument round-trip leaves the FX chain order intact, or the conventions guide documents the delete-descending + reload-in-order pattern.
+
+- **[INS-2Q7F]** ableton-mcp-install skill rsync example breaks under zsh — unquoted `--exclude=*.pyc` glob
+  `effort: S · impact: S · area: install · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 4). The install skill's rsync example uses an unquoted `--exclude=*.pyc`; under zsh the glob expands (or no-matches) and aborts the compound command. Quote it. **Verifiable signal:** the skill's rsync example carries a quoted exclude pattern and runs clean under zsh.
+
+- **[SKL-8N3V]** song-new postlude says call ensure_loaded but the natural song_slug param errors unknown-param
+  `effort: S · impact: S · area: skills · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 5). `/song-new`'s postlude tells the agent to call `ensure_loaded`; the natural reading passes `song_slug`, which errors unknown-param. The skill text should say to call it with no params. **Verifiable signal:** the song-new skill text shows the no-params `ensure_loaded` call and a fresh scaffold run follows it without an unknown-param error.
+
+- **[SYN-9F2L]** BUG: `params_dialed` on a snapshot-authored device silently not applied at push (+ `normalized` ambiguous for center-zero params)
+  `effort: M · impact: L · area: sync · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 6). A `params_dialed` value on a snapshot-authored device was silently not applied at push — Drive stayed at default with **no error**. Compounding it, `normalized` is ambiguous for center-zero params: a naive fraction-of-max would dial NEGATIVE drive. Fix direction: the push planner should prefer the display `value` string via the param's display curve, and **warn whenever a `params_dialed` write is skipped** (silent drop is the bug). **Verifiable signal:** a snapshot-authored device with `params_dialed` lands with the dialed value after push (verifiable via `get_parameters`), and any skipped `params_dialed` write surfaces a warning in the push report.
+
+- **[MCP-4T6Y]** Long-running actions (ensure_loaded on 25 surfaces, render) blow the MCP bridge 15s read window while work continues server-side
+  `effort: M · impact: M · area: mcp · source: dogfood · added: 2026-06-10 · status: open · stage: design · related: DEV-6T2W · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 7). Long-running actions — `ensure_loaded` across 25 surfaces, a full render — exceed the MCP bridge's 15s read window; the call "fails" client-side while the work continues server-side, leaving the agent blind to completion. Needs a progress/async pattern (job handle + poll) or chunked per-track ensure so each call fits the window. Related to DEV-6T2W (the 15s server-side main-thread ceiling, archived). **Verifiable signal:** an `ensure_loaded` across 25 surfaces (or a render) completes observably — either via chunked calls each under the window or via a progress/poll surface — with no blown read window.
+
+- **[SYN-5C3J]** push_cli `--pin <version>`/env knob for the editable-install + parallel-engine-dev version-mismatch lockout
+  `effort: S · impact: M · area: sync · source: dogfood · added: 2026-06-10 · status: open · stage: ready · refs: incoming-bugs/2026-06-10-swell-first-compose-friction.md`
+
+  From the swell friction log (item 8). With an editable install and parallel engine development, a version mismatch locks push out; the worktree+PYTHONPATH recovery worked but should be first-class — a `--pin <version>` flag (or env knob) on push_cli, plus an error-recovery guide note documenting the recovery. **Verifiable signal:** `push_cli --pin <version>` (or the env knob) runs a push under the pinned engine version, and the error-recovery guide documents the lockout + recovery.
+
 ## Promoted
 
 _(none — INS-7V2D shipped; see Archive.)_
@@ -545,6 +552,35 @@ _(none — INS-7V2D shipped; see Archive.)_
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[AUD-3F8M]** Master-bus windowing to verify post-fader automation (mixer_volume / mixer_pan)
+  `effort: M · impact: S · area: audio-analysis · source: critic · added: 2026-06-02 · status: shipped · closed-by: PR #154 · related: AUD-8H2M · refs: .prawduct/artifacts/plans/AUD-3F8M/build-plan.md · reviewed: 2026-06-11`
+
+  **SHIPPED (PR #154).** Build plan authored 2026-06-10 (2 chunks: mixer_volume thin slice, then mixer_pan + report surfacing).
+
+  *Original item (for the record):* AUD-8H2M verifies `device_parameter` (timbre) and `send_level` (return level) automation, but `mixer_volume` / `mixer_pan` are **post-fader** — invisible to the pre-fader stem tap (`audio/levels.py`), so `audio/automation.verify_envelope_realization` reports them `measurable=False` rather than verifying them. A volume swell or pan move IS visible on the **master** (post-fader sum) and in attribution. A master-bus-windowing pass — window the master (and/or the post-fader contribution) around a declared mixer envelope breakpoint and confirm the level/balance change — would close the gap. Scope: extend `_run_automation_verifications` to route mixer kinds to a master-windowed measurement; needs the per-stem post-fader contribution (attribution already estimates this) or a post-fader tap. **Verifiable signal:** a declared `mixer_volume` swell on a real capture reports `measurable=True` + `realized` from master-bus windowing, not the current post-fader skip. (cumulative Critic + AUD-8H2M scoping, 2026-06-02) **Repo-wide review 2026-06-09:** ranked next after the daily-loop friction basket (PSH-4E2W / WFL-7Q2N / DOC-5W8B) — post-fader `mixer_volume`/`mixer_pan` verification is the hole exactly where mix authorship lives under "sound design is composition".
+
+- **[AUD-4W7K]** `compare_to` baseline diffs for MixReports
+  `effort: M · impact: M · area: audio-analysis · source: reflection · added: 2026-05-23 · status: shipped · closed-by: PR #159 · reviewed: 2026-06-11`
+
+  **SHIPPED (PR #159).** `analyze_mix(compare_to=<seq>)` / `ableton_analysis(analyze, compare_to=<seq>)` returns per-surface loudness deltas + significance flags vs a db_seq-keyed baseline (see the MIX-6D2N note of 2026-06-10 — this is the measured-delta half of that item's loop).
+
+  *Original item (for the record):* Skeleton field reserved in audio-analysis MVP schema; implementation deferred. Diff two MixReports keyed to DB audit-log seq numbers, surface metric deltas with significance flags ("low-mid ratio went from 0.31 → 0.24, ∆ -0.07 — meaningful improvement"). Enables A/B verification workflow described in audio-analysis spike §2 (`.prawduct/artifacts/research-spike-audio-analysis.md`). **Verifiable signal:** `analyze_mix(..., compare_to=<seq>)` populates `MixReport.deltas` with per-metric ∆ values + significance flags. (spike §9 defer 2026-05-23)
+
+- **[PSH-4E2W]** Push failure UX — skill summarizes the halt instead of pointing at `.last-push-errors.json`
+  `effort: S · impact: M · area: sync/workflow · source: review · added: 2026-06-09 · status: shipped · closed-by: PR #153 (friction-basket) · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md · reviewed: 2026-06-11`
+
+  **SHIPPED (PR #153, daily-loop friction basket).** *Original item (for the record):* exit 1 → "read `.last-push-errors.json`" makes the agent spelunk raw JSON on every failure. Have the push skill summarize the halt cause in its output (e.g. "Serum failed to load — not installed; see REQUIREMENTS.md"). Daily-loop friction; every song pays the tax. **Verifiable signal:** a failed push's skill output contains a human-readable halt summary (cause + suggested next step) without the agent having to read the JSON file. (repo-wide review 2026-06-09)
+
+- **[WFL-7Q2N]** Session-ID auto-discovery — list the song's sessions, default to most recent when unambiguous
+  `effort: S · impact: M · area: workflow · source: review · added: 2026-06-09 · status: shipped · closed-by: PR #153 (friction-basket) · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md · reviewed: 2026-06-11`
+
+  **SHIPPED (PR #153, daily-loop friction basket).** *Original item (for the record):* Today the user must remember a DB row ID. Auto-list sessions for the song and default to the most recent when unambiguous. **Verifiable signal:** the push/pull/render flows resolve the session without the user supplying a numeric ID when exactly one unambiguous candidate exists. (repo-wide review 2026-06-09)
+
+- **[DOC-5W8B]** Auto-regenerate REQUIREMENTS.md after a push that changed devices
+  `effort: S · impact: S · area: sync/docs · source: review · added: 2026-06-09 · status: shipped · closed-by: PR #153 (friction-basket) · refs: .prawduct/artifacts/plans/FRICTION-BASKET/build-plan.md · reviewed: 2026-06-11`
+
+  **SHIPPED (PR #153, daily-loop friction basket).** *Original item (for the record):* One-liner; collaboration correctness for free — REQUIREMENTS.md drifts whenever a push changes the device set. **Verifiable signal:** a push that changes the device set leaves REQUIREMENTS.md regenerated (or explicitly prompts the regeneration) in the same flow. (repo-wide review 2026-06-09)
 
 - **[ENV-7G4K]** Performed automation — master/group/return mixer automation via gesture-recorded scripted ramps
   `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: shipped · closed-by: feature/env-7g4k-performed-automation → develop (chunks 01–04, 2026-06-11) · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/ENV-7G4K/design.md, .prawduct/artifacts/plans/ENV-7G4K/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md · reviewed: 2026-06-11`
@@ -644,6 +680,8 @@ Closed investigations — no fix possible / structural-close on Ableton's roadma
   **SHIPPED on develop (#129, commit de34b8c).** Master device-LOAD now refuses loudly (no silent mis-target onto a regular track) and the render master-analyzer is detect-only — master devices are place-by-hand-once / configure-only across the stack. NOTE: the push-PLANNER follow-up — `plan_push_devices` still emits impossible `device.load(master=true)` calls that halt the devices phase at execute time — remains tracked separately as **SYN-2M9P**.
 
   **New evidence (2026-06-11, ENV-7G4K chunk-03 S-7 smoke):** the "forever manual" master-load contract has a probe-confirmed crack. The smoke loaded an Auto Filter onto the MASTER chain agent-side via LOM-select-master + browser search + Enter (scripted keyboard automation, requires macOS Accessibility) — see `tests/integration/test_live_smoke.md` S-7. Not a LOM path (LOM remains load-incapable on master) and not productized; recorded here so a future scrub doesn't treat hand-placement as the only mechanism. If master-chain auto-placement becomes worth building, this is the direction — also softens TPL-2D8K's premise that a hand-built `.als` template is the only way to capture the master chain.
+
+  **Friction-log evidence (2026-06-10, swell first-compose):** item 8 of `incoming-bugs/2026-06-10-swell-first-compose-friction.md` confirms end-to-end that this master-analyzer gap blocks fully-unattended render→MixReport→mix-review cycles on a fresh set. A template set with the analyzer pre-placed (TPL-2D8K — impact raised on this evidence) would unlock overnight mix iteration.
 
 - **[AUD-1C7K]** Sample-accurate capture alignment — per-surface WAVs are NOT the same length (breaks reverb verification)
   `effort: M · impact: M · area: audio-analysis · source: user · added: 2026-06-02 · status: shipped · reviewed: 2026-06-03 · closed-by: #130 (commit 1bbac6a) · related: AUD-5M8H, AUD-2D6T, AUD-4S8T`

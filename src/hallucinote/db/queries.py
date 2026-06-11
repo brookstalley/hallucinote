@@ -236,6 +236,23 @@ def get_events_for_clip(
     ).fetchall()
 
 
+def get_latest_seq_for_song(
+    conn: sqlite3.Connection,
+    song_id: str,
+) -> int | None:
+    """The song's newest audit-log seq, or None when no events exist yet.
+
+    Captures record this at render time (``manifest.db_seq``) so a
+    MixReport is keyed to the exact DB state its audio reflects — the
+    cross-reference point baseline diffs resolve by (AUD-4W7K).
+    """
+    row = conn.execute(
+        "SELECT MAX(seq) AS latest FROM events WHERE song_id = ?",
+        (song_id,),
+    ).fetchone()
+    return int(row["latest"]) if row["latest"] is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Score: sections, tempo map, time-signature map, cue points
 # ---------------------------------------------------------------------------

@@ -552,6 +552,130 @@ def test_register_tool_detects_param_type_conflicts(isolated_registry):
         _collect_tool_params("ableton_session")
 
 
+def test_render_call_attaches_db_seq_from_song_db(tmp_path, monkeypatch):
+    """AUD-4W7K: the server reads the song's latest audit-log seq at
+    forward time and attaches it as db_seq — the render handler (inside
+    Live's hallucinote-less env) just writes it into the manifest."""
+    from hallucinote.db import mutations as M
+    from hallucinote.db import queries as Q
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"),
+    )
+    M.create_track(conn, song_id="song-demo", track_index=1, name="Drums")
+    expected_seq = Q.get_latest_seq_for_song(conn, "song-demo")
+    conn.commit()
+    conn.close()
+    assert expected_seq is not None  # the mutator emitted an event
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+        )
+    forwarded_request = send.call_args.args[0]
+    assert forwarded_request.params["db_seq"] == expected_seq
+
+
+def test_render_call_omits_db_seq_when_song_db_missing(tmp_path, monkeypatch):
+    """Provenance is best-effort: no song DB → the param simply isn't
+    attached (manifest.db_seq null); the render itself proceeds."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "nope", "output_dir": str(tmp_path / "captures")},
+        )
+    forwarded_request = send.call_args.args[0]
+    assert "db_seq" not in forwarded_request.params
+
+
+def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
+    """An explicitly-supplied db_seq is passed through untouched — the
+    server only fills the gap, it never overrides the caller."""
+    from hallucinote_mcp.wire import Response
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path), "db_seq": 99},
+        )
+    assert send.call_args.args[0].params["db_seq"] == 99
+
+
+def test_render_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
+    """A DB that exists but has no row for the slug degrades to no tag
+    (the get_song_by_name -> None branch), never an error."""
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+        )
+    assert "db_seq" not in send.call_args.args[0].params
+
+
+def test_render_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
+    """The waivered broad catch: a corrupt song DB logs a warning and
+    degrades to no tag — a render is never blocked over provenance."""
+    import logging
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with caplog.at_level(logging.WARNING):
+        with patch(
+            "hallucinote_mcp.server.client.send", return_value=forwarded
+        ) as send:
+            handle_tool_call(
+                "ableton_render", "render",
+                {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+            )
+    assert "db_seq" not in send.call_args.args[0].params
+    assert "could not read latest db seq" in caplog.text
+
+
 def test_annotated_param_type_any_is_explicit_not_fallback():
     # 'any' must be a first-class _PARAM_TYPE_MAP entry; regressing to the
     # .get() fallback would still work today, but the explicit entry is the

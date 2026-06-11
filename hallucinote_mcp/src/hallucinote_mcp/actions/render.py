@@ -165,6 +165,18 @@ register(
                     "Default 4 (one bar at 4/4), symmetric to post_roll."
                 ),
             ),
+            ParamSpec(
+                name="db_seq",
+                type="int",
+                required=False,
+                description=(
+                    "Song audit-log seq this capture reflects, recorded "
+                    "into manifest.json as the baseline-diff key "
+                    "(ableton_analysis compare_to). Auto-filled by the "
+                    "MCP server at forward time from the song DB's "
+                    "latest event — callers normally never pass it."
+                ),
+            ),
         ),
         handler=render_handlers.render_handler,
         runs_on_worker=True,

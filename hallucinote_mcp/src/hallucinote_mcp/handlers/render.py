@@ -21,10 +21,13 @@ start/stop on its own; the handler just sets up the window and waits.
 ``Arm`` is a gate, not a boundary — see analyzer spec §"Transport-
 position-driven timing" for why.
 
-DB-side audit linkage (``manifest.db_seq``) is deferred: the MVP
-focuses on producing the captures + manifest end-to-end. Chunk 3 ties
-the manifest to the song DB's event log when the analysis pipeline
-needs cross-reference points.
+DB-side audit linkage: ``manifest.db_seq`` records the song's latest
+audit-log seq at render-trigger time (AUD-4W7K). The MCP server reads
+it (`server._attach_render_db_seq` — this handler runs in Live's
+vendored env with no hallucinote package) and forwards it as the
+``db_seq`` param; baseline diffs (``ableton_analysis`` ``compare_to``)
+resolve previous reports by this key. Absent when the seq couldn't be
+read — provenance is best-effort, never render-blocking.
 """
 from __future__ import annotations
 
@@ -322,6 +325,7 @@ def render_handler(
     ring_out_beats: float = _DEFAULT_RING_OUT_BEATS,
     start_at_beat: int = 0,
     stop_at_beat: int | None = None,
+    db_seq: int | None = None,
     _osc_factory: Callable[[int], AnalyzerOSC] | None = None,
     _sidecar: OSCSidecar | None = None,
     _clock_source: Callable[[], float] | None = None,
@@ -586,6 +590,10 @@ def render_handler(
         "status": status,
         "frames_received": frames_after - frames_before,
         "analyzer_signature": "hallucinote-analyzer-v1",
+        # Audit-log seq the captured audio reflects (server-attached at
+        # forward time; None when provenance couldn't be read). The
+        # baseline-diff key for ableton_analysis compare_to (AUD-4W7K).
+        "db_seq": db_seq,
         "tracks": [
             _track_manifest_entry(inst, per_instance_paths[inst.track_id])
             for inst in layout.instances if inst.surface_kind == "track"

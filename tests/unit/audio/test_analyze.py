@@ -1036,3 +1036,156 @@ def test_analyze_mix_tags_overshoot_finding_with_section(tmp_path: Path):
     overshoot_findings = [f for f in report.findings if f.kind == "master_overshoot"]
     assert overshoot_findings
     assert all("section:chorus1" in f.db_reference for f in overshoot_findings)
+
+
+def test_analyze_mix_compare_to_diffs_against_baseline_json(tmp_path: Path):
+    """End-to-end AUD-4W7K: analyze once, write the report JSON the way the
+    MCP handler does, re-analyze a louder take with ``compare_to=<path>`` —
+    the report carries per-surface deltas with the master move flagged
+    significant, and still serializes under ``allow_nan=False``."""
+    duration_s = 4.0
+    quiet = _write_synthetic_capture(
+        tmp_path / "a",
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-22.0, duration_s),
+    )
+    baseline_report = analyze_mix(quiet)
+    baseline_path = tmp_path / "analysis" / "20260610T010000Z.json"
+    baseline_path.parent.mkdir()
+    baseline_path.write_text(
+        json.dumps(baseline_report.to_json_dict(), allow_nan=False),
+        encoding="utf-8",
+    )
+
+    loud = _write_synthetic_capture(
+        tmp_path / "b",
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-16.0, duration_s),
+    )
+    report = analyze_mix(loud, compare_to=baseline_path)
+
+    assert report.compare_to is not None
+    assert report.compare_to["baseline"]["ref"] == str(baseline_path)
+    master_lufs_rows = [
+        r for r in report.compare_to["deltas"]
+        if r["track_id"] == "master" and r["metric"] == "lufs_i"
+    ]
+    assert len(master_lufs_rows) == 1
+    row = master_lufs_rows[0]
+    assert row["delta"] > 4.0  # ~6 dB hotter master
+    assert row["significant"] is True
+    # The unchanged stem stays under the significance floor.
+    stem_lufs = [
+        r for r in report.compare_to["deltas"]
+        if r["track_id"] == "track:1" and r["metric"] == "lufs_i"
+    ]
+    assert stem_lufs[0]["significant"] is False
+    assert report.compare_to["added_surfaces"] == []
+    assert report.compare_to["missing_surfaces"] == []
+    # The whole report (deltas included) survives strict serialization.
+    json.dumps(report.to_json_dict(), allow_nan=False)
+
+
+def test_analyze_mix_missing_baseline_fails_fast(tmp_path: Path):
+    """A bad ``compare_to`` path refuses up front — before the DSP passes —
+    so a typo'd baseline doesn't cost a full analysis run."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    with pytest.raises(FileNotFoundError):
+        analyze_mix(captures_dir, compare_to=tmp_path / "nope.json")
+
+
+def test_analyze_mix_compare_to_seq_resolves_via_analysis_dir(tmp_path: Path):
+    """The seq form end-to-end: a manifest tagged db_seq=7 produces a report
+    carrying db_seq=7; a later analyze with compare_to=7 resolves that report
+    from the analysis dir and diffs against it."""
+    duration_s = 4.0
+
+    def _capture(subdir: str, db_seq: int | None) -> Path:
+        captures_dir = _write_synthetic_capture(
+            tmp_path / subdir,
+            stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+            master_audio=calibrated_pink_noise(-22.0, duration_s),
+        )
+        if db_seq is not None:
+            manifest_file = captures_dir / "manifest.json"
+            raw = json.loads(manifest_file.read_text(encoding="utf-8"))
+            raw["db_seq"] = db_seq
+            manifest_file.write_text(json.dumps(raw), encoding="utf-8")
+        return captures_dir
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+
+    baseline_report = analyze_mix(_capture("a", db_seq=7))
+    assert baseline_report.db_seq == 7  # manifest tag flows into the report
+    (analysis_dir / "20260610T010000Z.json").write_text(
+        json.dumps(baseline_report.to_json_dict(), allow_nan=False),
+        encoding="utf-8",
+    )
+
+    report = analyze_mix(
+        _capture("b", db_seq=9), compare_to=7, analysis_dir=analysis_dir,
+    )
+    assert report.db_seq == 9
+    assert report.compare_to is not None
+    assert report.compare_to["baseline"]["ref"].endswith("20260610T010000Z.json")
+
+
+def test_analyze_mix_seq_without_analysis_dir_refuses(tmp_path: Path):
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    with pytest.raises(ValueError, match="analysis_dir"):
+        analyze_mix(captures_dir, compare_to=7)
+
+
+def test_analyze_mix_wrong_song_baseline_refuses_up_front(tmp_path: Path):
+    """A baseline from another song refuses before the DSP passes — the
+    up-front copy of the diff_reports invariants (Critic chunk-1 note)."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    baseline_path = tmp_path / "other.json"
+    baseline_path.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION,
+        "song_slug": "some-other-song",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="cross-song"):
+        analyze_mix(captures_dir, compare_to=baseline_path)
+
+
+def test_analyze_mix_wrong_schema_version_baseline_refuses_up_front(tmp_path: Path):
+    """The schema_version twin of the wrong-song up-front refusal — an
+    incomparable shape refuses before the DSP passes, not at diff time."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    baseline_path = tmp_path / "old-schema.json"
+    baseline_path.write_text(json.dumps({
+        "schema_version": "0-not-current",
+        "song_slug": "some-song",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema_version"):
+        analyze_mix(captures_dir, compare_to=baseline_path)
+
+
+def test_analyze_mix_bool_compare_to_refuses(tmp_path: Path):
+    """compare_to=True is a malformed call (bool is an int subtype) — it
+    must refuse as a TypeError, never resolve as seq 1."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    with pytest.raises(TypeError, match="bool"):
+        analyze_mix(captures_dir, compare_to=True, analysis_dir=tmp_path)

@@ -231,9 +231,11 @@ sections only via explicit `/backlog update` calls.
   Skeleton field reserved in audio-analysis MVP schema; implementation deferred. Diff two MixReports keyed to DB audit-log seq numbers, surface metric deltas with significance flags ("low-mid ratio went from 0.31 → 0.24, ∆ -0.07 — meaningful improvement"). Enables A/B verification workflow described in audio-analysis spike §2 (`.prawduct/artifacts/research-spike-audio-analysis.md`). **Verifiable signal:** `analyze_mix(..., compare_to=<seq>)` populates `MixReport.deltas` with per-metric ∆ values + significance flags. (spike §9 defer 2026-05-23)
 
 - **[MIX-6D2N]** Candidate mutation proposals — the "fix" side of master-bus diagnosis
-  `effort: L · impact: M · area: mix · source: reflection · added: 2026-05-23 · status: open · stage: design · reviewed: 2026-06-09`
+  `effort: L · impact: M · area: mix · source: reflection · added: 2026-05-23 · status: open · related: AUD-4W7K · stage: design · reviewed: 2026-06-10`
 
   Audio-analysis MVP diagnoses; this proposes ranked mutations with predicted metric deltas ("Lower rhythm guitar 1.5 dB in chorus — predicted master peak drops ~0.6 dB"). Requires a mutation-template library (sidechain insert, EQ carve, mixer-level adjust, limiter ceiling) + a predictor estimating post-mutation metric. Each proposal must cite which DB intent it's verifying or improving. **Verifiable signal:** `MixReport.proposals: list[Proposal]` populated with named mutations + predicted deltas + DB-intent citations. (spike §9 defer 2026-05-23)
+
+  *Note (2026-06-10):* the measured-delta half of its loop shipped (AUD-4W7K, pending merge) — `analyze_mix(compare_to=<seq>)` / `ableton_analysis(analyze, compare_to=<seq>)` now returns per-surface loudness deltas + significance flags vs a db_seq-keyed baseline, so this item's "predicted metric deltas" can be verified against measured ones after applying a proposal.
 
 - **[DEV-1F9X]** W13-B follow-up: extract shared plugin-discriminator into a single module
   `effort: S · impact: M · area: device · source: critic · added: 2026-05-20 · status: open · stage: ready · reviewed: 2026-06-09`

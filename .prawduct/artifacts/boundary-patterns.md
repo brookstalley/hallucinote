@@ -117,6 +117,41 @@ When adding a new `db_kind`:
 - Add a planner branch in `sync/push.py` that emits a `<kind>:<uuid>` key.
 - Add an `apply_push_results` branch that consumes the matching result shape.
 
+### MixReport JSON (`src/hallucinote/audio/report.py` `to_json_dict()`)
+
+- **Producer**: `analyze.py` `analyze_mix` → `report.to_json_dict()`, persisted
+  as `songs/<slug>/analysis/<iso-ts>.json`.
+- **Consumers**: `compare.py` (`diff_reports` / `resolve_baseline` read old
+  reports back as raw dicts — the JSON **is** the contract, no deserializer),
+  the `/mix-review` skill, calibration baselines.
+- **Contract**: `schema_version` is load-bearing — `ensure_comparable` REFUSES
+  to diff mismatched versions, so a bump severs baseline lineage (every saved
+  report with the old version becomes undiffable). **Bump on breaking shape
+  changes ONLY; additive optional fields do NOT bump.** Precedent: AUD-4W7K
+  added `db_seq` + `compare_to` while `SCHEMA_VERSION` stayed `"1"` — version
+  `"1"` deliberately spans both shapes, and consumers tolerate the fields'
+  absence (`db_seq=None` on old reports).
+
+When changing this surface:
+- Additive optional field → no bump; ensure readers default sanely when it's
+  absent (the AUD-4W7K pattern).
+- Breaking change → bump, and accept (record) that existing analysis baselines
+  are orphaned — or write a migration for them.
+
+### Capture Manifest (`captures/manifest.json`)
+
+- **Producer**: `hallucinote_mcp/handlers/render.py` (inside Live's vendored,
+  hallucinote-less env) writes it; the server (`server._attach_render_db_seq`)
+  injects `db_seq` into the render request because only the server side can
+  read the song DB.
+- **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
+  into the MixReport), `resolve_baseline` (seq → report resolution).
+- **Contract**: `db_seq` crosses three runtimes (server reads → vendored
+  handler writes → engine loads). It is best-effort provenance: absent/null on
+  old manifests and when the song DB can't be read — consumers must treat
+  `db_seq=None` as "unknown", never an error. Field additions are additive
+  (same policy as MixReport JSON).
+
 ## Test Levels
 
 Tests fall into three categories that must stay disjoint: platform (the `hallucinote` library), MCP plugin (the `hallucinote-mcp` server), and song-specific. Platform and MCP tests must not load song data; song tests must not test platform/MCP behavior beyond what's incidental to the song.

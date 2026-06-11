@@ -65,6 +65,11 @@ class CaptureSet:
     master: Surface
     stems: list[Surface] = field(default_factory=list)
     returns: list[Surface] = field(default_factory=list)
+    # Song audit-log seq the capture reflects (manifest.db_seq, written by
+    # the render path at trigger time — AUD-4W7K). None for captures made
+    # before seq tagging landed or when provenance couldn't be read; such
+    # captures can't serve as seq-keyed baselines but stay fully loadable.
+    db_seq: int | None = None
 
 
 def load_capture(manifest_path: Path | str) -> CaptureSet:
@@ -124,6 +129,11 @@ def load_capture(manifest_path: Path | str) -> CaptureSet:
         master=master,
         stems=stems,
         returns=returns,
+        db_seq=(
+            int(manifest["db_seq"])
+            if manifest.get("db_seq") is not None
+            else None
+        ),
     )
 
 

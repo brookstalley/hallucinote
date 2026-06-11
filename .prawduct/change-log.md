@@ -4,6 +4,50 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
+
+<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability -->
+
+Triaged from the 2026-06-10 swell first-compose friction log: one silent
+correctness bug plus reliability/teaching holes that tax every song's
+bootstrap-and-compose loop. **SYN-9F2L (01):** a snapshot-authored device
+parameter (`params_dialed`) loaded at push but its dial never landed and the
+next push fingerprint-skipped the devices phase — a permanent silent drop. Root
+cause: `set_parameter` calls were planned only for already-linked devices, so a
+device loaded in the same execute pass got its link after parameter planning and
+was never dialed. Fixed via the same-pass devices convergence re-plan (the
+parameter writes now emit for newly-loaded devices too); the wire write prefers
+the display `value` string over the center-zero-ambiguous `normalized`; and a
+no-writable-form params_dialed write now surfaces on a new severity-scoped
+`PushPlan.alert()` channel (operator-actionable, drained into the benign
+`warnings` channel) instead of `plan.notes`, which `push_execute` never drained.
+**SYN-6B4Q (02):** first push of a freshly-scaffolded song no longer halts
+false-PARTIAL at `cues` past the (empty) arrangement extent — handler
+`cue_create_batch` gains `on_out_of_range='refuse'|'skip'`, the planner
+partitions cues against the composed extent (past-composed-with-arrangement →
+hard `PushPlan.errors` channel halting the phase; skeleton → defer+warn), and
+deferred cues surface via the benign `ExecuteResult.warnings` channel (exit 0).
+**INV-3K8W (03):** `preset_query` strict-mode errors now teach the actual fix —
+a `/`-containing pattern points at `path_prefix`; a `path_prefix` repeating
+`root` says to drop the leading segment (0-match / not-found branches only, zero
+behavioral change for valid queries; `inventory.find` inherits both). **SYN-5C3J
++ MCP-4T6Y (04):** an engine↔Remote-Script version-mismatch refusal now prints
+the exact worktree+PYTHONPATH pin recovery (+ error-recovery guide section)
+instead of the misleading generic "fix build.py" footer; the MCP server's
+read-timeout becomes a `(tool,action)`-keyed policy — `ensure_loaded` gets a
+bounded 180s (was timing out at the 15s default on a 25-surface set), render
+stays unbounded, everything else the 15s default. **DEV-5R8Q + INS-2Q7F +
+SKL-8N3V (05):** documented the delete-descending/reload-in-order chain-rebuild
+pattern in `conventions.md` and DECIDED against a `rebuild_chain` convenience (it
+is not a pure-planner emission — it needs Remote-Script orchestration to sequence
+delete+reload); `/song-new` postlude now calls `ensure_loaded` with no params;
+INS-2Q7F recorded obsolete-on-arrival (the install-hardening refactor already
+replaced the hand-authored rsync with a Python `copytree`+`fnmatch` exclude).
+Cumulative Critic (develop base) caught SYN-9F2L's warning still discarded on the
+execute path — resolved by the `alert()` channel above and verified end-to-end;
+a `verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
+Suite 3340 passed / 2 skipped.
+
 ## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
 
 <!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=merged -->

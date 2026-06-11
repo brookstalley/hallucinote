@@ -61,11 +61,27 @@ params_dialed drop (cheapest concrete probe; written before the fix).
 
 - [x] Chunk 01: SYN-9F2L — params_dialed lands or warns (root cause + fix + regression)
 - [x] Chunk 02: SYN-6B4Q — skeleton-push cues skip-with-warning past arrangement extent
-- [ ] Chunk 03: INV-3K8W — preset_query teaching errors point at the actual fix
+- [x] Chunk 03: INV-3K8W — preset_query teaching errors point at the actual fix
 - [ ] Chunk 04: SYN-5C3J + MCP-4T6Y — version-pin recovery teaching + long-action read window
 - [ ] Chunk 05: DEV-5R8Q + INS-2Q7F + SKL-8N3V — chain-rebuild decision + doc fixes (cumulative-final)
-Context: chunks 01 + 02 BUILT + committed. Chunk 01 (5384f98) per-chunk Critic
-deferred to cumulative. Chunk 02 (SYN-6B4Q) — the original "no Remote Script
+Context: chunks 01 + 02 + 03 BUILT + committed. Chunk 01 (5384f98) + chunk 03
+per-chunk Critic deferred to cumulative (small/single-file). Chunk 03 (INV-3K8W)
+— both authoring foot-guns in `resolve_query` now teach the actual fix: a
+pattern containing `/` (matches a leaf NAME only) gets the move-to-path_prefix
+teaching + concrete decomposition + path-shape sugar suggestion; a `path_prefix`
+whose first segment repeats `root` (case/space-insensitive) gets the drop-the-
+leading-segment teaching (or "omit path_prefix entirely" when it's the only
+segment). Both fixes are in the 0-match / not-found-under-root branches only —
+zero behavioral change for valid queries; the `"no loadable matches"` phrase is
+preserved so `inventory.find`'s partial-root augmentation still keys off it.
+`inventory.find` inherits both teachings (it delegates to `resolve_query`). The
+MCP push-time resolver (`device.py:_resolve_preset_query`) is a SEPARATE
+Remote-Script-side mirror with its own parallel error text — left unchanged:
+out of scope per the plan (Remote-Script changes needing a Live restart to
+verify) and the friction was hit on the offline authoring path. Suite 3325
+passed / 2 skipped. NEXT: chunk 04 (SYN-5C3J version-pin recovery teaching +
+MCP-4T6Y long-action read window).
+Chunk 02 (SYN-6B4Q) — the original "no Remote Script
 change" constraint was LIFTED by the user mid-build ("fix this right"); the
 fix now spans the handler + engine. Shipped: (a) handler `cue_create_batch`
 `on_out_of_range='refuse'|'skip'` — skip creates in-extent cues, defers the

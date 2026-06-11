@@ -167,6 +167,20 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
         "energy",
         "REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0))",
     ),
+    # CLP-AUD1 (AUD-1M4V stage 0a): clips gain the kind discriminator +
+    # wave-1 audio fields. Existing rows are all MIDI — the DEFAULT keeps
+    # them valid with audio columns NULL. start/end markers carry Live's
+    # dual unit (beats when warping=1, seconds when warping=0); see the
+    # clips block in schema.sql for full column semantics.
+    ("clips", "kind", "TEXT NOT NULL DEFAULT 'midi'"),
+    ("clips", "audio_file", "TEXT"),
+    ("clips", "audio_gain", "REAL"),
+    ("clips", "pitch_coarse", "INTEGER"),
+    ("clips", "pitch_fine", "REAL"),
+    ("clips", "warping", "INTEGER"),
+    ("clips", "warp_mode", "INTEGER"),
+    ("clips", "start_marker", "REAL"),
+    ("clips", "end_marker", "REAL"),
 )
 
 

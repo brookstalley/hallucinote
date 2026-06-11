@@ -74,6 +74,27 @@ CREATE TABLE IF NOT EXISTS clips (
     section_role            TEXT,
     generator_call_json     TEXT,
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- CLP-AUD1 (AUD-1M4V stage 0a): `kind` discriminates 'midi' (default —
+    -- every pre-column row is already valid) from 'audio'. Column-level
+    -- CHECKs stay minimal by design (SQLite ALTER limits); the cross-field
+    -- invariants live in the mutators, dual-layer with the kind-guards:
+    -- kind='audio' requires audio_file + an audio host track; kind='midi'
+    -- leaves every audio column NULL. `length_beats` stays the authored
+    -- placement length for both kinds, never derived audio duration.
+    kind                    TEXT NOT NULL DEFAULT 'midi',
+    -- Song-relative POSIX path (canonically under assets/), or absolute —
+    -- stored exactly as authored, resolved at push/analysis time.
+    audio_file              TEXT,
+    audio_gain              REAL,
+    pitch_coarse            INTEGER,
+    pitch_fine              REAL,
+    warping                 INTEGER,
+    -- Live's warp-mode enum int; named constants in mutations.clips.WARP_MODES.
+    warp_mode               INTEGER,
+    -- Live's dual marker unit: BEATS when warping=1, SECONDS when warping=0.
+    -- Consumers must read `warping` before interpreting the markers.
+    start_marker            REAL,
+    end_marker              REAL,
     UNIQUE(track_id, slot)
 );
 

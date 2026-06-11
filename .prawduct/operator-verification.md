@@ -124,3 +124,32 @@ Remote Script refresh).
    confirmation (automation lanes in the arrangement), and the `.als`
    dump breakpoint-quality spot-check (closes the probe doc's
    "breakpoint quality / thinning" open item).
+
+---
+
+## SYN-6B4Q — cue_create_batch skip-mode wire round-trip (CLR-A chunk 02)
+
+**Status:** UNIT-CONFIRMED, live smoke pending a Remote Script refresh.
+**Visual change:** no (locator strip; deferred cues simply don't appear yet).
+
+The handler `cue_create_batch` gained `on_out_of_range='skip'`: it now creates
+the in-`last_event_time` cues and returns the rest in `skipped_out_of_range`
+instead of the W5-C atomic raise. Covered by `FakeSong`/`FakeCtx` unit tests,
+but the running Remote Script predates this handler — Live caches Control
+Surface modules, so the real wire path needs a Live restart to exercise.
+
+1. **One-time setup (human):** `/ableton-mcp-install`, then fully quit and
+   reopen Live so the refreshed Remote Script loads.
+
+2. **Skeleton-defer check:** scaffold a song with cue_points but NO arrangement
+   content; `push_cli execute`. Expect: cues phase OK (exit 0), the stdout
+   "Warnings (push still OK)" section lists every cue as deferred, NO `.last-
+   push-errors.json`, and Live's locator strip is empty (nothing half-placed).
+
+3. **Land-on-next-push check:** compose the arrangement, re-push. Expect: the
+   previously-deferred cues now appear in Live's locator strip at the right
+   bars, idempotently (no duplicates).
+
+4. **Composed-overrun check:** author a cue past the arrangement's end; push.
+   Expect: cues phase HALTS PARTIAL with the "composed song length" message
+   (naming the offending cue), NOT the runtime "past last_event_time".

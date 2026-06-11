@@ -184,16 +184,20 @@ def plan_push_cue_points(
     Sequencing precondition (W3-I): cue creation must run AFTER
     arrangement-clip placement, because Live's ``set_or_delete_cue`` is
     clamped to ``[0, song.last_event_time]``. The agent / push-skill is
-    responsible for phase order; a cue past the arrangement's extent
-    will surface as a teaching error from the handler at execution time.
+    responsible for phase order.
 
-    Plan-time visibility (Wave 0 paper-cut, full-band-rock runbook step
-    7e): when any cue's ``position_bar`` exceeds ``max(arrangement_clips
-    .end_bar)`` — the DB's planned arrangement extent — emit a warn so
-    the agent / user sees the prerequisite issue before round-tripping
-    to Live. An empty arrangement gets a distinct, more descriptive warn
-    naming the missing prereq instead of a generic extent-exceeded
-    message.
+    Extent partition (SYN-6B4Q): a cue's fate is decided against the DB's
+    composed song length (``max(arrangement_clips.end_bar)``):
+
+      * past the composed length (and an arrangement IS authored) → a hard
+        authoring error via :meth:`PushPlan.error` (no calls emitted); the
+        executor halts the phase with that DB-grounded message rather than
+        the opaque runtime ``past last_event_time``.
+      * no arrangement authored yet (skeleton push) → all cues are deferred:
+        a warn explains they'll land once the arrangement is composed.
+      * otherwise → emitted with ``on_out_of_range='skip'`` so a cue ahead of
+        Live's CURRENT extent (skeleton, or arrangement-not-yet-built) defers
+        at the handler instead of failing the batch.
 
     Result key: ``cue_batch:{song_id}``. The batch handler returns a list
     of per-cue results; ``apply_push_results`` consumes it via the
@@ -210,33 +214,56 @@ def plan_push_cue_points(
             "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
 
-    # Plan-time arrangement-extent check. The DB-side max end_bar is the
-    # PLANNED extent — if arrangement is pushed in the same plan_push_song
-    # cycle, Live's last_event_time will match this by the time cues run.
+    # SYN-6B4Q: partition cues against the DB's composed song length.
+    #
+    # The composed extent is max(arrangement_clips.end_bar) — the length the
+    # song is authored to. Two distinct questions decide a cue's fate:
+    #
+    #   * "Will this cue EVER be placeable?" — a DB question, answered here. A
+    #     cue past the composed extent references content that can't exist;
+    #     that's a hard authoring error (plan.error → the executor halts the
+    #     phase with THIS clear message, not the opaque runtime
+    #     `past last_event_time=…`). Only meaningful once an arrangement is
+    #     authored: with none, the song simply isn't composed yet.
+    #   * "Is this cue placeable RIGHT NOW in Live?" — a runtime question only
+    #     Live's last_event_time answers. A cue within the composed song can
+    #     still be ahead of Live's CURRENT extent (a skeleton push, or an
+    #     arrangement that hasn't built yet). We emit those with
+    #     on_out_of_range='skip' so Live's handler DEFERS them (reports them
+    #     back) instead of failing the whole batch; they land on the next push.
     arrangement_rows = Q.get_arrangement_for_song(conn, song_id)
-    if not arrangement_rows:
-        plan.warn(
-            f"{len(rows)} cue point(s) but the DB has no arrangement_clips — "
-            "Live's set_or_delete_cue is clamped to [0, last_event_time], so "
-            "every cue past bar 1 will fail. Push arrangement first, OR add "
-            "arrangement_clips rows covering each cue's position_bar."
-        )
-    else:
-        max_end_bar = max(float(r["end_bar"]) for r in arrangement_rows)
-        late_cues = [r for r in rows if float(r["position_bar"]) > max_end_bar]
-        if late_cues:
+    composed_max_end_bar = (
+        max(float(r["end_bar"]) for r in arrangement_rows)
+        if arrangement_rows else None
+    )
+    if composed_max_end_bar is not None:
+        overrun = [
+            r for r in rows
+            if float(r["position_bar"]) > composed_max_end_bar + 1e-9
+        ]
+        if overrun:
             preview = ", ".join(
                 f"{r['name'] or '(unnamed)'}@bar{float(r['position_bar']):.2f}"
-                for r in late_cues[:5]
+                for r in overrun[:5]
             )
-            ellipsis = " ..." if len(late_cues) > 5 else ""
-            plan.warn(
-                f"{len(late_cues)} of {len(rows)} cue(s) sit past the DB's "
-                f"arrangement extent (max end_bar={max_end_bar:.2f}): "
-                f"[{preview}{ellipsis}]. Live's set_or_delete_cue is clamped "
-                "to [0, last_event_time]; these cues will fail unless "
-                "arrangement is extended to cover them first."
+            ellipsis = " ..." if len(overrun) > 5 else ""
+            plan.error(
+                f"{len(overrun)} of {len(rows)} cue(s) sit past the composed "
+                f"song length (arrangement extent max end_bar="
+                f"{composed_max_end_bar:.2f}): [{preview}{ellipsis}]. A cue "
+                "past the end of the composed arrangement can never be placed "
+                "(Live clamps set_or_delete_cue to [0, last_event_time]) — "
+                "extend the arrangement to cover these positions, or "
+                "move/remove the cue(s), then re-push. No cues written."
             )
+            return plan
+    else:
+        plan.warn(
+            f"{len(rows)} cue point(s) but the DB has no arrangement_clips "
+            "yet — cues are deferred until the arrangement is composed (Live "
+            "clamps set_or_delete_cue to [0, last_event_time]). They land on "
+            "the next push once arrangement content covers them."
+        )
 
     # W19-E: auto-disambiguate repeated cue names. Live's locator strip
     # lists cues by display name; three cues named "chorus" produce three
@@ -276,7 +303,16 @@ def plan_push_cue_points(
     # handler default ever flipping).
     plan.add(ToolCall(
         tool="ableton_arrangement",
-        args={"action": "cue_create_batch", "cues": cues, "if_exists": "skip"},
+        args={
+            "action": "cue_create_batch", "cues": cues,
+            "if_exists": "skip",
+            # SYN-6B4Q: cues ahead of Live's current extent defer (the handler
+            # reports them in skipped_out_of_range) rather than failing the
+            # batch. The planner has already refused cues past the composed
+            # song length above, so anything deferred here WILL become
+            # placeable on a later push.
+            "on_out_of_range": "skip",
+        },
         key=f"cue_batch:{song_id}",
         purpose=f"create {len(cues)} cue point(s) in one batched call",
     ))

@@ -376,3 +376,95 @@ def test_resolve_query_rejects_empty_pattern():
 def test_resolve_query_rejects_unknown_root():
     with pytest.raises(ValueError, match="valid roots"):
         resolve_query({"root": "bogus", "pattern": "x"}, [])
+
+
+# --- INV-3K8W: teaching errors point AT the fix, not away ---------------------
+# Both strict-mode behaviors are already correct (no silent wrong load); these
+# pin that the 0-match / not-found-under-root messages name the actual mistake.
+
+
+def test_resolve_query_pattern_with_slash_teaches_path_prefix():
+    """A pattern containing '/' is the #1 authoring foot-gun: patterns match a
+    browser leaf's NAME, never its path, so a slashed pattern can't match and
+    the generic 'verify the preset is installed / refresh the cache' tail sends
+    the author toward a pointless cache refresh. The error must instead name
+    the real fix — move the leading segments into path_prefix — and offer the
+    concrete decomposition."""
+    entries = [_entry("instruments", "Strings", "Ac Strings Orch")]
+    with pytest.raises(ValueError) as exc:
+        resolve_query(
+            {"root": "instruments", "pattern": "Strings/Ac Strings Orch"},
+            entries,
+        )
+    msg = str(exc.value)
+    # Teaches the cause (name-only matching) and the fix (path_prefix).
+    assert "patterns match" in msg.lower()
+    assert "path_prefix" in msg
+    # Offers the concrete decomposition: prefix = leading segments, pattern = leaf.
+    assert "['Strings']" in msg
+    assert "Ac Strings Orch" in msg
+    # Preserves the 'no loadable matches' phrase that inventory.find keys its
+    # partial-root augmentation on — changing it would silently break that path.
+    assert "no loadable matches" in msg
+
+
+def test_resolve_query_path_prefix_repeats_root_teaches_drop():
+    """Passing the root as path_prefix[0] (path_prefix=['instruments', 'Bass']
+    under root='instruments') double-scopes to [root, root, ...] and matches
+    nothing. The generic 'not found under root — verify or refresh' tail hides
+    that the fix is dropping the leading segment; the error must say so and
+    show the corrected prefix."""
+    entries = [_entry("instruments", "Bass", "Sub")]
+    with pytest.raises(ValueError) as exc:
+        resolve_query(
+            {"root": "instruments", "pattern": "Sub",
+             "path_prefix": ["instruments", "Bass"]},
+            entries,
+        )
+    msg = str(exc.value)
+    assert "drop" in msg.lower()
+    assert "'instruments'" in msg  # names the offending leading segment
+    assert "['Bass']" in msg       # shows the corrected prefix
+
+
+def test_resolve_query_path_prefix_repeats_root_only_segment_teaches_omit():
+    """When the only path_prefix segment IS the root, dropping it leaves an
+    empty prefix — the teaching says to omit path_prefix entirely rather than
+    suggest an empty list."""
+    entries = [_entry("packs", "Orchestral Strings", "Ac Strings Orch")]
+    with pytest.raises(ValueError) as exc:
+        resolve_query(
+            {"root": "packs", "pattern": "Ac Strings Orch",
+             "path_prefix": ["packs"]},
+            entries,
+        )
+    msg = str(exc.value)
+    assert "drop" in msg.lower()
+    assert "omit path_prefix" in msg
+
+
+def test_resolve_query_path_prefix_repeats_root_case_insensitive():
+    """The author likely copied the root spelled however the browser shows it
+    ('Packs', 'Audio Effects'); detect the repeat case-insensitively and with
+    space/underscore equivalence, mirroring root canonicalization."""
+    entries = [_entry("audio_effects", "Reverb", "Hall")]
+    with pytest.raises(ValueError) as exc:
+        resolve_query(
+            {"root": "audio_effects", "pattern": "Hall",
+             "path_prefix": ["Audio Effects", "Reverb"]},
+            entries,
+        )
+    assert "drop" in str(exc.value).lower()
+
+
+def test_resolve_query_path_prefix_genuine_miss_keeps_base_message():
+    """Regression guard: a path_prefix that does NOT repeat the root and simply
+    isn't in the cache keeps the original 'not found under root' message — the
+    new root-repeat teaching must not swallow the generic case."""
+    entries = [_entry("instruments", "Operator", "Bass", "Sub")]
+    with pytest.raises(ValueError, match="not found under") as exc:
+        resolve_query(
+            {"root": "instruments", "pattern": "Sub", "path_prefix": ["Meld"]},
+            entries,
+        )
+    assert "drop" not in str(exc.value).lower()

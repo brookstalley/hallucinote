@@ -41,7 +41,26 @@ class ToolCall:
 @dataclass
 class PushPlan:
     calls: list[ToolCall] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)  # human notes / warnings
+    # Internal/benign planner notes (e.g. "no tempo_map rows; nothing to push",
+    # "not linked yet; rerun after apply"). Diagnostic only — NOT surfaced to
+    # the operator. Use `alert()` for anything the operator must see.
+    notes: list[str] = field(default_factory=list)
+    # Hard authoring errors (SYN-6B4Q): a planner sets these when the DB
+    # describes something that can never be materialized in Live (e.g. a cue
+    # past the composed song length), as opposed to a `note` ("skipped a row,
+    # the agent decides"). The executor HALTS a phase whose plan carries
+    # errors — without dispatching any of its calls — so the operator gets a
+    # clear, DB-grounded message instead of an opaque runtime failure.
+    errors: list[str] = field(default_factory=list)
+    # Operator-actionable, NON-fatal warnings (SYN-9F2L): a planner sets these
+    # when it had to skip something the operator authored and would want to
+    # know about — e.g. a params_dialed write with no writable form ("the
+    # dialed intent was NOT pushed"). Distinct from `notes` (diagnostic noise
+    # the operator shouldn't see) and from `errors` (which halt). The executor
+    # drains alerts into the push report's benign warnings channel; the push
+    # still completes (exit 0). Severity-, not phase-, scoped: any planner can
+    # raise one and it surfaces.
+    alerts: list[str] = field(default_factory=list)
 
     def add(self, call: ToolCall) -> None:
         self.calls.append(call)
@@ -49,10 +68,18 @@ class PushPlan:
     def warn(self, msg: str) -> None:
         self.notes.append(msg)
 
+    def error(self, msg: str) -> None:
+        self.errors.append(msg)
+
+    def alert(self, msg: str) -> None:
+        self.alerts.append(msg)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "calls": [asdict(c) for c in self.calls],
             "notes": self.notes,
+            "errors": self.errors,
+            "alerts": self.alerts,
         }
 
 

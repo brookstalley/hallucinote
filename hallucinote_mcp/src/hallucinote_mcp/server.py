@@ -162,6 +162,37 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     return mcp
 
 
+# Read-timeout policy per (tool, action). The default suits actions that
+# return within Live's main-thread budget — a stall then surfaces as a
+# structured timeout instead of hanging the MCP transport. A few actions break
+# that budget by design and need a wider (or no) window:
+#   - ableton_render(render): drives full-arrangement playback before
+#     responding (minutes for a long song) → unbounded; only the operator
+#     stopping playback ends it.
+#   - ableton_render(ensure_loaded): loads the analyzer M4L device onto every
+#     audio track + return (25+ surfaces on a large set), each load a few
+#     seconds on Live's main thread → routinely past the 15s default while the
+#     work continues server-side (MCP-4T6Y). A generous but BOUNDED ceiling
+#     keeps a genuinely-stuck load surfacing as a timeout rather than hanging.
+_DEFAULT_READ_TIMEOUT: float = 15.0
+_ENSURE_LOADED_READ_TIMEOUT: float = 180.0
+_READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
+    ("ableton_render", "render"): None,
+    ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
+}
+
+
+def _read_timeout_for(tool: str, action: str) -> float | None:
+    """Select the socket read timeout for a forwarded call (MCP-4T6Y).
+
+    Returns ``None`` (unbounded) for known full-playback actions, a generous
+    bounded value for known long-but-finite actions, and the default for
+    everything else. The async/progress protocol that would replace polling
+    with server-pushed progress stays a design note on MCP-4T6Y.
+    """
+    return _READ_TIMEOUTS.get((tool, action), _DEFAULT_READ_TIMEOUT)
+
+
 def handle_tool_call(
     tool: str,
     action: str,
@@ -211,15 +242,12 @@ def handle_tool_call(
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
 
-    # Forward to the Remote Script. ableton_render(render) drives full-
-    # arrangement playback before responding (minutes for a long song),
-    # so disable the default 15s read timeout for that path. Every other
-    # action returns within Live's main-thread budget — keep the bounded
-    # default so a stalled handler surfaces as a structured timeout
-    # error instead of hanging the MCP transport.
-    read_timeout: float | None = 15.0
-    if request.tool == "ableton_render" and request.action == "render":
-        read_timeout = None
+    # Forward to the Remote Script with a per-action read-timeout (MCP-4T6Y):
+    # render is unbounded (full-arrangement playback), ensure_loaded gets a
+    # generous bounded window (25+ analyzer loads), everything else keeps the
+    # default so a stalled handler surfaces as a structured timeout instead of
+    # hanging the transport.
+    read_timeout = _read_timeout_for(request.tool, request.action)
     try:
         remote_response = client.send(request, read_timeout=read_timeout)
     except client.LiveConnectionError as exc:

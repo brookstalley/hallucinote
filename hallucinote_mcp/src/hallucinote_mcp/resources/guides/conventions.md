@@ -74,6 +74,32 @@ size, author the notes as code in the song's `build.py`
 Live 12.4 exposes no public reorder API — plan the load order if chain order
 matters.
 
+### Reordering / inserting mid-chain: delete-descending, reload-in-order
+
+Because load only appends and there's no reorder API, changing the order of an
+already-materialized chain — e.g. inserting a device ahead of an existing FX
+chain, or swapping one in the middle — has exactly one path:
+
+1. **Delete the affected devices in DESCENDING index order** (highest
+   `device_index` first). Deleting top-down keeps every not-yet-deleted index
+   stable; deleting bottom-up shifts the indices out from under you.
+2. **Reload all of them in the desired order** (`load` appends, so loading
+   `[A, B, C]` in sequence yields that chain order).
+
+There is a window between step 1 and step 2 where the chain is empty — issue
+all the delete + reload calls back-to-back (don't pause for unrelated work
+while the chain is gutted). Afterward, re-run the push probe-and-link step so
+the DB↔Live device bindings re-attach to the rebuilt chain; the next
+`push_cli execute` then reports `devices: skipped (idempotent)`.
+
+> No `rebuild_chain` convenience ships for this (DEV-5R8Q). It isn't a
+> pure-planner emission: the push planner binds devices idempotently by
+> class+position and has no "reorder an existing chain" diff, so a convenience
+> would need new Remote-Script-side orchestration to sequence the
+> delete+reload and manage the transient-empty-chain window — out of scope
+> until the cost is justified by more than a one-off hand-edit. Hand-author the
+> two steps above when you need them.
+
 ## `kind` is the browser display name
 
 For built-in Live devices, `kind` is the device's **browser display name**

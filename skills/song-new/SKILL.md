@@ -72,7 +72,7 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently.
+7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
 8. Report the result + tell the user what to do next.
 
 ## Gathering input

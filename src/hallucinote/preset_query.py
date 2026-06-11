@@ -228,6 +228,29 @@ def resolve_query(query: dict, entries: list[dict]) -> dict:
             if e.get("path", [])[: len(scope_path)] == scope_path
         ]
         if not in_scope:
+            # INV-3K8W foot-gun: path_prefix is RELATIVE to root, but authors
+            # who copy a full browser path repeat the root as path_prefix[0]
+            # (e.g. path_prefix=['packs', ...] under root='packs'), which
+            # double-scopes to [root, root, ...] and matches nothing. The
+            # generic "not found under root" hides that the fix is dropping the
+            # leading segment. Detect it (case/space-insensitive, mirroring
+            # root canonicalization) and teach the exact correction.
+            if (
+                path_prefix
+                and str(path_prefix[0]).strip().lower().replace(" ", "_") == root
+            ):
+                remainder = list(path_prefix[1:])
+                fix = (
+                    f"path_prefix={remainder!r}"
+                    if remainder
+                    else "omit path_prefix entirely"
+                )
+                raise ValueError(
+                    f"preset_query.path_prefix={path_prefix!r} repeats the root "
+                    f"{root!r} as its first segment. path_prefix is RELATIVE to "
+                    f"root, so the leading {path_prefix[0]!r} double-scopes and "
+                    f"matches nothing — drop it: {fix}."
+                )
             raise ValueError(
                 f"preset_query.path_prefix={path_prefix!r} not found under "
                 f"root {root!r} in the inventory cache — verify the prefix or "
@@ -242,6 +265,27 @@ def resolve_query(query: dict, entries: list[dict]) -> dict:
         and name_matches(str(e.get("name", "")), pattern, mode, case_sensitive)
     ]
     if not matches:
+        # INV-3K8W foot-gun: a pattern containing '/' matches a browser leaf's
+        # NAME only (Live uses '/' as the path separator, so no leaf name can
+        # contain one) — it's a guaranteed 0-match that the generic "verify
+        # the preset is installed / refresh the cache" tail sends the author to
+        # chase a pointless refresh. Teach the real fix: path structure goes in
+        # path_prefix. Keep the "no loadable matches" phrase — inventory.find
+        # keys its partial-root augmentation on it.
+        if "/" in pattern:
+            segments = [s.strip() for s in pattern.split("/")]
+            suggested_prefix = [s for s in segments[:-1] if s]
+            suggested_pattern = segments[-1]
+            raise ValueError(
+                f"preset_query found no loadable matches for pattern={pattern!r} "
+                f"mode={mode!r} root={root!r} path_prefix={path_prefix!r}. The "
+                "pattern contains '/', but patterns match a browser entry's NAME "
+                "only — never its path — so a slashed pattern can't match. Path "
+                "structure goes in path_prefix: move the leading segments there, "
+                f"e.g. path_prefix={suggested_prefix!r}, "
+                f"pattern={suggested_pattern!r} (or use the path-shape sugar "
+                f"{root + '/' + pattern!r})."
+            )
         raise ValueError(
             f"preset_query found no loadable matches for pattern={pattern!r} "
             f"mode={mode!r} root={root!r} path_prefix={path_prefix!r} in the "

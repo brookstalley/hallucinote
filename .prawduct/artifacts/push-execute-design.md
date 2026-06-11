@@ -80,7 +80,23 @@ return 0
 
 3. **No internal retry.** Re-running `execute` IS the retry — push is
    idempotent (W10-A), so already-applied rows skip on re-run. Internal
-   retry hides intermittent bugs.
+   retry hides intermittent bugs. Two deliberate, structural exceptions (not
+   transient-error retries):
+   - **Devices convergence re-plan (SYN-9F2L).** A device loaded *this* pass
+     gets its `ableton_links` row at apply-time — *after* its parameters were
+     planned — so its dialed params were unplannable in the primary pass. After
+     a clean devices phase, the executor re-runs the devices planner once and
+     dispatches only the NEW calls (already-dispatched keys are filtered out, so
+     nothing re-sends). Without it the params silently never land: the next
+     push's planner sees no DB change and skips the phase. This is a
+     same-pass *convergence*, not a retry of a failed call.
+   - **set_parameter wire-form fallback ladder (SYN-9F2L).** A `set_parameter`
+     the handler refuses with a known, structural reason gets ONE re-shaped
+     attempt: a `value_display` write refused as an enum retries with
+     `value_type='enum'`; one refused for a missing display curve retries with
+     the DB's `value_normalized`. A successful fallback is recorded on the
+     result (`set_parameter_fallback`); a still-failing write halts the phase
+     normally. One shape substitution, not open-ended retry.
 
 4. **Apply runs per phase** so `ableton_links` updates before the next
    phase plans. Successful results land in the DB even when later calls
@@ -89,6 +105,33 @@ return 0
 5. **No auto-clear.** If partial state is too tangled to trust, the
    operator invokes a separate `/ableton-push --clean` flow (or clears Live
    manually). `execute` never wipes Live state on its own.
+
+6. **Plan-time hard error → halt the phase WITHOUT dispatching (SYN-6B4Q).**
+   A planner can set `PushPlan.errors` when the DB describes something that
+   can never be materialized in Live (e.g. a cue past the composed song
+   length). The executor halts that phase up front — no calls go out, since
+   nothing should half-apply — with the DB-grounded message in the errors
+   file. This is distinct from a per-call failure (#2): there's no Live
+   round-trip, and the message teaches the authoring fix, not a runtime
+   symptom.
+
+7. **Benign warning → surface, don't fail (SYN-6B4Q, SYN-9F2L).** Some
+   outcomes are informational, not failures, and live in the `warnings` channel
+   (outcome stays `ok`, exit 0) so they never read as a halt cause. Two
+   sources feed it:
+   - **Deferred cues (SYN-6B4Q).** A `cue_create_batch` run in
+     `on_out_of_range='skip'` mode reports cues it DEFERRED (ahead of Live's
+     current arrangement extent) in `skipped_out_of_range`; the call succeeded,
+     and the deferred cues land on the next push once content covers them.
+   - **Planner alerts (SYN-9F2L).** A planner records an operator-actionable,
+     non-fatal warning via `PushPlan.alert()` (e.g. a params_dialed write with
+     no writable form — "the dialed intent was NOT pushed"). The executor
+     drains a plan's `alerts` (including the devices convergence re-plan's,
+     deduped) into `warnings`. This is severity-, not phase-, scoped: any
+     planner can raise one. It is DISTINCT from `PushPlan.notes` — the
+     diagnostic channel ("no tempo_map rows; nothing to push", "not linked yet;
+     rerun after apply") that the executor does NOT surface — and from
+     `PushPlan.errors` (#6), which halt.
 
 ### Artifacts (the agent-facing contract)
 
@@ -110,14 +153,19 @@ return 0
     {"name": "clips",          "status": "halted",  "calls_ok": 27, "calls_failed": 2},
     {"name": "mix",            "status": "pending", "calls_planned": 3}
   ],
-  "errors_file": ".last-push-errors.json"  // null when no errors
+  "errors_file": ".last-push-errors.json", // null when no errors
+  "warnings": []                            // SYN-6B4Q: benign warnings (deferred cues); [] when none
 }
 ```
 
 Phase `status` values: `ok` (all calls succeeded), `skipped` (planner emitted
-zero calls — idempotent re-push), `halted` (one or more calls failed; phase
-ran to completion before halt), `pending` (phase not attempted due to upstream
-halt).
+zero calls — idempotent re-push), `halted` (one or more calls failed OR the
+plan carried a hard error; phase did not necessarily round-trip to Live),
+`pending` (phase not attempted due to upstream halt).
+
+`warnings` (SYN-6B4Q) is an additive field: benign, non-failing messages
+(e.g. cues deferred past Live's current arrangement extent). An `ok` push can
+carry warnings with no errors file; readers default to `[]` when it's absent.
 
 **`.last-push-errors.json`** — full forensics, written only when there are
 errors:

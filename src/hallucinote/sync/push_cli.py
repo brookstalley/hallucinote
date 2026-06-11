@@ -532,6 +532,60 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+# Markers in the version-handshake refusal text built by the Remote Script
+# side (hallucinote_mcp.wire.check_version_compat). Matched as substrings so
+# the detection survives the refusal coming from an OLDER Remote Script whose
+# wording predates any change to that hint.
+_VERSION_MISMATCH_MARKERS = ("version mismatch", "version handshake")
+
+
+def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | None:
+    """SYN-5C3J: teach the recovery that actually clears an engine↔Remote-Script
+    version mismatch.
+
+    When a fresh CLI process is built from a different commit than the Live
+    session's running Remote Script, every call refuses on the version
+    handshake. The generic ``execute`` recovery ("fix build.py and re-run") is
+    actively misleading here — re-running with the same drift refuses again.
+    Detect the handshake refusal among the surfaced error patterns and return
+    the recovery that resolves it, including the pin path that keeps a
+    mid-flight Live session untouched (the editable-install + parallel-engine-
+    dev case from the swell friction log). Returns ``None`` when no version
+    mismatch is present, so normal failures keep the generic recovery.
+
+    The Remote Script side generates the refusal, so its hint can't be updated
+    in a running session — the teaching has to come from THIS (CLI) side, which
+    is why it lives here and not in ``hallucinote_mcp.wire``.
+    """
+    patterns = getattr(result, "top_error_patterns", None) or []
+    matched = any(
+        marker in (p.get("error_substring") or "").lower()
+        for p in patterns
+        for marker in _VERSION_MISMATCH_MARKERS
+    )
+    if not matched:
+        return None
+    return (
+        "\nRecovery (version mismatch): the CLI and the running Remote Script "
+        "are built from different commits, so re-running won't help until they "
+        "agree. The refusal above reports the Remote Script's version — its "
+        "`+<sha>` suffix is the commit it was vendored from. Two paths:\n"
+        "  1. Update the Remote Script to match the CLI: run `/ableton-mcp-install`, "
+        "then fully quit and reopen Live (Live caches Control Surface modules at "
+        "startup — `/mcp` alone won't reload them).\n"
+        "  2. Keep the live session and pin the CLI to the Remote Script's "
+        "commit (no Live restart — best when you're developing the engine in "
+        "parallel against a mid-flight song):\n"
+        "       git worktree add /tmp/hallucinote-pin <sha-from-the-refusal-above>\n"
+        "       export PYTHONPATH=/tmp/hallucinote-pin/src:/tmp/hallucinote-pin/hallucinote_mcp/src\n"
+        "       python3 -m hallucinote_mcp.cli preflight   # confirm package.version == the vendored remote_script version\n"
+        "       python3 -m hallucinote.sync.push_cli execute ...   # re-run, now pinned\n"
+        "  See the error-recovery guide ('Engine version drift during a live "
+        "compose session') for why the editable-install + parallel-dev combo "
+        "makes this common.\n"
+    )
+
+
 def _cmd_execute(args: argparse.Namespace) -> int:
     """W10-E2: dispatch the full twelve-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
@@ -637,14 +691,20 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     # Push is idempotent (W10-A + W20-A device binding by class/position) —
     # re-running is the structural retry, not a separate `--resume` path.
     if result.exit_code != 0:
-        slug_flag = f"--song {args.song}" if getattr(args, "song", None) else f"--db {db_path}"
-        sys.stdout.write(
-            "\nRecovery: fix the underlying issue (build.py or snapshot), "
-            "rebuild, then re-run:\n"
-            f"  python3 -m hallucinote.sync.push_cli execute "
-            f"{args.session_id} {slug_flag} --probe\n"
-            "Re-run is idempotent: already-applied rows skip on the second pass.\n"
-        )
+        # SYN-5C3J: a version-mismatch refusal needs a different recovery than
+        # the generic "fix build.py and re-run" — re-running can't clear drift.
+        pin_recovery = _version_mismatch_recovery(result)
+        if pin_recovery is not None:
+            sys.stdout.write(pin_recovery)
+        else:
+            slug_flag = f"--song {args.song}" if getattr(args, "song", None) else f"--db {db_path}"
+            sys.stdout.write(
+                "\nRecovery: fix the underlying issue (build.py or snapshot), "
+                "rebuild, then re-run:\n"
+                f"  python3 -m hallucinote.sync.push_cli execute "
+                f"{args.session_id} {slug_flag} --probe\n"
+                "Re-run is idempotent: already-applied rows skip on the second pass.\n"
+            )
     return result.exit_code
 
 

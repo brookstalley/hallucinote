@@ -352,6 +352,97 @@ def test_render_ensure_loaded_call_does_not_touch_output_dir(
 
 
 # ---------------------------------------------------------------------------
+# MCP-4T6Y: per-action socket read-timeout policy.
+#
+# The default 15s window fits actions that return within Live's main-thread
+# budget. Two ableton_render actions break it: render (full playback) needs no
+# bound; ensure_loaded loads the analyzer onto 25+ surfaces and routinely
+# outruns 15s while the work continues server-side — it needs a generous but
+# bounded window so a genuinely-stuck load still surfaces as a timeout.
+# ---------------------------------------------------------------------------
+
+
+def test_read_timeout_render_is_unbounded():
+    from hallucinote_mcp.server import _read_timeout_for
+    assert _read_timeout_for("ableton_render", "render") is None
+
+
+def test_read_timeout_ensure_loaded_is_generous_but_bounded():
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
+    t = _read_timeout_for("ableton_render", "ensure_loaded")
+    # Bounded (not the unbounded render case) but well clear of the default —
+    # the whole point is that 15s was too short.
+    assert t is not None
+    assert t > _DEFAULT_READ_TIMEOUT
+
+
+def test_read_timeout_default_action_keeps_bounded_default():
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
+    assert _read_timeout_for("ableton_session", "set_tempo") == _DEFAULT_READ_TIMEOUT
+    # ensure_loaded on a non-render tool is NOT special-cased — the policy is
+    # keyed on (tool, action), not action alone.
+    assert _read_timeout_for("ableton_track", "ensure_loaded") == _DEFAULT_READ_TIMEOUT
+
+
+def test_handle_tool_call_forwards_ensure_loaded_with_generous_timeout(
+    tmp_path, monkeypatch,
+):
+    """The selected timeout must actually reach client.send — pin the wiring,
+    not just the policy table. Before MCP-4T6Y this forwarded with the 15s
+    default and timed out mid-load."""
+    from hallucinote_mcp.server import _ENSURE_LOADED_READ_TIMEOUT
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+    forwarded = Response(ok=True, result={"loaded_count": 25})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "ensure_loaded", {})
+    assert send.call_args.kwargs["read_timeout"] == _ENSURE_LOADED_READ_TIMEOUT
+
+
+def test_handle_tool_call_forwards_render_with_unbounded_timeout(
+    tmp_path, monkeypatch,
+):
+    """Regression: render must keep its unbounded (None) read timeout through
+    the refactor to the policy table."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+    forwarded = Response(ok=True, result={"captures_dir": str(tmp_path)})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "render", {"song_slug": "demo"})
+    assert send.call_args.kwargs["read_timeout"] is None
+
+
+def test_handle_tool_call_forwards_default_action_with_bounded_timeout(
+    isolated_registry,
+):
+    """A normal mutating call keeps the 15s default so a stalled handler
+    surfaces as a structured timeout instead of hanging the transport."""
+    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT
+    from hallucinote_mcp.wire import Response
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session",
+            name="set_tempo",
+            description="",
+            params=(ParamSpec(name="value", type="float"),),
+            declarative_op=LiveOp(
+                kind="property_write", target="song", property="tempo"
+            ),
+        )
+    )
+    isolated_registry.register_help_actions()
+
+    forwarded = Response(ok=True, result={"new_tempo": 132.0})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+    assert send.call_args.kwargs["read_timeout"] == _DEFAULT_READ_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
 # Wire-shape regression: every tool's inputSchema must expose action params
 # as top-level kwargs (not nested under ``params``).
 #

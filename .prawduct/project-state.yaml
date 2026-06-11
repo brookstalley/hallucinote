@@ -476,9 +476,9 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). AUD-1M4V stage 0 executes
-# serially: CLP-AUD1 first, then ENV-7G4K (repoint when that cycle starts).
-active_build_plan: artifacts/plans/ENV-7G4K/build-plan.md
+# Active build plan pointer (.prawduct/-relative). ENV-7G4K shipped (PR #158);
+# ENV-9P4T extends it — performed automation at mix scale (started 2026-06-11).
+active_build_plan: artifacts/plans/ENV-9P4T/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

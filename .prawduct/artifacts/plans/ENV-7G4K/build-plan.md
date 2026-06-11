@@ -42,13 +42,81 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 
 ## Status
 
-- [ ] Chunk 01: probes + `ableton_automation perform` action (thin slice)
-- [ ] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
-- [ ] Chunk 03: push phase + fingerprint gate + Live smoke
-- [ ] Chunk 04: docs, guides, backlog closeout
-Context: plan authored 2026-06-10; nothing built yet. Parallel item CLP-AUD1 is
-file-disjoint (db schema CHECK regions differ; no shared push phase) — see
-"Coordination" below.
+- [x] Chunk 01: probes + `ableton_automation perform` action (thin slice)
+- [x] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
+- [x] Chunk 03: push phase + fingerprint gate + Live smoke
+- [x] Chunk 04: docs, guides, backlog closeout
+Context: chunk 04 BUILT 2026-06-11 (cumulative-final): gaps guide
+(`resources/guides/gaps.md`) splits the old master+audio gap into
+refused-audio (ENV-8H1T) vs performed master/group/return;
+`docs/song-authoring-conventions.md` gains the performed-arc section
+(wall-clock, transport-plays, fingerprint gate, write-only) and narrows
+the refusal to audio hosts; archived full-band-rock canary gains a
+superseded note. Change-log entry added (status=merged, set at PR
+creation per convention). Backlog pass via the skill: ENV-7G4K →
+shipped/Archive (with recorded-residuals scrub trail), ENV-4M2T narrowed
+to clip-locked residual, AUD-1M4V stage 0b BUILT, DEV-2M9K new-evidence
+note (scriptable UI crack). Cumulative Critic (develop...HEAD) found
+2 BLOCKING + 4 warnings — ALL resolved in 4c59a92 (session-keyed
+performed_automation fingerprints + disposable-table rebuild, song-new
+skill teaching, apply-layer unverified-perform warnings surfaced at all
+3 call sites, twelve-phase skill/help sweep, master send_level →
+unroutable, Q.get_envelope dedup; route-map dedup filed as ENV-5R2J).
+verify-resolutions chain record CLEAN — the /prawduct:pr create gate
+(base develop) is satisfied. PR awaits user ask (PR creation:
+wait_for_user). Operator audible/visual half still queued in
+operator-verification.md (not a PR blocker per review).
+Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
+`perform` action + handler (runs_on_worker, lock under live_state_lock,
+record_mode settle-poll per probe 10, per-step finally restore incl.
+re_enable_automation, beat-space interp with linear/hold/fast/slow) + 24 unit
+tests + LOCK_USERS audit entry. Chunk 01 step 0 verdicts landed 2026-06-11
+(lom-probe-results.md rows 12/13): (b) re-record overwrite **CONFIRMED** —
+same-span re-perform fully replaces the prior arc, automation_state stays 1 —
+the HIGH-impact fingerprint-gate assumption holds; chunk 03 unblocked. (a)
+group-host recording **CONFIRMED** later the same day (row 13) after the user
+granted Accessibility: group created agent-side (LOM select + Up-arrow focus
+onto the track header + scripted Cmd+G — Live's Group menu item needs header
+focus, LOM selection alone leaves it disabled), probe-4 recipe verified
+automation_state 0→1 + playback tracking on the group's mixer volume. BOTH
+chunk-01 probe verdicts landed; every design assumption confirmed; no
+re-plan needed at the chunk-01 governance checkpoint.
+Chunk 03 S-7 SMOKE PASSED (wire half) 2026-06-11 against real Live
+12.4.1 on matched versions after the RS refresh: all 5 arc families
+automation_state==1, fingerprint skip-all on re-push, targeted
+re-perform, 6 events. Evidence in test_live_smoke.md S-7; driver
+vendored at docs/research/audio-first-class/env7g4k-smoke-driver.py.
+Operator audible/visual + .als breakpoint-quality spot-check pending in
+operator-verification.md (user glance + one ⌘S). Bonus finding: master
+Auto Filter loaded via keyboard automation (browser+Enter) — DEV-2M9K
+has a scriptable UI path under Accessibility. Next: chunk 04 closeout.
+Chunk 03 CODE built + Critic-passed (1 warning, resolved with added
+coverage) 2026-06-11: `performed_automation` phase (12th, after envelopes)
+in sync/push/perform.py — eligibility via classify_envelope_route,
+per-kind addressing (master/group/return mixer, group sends, master- and
+return-chain device params), tempo-map-integrated wall-clock estimates,
+fingerprint gate with skipped-unchanged reporting, apply-layer
+record_perform_result gated on automation_state==1 (unverified → retry
+next push). 20 unit tests; phase-contract tests updated 11→12. Chunk 03
+stays [ ] on ONE remaining step: the S-7 real-Live smoke
+(tests/integration/test_live_smoke.md) — blocked on the Remote Script
+refresh (`/ableton-mcp-install` + full Live quit/reopen; running RS
+a5479db86125 predates the perform handler). Operator-verification entry
+queued.
+Chunk 02 built + Critic-clean (0/0/0) 2026-06-11: return_mixer_volume/pan
+kinds + performed_automation table (schema.sql), eligibility replaces the
+W10-F refusal (mutator allows master/group, audio keeps ENV-8H1T teaching,
+master send_level gets a semantic "no sends" refusal),
+`classify_envelope_route` in sync/push/envelopes.py is the single
+partition source (exported for chunk 03's phase selector),
+record_performed_automation + performed_automation_fingerprint +
+AUTOMATION_PERFORMED event shipped (consumed by chunk 03). 3208 tests
+green. Conscious scope note: return→return *sends* are not in the wave-1
+DB vocabulary (design.md only added the return's own mixer); flag for the
+backlog if a song needs them. Next: chunk 03 (push phase + fingerprint
+gate + Live smoke — smoke also closes the group-host probe, row 13).
+Parallel item CLP-AUD1 already merged (PR #157); schema.sql rebase burden
+now falls on this branch.
 
 ## Scaffolding
 

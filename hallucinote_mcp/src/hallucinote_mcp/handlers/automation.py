@@ -54,10 +54,15 @@ stays meter-agnostic — same principle as ``ableton_clip``.
 """
 from __future__ import annotations
 
+import logging
 import math as _math
-from typing import Any
+import time
+from typing import Any, Callable
 
 from ..dispatcher import LiveContext
+
+
+logger = logging.getLogger(__name__)
 
 
 TARGET_KINDS: tuple[str, ...] = (
@@ -1387,12 +1392,494 @@ def _translate_envelope_target_error(target_kind: str, exc: Exception) -> Except
     return exc
 
 
+# ---------------------------------------------------------------------------
+# perform — gesture-recorded arrangement automation (ENV-7G4K)
+# ---------------------------------------------------------------------------
+#
+# Master / group / return mixer and device-parameter automation has NO
+# session-clip host (master and returns can't hold session clips; Live
+# rejects group-track clip slots) and arrangement automation lanes have
+# no LOM write surface. The verified write path (lom-probe-results.md
+# probes 4 / 4b / 10, Live 12.4.1) is realtime automation recording:
+#
+#   save transport/record state
+#   song.session_automation_record = True
+#   song.record_mode = True        # ASYNC — applies ~300 ms later
+#                                  # (probe 10): settle-poll, NEVER
+#                                  # trust same-call read-back
+#   seek to span start
+#   param.begin_gesture()
+#   song.start_playing()
+#   loop (~10 Hz): read song.current_song_time (beats) on the main
+#                  thread, set param.value = interp(breakpoints, beat)
+#   param.end_gesture()
+#   song.stop_playing(); restore saved state
+#
+# Properties of the mechanism class: *write-only* (no LOM read of
+# arrangement automation — verification is param.automation_state +
+# playback observation), *realtime* (a perform costs wall-clock
+# proportional to span / tempo), *async transport state*.
+#
+# Threading: registered runs_on_worker=True. Every Live touch is its own
+# ``context.run_on_main`` bout; wall-clock sleeps happen on the worker
+# thread between bouts so Live's main thread stays free to pump the
+# audio-thread → mirror propagation (the W3-F lesson — a main-thread
+# sleep starves the very event pump the settle-poll is waiting on).
+# Transport mutation is serialized under ``context.live_state_lock``
+# (same contract as seek / cue_create).
+
+
+PERFORM_TARGET_KINDS: tuple[str, ...] = (
+    "mixer_volume",
+    "mixer_pan",
+    "send_level",
+    "device_parameter",
+)
+
+# Value-update PERIOD for the scripted ramp — the loop sleeps 100 ms per
+# step, but main-thread scheduling + the Live touch dominate, so the
+# ACHIEVED rate is ~2.5-3 Hz (S-7 .als dump: ~3 breakpoints/second per
+# arc). That rate still read as faithful across all 5 S-7 arc families —
+# Live interpolates between recorded points. Tune here if a future arc
+# surfaces audible stepping; the floor is scheduling, not this constant.
+_PERFORM_UPDATE_PERIOD_S = 0.1
+
+# Settle-poll cadence for async Song state (record_mode — probe 10).
+_PERFORM_SETTLE_POLL_S = 0.05
+
+_DEFAULT_PERFORM_SETTLE_TIMEOUT_MS = 2000
+
+# The ramp loop's wall-clock budget is the expected playback duration
+# times this factor, plus a fixed floor — generous because tempo maps
+# can slow playback well below the tempo read at span start.
+_PERFORM_WALL_CLOCK_FACTOR = 3.0
+_PERFORM_WALL_CLOCK_FLOOR_S = 10.0
+
+
+def _interp_performed_value(
+    breakpoints: list[dict[str, Any]], beat: float
+) -> float:
+    """Interpolate the authored arc's value at ``beat``.
+
+    ``breakpoints`` is the cleaned output of ``_validate_breakpoints``
+    (sorted, ``{time_beats, value, curve}``). Before the first breakpoint
+    the first value holds; after the last, the last value holds. Within a
+    segment, ``breakpoints[i]['curve']`` describes the transition TO the
+    next breakpoint (same convention as ``_write_breakpoints_as_steps``):
+
+      - ``linear`` (default) — straight lerp
+      - ``hold`` — previous value until the next breakpoint
+      - ``fast`` — most of the change happens early (1 - (1-t)^2)
+      - ``slow`` — most of the change happens late (t^2)
+
+    Recorded automation has no LOM curve-object surface; curve shapes are
+    approximated by sampling the shaped interpolation during the ramp
+    (design.md, ENV-7G4K).
+    """
+    if beat <= breakpoints[0]["time_beats"]:
+        return float(breakpoints[0]["value"])
+    if beat >= breakpoints[-1]["time_beats"]:
+        return float(breakpoints[-1]["value"])
+    # Walk segments — breakpoint lists are authored-arc sized (tens of
+    # entries), linear scan at 10 Hz is well below any cost threshold.
+    for i in range(len(breakpoints) - 1):
+        t0 = breakpoints[i]["time_beats"]
+        t1 = breakpoints[i + 1]["time_beats"]
+        if not (t0 <= beat < t1):
+            continue
+        v0 = float(breakpoints[i]["value"])
+        v1 = float(breakpoints[i + 1]["value"])
+        curve = breakpoints[i].get("curve") or "linear"
+        if curve == "hold":
+            return v0
+        if t1 <= t0:  # zero-length segment (duplicate times) — step to v0
+            return v0
+        t = (beat - t0) / (t1 - t0)
+        if curve == "fast":
+            shaped = 1.0 - (1.0 - t) ** 2
+        elif curve == "slow":
+            shaped = t**2
+        else:  # linear
+            shaped = t
+        return v0 + (v1 - v0) * shaped
+    # Unreachable given the boundary checks above; defensive hold.
+    return float(breakpoints[-1]["value"])
+
+
+def _resolve_perform_target(
+    context: LiveContext,
+    *,
+    target_kind: str,
+    master: bool,
+    track_index: int | None,
+    return_index: int | None,
+    device_index: int | None,
+    parameter_name: str | None,
+) -> Any:
+    """Resolve the Live ``DeviceParameter`` the gesture will ride.
+
+    Parent addressing: exactly one of ``master=True`` / ``track_index`` /
+    ``return_index`` — perform targets are clip-less, so unlike
+    ``write_envelope`` there is no containing-clip resolution, and the
+    master track is addressable (the canonical use). ``send_level`` is
+    track-parented (regular or group track) with ``return_index`` naming
+    the destination return, mirroring ``write_envelope``; master has no
+    sends and return-host sends are out of wave-1 scope.
+
+    Must run on Live's main thread (callers wrap in ``run_on_main``).
+    """
+    if target_kind == "send_level":
+        if master:
+            raise ValueError(
+                "perform target_kind='send_level' cannot target the master "
+                "track — the master strip has no sends"
+            )
+        if track_index is None or return_index is None:
+            raise ValueError(
+                "perform target_kind='send_level' requires track_index "
+                "(source track — regular or group) AND return_index "
+                "(destination return), mirroring write_envelope. "
+                "Return-host sends are not in the wave-1 perform surface."
+            )
+        track = _resolve_track(context, track_index)
+        sends = track.mixer_device.sends
+        if return_index < 1 or return_index > len(sends):
+            raise IndexError(
+                f"return_index {return_index} out of range "
+                f"[1, {len(sends)}] for track {track_index}"
+            )
+        return sends[return_index - 1]
+
+    # mixer_volume / mixer_pan / device_parameter — parent is exactly one
+    # of master / track / return.
+    selected = [
+        name
+        for name, present in (
+            ("master", master),
+            ("track_index", track_index is not None),
+            ("return_index", return_index is not None),
+        )
+        if present
+    ]
+    if len(selected) != 1:
+        raise ValueError(
+            f"perform target_kind={target_kind!r} requires exactly one of "
+            f"master=True / track_index / return_index, got {selected or 'none'}"
+        )
+    if master:
+        parent = context.song.master_track
+    elif track_index is not None:
+        parent = _resolve_track(context, track_index)
+    else:
+        song = context.song
+        if return_index < 1 or return_index > len(song.return_tracks):  # type: ignore[operator]
+            raise IndexError(
+                f"return_index {return_index} out of range "
+                f"[1, {len(song.return_tracks)}]"
+            )
+        parent = song.return_tracks[return_index - 1]  # type: ignore[index]
+
+    if target_kind == "device_parameter":
+        if device_index is None or parameter_name is None:
+            raise ValueError(
+                "perform target_kind='device_parameter' requires "
+                "device_index and parameter_name"
+            )
+        device = _resolve_device_on(parent, device_index)
+        return _find_parameter(device, parameter_name)
+    mixer = parent.mixer_device
+    return mixer.volume if target_kind == "mixer_volume" else mixer.panning
+
+
+def _wait_for_record_mode_on_worker(
+    context: LiveContext,
+    expected: bool,
+    *,
+    timeout_s: float,
+    poll_interval_s: float = _PERFORM_SETTLE_POLL_S,
+) -> None:
+    """Settle-poll ``song.record_mode`` until it reads ``expected``.
+
+    Probe 10 (Live 12.4.1): ``record_mode`` applies ASYNC — an immediate
+    read-back after the set returns the OLD value; it reads true ~300 ms
+    later. Runs on the worker thread; each read is its own main-thread
+    bout, with ``time.sleep`` between bouts on the worker so Live's main
+    thread can pump the state propagation we're waiting on.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        observed = context.run_on_main(
+            lambda: bool(context.song.record_mode)
+        )
+        if observed == expected:
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"song.record_mode did not settle to {expected} within "
+                f"{timeout_s:.1f}s (record_mode applies asynchronously — "
+                f"probe 10). Live may be busy or showing a modal dialog; "
+                f"retry, or pass a larger settle_timeout_ms."
+            )
+        time.sleep(poll_interval_s)
+
+
+def perform_handler(
+    context: LiveContext,
+    *,
+    target_kind: str,
+    breakpoints: list[dict[str, Any]],
+    master: bool = False,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    device_index: int | None = None,
+    parameter_name: str | None = None,
+    span_start_beats: float | None = None,
+    span_end_beats: float | None = None,
+    settle_timeout_ms: int = _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS,
+) -> dict[str, Any]:
+    """Record an authored automation arc into Live's ARRANGEMENT
+    automation by performing it in realtime (gesture recording).
+
+    This is the write path for automation surfaces session clips can't
+    reach: master / group / return mixer moves and device parameters
+    (master-chain filter sweeps). The transport PLAYS for the duration
+    of the span — wall-clock cost is span / tempo. Breakpoint times are
+    absolute arrangement beats.
+
+    ``span_start_beats`` / ``span_end_beats`` default to the first /
+    last breakpoint time. The arc's value before its first breakpoint
+    (when span starts earlier) holds the first value; after the last,
+    the last value holds.
+
+    Returns the post-perform ``automation_state`` (0 none / 1 active /
+    2 overridden — 1 is the success signal), beats performed, value
+    updates written, and wall-clock spent. The surface is write-only:
+    there is no LOM read of arrangement automation, so
+    ``automation_state`` + playback observation is the runtime
+    verification; deep verification is the ``.als`` dump (integration
+    smoke only).
+
+    A failed perform must not leave the set armed: ``end_gesture``,
+    transport stop, ``record_mode`` / ``session_automation_record``
+    restore, ``re_enable_automation`` and playhead restore all run in a
+    ``finally`` with per-step isolation. Note ``re_enable_automation``
+    is set-wide by design (design.md): it returns ANY overridden
+    parameter to following its automation, which is the correct
+    post-record state for a scripted writer.
+    """
+    if target_kind not in PERFORM_TARGET_KINDS:
+        raise ValueError(
+            f"perform target_kind {target_kind!r} not in "
+            f"{list(PERFORM_TARGET_KINDS)} — clip-hosted kinds (clip_cc, "
+            f"clip_pitch_bend, note_expression) are written via "
+            f"write_envelope, not performed"
+        )
+    cleaned = _validate_breakpoints(breakpoints)
+    span_start = (
+        float(span_start_beats)
+        if span_start_beats is not None
+        else cleaned[0]["time_beats"]
+    )
+    span_end = (
+        float(span_end_beats)
+        if span_end_beats is not None
+        else cleaned[-1]["time_beats"]
+    )
+    if span_end <= span_start:
+        raise ValueError(
+            f"perform span is empty: span_end_beats {span_end} must be > "
+            f"span_start_beats {span_start}"
+        )
+    if settle_timeout_ms <= 0:
+        raise ValueError(
+            f"settle_timeout_ms must be > 0, got {settle_timeout_ms}"
+        )
+    settle_timeout_s = settle_timeout_ms / 1000.0
+
+    with context.live_state_lock:
+        # Bout 1 — pure resolution, no mutation. Addressing errors land
+        # here, before any transport state is touched.
+        param = context.run_on_main(
+            lambda: _resolve_perform_target(
+                context,
+                target_kind=target_kind,
+                master=master,
+                track_index=track_index,
+                return_index=return_index,
+                device_index=device_index,
+                parameter_name=parameter_name,
+            )
+        )
+
+        # Bout 2 — read-only state snapshot. Captured BEFORE any
+        # mutation so the finally-restore below has the prior state even
+        # when the arm bout itself fails partway.
+        def _save_state() -> tuple[dict[str, Any], float]:
+            song = context.song
+            saved = {
+                "record_mode": bool(song.record_mode),
+                "session_automation_record": bool(
+                    song.session_automation_record
+                ),
+                "current_song_time": float(song.current_song_time),
+            }
+            return saved, float(song.tempo)
+
+        saved, tempo = context.run_on_main(_save_state)
+
+        gesture_open = False
+        updates_written = 0
+        restore_failures: list[str] = []
+        wall_start = time.monotonic()
+        try:
+            # Bout 3 — arm + seek (first mutation; inside the try so a
+            # partial arm still restores).
+            def _arm_and_seek() -> None:
+                song = context.song
+                if bool(song.is_playing):
+                    song.stop_playing()
+                song.session_automation_record = True
+                song.record_mode = True
+                song.current_song_time = float(span_start)
+
+            context.run_on_main(_arm_and_seek)
+
+            _wait_for_record_mode_on_worker(
+                context, True, timeout_s=settle_timeout_s
+            )
+
+            def _begin_gesture_and_play() -> None:
+                param.begin_gesture()
+                context.song.start_playing()
+
+            context.run_on_main(_begin_gesture_and_play)
+            gesture_open = True
+
+            # Ramp loop: each iteration is one main-thread bout that
+            # reads the playhead and writes the interpolated value —
+            # read + write in the SAME bout so the value can't lag a
+            # stale beat. Beat-space interpolation makes tempo maps
+            # free: the playhead position IS the authored coordinate.
+            expected_s = (span_end - span_start) / (max(tempo, 1.0) / 60.0)
+            deadline = wall_start + max(
+                expected_s * _PERFORM_WALL_CLOCK_FACTOR,
+                _PERFORM_WALL_CLOCK_FLOOR_S,
+            ) + settle_timeout_s
+
+            def _ramp_step() -> bool:
+                song = context.song
+                beat = float(song.current_song_time)
+                if beat >= span_end:
+                    return True
+                param.value = _interp_performed_value(cleaned, beat)
+                return False
+
+            while True:
+                done = context.run_on_main(_ramp_step)
+                if done:
+                    break
+                updates_written += 1
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"perform ramp did not reach span end "
+                        f"{span_end} beats within its wall-clock budget "
+                        f"({deadline - wall_start:.1f}s). Transport may "
+                        f"be blocked (modal dialog, count-in) — the set "
+                        f"has been disarmed and restored."
+                    )
+                time.sleep(_PERFORM_UPDATE_PERIOD_S)
+        finally:
+            # Disarm + restore — every step attempts even when an
+            # earlier one fails; a failed perform must not leave the
+            # set armed or the gesture open.
+            def _attempt(label: str, fn: Callable[[], Any]) -> None:
+                try:
+                    context.run_on_main(fn)
+                except Exception as exc:  # prawduct:allow prawduct/broad-except -- Live wrappers raise arbitrary types; every restore step must still attempt
+                    restore_failures.append(f"{label}: {exc}")
+                    logger.warning(
+                        "perform restore step %s failed: %s", label, exc
+                    )
+
+            if gesture_open:
+                _attempt("end_gesture", lambda: param.end_gesture())
+            _attempt("stop_playing", lambda: context.song.stop_playing())
+            _attempt(
+                "record_mode",
+                lambda: setattr(
+                    context.song, "record_mode", saved["record_mode"]
+                ),
+            )
+            _attempt(
+                "session_automation_record",
+                lambda: setattr(
+                    context.song,
+                    "session_automation_record",
+                    saved["session_automation_record"],
+                ),
+            )
+            _attempt(
+                "re_enable_automation",
+                lambda: context.song.re_enable_automation(),
+            )
+            _attempt(
+                "current_song_time",
+                lambda: setattr(
+                    context.song,
+                    "current_song_time",
+                    saved["current_song_time"],
+                ),
+            )
+
+        # Post-perform verification: automation_state is the runtime
+        # signal (probe 4: 0 → 1 after a successful record). It settles
+        # with the same async character as the rest of Song state, so
+        # poll briefly — but a non-1 read is reported, not raised; the
+        # caller (push apply layer) owns the failed-verification policy.
+        state_deadline = time.monotonic() + settle_timeout_s
+        automation_state: int | None = None
+        while True:
+            automation_state = context.run_on_main(
+                lambda: (
+                    int(param.automation_state)
+                    if getattr(param, "automation_state", None) is not None
+                    else None
+                )
+            )
+            if automation_state == 1 or time.monotonic() >= state_deadline:
+                break
+            time.sleep(_PERFORM_SETTLE_POLL_S)
+
+    result: dict[str, Any] = {
+        "target_kind": target_kind,
+        "automation_state": automation_state,
+        "span_beats": [span_start, span_end],
+        "beats_performed": span_end - span_start,
+        "updates_written": updates_written,
+        "wall_clock_s": round(time.monotonic() - wall_start, 3),
+        "breakpoint_count": len(cleaned),
+    }
+    if restore_failures:
+        result["restore_failures"] = restore_failures
+    _echo_addressing_args(
+        result,
+        master=master or None,
+        track_index=track_index,
+        return_index=return_index,
+        device_index=device_index,
+        parameter_name=parameter_name,
+    )
+    return result
+
+
 __all__ = [
     "TARGET_KINDS",
+    "PERFORM_TARGET_KINDS",
     "list_handler",
     "get_envelope_handler",
     "read_envelope_handler",
     "write_envelope_handler",
     "clear_handler",
     "clear_all_handler",
+    "perform_handler",
 ]

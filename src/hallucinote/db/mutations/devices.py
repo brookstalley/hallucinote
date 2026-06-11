@@ -7,6 +7,7 @@ mutators resolve song provenance through the device/chain helpers
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from typing import Any, Sequence
 
@@ -627,6 +628,8 @@ ENVELOPE_TARGET_KINDS = frozenset({
     "mixer_volume",
     "mixer_pan",
     "send_level",
+    "return_mixer_volume",
+    "return_mixer_pan",
 })
 
 # parameter_path is required for these kinds (CC number / MPE axis / param name)
@@ -638,12 +641,18 @@ _PARAMETER_PATH_REQUIRED = frozenset({
 # MPE axes accepted in parameter_path for note_expression envelopes.
 NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
 
-# W10-F: target_kinds that the planner routes through a MIDI session clip on
-# the target track. Live 12.4's LOM accepts Clip.create_automation_envelope
-# for these targets only on session clips, and Hallucinote v1 models clips as
-# MIDI-only — so the host track must be kind='midi'. Master/audio/group tracks
-# can't host the routing surface, so the mutator refuses early with teaching.
-_SESSION_CLIP_ROUTED_KINDS = frozenset({
+# Track-hosted target_kinds whose push route depends on the host track's
+# kind (ENV-7G4K eligibility, superseding the W10-F blanket refusal):
+#   kind='midi'   -> session-clip route (Clip.create_automation_envelope on a
+#                    covering session clip — Live 12.4 only accepts these
+#                    targets on session clips)
+#   'master'/'group' -> perform route (gesture-recorded arrangement
+#                    automation at push time; probe-verified, see
+#                    docs/research/audio-first-class/lom-probe-results.md)
+#   'audio'       -> refused until ENV-8H1T: their route is session-clip
+#                    envelopes on audio clips, which need the audio-clip
+#                    push surface (CLP-AUD1 landed the DB model only)
+_HOST_KIND_ROUTED_KINDS = frozenset({
     "mixer_volume", "mixer_pan", "send_level", "device_parameter",
 })
 
@@ -694,48 +703,31 @@ def _resolve_envelope_host_track(
 
 
 def _envelope_track_kind_refusal(target_kind: str, host_kind: str) -> str:
-    """Teaching message for D2 (master) / D3 (audio / group) refusals.
+    """Teaching message for the host kinds that remain unreachable after
+    ENV-7G4K: audio tracks (until ENV-8H1T) and any unknown future kind.
 
-    The phrasing names the LOM constraint, the v1 routing path, and the
-    supported workaround so callers can act without reading the source.
+    Master and group hosts are no longer refused — their envelopes are
+    *performed* into arrangement automation at push time (gesture
+    recording; see lom-probe-results.md probes 4/4b/12).
     """
-    if host_kind == "master":
-        # D2 — confirmed no LOM path: Clip.create_automation_envelope lives
-        # only on Clip; master can't host clips.
-        return (
-            f"target_kind={target_kind!r} on a master track is not reachable: "
-            "Live 12.4's LOM exposes envelope creation only via "
-            "Clip.create_automation_envelope, and the master track cannot "
-            "host clips. Route the source(s) to a sub-bus group track and "
-            "author the envelope on the group's mixer instead. "
-            "See ableton://guides/gaps for the LOM constraint."
-        )
     if host_kind == "audio":
-        # D3 — Hallucinote v1 models clips as MIDI-only; audio tracks can't
-        # host MIDI session clips, so the v1 routing path is unreachable.
+        # Audio tracks' route is session-clip envelopes hosted on audio
+        # clips (probe 3 verified the envelope mechanism). CLP-AUD1 landed
+        # the audio-clip DB model; the push surface is ENV-8H1T's scope.
         return (
             f"target_kind={target_kind!r} on an audio track is not reachable "
-            "in v1: Hallucinote routes mixer/send/device_parameter envelopes "
-            "through MIDI session clips, which audio tracks cannot host. "
-            "Route the source to a sub-bus group track (kind='midi') and "
-            "automate the group's mixer instead. Audio-clip envelopes are "
-            "v1.1 scope (gated on the audio-clip DB model)."
-        )
-    if host_kind == "group":
-        # Group tracks in Live host no clips of any kind — they're routing-
-        # only — so they share D3's "no host clip" failure mode.
-        return (
-            f"target_kind={target_kind!r} on a group track is not reachable: "
-            "group tracks in Live are routing-only and cannot host MIDI "
-            "session clips. Author the envelope on a member track or on the "
-            "group's parent sub-bus instead."
+            "yet: audio-track envelopes ride session audio clips, and the "
+            "audio-clip push surface is ENV-8H1T (not yet built). "
+            "Master/group/return automation no longer needs a workaround — "
+            "those targets are performed into arrangement automation at "
+            "push time."
         )
     # Defensive — TRACK_KINDS allowlist is {midi,audio,master,group}; any new
-    # kind that lands here should explicitly choose a teaching path.
+    # kind that lands here should explicitly choose a route.
     return (
-        f"target_kind={target_kind!r} on track kind={host_kind!r} is not "
-        "reachable: Hallucinote v1 routes these envelopes through MIDI "
-        "session clips; only kind='midi' tracks can host them."
+        f"target_kind={target_kind!r} on track kind={host_kind!r} has no "
+        "push route: kind='midi' hosts session-clip envelopes, "
+        "master/group are performed at push time, audio is ENV-8H1T scope."
     )
 
 
@@ -762,6 +754,8 @@ def create_envelope(
       device_parameter           -> target_device_id (parameter_path = name)
       mixer_volume / mixer_pan   -> target_track_id
       send_level                 -> target_track_id + target_send_return_id
+      return_mixer_volume / return_mixer_pan -> target_send_return_id
+                                    (a return track's own mixer; ENV-7G4K)
 
     The schema CHECK is the last-line defense; this mutator raises early with
     a clearer message and validates parameter_path semantics (required for
@@ -781,6 +775,8 @@ def create_envelope(
         "mixer_volume":     ("target_track_id",),
         "mixer_pan":        ("target_track_id",),
         "send_level":       ("target_track_id", "target_send_return_id"),
+        "return_mixer_volume": ("target_send_return_id",),
+        "return_mixer_pan":    ("target_send_return_id",),
     }
     all_targets = {
         "target_clip_id": target_clip_id,
@@ -833,12 +829,12 @@ def create_envelope(
                 f"clip_cc CC number {cc_number} out of MIDI range [0, 127]"
             )
 
-    # W10-F: enforce track-kind reachability for session-clip-routed envelopes.
-    # mixer/pan/send/device_parameter envelopes route through a MIDI session
-    # clip on the target track in v1. Master / audio / group tracks cannot host
-    # that routing surface, so reject with a teaching message that points at
-    # the supported workaround per kind. (See bug-triage-wave2 D2/D3.)
-    if target_kind in _SESSION_CLIP_ROUTED_KINDS:
+    # ENV-7G4K eligibility (supersedes the W10-F blanket refusal): midi
+    # hosts route through session clips, master/group hosts are performed
+    # at push time, audio hosts stay refused until ENV-8H1T builds their
+    # session-audio-clip route. The planner partitions the same way
+    # (sync/push/envelopes.py `classify_envelope_route`).
+    if target_kind in _HOST_KIND_ROUTED_KINDS:
         host_track_id = _resolve_envelope_host_track(
             conn,
             target_kind=target_kind,
@@ -847,9 +843,20 @@ def create_envelope(
         )
         if host_track_id is not None:
             host_kind = _track_kind(conn, host_track_id)
-            if host_kind is not None and host_kind != "midi":
+            if host_kind is not None and host_kind not in (
+                "midi", "master", "group",
+            ):
                 raise ValueError(
                     _envelope_track_kind_refusal(target_kind, host_kind)
+                )
+            # Live's master track has no sends — a send_level envelope
+            # addressed to it is unauthorable on any route (the perform
+            # handler refuses the same shape wire-side).
+            if host_kind == "master" and target_kind == "send_level":
+                raise ValueError(
+                    "target_kind='send_level' on the master track is "
+                    "invalid: Live's master has no sends. Author the send "
+                    "ride on the source track or group instead."
                 )
 
     # Provenance: clip envelopes carry their target_clip_id; note_expression
@@ -1121,6 +1128,136 @@ def replace_breakpoints(
         if song_id:
             _touch_song(conn, song_id)
     return new_ids
+
+
+def performed_automation_fingerprint(
+    *,
+    target_kind: str,
+    target_track_id: str | None,
+    target_device_id: str | None,
+    target_send_return_id: str | None,
+    parameter_path: str | None,
+    breakpoints: Sequence[Any],
+) -> str:
+    """Content fingerprint of a perform-routed arc (ENV-7G4K).
+
+    Covers the target addressing, parameter_path, and the ordered
+    (time_beats, value, curve_kind) list — any change to any of them
+    yields a new digest, and breakpoint *input order* never does (the
+    list is canonically sorted, matching how the arc is performed).
+    Push compares this against `performed_automation.fingerprint` to
+    decide re-perform vs skip; the surface is write-only, so this digest
+    is the only honesty mechanism there is.
+
+    Accepts breakpoint dicts or sqlite3.Rows (anything `bp["key"]`-able;
+    curve_kind defaults to 'linear' for dicts that omit it, mirroring
+    `replace_breakpoints`).
+    """
+    def _curve(bp: Any) -> str:
+        try:
+            return bp["curve_kind"]
+        except (KeyError, IndexError):
+            return "linear"
+
+    canonical = sorted(
+        (float(bp["time_beats"]), float(bp["value"]), _curve(bp))
+        for bp in breakpoints
+    )
+    payload = json.dumps(
+        {
+            "target_kind": target_kind,
+            "target_track_id": target_track_id,
+            "target_device_id": target_device_id,
+            "target_send_return_id": target_send_return_id,
+            "parameter_path": parameter_path,
+            "breakpoints": canonical,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def record_performed_automation(
+    conn: sqlite3.Connection,
+    *,
+    envelope_id: str,
+    session_id: str,
+    fingerprint: str,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> MutatorResult:
+    """Upsert the performed-state row for one (envelope, session) after a
+    successful perform call (ENV-7G4K). Sync-state, like
+    `link_db_to_ableton`: emits an event for the audit trail but does not
+    touch the song's authored-content timestamp. Session-keyed — each
+    bound Live set carries its own fingerprint, so a fresh set performs
+    every arc instead of false-skipping on another set's record.
+
+    Returns MutatorResult states: 'created' (first perform in this
+    session), 'updated' (re-performed with a new fingerprint),
+    'unchanged' (same fingerprint — callers normally skip the perform
+    entirely, so this is the idempotent-replay guard, not the common
+    path).
+    """
+    env_row = conn.execute(
+        "SELECT song_id FROM envelopes WHERE id = ?", (envelope_id,),
+    ).fetchone()
+    if env_row is None:
+        raise ValueError(
+            f"record_performed_automation: envelope {envelope_id!r} not found"
+        )
+    session_row = conn.execute(
+        "SELECT id FROM ableton_sessions WHERE id = ?", (session_id,),
+    ).fetchone()
+    if session_row is None:
+        raise ValueError(
+            f"record_performed_automation: session {session_id!r} not found"
+        )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    existing = conn.execute(
+        """SELECT id, fingerprint FROM performed_automation
+           WHERE envelope_id = ? AND session_id = ?""",
+        (envelope_id, session_id),
+    ).fetchone()
+    if existing is not None and existing["fingerprint"] == fingerprint:
+        return MutatorResult(existing["id"], "unchanged")
+    if existing is not None:
+        row_id = existing["id"]
+        state = "updated"
+        conn.execute(
+            """UPDATE performed_automation
+               SET fingerprint = ?,
+                   performed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+            (fingerprint, row_id),
+        )
+    else:
+        row_id = _uuid()
+        state = "created"
+        conn.execute(
+            """INSERT INTO performed_automation
+                   (id, envelope_id, session_id, fingerprint)
+               VALUES (?, ?, ?, ?)""",
+            (row_id, envelope_id, session_id, fingerprint),
+        )
+    _emit(
+        conn,
+        E.AUTOMATION_PERFORMED,
+        {
+            "performed_automation_id": row_id,
+            "envelope_id": envelope_id,
+            "session_id": session_id,
+            "fingerprint": fingerprint,
+            "state": state,
+        },
+        song_id=env_row["song_id"],
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    return MutatorResult(row_id, state)
 
 
 def create_enum_envelope(

@@ -28,16 +28,35 @@ LIKELY/UNKNOWN labels in `lom-audio-clip-surface.md` and
 | 10 | `record_mode` apply semantics | **ASYNC — CONFIRMED** | Immediate read-back after set returns the OLD value; reads true ~300 ms later. Any handler touching transport-adjacent Song state must poll, not trust same-call read-back |
 | 11 | `application.major_version` | **ABSENT at RS level** | AttributeError; use `application.get_major_version()`/`describe application` instead |
 
+## ENV-7G4K chunk 01 step 0 follow-ups (2026-06-11)
+
+Executed via `env7g4k-probe-driver.py` (records appended to the JSONL, probes
+prefixed `ramp1-up`/`ramp2-down`). Wire calls carried `allow_version_mismatch=true`
+(server `c0b443e0e4c0` vs Remote Script `a5479db86125` — the probe surface is the
+one the original 195 records ran against). Scratch default set, master volume.
+
+| # | Question | Verdict | Evidence |
+|---|----------|---------|----------|
+| 12 | Re-record overwrite (the fingerprint-gate assumption) | **YES — CONFIRMED** | Probe-4 recipe twice over the same span from beat 0: ramp 1 ascending 0.30→0.90 → playback (no writer) reads 0.30/0.33/0.36/0.39 ascending, `automation_state` 1; ramp 2 descending 0.90→0.30 re-performed over the same span → the SAME beats read 0.90/0.87/0.84/0.81 descending — ramp 1 fully replaced in the gesture-held region. `automation_state` stays **1** after re-record AND after playback (never 2/overridden). Replacement is bounded by the gesture-held region, which matches the perform handler (deterministic beat spans) |
+| 12a | Driver-latency caveat | noted | Recorded slope was ~5× shallower than authored: each driver step paid a TCP round trip (~400 ms vs the intended 100 ms), stretching the recorded span. Driver-only artifact — the shipped handler steps worker-side in the Remote Script process with no per-step wire hop |
+| 13 | Group-host gesture recording | **YES — CONFIRMED** (2026-06-11, after Accessibility grant) | Group created agent-side: LOM-select track + keyboard-navigate focus onto the track header (Up-arrow past the top clip slot — Live's Edit>Group enables only with header focus; LOM `selected_track` alone leaves it disabled) + scripted Cmd+G. Probe-4 recipe on `tracks[0]('1-Group').mixer_device.volume`: `automation_state` 0→**1**, playback with no writer attached tracks the recorded ramp (0.40→ ascending, 4/4 sampled steps). Mechanism confirmed track-kind-agnostic across master/return/group — all wave-1 host shapes now probe-verified |
+
 ## Still open (consciously)
 
-- **Breakpoint quality / thinning** of the recorded ramp: needs a saved `.als` to dump
-  (LOM cannot save the set). Low risk: the playback test shows a musically smooth ramp.
-  Verify during the first real master-automation chunk via the `.als` XML dump.
+- ~~**Breakpoint quality / thinning**~~ RESOLVED — S-7 `.als` dump (2026-06-11,
+  s7-smoke-test.als): all five performed arcs present with faithful shapes, spans, and
+  endpoints (volume events stored as LINEAR AMPLITUDE, not slider-raw — e.g. raw 0.3 duck
+  bottom reads as amp 0.063 ≈ −24 dB; device params stored in display units, Hz for
+  Auto Filter Frequency). Recorded as hold-step pairs at ~2.5–3 Hz wall-clock — the
+  handler's achieved step rate (run_on_main round-trip bound), below the ~10 Hz design
+  aim. Two open residuals: (a) audibility of ~3 Hz stepping on wide device sweeps —
+  operator listen pending (operator-verification.md); (b) the re-performed master arc
+  wrote its final settle point ~1.3 beats past span end (17.34 vs 16.0) — harmless
+  unless abutting later automation; backlog-note material.
 - **Punch-bounded recording** (`punch_in`/`punch_out` + loop): flags confirmed present;
   mechanics untested. Probe when the recording workflow chunk builds region-scoped writes.
-- **Group-track automation write**: mechanism confirmed on master + return; group track
-  untestable until a set with a group exists (LOM cannot create groups). Re-verify
-  opportunistically in a real song.
+- ~~**Group-track automation write**~~ RESOLVED — row 13 (2026-06-11): confirmed on a
+  group track via the same recipe; nothing about the mechanism is host-kind-specific.
 
 ## Architecture consequences (feed `discovery.md`)
 

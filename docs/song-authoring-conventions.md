@@ -359,14 +359,23 @@ For non-4/4 sections:
 
 ---
 
-## Master and audio-track envelopes
+## Master, group, and return envelopes — performed automation
 
-Two structural non-supports the planner refuses:
+Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records each arc into Live's arrangement automation by playing the transport through the arc's span while scripting the parameter.
 
-- **Master envelopes** can't be authored. Live LOM has no path. Workaround: route the sources to a sub-bus group track and automate the group's volume.
-- **Mixer envelopes on audio tracks** can't be authored yet. The DB now models audio session clips (CLP-AUD1 wave 1 — `create_audio_clip`), but the envelope routing change that lets them host envelopes is ENV-8H1T scope. Until that ships, workaround: same sub-bus pattern.
+What that means when you author one:
 
-Long envelopes spanning multiple session clips are also refused — author them with a per-section partition pattern (a future version may auto-partition).
+- **Push takes real wall-clock.** Each changed arc plays its span in real time; the push plan names the estimate per arc (tempo-map-aware). A 16-bar master fade at 120 BPM is ~32s of transport playback.
+- **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped); an edited arc re-performs alone, replacing the prior recording over the same span.
+- **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
+- **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
+
+## Audio-track envelopes (still refused)
+
+**Mixer envelopes on audio tracks** can't be authored yet. The DB models audio session clips (CLP-AUD1 wave 1 — `create_audio_clip`), but the envelope routing change that lets them host envelopes is ENV-8H1T scope. Until that ships, workaround: route the source to a sub-bus group track and automate the group — group envelopes are performed (above).
+
+Long envelopes spanning multiple session clips (midi-track hosts) are also refused — author them with a per-section partition pattern (a future version may auto-partition). Performed arcs have no such limit; they're span-bounded, not clip-bounded.
 
 ---
 

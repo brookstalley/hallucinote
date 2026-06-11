@@ -6,9 +6,9 @@ by this module **without the notes ever entering the agent's context** — the
 agent runs one command; the bytes flow DB → TCP → Live (the "code execution with
 MCP" pattern). This is the incremental compose loop's materialize step: push one
 clip (or only the clips whose note content changed) instead of the gated
-eleven-phase :func:`push_execute.execute_push`.
+twelve-phase :func:`push_execute.execute_push`.
 
-Why a separate path, not a flag on ``execute``: ``execute`` runs all eleven phases
+Why a separate path, not a flag on ``execute``: ``execute`` runs all twelve phases
 behind a coherence gate and writes ``.last-push-state.json``. The compose loop
 wants a cheap, repeatable "re-materialize these clips" step with its own
 content-change tracking — conflating the two schemas/contracts would muddy both.
@@ -252,10 +252,14 @@ def push_notes(
 
         # Record any successful create-links (replace_notes records nothing).
         if results_payload:
-            push.apply_push_results(
+            apply_warnings = push.apply_push_results(
                 conn, results_payload, session_id=session_id,
                 actor=actor, reason=reason or f"scoped notes push clip={cid}",
             )
+            # Notes pushes emit no perform: keys, so this is empty today —
+            # surfaced anyway so a future key kind can't be silently eaten.
+            for w in apply_warnings:
+                result.errors.append({"clip_id": cid, "name": name, "error": w})
 
         if clip_ok:
             new_fps[cid] = fp

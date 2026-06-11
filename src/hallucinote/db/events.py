@@ -43,6 +43,9 @@ ENVELOPE_DELETED = "envelope_deleted"
 BREAKPOINT_ADDED = "breakpoint_added"
 BREAKPOINT_REMOVED = "breakpoint_removed"
 BREAKPOINTS_REPLACED = "breakpoints_replaced"
+# ENV-7G4K: a perform-routed arc was gesture-recorded into Live's
+# arrangement automation (sync-state, like ABLETON_LINK_SET).
+AUTOMATION_PERFORMED = "automation_performed"
 
 # Score: sections, tempo map, time-signature map, cue points
 SECTION_CREATED = "section_created"

@@ -4,6 +4,36 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
+
+<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=merged -->
+
+AUD-1M4V stage 0b: the automation surface session clips can't reach —
+master/group mixer (volume, pan), group sends, return mixer, master- and
+return-chain device parameters — becomes authorable via gesture-recorded
+**performed automation**. **Bridge:** `ableton_automation(action='perform')`
+plays the transport through the arc's span in record while stepping the
+parameter (runs_on_worker, `live_state_lock`, settle-poll on `record_mode`,
+per-step `finally` restore incl. `re_enable_automation`, beat-space interp
+with linear/hold/fast/slow). Probe-verified end-to-end first (probes 4/4b/
+10/12/13: group-host recording + same-span re-record overwrite both
+CONFIRMED). **Engine:** `return_mixer_volume`/`return_mixer_pan` kinds +
+`performed_automation` state table; W10-F's dual-layer master/group refusal
+replaced by routing eligibility — `classify_envelope_route` is the single
+partition source (clip_scoped / session_clip / perform / refused_audio /
+unroutable); audio hosts keep their ENV-8H1T refusal; the false "route to a
+sub-bus" master teaching deleted. **Push:** twelfth phase
+`performed_automation` (after envelopes) — fingerprint-gated (unchanged arcs
+skip + are listed), per-arc tempo-map-aware wall-clock estimates in the plan
+(Visible Costs), apply records state + `AUTOMATION_PERFORMED` event gated on
+`automation_state == 1` (unverified writes retry next push). **Evidence:**
+S-7 wire smoke PASS on real Live 12.4.1 — 5 arc families, skip-all re-push,
+targeted re-perform; `.als` dump verdict: all 5 arcs faithful (~3 Hz step
+rate). Docs/gaps guide updated from "can't" to "performed via push". Scope
+notes: return→return sends not in wave-1 vocab; nested-rack device params
+unreachable on either route; pull/read of arrangement automation has no LOM
+surface.
+
 ## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
 
 <!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=merged -->

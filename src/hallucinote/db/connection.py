@@ -85,9 +85,28 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     """
     _check_schema_canary()
     conn = connect(db_path)
+    _rebuild_disposable_tables(conn)
     conn.executescript(_SCHEMA_PATH.read_text())
     _ensure_added_columns(conn)
     return conn
+
+
+def _rebuild_disposable_tables(conn: sqlite3.Connection) -> None:
+    """One-shot rebuilds for DISPOSABLE sync-state tables whose shape changed
+    in a way ``ALTER TABLE`` can't express (constraint changes). Dropping
+    here is safe by design — these tables cache re-derivable sync state,
+    never authored content. Runs before ``schema.sql`` so the CREATE TABLE
+    IF NOT EXISTS recreates the new shape.
+
+    - ``performed_automation`` pre-session-keying (ENV-7G4K): the original
+      table was UNIQUE(envelope_id) — session-blind, so a second Live set
+      false-skipped every arc. Rebuilt as UNIQUE(envelope_id, session_id);
+      dropped fingerprints just mean the next push re-performs each arc
+      (slower, never wrong).
+    """
+    rows = conn.execute("PRAGMA table_info(performed_automation)").fetchall()
+    if rows and "session_id" not in {r["name"] for r in rows}:
+        conn.execute("DROP TABLE performed_automation")
 
 
 # Column additions that post-date the original schema CREATE statements.

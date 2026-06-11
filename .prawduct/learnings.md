@@ -27,7 +27,7 @@ Refactors that touch a wide pattern (e.g. "rename internal class name → displa
 Arc 4 / D4 hit this hard. The cumulative Critic round 1 caught the BLOCKING (`actions/device.py` recommending `kind='Compressor2'` while the new test pinned exactly that as a FAILURE). Round 2 then caught NEW BLOCKING — round 1's response had only updated the cumulative-Critic's named files but missed sibling surfaces with the same pre-D4 advice (`.claude/skills/return-new/SKILL.md`, `track-new-with-instrument/SKILL.md` Step 2 self-contradicting its own Notes). Round 3 added a tree-wide grep across `.claude/`, `docs/`, and `hallucinote_mcp/.../resources/` as a structural completeness check.
 
 **How to apply.** For any change-the-convention refactor:
-1. Before declaring done, run a tree-wide grep for the OLD pattern (`grep -rn '<old>' .claude/ docs/ src/`).
+1. Before declaring done, run a tree-wide grep for the OLD pattern (`grep -rn '<old>' .claude/ docs/ src/`). Grep for EVERY phrasing of the old teaching, not one token — ENV-7G4K chunk 04 swept `skills/` but only for "envelope"/"sub-bus" patterns and missed song-new's "Master automation isn't supported" (caught as a cumulative-Critic BLOCKING). A capability flip ("can't"→"can") needs the capability named every way the docs ever said it.
 2. Each hit must be either (a) updated to new convention, (b) intentional historical/archaeology reference with explicit "no longer X" framing, or (c) backlogged with rationale.
 3. Pin the NEW convention with a regression test that names what now FAILS (`test_load_internal_class_name_fails_under_new_convention`). The test makes the deletion semantic, not accidental — but only the grep catches surfaces the test doesn't exercise.
 

@@ -248,3 +248,61 @@ def test_canary_runs_once_per_process(tmp_path, monkeypatch):
     )
     conn = init_db(tmp_path / "second.db")
     conn.close()
+
+
+def test_disposable_rebuild_drops_session_blind_performed_automation(tmp_path):
+    """ENV-7G4K cumulative fix: a DB carrying the original session-blind
+    ``performed_automation`` shape (UNIQUE(envelope_id), no session_id) is
+    rebuilt on open — old table dropped, new session-keyed shape created
+    by schema.sql. Dropped fingerprints are safe by design (the next push
+    re-performs). Idempotent on re-open."""
+    db_path = tmp_path / "session_blind.db"
+    conn = init_db(db_path)
+    conn.close()
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("DROP TABLE performed_automation")
+        conn.execute(
+            """CREATE TABLE performed_automation (
+                   id            TEXT PRIMARY KEY,
+                   envelope_id   TEXT NOT NULL UNIQUE
+                                     REFERENCES envelopes(id) ON DELETE CASCADE,
+                   fingerprint   TEXT NOT NULL,
+                   performed_at  TEXT NOT NULL DEFAULT
+                       (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+               )"""
+        )
+        conn.execute(
+            "INSERT INTO performed_automation (id, envelope_id, fingerprint) "
+            "VALUES ('p1', 'e1', 'fp-old')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    conn = init_db(db_path)
+    try:
+        cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(performed_automation)")
+        }
+        assert "session_id" in cols
+        # The old session-blind row is gone — disposable state, re-derived
+        # by the next push.
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM performed_automation"
+        ).fetchone()["n"] == 0
+    finally:
+        conn.close()
+
+    # Re-open: the rebuild sniff is a no-op on the new shape.
+    conn = init_db(db_path)
+    try:
+        cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(performed_automation)")
+        }
+        assert "session_id" in cols
+    finally:
+        conn.close()

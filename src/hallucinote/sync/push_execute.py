@@ -92,6 +92,11 @@ class ExecuteResult:
     state_file: Path | None = None
     errors_file: Path | None = None
     top_error_patterns: list[dict[str, Any]] = field(default_factory=list)
+    # SYN-6B4Q: benign warnings that did NOT fail the push (exit stays 0) —
+    # e.g. cues deferred past Live's current arrangement extent, which land on
+    # the next push. Kept distinct from errors so a deferral never reads as a
+    # PARTIAL halt cause.
+    warnings: list[str] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -544,6 +549,8 @@ def execute_push(
     outcome = "ok"
     exit_code = EXIT_OK
     error_records: list[dict[str, Any]] = []
+    # SYN-6B4Q: benign warnings (deferred cues) — do not flip outcome/exit.
+    warning_messages: list[str] = []
     error_phase: str | None = None
 
     def _maybe_pad_probe(phase_name: str) -> tuple[int, int]:
@@ -646,6 +653,33 @@ def execute_push(
             result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
 
+            # SYN-6B4Q: a cue_create_batch dispatched in skip mode reports the
+            # cues it DEFERRED (ahead of Live's current extent). The call itself
+            # succeeded — surface the deferral as a benign warning, not a
+            # failure. The deferred cues land on the next push once arrangement
+            # content covers them (the planner already refused any cue past the
+            # composed song length, so these WILL become placeable).
+            if (
+                ok
+                and call.tool == "ableton_arrangement"
+                and action == "cue_create_batch"
+            ):
+                deferred = (result_payload or {}).get("skipped_out_of_range") or []
+                if deferred:
+                    let = (result_payload or {}).get("last_event_time")
+                    preview = ", ".join(
+                        f"{d.get('name') or '(unnamed)'}@beat"
+                        f"{float(d['position_beats']):.2f}"
+                        for d in deferred[:5]
+                    )
+                    ellipsis = " ..." if len(deferred) > 5 else ""
+                    warning_messages.append(
+                        f"cues: {len(deferred)} cue(s) deferred past Live's "
+                        f"current arrangement extent (last_event_time={let}) — "
+                        "they land on the next push once arrangement content "
+                        f"covers them: [{preview}{ellipsis}]"
+                    )
+
             result_entry: dict[str, Any] = {
                 "key": call.key,
                 "tool": call.tool,
@@ -702,6 +736,41 @@ def execute_push(
 
     for idx, phase in enumerate(phases):
         plan = phase.plan_fn()
+
+        # SYN-6B4Q: a planner can flag a hard authoring error (e.g. a cue past
+        # the composed song length). Halt the phase WITHOUT dispatching — the
+        # DB describes something that can't be materialized, so nothing should
+        # half-apply in Live. The clear DB-grounded message rides the errors
+        # file; the operator fixes the authoring and re-pushes (idempotent).
+        if plan.errors:
+            for msg in plan.errors:
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "plan",
+                    "args_summary": {"phase": phase.name},
+                    "error": msg,
+                    "hint": (
+                        "fix the authoring in build.py (the message names the "
+                        "offending row[s]), rebuild, then re-run execute "
+                        "(idempotent — applied rows skip)"
+                    ),
+                })
+            phase_outcomes.append(PhaseOutcome(
+                name=phase.name, status=_STATUS_HALTED,
+                calls_ok=0, calls_failed=len(plan.errors),
+            ))
+            halt_phase = phase.name
+            error_phase = phase.name
+            outcome = "partial"
+            exit_code = EXIT_PARTIAL
+            for remaining in phases[idx + 1:]:
+                phase_outcomes.append(PhaseOutcome(
+                    name=remaining.name, status=_STATUS_PENDING,
+                    calls_planned=0,
+                ))
+            break
+
         if not plan.calls:
             pad_ok, pad_failed = _maybe_pad_probe(phase.name)
             phase_outcomes.append(PhaseOutcome(
@@ -812,6 +881,9 @@ def execute_push(
             for p in phase_outcomes
         ],
         "errors_file": errors_file.name if error_records else None,
+        # SYN-6B4Q: benign warnings (deferred cues) — additive field; an OK
+        # push can carry warnings without an errors file.
+        "warnings": warning_messages,
     }
     state_file.write_text(json.dumps(state_payload, indent=2) + "\n")
 
@@ -855,6 +927,7 @@ def execute_push(
         state_file=state_file,
         errors_file=errors_file if error_records else None,
         top_error_patterns=top_patterns,
+        warnings=warning_messages,
     )
 
 
@@ -911,6 +984,13 @@ def format_summary(result: ExecuteResult) -> str:
             plural = "s" if count != 1 else ""
             lines.append(f"  - {target}: {substr!r} ({count} call{plural})")
             lines.append(f"    next: {_suggest_next_step(pat, outcome=result.outcome)}")
+    # SYN-6B4Q: deferred-cue warnings are benign (the push is still OK) — show
+    # them in their own section so they never read as a halt cause.
+    if result.warnings:
+        lines.append("")
+        lines.append("Warnings (push still OK):")
+        for w in result.warnings:
+            lines.append(f"  - {w}")
     return "\n".join(lines) + "\n"
 
 

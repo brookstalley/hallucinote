@@ -42,6 +42,13 @@ class ToolCall:
 class PushPlan:
     calls: list[ToolCall] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # human notes / warnings
+    # Hard authoring errors (SYN-6B4Q): a planner sets these when the DB
+    # describes something that can never be materialized in Live (e.g. a cue
+    # past the composed song length), as opposed to a `note` ("skipped a row,
+    # the agent decides"). The executor HALTS a phase whose plan carries
+    # errors — without dispatching any of its calls — so the operator gets a
+    # clear, DB-grounded message instead of an opaque runtime failure.
+    errors: list[str] = field(default_factory=list)
 
     def add(self, call: ToolCall) -> None:
         self.calls.append(call)
@@ -49,10 +56,14 @@ class PushPlan:
     def warn(self, msg: str) -> None:
         self.notes.append(msg)
 
+    def error(self, msg: str) -> None:
+        self.errors.append(msg)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "calls": [asdict(c) for c in self.calls],
             "notes": self.notes,
+            "errors": self.errors,
         }
 
 

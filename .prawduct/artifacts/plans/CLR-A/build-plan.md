@@ -60,24 +60,25 @@ params_dialed drop (cheapest concrete probe; written before the fix).
 ## Status
 
 - [x] Chunk 01: SYN-9F2L — params_dialed lands or warns (root cause + fix + regression)
-- [ ] Chunk 02: SYN-6B4Q — skeleton-push cues skip-with-warning past arrangement extent
+- [x] Chunk 02: SYN-6B4Q — skeleton-push cues skip-with-warning past arrangement extent
 - [ ] Chunk 03: INV-3K8W — preset_query teaching errors point at the actual fix
 - [ ] Chunk 04: SYN-5C3J + MCP-4T6Y — version-pin recovery teaching + long-action read window
 - [ ] Chunk 05: DEV-5R8Q + INS-2Q7F + SKL-8N3V — chain-rebuild decision + doc fixes (cumulative-final)
-Context: chunk 01 BUILT + committed 2026-06-11 (5384f98), session paused on
-user quota — per-chunk Critic NOT yet run; per the small-chunks cadence
-learning it rolls into the cumulative at chunk 05 (or run `/prawduct:critic
-chunk` first thing next session if preferred). Root cause CONFIRMED by the
-regression test (planner-order link race + next-push fingerprint skip). Fix
-shipped in three parts: devices-phase convergence pass in `execute_push`
-(re-plan after apply, dispatch only NEW keys — `_dispatch_calls` /
-`_apply_results` extraction); planner wire-form selection (display preferred,
-known enums as `value_type='enum'`, normalized fallback, unwritable → warn);
-executor one-shot `_attempt_set_parameter_fallback` (actual-enum → enum
-write; no-str_for_value → DB normalized). Suite 3310 passed / 0 failed at
-HEAD. NEXT: chunk 02 (cues skip-with-warning, home decided in-chunk:
-apply-layer downgrade vs planner pre-partition — see
-`src/hallucinote/sync/push/arrangement.py:170` cue_batch emission).
+Context: chunks 01 + 02 BUILT + committed. Chunk 01 (5384f98) per-chunk Critic
+deferred to cumulative. Chunk 02 (SYN-6B4Q) — the original "no Remote Script
+change" constraint was LIFTED by the user mid-build ("fix this right"); the
+fix now spans the handler + engine. Shipped: (a) handler `cue_create_batch`
+`on_out_of_range='refuse'|'skip'` — skip creates in-extent cues, defers the
+rest into `skipped_out_of_range`+`last_event_time`; refuse preserves W5-C
+atomic. (b) new `PushPlan.errors` channel — planner hard-error → executor
+halts the phase without dispatching. (c) planner partitions cues against the
+COMPOSED song length: past-composed → `plan.error`; skeleton (no arrangement)
+→ defer+warn; else emit with skip-mode. (d) executor `ExecuteResult.warnings`
++ state-file `warnings[]` + "Warnings" summary section; deferred cues are
+benign (exit 0), not PARTIAL. Chunk-mode Critic CLEAN (0/0/0). Suite 3320
+passed / 2 skipped. Operator-verification: skip-mode wire round-trip in Live
+needs a Live restart to verify (unit-covered via FakeSong). NEXT: chunk 03
+(INV-3K8W preset_query teaching errors, `src/hallucinote/preset_query.py`).
 
 ## Scaffolding
 
@@ -121,18 +122,54 @@ First push of a freshly-scaffolded song halts PARTIAL at `cues`
 (`cue_create_batch: N cue(s) past last_event_time=24.0`) — Live's locator
 setter clamps to the arrangement extent and the arrangement is empty. The
 operator sees a false failure for "cues wait for content"; the cues are
-idempotently picked up by the next push once clips exist. Fix home decided
-in-chunk: either the apply layer downgrades per-cue `past last_event_time`
-failures to skip-with-warning (exit 0, listed as deferred), or the planner
-pre-partitions against the extent it can compute; the hard error is reserved
-for cue positions beyond the *composed* song length. Engine-side only
-(`src/hallucinote/sync/push/arrangement.py` + apply/result handling) — no
-Remote Script change.
+idempotently picked up by the next push once clips exist.
+
+**Requirement change (2026-06-11, user):** the original spec said "Engine-side
+only — no Remote Script change." The user explicitly lifted that constraint
+("we can DEFINITELY change the remote script ... let's fix this right"). The
+chosen design now spans the Remote Script handler AND the engine, because the
+two distinct questions live in two places:
+
+- *"Is this cue placeable RIGHT NOW in Live?"* — a runtime question only Live's
+  `last_event_time` answers → owned by the **handler**.
+- *"Will this cue EVER be placeable?"* — a DB question only the composed
+  arrangement extent answers → owned by the **planner**.
+
+Design (all four cases — A skeleton / B overrun / C healthy full push / D
+arrangement-not-built-at-runtime):
+
+1. **Handler** `cue_create_batch` gains `on_out_of_range: "refuse" | "skip"`
+   (`hallucinote_mcp/.../handlers/arrangement.py` + the action ParamSpec).
+   `"refuse"` (default) preserves the W5-C atomic raise-write-nothing contract
+   for direct/strict callers (existing tests stay green). `"skip"` creates the
+   in-`last_event_time` cues and returns the rest in `skipped_out_of_range`
+   (+ `last_event_time`) instead of failing — deferred, idempotently retried
+   next push.
+2. **Planner** `plan_push_cue_points` partitions authored cues against the DB's
+   composed extent (`max(arrangement_clips.end_bar)`): a cue past the composed
+   song length **when an arrangement is authored** is a hard authoring error
+   (it references content that can't exist) → `plan.error(...)`, emit no calls.
+   With NO arrangement authored yet (skeleton) all cues simply defer. Otherwise
+   it emits the batch with `on_out_of_range="skip"` so cues ahead of Live's
+   current runtime extent (skeleton, or arrangement-not-built) defer.
+3. **New `PushPlan.errors` channel** (`_core.py`) gives a planner a first-class
+   way to signal a hard authoring error distinct from a warn; the executor
+   halts the phase (PARTIAL) on it without dispatching, with the clear
+   composed-length message — *not* the opaque runtime `past last_event_time`.
+4. **Executor** (`push_execute.py`): a `skipped_out_of_range` cue result is
+   surfaced via a new benign `ExecuteResult.warnings` channel (state-file
+   `warnings[]` + a "Warnings:" summary section), outcome stays `ok` (exit 0);
+   a phase whose plan carries `errors` halts → PARTIAL.
+
+Verification: unit-tested against the fake-Live `FakeSong`/`FakeCtx` harness
+(handler) and fake `send_fn` (executor) + planner DB tests. The real wire path
+(skip-mode round-trip in Live) needs a Live restart to verify — enqueue for
+operator verification (F10), don't block the chunk on it.
 
 - **Done when:**
   1. A skeleton-push simulation (no arrangement content) plans/applies cues
      as skip-with-warning, not PARTIAL; composed-length overrun still hard-fails;
-     both test-pinned.
+     both test-pinned. Handler skip-mode + default-refuse-atomic both pinned.
   2. Full suite green; `/prawduct:critic` per cadence.
   3. Committed; chunk marked [x] in Status.
 

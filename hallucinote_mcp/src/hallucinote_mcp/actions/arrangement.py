@@ -207,11 +207,13 @@ register(
             "instead of N. Indices reported are the position in "
             "song.cue_points at the time of each insert; call cue_list "
             "after the batch for the final mapping. "
-            "**Atomic precondition** (W5-C): pre-validation now includes "
-            "every position against ``last_event_time`` — if any cue is "
-            "past the arrangement extent, NO cues are written. Combined "
-            "with the existing type/duplicate checks this means range / "
-            "shape errors fail the whole batch atomically. **Mid-loop "
+            "**Out-of-range policy** (SYN-6B4Q): ``on_out_of_range`` "
+            "controls cues past ``last_event_time`` (Live clamps the cue "
+            "setter to the arrangement extent). 'refuse' (default, W5-C "
+            "atomic): if any cue is past the extent, NO cues are written. "
+            "'skip' (the planner path): create the in-extent cues and "
+            "return the rest in ``skipped_out_of_range`` (+ "
+            "``last_event_time``) — deferred, not failed. **Mid-loop "
             "errors** (e.g. a position collides with a cue Live "
             "acquired between batches) can still leave partial state — "
             "call cue_list afterward to discover what landed if the "
@@ -234,6 +236,17 @@ register(
                     "position_beats. 'skip' (default — the planner path): "
                     "no-op when names match; the result carries "
                     "``skipped=True``. 'refuse': raise on any collision."
+                ),
+            ),
+            ParamSpec(
+                name="on_out_of_range", type="str", required=False,
+                enum=("refuse", "skip"),
+                description=(
+                    "Behavior for cues past last_event_time. 'refuse' "
+                    "(default): atomic — any out-of-range cue aborts the "
+                    "whole batch (W5-C). 'skip' (the planner path): create "
+                    "the in-extent cues, defer the rest into "
+                    "``skipped_out_of_range`` instead of failing."
                 ),
             ),
         ),

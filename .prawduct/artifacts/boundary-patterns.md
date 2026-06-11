@@ -51,12 +51,21 @@ When changing this surface:
     `M.link_db_to_ableton`.
   - `ToolCall.key` is `"<kind>:<uuid>"` — the kind selects which link is
     written when the result comes back.
+  - `PushPlan` carries three channels: `calls` (dispatched), `notes`
+    (advisory — the agent decides), and `errors` (SYN-6B4Q — hard authoring
+    errors). A non-empty `errors` means the DB describes something that can
+    never be materialized in Live; `push_execute` HALTS that phase without
+    dispatching. Use `error()` (not `warn()`) only when no re-push can fix it
+    short of changing the authored DB.
 
 When changing this surface:
 - Any signature change breaks the agent integration. Document in the build
   plan + chunk handoff.
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
+- MCP result fields a planner relies on (e.g. `cue_create_batch`'s
+  `skipped_out_of_range`, SYN-6B4Q) are additive optional fields — readers
+  default sanely when absent (same policy as the MixReport JSON surface).
 
 ### Pull Planner / Result API (`src/hallucinote/sync/pull.py` + `pull_cli.py`)
 

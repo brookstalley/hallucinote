@@ -90,6 +90,23 @@ return 0
    operator invokes a separate `/ableton-push --clean` flow (or clears Live
    manually). `execute` never wipes Live state on its own.
 
+6. **Plan-time hard error → halt the phase WITHOUT dispatching (SYN-6B4Q).**
+   A planner can set `PushPlan.errors` when the DB describes something that
+   can never be materialized in Live (e.g. a cue past the composed song
+   length). The executor halts that phase up front — no calls go out, since
+   nothing should half-apply — with the DB-grounded message in the errors
+   file. This is distinct from a per-call failure (#2): there's no Live
+   round-trip, and the message teaches the authoring fix, not a runtime
+   symptom.
+
+7. **Benign warning → surface, don't fail (SYN-6B4Q).** Some results are
+   informational, not failures: a `cue_create_batch` run in `on_out_of_range
+   ='skip'` mode reports cues it DEFERRED (ahead of Live's current arrangement
+   extent) in `skipped_out_of_range`. The call succeeded, so the executor
+   records a benign warning (outcome stays `ok`, exit 0) — the deferred cues
+   land on the next push once arrangement content covers them. Warnings live
+   in their own channel so a deferral never reads as a halt cause.
+
 ### Artifacts (the agent-facing contract)
 
 `execute` writes two files next to the DB (i.e. inside `songs/<slug>/`):
@@ -110,14 +127,19 @@ return 0
     {"name": "clips",          "status": "halted",  "calls_ok": 27, "calls_failed": 2},
     {"name": "mix",            "status": "pending", "calls_planned": 3}
   ],
-  "errors_file": ".last-push-errors.json"  // null when no errors
+  "errors_file": ".last-push-errors.json", // null when no errors
+  "warnings": []                            // SYN-6B4Q: benign warnings (deferred cues); [] when none
 }
 ```
 
 Phase `status` values: `ok` (all calls succeeded), `skipped` (planner emitted
-zero calls — idempotent re-push), `halted` (one or more calls failed; phase
-ran to completion before halt), `pending` (phase not attempted due to upstream
-halt).
+zero calls — idempotent re-push), `halted` (one or more calls failed OR the
+plan carried a hard error; phase did not necessarily round-trip to Live),
+`pending` (phase not attempted due to upstream halt).
+
+`warnings` (SYN-6B4Q) is an additive field: benign, non-failing messages
+(e.g. cues deferred past Live's current arrangement extent). An `ok` push can
+carry warnings with no errors file; readers default to `[]` when it's absent.
 
 **`.last-push-errors.json`** — full forensics, written only when there are
 errors:

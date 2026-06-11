@@ -1576,3 +1576,117 @@ def test_set_parameter_display_fallback_retries_with_normalized(
     ]
     assert len(normalized_writes) == 1
     assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.389)
+
+
+# ---------------------------------------------------------------------------
+# SYN-6B4Q: cue deferral (skip-with-warning) + plan-error halt
+# ---------------------------------------------------------------------------
+
+
+def _cue_skip_send_fn(skipped_out_of_range, *, last_event_time=0.0):
+    """Wrap the base fake send so ``cue_create_batch`` returns the handler's
+    skip-mode shape (some/all cues deferred past Live's extent)."""
+    base = _make_send_fn()
+
+    def send(req):
+        if req.tool == "ableton_arrangement" and req.action == "cue_create_batch":
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            n_in = len(req.params.get("cues", [])) - len(skipped_out_of_range)
+            return FakeResponse(ok=True, result={
+                "cue_count": max(n_in, 0),
+                "cues": [],
+                "skipped_out_of_range": skipped_out_of_range,
+                "last_event_time": last_event_time,
+            })
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_deferred_cues_surface_as_warning_not_partial(
+    conn, song, session, tiny_song, state_dir,
+):
+    """SYN-6B4Q: a skeleton push (cues authored, no arrangement) defers every
+    cue past Live's empty extent. The handler reports them in
+    ``skipped_out_of_range``; the executor surfaces a benign warning and the
+    push stays OK (exit 0) — NOT the old false PARTIAL."""
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+    M.add_cue_point(conn, song_id=song, position_bar=33.0, name="chorus")
+    send = _cue_skip_send_fn([
+        {"position_beats": 64.0, "name": "verse"},
+        {"position_beats": 128.0, "name": "chorus"},
+    ])
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    assert result.exit_code == push_execute.EXIT_OK
+    assert result.phase_halted is None
+    # Deferred cues surface as a warning, not an error file.
+    assert result.errors_file is None
+    assert not (state_dir / ".last-push-errors.json").exists()
+    assert any("defer" in w.lower() for w in result.warnings)
+    assert any("verse" in w or "chorus" in w for w in result.warnings)
+    # State file carries the warnings channel.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "ok"
+    assert any("defer" in w.lower() for w in state["warnings"])
+    # The cues phase ran cleanly (the batch call itself succeeded).
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["cues"]["status"] == "ok"
+
+
+def test_execute_partial_cue_defer_does_not_pollute_warning(
+    conn, song, session, tiny_song, state_dir,
+):
+    """When only some cues defer, the warning names the deferred ones and the
+    push still succeeds."""
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=33.0, name="late")
+    send = _cue_skip_send_fn(
+        [{"position_beats": 128.0, "name": "late"}], last_event_time=32.0,
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    assert len(result.warnings) == 1
+    assert "late" in result.warnings[0]
+    assert "intro" not in result.warnings[0]
+
+
+def test_execute_cue_past_composed_length_halts_partial(
+    conn, song, session, tiny_song, state_dir,
+):
+    """SYN-6B4Q: a cue past the composed song length is a hard authoring error.
+    The planner emits ``plan.error`` (no calls); the executor halts the cues
+    phase → PARTIAL, with the clear composed-length message in the errors file
+    — NOT the opaque runtime ``past last_event_time`` error."""
+    # Arrangement covers bars 1–2 (the tiny_song clip is 4 beats = 1 bar).
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=32.0, name="late")
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted == "cues"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "composed song length" in blob
+    assert "late@bar32.00" in blob
+    # The cues phase is marked halted in the state file.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["cues"]["status"] == "halted"

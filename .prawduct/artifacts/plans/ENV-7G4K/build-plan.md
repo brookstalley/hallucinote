@@ -56,9 +56,16 @@ superseded note. Change-log entry added (status=merged, set at PR
 creation per convention). Backlog pass via the skill: ENV-7G4K →
 shipped/Archive (with recorded-residuals scrub trail), ENV-4M2T narrowed
 to clip-locked residual, AUD-1M4V stage 0b BUILT, DEV-2M9K new-evidence
-note (scriptable UI crack). Remaining before PR: cumulative Critic
-against develop...HEAD (the /prawduct:pr create gate); operator
-audible/visual half still queued in operator-verification.md.
+note (scriptable UI crack). Cumulative Critic (develop...HEAD) found
+2 BLOCKING + 4 warnings — ALL resolved in 4c59a92 (session-keyed
+performed_automation fingerprints + disposable-table rebuild, song-new
+skill teaching, apply-layer unverified-perform warnings surfaced at all
+3 call sites, twelve-phase skill/help sweep, master send_level →
+unroutable, Q.get_envelope dedup; route-map dedup filed as ENV-5R2J).
+verify-resolutions chain record CLEAN — the /prawduct:pr create gate
+(base develop) is satisfied. PR awaits user ask (PR creation:
+wait_for_user). Operator audible/visual half still queued in
+operator-verification.md (not a PR blocker per review).
 Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
 `perform` action + handler (runs_on_worker, lock under live_state_lock,
 record_mode settle-poll per probe 10, per-step finally restore incl.

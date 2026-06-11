@@ -419,10 +419,14 @@ sections only via explicit `/backlog update` calls.
 
   **Update (2026-06-10): discovery pass COMPLETE — stage requirements→design; the verifiable signal is MET.** `.prawduct/artifacts/plans/AUD-1M4V/discovery.md` records producer-led requirements + empirical LOM probe results (`docs/research/audio-first-class/`) + the staged plan. Children updated with `refs:` to it; two new children filed from the discovery (ENV-7G4K performed automation, AUD-9R3V recording workflow). Key probe outcomes: Live 12.2+ has `create_audio_clip(abs_path)` (CLP-AUD2 redefined — browser-load workaround retired), mixer envelopes on audio session clips confirmed end-to-end (ENV-8H1T reduced), and performed automation via `session_automation_record` + gestures verified on master/return (ENV-4M2T partially superseded). (AUD-1M4V discovery completion, 2026-06-10)
 
+  **Update (2026-06-10, planning session): stage-0 children both planned and ready.** ENV-7G4K (stage 0b) and CLP-AUD1 (stage 0a) each carry a reviewed-against-discovery `design.md` + `build-plan.md` (`.prawduct/artifacts/plans/<ID>/`) and advanced to `stage: ready`.
+
 - **[ENV-7G4K]** Performed automation — master/group/return mixer automation via gesture-recorded scripted ramps
-  `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md · reviewed: 2026-06-10`
+  `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: open · stage: ready · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/ENV-7G4K/design.md, .prawduct/artifacts/plans/ENV-7G4K/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md · reviewed: 2026-06-10`
 
   The verified mechanism for the one automation surface clips can't reach: `session_automation_record` + `record_mode` (**ASYNC apply — poll, don't trust same-call read-back**) + `begin_gesture`/`end_gesture` + a scripted value ramp during playback. Verification via `DeviceParameter.automation_state` (0/1/2) + playback observation + `.als` XML dump. **Empirically confirmed on master and return tracks in Live 12.4.1** (playback-verified: the parameter moves by itself). **User lock 2026-06-10: must-have early.** **Staging corrected (cumulative-Critic, 2026-06-10):** probe 4 shows performed automation has ZERO dependency on audio clips, so it is staged **0b — PARALLEL to CLP-AUD1, can start immediately** — not behind CLP-AUD2. This is the strongest honoring of the must-have-early lock; the literal "right after the DB model" wording predated the probe evidence, and the deviation is recorded in discovery.md's staged plan. Master-bus filter sweeps are established electronic transition craft (producer research) — this is what makes them authorable. (AUD-1M4V discovery, 2026-06-10)
+
+  **Update (2026-06-10, planning session): stage design→ready.** Reviewed-against-discovery `design.md` + `build-plan.md` authored under `.prawduct/artifacts/plans/ENV-7G4K/`. User decisions 2026-06-10: authoring reuses envelopes+breakpoints — no new vocabulary; performed recording is a second push mechanism. Performing happens in push, fingerprint-gated. Wave-1 targets = full surface: master + group + return mixer/sends/device params (group probed in chunk 01).
 
 - **[AUD-9R3V]** Recording workflow — in-Live vocal/audio takes with comping staging
   `effort: L · impact: L · area: clip/audio · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md`
@@ -476,13 +480,15 @@ sections only via explicit `/backlog update` calls.
   **From the 2026-06-09 repo-wide review.** Findings coach per-dimension (harmony lint, melody lens, performance lens, energy realization, masking), but nothing synthesizes an overall verdict against declared intent. Mostly an interpretation/prompt layer, not DSP. **Explicitly gated on QLT-3D8R (listening-day calibration) — do not build before the per-dimension analyzers are ear-validated.** **Verifiable signal:** a review-skill-level rollup exists that reads the per-dimension findings + declared intents and produces an overall reading; OR a decision-record keeps synthesis at the LLM-orchestration layer with rationale. (repo-wide review 2026-06-09)
 
 - **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
-  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: design · related: AUD-1M4V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: ready · related: AUD-1M4V · refs: .prawduct/artifacts/plans/CLP-AUD1/design.md, .prawduct/artifacts/plans/CLP-AUD1/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   (migrated from legacy P6) Gates several deferred envelope + import items above.
 
   **Relocated out of the P6 far-horizon subsection + impact bumped M→L (repo-wide review 2026-06-09):** the review promotes audio-as-first-class-material to the #1 recommended investment; this item is a core child of the AUD-1M4V umbrella, not event-store-era work.
 
   **Update (2026-06-10, AUD-1M4V discovery): wave-1 field set LOCKED — stage→design.** The discovery artifact fixes the v1 schema scope: kind discriminator, file ref, gain, pitch, warping + warp mode, start/end markers. **Warp markers deferred per user lock** (not in wave 1). See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
+  **Update (2026-06-10, planning session): stage design→ready.** Reviewed-against-discovery `design.md` + `build-plan.md` authored under `.prawduct/artifacts/plans/CLP-AUD1/`. User decision 2026-06-10: audio file refs stored song-relative (assets-dir convention), resolved at push/analysis time; absolute paths allowed as-given.
 
 - **[CLP-AUD2]** Session-view audio clip creation — thin create handlers + push/pull surface for audio-clip rows
   `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`

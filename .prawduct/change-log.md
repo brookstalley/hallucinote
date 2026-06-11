@@ -6,7 +6,7 @@
 
 ## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
 
-<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=merged -->
+<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->
 
 The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
 `ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with
@@ -28,7 +28,7 @@ CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4
 
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
-<!-- chunks=INS-7V2D-cold-start-timeout status=shipped release=unreleased scope=plugin-distribution -->
+<!-- prawduct: type=bugfix | chunks=INS-7V2D-cold-start-timeout | scope=plugin-distribution | status=shipped | release=v0.9.4 -->
 
 The plugin-bundled `hallucinote-mcp` server timed out on a genuinely-cold first start: the spawn
 runs a full `uv` build (numpy/scipy/librosa/llvmlite, ~70 MiB) and the connection timed out at

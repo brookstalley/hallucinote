@@ -354,4 +354,5 @@ __all__ = [
     "get_handler",
     "resolve_path",
     "serialize",
+    "set_handler",
 ]

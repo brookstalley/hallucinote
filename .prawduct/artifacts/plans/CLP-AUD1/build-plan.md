@@ -106,9 +106,11 @@ table semantics (locate by grep at build time) gains the kind/audio-field rows.
 
 - **Type:** cumulative-final
 - **Deliverables:** `src/hallucinote/db/mutations/clips.py` (+ notes mutators
-  file), `src/hallucinote/sync/push/clips.py`, new path helper module; tests in
-  `tests/unit/db/test_mutations.py`, `tests/unit/sync/test_push_song.py`,
-  `tests/unit/audio/`; doc + `.prawduct/change-log.md` entry.
+  file), `src/hallucinote/sync/push/clips.py`, new path helper module (landed as
+  `src/hallucinote/paths.py` — package top-level so it stays stdlib-only; audio/
+  drags numpy); tests in `tests/unit/db/test_mutations.py`,
+  `tests/unit/sync/test_push_song.py`, `tests/unit/test_paths.py`; doc +
+  `.prawduct/change-log.md` entry.
 - **Tests:** update guards both directions; kind immutability; notes-on-audio
   refusal; planner refusal (warn text + no MIDI create emitted); path helper
   (relative resolves under song_dir, absolute passes through, POSIX separators);

@@ -30,6 +30,40 @@ WARP_MODES = {
 }
 
 
+def _validate_audio_fields(fields: dict[str, Any]) -> None:
+    """Teach LOM value domains at authoring time, not at CLP-AUD2 push time.
+
+    Domains per `lom-audio-clip-surface.md` (gain is LINEAR 0-1, not dB).
+    Only validates keys present with non-None values — partial updates pass
+    through untouched fields.
+    """
+    gain = fields.get("audio_gain")
+    if gain is not None and not 0.0 <= gain <= 1.0:
+        raise ValueError(
+            f"audio_gain {gain!r} out of range: Live clip gain is LINEAR "
+            "0.0-1.0 (not dB)."
+        )
+    coarse = fields.get("pitch_coarse")
+    if coarse is not None and not -48 <= coarse <= 48:
+        raise ValueError(
+            f"pitch_coarse {coarse!r} out of range: semitones, -48..+48."
+        )
+    fine = fields.get("pitch_fine")
+    if fine is not None and not -50.0 <= fine <= 50.0:
+        raise ValueError(
+            f"pitch_fine {fine!r} out of range: cents, -50.0..+50.0."
+        )
+    warping = fields.get("warping")
+    if warping is not None and warping not in (0, 1):
+        raise ValueError(f"warping {warping!r} invalid: 0 or 1.")
+    warp_mode = fields.get("warp_mode")
+    if warp_mode is not None and warp_mode not in WARP_MODES.values():
+        names = ", ".join(f"{n}={v}" for n, v in WARP_MODES.items())
+        raise ValueError(
+            f"warp_mode {warp_mode!r} is not a Live warp mode ({names})."
+        )
+
+
 def create_clip(
     conn: sqlite3.Connection,
     *,
@@ -195,6 +229,7 @@ def create_audio_clip(
         "start_marker": start_marker,
         "end_marker": end_marker,
     }
+    _validate_audio_fields(fields)
     if existing is not None:
         # `kind` is immutable — converting a MIDI slot to audio is
         # delete+create, same doctrine as track_id/slot relocation.
@@ -322,6 +357,7 @@ def update_clip(
             "always answer 'what does this clip play?'. To retire the "
             "clip, delete it (delete+create doctrine)."
         )
+    _validate_audio_fields(changes)
     sets = [f"{k} = ?" for k in changes]
     vals = list(changes.values()) + [clip_id]
     conn.execute(f"UPDATE clips SET {', '.join(sets)} WHERE id = ?", vals)

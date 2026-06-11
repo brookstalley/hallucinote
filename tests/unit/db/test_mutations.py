@@ -1971,3 +1971,40 @@ def test_create_enum_envelope_idempotent_on_replay(conn, amp_device):
         ],
     )
     assert first == second
+
+
+def test_audio_field_domains_validated_at_authoring_time(conn):
+    """CLP-AUD1 cumulative-Critic W3: LOM value domains teach at the mutator,
+    not at CLP-AUD2 push time inside Live."""
+    sid = M.create_song(conn, name="s")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Vox",
+                         kind="audio")
+
+    def make(**kw):
+        return M.create_audio_clip(
+            conn, track_id=tid, slot=1, length_beats=4.0,
+            audio_file="assets/a.wav", **kw,
+        )
+
+    with pytest.raises(ValueError, match="LINEAR"):
+        make(gain=1.5)
+    with pytest.raises(ValueError, match="semitones"):
+        make(pitch_coarse=60)
+    with pytest.raises(ValueError, match="cents"):
+        make(pitch_fine=-51.0)
+    with pytest.raises(ValueError, match="warping"):
+        make(warping=2)
+    with pytest.raises(ValueError, match="not a Live warp mode"):
+        make(warp_mode=99)
+    # No row, no event leaked from the refusals.
+    assert conn.execute("SELECT COUNT(*) AS n FROM clips").fetchone()["n"] == 0
+
+    # Boundary values pass; update_clip validates the same domains.
+    cid = make(gain=1.0, pitch_coarse=-48, pitch_fine=50.0, warping=1,
+               warp_mode=M.WARP_MODES["complex_pro"])
+    with pytest.raises(ValueError, match="not a Live warp mode"):
+        M.update_clip(conn, clip_id=cid, warp_mode=42)
+    M.update_clip(conn, clip_id=cid, audio_gain=0.0)
+    row = conn.execute("SELECT audio_gain FROM clips WHERE id = ?",
+                       (cid,)).fetchone()
+    assert row["audio_gain"] == 0.0

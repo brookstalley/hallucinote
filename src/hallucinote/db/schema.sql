@@ -85,7 +85,10 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Song-relative POSIX path (canonically under assets/), or absolute —
     -- stored exactly as authored, resolved at push/analysis time.
     audio_file              TEXT,
+    -- Live clip gain, 0.0-1.0 LINEAR (not dB) -- LOM value domain.
     audio_gain              REAL,
+    -- Transpose: semitones (-48..+48) / cents (-50.0..+50.0) -- LOM domains;
+    -- mutators validate (see mutations.clips._validate_audio_fields).
     pitch_coarse            INTEGER,
     pitch_fine              REAL,
     warping                 INTEGER,

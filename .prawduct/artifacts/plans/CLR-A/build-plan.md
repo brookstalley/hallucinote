@@ -59,12 +59,25 @@ params_dialed drop (cheapest concrete probe; written before the fix).
 
 ## Status
 
-- [ ] Chunk 01: SYN-9F2L — params_dialed lands or warns (root cause + fix + regression)
+- [x] Chunk 01: SYN-9F2L — params_dialed lands or warns (root cause + fix + regression)
 - [ ] Chunk 02: SYN-6B4Q — skeleton-push cues skip-with-warning past arrangement extent
 - [ ] Chunk 03: INV-3K8W — preset_query teaching errors point at the actual fix
 - [ ] Chunk 04: SYN-5C3J + MCP-4T6Y — version-pin recovery teaching + long-action read window
 - [ ] Chunk 05: DEV-5R8Q + INS-2Q7F + SKL-8N3V — chain-rebuild decision + doc fixes (cumulative-final)
-Context: plan authored 2026-06-11; nothing built yet.
+Context: chunk 01 BUILT + committed 2026-06-11 (5384f98), session paused on
+user quota — per-chunk Critic NOT yet run; per the small-chunks cadence
+learning it rolls into the cumulative at chunk 05 (or run `/prawduct:critic
+chunk` first thing next session if preferred). Root cause CONFIRMED by the
+regression test (planner-order link race + next-push fingerprint skip). Fix
+shipped in three parts: devices-phase convergence pass in `execute_push`
+(re-plan after apply, dispatch only NEW keys — `_dispatch_calls` /
+`_apply_results` extraction); planner wire-form selection (display preferred,
+known enums as `value_type='enum'`, normalized fallback, unwritable → warn);
+executor one-shot `_attempt_set_parameter_fallback` (actual-enum → enum
+write; no-str_for_value → DB normalized). Suite 3310 passed / 0 failed at
+HEAD. NEXT: chunk 02 (cues skip-with-warning, home decided in-chunk:
+apply-layer downgrade vs planner pre-partition — see
+`src/hallucinote/sync/push/arrangement.py:170` cue_batch emission).
 
 ## Scaffolding
 

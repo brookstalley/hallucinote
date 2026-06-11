@@ -421,6 +421,8 @@ sections only via explicit `/backlog update` calls.
 
   **Update (2026-06-10, planning session): stage-0 children both planned and ready.** ENV-7G4K (stage 0b) and CLP-AUD1 (stage 0a) each carry a reviewed-against-discovery `design.md` + `build-plan.md` (`.prawduct/artifacts/plans/<ID>/`) and advanced to `stage: ready`.
 
+  **Update (2026-06-10b): stage 0a SHIPPED.** CLP-AUD1 merged to develop (PR #157, squash 3ad1119) — audio-clip DB model (kind discriminator + wave-1 fields + `create_audio_clip`); item archived. CLP-AUD2 (push/pull surface) is now unblocked. Stage 0b (ENV-7G4K) remains `ready` but unbuilt — blocked on Live availability for its chunk-01 probes.
+
 - **[ENV-7G4K]** Performed automation — master/group/return mixer automation via gesture-recorded scripted ramps
   `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: open · stage: ready · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/ENV-7G4K/design.md, .prawduct/artifacts/plans/ENV-7G4K/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md · reviewed: 2026-06-10`
 
@@ -479,21 +481,12 @@ sections only via explicit `/backlog update` calls.
 
   **From the 2026-06-09 repo-wide review.** Findings coach per-dimension (harmony lint, melody lens, performance lens, energy realization, masking), but nothing synthesizes an overall verdict against declared intent. Mostly an interpretation/prompt layer, not DSP. **Explicitly gated on QLT-3D8R (listening-day calibration) — do not build before the per-dimension analyzers are ear-validated.** **Verifiable signal:** a review-skill-level rollup exists that reads the per-dimension findings + declared intents and produces an overall reading; OR a decision-record keeps synthesis at the LLM-orchestration layer with rationale. (repo-wide review 2026-06-09)
 
-- **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
-  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: ready · related: AUD-1M4V · refs: .prawduct/artifacts/plans/CLP-AUD1/design.md, .prawduct/artifacts/plans/CLP-AUD1/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
-
-  (migrated from legacy P6) Gates several deferred envelope + import items above.
-
-  **Relocated out of the P6 far-horizon subsection + impact bumped M→L (repo-wide review 2026-06-09):** the review promotes audio-as-first-class-material to the #1 recommended investment; this item is a core child of the AUD-1M4V umbrella, not event-store-era work.
-
-  **Update (2026-06-10, AUD-1M4V discovery): wave-1 field set LOCKED — stage→design.** The discovery artifact fixes the v1 schema scope: kind discriminator, file ref, gain, pitch, warping + warp mode, start/end markers. **Warp markers deferred per user lock** (not in wave 1). See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
-
-  **Update (2026-06-10, planning session): stage design→ready.** Reviewed-against-discovery `design.md` + `build-plan.md` authored under `.prawduct/artifacts/plans/CLP-AUD1/`. User decision 2026-06-10: audio file refs stored song-relative (assets-dir convention), resolved at push/analysis time; absolute paths allowed as-given.
-
 - **[CLP-AUD2]** Session-view audio clip creation — thin create handlers + push/pull surface for audio-clip rows
   `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   **REDEFINED by probe evidence (2026-06-10, AUD-1M4V discovery).** Live 12.2+ has `ClipSlot.create_audio_clip(abs_path)` (also on `Track` and `TakeLane`) — empirically confirmed by the LOM probe pass. The original async browser-load workaround design (below, retained for the record) is **obsolete and retired**. The item is now thin create handlers + the push/pull surface for CLP-AUD1's audio-clip rows. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
+  **UNBLOCKED (2026-06-10, CLP-AUD1 shipped — PR #157, squash 3ad1119 to develop).** The audio-clip DB model landed: `kind` discriminator + wave-1 fields + `create_audio_clip` mutator. The placement/push-pull surface this item owns is now buildable. Current interim behavior CLP-AUD2 replaces with real handlers: push **refuses `kind='audio'` loudly** (teaching error, no silent skip) and pull **exempts audio rows from reconcile** — both are deliberate placeholders for this item's create handlers + push/pull surface.
 
   *Retired original design (pre-12.2 assumption, W6-D investigation 2026-05-19):* Live 10–12 has no `ClipSlot.create_audio_clip`. The only path is async browser-load: set `song.view.highlighted_clip_slot = target_slot`, then `application.browser.load_item(audio_browser_item)`. Caveats: async (no completion callback), audio must be addressable as a BrowserItem (Library/User/Places — not arbitrary filesystem path), browser-indexing dependent. Could expose as `ableton_clip(action='load_audio_to_session', track_index, clip_index, browser_uri)`.
 
@@ -548,6 +541,15 @@ _(none — INS-7V2D shipped; see Archive.)_
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
+  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: shipped · closed-by: PR#157 (squash 3ad1119, develop, 2026-06-10) · related: AUD-1M4V, CLP-AUD2 · refs: .prawduct/artifacts/plans/CLP-AUD1/design.md, .prawduct/artifacts/plans/CLP-AUD1/build-plan.md, .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+
+  **SHIPPED (2026-06-10, PR #157 → develop).** The AUD-1M4V stage-0a child: audio-clip DB model — `kind` discriminator + wave-1 field set (file ref, gain, pitch, warping + warp mode, start/end markers) + `create_audio_clip` mutator. Audio file refs stored song-relative (assets-dir convention), resolved at push/analysis time; absolute paths allowed as-given (user decision 2026-06-10). Interim sync behavior pending CLP-AUD2: push refuses `kind='audio'` loudly; pull exempts audio rows from reconcile.
+
+  **Consciously deferred remainder — warp markers.** Excluded from the wave-1 field set per user lock 3 (2026-06-10); the remainder is already tracked by the AUD-1M4V discovery's R2.2 note (`.prawduct/artifacts/plans/AUD-1M4V/discovery.md`), so no follow-up item is filed — the deferral is recorded here for the scrub trail.
+
+  *Original item (for the record):* (migrated from legacy P6) Gates several deferred envelope + import items above. Relocated out of the P6 far-horizon subsection + impact bumped M→L (repo-wide review 2026-06-09): core child of the AUD-1M4V umbrella, not event-store-era work. Wave-1 field set locked by the 2026-06-10 discovery (stage→design), then design.md + build-plan.md authored same day (stage→ready).
 
 - **[INS-7V2D]** Plugin-bundled MCP server via uv — version-lock the server to the plugin (kill PATH/venv fragility)
   `effort: L · impact: M · area: install · source: user · added: 2026-06-04 · status: shipped · closed-by: feature/plugin-bundled-mcp-uv · related: TPL-2D8K, INS-4H8M, SYN-2M9P, DEV-1F9X`

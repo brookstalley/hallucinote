@@ -6,7 +6,7 @@
 
 ## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
 
-<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio -->
+<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=merged -->
 
 AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
 `'audio'`) plus the user-locked wave-1 audio field set — `audio_file`

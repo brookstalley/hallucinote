@@ -42,7 +42,7 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 
 ## Status
 
-- [ ] Chunk 01: probes + `ableton_automation perform` action (thin slice)
+- [x] Chunk 01: probes + `ableton_automation perform` action (thin slice)
 - [ ] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
 - [ ] Chunk 03: push phase + fingerprint gate + Live smoke
 - [ ] Chunk 04: docs, guides, backlog closeout
@@ -50,12 +50,17 @@ Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation
 `perform` action + handler (runs_on_worker, lock under live_state_lock,
 record_mode settle-poll per probe 10, per-step finally restore incl.
 re_enable_automation, beat-space interp with linear/hold/fast/slow) + 24 unit
-tests + LOCK_USERS audit entry. Chunk 01 step 0 (the two wire probes:
-group-host recording, re-record overwrite) is BLOCKED — the hallucinote MCP
-bridge is not connected in this session (Live must be running + `/mcp`
-reconnect). Probes gate chunk 02's group eligibility + chunk 03's fingerprint
-model, NOT the chunk-01 handler shape (mechanism probe-verified on
-master/return). Chunk stays [ ] until verdicts land in lom-probe-results.md.
+tests + LOCK_USERS audit entry. Chunk 01 step 0 verdicts landed 2026-06-11
+(lom-probe-results.md rows 12/13): (b) re-record overwrite **CONFIRMED** —
+same-span re-perform fully replaces the prior arc, automation_state stays 1 —
+the HIGH-impact fingerprint-gate assumption holds; chunk 03 unblocked. (a)
+group-host recording remains **blocked on one human action** (no group track
+exists, LOM can't create one, Accessibility not granted for a scripted Cmd+G);
+`env7g4k-probe-driver.py group` runs it unattended once a group exists. Per the
+original probe doc this is opportunistic re-verification of a track-kind-
+agnostic mechanism — carried into chunk 03's Live smoke (real song sets have
+groups), NOT a chunk 02 blocker; chunk 02 group eligibility ships per design
+decision 3 with the verdict noted pending.
 Parallel item CLP-AUD1 already merged (PR #157); schema.sql rebase burden
 now falls on this branch.
 

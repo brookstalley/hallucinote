@@ -28,6 +28,19 @@ LIKELY/UNKNOWN labels in `lom-audio-clip-surface.md` and
 | 10 | `record_mode` apply semantics | **ASYNC — CONFIRMED** | Immediate read-back after set returns the OLD value; reads true ~300 ms later. Any handler touching transport-adjacent Song state must poll, not trust same-call read-back |
 | 11 | `application.major_version` | **ABSENT at RS level** | AttributeError; use `application.get_major_version()`/`describe application` instead |
 
+## ENV-7G4K chunk 01 step 0 follow-ups (2026-06-11)
+
+Executed via `env7g4k-probe-driver.py` (records appended to the JSONL, probes
+prefixed `ramp1-up`/`ramp2-down`). Wire calls carried `allow_version_mismatch=true`
+(server `c0b443e0e4c0` vs Remote Script `a5479db86125` — the probe surface is the
+one the original 195 records ran against). Scratch default set, master volume.
+
+| # | Question | Verdict | Evidence |
+|---|----------|---------|----------|
+| 12 | Re-record overwrite (the fingerprint-gate assumption) | **YES — CONFIRMED** | Probe-4 recipe twice over the same span from beat 0: ramp 1 ascending 0.30→0.90 → playback (no writer) reads 0.30/0.33/0.36/0.39 ascending, `automation_state` 1; ramp 2 descending 0.90→0.30 re-performed over the same span → the SAME beats read 0.90/0.87/0.84/0.81 descending — ramp 1 fully replaced in the gesture-held region. `automation_state` stays **1** after re-record AND after playback (never 2/overridden). Replacement is bounded by the gesture-held region, which matches the perform handler (deterministic beat spans) |
+| 12a | Driver-latency caveat | noted | Recorded slope was ~5× shallower than authored: each driver step paid a TCP round trip (~400 ms vs the intended 100 ms), stretching the recorded span. Driver-only artifact — the shipped handler steps worker-side in the Remote Script process with no per-step wire hop |
+| 13 | Group-host gesture recording | **STILL BLOCKED — needs one human action** | No group track in any open set and LOM cannot create one (re-confirmed: `describe song` lists no group-creation method). Workaround attempted: LOM CAN set `song.view.selected_track` ($path), but sending Cmd+G via System Events fails — `osascript is not allowed to send keystrokes (1002)`, Accessibility not granted to the agent host. Unblock = either grant Accessibility, or Cmd+G any track in Live, then run `env7g4k-probe-driver.py group` |
+
 ## Still open (consciously)
 
 - **Breakpoint quality / thinning** of the recorded ramp: needs a saved `.als` to dump
@@ -37,7 +50,9 @@ LIKELY/UNKNOWN labels in `lom-audio-clip-surface.md` and
   mechanics untested. Probe when the recording workflow chunk builds region-scoped writes.
 - **Group-track automation write**: mechanism confirmed on master + return; group track
   untestable until a set with a group exists (LOM cannot create groups). Re-verify
-  opportunistically in a real song.
+  opportunistically in a real song. → Row 13 (2026-06-11): one human Cmd+G (or an
+  Accessibility grant) unblocks; `env7g4k-probe-driver.py group` then runs the probe
+  unattended.
 
 ## Architecture consequences (feed `discovery.md`)
 

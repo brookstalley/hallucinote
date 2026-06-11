@@ -280,13 +280,12 @@ def test_device_parameter_track_emits_via_session_clip(
     }
 
 
-def test_device_parameter_return_skipped_lacking_session_clip_model(
+def test_device_parameter_return_routes_to_perform(
     conn, song, session, linked_return, return_device,
 ):
-    """W4-B: return-side device_parameter envelopes require session-clip
-    routing per Live 12.4, but the DB has no return-side session-clip
-    model. Planner warns + skips (filed as backlog: return-track clip
-    domain)."""
+    """ENV-7G4K: return-side device_parameter envelopes are perform-routed
+    (was: W4-B skip-warn for the missing return-side session-clip model —
+    the perform mechanism made that model unnecessary)."""
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device",
         db_id=return_device, ableton_index=3,
@@ -298,7 +297,7 @@ def test_device_parameter_return_skipped_lacking_session_clip_model(
     _add_one_breakpoint(conn, eid)
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("return-side" in n and "session-clip" in n for n in plan.notes)
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
 
 
 def test_device_parameter_skipped_when_device_unlinked(
@@ -947,28 +946,24 @@ def test_lossy_warn_fires_on_note_expression_path(
 
 
 # ---------------------------------------------------------------------------
-# W10-F: D2/D3 planner safety-net + D1 teaching-message regression
+# ENV-7G4K: route partition (session-clip vs perform vs refused-audio)
 # ---------------------------------------------------------------------------
 
 
 def _force_track_kind(conn, track_id: str, kind: str) -> None:
-    """W10-F: bypass M.create_envelope's track-kind refusal by flipping the
-    track's kind AFTER envelope creation, to exercise the planner-side
-    safety net for legacy rows or pulled state.
-
-    Real callers can't hit this path through mutators today, but planner
-    defense-in-depth needs explicit coverage so a future schema change
-    doesn't silently regress it.
-    """
+    """Flip a track's kind AFTER envelope creation. For 'audio' this
+    bypasses the mutator refusal to exercise the planner-side safety net
+    (legacy rows / pulled state); for master/group it just spares the
+    fixtures a second track + link."""
     conn.execute("UPDATE tracks SET kind = ? WHERE id = ?", (kind, track_id))
 
 
-def test_planner_warns_when_mixer_envelope_targets_master_track(
+def test_planner_routes_master_mixer_envelope_to_perform(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
-    """D2 planner safety-net: even if a mixer_volume envelope landed in
-    the DB pointing at a master track (legacy / pull / future-schema),
-    the planner warns and skips with the teaching message."""
+    """ENV-7G4K: a master-host mixer envelope is not emitted by the
+    session-clip phase and not refused — the note names the
+    performed-automation route (was: sub-bus teaching + skip)."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume",
         target_track_id=linked_track,
@@ -977,28 +972,13 @@ def test_planner_warns_when_mixer_envelope_targets_master_track(
     _force_track_kind(conn, linked_track, "master")
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("master" in n and "sub-bus" in n for n in plan.notes), plan.notes
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
+    assert not any("sub-bus" in n for n in plan.notes), plan.notes
 
 
-def test_planner_warns_when_mixer_envelope_targets_audio_track(
+def test_planner_routes_group_mixer_envelope_to_perform(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
-    """D3 planner safety-net for audio-track host."""
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="mixer_pan",
-        target_track_id=linked_track,
-    )
-    _add_one_breakpoint(conn, eid)
-    _force_track_kind(conn, linked_track, "audio")
-    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert plan.calls == []
-    assert any("audio" in n and "sub-bus" in n for n in plan.notes), plan.notes
-
-
-def test_planner_warns_when_mixer_envelope_targets_group_track(
-    conn, song, session, linked_track, linked_clip, arr_clip,
-):
-    """Group tracks: same routing-unreachable failure mode as D3."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume",
         target_track_id=linked_track,
@@ -1007,14 +987,30 @@ def test_planner_warns_when_mixer_envelope_targets_group_track(
     _force_track_kind(conn, linked_track, "group")
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("group" in n for n in plan.notes), plan.notes
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
+
+
+def test_planner_warns_when_mixer_envelope_targets_audio_track(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Audio hosts stay refused (ENV-8H1T scope); the teaching no longer
+    points at the obsolete sub-bus workaround."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "audio")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("audio" in n and "ENV-8H1T" in n for n in plan.notes), plan.notes
+    assert not any("sub-bus" in n for n in plan.notes), plan.notes
 
 
 def test_planner_warns_when_send_envelope_targets_audio_track(
     conn, song, session, linked_track, linked_clip, arr_clip,
     linked_return,
 ):
-    """D3 safety net for send_level."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="send_level",
         target_track_id=linked_track,
@@ -1027,11 +1023,31 @@ def test_planner_warns_when_send_envelope_targets_audio_track(
     assert any("audio" in n and "send_level" in n for n in plan.notes), plan.notes
 
 
-def test_planner_warns_when_device_parameter_targets_master_track(
+def test_planner_warns_send_level_on_master_as_invalid(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+    linked_return,
+):
+    """Legacy-row safety net: send_level on the master is unauthorable on
+    any route (the master has no sends) — a hard skip-warn, not a
+    perform routing note."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    _force_track_kind(conn, linked_track, "master")
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("no sends" in n for n in plan.notes), plan.notes
+    assert not any("performed-automation" in n for n in plan.notes), plan.notes
+
+
+def test_planner_routes_master_device_parameter_to_perform(
     conn, song, session, linked_track, linked_clip, arr_clip, linked_device,
 ):
-    """D2 safety net for device_parameter: device's chain's parent_track is
-    the master."""
+    """Master-chain device sweeps are the canonical perform target
+    (design.md decision 3)."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
@@ -1040,8 +1056,92 @@ def test_planner_warns_when_device_parameter_targets_master_track(
     _force_track_kind(conn, linked_track, "master")
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("master" in n and "device_parameter" in n for n in plan.notes), \
-        plan.notes
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
+
+
+def test_planner_routes_return_mixer_envelope_to_perform(
+    conn, song, session, linked_return,
+):
+    """return_mixer_* kinds are always perform-routed (returns host no
+    clips; probe 4b verified the mechanism on returns)."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="return_mixer_volume",
+        target_send_return_id=linked_return,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("performed-automation" in n and "return_mixer_volume" in n
+               for n in plan.notes), plan.notes
+
+
+def test_classify_envelope_route_partitions_all_kinds(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+    linked_return, linked_device,
+):
+    """The eligibility predicate cleanly partitions session-clip vs
+    perform vs refused-audio (chunk 02 acceptance criterion). One song,
+    one envelope per route family, asserted directly on the predicate."""
+    mixer_midi = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    ret_mixer = M.create_envelope(
+        conn, song_id=song, target_kind="return_mixer_pan",
+        target_send_return_id=linked_return,
+    )
+    dev_midi = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    cc = M.create_envelope(
+        conn, song_id=song, target_kind="clip_cc",
+        target_clip_id=linked_clip, parameter_path="64",
+    )
+
+    def route_of(env_id):
+        row = conn.execute(
+            "SELECT * FROM envelopes WHERE id = ?", (env_id,),
+        ).fetchone()
+        return push.classify_envelope_route(conn, row)
+
+    assert route_of(mixer_midi) == "session_clip"
+    assert route_of(ret_mixer) == "perform"
+    assert route_of(dev_midi) == "session_clip"
+    assert route_of(cc) == "clip_scoped"
+
+    _force_track_kind(conn, linked_track, "master")
+    assert route_of(mixer_midi) == "perform"
+    assert route_of(dev_midi) == "perform"
+
+    _force_track_kind(conn, linked_track, "audio")
+    assert route_of(mixer_midi) == "refused_audio"
+    assert route_of(dev_midi) == "refused_audio"
+
+
+def test_classify_send_level_on_master_is_unroutable(
+    conn, song, session, linked_track, linked_return,
+):
+    """The master strip has no sends — a (mutator-bypassing) master
+    send_level row must NOT partition to 'perform', or the performed-
+    automation phase would emit a guaranteed-fail wire call. It routes
+    nowhere; group hosts stay perform-routed."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=linked_return,
+    )
+
+    def route_of(env_id):
+        row = conn.execute(
+            "SELECT * FROM envelopes WHERE id = ?", (env_id,),
+        ).fetchone()
+        return push.classify_envelope_route(conn, row)
+
+    _force_track_kind(conn, linked_track, "master")
+    assert route_of(eid) == "unroutable"
+    _force_track_kind(conn, linked_track, "group")
+    assert route_of(eid) == "perform"
 
 
 # --- D1 teaching-message regression: partition-by-hand suggestion ---

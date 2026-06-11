@@ -550,3 +550,12 @@ def test_register_tool_detects_param_type_conflicts(isolated_registry):
     )
     with pytest.raises(ValueError, match="type conflict"):
         _collect_tool_params("ableton_session")
+
+
+def test_annotated_param_type_any_is_explicit_not_fallback():
+    # 'any' must be a first-class _PARAM_TYPE_MAP entry; regressing to the
+    # .get() fallback would still work today, but the explicit entry is the
+    # documented contract for polymorphic params (ableton_probe set's value).
+    from hallucinote_mcp.server import _PARAM_TYPE_MAP
+    from typing import Any
+    assert _PARAM_TYPE_MAP["any"] is Any

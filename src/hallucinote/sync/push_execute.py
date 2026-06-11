@@ -1,6 +1,6 @@
 """W10-E2: bulk push dispatcher that bypasses the agent's tool-use channel.
 
-The eleven-phase push planner emits plans the agent has historically dispatched
+The twelve-phase push planner emits plans the agent has historically dispatched
 itself via MCP tool calls. For large songs that's the v1.0 ceiling: each call
 ships its full args (notably ``notes=[…]``) as inline JSON inside the agent's
 tool-use block, burning agent context budget per call. A 29-clip song measured
@@ -397,7 +397,7 @@ def execute_push(
     actor: str = "sync",
     reason: str | None = None,
 ) -> ExecuteResult:
-    """Run the full eleven-phase push, dispatching each call via ``send_fn``.
+    """Run the full twelve-phase push, dispatching each call via ``send_fn``.
 
     ``send_fn`` defaults to :func:`hallucinote_mcp.client.send`. Tests pass
     their own to avoid touching the MCP package or Live.
@@ -582,7 +582,7 @@ def execute_push(
         # connection-lost the loop broke before any subsequent ok rows could
         # accumulate, so this is safe.
         if results:
-            push.apply_push_results(
+            apply_warnings = push.apply_push_results(
                 conn,
                 results,
                 session_id=session_id,
@@ -590,6 +590,20 @@ def execute_push(
                 request_id=request_id,
                 reason=reason or f"push_cli execute phase={phase.name}",
             )
+            # Apply-layer warnings (e.g. a perform whose write Live could
+            # not verify — nothing recorded, next push retries) ride the
+            # errors file so the agent sees them. They don't flip the
+            # phase status: the wire call succeeded; what failed is the
+            # verification-gated DB record.
+            for w in apply_warnings:
+                error_records.append({
+                    "key": None,
+                    "tool": "apply_push_results",
+                    "action": "apply",
+                    "args_summary": {"phase": phase.name},
+                    "error": w,
+                    "hint": None,
+                })
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))

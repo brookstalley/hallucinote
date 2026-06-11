@@ -57,6 +57,17 @@ def plan_pull_notes_for_clips(
                 "skipping. Re-push to re-link."
             )
             continue
+        if clip_row["kind"] == "audio":
+            # CLP-AUD1 defense-in-depth: wave 1 never links audio clips
+            # (push refuses them), but CLP-AUD2's placement sync will —
+            # and notes live on MIDI clips only, so a note probe against
+            # an audio clip is never meaningful.
+            plan.warn(
+                f"clip {clip_id} ({clip_row['name']!r}) is kind='audio' "
+                "— notes live on MIDI clips only; skipping the note "
+                "probe."
+            )
+            continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id,
             db_kind="track", db_id=clip_row["track_id"],
@@ -145,6 +156,14 @@ def _apply_notes_for_clip(
     if clip_row is None:
         out.warnings.append(
             f"clip_notes:{clip_id} — DB clips row missing; skipping"
+        )
+        return
+
+    if clip_row["kind"] == "audio":
+        out.warnings.append(
+            f"clip_notes for {clip_id!r}: clip is kind='audio' — notes "
+            "live on MIDI clips only; skipping (the planner would not "
+            "have emitted this)"
         )
         return
 

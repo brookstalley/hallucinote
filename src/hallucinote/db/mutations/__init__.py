@@ -56,6 +56,8 @@ from .build import (
     build_session,
 )
 from .clips import (
+    WARP_MODES,
+    create_audio_clip,
     create_clip,
     delete_clip,
     update_clip,
@@ -72,6 +74,8 @@ from .devices import (
     delete_device,
     delete_device_chain,
     delete_envelope,
+    performed_automation_fingerprint,
+    record_performed_automation,
     remove_breakpoint,
     remove_device_parameter,
     replace_breakpoints,
@@ -149,6 +153,8 @@ __all__ = [
     "create_track",
     "set_track_mixer",
     # clips
+    "WARP_MODES",
+    "create_audio_clip",
     "create_clip",
     "delete_clip",
     "update_clip",
@@ -193,6 +199,8 @@ __all__ = [
     "delete_device",
     "delete_device_chain",
     "delete_envelope",
+    "performed_automation_fingerprint",
+    "record_performed_automation",
     "remove_breakpoint",
     "remove_device_parameter",
     "replace_breakpoints",

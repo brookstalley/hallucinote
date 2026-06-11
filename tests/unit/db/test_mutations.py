@@ -187,6 +187,241 @@ def test_create_clip_with_generator_call(conn, track):
     assert ev["kind"] == E.CLIP_CREATED
 
 
+# ---------- audio clips (CLP-AUD1 wave 1) ----------
+
+
+@pytest.fixture
+def audio_track(conn, song):
+    return M.create_track(
+        conn, song_id=song, track_index=2, name="Stems", kind="audio"
+    )
+
+
+_AUDIO_CLIP_KWARGS = dict(
+    slot=1,
+    length_beats=16.0,
+    audio_file="assets/guitar_take3.wav",
+    name="gtr",
+    gain=0.85,
+    pitch_coarse=-2,
+    pitch_fine=12.5,
+    warping=1,
+    warp_mode=M.WARP_MODES["complex_pro"],
+    start_marker=0.0,
+    end_marker=64.0,
+)
+
+
+def test_create_audio_clip_persists_wave1_fields_and_emits_event(conn, audio_track):
+    cid = M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+    row = Q.get_clip(conn, cid)
+    assert row["kind"] == "audio"
+    assert row["audio_file"] == "assets/guitar_take3.wav"
+    assert row["audio_gain"] == pytest.approx(0.85)
+    assert row["pitch_coarse"] == -2
+    assert row["pitch_fine"] == pytest.approx(12.5)
+    assert row["warping"] == 1
+    assert row["warp_mode"] == M.WARP_MODES["complex_pro"]
+    # Markers are beats here (warping=1); seconds when warping=0.
+    assert row["start_marker"] == 0.0
+    assert row["end_marker"] == 64.0
+    assert row["length_beats"] == 16.0
+    assert row["name"] == "gtr"
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.CLIP_CREATED
+    payload = json.loads(ev["payload_json"])
+    assert payload["clip_id"] == cid
+    assert payload["track_id"] == audio_track
+    assert payload["slot"] == 1
+    assert payload["kind"] == "audio"
+    assert payload["audio_file"] == "assets/guitar_take3.wav"
+    assert payload["audio_gain"] == pytest.approx(0.85)
+    assert payload["pitch_coarse"] == -2
+    assert payload["pitch_fine"] == pytest.approx(12.5)
+    assert payload["warping"] == 1
+    assert payload["warp_mode"] == M.WARP_MODES["complex_pro"]
+    assert payload["start_marker"] == 0.0
+    assert payload["end_marker"] == 64.0
+
+
+def test_create_audio_clip_refuses_non_audio_host_track(conn, track):
+    # `track` is the default MIDI fixture — audio clips need kind='audio'.
+    with pytest.raises(ValueError, match="kind='midi'"):
+        M.create_audio_clip(conn, track_id=track, **_AUDIO_CLIP_KWARGS)
+    # Refusal happens before any write: no clip row, no event.
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+
+
+def test_create_audio_clip_requires_audio_file(conn, audio_track):
+    kwargs = dict(_AUDIO_CLIP_KWARGS, audio_file="")
+    with pytest.raises(ValueError, match="audio_file is required"):
+        M.create_audio_clip(conn, track_id=audio_track, **kwargs)
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+
+
+def test_create_audio_clip_is_idempotent_and_updates_in_place(conn, audio_track):
+    cid = M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+    assert cid.kind == "created"
+    # Same inputs -> unchanged, no event (the create_clip rebuild contract).
+    before = len(_events(conn))
+    again = M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+    assert again == cid and again.kind == "unchanged"
+    assert len(_events(conn)) == before
+    # Changed field -> in-place update + CLIP_UPDATED.
+    changed = dict(_AUDIO_CLIP_KWARGS, gain=0.5)
+    updated = M.create_audio_clip(conn, track_id=audio_track, **changed)
+    assert updated == cid and updated.kind == "updated"
+    assert Q.get_clip(conn, cid)["audio_gain"] == pytest.approx(0.5)
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.CLIP_UPDATED
+    assert json.loads(ev["payload_json"])["changes"]["audio_gain"] == pytest.approx(0.5)
+
+
+def test_create_audio_clip_refuses_existing_midi_clip_in_slot(conn, audio_track):
+    # Seed a MIDI row via raw INSERT: chunk 02's create_clip host-kind
+    # guard refuses authoring MIDI on an audio track, but legacy rows of
+    # that shape can exist — the immutability doctrine holds regardless.
+    conn.execute(
+        """INSERT INTO clips (id, track_id, slot, length_beats, kind)
+           VALUES ('legacy-midi', ?, 1, 4.0, 'midi')""",
+        (audio_track,),
+    )
+    with pytest.raises(ValueError, match="kind is immutable"):
+        M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+
+
+def test_create_clip_writes_kind_midi_with_null_audio_fields(conn, track):
+    cid = M.create_clip(conn, track_id=track, slot=1, length_beats=8.0)
+    row = Q.get_clip(conn, cid)
+    assert row["kind"] == "midi"
+    for col in ("audio_file", "audio_gain", "pitch_coarse", "pitch_fine",
+                "warping", "warp_mode", "start_marker", "end_marker"):
+        assert row[col] is None
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert payload["kind"] == "midi"
+
+
+def test_delete_audio_clip_emits_event_and_removes_row(conn, audio_track):
+    cid = M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+    M.delete_clip(conn, clip_id=cid)
+    assert Q.get_clip(conn, cid) is None
+    assert _events(conn)[-1]["kind"] == E.CLIP_DELETED
+
+
+# ---------- kind-guards across MIDI-assuming surfaces (CLP-AUD1 C2) ----------
+
+
+@pytest.fixture
+def audio_clip(conn, audio_track):
+    return M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+
+
+def test_create_clip_refuses_audio_host_track(conn, audio_track):
+    # Mirror of create_audio_clip's MIDI-host refusal: Live hosts MIDI
+    # clips only on MIDI tracks.
+    with pytest.raises(ValueError, match="create_audio_clip"):
+        M.create_clip(conn, track_id=audio_track, slot=3, length_beats=4.0)
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+
+
+def test_create_clip_refuses_existing_audio_clip_in_slot(conn, song, audio_clip):
+    """The idempotent-rebuild path must never silently 'update' an audio
+    row as MIDI (flagged in C1). Seed the collision via raw INSERT of an
+    audio row on a MIDI track — the host-kind guard fires first on a real
+    audio track, but kind immutability must hold independently of it."""
+    midi_track = M.create_track(conn, song_id=song, track_index=5, name="Keys")
+    conn.execute(
+        """INSERT INTO clips (id, track_id, slot, length_beats, kind, audio_file)
+           VALUES ('legacy-audio', ?, 1, 4.0, 'audio', 'assets/x.wav')""",
+        (midi_track,),
+    )
+    before = len(_events(conn))
+    with pytest.raises(ValueError, match="kind is immutable"):
+        M.create_clip(conn, track_id=midi_track, slot=1, length_beats=4.0)
+    # Refusal is write-free: the audio row is untouched, no event emitted.
+    row = conn.execute(
+        "SELECT kind, audio_file FROM clips WHERE id = 'legacy-audio'"
+    ).fetchone()
+    assert (row["kind"], row["audio_file"]) == ("audio", "assets/x.wav")
+    assert len(_events(conn)) == before
+
+
+def test_update_clip_audio_fields_on_audio_clip(conn, audio_clip):
+    M.update_clip(
+        conn, clip_id=audio_clip, audio_gain=0.5,
+        warp_mode=M.WARP_MODES["beats"], warping=0,
+        start_marker=0.25, end_marker=12.0,
+    )
+    row = Q.get_clip(conn, audio_clip)
+    assert row["audio_gain"] == pytest.approx(0.5)
+    assert row["warp_mode"] == M.WARP_MODES["beats"]
+    assert row["warping"] == 0
+    # Markers are seconds now (warping=0) — units travel with `warping`.
+    assert row["start_marker"] == pytest.approx(0.25)
+    assert row["end_marker"] == pytest.approx(12.0)
+    ev = _events(conn)[-1]
+    assert ev["kind"] == E.CLIP_UPDATED
+    changes = json.loads(ev["payload_json"])["changes"]
+    assert changes["audio_gain"] == pytest.approx(0.5)
+
+
+def test_update_clip_common_fields_still_work_on_audio_clip(conn, audio_clip):
+    """The kind-guard must not over-reach: name/length/section_role are
+    both-kinds fields."""
+    M.update_clip(conn, clip_id=audio_clip, name="gtr2", length_beats=32.0)
+    row = Q.get_clip(conn, audio_clip)
+    assert row["name"] == "gtr2"
+    assert row["length_beats"] == 32.0
+
+
+def test_update_clip_refuses_audio_fields_on_midi_clip(conn, clip):
+    before = Q.get_clip(conn, clip)
+    with pytest.raises(ValueError, match="kind='midi'"):
+        M.update_clip(conn, clip_id=clip, audio_gain=0.5)
+    with pytest.raises(ValueError, match="audio fields"):
+        M.update_clip(conn, clip_id=clip, name="ok-too", audio_file="x.wav")
+    # Refusal is atomic: the both-kinds field in the mixed call did not land.
+    after = Q.get_clip(conn, clip)
+    assert after["name"] == before["name"]
+    assert after["audio_gain"] is None
+
+
+def test_update_clip_refuses_kind_change_on_both_kinds(conn, clip, audio_clip):
+    for cid in (clip, audio_clip):
+        with pytest.raises(ValueError, match="immutable"):
+            M.update_clip(conn, clip_id=cid, kind="audio")
+    assert Q.get_clip(conn, clip)["kind"] == "midi"
+    assert Q.get_clip(conn, audio_clip)["kind"] == "audio"
+
+
+def test_update_clip_refuses_clearing_audio_file(conn, audio_clip):
+    for empty in (None, ""):
+        with pytest.raises(ValueError, match="audio_file cannot be cleared"):
+            M.update_clip(conn, clip_id=audio_clip, audio_file=empty)
+    assert Q.get_clip(conn, audio_clip)["audio_file"] == "assets/guitar_take3.wav"
+
+
+def test_update_clip_can_repoint_audio_file(conn, audio_clip):
+    M.update_clip(conn, clip_id=audio_clip, audio_file="assets/guitar_take4.wav")
+    assert Q.get_clip(conn, audio_clip)["audio_file"] == "assets/guitar_take4.wav"
+
+
+def test_insert_notes_refuses_audio_clip(conn, audio_clip):
+    with pytest.raises(ValueError, match="kind='audio'"):
+        M.insert_notes(conn, clip_id=audio_clip, notes=[_make_note()])
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+
+
+def test_replace_clip_notes_refuses_audio_clip(conn, audio_clip):
+    with pytest.raises(ValueError, match="notes live on MIDI clips only"):
+        M.replace_clip_notes(conn, clip_id=audio_clip, notes=[_make_note()])
+    # The empty-set form is refused too: "this clip's notes are now []"
+    # is meaningless for an audio clip.
+    with pytest.raises(ValueError, match="kind='audio'"):
+        M.replace_clip_notes(conn, clip_id=audio_clip, notes=[])
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+
+
 # ---------- notes ----------
 
 
@@ -988,41 +1223,83 @@ def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
 
 
 # ---------------------------------------------------------------------------
-# W10-F: envelope-target track-kind refusals (D2 master / D3 audio / group)
+# ENV-7G4K: envelope-target eligibility (supersedes the W10-F blanket refusal)
+# master/group hosts are perform-routed and now creatable; audio stays
+# refused until ENV-8H1T; the master keeps a semantic send_level refusal.
 # ---------------------------------------------------------------------------
 
 
-def test_create_envelope_mixer_volume_refuses_master_target(conn, song):
-    """D2: mixer_volume on the master track has no LOM path (master can't
-    host clips). The mutator refuses with a teaching error pointing at the
-    sub-bus workaround."""
+def test_create_envelope_mixer_volume_on_master_succeeds_and_emits(conn, song):
+    """ENV-7G4K: mixer_volume on the master is perform-routed at push time,
+    so the mutator accepts it and emits ENVELOPE_CREATED (was: W10-F
+    refusal with the sub-bus teaching)."""
     master = M.create_track(conn, song_id=song, track_index=0, name="Master",
                             kind="master")
-    with pytest.raises(ValueError) as excinfo:
-        M.create_envelope(
-            conn, song_id=song, target_kind="mixer_volume",
-            target_track_id=master,
-        )
-    msg = str(excinfo.value)
-    assert "master" in msg
-    assert "sub-bus" in msg
-    assert "guides/gaps" in msg
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=master,
+    )
+    assert env_id
+    created = [r for r in _events(conn) if r["kind"] == E.ENVELOPE_CREATED]
+    assert len(created) == 1
+    payload = json.loads(created[0]["payload_json"])
+    assert payload["target_kind"] == "mixer_volume"
+    assert payload["target_track_id"] == master
 
 
-def test_create_envelope_mixer_pan_refuses_master_target(conn, song):
+def test_create_envelope_mixer_pan_on_master_succeeds(conn, song):
     master = M.create_track(conn, song_id=song, track_index=0, name="Master",
                             kind="master")
+    assert M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan",
+        target_track_id=master,
+    )
+
+
+def test_create_envelope_mixer_volume_on_group_succeeds_and_emits(conn, song):
+    """Group hosts share the perform route (probe 4b mechanism is
+    track-kind-agnostic; group-host probe carried into the chunk 03
+    smoke — lom-probe-results.md row 13)."""
+    group = M.create_track(conn, song_id=song, track_index=2, name="Bus",
+                           kind="group")
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=group,
+    )
+    assert env_id
+    assert any(r["kind"] == E.ENVELOPE_CREATED for r in _events(conn))
+
+
+def test_create_envelope_send_level_on_group_succeeds(conn, song):
+    """Group tracks have sends; a group send ride is a wave-1 perform
+    target (design.md decision 3)."""
+    group = M.create_track(conn, song_id=song, track_index=2, name="Bus",
+                           kind="group")
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    assert M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=group, target_send_return_id=ret,
+    )
+
+
+def test_create_envelope_send_level_refuses_master_target(conn, song):
+    """The master has no sends — send_level on it is invalid on every
+    route (semantic refusal, not a routing gap)."""
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
     with pytest.raises(ValueError) as excinfo:
         M.create_envelope(
-            conn, song_id=song, target_kind="mixer_pan",
-            target_track_id=master,
+            conn, song_id=song, target_kind="send_level",
+            target_track_id=master, target_send_return_id=ret,
         )
-    assert "master" in str(excinfo.value)
+    assert "no sends" in str(excinfo.value)
 
 
 def test_create_envelope_mixer_volume_refuses_audio_target(conn, song):
-    """D3: audio tracks can't host MIDI session clips in v1, so the routing
-    surface for mixer_volume envelopes is unreachable."""
+    """Audio hosts stay refused until ENV-8H1T builds the session-audio-
+    clip envelope route. The message no longer teaches the sub-bus
+    workaround (master/group are directly authorable now)."""
     audio = M.create_track(conn, song_id=song, track_index=3, name="Guitar",
                            kind="audio")
     with pytest.raises(ValueError) as excinfo:
@@ -1032,7 +1309,8 @@ def test_create_envelope_mixer_volume_refuses_audio_target(conn, song):
         )
     msg = str(excinfo.value)
     assert "audio" in msg
-    assert "sub-bus" in msg
+    assert "ENV-8H1T" in msg
+    assert "sub-bus" not in msg
 
 
 def test_create_envelope_send_level_refuses_audio_target(conn, song):
@@ -1047,22 +1325,9 @@ def test_create_envelope_send_level_refuses_audio_target(conn, song):
     assert "audio" in str(excinfo.value)
 
 
-def test_create_envelope_refuses_group_track_target(conn, song):
-    """Group tracks in Live are routing-only and host no clips of any kind
-    — same failure mode as D3, different teaching message."""
-    group = M.create_track(conn, song_id=song, track_index=2, name="Bus",
-                           kind="group")
-    with pytest.raises(ValueError) as excinfo:
-        M.create_envelope(
-            conn, song_id=song, target_kind="mixer_volume",
-            target_track_id=group,
-        )
-    assert "group" in str(excinfo.value)
-
-
-def test_create_envelope_device_parameter_refuses_master_device(conn, song):
-    """device_parameter on a device in the master's chain is also D2:
-    the routing path through a Clip is unreachable."""
+def test_create_envelope_device_parameter_on_master_device_succeeds(conn, song):
+    """device_parameter on a master-chain device is the canonical perform
+    use (master-chain filter sweeps) — creatable now."""
     master = M.create_track(conn, song_id=song, track_index=0, name="Master",
                             kind="master")
     chain = M.create_device_chain(conn, parent_track_id=master, position=0)
@@ -1070,12 +1335,10 @@ def test_create_envelope_device_parameter_refuses_master_device(conn, song):
         conn, chain_id=chain, position=1, kind="Compressor",
         display_name="Compressor",
     )
-    with pytest.raises(ValueError) as excinfo:
-        M.create_envelope(
-            conn, song_id=song, target_kind="device_parameter",
-            target_device_id=device, parameter_path="Threshold",
-        )
-    assert "master" in str(excinfo.value)
+    assert M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=device, parameter_path="Threshold",
+    )
 
 
 def test_create_envelope_device_parameter_accepts_midi_track_device(conn, song, track):
@@ -1113,6 +1376,258 @@ def test_create_envelope_clip_cc_unaffected_by_track_kind_check(conn, song, clip
         target_clip_id=clip, parameter_path="64",
     )
     assert env_id
+
+
+# ---------------------------------------------------------------------------
+# ENV-7G4K: return-mixer target kinds (a return track's own mixer)
+# ---------------------------------------------------------------------------
+
+
+def test_create_envelope_return_mixer_volume_round_trips(conn, song):
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="return_mixer_volume",
+        target_send_return_id=ret,
+    )
+    row = conn.execute(
+        "SELECT * FROM envelopes WHERE id = ?", (env_id,),
+    ).fetchone()
+    assert row["target_kind"] == "return_mixer_volume"
+    assert row["target_send_return_id"] == ret
+    assert row["target_track_id"] is None
+    assert row["parameter_path"] is None
+
+
+def test_create_envelope_return_mixer_pan_requires_return_kwarg(conn, song):
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="return_mixer_pan",
+        )
+    assert "target_send_return_id" in str(excinfo.value)
+
+
+def test_create_envelope_return_mixer_volume_forbids_track_kwarg(conn, song, track):
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    with pytest.raises(ValueError) as excinfo:
+        M.create_envelope(
+            conn, song_id=song, target_kind="return_mixer_volume",
+            target_send_return_id=ret, target_track_id=track,
+        )
+    assert "forbids" in str(excinfo.value)
+
+
+def test_return_mixer_schema_check_rejects_wrong_fk_shape(conn, song, track):
+    """The schema CHECK is the last-line defense below the mutator: a
+    return_mixer_volume row with target_track_id set (or no return FK)
+    violates the CASE branch."""
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """INSERT INTO envelopes (id, song_id, target_kind, target_track_id)
+               VALUES ('e1', ?, 'return_mixer_volume', ?)""",
+            (song, track),
+        )
+
+
+def test_return_mixer_envelope_cascades_with_return(conn, song):
+    ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="return_mixer_volume",
+        target_send_return_id=ret,
+    )
+    conn.execute("DELETE FROM returns WHERE id = ?", (ret,))
+    assert conn.execute(
+        "SELECT id FROM envelopes WHERE id = ?", (env_id,),
+    ).fetchone() is None
+
+
+# ---------------------------------------------------------------------------
+# ENV-7G4K: performed-automation state + fingerprint
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def master_volume_envelope(conn, song):
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    return M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=master,
+    )
+
+
+@pytest.fixture
+def live_session(conn, song):
+    return M.create_ableton_session(conn, song_id=song, name="set-a")
+
+
+def test_record_performed_automation_creates_and_emits(
+    conn, song, master_volume_envelope, live_session,
+):
+    res = M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    assert res.kind == "created"
+    row = conn.execute(
+        "SELECT * FROM performed_automation WHERE envelope_id = ?",
+        (master_volume_envelope,),
+    ).fetchone()
+    assert row["fingerprint"] == "fp-1"
+    assert row["session_id"] == live_session
+    assert row["performed_at"]
+    performed = [r for r in _events(conn) if r["kind"] == E.AUTOMATION_PERFORMED]
+    assert len(performed) == 1
+    payload = json.loads(performed[0]["payload_json"])
+    assert payload["envelope_id"] == master_volume_envelope
+    assert payload["session_id"] == live_session
+    assert payload["fingerprint"] == "fp-1"
+    assert payload["state"] == "created"
+
+
+def test_record_performed_automation_updates_on_new_fingerprint(
+    conn, master_volume_envelope, live_session,
+):
+    M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    res = M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-2",
+    )
+    assert res.kind == "updated"
+    rows = conn.execute(
+        "SELECT fingerprint FROM performed_automation WHERE envelope_id = ?",
+        (master_volume_envelope,),
+    ).fetchall()
+    assert [r["fingerprint"] for r in rows] == ["fp-2"]
+    performed = [r for r in _events(conn) if r["kind"] == E.AUTOMATION_PERFORMED]
+    assert len(performed) == 2
+
+
+def test_record_performed_automation_unchanged_emits_no_event(
+    conn, master_volume_envelope, live_session,
+):
+    """Idempotent replay guard: same fingerprint -> 'unchanged', no second
+    event (events pair with state changes, per the mutator discipline)."""
+    M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    res = M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    assert res.kind == "unchanged"
+    performed = [r for r in _events(conn) if r["kind"] == E.AUTOMATION_PERFORMED]
+    assert len(performed) == 1
+
+
+def test_record_performed_automation_is_session_keyed(
+    conn, song, master_volume_envelope, live_session,
+):
+    """Fingerprints are per-(envelope, session): the same arc recorded into
+    set A must NOT read as performed for set B — a fresh Live set performs
+    every arc instead of false-skipping on another set's record."""
+    session_b = M.create_ableton_session(conn, song_id=song, name="set-b")
+    M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    res_b = M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=session_b,
+        fingerprint="fp-1",
+    )
+    assert res_b.kind == "created"  # not 'unchanged' — set B has its own row
+    rows = conn.execute(
+        """SELECT session_id, fingerprint FROM performed_automation
+           WHERE envelope_id = ? ORDER BY session_id""",
+        (master_volume_envelope,),
+    ).fetchall()
+    assert {r["session_id"] for r in rows} == {live_session, session_b}
+
+
+def test_record_performed_automation_unknown_envelope_raises(
+    conn, live_session,
+):
+    with pytest.raises(ValueError):
+        M.record_performed_automation(
+            conn, envelope_id="nope", session_id=live_session,
+            fingerprint="fp-1",
+        )
+
+
+def test_record_performed_automation_unknown_session_raises(
+    conn, master_volume_envelope,
+):
+    with pytest.raises(ValueError):
+        M.record_performed_automation(
+            conn, envelope_id=master_volume_envelope, session_id="nope",
+            fingerprint="fp-1",
+        )
+
+
+def test_performed_state_cascades_with_envelope(
+    conn, song, master_volume_envelope, live_session,
+):
+    M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    M.delete_envelope(conn, envelope_id=master_volume_envelope)
+    assert conn.execute(
+        "SELECT id FROM performed_automation WHERE envelope_id = ?",
+        (master_volume_envelope,),
+    ).fetchone() is None
+
+
+_FP_KW = dict(
+    target_kind="mixer_volume",
+    target_track_id="t1",
+    target_device_id=None,
+    target_send_return_id=None,
+    parameter_path=None,
+)
+_FP_BPS = [
+    {"time_beats": 0.0, "value": 0.3, "curve_kind": "linear"},
+    {"time_beats": 8.0, "value": 0.9, "curve_kind": "slow"},
+]
+
+
+def test_fingerprint_is_order_stable(conn):
+    """Breakpoint input order never changes the digest (the arc is the
+    same arc) — the canonical sort is part of the contract."""
+    fp_a = M.performed_automation_fingerprint(**_FP_KW, breakpoints=_FP_BPS)
+    fp_b = M.performed_automation_fingerprint(
+        **_FP_KW, breakpoints=list(reversed(_FP_BPS)),
+    )
+    assert fp_a == fp_b
+
+
+@pytest.mark.parametrize("mutation, expect_changed", [
+    (lambda kw, bps: (kw, [{**bps[0], "value": 0.31}, bps[1]]), True),
+    (lambda kw, bps: (kw, [{**bps[0], "time_beats": 0.5}, bps[1]]), True),
+    (lambda kw, bps: (kw, [{**bps[0], "curve_kind": "hold"}, bps[1]]), True),
+    (lambda kw, bps: ({**kw, "target_track_id": "t2"}, bps), True),
+    (lambda kw, bps: ({**kw, "target_kind": "mixer_pan"}, bps), True),
+    (lambda kw, bps: ({**kw, "parameter_path": "Threshold"}, bps), True),
+    (lambda kw, bps: (kw, [dict(b) for b in bps]), False),
+])
+def test_fingerprint_changes_iff_content_changes(conn, mutation, expect_changed):
+    base = M.performed_automation_fingerprint(**_FP_KW, breakpoints=_FP_BPS)
+    kw, bps = mutation(dict(_FP_KW), _FP_BPS)
+    other = M.performed_automation_fingerprint(**kw, breakpoints=bps)
+    assert (other != base) is expect_changed
+
+
+def test_fingerprint_defaults_missing_curve_to_linear(conn):
+    """Mirrors replace_breakpoints' default so dict-authored and DB-read
+    breakpoints fingerprint identically."""
+    no_curve = [{k: v for k, v in bp.items() if k != "curve_kind"}
+                if bp["curve_kind"] == "linear" else bp for bp in _FP_BPS]
+    assert M.performed_automation_fingerprint(
+        **_FP_KW, breakpoints=no_curve,
+    ) == M.performed_automation_fingerprint(**_FP_KW, breakpoints=_FP_BPS)
 
 
 # ---------- W18-C reset_song_content (soft reset) ----------
@@ -1736,3 +2251,40 @@ def test_create_enum_envelope_idempotent_on_replay(conn, amp_device):
         ],
     )
     assert first == second
+
+
+def test_audio_field_domains_validated_at_authoring_time(conn):
+    """CLP-AUD1 cumulative-Critic W3: LOM value domains teach at the mutator,
+    not at CLP-AUD2 push time inside Live."""
+    sid = M.create_song(conn, name="s")
+    tid = M.create_track(conn, song_id=sid, track_index=1, name="Vox",
+                         kind="audio")
+
+    def make(**kw):
+        return M.create_audio_clip(
+            conn, track_id=tid, slot=1, length_beats=4.0,
+            audio_file="assets/a.wav", **kw,
+        )
+
+    with pytest.raises(ValueError, match="LINEAR"):
+        make(gain=1.5)
+    with pytest.raises(ValueError, match="semitones"):
+        make(pitch_coarse=60)
+    with pytest.raises(ValueError, match="cents"):
+        make(pitch_fine=-51.0)
+    with pytest.raises(ValueError, match="warping"):
+        make(warping=2)
+    with pytest.raises(ValueError, match="not a Live warp mode"):
+        make(warp_mode=99)
+    # No row, no event leaked from the refusals.
+    assert conn.execute("SELECT COUNT(*) AS n FROM clips").fetchone()["n"] == 0
+
+    # Boundary values pass; update_clip validates the same domains.
+    cid = make(gain=1.0, pitch_coarse=-48, pitch_fine=50.0, warping=1,
+               warp_mode=M.WARP_MODES["complex_pro"])
+    with pytest.raises(ValueError, match="not a Live warp mode"):
+        M.update_clip(conn, clip_id=cid, warp_mode=42)
+    M.update_clip(conn, clip_id=cid, audio_gain=0.0)
+    row = conn.execute("SELECT audio_gain FROM clips WHERE id = ?",
+                       (cid,)).fetchone()
+    assert row["audio_gain"] == 0.0

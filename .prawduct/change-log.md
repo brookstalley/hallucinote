@@ -13,7 +13,7 @@ The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
 `then` chaining and `{"$path": …}` LOM-object args) over a regex path grammar (no
 eval); makes capability probing a wire call instead of throwaway Remote Script code
 plus a Live restart per iteration. Adds the `any` ParamType for polymorphic params.
-57 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
+55 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
 probe suite executed against real Live 12.4.1 (`docs/research/audio-first-class/
 lom-probe-results.md` + raw JSONL): audio clip creation native since 12.2 (browser
 workaround obsolete), mixer envelopes on audio session clips confirmed end-to-end,

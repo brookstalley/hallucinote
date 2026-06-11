@@ -254,6 +254,11 @@ named ~28.0s total transport playback (tempo-map estimate matched the
 wall clock at 120 BPM). Notable: the master Auto Filter was loaded via
 LOM-select-master + browser search + Enter (keyboard automation) —
 DEV-2M9K's "forever manual" has a scriptable UI path when Accessibility
-is granted. Remaining: operator audible/visual confirmation of the
-arrangement lanes + the `.als` dump breakpoint-quality spot-check
-(needs a ⌘S save) → operator-verification.md.
+is granted. `.als` spot-check DONE
+(s7-smoke-test.als): all 5 arcs faithful — shapes/spans/endpoints
+correct (volumes stored as linear amplitude, device params in display
+units); recorded as ~2.5–3 Hz hold-step pairs (handler's achieved rate;
+design aimed ~10 Hz — audibility of stepping on wide sweeps is the
+operator-listen question); master re-perform tail wrote ~1.3 beats past
+span end. Remaining: operator audible/visual confirmation →
+operator-verification.md.

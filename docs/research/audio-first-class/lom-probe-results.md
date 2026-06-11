@@ -43,9 +43,16 @@ one the original 195 records ran against). Scratch default set, master volume.
 
 ## Still open (consciously)
 
-- **Breakpoint quality / thinning** of the recorded ramp: needs a saved `.als` to dump
-  (LOM cannot save the set). Low risk: the playback test shows a musically smooth ramp.
-  Verify during the first real master-automation chunk via the `.als` XML dump.
+- ~~**Breakpoint quality / thinning**~~ RESOLVED — S-7 `.als` dump (2026-06-11,
+  s7-smoke-test.als): all five performed arcs present with faithful shapes, spans, and
+  endpoints (volume events stored as LINEAR AMPLITUDE, not slider-raw — e.g. raw 0.3 duck
+  bottom reads as amp 0.063 ≈ −24 dB; device params stored in display units, Hz for
+  Auto Filter Frequency). Recorded as hold-step pairs at ~2.5–3 Hz wall-clock — the
+  handler's achieved step rate (run_on_main round-trip bound), below the ~10 Hz design
+  aim. Two open residuals: (a) audibility of ~3 Hz stepping on wide device sweeps —
+  operator listen pending (operator-verification.md); (b) the re-performed master arc
+  wrote its final settle point ~1.3 beats past span end (17.34 vs 16.0) — harmless
+  unless abutting later automation; backlog-note material.
 - **Punch-bounded recording** (`punch_in`/`punch_out` + loop): flags confirmed present;
   mechanics untested. Probe when the recording workflow chunk builds region-scoped writes.
 - ~~**Group-track automation write**~~ RESOLVED — row 13 (2026-06-11): confirmed on a

@@ -55,18 +55,20 @@ Branch: `feature/aud-1m4v-discovery` off `develop` (gitflow — pass the develop
 ## Status
 
 - [x] Chunk 01: `ableton_probe` — permanent constrained LOM introspection action
-- [ ] Chunk 02: Execute prioritized LOM probe suite in real Live (operator-assisted:
-      Remote Script reinstall + Live quit/reopen, then scripted probes via TCP bridge)
-- [ ] Chunk 03: Discovery/requirements artifact (`discovery.md` in this dir) +
-      staged plan + backlog children `refs:` updates via `/prawduct:backlog`
-Context: chunk 01 committed (c469580) + chunk-Critic clean (1 process warning:
-stale findings anchor from previous branch, corrected; run a FRESH cumulative
-before PR — old AUD-4W7K record does not vouch for this branch). Research landed:
-producer-practice deep research (verified synthesis; mastering stage produced no
-surviving claims — gap-fill agent running) and LOM deep-dive (begin/end_gesture +
-record_mode is the master/group automation candidate; 7-probe priority list).
-Next: operator reinstalls Remote Script (`hallucinote-mcp install-remote-script`)
-+ quits/reopens Live, then chunk 02 probes over the TCP bridge.
+      (+ small follow-ups: `then` chaining, `set` action, `any` ParamType)
+- [x] Chunk 02: LOM probe suite executed against real Live 12.4.1 — all seven areas
+      answered; results in `docs/research/audio-first-class/lom-probe-results.md`
+- [x] Chunk 03: `discovery.md` authored; backlog updated (AUD-1M4V→design, children
+      re-scoped, new children ENV-7G4K performed-automation + AUD-9R3V recording
+      workflow)
+Context: discovery cycle COMPLETE 2026-06-10. Headlines: CLP-AUD2 browser-load
+design retired (create_audio_clip native since 12.2); ENV-8H1T reduces to deleting
+a refusal once CLP-AUD1 lands; master/return performed-automation mechanism
+playback-verified; recording end-to-end verified incl. comping shape. Probe Live
+state (PROBE-AUDIO track, temp-project recordings, master/return automation lanes)
+left in the scratch set — operator discards by not saving. Next: fresh cumulative
+Critic (chunk-01 warning: old AUD-4W7K findings do NOT vouch for this branch),
+then PR into develop per /prawduct:pr.
 
 ## Chunk 01 — `ableton_probe` (the only code chunk)
 

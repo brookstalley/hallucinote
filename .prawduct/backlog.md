@@ -301,9 +301,11 @@ sections only via explicit `/backlog update` calls.
   Wave 6 shipped a substantial MCP-side surface validated against fakes. Sidechain smoke landed with `c80d4a6` (2026-05-22 — S/C Gain refusal fix). Still wants real-Live empirical confirmation: (a) `read_envelope` round-trips on a mixer_volume / device_parameter envelope; (b) `get_device_chains` structure on a real Drum Rack; (c) `load_in_rack` + `set_parameter_in_rack` on an InstrumentGroupDevice; (d) `set_input_routing` finds the right RoutingType by display_name; (e) W5-F deferred — round-trip parity on parameter-dialed native instruments via the W5-D pull path. (W6 close-out 2026-05-19; sidechain shipped 2026-05-22)
 
 - **[AUD-6T2K]** Source separation fallback for stemless audio inputs (lazy-import demucs)
-  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · reviewed: 2026-06-09`
+  `effort: L · impact: S · area: audio-analysis · source: reflection · added: 2026-05-23 · status: open · stage: ready · related: AUD-1M4V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   When users want to analyze an imported reference track (not authored in Hallucinote — no stems available), use HT-Demucs v4 to derive vocals/drums/bass/other pseudo-stems. PyTorch dep + ~9.2 dB SDR; lazy-import only when invoked so the dep stays optional. Audio-analysis MVP's normal mode is "we have the stems via `sfrecord~`" — separation is the fallback for analyzing reference tracks, not the primary path. **Verifiable signal:** `src/hallucinote/audio/separation.py` exists with `separate_stems(mixed_audio) -> dict[str, ndarray]` gated behind a `[audio-separation]` extras group. (spike §9 defer 2026-05-23)
+
+  **Note (2026-06-10, AUD-1M4V discovery):** scope unchanged; referenced by the umbrella's staged plan as the stemless-reference FALLBACK, not part of the build spine.
 
 - **[ENV-3M7K]** Wave 0 / D1 v1.1: planner auto-partition envelopes across per-section session clips
   `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: MIX-3S7P · stage: ready · reviewed: 2026-06-09`
@@ -313,9 +315,11 @@ sections only via explicit `/backlog update` calls.
   **Surfaced as the candidate general answer for MIX-3S7P's deferred song-spanning DubDelay send (2026-06-03).** That gesture must persist across sections where the source track is tacet — the one case the clip-local strategy can't host. Auto-partition (or a monolithic never-tacet host clip) is the general mechanism if/when the user un-defers the dry→wet DubDelay arc. Pending a user creative lock; not pulled into MIX-3S7P.
 
 - **[ENV-8H1T]** Wave 0 / D3 v1.1: mixer envelopes on audio tracks via audio-clip DB model
-  `effort: M · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: P6-AUD-CLIP · stage: ready · reviewed: 2026-06-09`
+  `effort: M · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · related: CLP-AUD1, AUD-1M4V · stage: ready · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   Gated on `scope.later` "audio clips: clip kind discriminator, file references, warp metadata." Once audio session clips are addressable, the envelope-emitter family can host mixer/send envelopes on audio session clips the same way it does for MIDI session clips. v1 ships refuse-with-teaching (W10-F). (Wave 0 triage Group D 2026-05-19)
+
+  **REDUCED by probe evidence (2026-06-10, AUD-1M4V discovery):** a mixer envelope on an audio session clip was confirmed end-to-end in Live 12.4.1. Once CLP-AUD1 lands, this item is mostly deleting the refusal at `sync/push/envelopes.py:193` + tests. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
 
 - **[ENV-1T9M]** Envelope discovery on pull — envelopes authored only in Live
   `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-19 · status: open · stage: idea · reviewed: 2026-06-09`
@@ -328,9 +332,11 @@ sections only via explicit `/backlog update` calls.
   W6-I/J ship one-level-deep nested-rack support. Live allows racks-inside-racks-inside-racks; addressing beyond one level requires a path-style API (e.g., `chain_path=[2, 1, 3]`). Not exercised by today's songs. (W6-I/J 2026-05-19)
 
 - **[ENV-4M2T]** Return-side device_parameter envelopes need a return-track session-clip model
-  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-18 · status: open · stage: requirements · reviewed: 2026-06-09`
+  `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-18 · status: open · stage: requirements · related: AUD-1M4V, ENV-7G4K · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   W4-B routes track-side mixer/pan/send/device_parameter envelopes through session clips on the parent track. Return tracks have arrangement-side mixer state but the DB has no session-clip model for returns (`clips.track_id` references `tracks(id)` only). Live 12.4 only accepts device_parameter envelopes on session clips, so return-side envelopes get warn+skip today. Non-trivial: schema branch + mutators + push/pull routing. (W4-B 2026-05-18)
+
+  **PARTIALLY SUPERSEDED (2026-06-10, AUD-1M4V discovery):** performed automation (ENV-7G4K) covers return mixer/send arcs WITHOUT a return session-clip model — probe-confirmed on a return track in Live 12.4.1. This item stays open only for **clip-locked return device envelopes**; revisit after performed automation ships. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
 
 - **[NOT-9H3K]** Live API residual on gap #4: true surgical Ableton-side note writes
   `effort: M · impact: S · area: note · source: builder · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
@@ -405,9 +411,21 @@ sections only via explicit `/backlog update` calls.
   **Moved Archive → Open (2026-06-09 triage):** `pending` is not an archive status; this is an open song idea (stage: idea — needs the design questions answered before it is buildable).
 
 - **[AUD-1M4V]** Audio as first-class material — umbrella discovery (vocal ingest, sampling, audio/master automation) (**HIGH PRIORITY**)
-  `effort: L · impact: L · area: clip/audio · source: review · added: 2026-06-09 · status: open · stage: requirements · related: CLP-AUD1, CLP-AUD2, ENV-8H1T, ENV-3M7K, ENV-4M2T, AUD-6T2K, TPL-2D8K`
+  `effort: L · impact: L · area: clip/audio · source: review · added: 2026-06-09 · status: open · stage: design · related: CLP-AUD1, CLP-AUD2, ENV-8H1T, ENV-3M7K, ENV-4M2T, AUD-6T2K, TPL-2D8K, ENV-7G4K, AUD-9R3V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   **From the 2026-06-09 repo-wide review (three-agent deep review of creative surface / quality loops / workflow, accepted by the user) — the review's #1 recommended investment.** The clips-are-MIDI-only v1 architecture is the single biggest creative ceiling: no envelope automation on audio tracks / group tracks / master (`sync/push/envelopes.py:183-208`), no session-view audio clips, no sampling/resampling/recorded-vocal workflow. Closing it converts capability-truth.md's vocal "✗ not yet" into "sing it, I'll ingest it" — the vision explicitly promises "audio recorded against a click flows back". Arrangement-view audio already exists and is barely exploited. Needs a real discovery pass first (LOM capability-probing per the third-party-device rule, `feedback_third_party_devices_require_capability_probing`). Children/related: CLP-AUD1 (audio-clip DB model), CLP-AUD2 (session audio-clip placement), ENV-8H1T (mixer envelopes on audio tracks), ENV-3M7K (envelope auto-partition), ENV-4M2T (return-side envelope clips), AUD-6T2K (source separation). For master-chain device placement, TPL-2D8K's `.als`-template workaround is the existing answer — this umbrella references it, never duplicates it. **Verifiable signal:** a discovery/requirements artifact exists recording the LOM probe results + a staged plan covering audio clips, audio-track/group/master automation, and vocal ingest; the children carry `refs:` to it. (repo-wide review 2026-06-09)
+
+  **Update (2026-06-10): discovery pass COMPLETE — stage requirements→design; the verifiable signal is MET.** `.prawduct/artifacts/plans/AUD-1M4V/discovery.md` records producer-led requirements + empirical LOM probe results (`docs/research/audio-first-class/`) + the staged plan. Children updated with `refs:` to it; two new children filed from the discovery (ENV-7G4K performed automation, AUD-9R3V recording workflow). Key probe outcomes: Live 12.2+ has `create_audio_clip(abs_path)` (CLP-AUD2 redefined — browser-load workaround retired), mixer envelopes on audio session clips confirmed end-to-end (ENV-8H1T reduced), and performed automation via `session_automation_record` + gestures verified on master/return (ENV-4M2T partially superseded). (AUD-1M4V discovery completion, 2026-06-10)
+
+- **[ENV-7G4K]** Performed automation — master/group/return mixer automation via gesture-recorded scripted ramps
+  `effort: L · impact: L · area: envelope · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, ENV-4M2T, MIX-3S7P · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md`
+
+  The verified mechanism for the one automation surface clips can't reach: `session_automation_record` + `record_mode` (**ASYNC apply — poll, don't trust same-call read-back**) + `begin_gesture`/`end_gesture` + a scripted value ramp during playback. Verification via `DeviceParameter.automation_state` (0/1/2) + playback observation + `.als` XML dump. **Empirically confirmed on master and return tracks in Live 12.4.1** (playback-verified: the parameter moves by itself). **User lock 2026-06-10: must-have early, staged right after CLP-AUD2.** Master-bus filter sweeps are established electronic transition craft (producer research) — this is what makes them authorable. (AUD-1M4V discovery, 2026-06-10)
+
+- **[AUD-9R3V]** Recording workflow — in-Live vocal/audio takes with comping staging
+  `effort: L · impact: L · area: clip/audio · source: discovery · added: 2026-06-10 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md, docs/research/audio-first-class/lom-probe-results.md`
+
+  Routing verify/teach (**arm silently no-ops with no input device — probe-confirmed**), arm, metronome, `clip_slot.fire(record_length=beats)`, poll, ingest `file_path` (valid during recording) into the DB; take lanes + `duplicate_clip_to_arrangement` as the comping-execution shape. Comp SELECTION stays directed — comping is curation (producer research: 4–8 takes, section-scoped). Resampling routing confirmed (records master with no input device) — also serves resampling-as-material (R2.3). **User lock 2026-06-10: in-Live recording first; file-import entry falls out of CLP-AUD2 for free.** (AUD-1M4V discovery, 2026-06-10)
 
 - **[QLT-3D8R]** Listening day — ear-validate shipped analyzers before building more (**HIGH PRIORITY**, user-owned)
   `effort: S · impact: L · area: quality · source: review · added: 2026-06-09 · status: open · stage: ready · related: MEL-1A7K, MIX-3S7P, ARR-9K4T`
@@ -456,16 +474,20 @@ sections only via explicit `/backlog update` calls.
   **From the 2026-06-09 repo-wide review.** Findings coach per-dimension (harmony lint, melody lens, performance lens, energy realization, masking), but nothing synthesizes an overall verdict against declared intent. Mostly an interpretation/prompt layer, not DSP. **Explicitly gated on QLT-3D8R (listening-day calibration) — do not build before the per-dimension analyzers are ear-validated.** **Verifiable signal:** a review-skill-level rollup exists that reads the per-dimension findings + declared intents and produces an overall reading; OR a decision-record keeps synthesis at the LLM-orchestration layer with rationale. (repo-wide review 2026-06-09)
 
 - **[CLP-AUD1]** Audio clips: clip kind discriminator, file references, warp metadata, warp markers
-  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: requirements · related: AUD-1M4V · reviewed: 2026-06-09`
+  `effort: L · impact: L · area: clip · source: user · added: 2026-05-17 · status: open · stage: design · related: AUD-1M4V · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
 
   (migrated from legacy P6) Gates several deferred envelope + import items above.
 
   **Relocated out of the P6 far-horizon subsection + impact bumped M→L (repo-wide review 2026-06-09):** the review promotes audio-as-first-class-material to the #1 recommended investment; this item is a core child of the AUD-1M4V umbrella, not event-store-era work.
 
-- **[CLP-AUD2]** Session-view audio clip placement via browser-load workaround
-  `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open · stage: design · related: AUD-1M4V · reviewed: 2026-06-09`
+  **Update (2026-06-10, AUD-1M4V discovery): wave-1 field set LOCKED — stage→design.** The discovery artifact fixes the v1 schema scope: kind discriminator, file ref, gain, pitch, warping + warp mode, start/end markers. **Warp markers deferred per user lock** (not in wave 1). See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
 
-  Live 10–12 has no `ClipSlot.create_audio_clip`. The only path is async browser-load: set `song.view.highlighted_clip_slot = target_slot`, then `application.browser.load_item(audio_browser_item)`. Caveats: async (no completion callback), audio must be addressable as a BrowserItem (Library/User/Places — not arbitrary filesystem path), browser-indexing dependent. Could expose as `ableton_clip(action='load_audio_to_session', track_index, clip_index, browser_uri)`. (W6-D investigation 2026-05-19)
+- **[CLP-AUD2]** Session-view audio clip creation — thin create handlers + push/pull surface for audio-clip rows
+  `effort: M · impact: S · area: clip · source: builder · added: 2026-05-19 · status: open · stage: design · related: AUD-1M4V, CLP-AUD1 · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-10`
+
+  **REDEFINED by probe evidence (2026-06-10, AUD-1M4V discovery).** Live 12.2+ has `ClipSlot.create_audio_clip(abs_path)` (also on `Track` and `TakeLane`) — empirically confirmed by the LOM probe pass. The original async browser-load workaround design (below, retained for the record) is **obsolete and retired**. The item is now thin create handlers + the push/pull surface for CLP-AUD1's audio-clip rows. See `.prawduct/artifacts/plans/AUD-1M4V/discovery.md`.
+
+  *Retired original design (pre-12.2 assumption, W6-D investigation 2026-05-19):* Live 10–12 has no `ClipSlot.create_audio_clip`. The only path is async browser-load: set `song.view.highlighted_clip_slot = target_slot`, then `application.browser.load_item(audio_browser_item)`. Caveats: async (no completion callback), audio must be addressable as a BrowserItem (Library/User/Places — not arbitrary filesystem path), browser-indexing dependent. Could expose as `ableton_clip(action='load_audio_to_session', track_index, clip_index, browser_uri)`.
 
   **Relocated out of the P6 far-horizon subsection (repo-wide review 2026-06-09):** child of the AUD-1M4V audio-as-first-class umbrella, not event-store-era work.
 

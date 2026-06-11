@@ -158,11 +158,16 @@ first — see "Refreshing the analysis"). For each section, you have:
   audio? Per value-changing breakpoint: a `device_parameter` flip (e.g. Amp
   Type Clean→Heavy) is a **directional** timbre verdict (`spectral_centroid_hz`
   before/after — "a shift occurred", not a scalar target); a `send_level` step
-  is a level move in the declared direction. `realized=false` (with
-  `measurable=true`) means the authored gesture didn't happen in the render —
-  surface it. `measurable=false` means it can't be checked from this capture
-  (mixer_volume/pan are post-fader-invisible; or the window was silent) — report
-  the gap, don't read it as a failure. The `note` field explains each verdict.
+  is a level move in the declared direction; the post-fader mixer kinds are
+  verified on the MASTER (AUD-3F8M) — `mixer_volume` as a `master_rms_db`
+  level step, `mixer_pan` as a `master_balance_db` L−R shift, each judged
+  against a prediction from the declared values + the stem's contribution.
+  `realized=false` (with `measurable=true`) means the authored gesture didn't
+  happen in the render — surface it. `measurable=false` means it can't be
+  checked from this capture (the window was silent; or, for mixer kinds, the
+  stem is too diluted in the mix for the master to speak, or master-chain
+  limiting broke the prediction model) — report the gap, don't read it as a
+  failure. The `note` field explains each verdict.
 - `energy_realization` — declared-energy-curve vs rendered-intensity (ARR-7M3D):
   did the per-section `energy` the composer authored actually render as
   intensity? `correlate_rho` is Spearman ρ per correlate (`loudness`,

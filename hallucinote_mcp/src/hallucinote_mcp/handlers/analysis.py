@@ -204,9 +204,11 @@ def _collect_declared_envelopes(
         (device → chain → parent track/return → surface index). The pre-fader
         stem captures the device's timbre change (e.g. the Amp Type flip).
       - ``send_level`` → the RETURN the send feeds (more send → louder return).
-      - ``mixer_volume`` / ``mixer_pan`` → the track surface; passed through so
-        the audio module reports them unverifiable (post-fader, invisible to the
-        pre-fader stem) rather than dropping them silently.
+      - ``mixer_volume`` / ``mixer_pan`` → the track surface; the audio
+        module verifies them on the MASTER (post-fader sum, AUD-3F8M) using
+        the declared fader values / pan positions to predict the expected
+        master effect, with honest unmeasurable verdicts when the stem is
+        too diluted for the master to speak.
 
     Clip-/note-scoped MIDI automation (clip_cc, clip_pitch_bend,
     note_expression) is not mix-audio automation — dropped here. Breakpoint

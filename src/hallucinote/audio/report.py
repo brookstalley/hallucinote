@@ -142,13 +142,17 @@ class EnvelopeVerification:
 
     One record per value-changing breakpoint of a declared envelope. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
-    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db`` for
-    a send-level step). ``realized`` says whether the authored change actually
-    happened in the audio. ``measurable`` is False when the change can't be
-    verified from this capture — a post-fader kind (mixer_volume/pan) invisible
-    to the pre-fader stem, or a window too quiet to characterise; in that case
-    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is the
-    human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db``
+    for a send-level step, ``master_rms_db`` / ``master_balance_db`` for the
+    post-fader mixer_volume / mixer_pan kinds — measured on the master, the
+    post-fader sum, per AUD-3F8M). ``realized`` says whether the authored
+    change actually happened in the audio. ``measurable`` is False when the
+    change can't be verified from this capture — a window too quiet to
+    characterise, a mixer move whose predicted master effect is below the
+    detectability floor (stem too diluted in the mix), or a master-chain-
+    compressed window where the prediction model breaks down; in that case
+    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is
+    the human-readable explanation the interpreter (``/mix-review``) surfaces."""
     target_surface_id: str
     target_kind: str
     parameter_path: str | None
@@ -765,8 +769,9 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
         "metric": e.metric,
-        # NaN when measurable=False (post-fader / too-quiet) — serialized as JSON
-        # null (B1), the "honestly unmeasured" sentinel.
+        # NaN when measurable=False (too-quiet / too-diluted / model
+        # breakdown) — serialized as JSON null (B1), the "honestly
+        # unmeasured" sentinel.
         "before": _finite_or_none(e.before),
         "after": _finite_or_none(e.after),
         "measurable": e.measurable,

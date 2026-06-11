@@ -59,7 +59,7 @@ LOCK_USERS: frozenset[tuple[str, str]] = frozenset({
     ("ableton_arrangement", "cue_delete"),
     ("ableton_arrangement", "cue_jump"),
     ("ableton_session", "seek"),
-    ("ableton_automation", "perform"),
+    ("ableton_automation", "perform_batch"),
 })
 
 

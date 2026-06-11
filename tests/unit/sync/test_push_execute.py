@@ -91,6 +91,7 @@ def _make_send_fn(
     fail_keys: set[str] = frozenset(),
     raise_on_key: str | None = None,
     fail_hint: str | None = None,
+    perform_automation_state: int | None = 1,
 ):
     """Build a fake send_fn that returns synthetic ok results with monotonic
     link indexes per kind, unless the call's key is in ``fail_keys`` (returns
@@ -145,6 +146,20 @@ def _make_send_fn(
                 error=f"simulated failure for {composite}",
                 hint=fail_hint,
             )
+
+        # perform_batch (ENV-9P4T) fans out to a per-arc result list; echo
+        # each arc's arc_id with a configurable automation_state (default 1
+        # = verified). The apply layer gates each arc independently on it.
+        if req.tool == "ableton_automation" and req.action == "perform_batch":
+            return FakeResponse(ok=True, result={
+                "arcs": [
+                    {
+                        "arc_id": a.get("arc_id"),
+                        "automation_state": perform_automation_state,
+                    }
+                    for a in req.params.get("arcs", [])
+                ],
+            })
 
         kind = _kind_for(req.tool, req.action)
         if kind is None:
@@ -1342,12 +1357,11 @@ def test_pad_probe_runs_on_idempotent_re_push(
 def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
     conn, song, session, tiny_song, state_dir,
 ):
-    """An ok perform wire call whose handler could not verify the write
-    (no ``automation_state == 1`` in the result — the fake send_fn's
-    ack-only path returns ``{}``) must not vanish: the exit code stays 0
-    (every wire call succeeded), but the errors file carries an
-    ``apply_push_results`` record naming the arc, and no performed-state
-    row is written so the next push retries."""
+    """An ok perform_batch wire call whose handler could not verify an
+    arc's write (the fake echoes the arc with ``automation_state=0``) must
+    not vanish: the exit code stays 0 (every wire call succeeded), but the
+    errors file carries an ``apply_push_results`` record naming the arc,
+    and no performed-state row is written so the next push retries."""
     master = M.create_track(
         conn, song_id=song, track_index=0, name="Master", kind="master",
     )
@@ -1364,7 +1378,7 @@ def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
     )
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
-        state_dir=state_dir, send_fn=_make_send_fn(),
+        state_dir=state_dir, send_fn=_make_send_fn(perform_automation_state=0),
     )
     assert result.exit_code == push_execute.EXIT_OK
     assert result.errors_file is not None

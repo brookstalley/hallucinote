@@ -53,12 +53,15 @@ envelope on the group's mixer — group hosts are performed (next entry).
 ### Master / group / return envelopes — performed, not clip-hosted
 The master track cannot host clips, so there is no
 `Clip.create_automation_envelope` path — but these targets are no longer
-refused (ENV-7G4K). `ableton_automation(action='perform')` gesture-records a
-scripted ramp into Live's arrangement automation: the transport plays the
-arc's span in record while the handler steps the parameter. Hallucinote's
-push routes master/group mixer + group sends, return mixer, and master-/
-return-chain device parameters through its performed-automation phase
-automatically (fingerprint-gated — unchanged arcs are skipped and listed).
+refused (ENV-7G4K). `ableton_automation(action='perform_batch')`
+gesture-records scripted ramps into Live's arrangement automation: the
+transport plays ONCE over the union span of all changed arcs in record while
+the handler steps each parameter inside its own gesture window (ENV-9P4T —
+N arcs in one playthrough, not one pass per arc). Hallucinote's push routes
+master/group mixer + group sends, return mixer, and master-/return-chain
+device parameters through its performed-automation phase automatically
+(fingerprint-gated — unchanged arcs are skipped and listed, so a hand-edited
+lane survives).
 **Restrictions:** write-only (recorded arrangement automation has no LOM read
 surface; verify via the returned `automation_state == 1`), real wall-clock
 per arc (the span plays in real time), and nested-rack device parameters are

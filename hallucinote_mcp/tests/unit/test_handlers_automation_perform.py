@@ -1,20 +1,25 @@
-"""Tests for ``ableton_automation(action='perform')`` — ENV-7G4K chunk 01.
+"""Tests for ``ableton_automation(action='perform_batch')`` — ENV-9P4T
+single-pass batched recording (supersedes the single-arc ENV-7G4K
+``perform``).
 
-Fake-Live coverage of the gesture-recording handler:
+Fake-Live coverage of the windowed gesture-recording handler:
 
-  - exact begin_gesture → ramp → end_gesture → restore sequence
-  - state restore when the ramp raises mid-flight
-  - record_mode settle-poll (probe 10: async apply — same-call read-back
-    returns the OLD value) including the timeout path
+  - exact begin_gesture → ramp → end_gesture → restore sequence (N=1 is
+    byte-for-byte the proven single-arc path)
+  - per-parameter WINDOWING across N arcs in one transport pass: each arc's
+    gesture opens at its span entry and closes at its exit, so a short/late
+    arc never stamps a flat value across the whole pass
+  - state restore when the ramp raises mid-flight (every open gesture closed)
+  - record_mode settle-poll (probe 10: async apply) including the timeout
   - breakpoint interpolation (linear / hold / fast / slow, out-of-range
     holds, segment boundaries)
-  - param validation (addressing, span, target_kind)
-  - wire-path regression through the dispatcher (probe-tool precedent)
+  - param validation (addressing, span, target_kind, empty batch)
+  - wire-path regression through the dispatcher
 
 The fakes simulate the two async behaviors the mechanism depends on:
-``record_mode`` applying N reads late, and ``current_song_time``
-advancing while the transport plays. Everything is event-logged so the
-ordering assertions read like the probe-4 recipe.
+``record_mode`` applying N reads late, and ``current_song_time`` advancing
+while the transport plays. Everything is event-logged so the ordering
+assertions read like the probe-4 recipe.
 """
 from __future__ import annotations
 
@@ -29,7 +34,7 @@ from hallucinote_mcp.handlers import automation as automation_handlers
 from hallucinote_mcp.handlers.automation import (
     _interp_performed_value,
     _validate_breakpoints,
-    perform_handler,
+    perform_batch_handler,
 )
 from hallucinote_mcp.testing import isolated_actions
 from hallucinote_mcp.wire import Request
@@ -41,10 +46,15 @@ from hallucinote_mcp.wire import Request
 
 
 class FakeGestureParam:
-    """A Live DeviceParameter that records gesture lifecycle + value sets."""
+    """A Live DeviceParameter that records gesture lifecycle + value sets.
+
+    Events land in the shared ``events`` log (cross-param timeline) AND in
+    this param's own ``own`` log (so per-param windowing is observable when
+    several params share one pass)."""
 
     def __init__(self, events: list[tuple]):
         self._events = events
+        self.own: list[tuple] = []
         self._value = 0.85
         self.automation_state = 0
         self.raise_on_set_after: int | None = None
@@ -52,9 +62,11 @@ class FakeGestureParam:
 
     def begin_gesture(self) -> None:
         self._events.append(("begin_gesture",))
+        self.own.append(("begin",))
 
     def end_gesture(self) -> None:
         self._events.append(("end_gesture",))
+        self.own.append(("end",))
         # Probe 4: a successful record flips automation_state 0 → 1.
         self.automation_state = 1
 
@@ -71,6 +83,7 @@ class FakeGestureParam:
         ):
             raise RuntimeError("simulated Live parameter write failure")
         self._events.append(("set_value", round(float(v), 6)))
+        self.own.append(("set", round(float(v), 6)))
         self._value = float(v)
 
 
@@ -219,17 +232,28 @@ def _bp(t: float, v: float, curve: str | None = None) -> dict[str, Any]:
     return bp
 
 
+def _one(ctx, *, settle_timeout_ms: int | None = None, **arc_fields):
+    """Run perform_batch with a single arc; returns the full batched
+    result (the arc is ``result["arcs"][0]``)."""
+    kwargs: dict[str, Any] = {}
+    if settle_timeout_ms is not None:
+        kwargs["settle_timeout_ms"] = settle_timeout_ms
+    return perform_batch_handler(ctx, arcs=[arc_fields], **kwargs)
+
+
+def _arc0(result):
+    return result["arcs"][0]
+
+
 # ---------------------------------------------------------------------------
-# Gesture ordering — the probe-4 recipe, exactly
+# Gesture ordering — the probe-4 recipe, exactly (N=1 == the proven path)
 # ---------------------------------------------------------------------------
 
 
 def test_perform_records_exact_gesture_sequence():
     ctx = FakeCtx()
-    result = perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
     )
 
@@ -260,12 +284,15 @@ def test_perform_records_exact_gesture_sequence():
     assert tail[4] == ("re_enable_automation",)
     assert tail[5] == ("seek", 0.0)  # playhead restored to saved position
 
-    assert result["automation_state"] == 1
-    assert result["span_beats"] == [0.0, 4.0]
-    assert result["beats_performed"] == 4.0
-    assert result["updates_written"] == len(ramp)
-    assert result["target_kind"] == "mixer_volume"
-    assert result["master"] is True
+    arc = _arc0(result)
+    assert arc["automation_state"] == 1
+    assert arc["span_beats"] == [0.0, 4.0]
+    assert arc["beats_performed"] == 4.0
+    assert arc["updates_written"] == len(ramp)
+    assert arc["target_kind"] == "mixer_volume"
+    assert arc["master"] is True
+    assert result["union_span_beats"] == [0.0, 4.0]
+    assert result["arc_count"] == 1
     assert "restore_failures" not in result
 
 
@@ -277,10 +304,8 @@ def test_perform_restores_prior_transport_state():
     song._song_time = 7.5
     ctx.events.clear()  # drop setup-logged events
 
-    perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
     # Restore writes the SAVED values back, not hardcoded False.
@@ -294,15 +319,93 @@ def test_perform_restores_prior_transport_state():
 def test_perform_stops_inflight_playback_before_arming():
     ctx = FakeCtx()
     ctx.song.is_playing = True
-    perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
     # The pre-arm stop comes before the arm writes.
     assert ctx.events[0] == ("stop",)
     assert ctx.events[1] == ("session_automation_record", True)
+
+
+# ---------------------------------------------------------------------------
+# Per-parameter windowing — the ENV-9P4T keystone
+# ---------------------------------------------------------------------------
+
+
+def test_perform_batch_windows_overlapping_arcs():
+    """Two arcs in one pass: A spans [0,8] (master volume), B spans [4,12]
+    (return volume). A opens at the union start (before play); B opens only
+    when the playhead reaches its span start (mid-pass); each closes at its
+    own span end. A short/late arc must NOT stamp a flat value across the
+    whole pass — proven by each param's writes staying inside its own
+    value band and B opening after A's first post-play write."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 2.0  # step coarsely through both spans
+    a_param = ctx.song.master_track.mixer_device.volume
+    b_param = ctx.song.return_tracks[0].mixer_device.volume
+
+    result = perform_batch_handler(ctx, arcs=[
+        {"arc_id": "A", "target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(0.0, 0.20), _bp(8.0, 0.90)]},
+        {"arc_id": "B", "target_kind": "mixer_volume", "return_index": 1,
+         "breakpoints": [_bp(4.0, 0.10), _bp(12.0, 0.80)]},
+    ])
+
+    # Union span is [0,12]; each arc verified independently.
+    assert result["union_span_beats"] == [0.0, 12.0]
+    by_id = {a["arc_id"]: a for a in result["arcs"]}
+    assert by_id["A"]["automation_state"] == 1
+    assert by_id["B"]["automation_state"] == 1
+    assert by_id["A"]["span_beats"] == [0.0, 8.0]
+    assert by_id["B"]["span_beats"] == [4.0, 12.0]
+
+    # Cross-param timeline: exactly two gestures; A opens before play, B
+    # opens AFTER play and after A's first post-play write (windowed open).
+    events = ctx.events
+    begins = [i for i, e in enumerate(events) if e == ("begin_gesture",)]
+    ends = [i for i, e in enumerate(events) if e == ("end_gesture",)]
+    play_idx = events.index(("play",))
+    assert len(begins) == 2 and len(ends) == 2
+    assert begins[0] < play_idx < begins[1]
+    first_set_after_play = next(
+        i for i, e in enumerate(events) if i > play_idx and e[0] == "set_value"
+    )
+    assert begins[1] > first_set_after_play
+    # Spans close in order: A (ends at 8) before B (ends at 12).
+    assert ends[0] < ends[1]
+
+    # Per-param bands: A only ever wrote values in [0.20, 0.90]; B only in
+    # [0.10, 0.80]. A short/late arc never wrote the other's value.
+    a_sets = [e[1] for e in a_param.own if e[0] == "set"]
+    b_sets = [e[1] for e in b_param.own if e[0] == "set"]
+    assert a_sets and b_sets
+    assert all(0.20 <= v <= 0.90 for v in a_sets), a_sets
+    assert all(0.10 <= v <= 0.80 for v in b_sets), b_sets
+    # B's first write is at its span start value (~0.10), not the union start
+    # — it did not begin recording until the playhead entered its window.
+    assert b_sets[0] == pytest.approx(0.10)
+    # Each param opened exactly once and closed exactly once.
+    assert a_param.own[0] == ("begin",) and a_param.own[-1] == ("end",)
+    assert b_param.own[0] == ("begin",) and b_param.own[-1] == ("end",)
+
+
+def test_perform_batch_one_pass_for_all_arcs():
+    """All arcs record in a SINGLE transport pass — one arm/seek/play/stop,
+    regardless of arc count (the performance win)."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 4.0
+    perform_batch_handler(ctx, arcs=[
+        {"arc_id": "A", "target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(0.0, 0.2), _bp(8.0, 0.9)]},
+        {"arc_id": "B", "target_kind": "mixer_volume", "return_index": 1,
+         "breakpoints": [_bp(0.0, 0.1), _bp(8.0, 0.8)]},
+    ])
+    events = ctx.events
+    assert sum(1 for e in events if e == ("play",)) == 1
+    assert sum(1 for e in events if e == ("stop",)) == 1
+    assert sum(1 for e in events if e[0] == "seek") == 2  # arm seek + restore
+    assert sum(1 for e in events if e == ("re_enable_automation",)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -316,10 +419,8 @@ def test_perform_restores_state_when_ramp_raises():
     param.raise_on_set_after = 1  # second value write blows up
 
     with pytest.raises(RuntimeError, match="simulated Live parameter"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
             breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)],
         )
 
@@ -332,6 +433,33 @@ def test_perform_restores_state_when_ramp_raises():
     assert ctx.song.is_playing is False
 
 
+def test_perform_batch_closes_every_open_gesture_when_ramp_raises():
+    """A mid-pass failure must close ALL open gestures, not just the one
+    whose write raised — a half-open batch would leave Live armed."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 2.0
+    a_param = ctx.song.master_track.mixer_device.volume
+    b_param = ctx.song.return_tracks[0].mixer_device.volume
+    # Both arcs are active by beat 4; make B's write blow up after both
+    # gestures are open.
+    b_param.raise_on_set_after = 1
+
+    with pytest.raises(RuntimeError, match="simulated Live parameter"):
+        perform_batch_handler(ctx, arcs=[
+            {"arc_id": "A", "target_kind": "mixer_volume", "master": True,
+             "breakpoints": [_bp(0.0, 0.2), _bp(12.0, 0.9)]},
+            {"arc_id": "B", "target_kind": "mixer_volume", "return_index": 1,
+             "breakpoints": [_bp(0.0, 0.1), _bp(12.0, 0.8)]},
+        ])
+
+    # Both gestures closed (each param's own log ends with a close).
+    assert a_param.own[-1] == ("end",)
+    assert b_param.own[-1] == ("end",)
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events
+    assert ("session_automation_record", False) in ctx.events
+
+
 def test_perform_restore_attempts_every_step_when_one_fails():
     ctx = FakeCtx()
 
@@ -339,10 +467,8 @@ def test_perform_restore_attempts_every_step_when_one_fails():
         raise RuntimeError("stop failed")
 
     ctx.song.stop_playing = _raising_stop  # type: ignore[method-assign]
-    result = perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
     # stop failed, but the disarm writes still happened…
@@ -360,14 +486,12 @@ def test_perform_restore_attempts_every_step_when_one_fails():
 def test_perform_waits_for_async_record_mode_apply():
     ctx = FakeCtx()
     ctx.song.record_mode_apply_after_reads = 3  # OLD value for 3 reads
-    result = perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
     # The gesture began only after record_mode actually applied.
-    assert result["automation_state"] == 1
+    assert _arc0(result)["automation_state"] == 1
     assert ("begin_gesture",) in ctx.events
 
 
@@ -377,10 +501,8 @@ def test_perform_times_out_when_record_mode_never_applies_and_restores():
     ctx.song.record_mode_apply_after_reads = 10**9
 
     with pytest.raises(TimeoutError, match="record_mode"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
             settle_timeout_ms=20,
         )
@@ -393,7 +515,7 @@ def test_perform_times_out_when_record_mode_never_applies_and_restores():
 
 
 # ---------------------------------------------------------------------------
-# Breakpoint interpolation
+# Breakpoint interpolation (unchanged — _interp_performed_value is reused)
 # ---------------------------------------------------------------------------
 
 
@@ -451,32 +573,34 @@ def test_interp_exact_breakpoint_times():
 
 
 # ---------------------------------------------------------------------------
-# Param validation
+# Param / batch validation
 # ---------------------------------------------------------------------------
+
+
+def test_perform_rejects_empty_batch():
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="non-empty 'arcs'"):
+        perform_batch_handler(ctx, arcs=[])
+    # No transport state was touched.
+    assert ctx.events == []
 
 
 def test_perform_rejects_clip_hosted_target_kinds():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="write_envelope"):
-        perform_handler(
-            ctx, target_kind="clip_cc", breakpoints=[_bp(0.0, 0.5)],
-        )
+        _one(ctx, target_kind="clip_cc", breakpoints=[_bp(0.0, 0.5)])
 
 
 def test_perform_requires_exactly_one_parent():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="exactly one of"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
-            track_index=1,
+        _one(
+            ctx, target_kind="mixer_volume", master=True, track_index=1,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
     with pytest.raises(ValueError, match="exactly one of"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_pan",
+        _one(
+            ctx, target_kind="mixer_pan",
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
     # No transport state was touched by addressing failures.
@@ -486,17 +610,13 @@ def test_perform_requires_exactly_one_parent():
 def test_perform_send_level_refuses_master_and_requires_both_indices():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="no sends"):
-        perform_handler(
-            ctx,
-            target_kind="send_level",
-            master=True,
+        _one(
+            ctx, target_kind="send_level", master=True,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
     with pytest.raises(ValueError, match="track_index"):
-        perform_handler(
-            ctx,
-            target_kind="send_level",
-            return_index=1,
+        _one(
+            ctx, target_kind="send_level", return_index=1,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
 
@@ -504,10 +624,8 @@ def test_perform_send_level_refuses_master_and_requires_both_indices():
 def test_perform_device_parameter_requires_device_and_name():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="device_index and parameter_name"):
-        perform_handler(
-            ctx,
-            target_kind="device_parameter",
-            master=True,
+        _one(
+            ctx, target_kind="device_parameter", master=True,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
 
@@ -516,91 +634,63 @@ def test_perform_device_parameter_on_master_chain():
     ctx = FakeCtx()
     cutoff = FakeNamedParam(ctx.events, "Frequency")
     ctx.song.master_track.devices = [FakeDevice([cutoff])]
-    result = perform_handler(
-        ctx,
-        target_kind="device_parameter",
-        master=True,
-        device_index=1,
-        parameter_name="Frequency",
+    result = _one(
+        ctx, target_kind="device_parameter", master=True,
+        device_index=1, parameter_name="Frequency",
         breakpoints=[_bp(0.0, 0.2), _bp(2.0, 0.9)],
     )
-    assert result["automation_state"] == 1
+    arc = _arc0(result)
+    assert arc["automation_state"] == 1
     assert any(e[0] == "set_value" for e in ctx.events)
-    assert result["parameter_name"] == "Frequency"
+    assert arc["parameter_name"] == "Frequency"
 
 
 def test_perform_on_return_track_mixer():
     ctx = FakeCtx()
-    result = perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        return_index=1,
+    result = _one(
+        ctx, target_kind="mixer_volume", return_index=1,
         breakpoints=[_bp(0.0, 0.2), _bp(2.0, 0.9)],
     )
-    assert result["automation_state"] == 1
-    assert result["return_index"] == 1
+    arc = _arc0(result)
+    assert arc["automation_state"] == 1
+    assert arc["return_index"] == 1
 
 
 def test_perform_send_level_on_track():
     ctx = FakeCtx()
     send = FakeGestureParam(ctx.events)
     ctx.song.tracks[0].mixer_device.sends = [send]
-    result = perform_handler(
-        ctx,
-        target_kind="send_level",
-        track_index=1,
-        return_index=1,
+    result = _one(
+        ctx, target_kind="send_level", track_index=1, return_index=1,
         breakpoints=[_bp(0.0, 0.0), _bp(2.0, 0.7)],
     )
-    assert result["automation_state"] == 1
+    assert _arc0(result)["automation_state"] == 1
     assert send.automation_state == 1
+
+
+def test_perform_echoes_arc_id_for_caller_correlation():
+    ctx = FakeCtx()
+    result = _one(
+        ctx, arc_id="env-42", target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
+    )
+    assert _arc0(result)["arc_id"] == "env-42"
 
 
 def test_perform_rejects_empty_span():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="span is empty"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
-            breakpoints=[_bp(4.0, 0.5)],  # single bp → zero-length default span
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(4.0, 0.5)],  # single bp → zero-length span
         )
-    with pytest.raises(ValueError, match="span is empty"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
-            breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
-            span_start_beats=4.0,
-            span_end_beats=2.0,
-        )
-
-
-def test_perform_explicit_span_extends_past_breakpoints():
-    ctx = FakeCtx()
-    result = perform_handler(
-        ctx,
-        target_kind="mixer_volume",
-        master=True,
-        breakpoints=[_bp(1.0, 0.5), _bp(2.0, 0.9)],
-        span_start_beats=0.0,
-        span_end_beats=4.0,
-    )
-    assert result["span_beats"] == [0.0, 4.0]
-    # First write (at beat 0, before the first breakpoint) holds the
-    # first authored value; the tail holds the last.
-    sets = [e[1] for e in ctx.events if e[0] == "set_value"]
-    assert sets[0] == pytest.approx(0.5)
-    assert sets[-1] == pytest.approx(0.9)
 
 
 def test_perform_rejects_unsorted_breakpoints():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="sorted"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
             breakpoints=[_bp(4.0, 0.5), _bp(0.0, 0.9)],
         )
 
@@ -608,18 +698,16 @@ def test_perform_rejects_unsorted_breakpoints():
 def test_perform_rejects_nonpositive_settle_timeout():
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="settle_timeout_ms"):
-        perform_handler(
-            ctx,
-            target_kind="mixer_volume",
-            master=True,
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
             settle_timeout_ms=0,
         )
 
 
 # ---------------------------------------------------------------------------
-# Wire-path regression (probe-tool precedent: the registered action must
-# round-trip through the dispatcher, not just the bare handler)
+# Wire-path regression (the registered action must round-trip through the
+# dispatcher, not just the bare handler)
 # ---------------------------------------------------------------------------
 
 
@@ -629,43 +717,54 @@ def loaded_actions():
         yield schema
 
 
-def test_perform_dispatches_through_wire(loaded_actions):
+def test_perform_batch_dispatches_through_wire(loaded_actions):
     ctx = FakeCtx()
     resp = dispatch(
         Request(
             tool="ableton_automation",
-            action="perform",
+            action="perform_batch",
             params={
-                "target_kind": "mixer_volume",
-                "master": True,
-                "breakpoints": [
-                    {"time_beats": 0.0, "value": 0.5},
-                    {"time_beats": 2.0, "value": 0.9, "curve": "slow"},
+                "arcs": [
+                    {
+                        "arc_id": "e1",
+                        "target_kind": "mixer_volume",
+                        "master": True,
+                        "breakpoints": [
+                            {"time_beats": 0.0, "value": 0.5},
+                            {"time_beats": 2.0, "value": 0.9, "curve": "slow"},
+                        ],
+                    },
                 ],
             },
         ),
         context=ctx,
     )
     assert resp.ok is True
-    assert resp.result["automation_state"] == 1
-    assert resp.result["target_kind"] == "mixer_volume"
+    arc = resp.result["arcs"][0]
+    assert arc["automation_state"] == 1
+    assert arc["target_kind"] == "mixer_volume"
+    assert arc["arc_id"] == "e1"
     assert ("begin_gesture",) in ctx.events
 
 
-def test_perform_registered_runs_on_worker(loaded_actions):
-    action = schema.get("ableton_automation", "perform")
+def test_perform_batch_registered_runs_on_worker(loaded_actions):
+    action = schema.get("ableton_automation", "perform_batch")
     assert action is not None
     assert action.runs_on_worker is True
 
 
-def test_perform_wire_validation_rejects_bad_target_kind(loaded_actions):
+def test_perform_batch_wire_validation_rejects_bad_target_kind(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_automation",
-            action="perform",
+            action="perform_batch",
             params={
-                "target_kind": "clip_cc",
-                "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
+                "arcs": [
+                    {
+                        "target_kind": "clip_cc",
+                        "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
+                    },
+                ],
             },
         ),
         context=FakeCtx(),

@@ -1623,72 +1623,50 @@ def _wait_for_record_mode_on_worker(
         time.sleep(poll_interval_s)
 
 
-def perform_handler(
+def perform_batch_handler(
     context: LiveContext,
     *,
-    target_kind: str,
-    breakpoints: list[dict[str, Any]],
-    master: bool = False,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    device_index: int | None = None,
-    parameter_name: str | None = None,
-    span_start_beats: float | None = None,
-    span_end_beats: float | None = None,
+    arcs: list[dict[str, Any]],
     settle_timeout_ms: int = _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS,
 ) -> dict[str, Any]:
-    """Record an authored automation arc into Live's ARRANGEMENT
-    automation by performing it in realtime (gesture recording).
+    """Record N authored automation arcs into Live's ARRANGEMENT automation
+    in a SINGLE transport pass (ENV-9P4T) — gesture recording with
+    per-parameter windowing.
 
-    This is the write path for automation surfaces session clips can't
-    reach: master / group / return mixer moves and device parameters
-    (master-chain filter sweeps). The transport PLAYS for the duration
-    of the span — wall-clock cost is span / tempo. Breakpoint times are
-    absolute arrangement beats.
+    Each arc in ``arcs`` is ``{arc_id?, target_kind, <addressing>,
+    breakpoints}`` where ``<addressing>`` is the same master / track_index /
+    return_index / device_index / parameter_name surface as the (former)
+    single-arc path, and the arc's span is ``[first, last]`` breakpoint
+    time. The transport plays ONCE over the UNION span
+    ``[min(start), max(end)]``; each arc's ``begin_gesture`` /
+    ``end_gesture`` opens at its span entry and closes at its span exit
+    inside that shared pass, so a short arc never stamps a flat value
+    across the whole song. Arcs active at the union start open BEFORE
+    ``start_playing`` (matching the proven single-arc order); later arcs
+    open mid-ramp.
 
-    ``span_start_beats`` / ``span_end_beats`` default to the first /
-    last breakpoint time. The arc's value before its first breakpoint
-    (when span starts earlier) holds the first value; after the last,
-    the last value holds.
+    ``arc_id`` is an opaque caller correlation id echoed back per arc so
+    the push apply layer can gate each arc's performed-state independently
+    on ITS ``automation_state`` (one unverified arc never blocks the
+    others). The write path is for surfaces session clips can't reach:
+    master / group / return mixer moves and device parameters.
 
-    Returns the post-perform ``automation_state`` (0 none / 1 active /
-    2 overridden — 1 is the success signal), beats performed, value
-    updates written, and wall-clock spent. The surface is write-only:
-    there is no LOM read of arrangement automation, so
-    ``automation_state`` + playback observation is the runtime
-    verification; deep verification is the ``.als`` dump (integration
-    smoke only).
+    Returns ``{"arcs": [{arc_id?, target_kind, automation_state,
+    span_beats, beats_performed, updates_written, breakpoint_count,
+    <addressing echo>}, ...], "union_span_beats", "wall_clock_s",
+    "arc_count"}``. A non-1 ``automation_state`` is reported per arc, not
+    raised — the caller owns the failed-verification policy.
 
-    A failed perform must not leave the set armed: ``end_gesture``,
-    transport stop, ``record_mode`` / ``session_automation_record``
-    restore, ``re_enable_automation`` and playhead restore all run in a
-    ``finally`` with per-step isolation. Note ``re_enable_automation``
-    is set-wide by design (design.md): it returns ANY overridden
-    parameter to following its automation, which is the correct
-    post-record state for a scripted writer.
+    A failed pass must not leave the set armed or any gesture open: every
+    still-open gesture is closed and the transport / record state restored
+    in a ``finally`` with per-step isolation. ``re_enable_automation`` is
+    set-wide by design (design.md) — the correct post-record state for a
+    scripted writer.
     """
-    if target_kind not in PERFORM_TARGET_KINDS:
+    if not isinstance(arcs, list) or not arcs:
         raise ValueError(
-            f"perform target_kind {target_kind!r} not in "
-            f"{list(PERFORM_TARGET_KINDS)} — clip-hosted kinds (clip_cc, "
-            f"clip_pitch_bend, note_expression) are written via "
-            f"write_envelope, not performed"
-        )
-    cleaned = _validate_breakpoints(breakpoints)
-    span_start = (
-        float(span_start_beats)
-        if span_start_beats is not None
-        else cleaned[0]["time_beats"]
-    )
-    span_end = (
-        float(span_end_beats)
-        if span_end_beats is not None
-        else cleaned[-1]["time_beats"]
-    )
-    if span_end <= span_start:
-        raise ValueError(
-            f"perform span is empty: span_end_beats {span_end} must be > "
-            f"span_start_beats {span_start}"
+            "perform_batch requires a non-empty 'arcs' list — each arc is "
+            "{arc_id?, target_kind, <addressing>, breakpoints}"
         )
     if settle_timeout_ms <= 0:
         raise ValueError(
@@ -1696,24 +1674,69 @@ def perform_handler(
         )
     settle_timeout_s = settle_timeout_ms / 1000.0
 
-    with context.live_state_lock:
-        # Bout 1 — pure resolution, no mutation. Addressing errors land
-        # here, before any transport state is touched.
-        param = context.run_on_main(
-            lambda: _resolve_perform_target(
-                context,
-                target_kind=target_kind,
-                master=master,
-                track_index=track_index,
-                return_index=return_index,
-                device_index=device_index,
-                parameter_name=parameter_name,
+    # Validate + normalize every arc up front (no Live touch yet) so a
+    # malformed arc raises before any transport state is armed.
+    prepared: list[dict[str, Any]] = []
+    for i, arc in enumerate(arcs):
+        target_kind = arc.get("target_kind")
+        if target_kind not in PERFORM_TARGET_KINDS:
+            raise ValueError(
+                f"perform_batch arcs[{i}] target_kind {target_kind!r} not in "
+                f"{list(PERFORM_TARGET_KINDS)} — clip-hosted kinds (clip_cc, "
+                f"clip_pitch_bend, note_expression) are written via "
+                f"write_envelope, not performed"
             )
-        )
+        cleaned = _validate_breakpoints(arc.get("breakpoints"))
+        span_start = cleaned[0]["time_beats"]
+        span_end = cleaned[-1]["time_beats"]
+        if span_end <= span_start:
+            raise ValueError(
+                f"perform_batch arcs[{i}] ({target_kind}) span is empty "
+                f"({span_start}..{span_end}) — a single-point arc is a static "
+                "value, not an automation ride; dial the parameter instead"
+            )
+        prepared.append({
+            "arc_id": arc.get("arc_id"),
+            "target_kind": target_kind,
+            "master": bool(arc.get("master", False)),
+            "track_index": arc.get("track_index"),
+            "return_index": arc.get("return_index"),
+            "device_index": arc.get("device_index"),
+            "parameter_name": arc.get("parameter_name"),
+            "cleaned": cleaned,
+            "span_start": span_start,
+            "span_end": span_end,
+            "param": None,
+            "gesture_open": False,
+            "opened": False,
+            "closed": False,
+            "updates_written": 0,
+            "automation_state": None,
+        })
 
-        # Bout 2 — read-only state snapshot. Captured BEFORE any
-        # mutation so the finally-restore below has the prior state even
-        # when the arm bout itself fails partway.
+    union_start = min(a["span_start"] for a in prepared)
+    union_end = max(a["span_end"] for a in prepared)
+
+    with context.live_state_lock:
+        # Bout 1 — resolve every arc's param. Addressing errors land here,
+        # before any transport state is touched (nothing has mutated yet).
+        def _resolve_all() -> None:
+            for a in prepared:
+                a["param"] = _resolve_perform_target(
+                    context,
+                    target_kind=a["target_kind"],
+                    master=a["master"],
+                    track_index=a["track_index"],
+                    return_index=a["return_index"],
+                    device_index=a["device_index"],
+                    parameter_name=a["parameter_name"],
+                )
+
+        context.run_on_main(_resolve_all)
+
+        # Bout 2 — read-only state snapshot. Captured BEFORE any mutation so
+        # the finally-restore below has the prior state even when the arm
+        # bout itself fails partway.
         def _save_state() -> tuple[dict[str, Any], float]:
             song = context.song
             saved = {
@@ -1727,20 +1750,45 @@ def perform_handler(
 
         saved, tempo = context.run_on_main(_save_state)
 
-        gesture_open = False
-        updates_written = 0
         restore_failures: list[str] = []
         wall_start = time.monotonic()
+
+        # Windowing primitives — both run inside a single main-thread bout
+        # (with the playhead beat just read), so an open/close/write can't
+        # lag a stale beat.
+        def _open_entering(beat: float) -> None:
+            for a in prepared:
+                if a["closed"] or a["opened"]:
+                    continue
+                if beat >= a["span_start"]:
+                    a["param"].begin_gesture()
+                    a["gesture_open"] = True
+                    a["opened"] = True
+
+        def _write_or_close(beat: float) -> None:
+            for a in prepared:
+                if not a["gesture_open"]:
+                    continue
+                if beat >= a["span_end"]:
+                    a["param"].end_gesture()
+                    a["gesture_open"] = False
+                    a["closed"] = True
+                else:
+                    a["param"].value = _interp_performed_value(
+                        a["cleaned"], beat
+                    )
+                    a["updates_written"] += 1
+
         try:
-            # Bout 3 — arm + seek (first mutation; inside the try so a
-            # partial arm still restores).
+            # Bout 3 — arm + seek to the union span start (first mutation;
+            # inside the try so a partial arm still restores).
             def _arm_and_seek() -> None:
                 song = context.song
                 if bool(song.is_playing):
                     song.stop_playing()
                 song.session_automation_record = True
                 song.record_mode = True
-                song.current_song_time = float(span_start)
+                song.current_song_time = float(union_start)
 
             context.run_on_main(_arm_and_seek)
 
@@ -1748,19 +1796,20 @@ def perform_handler(
                 context, True, timeout_s=settle_timeout_s
             )
 
-            def _begin_gesture_and_play() -> None:
-                param.begin_gesture()
+            # Open the gestures for arcs already active at the union start
+            # (begin_gesture BEFORE start_playing, as the single-arc path
+            # did), THEN play. Values are written by the ramp loop while the
+            # transport is actually moving.
+            def _begin_initial_and_play() -> None:
+                _open_entering(float(context.song.current_song_time))
                 context.song.start_playing()
 
-            context.run_on_main(_begin_gesture_and_play)
-            gesture_open = True
+            context.run_on_main(_begin_initial_and_play)
 
-            # Ramp loop: each iteration is one main-thread bout that
-            # reads the playhead and writes the interpolated value —
-            # read + write in the SAME bout so the value can't lag a
-            # stale beat. Beat-space interpolation makes tempo maps
-            # free: the playhead position IS the authored coordinate.
-            expected_s = (span_end - span_start) / (max(tempo, 1.0) / 60.0)
+            # Ramp loop over the union span. Beat-space interpolation makes
+            # tempo maps free: the playhead position IS the authored
+            # coordinate, so each arc's window is compared in beats.
+            expected_s = (union_end - union_start) / (max(tempo, 1.0) / 60.0)
             deadline = wall_start + max(
                 expected_s * _PERFORM_WALL_CLOCK_FACTOR,
                 _PERFORM_WALL_CLOCK_FLOOR_S,
@@ -1769,40 +1818,44 @@ def perform_handler(
             def _ramp_step() -> bool:
                 song = context.song
                 beat = float(song.current_song_time)
-                if beat >= span_end:
-                    return True
-                param.value = _interp_performed_value(cleaned, beat)
-                return False
+                _open_entering(beat)
+                _write_or_close(beat)
+                return beat >= union_end
 
             while True:
                 done = context.run_on_main(_ramp_step)
                 if done:
                     break
-                updates_written += 1
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"perform ramp did not reach span end "
-                        f"{span_end} beats within its wall-clock budget "
-                        f"({deadline - wall_start:.1f}s). Transport may "
-                        f"be blocked (modal dialog, count-in) — the set "
-                        f"has been disarmed and restored."
+                        f"perform_batch ramp did not reach union span end "
+                        f"{union_end} beats within its wall-clock budget "
+                        f"({deadline - wall_start:.1f}s). Transport may be "
+                        f"blocked (modal dialog, count-in) — the set has been "
+                        f"disarmed and restored."
                     )
                 time.sleep(_PERFORM_UPDATE_PERIOD_S)
         finally:
-            # Disarm + restore — every step attempts even when an
-            # earlier one fails; a failed perform must not leave the
-            # set armed or the gesture open.
+            # Disarm + restore — every step attempts even when an earlier
+            # one fails; a failed pass must not leave the set armed or ANY
+            # gesture open.
             def _attempt(label: str, fn: Callable[[], Any]) -> None:
                 try:
                     context.run_on_main(fn)
                 except Exception as exc:  # prawduct:allow prawduct/broad-except -- Live wrappers raise arbitrary types; every restore step must still attempt
                     restore_failures.append(f"{label}: {exc}")
                     logger.warning(
-                        "perform restore step %s failed: %s", label, exc
+                        "perform_batch restore step %s failed: %s", label, exc
                     )
 
-            if gesture_open:
-                _attempt("end_gesture", lambda: param.end_gesture())
+            for a in prepared:
+                if a["gesture_open"]:
+                    _attempt(
+                        f"end_gesture[{a['arc_id']}]",
+                        lambda p=a["param"]: p.end_gesture(),
+                    )
+                    a["gesture_open"] = False
+                    a["closed"] = True
             _attempt("stop_playing", lambda: context.song.stop_playing())
             _attempt(
                 "record_mode",
@@ -1831,44 +1884,57 @@ def perform_handler(
                 ),
             )
 
-        # Post-perform verification: automation_state is the runtime
-        # signal (probe 4: 0 → 1 after a successful record). It settles
-        # with the same async character as the rest of Song state, so
-        # poll briefly — but a non-1 read is reported, not raised; the
-        # caller (push apply layer) owns the failed-verification policy.
+        # Post-perform verification — per arc, the same automation_state
+        # poll the single-arc path used (probe 4: 0 → 1 after a successful
+        # record), but only for arcs that actually opened a gesture. A non-1
+        # read is reported per arc, not raised.
         state_deadline = time.monotonic() + settle_timeout_s
-        automation_state: int | None = None
+        pending = [a for a in prepared if a["opened"]]
         while True:
-            automation_state = context.run_on_main(
-                lambda: (
-                    int(param.automation_state)
-                    if getattr(param, "automation_state", None) is not None
-                    else None
+            for a in list(pending):
+                a["automation_state"] = context.run_on_main(
+                    lambda p=a["param"]: (
+                        int(p.automation_state)
+                        if getattr(p, "automation_state", None) is not None
+                        else None
+                    )
                 )
-            )
-            if automation_state == 1 or time.monotonic() >= state_deadline:
+                if a["automation_state"] == 1:
+                    pending.remove(a)
+            if not pending or time.monotonic() >= state_deadline:
                 break
             time.sleep(_PERFORM_SETTLE_POLL_S)
 
+    arcs_result: list[dict[str, Any]] = []
+    for a in prepared:
+        entry: dict[str, Any] = {
+            "target_kind": a["target_kind"],
+            "automation_state": a["automation_state"],
+            "span_beats": [a["span_start"], a["span_end"]],
+            "beats_performed": a["span_end"] - a["span_start"],
+            "updates_written": a["updates_written"],
+            "breakpoint_count": len(a["cleaned"]),
+        }
+        if a["arc_id"] is not None:
+            entry["arc_id"] = a["arc_id"]
+        _echo_addressing_args(
+            entry,
+            master=a["master"] or None,
+            track_index=a["track_index"],
+            return_index=a["return_index"],
+            device_index=a["device_index"],
+            parameter_name=a["parameter_name"],
+        )
+        arcs_result.append(entry)
+
     result: dict[str, Any] = {
-        "target_kind": target_kind,
-        "automation_state": automation_state,
-        "span_beats": [span_start, span_end],
-        "beats_performed": span_end - span_start,
-        "updates_written": updates_written,
+        "arcs": arcs_result,
+        "union_span_beats": [union_start, union_end],
         "wall_clock_s": round(time.monotonic() - wall_start, 3),
-        "breakpoint_count": len(cleaned),
+        "arc_count": len(prepared),
     }
     if restore_failures:
         result["restore_failures"] = restore_failures
-    _echo_addressing_args(
-        result,
-        master=master or None,
-        track_index=track_index,
-        return_index=return_index,
-        device_index=device_index,
-        parameter_name=parameter_name,
-    )
     return result
 
 
@@ -1881,5 +1947,5 @@ __all__ = [
     "write_envelope_handler",
     "clear_handler",
     "clear_all_handler",
-    "perform_handler",
+    "perform_batch_handler",
 ]

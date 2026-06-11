@@ -251,6 +251,86 @@ def _attempt_load_fallback(
     return retry_resp, fallback_uri
 
 
+# SYN-9F2L: the planner prefers the display form on the wire (exact via the
+# param's own display curve), but two handler refusals have a known second
+# form worth one retry each. Hint substrings match the handler's teaching
+# errors (handlers/display_value.py resolve_continuous_write).
+_SET_PARAM_ENUM_HINTS = ("is an enum", "is_quantized=True")
+_SET_PARAM_NO_CURVE_HINTS = ("str_for_value",)
+
+
+def _attempt_set_parameter_fallback(
+    *,
+    failed_call: Any,
+    conn: sqlite3.Connection,
+    send_fn: Callable[..., Any],
+    request_cls: type,
+    err_msg: str,
+) -> tuple[Any, str] | None:
+    """One-shot retries for a refused ``value_display`` write (SYN-9F2L).
+
+    Returns ``(retry_response, fallback_kind)`` on success, ``None`` when no
+    fallback applies or the retry failed (original error stands). Two cases:
+
+    * the handler refused because the parameter is actually an enum
+      (hand-authored snapshots store enum choices as bare display strings,
+      with no ``value_items`` captured) → retry as ``value_type='enum'``
+      with the display string as the value;
+    * the handler refused because the parameter exposes no ``str_for_value``
+      curve to invert → retry with the DB's stored normalized value (the
+      pre-SYN-9F2L wire form).
+    """
+    if failed_call.tool != "ableton_device":
+        return None
+    args = failed_call.args
+    if args.get("action") != "set_parameter":
+        return None
+    if args.get("value_display") is None:
+        return None
+    base = {
+        k: v for k, v in args.items()
+        if k not in ("action", "value_display", "value", "value_type")
+    }
+    if any(h in err_msg for h in _SET_PARAM_ENUM_HINTS):
+        retry_params = {
+            **base, "value": args["value_display"], "value_type": "enum",
+        }
+        fallback_kind = "enum"
+    elif any(h in err_msg for h in _SET_PARAM_NO_CURVE_HINTS):
+        key = failed_call.key or ""
+        parts = key.split(":", 2)
+        if len(parts) != 3 or parts[0] != "device_parameter":
+            return None
+        _, device_id, param_name = parts
+        row = next(
+            (
+                p for p in Q.get_device_parameters(conn, device_id)
+                if p["name"] == param_name
+            ),
+            None,
+        )
+        if row is None or row["value_normalized"] is None:
+            return None
+        retry_params = {
+            **base,
+            "value": str(row["value_normalized"]),
+            "value_type": "continuous",
+        }
+        fallback_kind = "normalized"
+    else:
+        return None
+    retry_req = request_cls(
+        tool=failed_call.tool, action="set_parameter", params=retry_params,
+    )
+    try:
+        retry_resp = send_fn(retry_req)
+    except Exception:  # prawduct:ok-broad-except — fallback must not crash the push loop; failure → no fallback
+        return None
+    if not bool(getattr(retry_resp, "ok", False)):
+        return None
+    return retry_resp, fallback_kind
+
+
 def _probe_pad_mappings_for_session(
     *,
     conn: sqlite3.Connection,
@@ -490,20 +570,16 @@ def execute_push(
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
 
-    for idx, phase in enumerate(phases):
-        plan = phase.plan_fn()
-        if not plan.calls:
-            pad_ok, pad_failed = _maybe_pad_probe(phase.name)
-            phase_outcomes.append(PhaseOutcome(
-                name=phase.name, status=_STATUS_SKIPPED,
-                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
-            ))
-            continue
+    def _dispatch_calls(calls) -> tuple[list[dict[str, Any]], bool]:
+        """Dispatch ToolCalls via ``send_fn`` → (results, connection_lost).
 
+        Per-call failures append to ``error_records``; a connection-class
+        exception stops the batch immediately (no point continuing without
+        Live). Shared by the main per-phase pass and the devices-phase
+        convergence pass (SYN-9F2L).
+        """
         results: list[dict[str, Any]] = []
-        connection_lost = False
-
-        for call in plan.calls:
+        for call in calls:
             action = call.args.get("action")
             params = {k: v for k, v in call.args.items() if k != "action"}
             req = Request(tool=call.tool, action=action or "", params=params)
@@ -514,7 +590,6 @@ def execute_push(
                 # Halt immediately — no point continuing without Live. Wire
                 # protocol bugs (wire.FrameError) and other unexpected
                 # exceptions propagate so they're not mislabeled here.
-                connection_lost = True
                 error_records.append({
                     "key": call.key,
                     "tool": call.tool,
@@ -523,7 +598,7 @@ def execute_push(
                     "error": f"{type(exc).__name__}: {exc}",
                     "hint": None,
                 })
-                break
+                return results, True
 
             ok = bool(getattr(resp, "ok", False))
             err_msg = getattr(resp, "error", None) if not ok else None
@@ -550,6 +625,24 @@ def execute_push(
                     ok = True
                     err_msg = None
 
+            # SYN-9F2L: a refused value_display write has two known second
+            # forms (actual-enum, no-display-curve) worth one retry each.
+            set_param_fallback: str | None = None
+            if (
+                not ok
+                and call.tool == "ableton_device"
+                and action == "set_parameter"
+                and err_msg
+            ):
+                fb2 = _attempt_set_parameter_fallback(
+                    failed_call=call, conn=conn, send_fn=send_fn,
+                    request_cls=Request, err_msg=err_msg,
+                )
+                if fb2 is not None:
+                    resp, set_param_fallback = fb2
+                    ok = True
+                    err_msg = None
+
             result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
 
@@ -565,6 +658,8 @@ def execute_push(
                 # fallback fired (and which URI was substituted). The DB's
                 # preset_uri stays untouched — the song remains portable.
                 result_entry["fallback_preset_uri"] = fallback_uri
+            if set_param_fallback is not None:
+                result_entry["set_parameter_fallback"] = set_param_fallback
             results.append(result_entry)
 
             if not ok:
@@ -576,34 +671,74 @@ def execute_push(
                     "error": err_msg,
                     "hint": hint,
                 })
+        return results, False
 
-        # Apply successes regardless of failure mix — push is idempotent and
-        # link rows must be live before the next phase plans. For
-        # connection-lost the loop broke before any subsequent ok rows could
-        # accumulate, so this is safe.
+    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
+        """Apply successes regardless of failure mix — push is idempotent and
+        link rows must be live before the next phase (or the devices-phase
+        convergence pass) plans."""
+        apply_warnings = push.apply_push_results(
+            conn,
+            batch,
+            session_id=session_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason or f"push_cli execute phase={phase_name}",
+        )
+        # Apply-layer warnings (e.g. a perform whose write Live could
+        # not verify — nothing recorded, next push retries) ride the
+        # errors file so the agent sees them. They don't flip the
+        # phase status: the wire call succeeded; what failed is the
+        # verification-gated DB record.
+        for w in apply_warnings:
+            error_records.append({
+                "key": None,
+                "tool": "apply_push_results",
+                "action": "apply",
+                "args_summary": {"phase": phase_name},
+                "error": w,
+                "hint": None,
+            })
+
+    for idx, phase in enumerate(phases):
+        plan = phase.plan_fn()
+        if not plan.calls:
+            pad_ok, pad_failed = _maybe_pad_probe(phase.name)
+            phase_outcomes.append(PhaseOutcome(
+                name=phase.name, status=_STATUS_SKIPPED,
+                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
+            ))
+            continue
+
+        results, connection_lost = _dispatch_calls(plan.calls)
+
+        # For connection-lost the dispatch stopped before any subsequent ok
+        # rows could accumulate, so applying what we have is safe.
         if results:
-            apply_warnings = push.apply_push_results(
-                conn,
-                results,
-                session_id=session_id,
-                actor=actor,
-                request_id=request_id,
-                reason=reason or f"push_cli execute phase={phase.name}",
-            )
-            # Apply-layer warnings (e.g. a perform whose write Live could
-            # not verify — nothing recorded, next push retries) ride the
-            # errors file so the agent sees them. They don't flip the
-            # phase status: the wire call succeeded; what failed is the
-            # verification-gated DB record.
-            for w in apply_warnings:
-                error_records.append({
-                    "key": None,
-                    "tool": "apply_push_results",
-                    "action": "apply",
-                    "args_summary": {"phase": phase.name},
-                    "error": w,
-                    "hint": None,
-                })
+            _apply_results(results, phase.name)
+
+        # SYN-9F2L convergence: a device loaded THIS pass gets its link at
+        # apply-time, after parameter planning — so its dialed parameters
+        # were unplannable above. Re-plan once now that links are live and
+        # dispatch only the NEW calls (loads already dispatched keep their
+        # keys, so nothing re-sends). Without this pass the params silently
+        # never land: the next push's planner sees no DB change and skips.
+        if (
+            phase.name == "devices"
+            and not connection_lost
+            and results
+            and all(r.get("ok") for r in results)
+        ):
+            dispatched_keys = {c.key for c in plan.calls}
+            extra_calls = [
+                c for c in phase.plan_fn().calls
+                if c.key not in dispatched_keys
+            ]
+            if extra_calls:
+                extra_results, connection_lost = _dispatch_calls(extra_calls)
+                results.extend(extra_results)
+                if extra_results:
+                    _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))

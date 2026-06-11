@@ -130,6 +130,7 @@ def _make_send_fn(
         call_log.append({
             "tool": req.tool, "action": req.action,
             "params_keys": sorted(req.params.keys()),
+            "params": dict(req.params),
         })
 
         # The fake matches against the *request* shape. Tests that want to
@@ -1375,3 +1376,203 @@ def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
     assert eid in apply_recs[0]["error"]
     assert "automation_state" in apply_recs[0]["error"]
     assert Q.get_performed_automation(conn, eid, session) is None
+
+
+# ---------------------------------------------------------------------------
+# SYN-9F2L — params_dialed lands in one execute (devices-phase convergence)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def song_with_dialed_device(conn, song):
+    """A track whose device carries a snapshot-authored dialed param —
+    the swell Saturator case (display '14 dB', normalized 0.389)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Glitch", kind="midi")
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator",
+        display_name="Saturator",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Drive",
+        value_display="14 dB", value_normalized=0.389,
+    )
+    return {"track_id": tid, "device_id": did}
+
+
+def test_devices_params_dialed_land_in_one_execute(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """SYN-9F2L regression: the device loads AND its dialed param is written
+    in the SAME execute. Before the fix, the set_parameter was deferred to a
+    'rerun plan_push_devices' that no execute ever performed — the param
+    silently never landed."""
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    set_param_calls = [
+        c for c in send.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "set_parameter"
+    ]
+    assert len(set_param_calls) == 1
+    params = set_param_calls[0]["params"]
+    assert params["parameter_name"] == "Drive"
+    # Display form preferred on the wire (center-zero-safe).
+    assert params["value_display"] == "14 dB"
+    assert "value" not in params
+    # The pass-2 write is ordered AFTER the load it depends on.
+    load_idx = next(
+        i for i, c in enumerate(send.call_log)
+        if c["tool"] == "ableton_device" and c["action"] == "load"
+    )
+    sp_idx = next(
+        i for i, c in enumerate(send.call_log)
+        if c["action"] == "set_parameter"
+    )
+    assert sp_idx > load_idx
+
+
+def test_devices_second_pass_does_not_redispatch_first_pass_keys(
+    conn, song, session, state_dir,
+):
+    """An already-linked device's params write in pass 1 and must NOT be
+    re-sent by the convergence pass."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Keys", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="EQ Eight", display_name="EQ",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Freq",
+        value_display="1.17 kHz", value_normalized=0.59,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    set_param_calls = [
+        c for c in send.call_log if c["action"] == "set_parameter"
+    ]
+    assert len(set_param_calls) == 1  # exactly once, not once per pass
+
+
+def test_devices_second_pass_failure_halts_partial(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """A failing pass-2 set_parameter is a real failure: the devices phase
+    halts partial, never a silent drop."""
+    send = _make_send_fn(fail_keys={"ableton_device:set_parameter"})
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+
+
+def test_set_parameter_enum_fallback_retries_display_as_enum(
+    conn, song, session, state_dir,
+):
+    """A display write the handler refuses with 'is an enum' is retried once
+    as value_type='enum' with the display string as the value — hand-authored
+    snapshot enums land instead of halting the phase."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Op", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Operator", display_name="Op",
+    )
+    M.set_device_parameter(conn, device_id=did, name="Filter Type",
+                           value_display="Lowpass")  # no items, no normalized
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'Filter Type' is an enum (is_quantized=True); "
+                    "use value_type='enum' with `value`, not `value_display`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    enum_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter"
+        and c["params"].get("value_type") == "enum"
+    ]
+    assert len(enum_writes) == 1
+    assert enum_writes[0]["params"]["value"] == "Lowpass"
+
+
+def test_set_parameter_display_fallback_retries_with_normalized(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """A display write the handler refuses with 'exposes no str_for_value'
+    is retried once with the DB's normalized value — the pre-SYN-9F2L wire
+    form — so params on curve-less parameters still land."""
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'Drive' exposes no str_for_value; set it via "
+                    "the normalized `value`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    normalized_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter" and "value" in c["params"]
+    ]
+    assert len(normalized_writes) == 1
+    assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.389)

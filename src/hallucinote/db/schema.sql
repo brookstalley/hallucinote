@@ -541,16 +541,24 @@ CREATE INDEX IF NOT EXISTS idx_automation_breakpoints_env
 -- there is nothing to diff against Live). The fingerprint is the honesty
 -- mechanism: push re-performs an arc only when the authored fingerprint
 -- (target addressing + parameter_path + ordered breakpoint list) differs
--- from the one recorded at the last successful perform. The table is
+-- from the one recorded at the last successful perform. Keyed per
+-- (envelope, session): a song bound to multiple Live sets carries one
+-- fingerprint per set, so pushing to a fresh session performs every arc
+-- there instead of false-skipping on another set's record. The table is
 -- disposable with the DB — a `build.py --reset` re-performs everything,
 -- which is slower but never wrong.
 
 CREATE TABLE IF NOT EXISTS performed_automation (
     id            TEXT PRIMARY KEY,
-    envelope_id   TEXT NOT NULL UNIQUE REFERENCES envelopes(id) ON DELETE CASCADE,
+    envelope_id   TEXT NOT NULL REFERENCES envelopes(id) ON DELETE CASCADE,
+    session_id    TEXT NOT NULL REFERENCES ableton_sessions(id) ON DELETE CASCADE,
     fingerprint   TEXT NOT NULL,
-    performed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    performed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(envelope_id, session_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_performed_automation_session
+    ON performed_automation(session_id);
 
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (

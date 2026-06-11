@@ -531,6 +531,11 @@ sections only via explicit `/backlog update` calls.
 
   Discovered at PR#155 merge: stamp-merged reported "nothing to stamp" because the new entry mimicked this repo's historical tag form (`<!-- chunks=... status=... -->`) which lacks the "prawduct:" prefix `TAG_LINE_RE` requires; every historical entry is equally invisible to the parser (they carry status=shipped inline so releases handled them manually). Fixed the AUD-1M4V entry in place (now canonical + stamped merged). Remaining: canonicalize the historical tag lines (mechanical sweep) so the lifecycle tooling sees the whole log, and note the canonical form where entries get authored. **Verifiable signal:** stamp-merged/typo-guard parse every tagged entry in change-log.md.
 
+- **[ENV-5R2J]** Dedup the host-kind→push-route mapping — encoded twice (push planner + DB eligibility layer)
+  `effort: S · impact: S · area: envelope · source: critic · added: 2026-06-11 · status: open · stage: ready · related: ENV-7G4K`
+
+  From the ENV-7G4K cumulative Critic (note finding): the host-kind→push-route mapping is encoded in two places — `sync/push/envelopes.py` `_route_for_host_kind` and the DB-mutator eligibility layer in `db/mutations` — so the two partitions can drift independently. Dedup to one shared source of truth (chunk 02 already named `classify_envelope_route` as "the single partition source"; make that literally true by having both sites consume it). Low priority, code-health. **Verifiable signal:** exactly one module encodes the host-kind→route partition; `grep` for the mapping table finds a single definition, with `sync/push/envelopes.py` and `db/mutations` both importing it.
+
 ## Promoted
 
 _(none — INS-7V2D shipped; see Archive.)_

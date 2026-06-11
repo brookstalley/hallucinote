@@ -292,7 +292,7 @@ def plan_push_performed_automation(
         args, label = addressing
 
         fingerprint = envelope_fingerprint(env, breakpoints)
-        performed = Q.get_performed_automation(conn, env["id"])
+        performed = Q.get_performed_automation(conn, env["id"], session_id)
         if performed is not None and performed["fingerprint"] == fingerprint:
             skipped.append(label)
             continue
@@ -330,35 +330,46 @@ def record_perform_result(
     conn: sqlite3.Connection,
     *,
     envelope_id: str,
+    session_id: str,
     result: dict[str, Any],
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
-) -> bool:
+) -> str | None:
     """Apply-layer hook for a successful ``perform:`` result. Records the
-    performed-state fingerprint ONLY when the handler verified the write
-    (``automation_state == 1``); anything else leaves the fingerprint
-    unwritten so the next push retries the arc. Returns whether state was
-    recorded.
+    performed-state fingerprint for this (envelope, session) ONLY when the
+    handler verified the write (``automation_state == 1``); anything else
+    leaves the fingerprint unwritten so the next push retries the arc.
+    Returns None when state was recorded, else a human-readable warning
+    naming the arc and why — the caller surfaces it (never a silent skip).
 
     The fingerprint is recomputed from current DB rows — identical to the
     planner's within one plan→execute→apply cycle, and self-healing if
     the arc was edited mid-cycle (the stored print then reflects neither
     old nor new Live state, forcing a re-perform next push).
     """
-    if result.get("automation_state") != 1:
-        return False
-    env = conn.execute(
-        "SELECT * FROM envelopes WHERE id = ?", (envelope_id,),
-    ).fetchone()
+    state = result.get("automation_state")
+    if state != 1:
+        return (
+            f"perform {envelope_id}: handler returned "
+            f"automation_state={state!r} (not 1 — the write is unverified); "
+            "fingerprint left unwritten, the next push retries this arc. "
+            "If it never verifies, check the parameter isn't "
+            "automation-overridden or locked in Live."
+        )
+    env = Q.get_envelope(conn, envelope_id)
     if env is None:
-        return False
+        return (
+            f"perform {envelope_id}: envelope no longer exists in the DB "
+            "(deleted mid-cycle?); performed state not recorded."
+        )
     M.record_performed_automation(
         conn,
         envelope_id=envelope_id,
+        session_id=session_id,
         fingerprint=envelope_fingerprint(env, Q.get_breakpoints(conn, envelope_id)),
         actor=actor,
         request_id=request_id,
         reason=reason,
     )
-    return True
+    return None

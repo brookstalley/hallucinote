@@ -1235,3 +1235,47 @@ def test_pad_probe_runs_on_idempotent_re_push(
     assert devices_phase["pad_probes_ok"] == 1
     # And the rows came back via the idempotent re-probe.
     assert len(Q.get_drum_pad_mappings(conn, drum_song["device_id"])) == 5
+
+
+# ---------------------------------------------------------------------------
+# ENV-7G4K: unverified perform surfacing
+# ---------------------------------------------------------------------------
+
+
+def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
+    conn, song, session, tiny_song, state_dir,
+):
+    """An ok perform wire call whose handler could not verify the write
+    (no ``automation_state == 1`` in the result — the fake send_fn's
+    ack-only path returns ``{}``) must not vanish: the exit code stays 0
+    (every wire call succeeded), but the errors file carries an
+    ``apply_push_results`` record naming the arc, and no performed-state
+    row is written so the next push retries."""
+    master = M.create_track(
+        conn, song_id=song, track_index=0, name="Master", kind="master",
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 16.0, "value": 0.4},
+        ],
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    assert result.exit_code == push_execute.EXIT_OK
+    assert result.errors_file is not None
+    errors = json.loads(result.errors_file.read_text())
+    apply_recs = [
+        e for e in errors["errors"] if e["tool"] == "apply_push_results"
+    ]
+    assert len(apply_recs) == 1
+    assert eid in apply_recs[0]["error"]
+    assert "automation_state" in apply_recs[0]["error"]
+    assert Q.get_performed_automation(conn, eid, session) is None

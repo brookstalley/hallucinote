@@ -219,9 +219,13 @@ def classify_envelope_route(
     if kind in ("return_mixer_volume", "return_mixer_pan"):
         return "perform"
     if kind in ("mixer_volume", "mixer_pan", "send_level"):
-        return _route_for_host_kind(
-            _track_kind_for_envelope(conn, envelope["target_track_id"])
-        )
+        host_kind = _track_kind_for_envelope(conn, envelope["target_track_id"])
+        if kind == "send_level" and host_kind == "master":
+            # The master strip has no sends — the mutator refuses this
+            # combination semantically, so a row here bypassed it. Route
+            # nowhere rather than emit a guaranteed-fail wire call.
+            return "unroutable"
+        return _route_for_host_kind(host_kind)
     if kind == "device_parameter":
         chain_row = Q.get_device_parent_chain(conn, envelope["target_device_id"])
         if chain_row is None:

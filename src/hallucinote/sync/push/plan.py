@@ -313,7 +313,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
-) -> None:
+) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
     for `session_id`, not on core rows.
@@ -327,13 +327,21 @@ def apply_push_results(
           "error": "...optional..."
         }
 
-    Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding) and
-    `_ACK_ONLY_KINDS` (no DB write). An unknown kind raises `ValueError` so a
-    new planner-emitted key kind can't silently no-op past this layer.
+    Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding),
+    `_ACK_ONLY_KINDS` (no DB write), and the `perform:` branch (performed-
+    automation state). An unknown kind raises `ValueError` so a new
+    planner-emitted key kind can't silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
+
+    Returns apply-layer warnings (empty when everything recorded cleanly).
+    Today these come from the `perform:` branch — an ok wire call whose
+    handler could NOT verify the write (`automation_state != 1`) records
+    nothing, and the warning says so (never a silent skip; the next push
+    retries the arc). Callers must surface them.
     """
+    warnings: list[str] = []
     with transaction(conn):
         for r in results:
             if not r.get("ok"):
@@ -359,14 +367,17 @@ def apply_push_results(
                         f"push result key {key!r} missing envelope id "
                         "after 'perform:'"
                     )
-                record_perform_result(
+                perform_warning = record_perform_result(
                     conn,
                     envelope_id=db_id,
+                    session_id=session_id,
                     result=r.get("result") or {},
                     actor=actor,
                     request_id=request_id,
                     reason=reason,
                 )
+                if perform_warning is not None:
+                    warnings.append(perform_warning)
                 continue
 
             if kind in _LINK_KINDS:
@@ -395,5 +406,7 @@ def apply_push_results(
 
             raise ValueError(
                 f"unknown push result key kind {kind!r} (full key={key!r}). "
-                f"Declare it in _LINK_KINDS or _ACK_ONLY_KINDS in sync/push.py."
+                "Declare it in _LINK_KINDS / _ACK_ONLY_KINDS (or add a "
+                "dedicated branch like 'perform') in sync/push/plan.py."
             )
+    return warnings

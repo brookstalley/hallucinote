@@ -777,7 +777,9 @@ def test_cli_apply_writes_link_from_result(conn, song, session, db_path, tmp_pat
         "apply", session, "--db", str(db_path), "--results", str(rpath),
     ])
     summary = json.loads(capsys.readouterr().out)
-    assert summary == {"applied": 1, "failed": 0, "details": []}
+    assert summary == {
+        "applied": 1, "failed": 0, "details": [], "apply_warnings": [],
+    }
     # Re-open for fresh connection so the apply's transaction is visible.
     fresh = init_db(db_path)
     try:
@@ -812,7 +814,9 @@ def test_cli_apply_skips_link_when_result_lacks_index(
         "apply", session, "--db", str(db_path), "--results", str(rpath),
     ])
     summary = json.loads(capsys.readouterr().out)
-    assert summary == {"applied": 1, "failed": 0, "details": []}
+    assert summary == {
+        "applied": 1, "failed": 0, "details": [], "apply_warnings": [],
+    }
     fresh = init_db(db_path)
     try:
         assert Q.get_ableton_link(

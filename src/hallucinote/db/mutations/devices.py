@@ -1182,20 +1182,24 @@ def record_performed_automation(
     conn: sqlite3.Connection,
     *,
     envelope_id: str,
+    session_id: str,
     fingerprint: str,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> MutatorResult:
-    """Upsert the performed-state row for one envelope after a successful
-    perform call (ENV-7G4K). Sync-state, like `link_db_to_ableton`:
-    emits an event for the audit trail but does not touch the song's
-    authored-content timestamp.
+    """Upsert the performed-state row for one (envelope, session) after a
+    successful perform call (ENV-7G4K). Sync-state, like
+    `link_db_to_ableton`: emits an event for the audit trail but does not
+    touch the song's authored-content timestamp. Session-keyed — each
+    bound Live set carries its own fingerprint, so a fresh set performs
+    every arc instead of false-skipping on another set's record.
 
-    Returns MutatorResult states: 'created' (first perform), 'updated'
-    (re-performed with a new fingerprint), 'unchanged' (same fingerprint
-    — callers normally skip the perform entirely, so this is the
-    idempotent-replay guard, not the common path).
+    Returns MutatorResult states: 'created' (first perform in this
+    session), 'updated' (re-performed with a new fingerprint),
+    'unchanged' (same fingerprint — callers normally skip the perform
+    entirely, so this is the idempotent-replay guard, not the common
+    path).
     """
     env_row = conn.execute(
         "SELECT song_id FROM envelopes WHERE id = ?", (envelope_id,),
@@ -1204,10 +1208,18 @@ def record_performed_automation(
         raise ValueError(
             f"record_performed_automation: envelope {envelope_id!r} not found"
         )
+    session_row = conn.execute(
+        "SELECT id FROM ableton_sessions WHERE id = ?", (session_id,),
+    ).fetchone()
+    if session_row is None:
+        raise ValueError(
+            f"record_performed_automation: session {session_id!r} not found"
+        )
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        "SELECT id, fingerprint FROM performed_automation WHERE envelope_id = ?",
-        (envelope_id,),
+        """SELECT id, fingerprint FROM performed_automation
+           WHERE envelope_id = ? AND session_id = ?""",
+        (envelope_id, session_id),
     ).fetchone()
     if existing is not None and existing["fingerprint"] == fingerprint:
         return MutatorResult(existing["id"], "unchanged")
@@ -1225,9 +1237,10 @@ def record_performed_automation(
         row_id = _uuid()
         state = "created"
         conn.execute(
-            """INSERT INTO performed_automation (id, envelope_id, fingerprint)
-               VALUES (?, ?, ?)""",
-            (row_id, envelope_id, fingerprint),
+            """INSERT INTO performed_automation
+                   (id, envelope_id, session_id, fingerprint)
+               VALUES (?, ?, ?, ?)""",
+            (row_id, envelope_id, session_id, fingerprint),
         )
     _emit(
         conn,
@@ -1235,6 +1248,7 @@ def record_performed_automation(
         {
             "performed_automation_id": row_id,
             "envelope_id": envelope_id,
+            "session_id": session_id,
             "fingerprint": fingerprint,
             "state": state,
         },

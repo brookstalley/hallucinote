@@ -1,12 +1,12 @@
 ---
-description: Push the Hallucinote DB into Ableton Live. Drives eleven ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → envelopes → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
+description: Push the Hallucinote DB into Ableton Live. Drives twelve ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
-You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving eleven ordered phases through MCP, and report what was created.
+You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving twelve ordered phases through MCP, and report what was created.
 
 $ARGUMENTS
 
@@ -30,7 +30,7 @@ If slug is missing, ask. For session, default to `--auto-session` only if the us
 1.  push_cli probe-and-link --probe          → mints session, upserts matches,
                                                reconciles stale links
 2.  push_cli execute --probe                 → coherence check + dispatch all
-                                               eleven phases over MCP TCP
+                                               twelve phases over MCP TCP
 2a. (conditional) cleanup-default-scaffold   → delete leftover defaults
 3.  Read .last-push-state.json + report.
 ```
@@ -97,7 +97,9 @@ Proceed only on explicit `yes`.
 python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 ```
 
-`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all eleven phases in order, dispatching every MCP call directly over TCP.
+`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all twelve phases in order, dispatching every MCP call directly over TCP.
+
+**The transport PLAYS during the `performed_automation` phase.** Master/group/return arcs are gesture-recorded in real time — each changed arc plays its span (the plan names the per-arc and total wall-clock). Audible playback during push is expected, not a bug. Unchanged arcs are fingerprint-skipped; a `--reset` DB or a new session re-performs everything.
 
 **Exit codes:**
 
@@ -132,6 +134,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 1. **Outcome + totals.** `outcome` field + per-phase counts.
 2. **Per-domain summary.** `"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written"`.
 3. **On partial / connection_lost:** cite `.last-push-errors.json` path. Tell the user the loop: read errors → fix → rebuild → re-execute. Idempotent.
+3a. **Unverified performs.** `.last-push-errors.json` can exist even on exit 0: a `tool: "apply_push_results"` record means a performed arc's write came back `automation_state != 1` — nothing was recorded, the next push retries that arc. Surface it; if it never verifies, the parameter is likely automation-overridden or locked in Live (the failure policy is yours, not the CLI's).
 4. **Live 12.4 UI heads-up — conditional, only emit rows that apply:**
    - **Empty mixer column.** If any track has zero devices: *"Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders."*
    - **Hidden mixer envelopes on MIDI clips.** If `envelopes` wrote any `mixer_volume` / `mixer_pan` / `send_level` on a MIDI clip: *"Mixer envelope(s) on MIDI clip 'Y' are playing but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider and choose 'Show Modulation'. Live remembers the choice per-set."*
@@ -150,6 +153,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 | `mix` | `ableton_track(set_property / set_send)`, `ableton_return(set_property)`, `ableton_session(set_master_property)` |
 | `devices` | `ableton_device(action='load' / 'set_parameter')` |
 | `envelopes` | `ableton_automation(action='write_envelope')` |
+| `performed_automation` | `ableton_automation(action='perform')` — realtime gesture recording; transport plays |
 | `arrangement` | `ableton_clip(action='duplicate_to_arrangement')` |
 | `cues` | `ableton_arrangement(action='cue_create_batch')` |
 

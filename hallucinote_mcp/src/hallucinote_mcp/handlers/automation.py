@@ -1436,10 +1436,12 @@ PERFORM_TARGET_KINDS: tuple[str, ...] = (
     "device_parameter",
 )
 
-# Value-update rate for the scripted ramp. ~10 Hz produced a musically
-# smooth recorded ramp in probe 4 (40 steps at 100 ms); Live interpolates
-# between recorded points. Tune here if the chunk-03 Live smoke surfaces
-# audible stepping.
+# Value-update PERIOD for the scripted ramp — the loop sleeps 100 ms per
+# step, but main-thread scheduling + the Live touch dominate, so the
+# ACHIEVED rate is ~2.5-3 Hz (S-7 .als dump: ~3 breakpoints/second per
+# arc). That rate still read as faithful across all 5 S-7 arc families —
+# Live interpolates between recorded points. Tune here if a future arc
+# surfaces audible stepping; the floor is scheduling, not this constant.
 _PERFORM_UPDATE_PERIOD_S = 0.1
 
 # Settle-poll cadence for async Song state (record_mode — probe 10).

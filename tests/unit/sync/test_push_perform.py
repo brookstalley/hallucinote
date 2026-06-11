@@ -357,10 +357,11 @@ def test_wall_clock_estimate_honors_tempo_map(conn, song, session, master_arc):
 def test_apply_records_state_and_event_on_verified_write(
     conn, song, session, master_arc,
 ):
-    push.apply_push_results(
+    warnings = push.apply_push_results(
         conn, [_ok_result(master_arc)], session_id=session,
     )
-    row = Q.get_performed_automation(conn, master_arc)
+    assert warnings == []
+    row = Q.get_performed_automation(conn, master_arc, session)
     assert row is not None
     assert row["fingerprint"]
     events = conn.execute(
@@ -374,24 +375,42 @@ def test_apply_leaves_fingerprint_unwritten_on_unverified_write(
     conn, song, session, master_arc, automation_state,
 ):
     """automation_state != 1 (none recorded / overridden / missing) →
-    no performed-state row, so the next plan retries the arc."""
+    no performed-state row, so the next plan retries the arc — and the
+    apply layer RETURNS a warning naming the arc (never a silent skip)."""
     result = _ok_result(master_arc, automation_state=automation_state)
     if automation_state is None:
         del result["result"]["automation_state"]
-    push.apply_push_results(conn, [result], session_id=session)
-    assert Q.get_performed_automation(conn, master_arc) is None
+    warnings = push.apply_push_results(conn, [result], session_id=session)
+    assert len(warnings) == 1
+    assert master_arc in warnings[0]
+    assert "automation_state" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
     plan = _plan(conn, song, session)
     assert [c.key for c in plan.calls] == [f"perform:{master_arc}"]
 
 
 def test_apply_skips_failed_result(conn, song, session, master_arc):
-    push.apply_push_results(
+    warnings = push.apply_push_results(
         conn,
         [{"key": f"perform:{master_arc}", "ok": False,
           "tool": "ableton_automation", "error": "boom"}],
         session_id=session,
     )
-    assert Q.get_performed_automation(conn, master_arc) is None
+    assert warnings == []  # ok=False is the agent layer's to report
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_fingerprint_gate_is_session_scoped(conn, song, session, master_arc):
+    """A second Live set must NOT inherit set A's performed state: after a
+    verified perform into session A, planning against a fresh session B
+    re-emits the arc instead of false-skipping it as unchanged."""
+    push.apply_push_results(
+        conn, [_ok_result(master_arc)], session_id=session,
+    )
+    assert not _plan(conn, song, session).calls  # set A: skip-unchanged
+    session_b = M.create_ableton_session(conn, song_id=song, name="set-b")
+    plan_b = _plan(conn, song, session_b)
+    assert [c.key for c in plan_b.calls] == [f"perform:{master_arc}"]
 
 
 def test_full_cycle_perform_then_skip_then_change_then_perform(

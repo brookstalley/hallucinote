@@ -1455,10 +1455,17 @@ def master_volume_envelope(conn, song):
     )
 
 
-def test_record_performed_automation_creates_and_emits(conn, song,
-                                                       master_volume_envelope):
+@pytest.fixture
+def live_session(conn, song):
+    return M.create_ableton_session(conn, song_id=song, name="set-a")
+
+
+def test_record_performed_automation_creates_and_emits(
+    conn, song, master_volume_envelope, live_session,
+):
     res = M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-1",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
     )
     assert res.kind == "created"
     row = conn.execute(
@@ -1466,23 +1473,27 @@ def test_record_performed_automation_creates_and_emits(conn, song,
         (master_volume_envelope,),
     ).fetchone()
     assert row["fingerprint"] == "fp-1"
+    assert row["session_id"] == live_session
     assert row["performed_at"]
     performed = [r for r in _events(conn) if r["kind"] == E.AUTOMATION_PERFORMED]
     assert len(performed) == 1
     payload = json.loads(performed[0]["payload_json"])
     assert payload["envelope_id"] == master_volume_envelope
+    assert payload["session_id"] == live_session
     assert payload["fingerprint"] == "fp-1"
     assert payload["state"] == "created"
 
 
 def test_record_performed_automation_updates_on_new_fingerprint(
-    conn, master_volume_envelope,
+    conn, master_volume_envelope, live_session,
 ):
     M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-1",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
     )
     res = M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-2",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-2",
     )
     assert res.kind == "updated"
     rows = conn.execute(
@@ -1495,32 +1506,73 @@ def test_record_performed_automation_updates_on_new_fingerprint(
 
 
 def test_record_performed_automation_unchanged_emits_no_event(
-    conn, master_volume_envelope,
+    conn, master_volume_envelope, live_session,
 ):
     """Idempotent replay guard: same fingerprint -> 'unchanged', no second
     event (events pair with state changes, per the mutator discipline)."""
     M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-1",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
     )
     res = M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-1",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
     )
     assert res.kind == "unchanged"
     performed = [r for r in _events(conn) if r["kind"] == E.AUTOMATION_PERFORMED]
     assert len(performed) == 1
 
 
-def test_record_performed_automation_unknown_envelope_raises(conn):
+def test_record_performed_automation_is_session_keyed(
+    conn, song, master_volume_envelope, live_session,
+):
+    """Fingerprints are per-(envelope, session): the same arc recorded into
+    set A must NOT read as performed for set B — a fresh Live set performs
+    every arc instead of false-skipping on another set's record."""
+    session_b = M.create_ableton_session(conn, song_id=song, name="set-b")
+    M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
+    )
+    res_b = M.record_performed_automation(
+        conn, envelope_id=master_volume_envelope, session_id=session_b,
+        fingerprint="fp-1",
+    )
+    assert res_b.kind == "created"  # not 'unchanged' — set B has its own row
+    rows = conn.execute(
+        """SELECT session_id, fingerprint FROM performed_automation
+           WHERE envelope_id = ? ORDER BY session_id""",
+        (master_volume_envelope,),
+    ).fetchall()
+    assert {r["session_id"] for r in rows} == {live_session, session_b}
+
+
+def test_record_performed_automation_unknown_envelope_raises(
+    conn, live_session,
+):
     with pytest.raises(ValueError):
         M.record_performed_automation(
-            conn, envelope_id="nope", fingerprint="fp-1",
+            conn, envelope_id="nope", session_id=live_session,
+            fingerprint="fp-1",
         )
 
 
-def test_performed_state_cascades_with_envelope(conn, song,
-                                                master_volume_envelope):
+def test_record_performed_automation_unknown_session_raises(
+    conn, master_volume_envelope,
+):
+    with pytest.raises(ValueError):
+        M.record_performed_automation(
+            conn, envelope_id=master_volume_envelope, session_id="nope",
+            fingerprint="fp-1",
+        )
+
+
+def test_performed_state_cascades_with_envelope(
+    conn, song, master_volume_envelope, live_session,
+):
     M.record_performed_automation(
-        conn, envelope_id=master_volume_envelope, fingerprint="fp-1",
+        conn, envelope_id=master_volume_envelope, session_id=live_session,
+        fingerprint="fp-1",
     )
     M.delete_envelope(conn, envelope_id=master_volume_envelope)
     assert conn.execute(

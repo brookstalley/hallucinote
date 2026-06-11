@@ -1119,6 +1119,31 @@ def test_classify_envelope_route_partitions_all_kinds(
     assert route_of(dev_midi) == "refused_audio"
 
 
+def test_classify_send_level_on_master_is_unroutable(
+    conn, song, session, linked_track, linked_return,
+):
+    """The master strip has no sends — a (mutator-bypassing) master
+    send_level row must NOT partition to 'perform', or the performed-
+    automation phase would emit a guaranteed-fail wire call. It routes
+    nowhere; group hosts stay perform-routed."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track,
+        target_send_return_id=linked_return,
+    )
+
+    def route_of(env_id):
+        row = conn.execute(
+            "SELECT * FROM envelopes WHERE id = ?", (env_id,),
+        ).fetchone()
+        return push.classify_envelope_route(conn, row)
+
+    _force_track_kind(conn, linked_track, "master")
+    assert route_of(eid) == "unroutable"
+    _force_track_kind(conn, linked_track, "group")
+    assert route_of(eid) == "perform"
+
+
 # --- D1 teaching-message regression: partition-by-hand suggestion ---
 
 

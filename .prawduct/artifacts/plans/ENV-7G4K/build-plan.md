@@ -44,7 +44,7 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 
 - [x] Chunk 01: probes + `ableton_automation perform` action (thin slice)
 - [x] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
-- [ ] Chunk 03: push phase + fingerprint gate + Live smoke
+- [x] Chunk 03: push phase + fingerprint gate + Live smoke
 - [ ] Chunk 04: docs, guides, backlog closeout
 Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
 `perform` action + handler (runs_on_worker, lock under live_state_lock,
@@ -61,6 +61,15 @@ focus, LOM selection alone leaves it disabled), probe-4 recipe verified
 automation_state 0→1 + playback tracking on the group's mixer volume. BOTH
 chunk-01 probe verdicts landed; every design assumption confirmed; no
 re-plan needed at the chunk-01 governance checkpoint.
+Chunk 03 S-7 SMOKE PASSED (wire half) 2026-06-11 against real Live
+12.4.1 on matched versions after the RS refresh: all 5 arc families
+automation_state==1, fingerprint skip-all on re-push, targeted
+re-perform, 6 events. Evidence in test_live_smoke.md S-7; driver
+vendored at docs/research/audio-first-class/env7g4k-smoke-driver.py.
+Operator audible/visual + .als breakpoint-quality spot-check pending in
+operator-verification.md (user glance + one ⌘S). Bonus finding: master
+Auto Filter loaded via keyboard automation (browser+Enter) — DEV-2M9K
+has a scriptable UI path under Accessibility. Next: chunk 04 closeout.
 Chunk 03 CODE built + Critic-passed (1 warning, resolved with added
 coverage) 2026-06-11: `performed_automation` phase (12th, after envelopes)
 in sync/push/perform.py — eligibility via classify_envelope_route,

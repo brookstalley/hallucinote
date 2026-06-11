@@ -242,5 +242,18 @@ then `probe-and-link`).
    closes the "breakpoint quality / thinning" open from the probe doc.
 7. Record the audible/visual half in `.prawduct/operator-verification.md`.
 
-**Status: PENDING — blocked on the Remote Script refresh + Live restart
-(human step). Unit half is green (tests/unit/sync/test_push_perform.py).**
+**Result: PASS (wire half) — 2026-06-11, Live 12.4.1, RS `c0b443e0e4c0`
+(matched, no bypass).** Driver: `/tmp/env7g4k_smoke.py` against a default
+set + agent-created group + browser-loaded master Auto Filter. All five
+arc families (master volume, group volume, group→return send,
+return_mixer_volume, master-chain `Frequency` sweep) performed with
+`automation_state == 1`; pass-2 skipped all five by fingerprint (each
+named); editing the master arc re-performed exactly it; pass-4 was a
+no-op; 6 `automation_performed` events (5 + 1 re-perform). Plan output
+named ~28.0s total transport playback (tempo-map estimate matched the
+wall clock at 120 BPM). Notable: the master Auto Filter was loaded via
+LOM-select-master + browser search + Enter (keyboard automation) —
+DEV-2M9K's "forever manual" has a scriptable UI path when Accessibility
+is granted. Remaining: operator audible/visual confirmation of the
+arrangement lanes + the `.als` dump breakpoint-quality spot-check
+(needs a ⌘S save) → operator-verification.md.

@@ -1,6 +1,6 @@
 """Tests for W4-D: ``plan_push_song`` master orchestrator + ``plan_push_clips``.
 
-The orchestrator returns eleven ordered :class:`PushPhase` objects, each
+The orchestrator returns twelve ordered :class:`PushPhase` objects, each
 carrying a ``plan_fn`` thunk that produces a fresh ``PushPlan`` from
 current DB state. Tests pin:
 
@@ -90,13 +90,13 @@ def session(conn, song):
 # ---------------------------------------------------------------------------
 
 
-def test_plan_push_song_returns_eleven_phases(conn, song, session):
+def test_plan_push_song_returns_twelve_phases(conn, song, session):
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
-    assert len(phases) == 11
+    assert len(phases) == 12
 
 
 def test_plan_push_song_phase_names_and_order(conn, song, session):
-    """The eleven phase names are the contract between the planner and the
+    """The twelve phase names are the contract between the planner and the
     push skill — renaming any breaks the skill prose. Order is
     load-bearing (see plan_push_song docstring). ``scenes`` runs
     immediately before ``clips`` (SYN-4P2D): session clip slots are scene
@@ -112,6 +112,7 @@ def test_plan_push_song_phase_names_and_order(conn, song, session):
         "mix",
         "devices",
         "envelopes",
+        "performed_automation",
         "arrangement",
         "cues",
     ]
@@ -289,7 +290,7 @@ def filled_song(conn, song, session):
 
 
 def test_end_to_end_drive_links_every_entity(conn, song, session, filled_song):
-    """Drive all eleven phases with fake-applied results between each.
+    """Drive all twelve phases with fake-applied results between each.
     Verifies the contract: each phase, given that prior phases' results
     applied, produces a clean plan that strict-link-precondition planners
     accept without raising. Pin the post-drive link state to detect

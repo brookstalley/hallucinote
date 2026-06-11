@@ -61,6 +61,19 @@ focus, LOM selection alone leaves it disabled), probe-4 recipe verified
 automation_state 0→1 + playback tracking on the group's mixer volume. BOTH
 chunk-01 probe verdicts landed; every design assumption confirmed; no
 re-plan needed at the chunk-01 governance checkpoint.
+Chunk 03 CODE built + Critic-passed (1 warning, resolved with added
+coverage) 2026-06-11: `performed_automation` phase (12th, after envelopes)
+in sync/push/perform.py — eligibility via classify_envelope_route,
+per-kind addressing (master/group/return mixer, group sends, master- and
+return-chain device params), tempo-map-integrated wall-clock estimates,
+fingerprint gate with skipped-unchanged reporting, apply-layer
+record_perform_result gated on automation_state==1 (unverified → retry
+next push). 20 unit tests; phase-contract tests updated 11→12. Chunk 03
+stays [ ] on ONE remaining step: the S-7 real-Live smoke
+(tests/integration/test_live_smoke.md) — blocked on the Remote Script
+refresh (`/ableton-mcp-install` + full Live quit/reopen; running RS
+a5479db86125 predates the perform handler). Operator-verification entry
+queued.
 Chunk 02 built + Critic-clean (0/0/0) 2026-06-11: return_mixer_volume/pan
 kinds + performed_automation table (schema.sql), eligibility replaces the
 W10-F refusal (mutator allows master/group, audio keeps ENV-8H1T teaching,

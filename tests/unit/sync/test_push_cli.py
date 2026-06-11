@@ -6,7 +6,7 @@ The probe-and-link tests exercise the Python helper directly.
 
 End-to-end CLI drive simulates the skill's flow: probe-and-link →
 enumerate phases → for each phase emit a plan + synthesize results +
-apply. Exercises the full eleven-phase loop through the CLI surface.
+apply. Exercises the full twelve-phase loop through the CLI surface.
 """
 from __future__ import annotations
 
@@ -728,7 +728,7 @@ def test_probe_and_link_skips_devices_on_unlinked_parent(conn, song, session):
 # ---------------------------------------------------------------------------
 
 
-def test_cli_phases_emits_eleven_phase_metadata(conn, song, session, db_path, capsys):
+def test_cli_phases_emits_twelve_phase_metadata(conn, song, session, db_path, capsys):
     push_cli.main([
         "phases", session, "--db", str(db_path),
     ])
@@ -737,7 +737,8 @@ def test_cli_phases_emits_eleven_phase_metadata(conn, song, session, db_path, ca
     assert out["session_id"] == session
     assert [p["name"] for p in out["phases"]] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "devices", "envelopes", "arrangement", "cues",
+        "scenes", "clips", "mix", "devices", "envelopes",
+        "performed_automation", "arrangement", "cues",
     ]
     for p in out["phases"]:
         assert p["description"], f"phase {p['name']!r} has empty description"
@@ -1077,7 +1078,8 @@ def test_cli_end_to_end_drive_links_everything(
     phase_list = json.loads(capsys.readouterr().out)["phases"]
     assert [p["name"] for p in phase_list] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "devices", "envelopes", "arrangement", "cues",
+        "scenes", "clips", "mix", "devices", "envelopes",
+        "performed_automation", "arrangement", "cues",
     ]
 
     # Step 3: drive each phase. We share counters across the loop so

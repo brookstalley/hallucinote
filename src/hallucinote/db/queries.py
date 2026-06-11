@@ -627,6 +627,17 @@ def get_breakpoints(
     ).fetchall()
 
 
+def get_performed_automation(
+    conn: sqlite3.Connection, envelope_id: str,
+) -> sqlite3.Row | None:
+    """Last-performed state for a perform-routed envelope (ENV-7G4K), or
+    None if the arc has never been successfully performed."""
+    return conn.execute(
+        "SELECT * FROM performed_automation WHERE envelope_id = ?",
+        (envelope_id,),
+    ).fetchone()
+
+
 # ---------------------------------------------------------------------------
 # Ableton projection
 # ---------------------------------------------------------------------------

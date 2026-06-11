@@ -169,11 +169,12 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The eleven phases are present, in order.
+    # The twelve phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "devices", "envelopes", "arrangement", "cues",
+        "scenes", "clips", "mix", "devices", "envelopes",
+        "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
     # content) or ok-with-zero-calls if the planner still emits acks.
@@ -272,7 +273,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all eleven plans before dispatching)."""
+    (e.g. a refactor that pre-builds all twelve plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 

@@ -209,3 +209,38 @@ which W6-K bundled). The remaining W6-K items (sidechain, load_in_rack,
 set_input_routing) have unit-test coverage and no smoke-caught surprises
 during this session's fixture work. Strike — re-open if a specific
 W6-K surface needs empirical attention.
+
+### S-7 — ENV-7G4K performed automation end-to-end (chunk 03)
+
+**Goal.** The backlog item's core signal: a master `mixer_volume`
+envelope authored in build.py lands as arrangement automation via push;
+a second push skips every arc as unchanged; group + return + master-
+chain-device arcs ride the same phase.
+
+**Prereqs.** Remote Script refreshed to a build carrying the `perform`
+action (`/ableton-mcp-install` + full Live quit/reopen — the handler is
+Live-side; `a5479db86125` predates it). A set with a group track
+(closes lom-probe-results.md row 13's opportunistic re-verify in a real
+song) and a device on the master chain (placed manually — DEV-2M9K —
+then `probe-and-link`).
+
+**Steps.**
+1. Author in the song DB: master volume ride (16+ beats), a group
+   mixer_volume arc, a return_mixer_volume arc, and a master-chain
+   `device_parameter` sweep. Run the build.
+2. `push_cli execute` — confirm the `performed_automation` phase plan
+   names each arc with its wall-clock estimate and states the transport
+   will play; watch Live record each gesture.
+3. Verify per arc: `automation_state == 1` in the perform result;
+   audible/visible automation in the arrangement lanes.
+4. Push again — phase must skip ALL arcs as unchanged (fingerprint
+   gate), each named in the skip notes.
+5. Edit one arc's breakpoints in build.py, rebuild, push — only that
+   arc re-performs and Live shows the new shape replacing the old
+   (probe 12's punch-over semantics at song scale).
+6. `.als` dump diff (gzipped XML) for breakpoint-quality spot-check —
+   closes the "breakpoint quality / thinning" open from the probe doc.
+7. Record the audible/visual half in `.prawduct/operator-verification.md`.
+
+**Status: PENDING — blocked on the Remote Script refresh + Live restart
+(human step). Unit half is green (tests/unit/sync/test_push_perform.py).**

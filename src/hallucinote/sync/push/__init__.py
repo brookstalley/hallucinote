@@ -99,6 +99,11 @@ from .envelopes import (
     _emit_mixer_envelope,
     _emit_send_envelope,
 )
+from .perform import (
+    envelope_fingerprint,
+    plan_push_performed_automation,
+    record_perform_result,
+)
 from .probe import (
     CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES,
     CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES,
@@ -163,6 +168,9 @@ __all__ = [
     # Envelopes
     "_LOSSY_CURVE_HINTS",
     "plan_push_envelopes",
+    "plan_push_performed_automation",
+    "envelope_fingerprint",
+    "record_perform_result",
     "_track_kind_for_envelope",
     "classify_envelope_route",
     "_clip_and_track_indices",

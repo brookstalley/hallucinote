@@ -102,3 +102,25 @@ attended Live run:
    RANKS sections sensibly; if it reads implausibly (the C7 slow-attack risk),
    the report ships loudness-ρ as the primary signal with density caveated —
    never a confidently-wrong density ρ.
+
+## ENV-7G4K — performed automation: S-7 Live smoke (chunk 03 visual half)
+
+Queued 2026-06-11 (chunk 03 code + unit half complete; smoke pending the
+Remote Script refresh).
+
+1. **One-time setup (human):** `/ableton-mcp-install`, then fully quit and
+   reopen Live (the running Remote Script `a5479db86125` predates the
+   `perform` handler — Live caches Control Surface modules). Open a set
+   with a group track and a manually-placed master-chain device, then
+   `probe-and-link`.
+
+2. **Run S-7** (`tests/integration/test_live_smoke.md`): master volume
+   ride + group arc + return arc + master-device sweep authored in
+   build.py → push performs each (transport plays, wall-clock named in
+   the plan) → second push skips all as unchanged → one edited arc
+   re-performs alone, new shape audibly/visibly replacing the old.
+
+3. **Record here:** per-arc `automation_state`, the audible/visual
+   confirmation (automation lanes in the arrangement), and the `.als`
+   dump breakpoint-quality spot-check (closes the probe doc's
+   "breakpoint quality / thinning" open item).

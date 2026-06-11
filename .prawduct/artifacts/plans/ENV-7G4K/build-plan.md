@@ -45,7 +45,20 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 - [x] Chunk 01: probes + `ableton_automation perform` action (thin slice)
 - [x] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
 - [x] Chunk 03: push phase + fingerprint gate + Live smoke
-- [ ] Chunk 04: docs, guides, backlog closeout
+- [x] Chunk 04: docs, guides, backlog closeout
+Context: chunk 04 BUILT 2026-06-11 (cumulative-final): gaps guide
+(`resources/guides/gaps.md`) splits the old master+audio gap into
+refused-audio (ENV-8H1T) vs performed master/group/return;
+`docs/song-authoring-conventions.md` gains the performed-arc section
+(wall-clock, transport-plays, fingerprint gate, write-only) and narrows
+the refusal to audio hosts; archived full-band-rock canary gains a
+superseded note. Change-log entry added (status=merged, set at PR
+creation per convention). Backlog pass via the skill: ENV-7G4K →
+shipped/Archive (with recorded-residuals scrub trail), ENV-4M2T narrowed
+to clip-locked residual, AUD-1M4V stage 0b BUILT, DEV-2M9K new-evidence
+note (scriptable UI crack). Remaining before PR: cumulative Critic
+against develop...HEAD (the /prawduct:pr create gate); operator
+audible/visual half still queued in operator-verification.md.
 Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
 `perform` action + handler (runs_on_worker, lock under live_state_lock,
 record_mode settle-poll per probe 10, per-step finally restore incl.

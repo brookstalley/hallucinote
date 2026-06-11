@@ -43,7 +43,7 @@ re-record overwrite) — wire calls against the running Live, no restart cycle.
 ## Status
 
 - [x] Chunk 01: probes + `ableton_automation perform` action (thin slice)
-- [ ] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
+- [x] Chunk 02: envelope eligibility — target kinds, routing replaces refusal
 - [ ] Chunk 03: push phase + fingerprint gate + Live smoke
 - [ ] Chunk 04: docs, guides, backlog closeout
 Context: chunk 01 CODE built 2026-06-10 on feature/env-7g4k-performed-automation:
@@ -61,6 +61,18 @@ original probe doc this is opportunistic re-verification of a track-kind-
 agnostic mechanism — carried into chunk 03's Live smoke (real song sets have
 groups), NOT a chunk 02 blocker; chunk 02 group eligibility ships per design
 decision 3 with the verdict noted pending.
+Chunk 02 built + Critic-clean (0/0/0) 2026-06-11: return_mixer_volume/pan
+kinds + performed_automation table (schema.sql), eligibility replaces the
+W10-F refusal (mutator allows master/group, audio keeps ENV-8H1T teaching,
+master send_level gets a semantic "no sends" refusal),
+`classify_envelope_route` in sync/push/envelopes.py is the single
+partition source (exported for chunk 03's phase selector),
+record_performed_automation + performed_automation_fingerprint +
+AUTOMATION_PERFORMED event shipped (consumed by chunk 03). 3208 tests
+green. Conscious scope note: return→return *sends* are not in the wave-1
+DB vocabulary (design.md only added the return's own mixer); flag for the
+backlog if a song needs them. Next: chunk 03 (push phase + fingerprint
+gate + Live smoke — smoke also closes the group-host probe, row 13).
 Parallel item CLP-AUD1 already merged (PR #157); schema.sql rebase burden
 now falls on this branch.
 

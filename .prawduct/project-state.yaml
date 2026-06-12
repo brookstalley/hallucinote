@@ -476,9 +476,10 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). ENV-7G4K shipped (PR #158);
-# ENV-9P4T extends it — performed automation at mix scale (started 2026-06-11).
-active_build_plan: artifacts/plans/ENV-9P4T/build-plan.md
+# Active build plan pointer (.prawduct/-relative). DEV-6M2K merged to develop
+# (PR #162, 2026-06-12) — master device load re-enabled; stays open pending the
+# live operator-verification corroboration, so its plan is retained per gitflow.
+active_build_plan: artifacts/plans/DEV-6M2K/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

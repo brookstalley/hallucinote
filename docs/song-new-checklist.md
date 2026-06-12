@@ -10,7 +10,7 @@ Apply with judgment, scaled to the work. A quick sketch song deserves 2-3 questi
 
 **This is collaborate-by-default, with precedence** (see `/hallucinote:song-new`'s "Read the request, not the requester"): elicit only the *load-bearing* unknowns, and when open questions stop yielding direction ("you decide," repeated vagueness), switch from asking to **proposing** a concrete, redirectable option — never assume-and-go. Clear direction always wins; questions are for genuine gaps, not choices the user already made.
 
-**Persist the answers.** Each non-trivial decision (especially must-haves) lands as a markdown file under `songs/<slug>/hallucinote:decisions/`, recording the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/hallucinote:song-context` so the song's intent survives `/clear`.
+**Persist the answers.** Each non-trivial decision (especially must-haves) lands as a markdown file under `songs/<slug>/decisions/`, recording the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/hallucinote:song-context` so the song's intent survives `/clear`.
 
 ---
 

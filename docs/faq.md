@@ -42,7 +42,7 @@ re-pushing, fold your manual edits back into the DB:
 - Device-parameter knob tweaks → `/hallucinote:snapshot-bake-recent-changes` (lighter), or
   `/hallucinote:song-snapshot` for the full mix layout.
 
-See the [Quickstart](quickstart.md#5-pull-manual-edits-back-optional).
+See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 
 ## Can I share a song if my collaborator doesn't have the same plugins?
 

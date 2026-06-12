@@ -49,6 +49,17 @@ sections only via explicit `/backlog update` calls.
 
   **Why `stage: design` (requirements before code):** the `.als` master-automation WRITE schema is open (the inverse of ING-5W8H's open READ schema — exact XML paths for `MasterTrack > AutomationEnvelopes`, curve/coefficient encoding, arrangement-time normalization, round-trip integrity), Live-closed/out-of-band constraint, version-fragility, and how a `.als`-write path composes with the existing 12-phase push (a cold post-push rewrite vs an in-session perform — likely a separate "finalize fidelity" pass). Mine hodel33/ableton-project-processor (shared with ING-5W8H) for the write paths. **Verifiable signal:** a decision-record + a write path that authors master mixer/device-param automation envelopes losslessly (true breakpoints + curve kinds, round-trip-verified against an `.als` dump) — via `.als` XML write and/or ENV-2T9K-improved perform — explicitly framed as the fidelity upgrade over the shipped lossy perform write, pairing with DEV-6M2K's now-loadable master device chains. **Sized:** large (schema research → write path → round-trip verification; shares the `.als` mining with ING-5W8H). (user master-automation-writing top-priority lock, 2026-06-12)
 
+- **[INS-3W8P]** `/ableton-mcp-install` CLI invocations resolve `hallucinote_mcp` via ambient sys.path, not the plugin's launched uv env — vendors + fingerprints the WRONG package
+  `effort: M · impact: M · area: install · source: dogfood · added: 2026-06-12 · status: open · stage: ready · related: INS-7V2D, INS-4H8M`
+
+  **Surfaced by a dev-machine `/ableton-mcp-install` run (2026-06-12)** — the install agent worked around it manually by running the CLI through the plugin uv env.
+
+  **The bug.** `install_paths.py:56-58` resolves `hallucinote_mcp` via the ambient python path (`hallucinote_mcp.__file__`), NOT the package the plugin actually launches (`uv run --frozen --project <plugin-root>` — the env INS-7V2D shipped). So on any machine where the editable clone diverges from the installed plugin — e.g. the plugin updated to 0.9.5 but the clone not `git pull`-ed — the skill's `python -m hallucinote_mcp.cli` (preflight + install-remote-script + install-analyzer) BOTH **vendors the Remote Script from the clone** AND **computes `matches_mcp_server` against the clone**. A "successful" install can therefore vendor a Remote Script whose fingerprint doesn't match the server the plugin launches → the handshake still fails. **Not just dev machines:** the README documents `pip install -e ./hallucinote_mcp`, so the clone is on the path for users too — this affects the documented user install path.
+
+  **Fix direction (one of):** (a) pin the skill's CLI invocations to the plugin's uv env (`UV_PROJECT_ENVIRONMENT=<plugin-data>/venv uv run --frozen --project <plugin-root> …`) so `__file__` resolves to the bundled package; OR (b) make the CLI accept / auto-discover an authoritative `--plugin-root` rather than trusting `sys.path`. **Open design question:** whether `CLAUDE_PLUGIN_ROOT` / `CLAUDE_PLUGIN_DATA` are available in the skill's bash env — if not, the skill must discover `~/.claude/plugins/cache/hallucinote/.../<version>/`. (This is the install-skill counterpart to the version-coupling INS-7V2D fixed for the *server launch* — same divergence class, different surface: the launch is pinned, the skill's CLI calls are not.)
+
+  **Verifiable signal:** `/ableton-mcp-install`'s preflight + install-remote-script + install-analyzer steps resolve `hallucinote_mcp` to the package the plugin launches (the bundled uv env), not whatever `sys.path` finds first — provably so when the editable clone diverges from the installed plugin (a stale clone no longer vendors/fingerprints against itself). **Sized:** medium (pin the CLI env or thread `--plugin-root`, settle the env-availability question). (dev-machine `/ableton-mcp-install` friction, 2026-06-12)
+
 - **[CON-7K3D]** Declared-constraint substrate — the framework verifies a rule it never knows (**HIGH PRIORITY**)
   `effort: M · impact: L · area: constraint · source: user · added: 2026-06-03 · status: open · related: LNT-1V9K, MEL-1A7K, ARR-1H9C · stage: design · refs: .prawduct/artifacts/declared-constraint-substrate.md · reviewed: 2026-06-09`
 
@@ -663,16 +674,20 @@ sections only via explicit `/backlog update` calls.
 
 ## Promoted
 
+_(none currently in flight)_
+
+## Archive
+
+Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
 - **[RTE-1K9T]** Track routing: sidechain, parallel busses, input/output routing config — the **keystone** for master-like bus automation without `.als`
-  `effort: L · impact: M · area: routing · source: user · added: 2026-05-17 · status: promoted · stage: ready · accepted-by: @planning-session-2026-06-12 · related: MAW-4K7P, TPL-2D8K, CLP-AUD2, ENV-8H1T, TRK-2H6K · refs: .prawduct/artifacts/plans/RTE-1K9T/design.md, .prawduct/artifacts/plans/RTE-1K9T/build-plan.md · reviewed: 2026-06-12`
+  `effort: L · impact: M · area: routing · source: user · added: 2026-05-17 · status: shipped · stage: ready · closed-by: #163 · related: MAW-4K7P, TPL-2D8K, CLP-AUD2, ENV-8H1T, TRK-2H6K · refs: .prawduct/artifacts/plans/RTE-1K9T/design.md, .prawduct/artifacts/plans/RTE-1K9T/build-plan.md · reviewed: 2026-06-12`
 
   (migrated from legacy P6) Schema + sync work.
 
   **PROMOTED + stage requirements→ready (user, 2026-06-12).** Discovery complete and **live-probed this session**; this is the user-chosen **keystone** delivering *"automation on a master-like bus without an `.als`."* The mechanism is a **plain audio PRE-MAIN bus + track output routing — NOT a group** (a group is impossible to create via LOM — see TRK-2H6K's deferral). A plain audio bus sits before the master, the source tracks route their output to it, and automation lives on that ordinary audio track (fully LOM-authorable), giving the master-like-bus behavior without ever needing to write a binary `.als` or create a group. Impact raised **S→M** on the keystone role. Design + build plan: `.prawduct/artifacts/plans/RTE-1K9T/design.md`, `.prawduct/artifacts/plans/RTE-1K9T/build-plan.md`. Related: **MAW-4K7P** (the no-`.als` alternative path / lossless master-automation sibling), **TPL-2D8K**, **CLP-AUD2**, **ENV-8H1T**, **TRK-2H6K** (the deferred group-track path this supersedes for the bus use-case). Claimed by this planning session.
 
-## Archive
-
-Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+  **SHIPPED (user, 2026-06-12).** Status promoted→shipped; `accepted-by` claim cleared on close.
 
 - **[DEV-6M2K]** Master device loading actually WORKS — re-enable it across the stack (DEV-2M9K REFUTED, live-proven 2026-06-12) (**TOP PRIORITY — user, 2026-06-12**)
   `effort: M · impact: L · area: device · source: user · added: 2026-06-12 · status: shipped · stage: ready · closed-by: #162 · related: DEV-2M9K, SYN-2M9P, TPL-2D8K, MAW-4K7P · refs: .prawduct/artifacts/research-spike-automation-ingest.md · reviewed: 2026-06-12`

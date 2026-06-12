@@ -87,8 +87,16 @@ DEV-2M9K (shipped verdict retracted), SYN-2M9P (planner-skip no longer correct),
 
 ## Status
 
-- [ ] device.py un-gate + test flip
-- [ ] analyzer/setup.py un-gate + test flips/comments
-- [ ] push/devices.py un-gate + test flip + SYN→DEV-6M2K file rewrite
-- [ ] doc coherence sweep
-- [ ] verify suite green → Critic cumulative → reflect → backlog re-triage → operator-verification
+- [x] device.py un-gate + test flip
+- [x] analyzer/setup.py un-gate + test flips/comments
+- [x] push/devices.py un-gate + test flip + SYN→DEV-6M2K file rewrite
+- [x] doc coherence sweep (server.py render tool description; guides had no stale text)
+- [x] verify suite green (3371 passed / 2 skipped) → Critic (no findings) → operator-verification enqueued
+
+**Context (handoff):** Code + tests shipped on `fix/master-device-writing` (commit 61b207a),
+Critic clean. DEV-6M2K stays OPEN pending the live operator-verification corroboration
+(native non-M4L device, full master-chain push, fresh-set render auto-load) —
+`.prawduct/operator-verification.md`. The DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes on
+that live confirmation. Capability already live-proven (M4L Align Delay, Live 12.4.2). NOTE:
+the MCP handlers run Live-side in the vendored Remote Script → corroboration needs a re-vendor
++ Live quit/reopen.

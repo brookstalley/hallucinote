@@ -174,3 +174,64 @@ test (signature + infer assertions); `test_mutations.py` —
 `_send_level_refuses_audio_target` flip to **succeed**. New: audio continuous
 ride → perform; audio per-clip (covered) → refused_audio/CLP-AUD2; within-clip
 midi → session_clip (preserved). Within-clip session-clip path is unchanged.
+
+## Chunk 03 — fidelity: verify-api verdict (the framing does not survive the probe)
+
+**Done-when step 0 (verify-api) — CONFIRMED LIVE 2026-06-12.** The chunk's
+framed deliverable ("adaptive sampling — sample more densely across steep
+segments") is **not realizable** through the realtime perform loop. Three
+independent lines of evidence, all gathered live this session:
+
+**1. The density ceiling is scheduling-bound, not sleep-bound.** `perform_batch`
+of a single master arc: 81 updates / 64 beats (chunk 01) and 20 updates / 16
+beats (this probe) = **~1.25 updates/beat ≈ 2.5 Hz = ~0.8 beat/tick at 120 BPM**.
+The loop's `_PERFORM_UPDATE_PERIOD_S` is already 0.1 s (10 Hz nominal), but the
+`run_on_main` round-trip to Live's main thread dominates — the in-code comment
+(from the ENV-7G4K S-7 work) already states "the floor is scheduling, not this
+constant." So lowering the sleep or ticking adaptively **cannot** raise the
+rate: we are main-thread-scheduling-bound, not sleep-bound.
+
+**2. Sharp sub-tick features lose their depth.** A master-volume arc with a
+0.5-beat-wide V-dip — `[0:0.85, 7.75:0.85, 8:0.1, 8.25:0.85, 16:0.85]` — was
+performed, then read back by `seek`+`probe get` at the dip bottom (beat 8): the
+recorded value is **0.589**, not the authored **0.1**. The dip is narrower than
+the ~0.8-beat tick spacing, so no tick lands at its bottom and Live interpolates
+straight over it. The depth error (~0.49 on a 0–1 scale) is the fidelity loss
+adaptive sampling was meant to fix — and it is **un-fixable by any
+sampling-strategy change** because the tick spacing is the hard floor.
+
+**3. No direct-write escape for the perform target.** Live-`describe` of
+`song.master_track.mixer_device.volume` (a `DeviceParameter`) enumerates its
+FULL method surface: `begin_gesture`/`end_gesture`/`re_enable_automation` +
+value/state listeners — and **no** `automation_envelope`,
+`create_automation_envelope`, or `create_event`. This corroborates the binary
+research (`lom-recording-automation.md`): the envelope-event API
+(`create_event`) lives on `AutomationEnvelope`, reachable only via
+`Clip.automation_envelope` (which "Returns None for Arrangement clips"), and
+**no track/master-level envelope accessor exists**. The perform target is
+track/master mixer arrangement automation — which has no clip envelope at all —
+so the realtime gesture loop is the ONLY write path. (The undocumented
+`create_event` may still reach SESSION-CLIP envelopes — a possible fidelity win
+for the *session-clip* route, NOT perform — see the spun-out backlog item.)
+
+**The real lever (the framing should have been tempo, not tick rate):**
+**tempo-reduction-during-record.** Because recorded `FloatEvent`s are keyed in
+BEATS (tempo-independent on playback), temporarily lowering the transport tempo
+during the perform pass multiplies breakpoints-per-beat by the same factor at
+the fixed ~2.5 Hz wall-clock tick rate (e.g. record at 30 BPM → 4× beat-space
+density → the 0.5-beat dip gets ~2.5 ticks instead of ~0.6). The cost is
+proportional wall-clock (4× slower playback), and it could be made adaptive
+(slow more for arcs with steep/sharp segments). This is a genuine, sound design
+— but it (a) is a non-trivial `perform_batch_handler` change (global-tempo
+save/restore mid-pass; cost-model interaction), (b) deserves a deliberate
+wall-clock-tradeoff decision, and (c) **cannot be Live-smoke-verified without an
+`/mcp` reconnect** (server-subprocess respawn to load the new handler) — which
+is operator-gated. It is therefore **spun out as its own backlog item**, not
+rushed into this chunk.
+
+**Chunk 03 disposition:** the probe (Done-when step 0) is COMPLETE and is the
+chunk's real deliverable; the framed "adaptive sampling for higher density"
+acceptance criterion is **not achievable** and is consciously NOT implemented
+(implementing it would ship a change the evidence says cannot work). The fidelity
+improvement that IS possible (tempo-reduction) is captured as a separate item for
+a session with `/mcp` access. See build-plan.md Status for the revised scope.

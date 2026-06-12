@@ -50,7 +50,17 @@ was unavailable this session (a 2nd agent holds a song)** — every probe is a b
   — infer-from-span routing in `classify_envelope_route` + audio admitted in the
   `create_envelope` mutator; perform addressing was already kind-agnostic. Critic
   `chunk` clean (0 blocking; 2 warnings + 1 note resolved). Suite green.
-- [ ] Chunk 03: Fidelity — adaptive sampling density + curve faithfulness
+- [~] Chunk 03: Fidelity — PROBE COMPLETE, framing invalidated, implementation
+  spun out. The verify-api probe (Done-when step 0, the chunk's real deliverable)
+  CONFIRMED LIVE that "adaptive sampling for higher density" is **not realizable**:
+  the realtime loop is scheduling-bound at ~2.5 Hz (not sleep-bound, so adaptive
+  ticking can't help), a 0.5-beat dip authored to 0.1 records to 0.589, and the
+  perform target's `DeviceParameter` exposes only begin/end_gesture — no
+  direct-write surface (live-confirmed). The achievable lever is
+  **tempo-reduction-during-record** (slower transport → more breakpoints/beat),
+  a deliberate new design with a wall-clock cost, spun out as its own backlog
+  item (needs an `/mcp` reconnect for the handler-change Live-smoke — operator-
+  gated). Full verdict: `api-notes.md` "Chunk 03 — fidelity: verify-api verdict".
 
 Context (2026-06-11, branch `feature/env-9p4t-perform-scale` off `develop`): **Chunk 01
 code + tests landed** (commits 82b1eb5 → 9c2235c): the single-arc `perform` action is

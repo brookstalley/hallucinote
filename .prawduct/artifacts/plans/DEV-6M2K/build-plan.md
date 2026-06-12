@@ -93,10 +93,10 @@ DEV-2M9K (shipped verdict retracted), SYN-2M9P (planner-skip no longer correct),
 - [x] doc coherence sweep (server.py render tool description; guides had no stale text)
 - [x] verify suite green (3371 passed / 2 skipped) → Critic (no findings) → operator-verification enqueued
 
-**Context (handoff):** Code + tests shipped on `fix/master-device-writing` (commit 61b207a),
-Critic clean. DEV-6M2K stays OPEN pending the live operator-verification corroboration
-(native non-M4L device, full master-chain push, fresh-set render auto-load) —
-`.prawduct/operator-verification.md`. The DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes on
-that live confirmation. Capability already live-proven (M4L Align Delay, Live 12.4.2). NOTE:
-the MCP handlers run Live-side in the vendored Remote Script → corroboration needs a re-vendor
-+ Live quit/reopen.
+**Context (handoff):** COMPLETE. Code + tests merged via PR #162 (squash `bc5d36e`), Critic
+clean. All three live operator-verification checks PASSED on 2026-06-12 (Live 12.4.2, bridge
+re-vendored to `9093dfef` + reconnected): native non-M4L EQ Eight load+delete on the master;
+full DB-authored master Limiter+Ceiling push via `execute_push` (devices phase ok=2/0, no
+PARTIAL halt); HallucinoteAnalyzer resolved + loaded onto the master via the sweep's
+`preset_query`. DEV-6M2K shipped + archived; DEV-2M9K verdict retracted, SYN-2M9P planner-skip
+retired, TPL-2D8K reduced to an optional convenience (impact L→S). Nothing left.

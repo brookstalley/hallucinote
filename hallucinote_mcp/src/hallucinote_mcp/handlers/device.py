@@ -648,26 +648,15 @@ def load_handler(
     parent, parent_kind, parent_idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index, master=master,
     )
-    if parent_kind == "master":
-        # DEV-2M9K: Ableton Live 12.4 exposes NO Live Object Model path to load
-        # a browser device onto the master track. `song.view.selected_track`
-        # silently refuses the master (it has no selectable session/arranger
-        # slot), and `browser.load_item` has no target argument — it loads onto
-        # whatever regular track was last selected. So the previous code didn't
-        # add a master device, it MIS-TARGETED a regular track and then raised a
-        # misleading "no device appeared on master". Every comparable project
-        # (AbletonOSC, ableton-js, ableton-mcp) hits the same wall. Refuse up
-        # front with the actionable path instead of silently mis-loading.
-        raise ValueError(
-            "load: cannot add a device to the master track through the bridge "
-            "— Ableton Live 12.4 has no API to do it (selecting the master for "
-            "a browser load is not possible, and the load would silently land "
-            "on the last-selected regular track). Add the device to the Master "
-            "strip BY HAND once in Live, then drive it from the bridge: "
-            "set_parameter / get_parameters / delete / list all work on a "
-            "master device that already exists — only `load` is gated by the "
-            f"unsupported selection. (requested kind={kind!r})"
-        )
+    # DEV-6M2K: master loads go through the SAME path as track/return loads.
+    # The earlier DEV-2M9K refusal here was built on a premise refuted on Live
+    # 12.4.2 — `song.view.selected_track = song.master_track` STICKS (read-back
+    # confirms; not a silent no-op), so `select master → browser.load_item`
+    # lands a device on the master chain exactly like any other track. No
+    # special-casing: `_resolve_parent` / `_refresh_parent` / `_parent_address`
+    # already branch master, and the post-load chain-grew check below catches a
+    # hypothetical mis-load (it would read the master's unchanged chain and
+    # raise the silent-noop guard rather than corrupt a regular track).
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
     if preset_query is not None and preset_uri is not None:

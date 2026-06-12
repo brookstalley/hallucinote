@@ -356,8 +356,11 @@ def test_phase_addresses_group_send_ride(
 def test_phase_warns_pending_when_master_device_unlinked(
     conn, song, session, master,
 ):
-    """Master-chain devices are placed manually (DEV-2M9K) — an unlinked
-    one defers the arc with the probe-and-link teaching, never silently."""
+    """The perform (automation) phase writes only to LINKED devices — an
+    unlinked master device defers the arc with the probe-and-link teaching,
+    never silently. (DEV-6M2K loads master devices in the earlier devices
+    phase, so this is now a transient pre-link state, not the old
+    placed-by-hand contract — the deferral behavior is unchanged.)"""
     chain = M.create_device_chain(conn, parent_track_id=master, position=0)
     device = M.create_device(
         conn, chain_id=chain, position=1, kind="AutoFilter",

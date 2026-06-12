@@ -124,6 +124,14 @@ The 2026-05-17 push session shipped five handler fixes (the B-1/B-2/B-10/B-11/B-
 
 Track potential smoke-test coverage in a `tests/integration/test_live_smoke.py` file. Don't gate on it for every PR (too slow); gate on it for "ready to release" / pre-merge of large refactors.
 
+## A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
+
+**When a user (or your own reasoning) challenges a capability the project recorded as impossible — especially a platform/LOM "X is not supported / forever-manual" — and the platform is reachable, RE-PROBE it directly before defending from the artifact. Capability verdicts are VERSION-SENSITIVE: a finding empirically true on an older build can be silently fixed by a platform update, and the stale "can't" then propagates into code, skills, and workarounds as a false premise.**
+
+DEV-2M9K shipped "master device loading is impossible (`song.view.selected_track = master` silently refuses; master devices forever-manual)" and gated four surfaces (`handlers/device.py`, `analyzer/setup.py`, `render`, `sync/push/devices.py`) plus a hand-built workaround (TPL-2D8K). When the user pushed back, I defended it twice from the artifact (even claiming Push couldn't do it either). A ~5-minute live re-probe on **Live 12.4.2** refuted it end-to-end: `selected_track = master` STICKS (`name`→"Main", old≠new object — NOT the claimed silent no-op), `browser.load_item` lands a device on the master chain, `delete_device` removes it. Root cause: treated a shipped artifact's empirical platform claim as durable truth across versions.
+
+**How to apply.** (1) A recorded capability verdict ("can't / not supported / impossible") is a *dated snapshot of a specific build*, not a law — when it's challenged and the platform is live, re-probe (cost: minutes) before citing the artifact. (2) Capability claims in artifacts MUST record the platform build they were verified against (e.g. "refused on Live 12.4.0"); a build-less verdict is untrustable on a later build. (3) The asymmetry favors the probe — minutes to confirm vs. a shipped false premise spanning many surfaces — so bias toward cheap empirical re-verification over artifact-citation for version-sensitive platform behavior. (4) On a confirmed flip, the sibling rules fire: sweep every doc phrasing of the old "can't" (see "Pattern sweeps are tree-wide"), audit the WHY/intent layer (see "When a capability ships, audit the planning + intent artifacts"), and re-triage workarounds built on the false premise. Reinforces Honest Confidence + Verify-don't-guess + Root Cause Discipline.
+
 ## Link, don't summarize
 
 **When an artifact needs to reference a fact that lives in another artifact, file, or code path, link to the source — don't restate the fact in this artifact's prose.**

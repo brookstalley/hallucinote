@@ -225,6 +225,22 @@ def _arc_addressing(
     )
 
 
+def perform_target_key(args: dict[str, Any]) -> tuple:
+    """Identity of the Live parameter a perform arc rides, from its wire
+    addressing args — the key the planner's duplicate-target preflight dedups
+    on. MUST stay field-for-field identical to the handler's
+    ``_PreparedArc.addressing_key()`` (the mcp side): the planner preflight and
+    the handler's collision guard are two halves of one contract, and if they
+    drift the planner silently stops matching and a collision halts the whole
+    phase. A cross-package parity test pins them together.
+    """
+    return (
+        args.get("target_kind"), bool(args.get("master")),
+        args.get("track_index"), args.get("return_index"),
+        args.get("device_index"), args.get("parameter_name"),
+    )
+
+
 def envelope_fingerprint(
     envelope: sqlite3.Row, breakpoints: list[sqlite3.Row],
 ) -> str:
@@ -314,11 +330,7 @@ def plan_push_performed_automation(
             skipped.append(label)
             continue
 
-        target_key = (
-            args.get("target_kind"), bool(args.get("master")),
-            args.get("track_index"), args.get("return_index"),
-            args.get("device_index"), args.get("parameter_name"),
-        )
+        target_key = perform_target_key(args)
         if target_key in queued_targets:
             plan.alert(
                 f"performed-automation: arc {env['id']} ({label}) targets the "

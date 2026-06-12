@@ -702,3 +702,36 @@ def test_phase_defers_duplicate_target_with_alert(conn, song, session):
     _, arcs = _batch_arcs(plan)
     assert len(arcs) == 1  # only the first-queued arc rides the pass
     assert any("same parameter" in al for al in plan.alerts), plan.alerts
+
+
+def test_collision_key_parity_planner_vs_handler():
+    """The planner's duplicate-target key and the handler's collision-guard key
+    must be field-for-field identical across the package boundary — if they
+    drift, the planner silently stops deduping and one collision halts the whole
+    phase. Pin both (this fails if either tuple's fields/order/normalization
+    changes)."""
+    from hallucinote.sync.push.perform import perform_target_key
+    from hallucinote_mcp.handlers.automation import _PreparedArc
+
+    def _handler_key(**addr):
+        return _PreparedArc(
+            arc_id="x", cleaned=[], span_start=0.0, span_end=1.0,
+            target_kind=addr.get("target_kind"),
+            master=bool(addr.get("master", False)),
+            track_index=addr.get("track_index"),
+            return_index=addr.get("return_index"),
+            device_index=addr.get("device_index"),
+            parameter_name=addr.get("parameter_name"),
+        ).addressing_key()
+
+    # Master device-parameter arc.
+    a1 = {"target_kind": "device_parameter", "master": True,
+          "device_index": 2, "parameter_name": "Frequency"}
+    assert perform_target_key(a1) == _handler_key(**a1)
+    # Non-master track arc — `master` absent on the planner side must normalize
+    # to the handler's explicit False (the bug the bool() normalization fixed).
+    a2 = {"target_kind": "mixer_volume", "track_index": 3}
+    assert perform_target_key(a2) == _handler_key(**a2)
+    # Send arc (track + return).
+    a3 = {"target_kind": "send_level", "track_index": 3, "return_index": 1}
+    assert perform_target_key(a3) == _handler_key(**a3)

@@ -22,13 +22,16 @@ from hallucinote.sync import push
 from hallucinote_mcp import client, wire
 
 DB = "/tmp/env7g4k_smoke.db"
-READ_TIMEOUT = 180
 
 
 def send(tool, action, **params):
+    # No read_timeout override — let client.send auto-resolve from the
+    # (tool, action) policy (perform_batch → unbounded). A hard-coded
+    # override here would mask a wrong default on the real push path, the
+    # exact trap the read-timeout learning was written about.
     return client.send(
         wire.Request(tool=tool, action=action, params=params),
-        connect_timeout=5, read_timeout=READ_TIMEOUT,
+        connect_timeout=5,
     )
 
 

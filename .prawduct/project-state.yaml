@@ -476,10 +476,11 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). DEV-6M2K merged to develop
-# (PR #162, 2026-06-12) — master device load re-enabled; stays open pending the
-# live operator-verification corroboration, so its plan is retained per gitflow.
-active_build_plan: artifacts/plans/DEV-6M2K/build-plan.md
+# Active build plan pointer (.prawduct/-relative). RTE-1K9T (track routing) planned
+# 2026-06-12 — discovery complete + live-probed; build pending in a fresh session on
+# `feature/rte-1k9t-track-routing`. DEV-6M2K shipped + live-verified + CLOSED (PR #162);
+# its plan dir is stale and may be deleted.
+active_build_plan: artifacts/plans/RTE-1K9T/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

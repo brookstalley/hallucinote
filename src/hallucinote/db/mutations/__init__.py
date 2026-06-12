@@ -130,10 +130,14 @@ from .songs import (
     set_song_timing_mode,
 )
 from .tracks import (
+    INPUT_ROUTING_KINDS,
+    MONITORING_STATES,
+    OUTPUT_ROUTING_KINDS,
     TRACK_KINDS,
     _delete_track,
     create_track,
     set_track_mixer,
+    set_track_routing,
 )
 
 
@@ -149,9 +153,13 @@ __all__ = [
     "create_song",
     "set_song_timing_mode",
     # tracks
+    "INPUT_ROUTING_KINDS",
+    "MONITORING_STATES",
+    "OUTPUT_ROUTING_KINDS",
     "TRACK_KINDS",
     "create_track",
     "set_track_mixer",
+    "set_track_routing",
     # clips
     "WARP_MODES",
     "create_audio_clip",

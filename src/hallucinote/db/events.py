@@ -21,6 +21,11 @@ CLIP_DELETED = "clip_deleted"
 
 # Mix: track kind, mixer state, returns, sends
 TRACK_MIXER_SET = "track_mixer_set"
+# RTE-1K9T: track signal routing (output + input) + monitor switch. Payload
+# {track_id, changes} mirrors TRACK_MIXER_SET — `changes` is the subset of
+# routing/monitor fields that actually changed (semantic reference, not Live
+# display_name; see set_track_routing).
+TRACK_ROUTING_SET = "track_routing_set"
 RETURN_CREATED = "return_created"
 RETURN_UPDATED = "return_updated"
 RETURN_DELETED = "return_deleted"

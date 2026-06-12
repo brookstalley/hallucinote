@@ -137,6 +137,185 @@ def test_create_track_rejects_legacy_return_kind(conn, song):
         )
 
 
+# --- RTE-1K9T: track routing (output + input) + monitor -----------------------
+
+
+def test_set_track_routing_to_master_round_trips_and_emits_one_event(conn, track):
+    before = len(_events(conn))
+    M.set_track_routing(conn, track_id=track, output_routing_kind="master")
+    row = Q.get_track(conn, track)
+    assert row["output_routing_kind"] == "master"
+    assert row["output_routing_target_id"] is None
+    evs = _events(conn)
+    assert len(evs) == before + 1
+    ev = evs[-1]
+    assert ev["kind"] == E.TRACK_ROUTING_SET
+    payload = json.loads(ev["payload_json"])
+    assert payload["track_id"] == track
+    assert payload["changes"] == {"output_routing_kind": "master"}
+
+
+def test_set_track_routing_sends_only_round_trips(conn, track):
+    M.set_track_routing(conn, track_id=track, output_routing_kind="sends_only")
+    assert Q.get_track(conn, track)["output_routing_kind"] == "sends_only"
+
+
+def test_set_track_routing_track_target_survives_fk(conn, song, track):
+    """A track-target reference is the keystone submaster case: route an
+    instrument track's output to a bus track by FK, reload, confirm it sticks."""
+    bus = M.create_track(conn, song_id=song, track_index=9, name="PRE-MAIN", kind="audio")
+    M.set_track_routing(
+        conn, track_id=track,
+        output_routing_kind="track", output_routing_target_id=bus,
+        output_routing_channel="Post Mixer",
+    )
+    row = Q.get_track(conn, track)
+    assert row["output_routing_kind"] == "track"
+    assert row["output_routing_target_id"] == bus
+    assert row["output_routing_channel"] == "Post Mixer"
+
+
+def test_set_track_routing_input_and_monitor_round_trip(conn, track):
+    M.set_track_routing(
+        conn, track_id=track,
+        input_routing_kind="ext_in", input_routing_channel="1/2",
+        monitoring_state="In",
+    )
+    row = Q.get_track(conn, track)
+    assert row["input_routing_kind"] == "ext_in"
+    assert row["input_routing_channel"] == "1/2"
+    assert row["monitoring_state"] == "In"
+
+
+def test_set_track_routing_multi_field_emits_single_event(conn, song, track):
+    bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
+    before = len(_events(conn))
+    M.set_track_routing(
+        conn, track_id=track,
+        output_routing_kind="track", output_routing_target_id=bus,
+        monitoring_state="Auto",
+    )
+    assert len(_events(conn)) == before + 1
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert set(payload["changes"]) == {
+        "output_routing_kind", "output_routing_target_id", "monitoring_state",
+    }
+
+
+def test_set_track_routing_is_idempotent(conn, track):
+    M.set_track_routing(conn, track_id=track, monitoring_state="In")
+    before = len(_events(conn))
+    M.set_track_routing(conn, track_id=track, monitoring_state="In")  # same value
+    assert len(_events(conn)) == before  # no write -> no event
+
+
+def test_set_track_routing_partial_update_touches_only_given_fields(conn, track):
+    M.set_track_routing(conn, track_id=track, output_routing_kind="master",
+                        monitoring_state="In")
+    M.set_track_routing(conn, track_id=track, monitoring_state="Off")
+    row = Q.get_track(conn, track)
+    assert row["output_routing_kind"] == "master"  # untouched
+    assert row["monitoring_state"] == "Off"
+
+
+def test_set_track_routing_threads_actor_and_reason(conn, track):
+    M.set_track_routing(conn, track_id=track, monitoring_state="In",
+                        actor="sync", reason="pulled from Live")
+    ev = _events(conn)[-1]
+    assert ev["actor"] == "sync"
+    assert ev["reason"] == "pulled from Live"
+
+
+def test_set_track_routing_empty_is_noop(conn, track):
+    before = len(_events(conn))
+    M.set_track_routing(conn, track_id=track)
+    assert len(_events(conn)) == before
+
+
+def test_set_track_routing_missing_track_is_noop(conn):
+    before = len(_events(conn))
+    M.set_track_routing(conn, track_id="does-not-exist", monitoring_state="In")
+    assert len(_events(conn)) == before
+
+
+def test_set_track_routing_rejects_unsupported_field(conn, track):
+    with pytest.raises(ValueError, match="unsupported fields"):
+        M.set_track_routing(conn, track_id=track, volume=0.5)
+
+
+def test_set_track_routing_rejects_bad_output_kind(conn, track):
+    with pytest.raises(ValueError, match="invalid output_routing_kind"):
+        M.set_track_routing(conn, track_id=track, output_routing_kind="bogus")
+
+
+def test_set_track_routing_rejects_bad_input_kind(conn, track):
+    with pytest.raises(ValueError, match="invalid input_routing_kind"):
+        M.set_track_routing(conn, track_id=track, input_routing_kind="bogus")
+
+
+def test_set_track_routing_rejects_bad_monitor_state(conn, track):
+    with pytest.raises(ValueError, match="invalid monitoring_state"):
+        M.set_track_routing(conn, track_id=track, monitoring_state="in")  # case matters
+
+
+def test_set_track_routing_track_kind_requires_target(conn, track):
+    with pytest.raises(ValueError, match="requires output_routing_target_id"):
+        M.set_track_routing(conn, track_id=track, output_routing_kind="track")
+
+
+def test_set_track_routing_target_requires_track_kind(conn, song, track):
+    bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
+    with pytest.raises(ValueError, match="only valid when output_routing_kind"):
+        M.set_track_routing(conn, track_id=track,
+                            output_routing_kind="master", output_routing_target_id=bus)
+
+
+def test_set_track_routing_rejects_nonexistent_target(conn, track):
+    with pytest.raises(ValueError, match="does not reference an existing track"):
+        M.set_track_routing(conn, track_id=track,
+                            output_routing_kind="track",
+                            output_routing_target_id="ghost")
+
+
+def test_set_track_routing_rejects_cross_song_target(conn, song, track):
+    other = M.create_song(conn, name="other", key="C")
+    other_track = M.create_track(conn, song_id=other, track_index=1, name="x")
+    with pytest.raises(ValueError, match="belongs to a different song"):
+        M.set_track_routing(conn, track_id=track,
+                            output_routing_kind="track",
+                            output_routing_target_id=other_track)
+
+
+def test_set_track_routing_deleting_target_dangles_not_cascades(conn, song, track):
+    """ON DELETE SET NULL: deleting the routed-to bus must NOT delete the
+    routing track; it leaves a detectable dangling state (kind='track',
+    target_id=NULL) that push treats as 'target gone'. And an unrelated update
+    on the dangling track must not be spuriously blocked by the invariant."""
+    bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
+    M.set_track_routing(conn, track_id=track,
+                        output_routing_kind="track", output_routing_target_id=bus)
+    M._delete_track(conn, track_id=bus)
+    row = Q.get_track(conn, track)
+    assert row is not None  # routing track survives
+    assert row["output_routing_kind"] == "track"  # kind unchanged...
+    assert row["output_routing_target_id"] is None  # ...target SET NULL (dangling)
+    # An unrelated update on the dangling track is allowed (re-validates only
+    # the touched direction).
+    M.set_track_routing(conn, track_id=track, monitoring_state="In")
+    assert Q.get_track(conn, track)["monitoring_state"] == "In"
+
+
+def test_set_track_routing_clear_route(conn, song, track):
+    bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
+    M.set_track_routing(conn, track_id=track,
+                        output_routing_kind="track", output_routing_target_id=bus)
+    M.set_track_routing(conn, track_id=track,
+                        output_routing_kind=None, output_routing_target_id=None)
+    row = Q.get_track(conn, track)
+    assert row["output_routing_kind"] is None
+    assert row["output_routing_target_id"] is None
+
+
 def test_update_clip_persists_name_and_length_and_emits_event(conn, track):
     cid = M.create_clip(
         conn, track_id=track, slot=1, length_beats=16.0, name="Old",

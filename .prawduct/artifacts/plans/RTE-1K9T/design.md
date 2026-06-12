@@ -76,6 +76,28 @@ and explicit output/input routing config — long-standing gaps.
   `{kind: master|track|sends_only|ext_out, target_track_id?}` + channel.
 - **D5** — **Push phase order:** insert a `routing` phase **after `mix` (7), before `devices` (8)** —
   routing needs track links to exist (created in `tracks`, phase 3) and is logically a mixer concern.
+- **D6** (chunk 03, persisted-shape lock-in) — **Routing-reference columns + the CHECK asymmetry.**
+  D4 enumerated only the *output* kind vocabulary; chunk 03 must also persist *input* routing and
+  monitor. Decided shape — seven nullable columns on `tracks` (matching mixer-state-as-columns):
+  `output_routing_kind` / `output_routing_target_id` (FK→`tracks.id`, `ON DELETE SET NULL`) /
+  `output_routing_channel`; the `input_*` triple; and `monitoring_state`. The target is **always a
+  semantic reference, never Live's `display_name`** — `kind='track'` ⇒ `target_id` FKs the
+  destination track (the submaster bus), so the reference survives renames + re-pushes; push
+  resolves the FK→display_name, pull maps display_name→reference.
+  **CHECK asymmetry (deliberate):** `output_routing_kind` (`master|track|sends_only|ext_out`) and
+  `monitoring_state` (`In|Auto|Off`) get schema-level CHECKs — both domains are *closed and
+  live-probed certain*. `input_routing_kind` (`ext_in|resampling|no_input|track`) gets **no schema
+  CHECK** — input's domain is *open and hardware-bound* (specific MIDI ports / interface channels
+  vary per machine), and a wrong CHECK is a destructive SQLite migration (no `ALTER … CHECK`). The
+  mutator validates the input vocabulary in Python (extensible without a migration). Cross-field
+  invariant (`target_id` present ⟺ `kind='track'`) lives in the mutator both directions (ALTER
+  can't add a table-level CHECK — the clips audio-invariant precedent). **V1 input scope:** input
+  types outside the four-value set (arbitrary MIDI ports / interface inputs) are not persisted —
+  chunk-05 pull leaves input routing NULL for them; input exists so a bus's Monitor=In round-trips,
+  and a bus needs no specific input source. The dangling state (`kind='track'`, `target_id=NULL`)
+  the FK cascade produces when a target is deleted is *legal* and detectable — push (chunk 04)
+  treats it as "target gone" and alerts; the mutator re-validates a direction only when that
+  direction's kind/target is touched, so an unrelated update on a dangling track is not blocked.
 
 ---
 

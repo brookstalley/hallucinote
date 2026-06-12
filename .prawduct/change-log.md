@@ -6,7 +6,7 @@
 
 ## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
 
-<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=merged -->
+<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=shipped | release=v0.9.5 -->
 
 First-class track signal routing end-to-end (MCP → DB → push → pull) and the
 convention it unlocks: a plain audio **PRE-MAIN** bus you route everything
@@ -44,7 +44,7 @@ default (V1 pull persists only track→track input until that's pinned).
 
 ## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
 
-<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=merged -->
+<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=shipped | release=v0.9.5 -->
 
 Un-gates master-strip device loading. DEV-2M9K shipped the verdict "Live 12.4
 has no LOM path to load a device onto the master" (`song.view.selected_track =
@@ -76,7 +76,7 @@ the DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes then.
 
 ## 2026-06-12 — ENV-9P4T: performed automation at mix scale
 
-<!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=merged -->
+<!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=shipped | release=v0.9.5 -->
 
 Extends ENV-7G4K's performed automation toward real mixes: write automation at
 greater **performance** (one transport pass for all arcs) and broader **reach**
@@ -118,7 +118,7 @@ squash; REL-6C3W-class gap, repaired here.)
 
 ## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
 
-<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=merged -->
+<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=shipped | release=v0.9.5 -->
 
 Triaged from the 2026-06-10 swell first-compose friction log: one silent
 correctness bug plus reliability/teaching holes that tax every song's
@@ -162,7 +162,7 @@ Suite 3340 passed / 2 skipped.
 
 ## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
 
-<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=merged -->
+<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=shipped | release=v0.9.5 -->
 
 AUD-1M4V stage 0b: the automation surface session clips can't reach —
 master/group mixer (volume, pan), group sends, return mixer, master- and
@@ -192,7 +192,7 @@ surface.
 
 ## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
 
-<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=merged -->
+<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=shipped | release=v0.9.5 -->
 
 AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
 `'audio'`) plus the user-locked wave-1 audio field set — `audio_file`

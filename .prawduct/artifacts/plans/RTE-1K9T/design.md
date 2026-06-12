@@ -42,6 +42,7 @@ and explicit output/input routing config — long-standing gaps.
 | **Input routing surface (symmetric)** | `input_routing_type` / `available_input_routing_types` (+ channel). For a summing bus to PASS routed audio it also needs **monitor state** = `current_monitoring_state` (`In`/`Auto`/`Off`); a bus wants `In`. |
 | **Targets are SOURCE-dependent** | bare MIDI track (no instrument) → 2 output types (`Main`, `Sends Only`); audio track → 5 (`Ext. Out`, `Main`, `<other audio track>`, `PRE-MAIN`, `Sends Only`). ⇒ resolve by `display_name` against the *source track's own* list; teaching error must list the actual options. |
 | **No group-track creation** | `Song` exposes `create_audio_track`, `create_midi_track`, `create_return_track`, `create_scene` — **no `create_group_track`**. Groups are UI-only (Cmd+G); LOM can READ membership (`track.group_track`, `is_grouped`) but not create. ⇒ TRK-2H6K create-group is not LOM-authorable. |
+| **Same-callback readback is unreliable** | Reading `output_routing_type.display_name` back in the *same* MCP callback that set it can return the prior value (the live probe in row 2 used *separate* MCP calls = separate callbacks, so it read the new value). Same constraint the session-view handlers already encode (`handlers/session.py:167-171`). ⇒ the set handlers ECHO the requested name as the success signal (the side effect is authoritative); to confirm the new value, issue a *subsequent* `get_output_routing`. |
 
 ---
 

@@ -9,6 +9,16 @@ the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).
 
+**Context (2026-06-12):** Chunks **01+02 DONE** — the MCP layer ships first-class track
+input/output routing + monitor state (6 new `ableton_track` actions) on a shared
+`handlers/_routing.py` (resolve/enumerate/atomic-write/read-shape helpers; `device.py` refactored
+onto it). Critic (final mode) passed: 0 blocking; 5 warnings + 4 notes all resolved (atomic set
+across all 3 handlers, stale tool-desc surfaces, read dedup, echo-vs-readback artifact reconcile,
+monitor-int raw surfacing). Suite 3397 passed / 2 skipped. **Next cycle: Chunk 03** (DB schema +
+`set_track_routing` mutator) — crosses the DB Schema + Mutator API boundaries (see
+`boundary-patterns.md`) and locks the persisted routing-target reference shape (D4); recommend a
+fresh `/clear`. Then 04 push → 05 pull → 06 convention/docs.
+
 ---
 
 ## Thin vertical slice first
@@ -21,7 +31,7 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
 
 ## Chunks
 
-### Chunk 01 — MCP track OUTPUT-routing actions  ·  status: pending
+### Chunk 01 — MCP track OUTPUT-routing actions  ·  status: done
 **Deliverables**
 - `ableton_track(action='set_output_routing', track_index, type_display_name, channel_display_name?)`
   and `action='get_output_routing'` in `actions/track.py` + handlers in `handlers/track.py`.
@@ -32,13 +42,15 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
   a shared module rather than copy-paste (avoid the MIX-6D2N-style duplication).
 
 **Acceptance criteria**
-- Routing an audio track's output to a named bus succeeds and reads back the new `display_name`.
+- Routing an audio track's output to a named bus succeeds; the new `display_name`
+  is confirmable via a subsequent `get_output_routing` (the set handler echoes the
+  requested name — same-callback readback is unreliable; see design discovery table).
 - Unknown `type_display_name` → teaching error **listing the source track's actual available targets**.
 - Source-dependence respected (a bare MIDI track legitimately lacks audio-track targets — error, not crash).
 - Tests in `test_actions_track.py` mirroring `test_actions_device.py` L2037–2089 (by-name, with-channel,
   unknown-type-lists-available). All green.
 
-### Chunk 02 — MCP track INPUT-routing + monitor state  ·  status: pending
+### Chunk 02 — MCP track INPUT-routing + monitor state  ·  status: done
 **Deliverables**
 - `set_input_routing` / `get_input_routing` on `ableton_track` (symmetric to chunk 01).
 - Monitor state: `set_property(property='monitoring_state', value=In|Auto|Off)` (or a dedicated

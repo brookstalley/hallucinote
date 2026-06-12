@@ -46,7 +46,7 @@ Live's Control Surface slot.
 | Tool | Scope |
 |---|---|
 | `ableton_session` | Global state, master, transport, view, tempo, signature, snapshot |
-| `ableton_track` | Tracks: lifecycle, mixer state, sends |
+| `ableton_track` | Tracks: lifecycle, mixer state, sends, input/output routing, monitor state |
 | `ableton_return` | Return tracks |
 | `ableton_clip` | Session + arrangement clips (lifecycle, set_property, replace_notes) |
 | `ableton_note` | Within-clip note operations |

@@ -191,3 +191,37 @@ method:
    signal). A higher-N stress pass (`env7g4k-smoke-driver.py`, 5 arcs) remains
    available if Chunk 02's 10+-track use case ever shows main-thread contention;
    tracked as a non-blocking note, not a Chunk 01 gate.
+
+---
+
+## DEV-6M2K — master device load re-enabled across the stack (live corroboration)
+
+**Status:** PENDING. The core capability is already live-proven (2026-06-12,
+Live 12.4.2: `select master → browser.load_item → delete_device` end-to-end, M4L
+Align Delay — `.prawduct/artifacts/research-spike-automation-ingest.md`). Code +
+unit tests landed (the gate removed in `handlers/device.py`, `analyzer/setup.py`,
+`sync/push/devices.py`); these checks corroborate the integrated paths against a
+live bridge. **Visual change:** yes (devices appear on the Master strip).
+**Requires:** re-vendor the Remote Script (`/ableton-mcp-install`) + Live
+quit/reopen (Live caches Control Surface modules), then `/mcp` reconnect.
+
+1. **Native (non-M4L) device on master (the backlog's before-close caveat).**
+   `ableton_device(action='load', master=True, kind='EQ Eight')` on both an
+   empty and a non-empty master. Expect: the device appends to the Master chain
+   (response `parent_kind='master'`, `master: True`), `delete_device` removes it.
+   Rules out a device-class quirk (the proof used an M4L device).
+
+2. **Full push of a DB-authored master-strip chain.** Author a master device
+   chain in a song's DB (e.g. a Limiter with a dialed Ceiling); `push_cli
+   execute`. Expect: the devices phase emits `device.load(master=True)`, it
+   links, the convergence re-plan writes the param, and the push completes
+   WITHOUT a PARTIAL halt (the old SYN-2M9P trap is gone).
+
+3. **Render auto-loads the master analyzer on a fresh set.** Open a set with NO
+   pre-placed master analyzer; `ableton_render(action='ensure_loaded')`. Expect:
+   the sweep auto-loads HallucinoteAnalyzer onto the Master (port 11220), no
+   "add it by hand" RuntimeError, idempotent on a second call.
+
+On confirmation, close DEV-6M2K and finalize the re-triage of DEV-2M9K
+(verdict retracted) / SYN-2M9P (planner-skip retired) / TPL-2D8K (`.als`
+master-template workaround reduced to a convenience).

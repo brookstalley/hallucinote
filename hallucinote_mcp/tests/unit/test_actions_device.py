@@ -175,12 +175,13 @@ class FakeApplication:
 
 
 class FakeSongView:
-    """Models Live 12.4: ``selected_track`` accepts regular and return tracks
-    but SILENTLY IGNORES an attempt to select the master — Live has no
-    selectable session/arranger slot for it (DEV-2M9K). An honest fake
-    reproduces that: a load that tries to select the master mis-targets the
-    prior selection, so removing ``load_handler``'s master guard fails a test
-    instead of passing on a fiction (the trap the old fake created)."""
+    """Models Live 12.4.2: ``selected_track`` accepts regular tracks, return
+    tracks, AND the master — the assignment STICKS for all three. DEV-6M2K:
+    the master selection is no longer a silent no-op (DEV-2M9K's premise,
+    live-refuted on Live 12.4.2 — read-back confirms the master sticks), so
+    a load that selects the master correctly targets the master chain. A
+    faithful fake reproduces THAT: ``load_handler``'s generic select-then-load
+    path lands the device on the master, exactly as on any other track."""
 
     def __init__(self, song: "FakeSong") -> None:
         self._song = song
@@ -192,8 +193,6 @@ class FakeSongView:
 
     @selected_track.setter
     def selected_track(self, track: Any) -> None:
-        if track is self._song.master_track:
-            return  # Live refuses the master; selection stays put
         self._selected = track
 
 
@@ -730,8 +729,10 @@ def test_load_without_application_errors(loaded_actions):
 
 def test_load_no_chain_growth_is_runtime_error(loaded_actions):
     """If Live silently no-ops a load on a track (a device it won't append to
-    this chain), we surface it. (The master is refused earlier — DEV-2M9K —
-    so it never reaches this path.)"""
+    this chain), we surface it. (DEV-6M2K: the master reaches this same path
+    now — if a master selection ever failed to stick, the post-load chain-grew
+    check here is exactly what would catch the mis-load instead of corrupting a
+    regular track.)"""
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
     _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
     # Replace the browser's load_item with a no-op that doesn't grow the chain.
@@ -2914,32 +2915,38 @@ def test_set_parameter_on_master(loaded_actions):
     assert ctx.song.master_track.devices[0].parameters[0].value == -1.0
 
 
-def test_load_refuses_on_master(loaded_actions):
-    """DEV-2M9K: Live 12.4 has no LOM path to load a device onto the master, so
-    `load` must REFUSE with an actionable message rather than silently mis-load
-    a regular track. The guard fires before browser.load_item — and the honest
-    fake (selected_track ignores the master) would mis-target the prior
-    selection if the guard were ever removed, so this can't regress silently."""
-    ctx = _ctx_with_master_device()
+def test_load_on_master_appends_to_master_chain(loaded_actions):
+    """DEV-6M2K: `load` onto the master goes through the same select-then-load
+    path as any track. Live 12.4.2 lets `selected_track = master_track` stick,
+    so `browser.load_item` lands the device on the master chain. The response
+    is master-addressed (`parent_kind='master'`, `master: True`, no index)."""
+    ctx = _ctx_with_master_device()  # master already holds a "Limiter"
     item = FakeBrowserItem(
-        name="Limiter", uri="query:Audio Effects#Limiter", is_loadable=True,
+        name="EQ Eight", uri="query:Audio Effects#EQ Eight", is_loadable=True,
     )
     ctx.application.browser.audio_effects.children.append(item)
 
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"master": True, "kind": "Limiter"},
+            params={"master": True, "kind": "EQ Eight"},
         ),
         context=ctx,
     )
-    assert resp.ok is False
-    err = (resp.error or "").lower()
-    assert "master" in err and "by hand" in err
-    # Refusal is up front: load_item is never called and nothing landed on the
-    # master (it still holds only the pre-existing Limiter).
-    assert ctx.application.browser.load_calls == []
-    assert len(ctx.song.master_track.devices) == 1
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    assert resp.result["master"] is True
+    assert "track_index" not in resp.result
+    assert "return_index" not in resp.result
+    assert resp.result["name"] == "EQ Eight"
+    # The load landed on the MASTER chain (appended after the pre-existing
+    # Limiter), not mis-targeted onto a regular track.
+    assert ctx.application.browser.load_calls == [item]
+    master_devices = [d.name for d in ctx.song.master_track.devices]
+    assert master_devices == ["Limiter", "EQ Eight"]
+    assert resp.result["device_index"] == 2
+    # No regular track was touched.
+    assert all(t.devices == [] for t in ctx.song.tracks)
 
 
 # `plan_push_devices` master-strip walk lives in tests/unit/sync/test_push_devices.py

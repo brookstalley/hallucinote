@@ -567,17 +567,13 @@ def master_track(conn, song):
 def test_plan_push_devices_walks_master_chain(
     conn, song, session, master_track,
 ):
-    """plan_push_devices walks kind='master' tracks but — per SYN-2M9P /
-    DEV-2M9K — must NOT emit an impossible ``device.load(master=True)`` for an
-    UNLINKED master device: Ableton Live 12.4 has no LOM path to load a device
-    onto the master strip, so that call fails at execute time and HALTS the
-    devices phase (outcome='partial'), stranding every downstream phase. The
-    corrected contract: skip the load and surface a place-by-hand note. (An
-    earlier chunk asserted exactly one master load here, encoding the behavior
-    DEV-2M9K later proved impossible; that assertion is now corrected. Param
-    writes on a hand-placed+linked master device still fire — see
-    test_plan_push_devices_master_set_parameter_uses_master_kv. Fuller coverage
-    of the corrected contract lives in test_syn_2m9p_master_load.py.)"""
+    """DEV-6M2K: plan_push_devices walks kind='master' tracks and emits a
+    ``device.load(master=True)`` for an UNLINKED master device, exactly like a
+    track/return device. The earlier SYN-2M9P/DEV-2M9K skip (zero loads +
+    place-by-hand note) rested on a premise refuted on Live 12.4.2 — master
+    device load works, so the load executes and links via the same
+    ``device:<id>`` key path; no PARTIAL-by-master halt. (Fuller plan +
+    execute-path coverage lives in test_dev_6m2k_master_load.py.)"""
     cid = M.create_device_chain(conn, parent_track_id=master_track)
     M.create_device(
         conn, chain_id=cid, position=1,
@@ -586,10 +582,16 @@ def test_plan_push_devices_walks_master_chain(
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     loads = [c for c in plan.calls if c.args.get("action") == "load"]
-    assert loads == [], f"unlinked master device must emit zero loads, got {loads}"
-    assert any(
-        "not loadable via LOM" in n and "by hand" in n for n in plan.notes
-    ), plan.notes
+    assert len(loads) == 1, f"unlinked master device must emit one load, got {loads}"
+    args = loads[0].args
+    assert args.get("master") is True
+    assert "track_index" not in args and "return_index" not in args
+    assert args["kind"] == "Limiter"
+    # Standard device-level "not linked yet" note (the generic path), NOT the
+    # retired "place by hand" note.
+    assert any("Master Limiter" in n and "not linked yet" in n for n in plan.notes), \
+        plan.notes
+    assert not any("by hand" in n or "not loadable via LOM" in n for n in plan.notes)
 
 
 def test_plan_push_devices_master_chain_no_unlinked_track_warn(

@@ -1910,6 +1910,17 @@ def perform_batch_handler(
                     context.song, "record_mode", saved["record_mode"]
                 ),
             )
+            # record_mode applies ASYNCHRONOUSLY (probe 10) — a bare setattr
+            # that's accepted but never applies would leave the set armed with
+            # no signal. Settle-verify the disarm; a timeout lands in
+            # restore_failures (surfaced as an operator warning), the one
+            # armed-set failure mode that otherwise had no detection.
+            _attempt(
+                "record_mode_settle",
+                lambda: _wait_for_record_mode_on_worker(
+                    context, saved["record_mode"], timeout_s=settle_timeout_s
+                ),
+            )
             _attempt(
                 "session_automation_record",
                 lambda: setattr(

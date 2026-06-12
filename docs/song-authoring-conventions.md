@@ -361,13 +361,13 @@ For non-4/4 sections:
 
 ## Master, group, and return envelopes — performed automation
 
-Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records each arc into Live's arrangement automation by playing the transport through the arc's span while scripting the parameter.
+Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records ALL changed arcs in ONE transport pass (ENV-9P4T), playing through the union span of the changed arcs while scripting each parameter inside its own gesture window.
 
 What that means when you author one:
 
-- **Push takes real wall-clock.** Each changed arc plays its span in real time; the push plan names the estimate per arc (tempo-map-aware). A 16-bar master fade at 120 BPM is ~32s of transport playback.
+- **Push takes real wall-clock.** All changed arcs record in a single playthrough over their union span; the push plan names that union-span estimate (tempo-map-aware) and a loud alert lists every span it will overwrite. A 16-bar master fade at 120 BPM is ~32s of transport playback; adding a second overlapping arc costs no extra time (same pass).
 - **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
-- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped); an edited arc re-performs alone, replacing the prior recording over the same span.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
 

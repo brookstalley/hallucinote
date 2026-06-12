@@ -131,6 +131,9 @@ class FakePerformSong:
 
         self.beats_per_read = 1.0
         self.record_mode_apply_after_reads = 0
+        # When True, a disarm (record_mode=False) is accepted (event logged)
+        # but never applies — Live's async-apply failing silently (probe 10).
+        self.disarm_never_applies = False
         self._record_mode_actual = False
         self._record_mode_pending: bool | None = None
         self._record_mode_reads_until_apply = 0
@@ -151,6 +154,10 @@ class FakePerformSong:
     @record_mode.setter
     def record_mode(self, v: bool) -> None:
         self._events.append(("record_mode", bool(v)))
+        if not bool(v) and self.disarm_never_applies:
+            # Accepted but never applied — _record_mode_actual stays armed.
+            self._record_mode_pending = None
+            return
         self._record_mode_pending = bool(v)
         self._record_mode_reads_until_apply = self.record_mode_apply_after_reads
 
@@ -495,6 +502,22 @@ def test_perform_batch_closes_every_open_gesture_when_ramp_raises():
     assert ctx.song.is_playing is False
     assert ("record_mode", False) in ctx.events
     assert ("session_automation_record", False) in ctx.events
+
+
+def test_perform_batch_settle_verifies_disarm():
+    """record_mode applies asynchronously (probe 10) — the disarm in the
+    restore path is settle-verified, so a disarm that's ACCEPTED but never
+    applies surfaces in restore_failures (operator-visible) instead of a
+    silently armed set."""
+    ctx = FakeCtx()
+    ctx.song.disarm_never_applies = True
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
+        settle_timeout_ms=20,
+    )
+    assert any("record_mode_settle" in f
+               for f in result.get("restore_failures", [])), result
 
 
 def test_perform_restore_attempts_every_step_when_one_fails():

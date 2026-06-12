@@ -6,7 +6,7 @@
 
 ## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
 
-<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs -->
+<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=merged -->
 
 First-class track signal routing end-to-end (MCP → DB → push → pull) and the
 convention it unlocks: a plain audio **PRE-MAIN** bus you route everything

@@ -17,6 +17,8 @@ from .mix import (
     _apply_return_info,
     _apply_track_info,
     _apply_track_sends,
+    _apply_track_routing,
+    _apply_track_monitor,
 )
 from .score import _apply_cue_points_list
 from .devices import (
@@ -39,6 +41,9 @@ _HANDLERS = {
     "return_info":               ("return_info",               True),   # Wave M-2: per-return mixer state
     "track_info":                ("track_info",                True),
     "track_sends":               ("track_sends",               True),
+    "track_output_routing":      ("track_output_routing",      True),   # RTE-1K9T chunk 05
+    "track_input_routing":       ("track_input_routing",       True),   # RTE-1K9T chunk 05
+    "track_monitor":             ("track_monitor",             True),   # RTE-1K9T chunk 05
     "cue_points_list":           ("cue_points_list",           False),
     "track_devices":             ("track_devices",             True),   # W3-3: top-level chain
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
@@ -135,6 +140,24 @@ def apply_pull_results(
                 _apply_track_sends(
                     conn, song_id=song_id, session_id=session_id,
                     track_id=db_id, result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_output_routing":
+                _apply_track_routing(
+                    conn, session_id=session_id, track_id=db_id,
+                    direction="output", result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_input_routing":
+                _apply_track_routing(
+                    conn, session_id=session_id, track_id=db_id,
+                    direction="input", result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "track_monitor":
+                _apply_track_monitor(
+                    conn, session_id=session_id, track_id=db_id,
+                    result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
             elif handler_name == "cue_points_list":

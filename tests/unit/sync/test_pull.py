@@ -652,6 +652,359 @@ def test_apply_track_sends_out_of_range_warns_continues_batch(conn, song, sessio
 
 
 # ---------------------------------------------------------------------------
+# apply_pull_results — routing (RTE-1K9T chunk 05)
+# ---------------------------------------------------------------------------
+
+
+def _out_routing(current_type, *, channel=None, has=True):
+    return {
+        "track_index": 1,
+        "has_output_routing": has,
+        "current_type": current_type,
+        "current_channel": channel,
+        "available_types": [],
+        "available_channels": [],
+    }
+
+
+def _in_routing(current_type, *, channel=None, has=True):
+    return {
+        "track_index": 1,
+        "has_input_routing": has,
+        "current_type": current_type,
+        "current_channel": channel,
+        "available_types": [],
+        "available_channels": [],
+    }
+
+
+def _monitor(state, *, has=True):
+    return {
+        "track_index": 1,
+        "has_monitoring_state": has,
+        "monitoring_state": state,
+    }
+
+
+# --- planner ---------------------------------------------------------------
+
+
+def test_plan_pull_mix_emits_routing_probes(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    plan = pull.plan_pull_mix(conn, song_id=song, session_id=session)
+    by_key = {c.key: c for c in plan.calls}
+    assert by_key[f"track_output_routing:{tid}"].args == {
+        "action": "get_output_routing", "track_index": 5,
+    }
+    assert by_key[f"track_input_routing:{tid}"].args == {
+        "action": "get_input_routing", "track_index": 5,
+    }
+    assert by_key[f"track_monitor:{tid}"].args == {
+        "action": "get_monitoring_state", "track_index": 5,
+    }
+    for k in (
+        f"track_output_routing:{tid}",
+        f"track_input_routing:{tid}",
+        f"track_monitor:{tid}",
+    ):
+        assert by_key[k].tool == "ableton_track"
+
+
+def test_plan_pull_mix_no_routing_probes_for_unlinked(conn, song, session):
+    M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    plan = pull.plan_pull_mix(conn, song_id=song, session_id=session)
+    assert not any(c.key.startswith("track_output_routing:") for c in plan.calls)
+    assert not any(c.key.startswith("track_monitor:") for c in plan.calls)
+
+
+# --- output routing: the PRE-MAIN submaster reference ----------------------
+
+
+def test_apply_output_routing_to_bus_writes_track_reference(conn, song, session):
+    """The core PRE-MAIN case: a track's output routed (in Live) to a sibling
+    bus by name resolves back to a kind='track' reference FKing the bus."""
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    bus = M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    results = [_result(f"track_output_routing:{inst}",
+                       _out_routing("PRE-MAIN", channel="Post Mixer"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, inst)
+    assert row["output_routing_kind"] == "track"
+    assert row["output_routing_target_id"] == bus
+    assert row["output_routing_channel"] == "Post Mixer"
+
+
+def test_apply_output_routing_emits_routing_event_actor_sync(conn, song, session):
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN", kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    results = [_result(f"track_output_routing:{inst}", _out_routing("PRE-MAIN"))]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session,
+                            reason="pull-test")
+    latest = Q.get_events_for_song(conn, song)[0]
+    assert latest["kind"] == "track_routing_set"
+    assert latest["actor"] == "sync"
+    assert latest["reason"] == "pull-test"
+
+
+def test_apply_output_routing_default_main_is_no_op_against_null(conn, song, session):
+    """NULL ≡ Live default: a track at the default 'Main' output must NOT churn
+    a NULL routing column into an explicit 'master' (D8)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_output_routing:{tid}", _out_routing("Main"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_track(conn, tid)["output_routing_kind"] is None
+
+
+def test_apply_output_routing_fixed_kind_sends_only(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_output_routing:{tid}", _out_routing("Sends Only"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, tid)
+    assert row["output_routing_kind"] == "sends_only"
+    assert row["output_routing_target_id"] is None
+
+
+def test_apply_output_routing_ext_out_with_channel(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_output_routing:{tid}",
+                       _out_routing("Ext. Out", channel="1/2"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, tid)
+    assert row["output_routing_kind"] == "ext_out"
+    assert row["output_routing_channel"] == "1/2"
+
+
+def test_apply_output_routing_revert_to_default_clears_route(conn, song, session):
+    """Ableton-authoritative: a previously-authored bus route reverted to 'Main'
+    in Live clears the DB route (kind='master', target/channel NULL)."""
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    bus = M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    M.set_track_routing(conn, track_id=inst, output_routing_kind="track",
+                        output_routing_target_id=bus,
+                        output_routing_channel="Post Mixer")
+    results = [_result(f"track_output_routing:{inst}", _out_routing("Main"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, inst)
+    assert row["output_routing_kind"] == "master"
+    assert row["output_routing_target_id"] is None
+    assert row["output_routing_channel"] is None
+
+
+def test_apply_output_routing_explicit_master_is_no_op(conn, song, session):
+    """An explicitly-authored 'master' route does NOT churn against Live's
+    'Main' (db_kind == default_kind → no-op)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    M.set_track_routing(conn, track_id=tid, output_routing_kind="master")
+    results = [_result(f"track_output_routing:{tid}", _out_routing("Main"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_output_routing_idempotent_round_trip(conn, song, session):
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    bus = M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    M.set_track_routing(conn, track_id=inst, output_routing_kind="track",
+                        output_routing_target_id=bus,
+                        output_routing_channel="Post Mixer")
+    results = [_result(f"track_output_routing:{inst}",
+                       _out_routing("PRE-MAIN", channel="Post Mixer"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_output_routing_unknown_target_warns_no_mutation(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_output_routing:{tid}", _out_routing("Ghost Track"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert any("not a known routing target" in w for w in out.warnings)
+    assert Q.get_track(conn, tid)["output_routing_kind"] is None
+
+
+def test_apply_output_routing_ambiguous_target_warns(conn, song, session):
+    """Two sibling tracks share a name → no unambiguous reference; skip+warn."""
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    M.create_track(conn, song_id=song, track_index=2, name="BUS", kind="audio")
+    M.create_track(conn, song_id=song, track_index=3, name="BUS", kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    results = [_result(f"track_output_routing:{inst}", _out_routing("BUS"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert any("multiple tracks by name" in w for w in out.warnings)
+
+
+# --- input routing (V1: only track→track is persisted; D6/D8) --------------
+
+
+def test_apply_input_routing_track_target_persisted(conn, song, session):
+    """The one default-independent input case pull persists in V1: input routed
+    from a sibling track's output → a kind='track' reference."""
+    bus = M.create_track(conn, song_id=song, track_index=1, name="Bus",
+                         kind="audio")
+    src = M.create_track(conn, song_id=song, track_index=2, name="Synth")
+    _link_track(conn, session=session, db_id=bus, ableton_index=1)
+    results = [_result(f"track_input_routing:{bus}", _in_routing("Synth"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, bus)
+    assert row["input_routing_kind"] == "track"
+    assert row["input_routing_target_id"] == src
+
+
+def test_apply_input_routing_fixed_ext_in_not_persisted_v1(conn, song, session):
+    """V1 defers fixed input kinds (their Live default is unprobed) — Ext. In is
+    NOT persisted; quiet no-op, no churn, no per-track warning."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bus")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_input_routing:{tid}", _in_routing("Ext. In"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert out.warnings == []
+    assert Q.get_track(conn, tid)["input_routing_kind"] is None
+
+
+def test_apply_input_routing_default_no_input_is_no_op(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_input_routing:{tid}", _in_routing("No Input"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_track(conn, tid)["input_routing_kind"] is None
+
+
+def test_apply_input_routing_arbitrary_not_persisted_v1(conn, song, session):
+    """D6/D8 V1 scope: an arbitrary MIDI / interface input (e.g. "All Ins") is
+    NOT persisted and does not spam a warning — quiet no-op, DB untouched."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bus")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_input_routing:{tid}", _in_routing("All Ins"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert out.warnings == []
+    assert Q.get_track(conn, tid)["input_routing_kind"] is None
+
+
+# --- monitor state ---------------------------------------------------------
+
+
+def test_apply_monitor_in_writes_state(conn, song, session):
+    """A summing bus wants Monitor=In to pass routed audio."""
+    bus = M.create_track(conn, song_id=song, track_index=1, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=bus, ableton_index=5)
+    results = [_result(f"track_monitor:{bus}", _monitor("In"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    assert Q.get_track(conn, bus)["monitoring_state"] == "In"
+
+
+def test_apply_monitor_auto_default_is_no_op(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_monitor:{tid}", _monitor("Auto"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_track(conn, tid)["monitoring_state"] is None
+
+
+def test_apply_monitor_no_surface_is_no_op(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_monitor:{tid}",
+                       {"track_index": 5, "has_monitoring_state": False})]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_monitor_revert_to_auto_resets(conn, song, session):
+    """Ableton-authoritative: a bus reverted from Monitor=In back to the default
+    Auto in Live resets the DB monitoring_state to 'Auto' (the D8 revert path)."""
+    bus = M.create_track(conn, song_id=song, track_index=1, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=bus, ableton_index=5)
+    M.set_track_routing(conn, track_id=bus, monitoring_state="In")
+    results = [_result(f"track_monitor:{bus}", _monitor("Auto"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    assert Q.get_track(conn, bus)["monitoring_state"] == "Auto"
+
+
+def test_apply_monitor_out_of_vocab_raw_warns_no_mutation(conn, song, session):
+    """An out-of-vocabulary Live monitor enum (monitoring_state=None +
+    monitoring_state_raw) is surfaced as a warning, not silently swallowed."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    results = [_result(f"track_monitor:{tid}",
+                       {"track_index": 5, "has_monitoring_state": True,
+                        "monitoring_state": None, "monitoring_state_raw": 7})]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert any("out-of-vocabulary" in w and "7" in w for w in out.warnings)
+    assert Q.get_track(conn, tid)["monitoring_state"] is None
+
+
+# --- defense in depth ------------------------------------------------------
+
+
+def test_apply_routing_unlinked_track_skips_with_warning(conn, song, session):
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN", kind="audio")
+    # No link for tid in this session.
+    results = [_result(f"track_output_routing:{tid}", _out_routing("PRE-MAIN"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    assert any("not linked" in w for w in out.warnings)
+
+
+def test_apply_routing_full_pre_main_layout_round_trips(conn, song, session):
+    """End-to-end: an instrument routed to the bus + the bus on Monitor=In,
+    pulled together, then re-pulled — second pass is a clean no-op."""
+    inst = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    bus = M.create_track(conn, song_id=song, track_index=2, name="PRE-MAIN",
+                         kind="audio")
+    _link_track(conn, session=session, db_id=inst, ableton_index=1)
+    _link_track(conn, session=session, db_id=bus, ableton_index=2)
+    results = [
+        _result(f"track_output_routing:{inst}", _out_routing("PRE-MAIN")),
+        _result(f"track_monitor:{bus}", _monitor("In")),
+    ]
+    out1 = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out1.mutations == 2
+    assert Q.get_track(conn, inst)["output_routing_kind"] == "track"
+    assert Q.get_track(conn, bus)["monitoring_state"] == "In"
+    # Re-pull the identical Live state — no churn.
+    out2 = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out2.mutations == 0
+
+
+# ---------------------------------------------------------------------------
 # apply_pull_results — session_info / tempo (W3-2)
 # ---------------------------------------------------------------------------
 

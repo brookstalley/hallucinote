@@ -255,3 +255,33 @@ actually sums through the bus. Operator checks:
    error). Confirms the no-fingerprint-gating decision holds in practice.
 4. **(After chunk 05 — pull)** The full round-trip: reroute a track by hand in Live,
    pull, and confirm the DB reference updates through the mutator. Deferred to chunk 05.
+
+---
+
+## RTE-1K9T chunk 05 — routing pull ingests a manual reroute + Live input-default probe
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** no (pull reads
+Live → writes the DB; nothing new appears in Live). Unit-proven at the plan + apply
+layers (`tests/unit/sync/test_pull.py`, 23 routing tests): per-track output/input/monitor
+probes, display-name→reference resolution (fixed-name-wins, ambiguity, unknown-target),
+the NULL≡default churn-avoidance state machine (no-op / revert / non-default-persist), the
+V1 input narrowing, and the out-of-vocab monitor diagnostic. What units CANNOT cover:
+whether the live MCP getters return the display_names/channels the inverse map assumes,
+and — the Critic-W1 open premise — what Live's **non-track input default actually is**.
+
+1. **Manual-reroute round-trip (the chunk's deliverable).** Starting from the chunk-04
+   PRE-MAIN layout, reroute an instrument's output to the bus **by hand in Live's mixer**,
+   then `pull_cli execute mix-state`. Confirm the DB ingests it through `set_track_routing`
+   (a `track_routing_set` event falls out, `output_routing_kind='track'` + the bus FK),
+   and that an immediate second pull is a clean no-op (mutations=0). Set the bus Monitor
+   by hand and confirm the same for `monitoring_state`.
+2. **Input-default probe (resolves Critic W1 — unblocks fixed-input-kind pull).** On a
+   fresh MIDI track AND a fresh audio track, run `ableton_track(action='get_input_routing')`
+   and record the `current_type` display_name (the hypothesis: MIDI → "All Ins", audio →
+   an interface channel / "Ext. In"). This pins Live's real input default. IF it is a
+   stable, closed value, a follow-up can add `INPUT_DEFAULT_KIND` + a NULL≡default rule and
+   widen input pull beyond track-targets; until then V1's track-only input pull is the
+   safe floor (it cannot churn regardless of what the default turns out to be).
+3. **Display-name / channel fidelity spot-check.** For a track routed to the bus, confirm
+   `get_output_routing` returns `current_type` == the bus's exact name and a `current_channel`
+   the inverse map round-trips (e.g. "Post Mixer") — i.e. push-then-pull is identity.

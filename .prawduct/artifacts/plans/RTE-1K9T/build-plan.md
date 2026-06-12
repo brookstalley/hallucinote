@@ -9,7 +9,7 @@ the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).
 
-**Context (2026-06-12):** Chunks **01+02+03+04 DONE.** 01+02: MCP layer ships first-class track
+**Context (2026-06-12):** Chunks **01+02+03+04+05 DONE.** 01+02: MCP layer ships first-class track
 input/output routing + monitor state (6 new `ableton_track` actions) on shared `handlers/_routing.py`.
 **03 (commit `2ac2812`):** the DB layer persists routing through the mutator path — 7 nullable cols on
 `tracks` (output/input routing kind + FK `target_id` + channel + `monitoring_state`); target is a
@@ -30,9 +30,22 @@ NO fingerprint gating — the plan's "match mix/send gating" rested on a false p
 `twelve→thirteen` phase-count consumers updated (push_cli/execute/notes + ableton-push skill + pins).
 Critic (final): 1 warning resolved (unlinked-track skip uses `notes`-channel `warn()` — documented as
 deliberate, consistent with the execute path's suppression of "not linked" noise + the mix/devices
-siblings; the reachable dangling case correctly `alert()`s), 0 blocking. Suite **3434 passed / 2
-skipped**. **Next cycle: Chunk 05** (pull — ingest routing in `plan_pull_mix`, `_apply_track_routing`
-maps display_name→reference); recommend a fresh `/clear`. Then 06 convention/docs.
+siblings; the reachable dangling case correctly `alert()`s), 0 blocking. **05 (this cycle):** pull —
+`plan_pull_mix` emits three routing probes per linked track (`get_output_routing` /
+`get_input_routing` / `get_monitoring_state` → keys `track_output_routing` / `track_input_routing` /
+`track_monitor`, mirroring push); `_apply_track_routing(direction)` + `_apply_track_monitor` map Live's
+`display_name` back to a DB reference via the **shared** `sync/routing_names.py` (extracted from
+push/routing's private maps — push & pull now derive both directions from ONE map, so they can't drift)
+and write through `set_track_routing`. **D8 (pull normalization):** `DB-NULL ≡ Live-default` — a first
+pull of an unrouted track is a no-op (only a NON-default route, or a revert-to-default, mutates);
+track-targets resolve by name (fixed names win; collisions→warn+skip). **V1 input narrowed (Critic
+W1):** pull persists ONLY track→track input — fixed input kinds + arbitrary MIDI/interface inputs are
+deferred because Live's non-track input default is unprobed (a NULL≡default rule on them would churn);
+the live-probe is enqueued in `operator-verification.md`. Mutator `ValueError` caught per-track. 23 new
+pull tests. Critic (final): 0 blocking, 4 warnings resolved (W1 input-default premise → narrowed to
+track-targets; W2 stale test-path/count refs; W3 monitor out-of-vocab raw now surfaced; W4 added
+revert/out-of-vocab tests). **Next cycle: Chunk 06** (PRE-MAIN convention + docs — the only remaining
+chunk); recommend a fresh `/clear`.
 
 ---
 
@@ -104,11 +117,11 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
   routing in a fresh set; re-push is a no-op.
 - Push tests (new `test_push_routing.py`) cover plan-level + execute-path. Green.
 
-### Chunk 05 — Pull integration  ·  status: pending
+### Chunk 05 — Pull integration  ·  status: done
 **Deliverables**
 - Ingest routing in `plan_pull_mix` (probe `output_routing_type.display_name` etc.); `_apply_track_routing`
   maps the Live display_name back to a DB target reference and calls `set_track_routing`.
-- Pull tests in `tests/unit/sync/test_pull_mix.py` (manual reroute in Live → DB ingest via mutator).
+- Pull tests in `tests/unit/sync/test_pull.py` (manual reroute in Live → DB ingest via mutator).
 
 **Acceptance criteria**
 - A routing change made in Live pulls into the DB through the mutator (events fall out). Green.
@@ -129,7 +142,7 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
 ---
 
 ## Verification (whole-plan)
-- Full suite green (current baseline: 3371 passed / 0 failed / 2 skipped @ 2026-06-12).
+- Full suite green (baseline after chunk 05: 3457 passed / 0 failed / 2 skipped @ 2026-06-12).
 - Live smoke: author + push a PRE-MAIN submaster in a scratch set; confirm audio sums through the bus
   (Monitor=In) and a `perform_batch` volume ride on the bus lands.
 - Critic review (base `develop`); reflection captured before close.

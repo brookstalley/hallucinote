@@ -40,23 +40,11 @@ import sqlite3
 
 from hallucinote.db import queries as Q
 
+from ..routing_names import (
+    OUTPUT_KIND_DISPLAY_NAME as _OUTPUT_KIND_DISPLAY_NAME,
+    INPUT_KIND_DISPLAY_NAME as _INPUT_KIND_DISPLAY_NAME,
+)
 from ._core import PushPlan, ToolCall
-
-
-# DB ``*_routing_kind`` → Live ``display_name`` for the non-track kinds. The
-# 'track' kind is resolved separately (to the target track's own name). These
-# mirror the closed vocabularies the chunk-03 mutator validates against
-# (OUTPUT_ROUTING_KINDS / INPUT_ROUTING_KINDS) minus 'track'.
-_OUTPUT_KIND_DISPLAY_NAME: dict[str, str] = {
-    "master": "Main",
-    "sends_only": "Sends Only",
-    "ext_out": "Ext. Out",
-}
-_INPUT_KIND_DISPLAY_NAME: dict[str, str] = {
-    "ext_in": "Ext. In",
-    "no_input": "No Input",
-    "resampling": "Resampling",
-}
 
 
 def plan_push_routing(

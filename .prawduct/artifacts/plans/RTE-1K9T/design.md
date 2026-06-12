@@ -118,6 +118,39 @@ and explicit output/input routing config — long-standing gaps.
   is. Keys are ack-only (`track_output_routing` / `track_input_routing` / `track_monitor`) — the
   routing state already lives in the DB, so there's no Live-side index to bind back.
 
+- **D8** (chunk 05, pull normalization) — **Pull is faithful + Ableton-authoritative
+  and uses `DB-NULL ≡ Live-default` to avoid default-churn.** The inverse of D6/D7's
+  push: a `get_{output,input}_routing` / `get_monitoring_state` probe per linked track
+  (three keys — `track_output_routing` / `track_input_routing` / `track_monitor` —
+  mirroring push; one MCP read each, since the three getters are separate LOM
+  surfaces), mapped from Live's `display_name` back to a DB reference and written via
+  `set_track_routing`. The display_name↔kind map is **shared** (`sync/routing_names.py`),
+  so push (kind→name) and pull (name→kind) can never drift. **Default-churn rule:** a
+  track with no authored routing has NULL routing columns, but Live always reports a
+  concrete default (`Main` / `No Input` / `Auto`). Pull treats NULL as EQUIVALENT to
+  the default, so a first pull of an unrouted track is a no-op — only a NON-default
+  Live route (or a user reverting an authored route back to default) mutates the DB,
+  and the value written is exactly what Live reports (Ableton-authoritative). **Track
+  targets** resolve by name against the song's tracks (fixed names like `Main` win over
+  track-name matching; the source track + master are excluded; a 2+-way name collision
+  is unmappable → warn+skip, never a wrong reference). **V1 input scope (Critic W1 →
+  narrowed):** pull persists ONLY a track→track input — the one input case that is
+  default-independent. Fixed input kinds (`ext_in` / `no_input` / `resampling`) and
+  arbitrary MIDI/interface inputs are deferred: Live's non-track input default is open,
+  hardware-bound, and **not live-probed** (a MIDI track likely defaults to "All Ins"),
+  so a `NULL ≡ default` rule on them would rest on an unverified premise and could churn
+  every track on the first pull. There is consequently **no `INPUT_DEFAULT_KIND`
+  constant** (`routing_names.py` carries only the live-probed-certain OUTPUT + MONITOR
+  defaults). Non-track input is a quiet no-op (not a per-track warning — the deferral is
+  by-design, and Live's default input would otherwise spam). The fixed-input-kind pull
+  is unblocked once a live-probe pins Live's input defaults — **enqueued in
+  `operator-verification.md`**. The output direction is unaffected (output's "Main"
+  default is closed + live-probed). **Channel** rides along faithfully with a non-default
+  route (it never enters the default-route no-op path, so it can't churn). A mutator
+  `ValueError` is caught per-track (validation rejects before any write → transaction
+  stays clean), surfaced as a warning, and the batch continues — mirroring
+  `_apply_track_sends`.
+
 ## Out of scope (explicit — never silently drop)
 
 - **Group-track creation** (TRK-2H6K) — LOM-blocked (no `create_group_track`).
@@ -159,6 +192,6 @@ no-`.als` path the user wants.
   "Group-track creation is not supported yet" at L113–114), `set_property`, `set_send`/`get_sends`.
   Register new routing actions here; registration side-effect via `actions/__init__.py`.
 - **Test homes:** DB → `tests/unit/db/test_mutations.py`; push → `tests/unit/sync/test_push_mix.py`
-  (or new `test_push_routing.py`); pull → `tests/unit/sync/test_pull_mix.py`; MCP →
+  (or new `test_push_routing.py`); pull → `tests/unit/sync/test_pull.py`; MCP →
   `hallucinote_mcp/tests/unit/test_actions_track.py`. Mirror the input-routing suite at
   `hallucinote_mcp/tests/unit/test_actions_device.py` (L2003–2151).

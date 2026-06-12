@@ -227,3 +227,31 @@ restored to an empty master).
 
 DEV-6M2K closed; DEV-2M9K (verdict retracted), SYN-2M9P (planner-skip retired),
 TPL-2D8K (`.als` master-template workaround reduced to a convenience) re-triaged.
+
+---
+
+## RTE-1K9T chunk 04 — routing push phase materializes a PRE-MAIN submaster in real Live
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** yes (tracks'
+output/input routing chips + monitor switch change in Live's mixer; a new audio bus
+sums the routed tracks). Unit-proven at the plan + apply layers
+(`tests/unit/sync/test_push_routing.py`, 16 tests): display-name resolution per kind,
+the track-target FK→name resolution, channel pass-through, the dangling-target alert,
+ack-only key round-trip, and the orchestration wiring. What unit tests CANNOT cover:
+the same-callback-readback caveat (design discovery row 6) and whether routed audio
+actually sums through the bus. Operator checks:
+
+1. **PRE-MAIN push materializes the routing.** Author a scratch song with an audio
+   bus "PRE-MAIN", route an instrument track's output → the bus (`output_routing_kind
+   ='track'`, `target_id`=bus), route the bus → master (`kind='master'`), set the bus
+   `monitoring_state='In'`. Drive `execute_push` (routing phase) against the real
+   bridge. Confirm in Live: the instrument track's output chip reads "PRE-MAIN", the
+   bus's output reads "Main", and the bus monitor is "In". `outcome=ok`, no PARTIAL halt.
+2. **Audio sums through the bus.** With the layout from #1, confirm the instrument is
+   audible through the bus (Monitor=In passes the routed audio) — silence here means
+   the monitor/input wiring is wrong, not the routing-type set.
+3. **Re-push is an effect-level no-op (D7).** Run the routing phase a second time; the
+   plan re-emits the same idempotent calls and Live's state is unchanged (no churn, no
+   error). Confirms the no-fingerprint-gating decision holds in practice.
+4. **(After chunk 05 — pull)** The full round-trip: reroute a track by hand in Live,
+   pull, and confirm the DB reference updates through the mutator. Deferred to chunk 05.

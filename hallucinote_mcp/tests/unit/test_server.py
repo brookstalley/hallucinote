@@ -362,93 +362,42 @@ def test_render_ensure_loaded_call_does_not_touch_output_dir(
 # ---------------------------------------------------------------------------
 
 
-def test_read_timeout_render_is_unbounded():
-    from hallucinote_mcp.server import _read_timeout_for
-    assert _read_timeout_for("ableton_render", "render") is None
+# The POLICY VALUES (which (tool, action) → which timeout) are owned by
+# ``client.read_timeout_for`` and tested in test_client.py
+# (``test_read_timeout_for_*``). The server-specific property kept here is that
+# ``handle_tool_call`` CONSULTS that policy and forwards its result to
+# ``client.send`` — ENV-8K2R #6 dropped the private-constant re-exports from
+# ``server`` that the old duplicate policy-value tests reached through, so this
+# asserts against the public resolver rather than re-deriving the table.
 
 
-def test_read_timeout_perform_batch_is_unbounded():
-    """perform_batch plays the transport over the union span in record
-    (minutes at mix scale); a bounded socket timeout would sever the only
-    verification this write-only surface has (per-arc automation_state) and
-    misreport it as connection_lost while Live keeps recording (ENV-9P4T)."""
-    from hallucinote_mcp.server import _read_timeout_for
-    assert _read_timeout_for("ableton_automation", "perform_batch") is None
-
-
-def test_read_timeout_ensure_loaded_is_generous_but_bounded():
-    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
-    t = _read_timeout_for("ableton_render", "ensure_loaded")
-    # Bounded (not the unbounded render case) but well clear of the default —
-    # the whole point is that 15s was too short.
-    assert t is not None
-    assert t > _DEFAULT_READ_TIMEOUT
-
-
-def test_read_timeout_default_action_keeps_bounded_default():
-    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
-    assert _read_timeout_for("ableton_session", "set_tempo") == _DEFAULT_READ_TIMEOUT
-    # ensure_loaded on a non-render tool is NOT special-cased — the policy is
-    # keyed on (tool, action), not action alone.
-    assert _read_timeout_for("ableton_track", "ensure_loaded") == _DEFAULT_READ_TIMEOUT
-
-
-def test_handle_tool_call_forwards_ensure_loaded_with_generous_timeout(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize(
+    "tool, action, params",
+    [
+        ("ableton_render", "render", {"song_slug": "demo"}),  # unbounded (None)
+        ("ableton_render", "ensure_loaded", {}),              # generous bounded
+        ("ableton_session", "set_tempo", {"bpm": 132.0}),     # default bounded
+    ],
+)
+def test_handle_tool_call_forwards_policy_read_timeout(
+    tool, action, params, tmp_path, monkeypatch,
 ):
-    """The selected timeout must actually reach client.send — pin the wiring,
-    not just the policy table. Before MCP-4T6Y this forwarded with the 15s
-    default and timed out mid-load."""
-    from hallucinote_mcp.server import _ENSURE_LOADED_READ_TIMEOUT
+    """The read_timeout ``handle_tool_call`` forwards to ``client.send`` is
+    EXACTLY what the policy returns for that (tool, action) — pinning the wiring,
+    not re-asserting the policy table. render forwards the unbounded ``None`` (a
+    bounded socket timeout would sever its only verification — automation_state);
+    ensure_loaded forwards the generous window (MCP-4T6Y); a normal action
+    forwards the bounded default."""
+    from hallucinote_mcp import client
     from hallucinote_mcp.wire import Response
 
     monkeypatch.chdir(tmp_path)
-    forwarded = Response(ok=True, result={"loaded_count": 25})
+    forwarded = Response(ok=True, result={})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
-        handle_tool_call("ableton_render", "ensure_loaded", {})
-    assert send.call_args.kwargs["read_timeout"] == _ENSURE_LOADED_READ_TIMEOUT
-
-
-def test_handle_tool_call_forwards_render_with_unbounded_timeout(
-    tmp_path, monkeypatch,
-):
-    """Regression: render must keep its unbounded (None) read timeout through
-    the refactor to the policy table."""
-    from hallucinote_mcp.wire import Response
-
-    monkeypatch.chdir(tmp_path)
-    forwarded = Response(ok=True, result={"captures_dir": str(tmp_path)})
-    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
-        handle_tool_call("ableton_render", "render", {"song_slug": "demo"})
-    assert send.call_args.kwargs["read_timeout"] is None
-
-
-def test_handle_tool_call_forwards_default_action_with_bounded_timeout(
-    isolated_registry,
-):
-    """A normal mutating call keeps the 15s default so a stalled handler
-    surfaces as a structured timeout instead of hanging the transport."""
-    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
-    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT
-    from hallucinote_mcp.wire import Response
-
-    isolated_registry.register(
-        Action(
-            tool="ableton_session",
-            name="set_tempo",
-            description="",
-            params=(ParamSpec(name="value", type="float"),),
-            declarative_op=LiveOp(
-                kind="property_write", target="song", property="tempo"
-            ),
-        )
+        handle_tool_call(tool, action, params)
+    assert send.call_args.kwargs["read_timeout"] == client.read_timeout_for(
+        tool, action
     )
-    isolated_registry.register_help_actions()
-
-    forwarded = Response(ok=True, result={"new_tempo": 132.0})
-    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
-        handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
-    assert send.call_args.kwargs["read_timeout"] == _DEFAULT_READ_TIMEOUT
 
 
 # ---------------------------------------------------------------------------

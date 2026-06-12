@@ -33,6 +33,8 @@ from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import automation as automation_handlers
 from hallucinote_mcp.handlers.automation import (
     _interp_performed_value,
+    _require_parent,
+    _resolve_send,
     _validate_breakpoints,
     perform_batch_handler,
 )
@@ -909,3 +911,54 @@ def test_perform_batch_wire_validation_rejects_bad_target_kind(loaded_actions):
     )
     assert resp.ok is False
     assert "target_kind" in resp.error.lower() or "clip_cc" in resp.error
+
+
+# ---------------------------------------------------------------------------
+# ENV-8K2R #7 — addressing dedup. ``_require_parent`` gained an opt-in master
+# branch (so ``_resolve_perform_target`` delegates its parent resolution there
+# instead of duplicating the return-bounds block), and ``_resolve_send`` is the
+# single home for the send_level bounds check shared by all four envelope paths.
+# ---------------------------------------------------------------------------
+
+
+def test_require_parent_master_returns_master_track():
+    ctx = FakeCtx()
+    assert (
+        _require_parent(ctx, master=True, track_index=None, return_index=None)
+        is ctx.song.master_track
+    )
+
+
+def test_require_parent_rejects_master_combined_with_track_or_return():
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="exactly one"):
+        _require_parent(ctx, master=True, track_index=1, return_index=None)
+    with pytest.raises(ValueError, match="exactly one"):
+        _require_parent(ctx, master=True, track_index=None, return_index=1)
+
+
+def test_require_parent_non_master_paths_unchanged():
+    ctx = FakeCtx()
+    assert (
+        _require_parent(ctx, track_index=1, return_index=None)
+        is ctx.song.tracks[0]
+    )
+    assert (
+        _require_parent(ctx, track_index=None, return_index=1)
+        is ctx.song.return_tracks[0]
+    )
+    with pytest.raises(ValueError, match="not both"):
+        _require_parent(ctx, track_index=1, return_index=1)
+
+
+def test_resolve_send_resolves_and_bounds_check():
+    events: list[tuple] = []
+    track = FakeTrack(events)
+    send = FakeGestureParam(events)
+    track.mixer_device.sends = [send]
+    assert _resolve_send(track, track_index=2, return_index=1) is send
+    # 1-based: index 0 and index past the end both out of range, same message.
+    with pytest.raises(IndexError, match="out of range"):
+        _resolve_send(track, track_index=2, return_index=2)
+    with pytest.raises(IndexError, match="out of range"):
+        _resolve_send(track, track_index=2, return_index=0)

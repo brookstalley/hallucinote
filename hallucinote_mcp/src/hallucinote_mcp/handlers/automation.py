@@ -360,13 +360,9 @@ def _resolve_read_envelope_target_and_clip(
             "read_envelope target_kind='send_level' requires track_index"
         )
     track = _resolve_track(context, track_index)
-    sends = track.mixer_device.sends
-    if return_index < 1 or return_index > len(sends):
-        raise IndexError(
-            f"return_index {return_index} out of range "
-            f"[1, {len(sends)}] for track {track_index}"
-        )
-    target = sends[return_index - 1]
+    target = _resolve_send(
+        track, track_index=track_index, return_index=return_index
+    )
     clip = _resolve_clip(track, location, clip_index)
     return clip, target
 
@@ -1037,13 +1033,9 @@ def write_envelope_handler(
                     "(the source track of the send)"
                 )
             track = _resolve_track(context, track_index)
-            sends = track.mixer_device.sends
-            if return_index < 1 or return_index > len(sends):
-                raise IndexError(
-                    f"return_index {return_index} out of range "
-                    f"[1, {len(sends)}] for track {track_index}"
-                )
-            target = sends[return_index - 1]
+            target = _resolve_send(
+                track, track_index=track_index, return_index=return_index
+            )
             clip = _resolve_clip(track, location, clip_index)
         clip.clear_envelope(target)
         envelope = clip.create_automation_envelope(target)
@@ -1207,13 +1199,9 @@ def clear_handler(
                 "AND return_index"
             )
         track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(sends)}] for track {track_index}"
-            )
-        target = sends[return_index - 1]
+        target = _resolve_send(
+            track, track_index=track_index, return_index=return_index
+        )
         clip = _resolve_clip(track, location, clip_index)
     clip.clear_envelope(target)
     return {"target_kind": target_kind, "cleared": True}
@@ -1324,9 +1312,23 @@ def _require_clip(
 def _require_parent(
     context: LiveContext,
     *,
+    master: bool = False,
     track_index: int | None,
     return_index: int | None,
 ) -> Any:
+    """Resolve the mixer parent (master / track / return) addressed by exactly
+    one of the three selectors. ``master`` is opt-in (default off) so the
+    clip-envelope callers — which can't address the master strip — keep their
+    track/return-only contract; the perform path passes ``master=True`` through.
+    Single home for return-track bounds resolution (the block ``perform`` used to
+    duplicate)."""
+    if master:
+        if track_index is not None or return_index is not None:
+            raise ValueError(
+                "specify exactly one of master=True / track_index / "
+                "return_index, not a combination"
+            )
+        return context.song.master_track
     if track_index is not None and return_index is not None:
         raise ValueError(
             "specify exactly one of track_index / return_index, not both"
@@ -1342,6 +1344,26 @@ def _require_parent(
             )
         return song.return_tracks[return_index - 1]
     raise ValueError("must specify track_index or return_index")
+
+
+def _resolve_send(
+    track: Any,
+    *,
+    track_index: int | None,
+    return_index: int,
+) -> Any:
+    """Resolve the Send on an already-resolved ``track`` feeding return
+    ``return_index`` (1-based). Single home for the send-bounds check shared by
+    every ``send_level`` path (read / write / clear envelope + perform); the
+    callers resolve ``track`` first because most of them reuse it afterward (the
+    containing clip). ``track_index`` is carried only for the bounds message."""
+    sends = track.mixer_device.sends
+    if return_index < 1 or return_index > len(sends):
+        raise IndexError(
+            f"return_index {return_index} out of range "
+            f"[1, {len(sends)}] for track {track_index}"
+        )
+    return sends[return_index - 1]
 
 
 def _midi_cc_envelope_target(clip: Any, cc_number: int) -> Any:
@@ -1584,13 +1606,9 @@ def _resolve_perform_target(
                 "Return-host sends are not in the wave-1 perform surface."
             )
         track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(sends)}] for track {track_index}"
-            )
-        return sends[return_index - 1]
+        return _resolve_send(
+            track, track_index=track_index, return_index=return_index
+        )
 
     # mixer_volume / mixer_pan / device_parameter — parent is exactly one
     # of master / track / return.
@@ -1608,18 +1626,14 @@ def _resolve_perform_target(
             f"perform target_kind={target_kind!r} requires exactly one of "
             f"master=True / track_index / return_index, got {selected or 'none'}"
         )
-    if master:
-        parent = context.song.master_track
-    elif track_index is not None:
-        parent = _resolve_track(context, track_index)
-    else:
-        song = context.song
-        if return_index < 1 or return_index > len(song.return_tracks):  # type: ignore[operator]
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(song.return_tracks)}]"
-            )
-        parent = song.return_tracks[return_index - 1]  # type: ignore[index]
+    # Selection validated above (perform-specific message); _require_parent is
+    # the single home for the master/track/return resolution itself.
+    parent = _require_parent(
+        context,
+        master=master,
+        track_index=track_index,
+        return_index=return_index,
+    )
 
     if target_kind == "device_parameter":
         if device_index is None or parameter_name is None:

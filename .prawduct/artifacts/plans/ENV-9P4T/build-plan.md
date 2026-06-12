@@ -43,15 +43,27 @@ was unavailable this session (a 2nd agent holds a song)** — every probe is a b
 
 ## Status
 
-- [ ] Chunk 01: Single-pass batched recording (the performance keystone)
+- [~] Chunk 01: Single-pass batched recording (the performance keystone) — CODE + tests
+  complete & Critic-clean (0 blocking); the step-0 verify-api Live probe is DEFERRED
 - [ ] Chunk 02: Plain-track + audio-track perform targets (the 10+-track capability)
 - [ ] Chunk 03: Fidelity — adaptive sampling density + curve faithfulness
 
-Context: Plan authored 2026-06-11 from `discovery.md`. Not yet started. **Branch off
-`develop`** as `feature/env-9p4t-perform-scale` (gitflow; PR base is `develop`). Set
-`active_build_plan` → this file when starting Chunk 01. The safety invariant (per-arc
-gating retained; batched plan loudly names every span it will overwrite) threads all
-chunks. Existing verification asset: **AUD-3F8M** (shipped) render-verifies
+Context (2026-06-11, branch `feature/env-9p4t-perform-scale` off `develop`): **Chunk 01
+code + tests landed** (commits 82b1eb5 → 9c2235c): the single-arc `perform` action is
+replaced by `perform_batch` — all changed arcs record in ONE transport pass with
+per-parameter gesture windowing (`_PreparedArc` pending→open→closed), the planner emits
+one batched call (union-span cost + overwrite `alert()` + duplicate-target preflight),
+and `apply_push_results` gates each arc independently on its `automation_state` (+
+zero-write stale-lane guard). Critic `final` run 3× — 1 blocking (wire read-timeout
+severed verification at scale → `perform_batch` now unbounded in the server policy) + all
+warnings resolved; suite 3358 green. **Chunk 01's step-0 `verify-api` Live probe (two
+gesture windows in one pass + breakpoint density) is DEFERRED** — the bridge was
+version-mismatched (`c0b443e0` vs `b0c3c347`) and a 2nd agent held a song. It is the
+ONLY symbolic-only verification of the windowing claim, so it **GATES Chunk 02**:
+`/ableton-mcp-install` + a Live restart, then run the probe (recipe in `api-notes.md` +
+`operator-verification.md`) before starting Chunk 02. The safety invariant (per-arc
+gating retained; batched plan loudly names every overwritten span) threads all chunks.
+Existing verification asset: **AUD-3F8M** (shipped) render-verifies
 `mixer_volume`/`mixer_pan` via master-bus windowing.
 
 ### Verification Strategy

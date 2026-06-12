@@ -9,7 +9,7 @@ the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).
 
-**Context (2026-06-12):** Chunks **01+02+03 DONE.** 01+02: MCP layer ships first-class track
+**Context (2026-06-12):** Chunks **01+02+03+04 DONE.** 01+02: MCP layer ships first-class track
 input/output routing + monitor state (6 new `ableton_track` actions) on shared `handlers/_routing.py`.
 **03 (commit `2ac2812`):** the DB layer persists routing through the mutator path — 7 nullable cols on
 `tracks` (output/input routing kind + FK `target_id` + channel + `monitoring_state`); target is a
@@ -17,13 +17,22 @@ SEMANTIC reference (`kind` + FK→`tracks.id` when `kind='track'`), never Live's
 submaster bus link survives renames/re-pushes; `ON DELETE SET NULL` leaves a detectable dangling
 state (kind='track', target NULL) push will treat as "target gone". `set_track_routing` emits one
 `TRACK_ROUTING_SET` (mirrors `set_track_mixer`); cross-field invariant (`target_id` ⟺ `kind='track'`)
-lives in the mutator, re-validated only for touched directions. CHECK asymmetry (**D6, new**):
+lives in the mutator, re-validated only for touched directions. CHECK asymmetry (**D6**):
 output+monitor CHECK-constrained (closed domains), input plain TEXT (open/hardware-bound, mutator
-validates — extensible without a destructive migration). Critic (final): 1 warning resolved
-(migration comment overstated the canary's CHECK-text reach — the canary checks column *presence*
-only), 0 blocking. Suite **3417 passed / 2 skipped**. **Next cycle: Chunk 04** (push — new `routing`
-phase after `mix`/before `devices`, `plan_push_routing` resolving FK→display_name, fingerprint-gated);
-recommend a fresh `/clear`. Then 05 pull → 06 convention/docs.
+validates — extensible without a destructive migration). **04 (this cycle):** new `routing` push
+phase (after `mix`, before `devices` — D5) on `sync/push/routing.py::plan_push_routing` — resolves
+the semantic routing reference (D6) to Live `display_name`s and emits `set_output_routing` /
+`set_input_routing` / `set_monitoring_state`; dangling target → `alert()`+skip-direction; ack-only
+keys (`track_output_routing` / `track_input_routing` / `track_monitor`). **D7 (spec correction):**
+NO fingerprint gating — the plan's "match mix/send gating" rested on a false premise (only
+`performed_automation` gates, on wall-clock cost); routing re-emits idempotently like `mix`/`devices`,
+"re-push is a no-op" at the EFFECT level. 16 new routing tests + 1 phase-order invariant; all
+`twelve→thirteen` phase-count consumers updated (push_cli/execute/notes + ableton-push skill + pins).
+Critic (final): 1 warning resolved (unlinked-track skip uses `notes`-channel `warn()` — documented as
+deliberate, consistent with the execute path's suppression of "not linked" noise + the mix/devices
+siblings; the reachable dangling case correctly `alert()`s), 0 blocking. Suite **3434 passed / 2
+skipped**. **Next cycle: Chunk 05** (pull — ingest routing in `plan_pull_mix`, `_apply_track_routing`
+maps display_name→reference); recommend a fresh `/clear`. Then 06 convention/docs.
 
 ---
 
@@ -80,12 +89,15 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
 - A track-target reference survives (FK to `tracks.id`); deleting the target is handled sanely.
 - No raw SQL in callers (`feedback_mutator_discipline`). Green.
 
-### Chunk 04 — Push integration (new `routing` phase)  ·  status: pending
+### Chunk 04 — Push integration (new `routing` phase)  ·  status: done
 **Deliverables**
 - New `routing` phase in `plan.py` `_PHASE_NAMES` **after `mix`, before `devices`** (D5).
 - `plan_push_routing` (in `sync/push/`): for each track with DB routing, resolve the target-track link
   and emit `ableton_track(action='set_output_routing'/'set_input_routing'/monitor)` by `display_name`.
-- Fingerprint-gate so unchanged routing never re-emits (match the existing mix/send gating).
+- ~~Fingerprint-gate so unchanged routing never re-emits (match the existing mix/send gating).~~
+  **CORRECTED (D7):** there is NO mix/send fingerprint gating to match — `mix`/`devices` re-emit
+  idempotent sets unconditionally; only `performed_automation` gates (real wall-clock cost).
+  Routing mirrors `mix`/`devices`: re-emit unconditionally, "re-push is a no-op" at the EFFECT level.
 
 **Acceptance criteria**
 - Pushing a DB-authored PRE-MAIN layout (tracks→bus, bus→master, bus Monitor=In) materializes the

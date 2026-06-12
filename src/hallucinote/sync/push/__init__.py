@@ -78,6 +78,9 @@ from .devices import (
     plan_push_devices,
     _emit_device_calls,
 )
+from .routing import (
+    plan_push_routing,
+)
 from .envelopes import (
     _LOSSY_CURVE_HINTS,
     plan_push_envelopes,
@@ -165,6 +168,8 @@ __all__ = [
     # Devices
     "plan_push_devices",
     "_emit_device_calls",
+    # Routing (RTE-1K9T)
+    "plan_push_routing",
     # Envelopes
     "_LOSSY_CURVE_HINTS",
     "plan_push_envelopes",

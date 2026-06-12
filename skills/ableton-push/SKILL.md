@@ -1,12 +1,12 @@
 ---
-description: Push the Hallucinote DB into Ableton Live. Drives twelve ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
+description: Push the Hallucinote DB into Ableton Live. Drives thirteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
-You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving twelve ordered phases through MCP, and report what was created.
+You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving thirteen ordered phases through MCP, and report what was created.
 
 $ARGUMENTS
 
@@ -31,7 +31,7 @@ If slug is missing, ask. For session, omit it unless the user signaled "first pu
 1.  push_cli probe-and-link --probe          → mints session, upserts matches,
                                                reconciles stale links
 2.  push_cli execute --probe                 → coherence check + dispatch all
-                                               twelve phases over MCP TCP
+                                               thirteen phases over MCP TCP
 2a. (conditional) cleanup-default-scaffold   → delete leftover defaults
 3.  Read .last-push-state.json + report.
 ```
@@ -98,7 +98,7 @@ Proceed only on explicit `yes`.
 python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 ```
 
-`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all twelve phases in order, dispatching every MCP call directly over TCP.
+`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all thirteen phases in order, dispatching every MCP call directly over TCP.
 
 **The transport PLAYS during the `performed_automation` phase.** Master/group/return arcs are gesture-recorded in real time — all changed arcs record in ONE pass over their union span (the plan names that union-span wall-clock and a loud alert lists every span it will overwrite). Audible playback during push is expected, not a bug. Unchanged arcs are fingerprint-skipped (so a hand-edited lane survives); a `--reset` DB or a new session re-performs everything.
 

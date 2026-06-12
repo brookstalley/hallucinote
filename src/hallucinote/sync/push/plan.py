@@ -16,6 +16,7 @@ from .devices import plan_push_devices
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
 from .perform import plan_push_performed_automation, record_perform_result
+from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
@@ -46,7 +47,7 @@ class PushPhase:
     description: str
 
 
-# The twelve phases of the master push, in execution order. Order is
+# The thirteen phases of the master push, in execution order. Order is
 # load-bearing — see :func:`plan_push_song` for the dependency
 # rationale per phase. This tuple is the single source of truth; tests
 # pin both the names and the count.
@@ -58,6 +59,7 @@ _PHASE_NAMES: tuple[str, ...] = (
     "scenes",
     "clips",
     "mix",
+    "routing",
     "devices",
     "envelopes",
     "performed_automation",
@@ -72,7 +74,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
 ) -> list[PushPhase]:
-    """Master orchestration: return the twelve phases of a full song push, in order.
+    """Master orchestration: return the thirteen phases of a full song push, in order.
 
     Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
     fresh :class:`PushPlan` from current DB state at call time. The
@@ -105,25 +107,32 @@ def plan_push_song(
          hosting) and arrangement (duplicate source).
       7. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
          Needs tracks + returns linked. No clip dep.
-      8. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+      8. ``routing`` — :func:`plan_push_routing`. Materializes per-track
+         output/input routing + monitor state (RTE-1K9T; the PRE-MAIN
+         submaster pattern). After ``mix`` (routing is a mixer concern),
+         before ``devices`` (D5). Needs tracks linked — the source track
+         AND any track-route target are created in the ``tracks`` phase.
+         Idempotent re-emit like ``mix``/``devices`` (no fingerprint gate,
+         D7).
+      9. ``devices`` — :func:`plan_push_devices`. Loads instruments +
          effects and sets parameters. Needs tracks + returns linked.
          Prerequisite for ``device_parameter`` envelopes (need the
          target device linked).
-      9. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
+      10. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
          on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
          a snapshot copy, so the envelope must exist on the session
          clip BEFORE arrangement runs. Needs tracks + clips + returns
          + devices linked.
-      10. ``performed_automation`` — :func:`plan_push_performed_automation`.
+      11. ``performed_automation`` — :func:`plan_push_performed_automation`.
           Gesture-records master/group/return-side arcs into arrangement
           automation (ENV-7G4K), fingerprint-gated. Needs tracks +
           returns + devices linked. Realtime: the transport plays each
           changed arc's span (the plan names the wall-clock cost).
-      11. ``arrangement`` — :func:`plan_push_arrangement`. Emits
+      12. ``arrangement`` — :func:`plan_push_arrangement`. Emits
           ``duplicate_to_arrangement`` per arrangement row. Carries
           session-clip envelopes as snapshot copies (W4-A finding).
           Needs clips linked (raises otherwise).
-      12. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
+      13. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
           Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
           clamped to ``[0, song.last_event_time]``; cues placed before
           arrangement exists get rejected.
@@ -132,7 +141,7 @@ def plan_push_song(
     canonical calls (Live has no section-marker concept distinct from
     cue points). Run it separately to surface its warn if needed.
 
-    Returns 12 phases regardless of whether the song actually has
+    Returns 13 phases regardless of whether the song actually has
     content for each phase — empty phases produce a plan with a
     ``no … to push`` warn instead of an empty plan, so the skill's
     progress reporting can distinguish "ran cleanly with nothing to
@@ -185,6 +194,13 @@ def plan_push_song(
                 conn, song_id=song_id, session_id=session_id,
             ),
             description="Push mixer state (volume/pan/mute/solo/arm/color) + master + sends.",
+        ),
+        PushPhase(
+            name="routing",
+            plan_fn=lambda: plan_push_routing(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Materialize per-track output/input routing + monitor state (RTE-1K9T PRE-MAIN submaster pattern).",
         ),
         PushPhase(
             name="devices",
@@ -296,6 +312,14 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "master_volume",
     "master_pan",
     "send",
+    # RTE-1K9T (routing): per-track output/input routing + monitor go through
+    # ableton_track(set_output_routing / set_input_routing / set_monitoring_state).
+    # Ack-only — the routing state already lives in the DB (the push ORIGINATES
+    # from it, same as the mixer set_property keys above); there's no Live-side
+    # index to record back.
+    "track_output_routing",
+    "track_input_routing",
+    "track_monitor",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions

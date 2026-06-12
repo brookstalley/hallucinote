@@ -101,6 +101,23 @@ and explicit output/input routing config — long-standing gaps.
 
 ---
 
+- **D7** (chunk 04, spec correction) — **Routing push is NOT fingerprint-gated; it
+  re-emits idempotent sets, mirroring `mix`/`devices`.** The build plan's chunk-04 line
+  "fingerprint-gate so unchanged routing never re-emits (match the existing mix/send gating)"
+  rests on a **false premise**: neither `plan_push_mix` nor `plan_push_devices` fingerprint-gates
+  — both re-emit every `set_property` / `set_parameter` call on every push and rely on Live's
+  idempotent set semantics. The *only* fingerprint-gated phase is `performed_automation`, which
+  gates because each changed arc costs **real wall-clock transport time** (the playhead plays the
+  span). A routing set has no such cost — it's a cheap, idempotent LOM write. Moreover a
+  pure-data planner **cannot** read Live's current routing to gate against it (planners read the
+  DB only; the agent executes MCP calls), and no per-track "last-pushed routing" fingerprint is
+  stored — adding one would be unjustified complexity no sibling planner carries. **Decision:**
+  `plan_push_routing` emits routing calls unconditionally for every linked track that carries
+  routing columns; "re-push is a no-op" (the chunk-04 acceptance criterion) holds at the **effect
+  level** (re-setting the same route changes nothing in Live), exactly as `mix` re-pushing volume
+  is. Keys are ack-only (`track_output_routing` / `track_input_routing` / `track_monitor`) — the
+  routing state already lives in the DB, so there's no Live-side index to bind back.
+
 ## Out of scope (explicit — never silently drop)
 
 - **Group-track creation** (TRK-2H6K) — LOM-blocked (no `create_group_track`).

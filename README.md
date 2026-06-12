@@ -9,7 +9,7 @@ You describe musical intent in plain language — *"write a stereotypical metal 
 ## What you can do
 
 - **Compose a song from a prompt.** `/song-new <slug> [initial instructions]` scaffolds the directory using <slug> as folder name (this will also be used for various filenames); the agent writes a `build.py` against the generator library, materializes a SQLite DB, and pushes the result into a running Ableton Live set.
-- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chorus drums"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
+- **Iterate by talking.** *"raise the verse ghost snares"*, *"swap the chorus walk for a fill at bar 12"*, *"use a giant gated reverb on the chorus drums"*, *"route the drums through a sub-bus and glue-compress it"* — the agent edits `build.py` (or the DB directly) and re-pushes. Re-runs are idempotent.
 - **Pull manual edits back.** Tweak faders, mutes, sends, or notes in Live, then run `/ableton-pull` to fold the changes back into the song's DB.
 - **Share songs across machines.** A song is a directory you commit to git. The compat check generates a `REQUIREMENTS.md` of third-party plugins the collaborator needs to install; see [`docs/collaboration.md`](docs/collaboration.md) for the round-trip.
 
@@ -138,25 +138,19 @@ You should get back tempo, signature, track counts, and master strip state from 
 
 ## Try it
 
-Setup is one-time. Day to day: open Live, start Claude Code in this repo, talk.
+Setup is one-time. Day to day: open Live, start Claude Code in your **songs workspace** (a repo with a `hallucinote.toml` marker — see [`docs/quickstart.md`](docs/quickstart.md)), and talk.
 
-### Load the example song
-
-`songs/falling-walking/` is the canary song — a D-minor electronic piece used to gate every push planner and mutator change.
-
-1. Open Ableton Live with an empty set (Hallucinote already selected as the Control Surface from setup).
-2. In this repo, run `claude`.
-3. Say:
-
-> *"load falling-walking into Live"*
-
-Claude builds `songs/falling-walking/falling-walking-<branch>.db` from `build.py`, then drives `/ableton-push` to materialize it through MCP — tempo → meter → tracks → returns → clips → mix → devices → envelopes → arrangement → cues. When it finishes you have a fully-built session in Live.
-
-### Compose a new song
+### Compose a song
 
 > *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-The agent runs `/song-new punk-fate` to scaffold `songs/punk-fate/`, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again.
+The agent runs `/song-new punk-fate` to scaffold `songs/punk-fate/` in your workspace, picks instrument chains, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live through **thirteen ordered phases**:
+
+```
+tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed automation → arrangement → cues
+```
+
+When it finishes you have a fully-built session — named tracks, returns, clips, device chains, the mix, and any signal routing — ready to play. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again; re-runs are idempotent. (Already have a songs repo? Just name a song — *"load falling-walking into Live"* — and Claude builds + pushes it the same way.)
 
 ### Pull manual edits back
 
@@ -224,13 +218,13 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 ```
 src/hallucinote/      # composition library: db, generators, sync, capture
 hallucinote_mcp/      # in-repo MCP server (13 unified Ableton tools)
-songs/<slug>/         # one directory per song: build.py + snapshot + tests
+skills/               # the /hallucinote:* Claude Code skills the plugin ships
 tools/                # scaffolding + maintenance scripts
-docs/                 # quickstart, skills, VISION, collaboration, FAQ, schemas, terminology
-tests/                # platform-level tests (per-song tests live under songs/<slug>/tests/)
+docs/                 # quickstart, skills, VISION, collaboration, FAQ, schemas, …
+tests/                # platform-level tests
 ```
 
-Each song under `songs/` is self-contained — `build.py`, `captured_session.json`, `tests/`, `decisions/`, `annotations/`, and a per-branch SQLite DB (gitignored). See [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) for the conventions and [`docs/snapshot-schema.md`](docs/snapshot-schema.md) for the snapshot format.
+This is the **framework** repo. Your **songs live in a separate workspace repo** (a folder with a `hallucinote.toml` marker), not here — each song is a self-contained directory: `build.py`, `captured_session.json`, `tests/`, `decisions/`, `annotations/`, and a per-branch SQLite DB (gitignored). See [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) for the conventions and [`docs/snapshot-schema.md`](docs/snapshot-schema.md) for the snapshot format.
 
 ## Development
 

@@ -84,7 +84,7 @@ structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
   ableton_session       global state, master, transport, view, tempo, signature
-  ableton_track         tracks: lifecycle, mixer state, sends
+  ableton_track         tracks: lifecycle, mixer state, sends, routing, monitor state
   ableton_return        return tracks
   ableton_clip          session + arrangement clips, replace_notes
   ableton_note          per-note ops (gap #4 blocked — read ableton://guides/gaps)
@@ -146,7 +146,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     # shared dispatcher; the wrapper exists only so FastMCP can register a
     # name + docstring for the MCP client to see.
     _register_tool(mcp, "ableton_session", "Global state, master, transport, view, tempo, signature, snapshot.")
-    _register_tool(mcp, "ableton_track", "Tracks: lifecycle, mixer state, sends.")
+    _register_tool(mcp, "ableton_track", "Tracks: lifecycle, mixer state, sends, input/output routing, monitor state.")
     _register_tool(mcp, "ableton_return", "Return tracks: lifecycle, mixer state.")
     _register_tool(mcp, "ableton_clip", "Session + arrangement clips: lifecycle, set_property, replace_notes. Timing transforms (quantize/swing/groove) deliberately live in Hallucinote — see design doc §6.2.")
     _register_tool(mcp, "ableton_note", "Within-clip note operations (gap #4 blocked).")

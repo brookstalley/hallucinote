@@ -89,6 +89,14 @@ When changing this surface:
     walk `ableton_links` for linked rows, emit `PullCall` probes.
   - `PullCall.key` is `"<kind>"` (global) or `"<kind>:<uuid>"` (per-row) —
     dispatched by `_HANDLERS` in `apply_pull_results`.
+  - Routing (RTE-1K9T) rides in the `mix-state` domain: per linked track,
+    `plan_pull_mix` emits `track_output_routing:<id>` / `track_input_routing:<id>`
+    / `track_monitor:<id>` (one MCP read each — the three getters are separate
+    LOM surfaces). Apply maps Live's `display_name` back to a DB routing
+    reference via `sync/routing_names.py` (the SAME map push reads forward, so
+    the two never drift), then writes through `set_track_routing`. NULL routing
+    columns are treated as Live's default route, so a first pull of an unrouted
+    track is a no-op, not a churn of every NULL into an explicit default (D8).
   - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
     field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
     doesn't churn events.

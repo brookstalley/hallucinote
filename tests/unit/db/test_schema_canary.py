@@ -11,12 +11,19 @@ Most recent drift: ``devices.browser_path_json`` (Arc 7-tail / E3,
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 import pytest
 
 from hallucinote.db import connection as conn_mod
 from hallucinote.db import init_db
+from hallucinote.db.mutations.tracks import (
+    OUTPUT_ROUTING_KINDS,
+    INPUT_ROUTING_KINDS,
+    MONITORING_STATES,
+)
+from hallucinote.sync import routing_names
 
 
 @pytest.fixture(autouse=True)
@@ -228,6 +235,122 @@ def test_clip_audio_columns_present_on_fresh_db(tmp_path):
         assert _CLIP_AUDIO_COLUMNS <= cols
     finally:
         conn.close()
+
+
+_ROUTING_COLUMNS = {
+    "output_routing_kind", "output_routing_target_id", "output_routing_channel",
+    "input_routing_kind", "input_routing_target_id", "input_routing_channel",
+    "monitoring_state",
+}
+
+
+def _make_pre_routing_db(db_path) -> None:
+    """Build a full schema DB with the RTE-1K9T routing columns stripped from the
+    tracks CREATE TABLE — the exact shape of a DB built before track routing
+    landed. Same construction as ``_make_pre_audio_clip_db``: the real
+    ``schema.sql`` minus the one block, every other table byte-identical."""
+    schema = conn_mod._SCHEMA_PATH.read_text()
+    kept = []
+    skipping = False
+    for line in schema.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("-- RTE-1K9T: track signal routing"):
+            skipping = True
+            continue
+        if skipping:
+            # The monitoring_state CHECK's close is the last routing line.
+            if "'Off'))" in stripped:
+                skipping = False
+            continue
+        kept.append(line)
+    pre_schema = "".join(kept)
+    for marker in ("routing_kind", "routing_target_id", "routing_channel",
+                   "monitoring_state"):
+        assert marker not in pre_schema, f"routing not fully stripped ({marker})"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(pre_schema)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_routing_columns_land_on_pre_column_db_and_default_legacy_rows(tmp_path):
+    """RTE-1K9T's seven routing ALTERs land idempotently on a pre-column DB, a
+    legacy track written BEFORE the migration stays valid (every routing column
+    NULL), and the CHECK that rode the ALTER definition is enforced."""
+    db_path = tmp_path / "pre_routing.db"
+    _make_pre_routing_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Seed a legacy track in the pre-column shape (raw SQL is the point).
+        conn.execute("INSERT INTO songs (id, name) VALUES ('s1', 'legacy-song')")
+        conn.execute(
+            "INSERT INTO tracks (id, song_id, track_index, name) "
+            "VALUES ('t1', 's1', 1, 'Drums')"
+        )
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracks)")}
+        assert not (_ROUTING_COLUMNS & cols)
+
+        # Migration lands all seven; re-run is a no-op.
+        conn_mod._ensure_added_columns(conn)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracks)")}
+        assert _ROUTING_COLUMNS <= cols
+        conn_mod._ensure_added_columns(conn)
+        assert {r["name"] for r in conn.execute("PRAGMA table_info(tracks)")} == cols
+
+        # The legacy row is valid: every routing column reads NULL.
+        row = conn.execute("SELECT * FROM tracks WHERE id = 't1'").fetchone()
+        for col in _ROUTING_COLUMNS:
+            assert row[col] is None
+
+        # The CHECK rode the ALTER: bad kind / monitor rejected, valid accepted.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE tracks SET output_routing_kind = 'bogus' WHERE id = 't1'")
+        conn.execute("UPDATE tracks SET output_routing_kind = 'master' WHERE id = 't1'")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE tracks SET monitoring_state = 'Bogus' WHERE id = 't1'")
+    finally:
+        conn.close()
+
+
+def test_routing_columns_present_on_fresh_db(tmp_path):
+    """The dual-declaration convention's other half: a fresh init_db (schema.sql
+    path, no ALTER) carries the same seven routing columns."""
+    conn = init_db(tmp_path / "fresh_routing.db")
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracks)")}
+        assert _ROUTING_COLUMNS <= cols
+    finally:
+        conn.close()
+
+
+def test_routing_vocabulary_parity_across_all_four_sites():
+    """RTE-1K9T (Critic W3): the closed routing vocabulary is hand-synced across
+    FOUR sites — schema.sql's CHECK, the ``_ADDED_COLUMNS`` ALTER CHECK, the
+    mutator frozensets, and ``routing_names``' display maps. The schema canary
+    only checks column PRESENCE, not the CHECK vocab, so lock the vocab here: a
+    drift in any one site breaks this test."""
+    schema = conn_mod._SCHEMA_PATH.read_text()
+    alter = "\n".join(
+        defn for (table, _col, defn) in conn_mod._ADDED_COLUMNS if table == "tracks"
+    )
+
+    def _in_list(sql: str, column: str) -> set[str]:
+        m = re.search(rf"{column}\s+IN\s*\(([^)]*)\)", sql)
+        assert m, f"no CHECK IN-list found for {column}"
+        return {tok.strip().strip("'") for tok in m.group(1).split(",")}
+
+    # OUTPUT kind + MONITOR state: schema.sql == ALTER == mutator frozenset.
+    assert _in_list(schema, "output_routing_kind") == set(OUTPUT_ROUTING_KINDS)
+    assert _in_list(alter, "output_routing_kind") == set(OUTPUT_ROUTING_KINDS)
+    assert _in_list(schema, "monitoring_state") == set(MONITORING_STATES)
+    assert _in_list(alter, "monitoring_state") == set(MONITORING_STATES)
+    # routing_names' display maps cover exactly the non-'track' kinds.
+    assert set(routing_names.OUTPUT_KIND_DISPLAY_NAME) | {"track"} == set(OUTPUT_ROUTING_KINDS)
+    assert set(routing_names.INPUT_KIND_DISPLAY_NAME) | {"track"} == set(INPUT_ROUTING_KINDS)
 
 
 def test_canary_runs_once_per_process(tmp_path, monkeypatch):

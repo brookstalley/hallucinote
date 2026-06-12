@@ -81,7 +81,7 @@ In Claude Code, with the project loaded:
 /hallucinote:ableton-push <slug>
 ```
 
-The skill walks the song into Live across ten ordered phases. **Before the first phase**, it now runs a compat check:
+The skill walks the song into Live across thirteen ordered phases. **Before the first phase**, it now runs a compat check:
 
 - The skill probes Live for the installed-plugin list via the MCP browser.
 - It runs `python -m hallucinote.sync.compat check <slug> --installed-plugins …`.

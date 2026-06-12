@@ -54,6 +54,33 @@ CREATE TABLE IF NOT EXISTS tracks (
     solo                    INTEGER CHECK (solo IS NULL OR solo IN (0, 1)),
     arm                     INTEGER CHECK (arm IS NULL OR arm IN (0, 1)),
     color                   INTEGER,
+    -- RTE-1K9T: track signal routing (output + input) + monitor switch.
+    -- Single-valued per track (1:1) -> columns, not a side table (D4),
+    -- matching mixer-state-as-columns. The routing TARGET is a SEMANTIC
+    -- reference, never Live's display_name: *_routing_kind says WHAT the
+    -- target is and *_routing_target_id FKs the destination track when
+    -- kind='track' (the submaster bus) -- so it survives renames + re-pushes.
+    -- Push resolves the FK -> Live display_name; pull maps display_name back.
+    -- ON DELETE SET NULL: deleting a routed-to bus leaves a detectable
+    -- dangling state (kind='track', target_id=NULL) push treats as "target
+    -- gone", never a cascade-delete of the routing track itself.
+    --
+    -- CHECK asymmetry (D6): output_routing_kind + monitoring_state are CHECK-
+    -- constrained (closed, live-probed-certain domains); input_routing_kind is
+    -- NOT (input's domain is open/hardware-bound -- MIDI ports, interface
+    -- channels -- and a wrong CHECK is a destructive SQLite migration). The
+    -- mutator (set_track_routing) validates input_routing_kind in Python and
+    -- owns the cross-field invariant (target_id present <=> kind='track'),
+    -- which a column-level CHECK can't express.
+    output_routing_kind     TEXT CHECK (output_routing_kind IS NULL OR
+                                output_routing_kind IN ('master','track','sends_only','ext_out')),
+    output_routing_target_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    output_routing_channel  TEXT,
+    input_routing_kind      TEXT,
+    input_routing_target_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    input_routing_channel   TEXT,
+    monitoring_state        TEXT CHECK (monitoring_state IS NULL OR
+                                monitoring_state IN ('In','Auto','Off')),
     UNIQUE(song_id, track_index)
 );
 -- `kind` is the discriminator: 'midi' (default), 'audio', 'master', 'group'.

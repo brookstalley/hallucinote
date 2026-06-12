@@ -479,15 +479,12 @@ sections only via explicit `/backlog update` calls.
 
 ### Future / event-store era (P6 — far horizon, kept open)
 
-- **[RTE-1K9T]** Track routing: sidechain, parallel busses, input/output routing config
-  `effort: L · impact: S · area: routing · source: user · added: 2026-05-17 · status: open · stage: requirements · reviewed: 2026-06-09`
-
-  (migrated from legacy P6) Schema + sync work.
-
 - **[TRK-2H6K]** Group tracks (`tracks.parent_track_id` + Live group semantics)
-  `effort: L · impact: S · area: track · source: user · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
+  `effort: L · impact: S · area: track · source: user · added: 2026-05-17 · status: open · stage: idea · related: RTE-1K9T · reviewed: 2026-06-12`
 
   (migrated from legacy P6)
+
+  **DEFERRED (user, 2026-06-12) — gated on a hard LOM blocker.** Live's LOM has **NO `create_group_track`**: groups are a UI-only operation (Cmd+G) and cannot be created programmatically. The LOM only *reads* group membership (`track.group_track` exposes the parent), but it cannot *create* a group track. This is the gating fact for the item. Deferred in favor of **RTE-1K9T**'s plain-audio-bus routing (a plain audio PRE-MAIN bus + track output routing), which delivers the master-like bus this item was wanted for **without needing a group** — so the group-track capability is no longer on the critical path. Kept open at `stage: idea`; revisit only if the LOM gains a group-create surface or a group (vs a plain bus) becomes specifically required.
 
 - **[SYN-7T3M]** Pull-side sync follow-on
   `effort: M · impact: S · area: sync · source: builder · added: 2026-05-17 · status: open · stage: idea · reviewed: 2026-06-09`
@@ -666,7 +663,12 @@ sections only via explicit `/backlog update` calls.
 
 ## Promoted
 
-_(none — INS-7V2D shipped; see Archive.)_
+- **[RTE-1K9T]** Track routing: sidechain, parallel busses, input/output routing config — the **keystone** for master-like bus automation without `.als`
+  `effort: L · impact: M · area: routing · source: user · added: 2026-05-17 · status: promoted · stage: ready · accepted-by: @planning-session-2026-06-12 · related: MAW-4K7P, TPL-2D8K, CLP-AUD2, ENV-8H1T, TRK-2H6K · refs: .prawduct/artifacts/plans/RTE-1K9T/design.md, .prawduct/artifacts/plans/RTE-1K9T/build-plan.md · reviewed: 2026-06-12`
+
+  (migrated from legacy P6) Schema + sync work.
+
+  **PROMOTED + stage requirements→ready (user, 2026-06-12).** Discovery complete and **live-probed this session**; this is the user-chosen **keystone** delivering *"automation on a master-like bus without an `.als`."* The mechanism is a **plain audio PRE-MAIN bus + track output routing — NOT a group** (a group is impossible to create via LOM — see TRK-2H6K's deferral). A plain audio bus sits before the master, the source tracks route their output to it, and automation lives on that ordinary audio track (fully LOM-authorable), giving the master-like-bus behavior without ever needing to write a binary `.als` or create a group. Impact raised **S→M** on the keystone role. Design + build plan: `.prawduct/artifacts/plans/RTE-1K9T/design.md`, `.prawduct/artifacts/plans/RTE-1K9T/build-plan.md`. Related: **MAW-4K7P** (the no-`.als` alternative path / lossless master-automation sibling), **TPL-2D8K**, **CLP-AUD2**, **ENV-8H1T**, **TRK-2H6K** (the deferred group-track path this supersedes for the bus use-case). Claimed by this planning session.
 
 ## Archive
 

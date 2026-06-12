@@ -37,7 +37,7 @@ are the same.)
 
 | Skill | What it does |
 |---|---|
-| `/hallucinote:ableton-push` | Push the DB into Live through ten ordered phases (tempo → … → cues). Materializes a song from scratch or converges an existing set. |
+| `/hallucinote:ableton-push` | Push the DB into Live through thirteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed-automation → arrangement → cues). Materializes a song from scratch or converges an existing set. |
 | `/hallucinote:ableton-pull` | Pull manual Live edits (faders, mutes, sends, notes) back into the DB through the mutator path. |
 | `/hallucinote:song-snapshot` | Refresh a song's `captured_session.json` against the open set — instrument params, sends, device chains. (Not for clips/notes/automation.) |
 | `/hallucinote:snapshot-bake-recent-changes` | Bake mid-session device-parameter tweaks back into the DB so they survive the next push. Lighter than a full snapshot. |
@@ -46,8 +46,14 @@ are the same.)
 
 | Skill | What it does |
 |---|---|
-| `/hallucinote:mix-review` | Holistic, intent-aware mix review for a song — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* |
 | `/hallucinote:mix-sidechain` | Set up sidechain compression on a target track from a source track (capability-probed across native + third-party dynamics devices). |
+
+## Review
+
+| Skill | What it does |
+|---|---|
+| `/hallucinote:compose-review` | Compose-stage guided evaluation — reads the composition (sections, density, energy arc) and the symbolic melody/recurrence lenses *against* declared intent: *"you wanted the chorus to lift — does it?"* Use before the mix stage, or when you ask *"is the chorus landing?"* / *"what's missing?"* |
+| `/hallucinote:mix-review` | Holistic, intent-aware mix review — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* |
 
 ## Understand a song
 
@@ -62,11 +68,11 @@ These are for working on Hallucinote itself, not on a song.
 
 | Skill | What it does |
 |---|---|
-| `/critic` | Independent Critic review — quality governance for code changes. |
-| `/pr` | PR lifecycle — create, update, merge, or check status with an independent reviewer. |
-| `/janitor` | Periodic codebase maintenance — health check across VCS hygiene, code quality, docs, tests, dependencies. |
-| `/learnings` | Look up project learnings and preferences relevant to your current task. |
-| `/prawduct-doctor` | Product-repo setup, health check, and repair. |
+| `/prawduct:critic` | Independent Critic review — quality governance for code changes. |
+| `/prawduct:pr` | PR lifecycle — create, update, merge, or check status with an independent reviewer. |
+| `/prawduct:janitor` | Periodic codebase maintenance — health check across VCS hygiene, code quality, docs, tests, dependencies. |
+| `/prawduct:learnings` | Look up project learnings and preferences relevant to your current task. |
+| `/prawduct:doctor` | Repo health-check, repair, and maintenance for an onboarded Prawduct repo. |
 
 ---
 

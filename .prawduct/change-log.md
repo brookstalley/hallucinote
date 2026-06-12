@@ -4,6 +4,44 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
+
+<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs -->
+
+First-class track signal routing end-to-end (MCP → DB → push → pull) and the
+convention it unlocks: a plain audio **PRE-MAIN** bus you route everything
+through for master-like automation and sub-mixing — the no-`.als` path to an
+automatable "master" that Live's clip-less master/group/return strips can't
+provide. The push pipeline grows from twelve to thirteen phases.
+
+- **MCP** (chunks 01–02): `ableton_track` gains `set/get_output_routing`,
+  `set/get_input_routing`, `set/get_monitoring_state` on a shared
+  capability-probing helper (`handlers/_routing.py`) — by-`display_name`,
+  source-dependent, teaching errors that list the real targets, set handlers
+  echo the requested name (same-callback readback is unreliable).
+- **DB** (chunk 03): routing on `tracks` as seven nullable columns written
+  through `set_track_routing` (one `TRACK_ROUTING_SET` event). The target is a
+  **semantic reference** (`kind` + FK to `tracks.id`), never Live's display_name,
+  so a submaster link survives renames + re-pushes. CHECK asymmetry (D6): output
+  + monitor schema-constrained; the open input domain is mutator-validated.
+- **Push** (chunk 04): a `routing` phase after `mix`, before `devices`; dangling
+  targets alert + skip, never silently drop. No fingerprint gating (D7).
+- **Pull** (chunk 05): a manual reroute ingests back through the mutator;
+  `DB-NULL ≡ Live-default` avoids churning every default into explicit state (D8).
+- **Convention + docs** (chunk 06): the PRE-MAIN bus documented for song authors
+  (`song-authoring-conventions.md`) and for agents driving Live
+  (`ableton://guides/conventions`); a doc-drift-locked worked example.
+
+Per-chunk Critic across the build, a whole-plan `final` review (2 real
+silent-drop bugs caught + fixed — tombstone-protection registration for the new
+event kind, master-subject routing reject), and a cumulative + verify-resolutions
+chain (3 warnings resolved: a pull silent-override of a manual input revert, a
+self/master target validation gap, a stale plan comment). Group-track support
+(TRK-2H6K) stays deferred — group *creation* is LOM-blocked. One operator
+Live-smoke is enqueued (`operator-verification.md`): push materialization +
+manual-reroute round-trip in a real set, plus a probe of Live's non-track input
+default (V1 pull persists only track→track input until that's pinned).
+
 ## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
 
 <!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=merged -->

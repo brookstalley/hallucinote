@@ -1,6 +1,6 @@
 """Tests for W4-D: ``plan_push_song`` master orchestrator + ``plan_push_clips``.
 
-The orchestrator returns twelve ordered :class:`PushPhase` objects, each
+The orchestrator returns thirteen ordered :class:`PushPhase` objects, each
 carrying a ``plan_fn`` thunk that produces a fresh ``PushPlan`` from
 current DB state. Tests pin:
 
@@ -90,17 +90,18 @@ def session(conn, song):
 # ---------------------------------------------------------------------------
 
 
-def test_plan_push_song_returns_twelve_phases(conn, song, session):
+def test_plan_push_song_returns_thirteen_phases(conn, song, session):
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
-    assert len(phases) == 12
+    assert len(phases) == 13
 
 
 def test_plan_push_song_phase_names_and_order(conn, song, session):
-    """The twelve phase names are the contract between the planner and the
+    """The thirteen phase names are the contract between the planner and the
     push skill — renaming any breaks the skill prose. Order is
     load-bearing (see plan_push_song docstring). ``scenes`` runs
     immediately before ``clips`` (SYN-4P2D): session clip slots are scene
-    rows, so the set must have enough scenes before clip-create."""
+    rows, so the set must have enough scenes before clip-create. ``routing``
+    runs after ``mix`` and before ``devices`` (RTE-1K9T / D5)."""
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
     assert [p.name for p in phases] == [
         "tempo_map",
@@ -110,6 +111,7 @@ def test_plan_push_song_phase_names_and_order(conn, song, session):
         "scenes",
         "clips",
         "mix",
+        "routing",
         "devices",
         "envelopes",
         "performed_automation",
@@ -127,6 +129,16 @@ def test_plan_push_song_scenes_phase_precedes_clips(conn, song, session):
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
     names = [p.name for p in phases]
     assert names.index("scenes") < names.index("clips")
+
+
+def test_plan_push_song_routing_phase_between_mix_and_devices(conn, song, session):
+    """RTE-1K9T / D5 invariant: the ``routing`` phase runs after ``mix``
+    (routing is a mixer concern) and before ``devices``. Routing needs every
+    track linked (the source track and any track-route target are created in
+    the ``tracks`` phase, which runs well before this)."""
+    phases = push.plan_push_song(conn, song_id=song, session_id=session)
+    names = [p.name for p in phases]
+    assert names.index("mix") < names.index("routing") < names.index("devices")
 
 
 def test_plan_push_song_envelopes_phase_precedes_arrangement(conn, song, session):
@@ -290,7 +302,7 @@ def filled_song(conn, song, session):
 
 
 def test_end_to_end_drive_links_every_entity(conn, song, session, filled_song):
-    """Drive all twelve phases with fake-applied results between each.
+    """Drive all thirteen phases with fake-applied results between each.
     Verifies the contract: each phase, given that prior phases' results
     applied, produces a clean plan that strict-link-precondition planners
     accept without raising. Pin the post-drive link state to detect

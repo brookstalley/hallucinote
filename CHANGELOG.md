@@ -6,7 +6,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased work._
+**Track routing + the PRE-MAIN submaster bus (RTE-1K9T).** First-class track signal routing end-to-end (MCP → DB → push → pull), plus the convention it unlocks: a plain audio "PRE-MAIN" bus you route everything through for master-like automation and sub-mixing — the no-`.als` path to an automatable master that Live's clip-less master/group/return strips can't provide. The push pipeline grows from twelve to thirteen phases.
+
+### Added — track input/output routing + monitor state
+
+- **MCP** — `ableton_track` gains `set_output_routing` / `get_output_routing` / `set_input_routing` / `get_input_routing` / `set_monitoring_state` / `get_monitoring_state`, on a shared capability-probing helper (`handlers/_routing.py`). Targets resolve by Live `display_name` against the source track's own available set (source-dependent), with teaching errors that list the real options; the set handlers echo the requested name (same-callback readback is unreliable).
+- **DB** — routing is modeled on `tracks` as seven nullable columns (output/input routing `kind` + FK `target_id` + `channel`, plus `monitoring_state`) written through the new `set_track_routing` mutator (one `TRACK_ROUTING_SET` event). The routing target is a **semantic reference** (`kind` + FK to `tracks.id` when `kind='track'`), never Live's `display_name`, so a submaster link survives renames + re-pushes. CHECK asymmetry (D6): output + monitor domains are schema-CHECK-constrained; the open, hardware-bound input domain is mutator-validated (extensible without a destructive migration).
+- **Push** — a new `routing` phase materializes the DB routing in Live (after `mix`, before `devices`), resolving each semantic reference to the Live `display_name` the routing actions expect; a dangling target (the FK's `ON DELETE SET NULL` state) alerts and is skipped, never silently dropped.
+- **Pull** — a manual reroute in Live ingests back through the mutator (output routing, a track→track input, and monitor state). `DB-NULL ≡ Live-default` so a first pull of an unrouted track is a no-op, not a churn of every default into explicit state.
+
+### Added — the PRE-MAIN submaster convention + agent guidance
+
+- **`docs/song-authoring-conventions.md`** documents authoring the bus (create audio bus → route instrument outputs to it → bus → master → Monitor='In'), when to reach for it instead of the master, and the other patterns it unlocks (sub-mix/group replacement — Live groups aren't LOM-creatable — parallel compression, FX pre-busses). The **automation-fidelity caveat** (perform-fidelity today; lossless gated on CLP-AUD2) is linked, not restated.
+- **MCP conventions guide** (`ableton://guides/conventions`) carries the same steering for agents driving Live directly.
+
+### Verified
+
+- Suite green (3472 passing / 2 skipped). New coverage spans the MCP routing actions, the DB mutator + routing invariants, the push planner + phase order, the pull apply + round-trip, a pre-routing-DB migration + a four-site vocabulary parity lock, and a doc-drift-locked worked example of the convention.
+- Per-chunk Critic across the build, plus a whole-plan `final`-mode review (0 blocking; 4 warnings resolved, two of them real silent-drop bugs the cross-cutting review surfaced).
+
+### Notes
+
+- Group-track support (TRK-2H6K) remains deferred — group *creation* is LOM-blocked and a group offers no automation advantage over the routing bus.
+- One operator Live-smoke is enqueued (`.prawduct/operator-verification.md`): the push materialization + manual-reroute round-trip in a real set, plus a probe of Live's non-track input default (V1 pull persists only track→track input until that's pinned).
 
 ## [1.3.2] — 2026-05-23
 

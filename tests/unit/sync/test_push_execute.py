@@ -194,11 +194,11 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The twelve phases are present, in order.
+    # The thirteen phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "devices", "envelopes",
+        "scenes", "clips", "mix", "routing", "devices", "envelopes",
         "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
@@ -298,7 +298,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all twelve plans before dispatching)."""
+    (e.g. a refactor that pre-builds all thirteen plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 
@@ -527,7 +527,7 @@ def test_execute_halts_at_phase_boundary_after_clip_failure(
     assert by_name["clips"]["status"] == "halted"
     assert by_name["clips"]["calls_failed"] == 1
     # Mix / devices / etc. all marked pending.
-    for downstream in ("mix", "devices", "envelopes", "arrangement", "cues"):
+    for downstream in ("mix", "routing", "devices", "envelopes", "arrangement", "cues"):
         assert by_name[downstream]["status"] == "pending", downstream
     # tracks ran before the failure.
     assert by_name["tracks"]["status"] == "ok"
@@ -610,7 +610,7 @@ def test_execute_connection_loss_immediate_halt(
     assert state["outcome"] == "connection_lost"
     # Downstream phases pending.
     by_name = {p["name"]: p for p in state["phases"]}
-    for downstream in ("mix", "devices", "envelopes", "arrangement", "cues"):
+    for downstream in ("mix", "routing", "devices", "envelopes", "arrangement", "cues"):
         assert by_name[downstream]["status"] == "pending"
 
     # The errors file records the connection-class exception.

@@ -136,6 +136,7 @@ matching field names.
 | Session-view clip slot | `track.clip_slots[i].clip` | `ableton_clip(location='session', …)` | `clips` (with link to slot via `ableton_links`) | `create_clip` / `create_audio_clip` / `delete_clip` / `replace_clip_notes` (MIDI only) | `CLIP_CREATED` / `CLIP_DELETED` / `CLIP_NOTES_REPLACED` | `clip` |
 | Arrangement-view metadata | `Live.Song.Song.{loop_*, view, …}` | `ableton_arrangement(action='info'/'set_loop'/'control_view')` | — (no single DB home; tempo/sig live in maps; loop has no DB home today) | — | — | — |
 | Set-level state (the Live document) | `Live.Song.Song.{tempo, signature, master_track, transport}` | `ableton_session(action='info'/'set_tempo'/'set_signature'/'play'/'stop'/'seek'/'snapshot'/'set_master_property')` | varies (`tempo_map`, `time_signature_map`, master via `tracks(kind='master')`) | `set_master_*`, tempo/sig-map mutators | various | — |
+| Track routing / monitor (RTE-1K9T) | `track.{output,input}_routing_type` + `current_monitoring_state` | `ableton_track(action='set_output_routing'/'set_input_routing'/'set_monitoring_state')` | `tracks.{output,input}_routing_kind/_target_id/_channel`, `tracks.monitoring_state` | `set_track_routing` | `TRACK_ROUTING_SET` | — (uses the `track` link) |
 | Sync session (DB↔Live binding) | — | — | `ableton_sessions` + `ableton_links` | `create_ableton_session`, link mutators | — | — |
 
 ## Forbidden / loaded terms

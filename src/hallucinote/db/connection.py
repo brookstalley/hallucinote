@@ -200,6 +200,37 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("clips", "warp_mode", "INTEGER"),
     ("clips", "start_marker", "REAL"),
     ("clips", "end_marker", "REAL"),
+    # RTE-1K9T: track signal routing (output + input) + monitor switch (D6).
+    # Existing rows get NULL across all seven (no routing authored) -- the
+    # DEFAULT-NULL keeps every pre-column track valid. The routing target is a
+    # SEMANTIC reference (kind + FK target_id + channel), never Live's
+    # display_name; see the tracks block in schema.sql + set_track_routing.
+    # target_id self-FKs `tracks` (the requests.parent_id precedent — a
+    # self-referential FK added via ALTER) with ON DELETE SET NULL.
+    # CHECK asymmetry: output_routing_kind + monitoring_state are CHECK-
+    # constrained (closed domains); input_routing_kind is plain TEXT (open
+    # hardware-bound domain — the mutator validates). Keep each CHECK clause
+    # in sync with schema.sql's CREATE TABLE by hand: the canary only verifies
+    # column *presence* (PRAGMA table_info names), NOT the CHECK-clause text,
+    # so a divergent CHECK between the fresh-DB (schema.sql) and migrated-DB
+    # (this ALTER) paths would NOT be caught here.
+    (
+        "tracks",
+        "output_routing_kind",
+        "TEXT CHECK (output_routing_kind IS NULL OR "
+        "output_routing_kind IN ('master','track','sends_only','ext_out'))",
+    ),
+    ("tracks", "output_routing_target_id", "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
+    ("tracks", "output_routing_channel", "TEXT"),
+    ("tracks", "input_routing_kind", "TEXT"),
+    ("tracks", "input_routing_target_id", "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
+    ("tracks", "input_routing_channel", "TEXT"),
+    (
+        "tracks",
+        "monitoring_state",
+        "TEXT CHECK (monitoring_state IS NULL OR "
+        "monitoring_state IN ('In','Auto','Off'))",
+    ),
 )
 
 

@@ -31,6 +31,7 @@ from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
+from ._routing import resolve_routing_write, routing_surface_fields
 from .display_value import resolve_continuous_write
 
 
@@ -1152,35 +1153,6 @@ def _looks_like_sidechain_param(name: str) -> bool:
     return any(hint in lower for hint in _SIDECHAIN_NAME_HINTS)
 
 
-def _find_routing_by_display_name(
-    available: Any, display_name: str
-) -> Any | None:
-    """Walk a Live RoutingTypeVector / RoutingChannelVector finding
-    the first entry whose ``display_name`` matches exactly.
-
-    Returns None when not found — caller composes a teaching error
-    with the available names listed.
-    """
-    if available is None:
-        return None
-    for entry in available:
-        if getattr(entry, "display_name", "") == display_name:
-            return entry
-    return None
-
-
-def _enumerate_available(available: Any) -> list[str]:
-    """Walk a routing vector and collect display_names for teaching errors."""
-    if available is None:
-        return []
-    out: list[str] = []
-    for entry in available:
-        dn = getattr(entry, "display_name", None)
-        if dn is not None:
-            out.append(dn)
-    return out
-
-
 def set_input_routing_handler(
     context: LiveContext,
     *,
@@ -1226,33 +1198,22 @@ def set_input_routing_handler(
             "'get_parameters') to discover names)."
         )
 
-    matched_type = _find_routing_by_display_name(
-        available_types, type_display_name
+    # Resolve type AND channel before writing either, so an unknown channel
+    # never leaves the type reroute half-applied to Live (atomic set).
+    matched_type, matched_channel = resolve_routing_write(
+        available_types=available_types,
+        type_display_name=type_display_name,
+        available_channels=getattr(dev, "available_input_routing_channels", None),
+        channel_display_name=channel_display_name,
+        type_label="input routing type",
+        channel_label="input routing channel",
+        missing_channel_api_msg=(
+            "device exposes input_routing_type but not "
+            "input_routing_channel — cannot set channel_display_name"
+        ),
     )
-    if matched_type is None:
-        raise ValueError(
-            f"input routing type {type_display_name!r} not in available "
-            f"types {_enumerate_available(available_types)!r}"
-        )
     dev.input_routing_type = matched_type
-
-    matched_channel = None
-    if channel_display_name is not None:
-        available_channels = getattr(dev, "available_input_routing_channels", None)
-        if available_channels is None:
-            raise NotImplementedError(
-                f"device exposes input_routing_type but not "
-                f"input_routing_channel — cannot set channel_display_name"
-            )
-        matched_channel = _find_routing_by_display_name(
-            available_channels, channel_display_name
-        )
-        if matched_channel is None:
-            raise ValueError(
-                f"input routing channel {channel_display_name!r} not in "
-                f"available channels "
-                f"{_enumerate_available(available_channels)!r}"
-            )
+    if matched_channel is not None:
         dev.input_routing_channel = matched_channel
 
     result: dict[str, Any] = {
@@ -1286,10 +1247,6 @@ def get_input_routing_handler(
     )
     dev = _resolve_device(parent, device_index)
     available_types = getattr(dev, "available_input_routing_types", None)
-    current_type = getattr(dev, "input_routing_type", None)
-    available_channels = getattr(dev, "available_input_routing_channels", None)
-    current_channel = getattr(dev, "input_routing_channel", None)
-
     has_routing = available_types is not None
     result: dict[str, Any] = {
         "device_index": device_index,
@@ -1297,16 +1254,12 @@ def get_input_routing_handler(
         "parent_kind": kind,
     }
     if has_routing:
-        result["current_type"] = (
-            getattr(current_type, "display_name", None)
-            if current_type is not None else None
-        )
-        result["available_types"] = _enumerate_available(available_types)
-        result["current_channel"] = (
-            getattr(current_channel, "display_name", None)
-            if current_channel is not None else None
-        )
-        result["available_channels"] = _enumerate_available(available_channels)
+        result.update(routing_surface_fields(
+            current_type=getattr(dev, "input_routing_type", None),
+            available_types=available_types,
+            current_channel=getattr(dev, "input_routing_channel", None),
+            available_channels=getattr(dev, "available_input_routing_channels", None),
+        ))
     result.update(_parent_address(kind, idx))
     return result
 

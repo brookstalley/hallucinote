@@ -162,11 +162,14 @@ def loaded_actions():
 _EXPECTED_TRACK_ACTIONS = {
     "help", "list", "info", "create", "delete", "rename",
     "set_property", "get_property", "set_send", "get_sends",
+    "set_output_routing", "get_output_routing",
+    "set_input_routing", "get_input_routing",
+    "set_monitoring_state", "get_monitoring_state",
     "deletion_status",
 }
 
 
-def test_track_registers_eleven_actions(loaded_actions):
+def test_track_registers_seventeen_actions(loaded_actions):
     names = {a.name for a in schema.actions_for("ableton_track")}
     assert names == _EXPECTED_TRACK_ACTIONS
 
@@ -721,3 +724,500 @@ def test_deletion_status_marks_nonexistent_indices(loaded_actions):
     rows = {r["track_index"]: r for r in resp.result["tracks"]}
     assert rows[1]["present"] is True
     assert rows[99]["present"] is False
+
+
+# ---------- output routing ----------
+
+
+class _Routing:
+    """Mirrors Live's RoutingType / RoutingChannel — only ``display_name`` is
+    needed by the handlers. Matched by display_name, never object identity:
+    Live re-wraps these on every access, so two wrappers for the same routing
+    target won't be ``is``-equal."""
+
+    def __init__(self, name: str):
+        self.display_name = name
+
+
+def _track_with_output_routing(
+    name: str = "Inst",
+    *,
+    targets: tuple[str, ...] = ("Ext. Out", "Main", "PRE-MAIN", "Sends Only"),
+    channels: tuple[str, ...] = ("Pre FX", "Post FX", "Post Mixer", "Track In"),
+    current_type: str = "Main",
+    current_channel: str = "Post Mixer",
+) -> FakeTrack:
+    """A FakeTrack exposing Live's output_routing_* surface — opt-in like the
+    device sidechain fakes. The base FakeTrack omits these attrs so the
+    has_output_routing=False path stays testable. Default targets mirror the
+    live-probed audio-track set (Ext. Out / Main / <bus> / Sends Only)."""
+    t = FakeTrack(name=name, kind="audio")
+    t.available_output_routing_types = [_Routing(n) for n in targets]
+    t.available_output_routing_channels = [_Routing(n) for n in channels]
+    t.output_routing_type = _Routing(current_type)
+    t.output_routing_channel = _Routing(current_channel)
+    return t
+
+
+def test_set_output_routing_finds_by_display_name(loaded_actions):
+    track = _track_with_output_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={"track_index": 1, "type_display_name": "PRE-MAIN"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # Resolved by display_name against the available vector (not by `is`).
+    assert track.output_routing_type.display_name == "PRE-MAIN"
+    assert resp.result["output_routing_type"] == "PRE-MAIN"
+    # No channel passed -> channel untouched, not echoed.
+    assert "output_routing_channel" not in resp.result
+
+
+def test_set_output_routing_with_channel(loaded_actions):
+    track = _track_with_output_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "Main",
+                "channel_display_name": "Post FX",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert track.output_routing_type.display_name == "Main"
+    assert track.output_routing_channel.display_name == "Post FX"
+    assert resp.result["output_routing_channel"] == "Post FX"
+
+
+def test_set_output_routing_unknown_type_lists_available(loaded_actions):
+    track = _track_with_output_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={"track_index": 1, "type_display_name": "Nonexistent"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    # The source track's OWN available targets are surfaced for teaching.
+    assert "PRE-MAIN" in err and "Main" in err
+
+
+def test_set_output_routing_unknown_channel_lists_available(loaded_actions):
+    track = _track_with_output_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "Main",
+                "channel_display_name": "Nope",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Post Mixer" in err  # available channels surfaced
+
+
+def test_set_output_routing_source_dependent_targets(loaded_actions):
+    """A bare MIDI track legitimately lacks audio-track targets (live-probed:
+    only 'Main' + 'Sends Only'). Routing it to an audio bus must fail loudly
+    with the track's ACTUAL options, not crash."""
+    midi_bus_less = _track_with_output_routing(
+        name="BareMIDI", targets=("Main", "Sends Only"),
+    )
+    ctx = FakeCtx(FakeSong(tracks=[midi_bus_less]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={"track_index": 1, "type_display_name": "PRE-MAIN"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Sends Only" in err and "Main" in err
+    assert "PRE-MAIN" not in err.split("not in available")[1]  # not an option here
+
+
+def test_set_output_routing_missing_api_raises_teaching_error(loaded_actions):
+    """A track family without the output_routing_* API (the master strip is
+    the case) fails loudly, not a silent no-op."""
+    bare = FakeTrack(name="NoRouting")  # base FakeTrack: no routing attrs
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={"track_index": 1, "type_display_name": "Main"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "output_routing" in (resp.error or "")
+
+
+def test_get_output_routing_returns_current_and_available(loaded_actions):
+    track = _track_with_output_routing(current_type="Main", current_channel="Post Mixer")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_output_routing",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    r = resp.result
+    assert r["has_output_routing"] is True
+    assert r["current_type"] == "Main"
+    assert "PRE-MAIN" in r["available_types"]
+    assert r["current_channel"] == "Post Mixer"
+    assert "Track In" in r["available_channels"]
+
+
+def test_get_output_routing_no_api_returns_false_no_raise(loaded_actions):
+    """Symmetric with the device capability probe: get_ returns
+    has_output_routing=False instead of raising when the API is absent."""
+    bare = FakeTrack(name="NoRouting")  # base FakeTrack: no routing attrs
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_output_routing",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_output_routing"] is False
+    assert "current_type" not in resp.result
+
+
+def test_set_output_routing_rejects_out_of_range_index(loaded_actions):
+    ctx = FakeCtx(FakeSong(tracks=[_track_with_output_routing()]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={"track_index": 99, "type_display_name": "Main"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "out of range" in (resp.error or "")
+
+
+# ---------- input routing ----------
+
+
+def _track_with_input_routing(
+    name: str = "Bus",
+    *,
+    sources: tuple[str, ...] = ("No Input", "Ext. In", "Drums", "Bass"),
+    channels: tuple[str, ...] = ("Pre FX", "Post FX", "Post Mixer"),
+    current_type: str = "No Input",
+    current_channel: str = "Post FX",
+    monitoring_state: int = 1,  # Auto
+) -> FakeTrack:
+    """A FakeTrack exposing Live's input_routing_* surface + monitor switch —
+    a receiving-bus fake. Base FakeTrack omits these so the absent-API paths
+    stay testable."""
+    t = FakeTrack(name=name, kind="audio")
+    t.available_input_routing_types = [_Routing(n) for n in sources]
+    t.available_input_routing_channels = [_Routing(n) for n in channels]
+    t.input_routing_type = _Routing(current_type)
+    t.input_routing_channel = _Routing(current_channel)
+    t.current_monitoring_state = monitoring_state
+    return t
+
+
+def test_set_input_routing_finds_by_display_name(loaded_actions):
+    track = _track_with_input_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={"track_index": 1, "type_display_name": "Drums"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert track.input_routing_type.display_name == "Drums"
+    assert resp.result["input_routing_type"] == "Drums"
+    assert "input_routing_channel" not in resp.result
+
+
+def test_set_input_routing_with_channel(loaded_actions):
+    track = _track_with_input_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "Bass",
+                "channel_display_name": "Pre FX",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert track.input_routing_type.display_name == "Bass"
+    assert track.input_routing_channel.display_name == "Pre FX"
+    assert resp.result["input_routing_channel"] == "Pre FX"
+
+
+def test_set_input_routing_unknown_type_lists_available(loaded_actions):
+    track = _track_with_input_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={"track_index": 1, "type_display_name": "Ghost"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Drums" in err and "Ext. In" in err
+
+
+def test_set_input_routing_missing_api_raises_teaching_error(loaded_actions):
+    bare = FakeTrack(name="NoRouting")
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={"track_index": 1, "type_display_name": "Drums"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "input_routing" in (resp.error or "")
+
+
+def test_get_input_routing_returns_current_and_available(loaded_actions):
+    track = _track_with_input_routing(current_type="No Input", current_channel="Post FX")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_input_routing",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    r = resp.result
+    assert r["has_input_routing"] is True
+    assert r["current_type"] == "No Input"
+    assert "Drums" in r["available_types"]
+    assert "Post FX" in r["available_channels"]
+
+
+def test_get_input_routing_no_api_returns_false_no_raise(loaded_actions):
+    bare = FakeTrack(name="NoRouting")
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_input_routing",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_input_routing"] is False
+    assert "current_type" not in resp.result
+
+
+# ---------- monitor state ----------
+
+
+def test_set_monitoring_state_in_round_trips(loaded_actions):
+    """Acceptance: a receiving bus can be set Monitor=In and read back."""
+    track = _track_with_input_routing(monitoring_state=1)  # starts Auto
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    set_resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_monitoring_state",
+            params={"track_index": 1, "state": "In"},
+        ),
+        context=ctx,
+    )
+    assert set_resp.ok is True, set_resp.error
+    assert set_resp.result["monitoring_state"] == "In"
+    # Side effect: Live's int enum, In == 0.
+    assert track.current_monitoring_state == 0
+    # Round-trip read.
+    get_resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_monitoring_state",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert get_resp.ok is True
+    assert get_resp.result["has_monitoring_state"] is True
+    assert get_resp.result["monitoring_state"] == "In"
+
+
+def test_set_monitoring_state_rejects_unknown_state(loaded_actions):
+    # The action schema's enum=('In','Auto','Off') means the dispatcher's
+    # enum gate rejects this before the handler runs (the handler's own
+    # ValueError is defense-in-depth for direct calls); either way the valid
+    # states are surfaced.
+    track = _track_with_input_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_monitoring_state",
+            params={"track_index": 1, "state": "Loud"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "In" in err and "Auto" in err and "Off" in err  # valid states listed
+
+
+def test_set_monitoring_state_missing_switch_raises(loaded_actions):
+    """Master / return tracks have no monitor switch — fail loudly."""
+    bare = FakeTrack(name="NoMonitor")  # no current_monitoring_state attr
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_monitoring_state",
+            params={"track_index": 1, "state": "In"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "current_monitoring_state" in (resp.error or "")
+
+
+def test_get_monitoring_state_no_switch_returns_false_no_raise(loaded_actions):
+    bare = FakeTrack(name="NoMonitor")
+    ctx = FakeCtx(FakeSong(tracks=[bare]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_monitoring_state",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_monitoring_state"] is False
+    assert "monitoring_state" not in resp.result
+
+
+@pytest.mark.parametrize("state,raw", [("In", 0), ("Auto", 1), ("Off", 2)])
+def test_set_monitoring_state_all_states_pin_raw_int(loaded_actions, state, raw):
+    """Every state maps to its documented Live int, and reads back as the name
+    — guards the In=0/Auto=1/Off=2 mapping in both directions."""
+    track = _track_with_input_routing(monitoring_state=99)  # sentinel start
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    set_resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_monitoring_state",
+            params={"track_index": 1, "state": state},
+        ),
+        context=ctx,
+    )
+    assert set_resp.ok is True, set_resp.error
+    assert track.current_monitoring_state == raw
+    get_resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_monitoring_state",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert get_resp.result["monitoring_state"] == state
+
+
+def test_get_monitoring_state_unknown_int_surfaces_raw(loaded_actions):
+    """An out-of-vocabulary int (a future Live enum shift) is not silently
+    lost: name is None but the raw value is surfaced for diagnosis."""
+    track = _track_with_input_routing(monitoring_state=7)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="get_monitoring_state",
+            params={"track_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["has_monitoring_state"] is True
+    assert resp.result["monitoring_state"] is None
+    assert resp.result["monitoring_state_raw"] == 7
+
+
+# ---------- atomicity: a bad channel must not half-apply the type ----------
+
+
+def test_set_output_routing_atomic_on_channel_failure(loaded_actions):
+    """If the channel name is invalid the output type reroute must NOT land —
+    otherwise an error response masks a half-mutated session."""
+    track = _track_with_output_routing(current_type="Main")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_output_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "PRE-MAIN",
+                "channel_display_name": "Bogus",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    # Type untouched — still the original target, not the requested PRE-MAIN.
+    assert track.output_routing_type.display_name == "Main"
+
+
+def test_set_input_routing_atomic_on_channel_failure(loaded_actions):
+    track = _track_with_input_routing(current_type="No Input")
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "Drums",
+                "channel_display_name": "Bogus",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert track.input_routing_type.display_name == "No Input"
+
+
+def test_set_input_routing_unknown_channel_lists_available(loaded_actions):
+    track = _track_with_input_routing()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_track", action="set_input_routing",
+            params={
+                "track_index": 1,
+                "type_display_name": "Drums",
+                "channel_display_name": "Nope",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "Post FX" in (resp.error or "")  # available channels surfaced

@@ -134,6 +134,21 @@ def test_conventions_guide_documents_chain_rebuild_pattern():
     )
 
 
+def test_conventions_guide_documents_pre_main_bus_routing():
+    """RTE-1K9T: agents must learn to route a master-like ride through a plain
+    audio PRE-MAIN bus instead of automating the clip-less master, that a summing
+    bus needs Monitor='In', and that busses are the sub-mix/grouping tool (Live
+    groups aren't LOM-creatable). Locks the routing best-practice guidance."""
+    content = _read_guide("conventions").lower()
+    assert "pre-main" in content, "guide should name the PRE-MAIN bus pattern"
+    assert "set_output_routing" in content, "guide should show the routing action"
+    assert "set_monitoring_state" in content and "'in'" in content, (
+        "guide should name the Monitor='In' requirement for a summing bus"
+    )
+    assert "master" in content, "guide should contrast the clip-less master"
+    assert "group" in content, "guide should name the sub-mix/grouping use"
+
+
 def test_scales_json_loads_with_expected_shape():
     raw = _read_reference_json("scales")
     data = json.loads(raw)

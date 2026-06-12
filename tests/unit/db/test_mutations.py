@@ -271,6 +271,24 @@ def test_set_track_routing_on_master_track_rejected(conn, song):
     assert Q.get_track(conn, mid)["monitoring_state"] is None
 
 
+def test_set_track_routing_rejects_self_target(conn, track):
+    """Critic W2: a track cannot route to itself — the pull resolver refuses to
+    produce a self-reference, so authoring one must be refused too."""
+    with pytest.raises(ValueError, match="cannot route to itself"):
+        M.set_track_routing(conn, track_id=track, output_routing_kind="track",
+                            output_routing_target_id=track)
+
+
+def test_set_track_routing_rejects_master_as_track_target(conn, song, track):
+    """Critic W2: route TO the master via kind='master', never as a kind='track'
+    target pointing at the master row (push can't address it as a track)."""
+    mid = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                         kind="master")
+    with pytest.raises(ValueError, match="is a master track"):
+        M.set_track_routing(conn, track_id=track, output_routing_kind="track",
+                            output_routing_target_id=mid)
+
+
 def test_set_track_routing_track_kind_requires_target(conn, track):
     with pytest.raises(ValueError, match="requires output_routing_target_id"):
         M.set_track_routing(conn, track_id=track, output_routing_kind="track")

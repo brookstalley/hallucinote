@@ -168,8 +168,8 @@ def _check_routing_enum(value: Any, allowed: frozenset[str], field: str) -> None
 
 
 def _validate_track_routing(
-    conn: sqlite3.Connection, *, song_id: str, changes: dict[str, Any],
-    merged: dict[str, Any],
+    conn: sqlite3.Connection, *, track_id: str, song_id: str,
+    changes: dict[str, Any], merged: dict[str, Any],
 ) -> None:
     """Validate the MERGED routing state, but only the parts the caller touched.
 
@@ -177,6 +177,12 @@ def _validate_track_routing(
     `changes`, so an unrelated update on a track whose target was deleted out
     from under it (FK ON DELETE SET NULL leaves kind='track', target_id=NULL —
     a legal dangling state) is never spuriously blocked.
+
+    A track-target is additionally constrained to a real routing target: not the
+    source track itself (a track never routes to itself) and not a master row
+    (route TO the master via kind='master', never as a kind='track' target). Both
+    mirror the source-side master reject — a reference the pull resolver refuses
+    to PRODUCE must not be authorable either, or push fails confusingly later.
     """
     if "output_routing_kind" in changes:
         _check_routing_enum(merged["output_routing_kind"], OUTPUT_ROUTING_KINDS,
@@ -203,8 +209,13 @@ def _validate_track_routing(
                 f"(got {kind_field}={kind_val!r})"
             )
         if target is not None:
+            if target == track_id:
+                raise ValueError(
+                    f"{target_field} {target!r} is the track itself; a track "
+                    "cannot route to itself"
+                )
             trow = conn.execute(
-                "SELECT song_id FROM tracks WHERE id = ?", (target,)
+                "SELECT song_id, kind FROM tracks WHERE id = ?", (target,)
             ).fetchone()
             if trow is None:
                 raise ValueError(
@@ -213,6 +224,11 @@ def _validate_track_routing(
             if trow["song_id"] != song_id:
                 raise ValueError(
                     f"{target_field} {target!r} belongs to a different song"
+                )
+            if trow["kind"] == "master":
+                raise ValueError(
+                    f"{target_field} {target!r} is a master track; route TO the "
+                    f"master via {kind_field}='master', not as a track target"
                 )
 
 
@@ -271,7 +287,10 @@ def set_track_routing(
     # Merge requested changes over current state; validate the MERGED row so a
     # partial update can never leave an inconsistent reference.
     merged = {f: (changes[f] if f in changes else row[f]) for f in _ROUTING_FIELDS}
-    _validate_track_routing(conn, song_id=row["song_id"], changes=changes, merged=merged)
+    _validate_track_routing(
+        conn, track_id=track_id, song_id=row["song_id"],
+        changes=changes, merged=merged,
+    )
     # Idempotent — diff per field; skip the event when no field changes.
     actual_changes = {k: v for k, v in changes.items() if row[k] != v}
     if not actual_changes:

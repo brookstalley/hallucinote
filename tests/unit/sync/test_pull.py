@@ -908,6 +908,39 @@ def test_apply_input_routing_arbitrary_not_persisted_v1(conn, song, session):
     assert Q.get_track(conn, tid)["input_routing_kind"] is None
 
 
+def test_apply_input_routing_revert_from_track_clears_stale_route(conn, song, session):
+    """Critic W1: a manual revert in Live of an AUTHORED track-input must not be
+    silently overridden on the next push. When the DB holds input_routing_kind=
+    'track' and Live now shows a non-track input, pull clears the stale route
+    (Ableton-authoritative) — even though V1 can't persist the new non-track value."""
+    bus = M.create_track(conn, song_id=song, track_index=1, name="Bus", kind="audio")
+    src = M.create_track(conn, song_id=song, track_index=2, name="Synth")
+    _link_track(conn, session=session, db_id=bus, ableton_index=1)
+    M.set_track_routing(conn, track_id=bus, input_routing_kind="track",
+                        input_routing_target_id=src)
+    # User reroutes the bus input to "No Input" by hand in Live.
+    results = [_result(f"track_input_routing:{bus}", _in_routing("No Input"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_track(conn, bus)
+    assert row["input_routing_kind"] is None
+    assert row["input_routing_target_id"] is None
+
+
+def test_apply_input_routing_revert_via_unmappable_clears_stale_route(conn, song, session):
+    """Critic W1, the ref-is-None path: a revert to an UNMAPPABLE input ("All
+    Ins") must ALSO clear an authored track-input, not just the fixed-kind path."""
+    bus = M.create_track(conn, song_id=song, track_index=1, name="Bus", kind="audio")
+    src = M.create_track(conn, song_id=song, track_index=2, name="Synth")
+    _link_track(conn, session=session, db_id=bus, ableton_index=1)
+    M.set_track_routing(conn, track_id=bus, input_routing_kind="track",
+                        input_routing_target_id=src)
+    results = [_result(f"track_input_routing:{bus}", _in_routing("All Ins"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    assert Q.get_track(conn, bus)["input_routing_kind"] is None
+
+
 # --- monitor state ---------------------------------------------------------
 
 

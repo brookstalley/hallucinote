@@ -832,22 +832,49 @@ def _apply_track_routing(
                 "not a known routing target or track in this song — skipping"
             )
             return
-        # INPUT, unmappable: an arbitrary MIDI / interface input (e.g. "All Ins",
-        # "3/4"). V1 does NOT persist non-track input (D6/D8) — and Live's input
-        # default is unprobed, so warning per track would spam every default
-        # input. Quietly count it as a no-op; the deferral is documented in D8.
-        out.no_ops += 1
-        return
-
-    live_kind, live_target = ref
+        # INPUT, unmappable (an arbitrary MIDI / interface input, e.g. "All Ins").
+        # Falls through to the non-track-input path below (clears a stale
+        # authored route; otherwise a quiet no-op).
+        live_kind, live_target = None, None
+    else:
+        live_kind, live_target = ref
 
     if direction == "input" and live_kind != "track":
-        # V1 pulls ONLY a track→track input. Fixed input kinds (ext_in /
-        # no_input / resampling) sit on Live's open/hardware-bound, unprobed
-        # input default, so a NULL≡default rule on them would risk churning
-        # every track — deferred until a live-probe pins Live's input defaults
-        # (D6/D8). A track-target input is never a default, so it falls through.
-        out.no_ops += 1
+        # V1 pulls ONLY a track→track input — fixed input kinds (ext_in /
+        # no_input / resampling) and arbitrary hardware inputs sit on Live's
+        # open/hardware-bound, unprobed default, so persisting them risks
+        # churning every track (D6/D8). BUT if the DB holds an AUTHORED input
+        # route and Live now shows a non-track input, the user changed it in
+        # Live: clear the stale route (Ableton-authoritative) so the next push
+        # doesn't SILENTLY re-assert it over the manual edit. A track that never
+        # had an authored input route is a quiet no-op (the common default case).
+        if row["input_routing_kind"] is None:
+            out.no_ops += 1
+            return
+        try:
+            M.set_track_routing(
+                conn,
+                track_id=track_id,
+                input_routing_kind=None,
+                input_routing_target_id=None,
+                input_routing_channel=None,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+        except ValueError as e:
+            out.warnings.append(
+                f"track {row['name']!r} input routing -> {current_type!r}: "
+                f"clearing the stale authored route was rejected ({e}); DB unchanged"
+            )
+            return
+        out.mutations += 1
+        out.details.append(
+            f"track {row['name']!r} input routing: cleared the authored "
+            f"{row['input_routing_kind']!r} route — Live now shows non-track "
+            f"{current_type!r}, which V1 doesn't persist (so it won't re-assert "
+            "the old route on the next push)"
+        )
         return
 
     db_kind = row[f"{direction}_routing_kind"]

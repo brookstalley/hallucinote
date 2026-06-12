@@ -476,10 +476,11 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). RTE-1K9T (track routing) planned
-# 2026-06-12 — discovery complete + live-probed; build pending in a fresh session on
-# `feature/rte-1k9t-track-routing`. DEV-6M2K shipped + live-verified + CLOSED (PR #162);
-# its plan dir is stale and may be deleted.
+# Active build plan pointer (.prawduct/-relative). RTE-1K9T (track routing) — all
+# chunks 01–06 DONE on `feature/rte-1k9t-track-routing`; code-complete + cumulative
+# Critic clean, opening the PR into develop. Only the operator Live-smoke remains
+# (enqueued in operator-verification.md). DEV-6M2K shipped + live-verified + CLOSED
+# (PR #162); its plan dir is stale and may be deleted.
 active_build_plan: artifacts/plans/RTE-1K9T/build-plan.md
 
 # =============================================================================

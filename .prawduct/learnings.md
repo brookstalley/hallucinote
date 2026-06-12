@@ -2,6 +2,28 @@
 
 Accumulated wisdom from building this product.
 
+## Threading a new param means making the test doubles faithful — not weakening tests
+
+**When you add a parameter to a function that tests stub out (a `send_fn`, a monkeypatched planner, any injected callable), the stubs break with `TypeError: unexpected keyword argument`. The fix is to EXTEND each double to mirror the real signature (`def send(req, *, read_timeout=None)`, `**kwargs`) — that makes the double MORE faithful to the thing it imitates, the opposite of test corruption. Reach for it before reaching for a conditional that skips the new arg.**
+
+ENV-8K2R #5 added `ToolCall.read_timeout` (forwarded to `client.send`) and ENV-2T9K added `plan_push_song(perform_slowdown_factor=...)`. Two 1-arg doubles broke — `_make_send_fn`'s `send(req)` and a `plan_without_scenes(conn, *, song_id, session_id)` monkeypatch. Both were resolved by widening the double to the real contract (`send(req, *, read_timeout=None)` recording the value; `plan_without_scenes(..., **kwargs)` forwarding through), and the `send` double additionally grew the `arc_count` field the real handler returns so the new apply-layer cross-check (#4) was exercised. The executor's own forwarding was written to pass the new kwarg ONLY when set, so the *non*-perform path still hits 1-arg doubles untouched — pick the conditional at the production boundary, the faithful-signature widening at the test boundary.
+
+**How to apply.** (1) After threading a param through a doubled seam, grep the test tree for the doubled callable's construction sites and update each signature to mirror the real one — don't special-case the production code to dodge old doubles. (2) If the double simulates a return shape (a fake handler response), add the new field the real producer now returns, or the consuming assertion never runs. (3) Widening a double to accept+record a new kwarg lets you ALSO assert it was forwarded — turn the break into coverage. (4) A faithful double tracks the real signature; a `getattr(args, "x", default)` fallback or a try/except-TypeError around the call is the smell that you weakened the seam instead.
+
+## A collision/ordering guarantee needs a test per visit-order, and a single pass can't encode "this class always wins"
+
+**When the rule is "class A always beats class B on a shared resource" (a recorded lane beats a re-record; an existing binding beats a new one), a single forward pass that claims-as-it-goes only enforces it when A happens to be visited first — the guarantee silently becomes order-dependent. Encode "A wins" as a PRE-PASS that claims all of A before B is processed, and test BOTH visit orders, not just the favorable one.**
+
+ENV-8K2R #3's first cut moved the duplicate-target claim before the fingerprint gate and "seeded skipped-unchanged targets too" — which reads like it protects the already-recorded lane, and the one test (skipped arc first) passed. But a CHANGED arc earlier in envelope order claimed the target first and recorded over the correct lane (alerted, but clobbered). The cumulative Critic caught it; the test's own docstring claimed "regardless of visit order" while only covering one order. Fix: a two-pass — Pass A claims every skipped lane, Pass B queues changed arcs against the now-complete claim set — plus the changed-first-order test.
+
+**How to apply.** (1) Write the order-independence test FIRST and in both directions — if the guarantee is "skipped wins," test skipped-first AND changed-first; a passing favorable-order test plus a confident docstring is exactly how the gap hides. (2) "Claim as you iterate" can't express "this class always wins" across a heterogeneous list — split into classify → claim-the-privileged-class → process-the-rest. (3) Beware a test docstring that asserts a property ("regardless of order") the test body doesn't exercise; that mismatch is a finding waiting for the Critic.
+
+## A "trivial" fix can key off a value another layer's policy depends on — trace the consumer first
+
+**Before applying a literal one-line fix, check whether the field it changes is read by a DIFFERENT layer's decision. ENV-8K2R #2 ("write interp(span_end) before end_gesture") was a clean endpoint fix for normal arcs — but unconditionally bumping `updates_written` from 0 to 1 would have defeated `record_perform_result`'s stale-lane gate (which treats updates_written==0 as "degenerate sub-tick window, don't trust automation_state, re-perform"). Reconciled by pinning the final value ONLY when the gesture actually ramped (`updates_written > 0`): fixes the normal-arc endpoint, preserves the degenerate-window safety. The backlog's literal instruction was right for the case it described and wrong two layers away.**
+
+**How to apply.** (1) When a fix mutates a returned/recorded field, grep for that field name across consumers before taking the literal change — a value that looks like a local counter may be a cross-layer signal. (2) "Do exactly what the backlog says" is not a license to skip the blast-radius check the backlog author may not have run. (3) The conditional that preserves the other layer's contract usually also reads as the more correct behavior (here: a sub-tick arc the perform path can't faithfully record SHOULD re-perform, not record a lone endpoint and mark itself done).
+
 ## Install/setup skills do filesystem mutations in tested Python, never hand-authored shell
 
 **A skill that copies, deletes, or edits files on the user's machine must call a tested, atomic Python helper (via a CLI subcommand), not hand-author `rsync`/`rm`/JSON-edit shell in the SKILL.md. The shell boundary is a footgun, and skill shell is untestable and non-atomic.**

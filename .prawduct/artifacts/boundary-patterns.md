@@ -50,7 +50,12 @@ When changing this surface:
   - `apply_push_results` takes `session_id` and writes bindings via
     `M.link_db_to_ableton`.
   - `ToolCall.key` is `"<kind>:<uuid>"` — the kind selects which link is
-    written when the result comes back.
+    written when the result comes back. Exception (ENV-9P4T): the
+    `perform_batch:<song>` key is ONE call whose result fans out to N
+    arc-results — `apply_push_results`' `perform_batch` branch iterates
+    `result["arcs"]` and correlates each to its envelope by the opaque
+    `arc_id` the handler echoes back (NOT by the call key), recording each
+    arc's performed-state independently on its own `automation_state`.
   - `PushPlan` carries four channels: `calls` (dispatched), `notes`
     (diagnostic — "nothing to push", "not linked yet"; NOT surfaced to the
     operator), `alerts` (SYN-9F2L — operator-actionable, non-fatal warnings),

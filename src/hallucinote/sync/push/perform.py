@@ -1,18 +1,21 @@
-"""Performed-automation push phase (ENV-7G4K).
+"""Performed-automation push phase (ENV-7G4K; ENV-9P4T single-pass batch).
 
 Master/group/return-side envelopes can't ride session clips; this phase
-gesture-records them into Live's arrangement automation via
-``ableton_automation(action='perform')``. The surface is write-only (no
-LOM read of arrangement automation), so the phase is fingerprint-gated:
-an arc is performed only when its authored fingerprint (target
-addressing + parameter_path + ordered breakpoints) differs from the one
-recorded at the last successful perform (``performed_automation`` table).
+gesture-records them into Live's arrangement automation via ONE
+``ableton_automation(action='perform_batch')`` call that records every
+changed arc in a single transport pass (per-parameter gesture windowing).
+The surface is write-only (no LOM read of arrangement automation), so the
+phase is fingerprint-gated: an arc enters the batch only when its authored
+fingerprint (target addressing + parameter_path + ordered breakpoints)
+differs from the one recorded at the last successful perform
+(``performed_automation`` table). Gating is data-safety as well as speed —
+an unchanged arc is never re-recorded, so a hand-edited Live lane survives.
 
 Visible Costs (design.md decision 2): performing is realtime — the
-transport PLAYS each arc's span, so every emitted call names its
-estimated wall-clock (span integrated across the authored tempo map)
-and the plan summary totals it. Skipped-unchanged arcs are listed, not
-silent.
+transport PLAYS once over the UNION span of the changed arcs, so the
+batched call names that union-span wall-clock (integrated across the
+authored tempo map) and a loud ``alert()`` enumerates every span the pass
+will record/overwrite. Skipped-unchanged arcs are listed, not silent.
 """
 from __future__ import annotations
 
@@ -222,6 +225,22 @@ def _arc_addressing(
     )
 
 
+def perform_target_key(args: dict[str, Any]) -> tuple:
+    """Identity of the Live parameter a perform arc rides, from its wire
+    addressing args — the key the planner's duplicate-target preflight dedups
+    on. MUST stay field-for-field identical to the handler's
+    ``_PreparedArc.addressing_key()`` (the mcp side): the planner preflight and
+    the handler's collision guard are two halves of one contract, and if they
+    drift the planner silently stops matching and a collision halts the whole
+    phase. A cross-package parity test pins them together.
+    """
+    return (
+        args.get("target_kind"), bool(args.get("master")),
+        args.get("track_index"), args.get("return_index"),
+        args.get("device_index"), args.get("parameter_name"),
+    )
+
+
 def envelope_fingerprint(
     envelope: sqlite3.Row, breakpoints: list[sqlite3.Row],
 ) -> str:
@@ -243,27 +262,41 @@ def plan_push_performed_automation(
     song_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Plan the perform pass: one ``ableton_automation(action='perform')``
-    call per perform-routed envelope whose fingerprint changed since the
-    last successful perform. Unchanged arcs are listed as skipped.
+    """Plan the perform pass: ONE
+    ``ableton_automation(action='perform_batch')`` call carrying every
+    perform-routed arc whose fingerprint changed since the last successful
+    perform (ENV-9P4T). The transport plays once over the union span with
+    per-parameter gesture windowing, instead of one playthrough per arc.
+    Unchanged arcs are fingerprint-gated out and listed as skipped — a
+    data-safety feature, not just a speed one: an unchanged authored arc is
+    never re-recorded, so a hand-edited Live lane survives.
 
-    Every emitted call's purpose names the arc and its estimated
-    wall-clock; the summary note states the transport will play and
-    totals the cost (Visible Costs).
+    Visible Costs: the call's purpose names the union-span wall-clock (one
+    pass, NOT the per-arc sum), and a loud operator-facing ``alert()``
+    enumerates every span the pass will record/overwrite.
     """
     plan = PushPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
     eligible = [
         env for env in envelopes
-        if classify_envelope_route(conn, env) == "perform"
+        if classify_envelope_route(conn, env, song_id=song_id) == "perform"
     ]
     if not eligible:
         plan.warn("no perform-routed envelopes for this song; nothing to perform")
         return plan
 
     segments = _tempo_segments(conn, song_id)
-    total_seconds = 0.0
     skipped: list[str] = []
+    arcs: list[dict[str, Any]] = []
+    # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
+    # alert and the union-span cost.
+    spans: list[tuple[str, float, float]] = []
+    # Addressing identity → first envelope id queued for it. Two changed arcs
+    # on ONE parameter can't both ride a single transport pass (the handler
+    # rejects the whole batch on a collision), so the planner keeps the first
+    # and loudly defers the rest — surfacing the authoring ambiguity instead
+    # of guessing or failing the entire phase.
+    queued_targets: dict[tuple, str] = {}
 
     for env in eligible:
         breakpoints = Q.get_breakpoints(conn, env["id"])
@@ -297,29 +330,47 @@ def plan_push_performed_automation(
             skipped.append(label)
             continue
 
-        seconds = _estimate_span_seconds(segments, span_start, span_end)
-        total_seconds += seconds
+        target_key = perform_target_key(args)
+        if target_key in queued_targets:
+            plan.alert(
+                f"performed-automation: arc {env['id']} ({label}) targets the "
+                f"same parameter as already-queued arc "
+                f"{queued_targets[target_key]} — two performed arcs can't ride "
+                "one parameter in a single pass; performing only the first. "
+                "Merge them into one envelope."
+            )
+            continue
+        queued_targets[target_key] = env["id"]
+
+        arcs.append({
+            "arc_id": env["id"],
+            **args,
+            "breakpoints": _breakpoints_for_mcp(breakpoints),
+        })
+        spans.append((label, span_start, span_end))
+
+    if arcs:
+        union_start = min(s for (_, s, _) in spans)
+        union_end = max(e for (_, _, e) in spans)
+        union_seconds = _estimate_span_seconds(segments, union_start, union_end)
         plan.add(ToolCall(
             tool="ableton_automation",
-            args={
-                "action": "perform",
-                **args,
-                "breakpoints": _breakpoints_for_mcp(breakpoints),
-            },
-            key=f"perform:{env['id']}",
+            args={"action": "perform_batch", "arcs": arcs},
+            key=f"perform_batch:{song_id}",
             purpose=(
-                f"perform {label}: beats {span_start:g}-{span_end:g} "
-                f"(~{seconds:.1f}s transport playback), "
-                f"{len(breakpoints)} breakpoint(s)"
+                f"perform {len(arcs)} arc(s) in ONE transport pass over "
+                f"beats {union_start:g}-{union_end:g} "
+                f"(~{union_seconds:.1f}s realtime playback)"
             ),
         ))
-
-    if plan.calls:
-        plan.warn(
-            f"performed-automation: {len(plan.calls)} arc(s) to perform — "
-            f"the transport WILL PLAY for ~{total_seconds:.1f}s total "
-            f"(realtime gesture recording); {len(skipped)} unchanged arc(s) "
-            "skipped"
+        span_list = "; ".join(
+            f"{label} [{s:g}-{e:g}]" for (label, s, e) in spans
+        )
+        plan.alert(
+            f"performed-automation: ONE transport pass over beats "
+            f"{union_start:g}-{union_end:g} (~{union_seconds:.1f}s realtime) "
+            f"WILL RECORD/OVERWRITE {len(arcs)} arc(s): {span_list}. "
+            f"{len(skipped)} unchanged arc(s) skipped."
         )
     for label in skipped:
         plan.warn(f"performed-automation: skipped (unchanged): {label}")
@@ -336,9 +387,10 @@ def record_perform_result(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str | None:
-    """Apply-layer hook for a successful ``perform:`` result. Records the
-    performed-state fingerprint for this (envelope, session) ONLY when the
-    handler verified the write (``automation_state == 1``); anything else
+    """Apply-layer hook for a single arc of a successful ``perform_batch``
+    result. Records the performed-state fingerprint for this (envelope,
+    session) ONLY when the handler verified the write
+    (``automation_state == 1``); anything else
     leaves the fingerprint unwritten so the next push retries the arc.
     Returns None when state was recorded, else a human-readable warning
     naming the arc and why — the caller surfaces it (never a silent skip).
@@ -356,6 +408,19 @@ def record_perform_result(
             "fingerprint left unwritten, the next push retries this arc. "
             "If it never verifies, check the parameter isn't "
             "automation-overridden or locked in Live."
+        )
+    # A verified state with zero value writes means the playhead crossed the
+    # arc's whole span between ramp ticks (sub-tick / degenerate window): the
+    # gesture opened and closed but nothing was recorded, so automation_state=1
+    # reflects the STALE pre-edit lane, not this arc. Don't trust it — leave
+    # the fingerprint unwritten so the next push re-performs. (updates_written
+    # absent → a caller that doesn't report it; don't second-guess that case.)
+    if result.get("updates_written") == 0:
+        return (
+            f"perform {envelope_id}: automation_state=1 but updates_written=0 "
+            "— the playhead crossed the arc's span between ticks, so no value "
+            "was recorded this pass and the '1' reflects a stale lane. "
+            "Fingerprint left unwritten; the next push retries this arc."
         )
     env = Q.get_envelope(conn, envelope_id)
     if env is None:

@@ -1224,8 +1224,10 @@ def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
 
 # ---------------------------------------------------------------------------
 # ENV-7G4K: envelope-target eligibility (supersedes the W10-F blanket refusal)
-# master/group hosts are perform-routed and now creatable; audio stays
-# refused until ENV-8H1T; the master keeps a semantic send_level refusal.
+# master/group hosts are perform-routed and creatable. ENV-9P4T: AUDIO hosts
+# are now creatable too — perform gives an audio track a continuous
+# arrangement ride (the per-clip session-audio-clip route stays CLP-AUD2,
+# refused at PUSH time). The master keeps a semantic send_level refusal.
 # ---------------------------------------------------------------------------
 
 
@@ -1296,33 +1298,35 @@ def test_create_envelope_send_level_refuses_master_target(conn, song):
     assert "no sends" in str(excinfo.value)
 
 
-def test_create_envelope_mixer_volume_refuses_audio_target(conn, song):
-    """Audio hosts stay refused until ENV-8H1T builds the session-audio-
-    clip envelope route. The message no longer teaches the sub-bus
-    workaround (master/group are directly authorable now)."""
+def test_create_envelope_mixer_volume_on_audio_succeeds_and_emits(conn, song):
+    """ENV-9P4T: an audio track's mixer_volume is now authorable — perform
+    gives it a continuous arrangement ride (was: ENV-8H1T blanket refusal at
+    create time). The per-clip-vs-continuous routing decision is the
+    planner's (it needs the song's clips), not this create-time gate."""
     audio = M.create_track(conn, song_id=song, track_index=3, name="Guitar",
                            kind="audio")
-    with pytest.raises(ValueError) as excinfo:
-        M.create_envelope(
-            conn, song_id=song, target_kind="mixer_volume",
-            target_track_id=audio,
-        )
-    msg = str(excinfo.value)
-    assert "audio" in msg
-    assert "ENV-8H1T" in msg
-    assert "sub-bus" not in msg
+    env_id = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=audio,
+    )
+    assert env_id
+    created = [r for r in _events(conn) if r["kind"] == E.ENVELOPE_CREATED]
+    assert len(created) == 1
+    payload = json.loads(created[0]["payload_json"])
+    assert payload["target_kind"] == "mixer_volume"
+    assert payload["target_track_id"] == audio
 
 
-def test_create_envelope_send_level_refuses_audio_target(conn, song):
+def test_create_envelope_send_level_on_audio_succeeds(conn, song):
+    """ENV-9P4T: an audio track has sends, and a clip-independent send ride
+    performs — so a send_level envelope on an audio host is authorable."""
     audio = M.create_track(conn, song_id=song, track_index=3, name="Guitar",
                            kind="audio")
     ret = M.create_return(conn, song_id=song, name="A-Reverb", position=1)
-    with pytest.raises(ValueError) as excinfo:
-        M.create_envelope(
-            conn, song_id=song, target_kind="send_level",
-            target_track_id=audio, target_send_return_id=ret,
-        )
-    assert "audio" in str(excinfo.value)
+    assert M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=audio, target_send_return_id=ret,
+    )
 
 
 def test_create_envelope_device_parameter_on_master_device_succeeds(conn, song):

@@ -258,9 +258,10 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # Key kinds that have no DB binding to record but are valid acks — the planner
 # emits them and the agent reports success/failure, but hallucinote has nothing
 # to write. Membership here is a contract: every key kind the planner emits
-# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or the explicit `perform`
-# branch in `apply_push_results` (ENV-7G4K performed-state recording), or
-# `apply_push_results` raises. This makes the dispatch surface auditable: when
+# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or the explicit
+# `perform_batch` branch in `apply_push_results` (ENV-9P4T per-arc
+# performed-state recording), or `apply_push_results` raises. This makes the
+# dispatch surface auditable: when
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
@@ -328,18 +329,19 @@ def apply_push_results(
         }
 
     Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding),
-    `_ACK_ONLY_KINDS` (no DB write), and the `perform:` branch (performed-
-    automation state). An unknown kind raises `ValueError` so a new
+    `_ACK_ONLY_KINDS` (no DB write), and the `perform_batch` branch (per-arc
+    performed-automation state). An unknown kind raises `ValueError` so a new
     planner-emitted key kind can't silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
 
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform:` branch — an ok wire call whose
-    handler could NOT verify the write (`automation_state != 1`) records
-    nothing, and the warning says so (never a silent skip; the next push
-    retries the arc). Callers must surface them.
+    Today these come from the `perform_batch` branch — for any arc whose
+    handler could NOT verify the write (`automation_state != 1`) the apply
+    layer records nothing for that arc and the warning says so (never a
+    silent skip; the next push retries just that arc). Callers must surface
+    them.
     """
     warnings: list[str] = []
     with transaction(conn):
@@ -354,30 +356,45 @@ def apply_push_results(
             if kind in _ACK_ONLY_KINDS:
                 continue
 
-            if kind == "perform":
-                # ENV-7G4K performed automation: success records the
-                # arc's fingerprint so the next push skips it. Gated on
-                # the handler's automation_state == 1 verification — the
-                # perform handler RETURNS a non-1 state rather than
-                # raising, and an unverified write must leave the
-                # fingerprint unwritten so the next push retries
-                # (record_perform_result owns that policy).
-                if not db_id:
-                    raise ValueError(
-                        f"push result key {key!r} missing envelope id "
-                        "after 'perform:'"
+            if kind == "perform_batch":
+                # ENV-9P4T single-pass batched performed automation: the
+                # handler returns a per-arc result list, each arc carrying
+                # its opaque `arc_id` (the envelope id the planner stamped)
+                # and its own `automation_state`. Each arc records its
+                # fingerprint INDEPENDENTLY, gated on ITS automation_state
+                # == 1 — one unverified arc must not block the others, and
+                # an unverified write leaves that arc's fingerprint
+                # unwritten so the next push retries just that arc
+                # (record_perform_result owns the per-arc policy). The
+                # perform_batch handler RETURNS a non-1 state, not a raise.
+                res = r.get("result") or {}
+                # A restore failure means the pass may have left the set
+                # ARMED (record_mode / a gesture / playhead not restored) —
+                # operator-actionable, never swallowed.
+                for failure in res.get("restore_failures", []):
+                    warnings.append(
+                        f"perform_batch: a transport-state restore step "
+                        f"FAILED ({failure}) — the Live set may be left armed "
+                        "or the playhead moved; check record_mode in Live."
                     )
-                perform_warning = record_perform_result(
-                    conn,
-                    envelope_id=db_id,
-                    session_id=session_id,
-                    result=r.get("result") or {},
-                    actor=actor,
-                    request_id=request_id,
-                    reason=reason,
-                )
-                if perform_warning is not None:
-                    warnings.append(perform_warning)
+                for arc in res.get("arcs", []):
+                    arc_eid = arc.get("arc_id")
+                    if not arc_eid:
+                        raise ValueError(
+                            f"perform_batch result arc missing 'arc_id' "
+                            f"(key={key!r}): {arc!r}"
+                        )
+                    perform_warning = record_perform_result(
+                        conn,
+                        envelope_id=arc_eid,
+                        session_id=session_id,
+                        result=arc,
+                        actor=actor,
+                        request_id=request_id,
+                        reason=reason,
+                    )
+                    if perform_warning is not None:
+                        warnings.append(perform_warning)
                 continue
 
             if kind in _LINK_KINDS:
@@ -407,6 +424,6 @@ def apply_push_results(
             raise ValueError(
                 f"unknown push result key kind {kind!r} (full key={key!r}). "
                 "Declare it in _LINK_KINDS / _ACK_ONLY_KINDS (or add a "
-                "dedicated branch like 'perform') in sync/push/plan.py."
+                "dedicated branch like 'perform_batch') in sync/push/plan.py."
             )
     return warnings

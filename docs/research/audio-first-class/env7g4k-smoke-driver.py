@@ -1,12 +1,16 @@
-"""ENV-7G4K S-7 smoke driver — performed automation end-to-end.
+"""ENV-7G4K S-7 / ENV-9P4T smoke driver — performed automation end-to-end.
 
 Run from the repo root: uv run python /tmp/env7g4k_smoke.py
 Live must be open on a set with: tracks[0] = a group track, >=1 return,
 an Auto Filter on the master chain. Versions must match (no bypass).
 
-Drives the REAL chunk-03 surfaces: plan_push_performed_automation →
-wire-execute each ToolCall → apply_push_results → re-plan (all-skip) →
-edit one arc → re-plan (only it) → execute → final all-skip.
+Drives the REAL surfaces: plan_push_performed_automation → wire-execute the
+ONE batched ``perform_batch`` ToolCall (ENV-9P4T: all changed arcs recorded
+in a single transport pass with per-parameter windowing) → apply_push_results
+→ re-plan (all-skip) → edit one arc → re-plan (only it, still batched) →
+execute → final all-skip. This doubles as the ENV-9P4T batched-perform live
+smoke (the two-overlapping-window probe in
+.prawduct/artifacts/plans/ENV-9P4T/api-notes.md is the focused complement).
 """
 from __future__ import annotations
 
@@ -18,13 +22,16 @@ from hallucinote.sync import push
 from hallucinote_mcp import client, wire
 
 DB = "/tmp/env7g4k_smoke.db"
-READ_TIMEOUT = 180
 
 
 def send(tool, action, **params):
+    # No read_timeout override — let client.send auto-resolve from the
+    # (tool, action) policy (perform_batch → unbounded). A hard-coded
+    # override here would mask a wrong default on the real push path, the
+    # exact trap the read-timeout learning was written about.
     return client.send(
         wire.Request(tool=tool, action=action, params=params),
-        connect_timeout=5, read_timeout=READ_TIMEOUT,
+        connect_timeout=5,
     )
 
 
@@ -58,9 +65,16 @@ def execute(plan):
     for c in plan.calls:
         params = {k: v for k, v in c.args.items() if k != "action"}
         resp = send(c.tool, c.args["action"], **params)
-        state = (resp.result or {}).get("automation_state")
-        print(f"    EXEC {c.key}: ok={resp.ok} automation_state={state}"
-              + (f" error={resp.error}" if resp.error else ""))
+        res = resp.result or {}
+        if "arcs" in res:  # perform_batch fan-out
+            states = {a.get("arc_id"): a.get("automation_state")
+                      for a in res["arcs"]}
+            print(f"    EXEC {c.key}: ok={resp.ok} arc_states={states}"
+                  + (f" error={resp.error}" if resp.error else ""))
+        else:
+            print(f"    EXEC {c.key}: ok={resp.ok} "
+                  f"automation_state={res.get('automation_state')}"
+                  + (f" error={resp.error}" if resp.error else ""))
         results.append({
             "key": c.key, "ok": resp.ok, "tool": c.tool,
             "result": resp.result, "error": resp.error,
@@ -140,16 +154,22 @@ def main():
         return push.plan_push_performed_automation(
             conn, song_id=song, session_id=session)
 
-    print("== PASS 1: initial perform (5 arcs, transport will play) ==")
+    print("== PASS 1: initial perform (5 arcs in ONE batched pass, "
+          "transport will play) ==")
     p1 = plan()
     show_plan("plan-1", p1)
-    if len(p1.calls) != 5:
-        raise SystemExit(f"FAIL: expected 5 calls, got {len(p1.calls)}")
+    if len(p1.calls) != 1:
+        raise SystemExit(f"FAIL: expected 1 batched call, got {len(p1.calls)}")
+    batch_arcs = p1.calls[0].args["arcs"]
+    if len(batch_arcs) != 5:
+        raise SystemExit(f"FAIL: expected 5 arcs in the batch, "
+                         f"got {len(batch_arcs)}")
     r1 = execute(p1)
     push.apply_push_results(conn, r1, session_id=session)
-    states = {r["key"]: (r["result"] or {}).get("automation_state") for r in r1}
-    bad = {k: v for k, v in states.items() if v != 1}
-    print(f"    pass-1 automation_states: {states}")
+    arc_states = {a["arc_id"]: a.get("automation_state")
+                  for a in (r1[0]["result"] or {}).get("arcs", [])}
+    bad = {k: v for k, v in arc_states.items() if v != 1}
+    print(f"    pass-1 arc automation_states: {arc_states}")
     if bad:
         raise SystemExit(f"FAIL: non-1 automation_state: {bad}")
 
@@ -169,11 +189,15 @@ def main():
     ])
     p3 = plan()
     show_plan("plan-3", p3)
-    if [c.key for c in p3.calls] != [f"perform:{arcs['master_vol']}"]:
+    if len(p3.calls) != 1:
+        raise SystemExit("FAIL: pass 3 should emit exactly one batched call")
+    p3_arcs = p3.calls[0].args["arcs"]
+    if [a["arc_id"] for a in p3_arcs] != [arcs["master_vol"]]:
         raise SystemExit("FAIL: pass 3 should re-perform exactly master_vol")
     r3 = execute(p3)
     push.apply_push_results(conn, r3, session_id=session)
-    if (r3[0]["result"] or {}).get("automation_state") != 1:
+    r3_arcs = (r3[0]["result"] or {}).get("arcs", [])
+    if not r3_arcs or r3_arcs[0].get("automation_state") != 1:
         raise SystemExit("FAIL: re-perform automation_state != 1")
 
     print("== PASS 4: final no-op ==")

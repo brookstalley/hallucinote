@@ -24,13 +24,50 @@ class LiveConnectionError(Exception):
     """Raised when the Remote Script side is unreachable."""
 
 
+# Read-timeout policy per (tool, action) — THE single source of truth for both
+# wire-recv paths (the server's agent-forward AND push_cli's direct dispatch),
+# so a long-running handler can't outrun the socket on one route while being
+# safe on the other (the ENV-9P4T blocker: perform_batch was safe on the
+# server route but the push route hit the 15s default and severed verification).
+# The default suits actions that return within Live's main-thread budget; a few
+# break it by design and need a wider (or no) window:
+#   - ableton_render(render): full-arrangement playback before responding
+#     (minutes) → unbounded; only the operator stopping playback ends it.
+#   - ableton_automation(perform_batch): plays the union span of all changed
+#     arcs in record (minutes at mix scale) → unbounded; the HANDLER owns the
+#     timeout via its own ramp deadline + finally-restore, so a socket cutoff
+#     here would discard the only verification this write-only surface has.
+#   - ableton_render(ensure_loaded): loads the analyzer onto 25+ surfaces, each
+#     a few seconds on the main thread → a generous BOUNDED ceiling so a stuck
+#     load still surfaces as a timeout (MCP-4T6Y).
+_DEFAULT_READ_TIMEOUT: float = 15.0
+_ENSURE_LOADED_READ_TIMEOUT: float = 180.0
+_READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
+    ("ableton_render", "render"): None,
+    ("ableton_automation", "perform_batch"): None,
+    ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
+}
+
+
+def read_timeout_for(tool: str, action: str) -> float | None:
+    """Select the socket read timeout for a (tool, action). ``None`` =
+    unbounded (block until the handler responds); a float = a bounded ceiling;
+    the default for everything else."""
+    return _READ_TIMEOUTS.get((tool, action), _DEFAULT_READ_TIMEOUT)
+
+
+# Sentinel: caller did not specify read_timeout → resolve from the policy by
+# (tool, action). Distinct from ``None``, which is an explicit "block forever".
+_UNSET_READ_TIMEOUT: Any = object()
+
+
 def send(
     request: Request,
     *,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     connect_timeout: float = 15.0,
-    read_timeout: float | None = 15.0,
+    read_timeout: float | None = _UNSET_READ_TIMEOUT,
 ) -> Response:
     """Send a request to the Remote Script; return the parsed response.
 
@@ -51,14 +88,17 @@ def send(
         accept within 15 s it's not coming back this call.
       - ``read_timeout`` bounds how long we wait for the response after the
         request lands on the wire. Long-running handlers (``ableton_render``
-        plays the entire arrangement before responding — minutes for a full
-        song) require a generous ceiling. ``None`` means "block forever";
-        the server-side dispatcher (``server.handle_tool_call``) passes
-        ``None`` for ``ableton_render(render)`` since the handler is
-        synchronous-on-completion. Default 15s matches every other action's
-        contract — those that don't block on transport should respond
-        within Live's main-thread budget.
+        plays the entire arrangement; ``ableton_automation(perform_batch)``
+        records the union span in realtime — minutes for either) require a
+        generous (or no) ceiling. **When the caller doesn't specify, it is
+        resolved from the (tool, action) policy** (``read_timeout_for``) so
+        BOTH wire-recv routes — the server's agent-forward and push_cli's
+        direct dispatch — get the same window without each caller re-deriving
+        it. An explicit value (incl. ``None`` = block forever) is honored as
+        passed; default for most actions is 15s (Live's main-thread budget).
     """
+    if read_timeout is _UNSET_READ_TIMEOUT:
+        read_timeout = read_timeout_for(request.tool, request.action)
     if not request.server_version:
         request = dataclasses.replace(request, server_version=__version__)
 
@@ -112,4 +152,4 @@ def _maybe_tuple(value: Any) -> tuple[str, ...] | None:
     return None
 
 
-__all__ = ["LiveConnectionError", "send"]
+__all__ = ["LiveConnectionError", "send", "read_timeout_for"]

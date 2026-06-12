@@ -152,5 +152,5 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 - Per-song test files use unique basenames (`test_<slug>_build.py`, not bare `test_build.py`). Wave 0 surfaced the collision the hard way.
 - Sections default to 8 bars each. The scaffold uses this for cue-point placement; the user can adjust constants in `build.py` afterwards.
 - Generators today assume 4/4. For non-4/4 songs, hand-author until meter-parametrized generators ship.
-- Master/group/return automation IS supported — author the envelope in `build.py`; push performs it into arrangement automation (transport plays in real time, fingerprint-gated). Audio-track envelopes are still refused (ENV-8H1T) — route the source to a sub-bus group track.
+- Master/group/return automation IS supported — author the envelope in `build.py`; push performs it into arrangement automation (transport plays in real time, fingerprint-gated). Plain MIDI/audio-track envelopes are also supported (ENV-9P4T): a song-spanning / clip-independent ride performs as a continuous arrangement lane; a within-one-clip ride routes through that session clip.
 - Within-section meter changes aren't supported. The meter map can only change between sections.

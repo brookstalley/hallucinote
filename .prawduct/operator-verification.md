@@ -153,3 +153,41 @@ Surface modules, so the real wire path needs a Live restart to exercise.
 4. **Composed-overrun check:** author a cue past the arrangement's end; push.
    Expect: cues phase HALTS PARTIAL with the "composed song length" message
    (naming the offending cue), NOT the runtime "past last_event_time".
+
+---
+
+## ENV-9P4T chunk 01 — single-pass batched perform: verify-api probe + Live smoke
+
+**Status:** CONFIRMED LIVE 2026-06-11 — the keystone per-parameter-windowing
+claim is verified on a real bridge (no longer symbolic-only). Bridge healed
+(`/ableton-mcp-install` re-vendored the Remote Script to `725742c1`, Live
+restarted, `/mcp` reconnected); the prior mismatch (server `c0b443e0` vs
+Remote Script `b0c3c347`) is gone. **No `.als` dump was needed** — seek-and-read
+of `DeviceParameter.value` plus each arc's `updates_written` settle the
+windowing without the LOM envelope read surface (full capture +
+method:
+`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`). **Visual change:** no.
+
+1. ~~**One-time setup (human):** `/ableton-mcp-install` + Live restart.~~
+   **DONE** — bridge version-matched; clean calls confirm the handshake.
+
+2. ~~**Two-window-in-one-pass correctness (the keystone).**~~ **CONFIRMED.**
+   `perform_batch [master_vol [0,64], return1_vol [16,48]]`: BOTH
+   `automation_state == 1`; `wall_clock 34.32 s` ≈ one union-span pass (not the
+   48 s per-arc sum). Windowing proven WITHOUT `.als`: at beat 8 the return
+   reads its MANUAL 0.85 (a flat-stamp would read 0.2), at beat 32 it reads the
+   live ramp (0.499 ≈ 0.5, the control), and `updates_written = 41` ≈ its
+   32-beat span (vs master's 81 over 64 beats) — the gesture was open only over
+   [16,48], bounding both edges.
+
+3. ~~**Achieved breakpoint density (Hz)**~~ **CAPTURED:** ~2.5 Hz per arc
+   (81/64 beats, 41/32 beats), identical under 2-param batching → no
+   main-thread starvation; within the ENV-7G4K ~2.5–3 Hz baseline. This is the
+   *attempted* rate; the seek-read trace reconstructs both ramps to <0.5% error.
+   The exact Live-*retained* count (post-thinning) is the only `.als`-only
+   residual — a Chunk 03 fidelity detail, NOT a gate item.
+
+4. **Safe batch ceiling** — NOT stressed (N=2 recorded cleanly; no contention
+   signal). A higher-N stress pass (`env7g4k-smoke-driver.py`, 5 arcs) remains
+   available if Chunk 02's 10+-track use case ever shows main-thread contention;
+   tracked as a non-blocking note, not a Chunk 01 gate.

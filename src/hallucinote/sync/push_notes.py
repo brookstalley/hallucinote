@@ -256,8 +256,8 @@ def push_notes(
                 conn, results_payload, session_id=session_id,
                 actor=actor, reason=reason or f"scoped notes push clip={cid}",
             )
-            # Notes pushes emit no perform: keys, so this is empty today —
-            # surfaced anyway so a future key kind can't be silently eaten.
+            # Notes pushes emit no perform_batch: keys, so this is empty today
+            # — surfaced anyway so a future key kind can't be silently eaten.
             for w in apply_warnings:
                 result.errors.append({"clip_id": cid, "name": name, "error": w})
 

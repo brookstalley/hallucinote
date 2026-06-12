@@ -361,21 +361,21 @@ For non-4/4 sections:
 
 ## Master, group, and return envelopes — performed automation
 
-Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records each arc into Live's arrangement automation by playing the transport through the arc's span while scripting the parameter.
+Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records ALL changed arcs in ONE transport pass (ENV-9P4T), playing through the union span of the changed arcs while scripting each parameter inside its own gesture window.
 
 What that means when you author one:
 
-- **Push takes real wall-clock.** Each changed arc plays its span in real time; the push plan names the estimate per arc (tempo-map-aware). A 16-bar master fade at 120 BPM is ~32s of transport playback.
+- **Push takes real wall-clock.** All changed arcs record in a single playthrough over their union span; the push plan names that union-span estimate (tempo-map-aware) and a loud alert lists every span it will overwrite. A 16-bar master fade at 120 BPM is ~32s of transport playback; adding a second overlapping arc costs no extra time (same pass).
 - **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
-- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped); an edited arc re-performs alone, replacing the prior recording over the same span.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
 
-## Audio-track envelopes (still refused)
+## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 
-**Mixer envelopes on audio tracks** can't be authored yet. The DB models audio session clips (CLP-AUD1 wave 1 — `create_audio_clip`), but the envelope routing change that lets them host envelopes is ENV-8H1T scope. Until that ships, workaround: route the source to a sub-bus group track and automate the group — group envelopes are performed (above).
+**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
 
-Long envelopes spanning multiple session clips (midi-track hosts) are also refused — author them with a per-section partition pattern (a future version may auto-partition). Performed arcs have no such limit; they're span-bounded, not clip-bounded.
+**Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
 
 ---
 

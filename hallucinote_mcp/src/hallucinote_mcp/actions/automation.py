@@ -232,71 +232,50 @@ register(
 
 
 # ---------------------------------------------------------------------------
-# perform — gesture-recorded arrangement automation (ENV-7G4K)
+# perform_batch — gesture-recorded arrangement automation, one transport
+# pass for N arcs with per-parameter windowing (ENV-9P4T; supersedes the
+# single-arc ENV-7G4K `perform`)
 # ---------------------------------------------------------------------------
 
 register(
     Action(
         tool="ableton_automation",
-        name="perform",
+        name="perform_batch",
         description=(
-            "Record an automation arc into Live's ARRANGEMENT automation "
-            "by performing it in realtime (gesture recording). The write "
-            "path for surfaces session clips can't host: master / group / "
-            "return mixer volume+pan, track/group sends, and device "
-            "parameters on master / track / return chains. The transport "
-            "PLAYS for the span's duration — wall-clock cost is "
-            "span / tempo. Write-only: verify via the returned "
-            "automation_state (1 = active) and playback; arrangement "
-            "automation has no LOM read surface. Breakpoint times are "
-            "absolute arrangement beats."
+            "Record N automation arcs into Live's ARRANGEMENT automation in "
+            "ONE transport pass (gesture recording with per-parameter "
+            "windowing). The write path for surfaces session clips can't "
+            "host: master / group / return mixer volume+pan, track/group "
+            "sends, and device parameters on master / track / return "
+            "chains. The transport plays ONCE over the union span "
+            "[min(start), max(end)] — each arc's gesture opens at its span "
+            "entry and closes at its exit, so a short arc never stamps a "
+            "flat value across the whole song. Wall-clock cost is "
+            "union-span / tempo (NOT the sum of per-arc spans). Write-only: "
+            "verify via each arc's returned automation_state (1 = active) "
+            "and playback; arrangement automation has no LOM read surface. "
+            "Breakpoint times are absolute arrangement beats."
         ),
         params=(
             ParamSpec(
-                name="target_kind", type="str",
-                enum=automation_handlers.PERFORM_TARGET_KINDS,
-            ),
-            ParamSpec(
-                name="breakpoints",
+                name="arcs",
                 type="list",
                 description=(
-                    "[{time_beats: float, value: float, "
-                    "curve?: linear|hold|fast|slow}, ...] — sorted, "
-                    "ABSOLUTE arrangement beats. Curve describes the "
-                    "transition to the next breakpoint; fast/slow are "
-                    "approximated by shaped interpolation during the "
-                    "ramp (recorded automation has no LOM curve "
-                    "objects)."
-                ),
-            ),
-            ParamSpec(
-                name="master", type="bool", required=False,
-                description=(
-                    "Target the master track (mixer_volume / mixer_pan / "
-                    "device_parameter). Exactly one of master / "
-                    "track_index / return_index."
-                ),
-            ),
-            ParamSpec(name="track_index", type="int", required=False, minimum=1),
-            ParamSpec(name="return_index", type="int", required=False, minimum=1),
-            ParamSpec(name="device_index", type="int", required=False, minimum=1),
-            ParamSpec(
-                name="parameter_name", type="str", required=False,
-                description="Required for target_kind='device_parameter'.",
-            ),
-            ParamSpec(
-                name="span_start_beats", type="float", required=False,
-                minimum=0.0,
-                description=(
-                    "Recorded span start (default: first breakpoint "
-                    "time). The transport seeks here before recording."
-                ),
-            ),
-            ParamSpec(
-                name="span_end_beats", type="float", required=False,
-                minimum=0.0,
-                description=(
-                    "Recorded span end (default: last breakpoint time)."
+                    "[{arc_id?: str, target_kind: "
+                    "mixer_volume|mixer_pan|send_level|device_parameter, "
+                    "<addressing>, breakpoints: [{time_beats, value, "
+                    "curve?}, ...]}, ...]. <addressing> per target_kind: "
+                    "mixer_volume / mixer_pan / device_parameter → exactly "
+                    "one of master=true / track_index / return_index "
+                    "(+ device_index + parameter_name for device_parameter); "
+                    "send_level → track_index (source) + return_index "
+                    "(destination). Each arc's span is [first, last] "
+                    "breakpoint time. arc_id is an opaque caller correlation "
+                    "id echoed back per arc so each arc's verification is "
+                    "independent. Curve (linear|hold|fast|slow) describes "
+                    "the transition to the next breakpoint; fast/slow are "
+                    "approximated by shaped interpolation (recorded "
+                    "automation has no LOM curve objects)."
                 ),
             ),
             ParamSpec(
@@ -310,35 +289,32 @@ register(
                 ),
             ),
         ),
-        handler=automation_handlers.perform_handler,
+        handler=automation_handlers.perform_batch_handler,
         # Sleeps and settle-polls between main-thread bouts; acquires
         # live_state_lock around the transport mutation (LOCK_USERS
         # audit in test_threading_invariants.py).
         runs_on_worker=True,
         example=(
-            "ableton_automation(action='perform', "
-            "target_kind='mixer_volume', master=True, "
-            "breakpoints=[{time_beats:64.0, value:0.85}, "
-            "{time_beats:96.0, value:0.4, curve:'slow'}])"
+            "ableton_automation(action='perform_batch', arcs=["
+            "{target_kind:'mixer_volume', master:true, breakpoints:["
+            "{time_beats:0.0, value:0.85}, {time_beats:64.0, value:0.4, "
+            "curve:'slow'}]}, {target_kind:'mixer_volume', return_index:1, "
+            "breakpoints:[{time_beats:16.0, value:0.2}, "
+            "{time_beats:48.0, value:0.8}]}])"
         ),
         tips=(
-            "Per-target_kind addressing: mixer_volume / mixer_pan / "
-            "device_parameter → exactly one of master=True / track_index "
-            "/ return_index (+ device_index + parameter_name for "
-            "device_parameter); send_level → track_index (source — "
-            "regular or group track) + return_index (destination "
-            "return). Master has no sends; return-host sends are not in "
-            "the wave-1 surface.",
-            "The transport plays the span in realtime — a 32-beat arc "
-            "at 120 BPM costs ~16 s of wall clock. Batch arcs and skip "
-            "unchanged ones (the Hallucinote push planner fingerprints "
-            "for exactly this).",
-            "automation_state in the response: 0 = no automation "
-            "recorded, 1 = active (success), 2 = overridden. A non-1 "
-            "result is returned, not raised — the caller owns the "
-            "failed-verification policy.",
-            "Re-performing a changed arc over the same span overwrites "
-            "the previous recording (Live punch-over semantics).",
+            "All arcs record in ONE playthrough over the union span — the "
+            "transport plays it once in realtime (a union span of 64 beats "
+            "at 120 BPM costs ~32 s of wall clock regardless of arc count). "
+            "Pass only the arcs that changed; the Hallucinote push planner "
+            "fingerprint-gates so unchanged arcs never re-record (and a "
+            "hand-edited lane survives).",
+            "Each result arc carries its own automation_state: 0 = no "
+            "automation recorded, 1 = active (success), 2 = overridden. A "
+            "non-1 result is returned, not raised — the caller owns the "
+            "per-arc failed-verification policy.",
+            "Re-performing a changed arc over the same span overwrites the "
+            "previous recording (Live punch-over semantics).",
         ),
     )
 )

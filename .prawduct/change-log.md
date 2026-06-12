@@ -4,6 +4,38 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
+
+<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push -->
+
+Un-gates master-strip device loading. DEV-2M9K shipped the verdict "Live 12.4
+has no LOM path to load a device onto the master" (`song.view.selected_track =
+master` silently no-ops) and gated three surfaces; that premise is **refuted on
+Live 12.4.2** — the master selection *sticks*, so `select master →
+browser.load_item → delete_device` works end-to-end (live-proven; research spike
+in `.prawduct/artifacts/research-spike-automation-ingest.md`).
+
+The fix is pure subtraction — master now flows through the same generic path as
+track/return:
+- `handlers/device.py`: drop `load_handler`'s master refusal (the existing
+  silent-noop post-condition catches a hypothetical mis-load).
+- `analyzer/setup.py`: drop the master detect-only `RuntimeError` — the master
+  analyzer auto-loads like any surface.
+- `sync/push/devices.py`: drop the SYN-2M9P configure-only skip — an unlinked
+  master device emits `device.load(master=True)`, links via the `device:<id>`
+  key, and the SYN-9F2L convergence re-plan writes its params. No more
+  PARTIAL-by-master halt.
+- `server.py`: the `ableton_render` tool description no longer says master is
+  place-by-hand.
+
+Tests are corrected, not weakened — the test *double* (`FakeSongView`) encoded
+the refuted premise and now models Live 12.4.2; the `test_syn_2m9p_master_load.py`
+→ `test_dev_6m2k_master_load.py` rewrite adds multi-hop execute-path coverage.
+Live corroboration of the integrated paths (native non-M4L device, full
+master-chain push, fresh-set render auto-load) is enqueued in
+`.prawduct/operator-verification.md`; DEV-6M2K stays open until that lands, and
+the DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes then.
+
 ## 2026-06-12 — ENV-9P4T: performed automation at mix scale
 
 <!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=merged -->

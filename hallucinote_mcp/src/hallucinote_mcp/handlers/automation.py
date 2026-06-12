@@ -1768,6 +1768,14 @@ def perform_batch_handler(
 
     union_start = min(a.span_start for a in prepared)
     union_end = max(a.span_end for a in prepared)
+    # Write-only realtime op — leave server-side evidence of the pass so a
+    # lost wire response or a windowing question has something to read.
+    logger.info(
+        "perform_batch: recording %d arc(s) in one pass over union span "
+        "[%g, %g]: %s",
+        len(prepared), union_start, union_end,
+        [(a.arc_id, a.target_kind, a.span_start, a.span_end) for a in prepared],
+    )
 
     with context.live_state_lock:
         # Bout 1 — resolve every arc's param. Addressing errors land here,
@@ -1993,6 +2001,13 @@ def perform_batch_handler(
     }
     if restore_failures:
         result["restore_failures"] = restore_failures
+    logger.info(
+        "perform_batch complete: %.1fs wall-clock, per-arc "
+        "(automation_state, updates_written): %s%s",
+        result["wall_clock_s"],
+        {a.arc_id: (a.automation_state, a.updates_written) for a in prepared},
+        f", restore_failures={restore_failures}" if restore_failures else "",
+    )
     return result
 
 

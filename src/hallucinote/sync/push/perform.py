@@ -315,7 +315,7 @@ def plan_push_performed_automation(
             continue
 
         target_key = (
-            args.get("target_kind"), args.get("master"),
+            args.get("target_kind"), bool(args.get("master")),
             args.get("track_index"), args.get("return_index"),
             args.get("device_index"), args.get("parameter_name"),
         )

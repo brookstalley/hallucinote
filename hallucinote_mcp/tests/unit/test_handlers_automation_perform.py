@@ -390,6 +390,28 @@ def test_perform_batch_windows_overlapping_arcs():
     assert b_param.own[0] == ("begin",) and b_param.own[-1] == ("end",)
 
 
+def test_perform_batch_degenerate_window_reports_zero_writes():
+    """A tiny window the playhead jumps in a single tick opens+closes with
+    ZERO value writes — the handler reports updates_written==0 even though
+    end_gesture flipped automation_state to 1. The apply layer treats that as
+    a stale-lane non-verification (see test_push_perform); here we prove the
+    handler actually produces the degenerate datum."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 60.0  # huge step jumps the tiny window whole
+    result = perform_batch_handler(ctx, arcs=[
+        {"arc_id": "driver", "target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(0.0, 0.2), _bp(100.0, 0.9)]},
+        {"arc_id": "tiny", "target_kind": "mixer_volume", "return_index": 1,
+         "breakpoints": [_bp(48.0, 0.1), _bp(50.0, 0.8)]},
+    ])
+    by_id = {a["arc_id"]: a for a in result["arcs"]}
+    assert by_id["tiny"]["updates_written"] == 0
+    assert by_id["tiny"]["span_beats"] == [48.0, 50.0]
+    # end_gesture flipped the (stale) lane to 1 — exactly the trap the apply
+    # layer's updates_written gate guards against.
+    assert by_id["tiny"]["automation_state"] == 1
+
+
 def test_perform_batch_rejects_same_target_collision():
     """Two arcs resolving to the SAME parameter would fight for one gesture
     in the shared pass — rejected up front, naming both arc_ids, before any

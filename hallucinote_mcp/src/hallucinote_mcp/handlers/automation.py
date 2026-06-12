@@ -1394,7 +1394,9 @@ def _translate_envelope_target_error(target_kind: str, exc: Exception) -> Except
 
 
 # ---------------------------------------------------------------------------
-# perform — gesture-recorded arrangement automation (ENV-7G4K)
+# perform_batch — gesture-recorded arrangement automation, one transport
+# pass for N windowed arcs (ENV-9P4T; supersedes the single-arc ENV-7G4K
+# perform)
 # ---------------------------------------------------------------------------
 #
 # Master / group / return mixer and device-parameter automation has NO
@@ -1875,8 +1877,10 @@ def perform_batch_handler(
                         f"perform_batch ramp did not reach union span end "
                         f"{union_end} beats within its wall-clock budget "
                         f"({deadline - wall_start:.1f}s). Transport may be "
-                        f"blocked (modal dialog, count-in) — the set has been "
-                        f"disarmed and restored."
+                        f"blocked (modal dialog, count-in) — the handler's "
+                        f"cleanup disarms the set and restores transport state "
+                        f"(check record_mode in Live if a restore step also "
+                        f"failed; those are logged)."
                     )
                 time.sleep(_PERFORM_UPDATE_PERIOD_S)
         finally:

@@ -674,3 +674,31 @@ def test_phase_degenerate_arc_does_not_poison_batch(
     _, arcs = _batch_arcs(_plan(conn, song, session))
     assert [a["arc_id"] for a in arcs] == [valid]
     assert any("static value" in n for n in _plan(conn, song, session).notes)
+
+
+def test_phase_defers_duplicate_target_with_alert(conn, song, session):
+    """Two DISTINCT envelopes whose WIRE addressing coincides (here: two group
+    tracks linked to the same Ableton index — link drift create_envelope can't
+    prevent, since it dedups on DB target, not wire target) can't both ride one
+    transport pass. The planner queues the first and loudly defers the rest, so
+    the handler never sees a whole-batch collision."""
+    g1 = M.create_track(conn, song_id=song, track_index=2, name="Bus1",
+                        kind="group")
+    g2 = M.create_track(conn, song_id=song, track_index=3, name="Bus2",
+                        kind="group")
+    # Both linked to Ableton index 3 (the collision).
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g1,
+                         ableton_index=3)
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g2,
+                         ableton_index=3)
+    e1 = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                          target_track_id=g1)
+    _two_point_ramp(conn, e1)
+    e2 = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                          target_track_id=g2)
+    _two_point_ramp(conn, e2)
+    assert e1 != e2  # distinct envelopes, same wire address
+    plan = _plan(conn, song, session)
+    _, arcs = _batch_arcs(plan)
+    assert len(arcs) == 1  # only the first-queued arc rides the pass
+    assert any("same parameter" in al for al in plan.alerts), plan.alerts

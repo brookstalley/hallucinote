@@ -366,7 +366,7 @@ def apply_push_results(
                 # an unverified write leaves that arc's fingerprint
                 # unwritten so the next push retries just that arc
                 # (record_perform_result owns the per-arc policy). The
-                # perform handler RETURNS a non-1 state rather than raising.
+                # perform_batch handler RETURNS a non-1 state, not a raise.
                 res = r.get("result") or {}
                 # A restore failure means the pass may have left the set
                 # ARMED (record_mode / a gesture / playhead not restored) —
@@ -424,6 +424,6 @@ def apply_push_results(
             raise ValueError(
                 f"unknown push result key kind {kind!r} (full key={key!r}). "
                 "Declare it in _LINK_KINDS / _ACK_ONLY_KINDS (or add a "
-                "dedicated branch like 'perform') in sync/push/plan.py."
+                "dedicated branch like 'perform_batch') in sync/push/plan.py."
             )
     return warnings

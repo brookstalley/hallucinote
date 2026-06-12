@@ -275,6 +275,12 @@ def plan_push_performed_automation(
     # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
     # alert and the union-span cost.
     spans: list[tuple[str, float, float]] = []
+    # Addressing identity → first envelope id queued for it. Two changed arcs
+    # on ONE parameter can't both ride a single transport pass (the handler
+    # rejects the whole batch on a collision), so the planner keeps the first
+    # and loudly defers the rest — surfacing the authoring ambiguity instead
+    # of guessing or failing the entire phase.
+    queued_targets: dict[tuple, str] = {}
 
     for env in eligible:
         breakpoints = Q.get_breakpoints(conn, env["id"])
@@ -307,6 +313,22 @@ def plan_push_performed_automation(
         if performed is not None and performed["fingerprint"] == fingerprint:
             skipped.append(label)
             continue
+
+        target_key = (
+            args.get("target_kind"), args.get("master"),
+            args.get("track_index"), args.get("return_index"),
+            args.get("device_index"), args.get("parameter_name"),
+        )
+        if target_key in queued_targets:
+            plan.alert(
+                f"performed-automation: arc {env['id']} ({label}) targets the "
+                f"same parameter as already-queued arc "
+                f"{queued_targets[target_key]} — two performed arcs can't ride "
+                "one parameter in a single pass; performing only the first. "
+                "Merge them into one envelope."
+            )
+            continue
+        queued_targets[target_key] = env["id"]
 
         arcs.append({
             "arc_id": env["id"],

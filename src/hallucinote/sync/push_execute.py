@@ -509,6 +509,7 @@ def execute_push(
     send_fn: Callable[..., Any] | None = None,
     actor: str = "sync",
     reason: str | None = None,
+    perform_slowdown_factor: float = 1.0,
 ) -> ExecuteResult:
     """Run the full twelve-phase push, dispatching each call via ``send_fn``.
 
@@ -570,7 +571,10 @@ def execute_push(
         ),
     )
 
-    phases = push.plan_push_song(conn, song_id=song_id, session_id=session_id)
+    phases = push.plan_push_song(
+        conn, song_id=song_id, session_id=session_id,
+        perform_slowdown_factor=perform_slowdown_factor,
+    )
 
     phase_outcomes: list[PhaseOutcome] = []
     halt_phase: str | None = None  # also the errors-file "phase" — one source

@@ -71,6 +71,7 @@ def plan_push_song(
     *,
     song_id: str,
     session_id: str,
+    perform_slowdown_factor: float = 1.0,
 ) -> list[PushPhase]:
     """Master orchestration: return the twelve phases of a full song push, in order.
 
@@ -204,6 +205,7 @@ def plan_push_song(
             name="performed_automation",
             plan_fn=lambda: plan_push_performed_automation(
                 conn, song_id=song_id, session_id=session_id,
+                slowdown_factor=perform_slowdown_factor,
             ),
             description=(
                 "Gesture-record master/group/return-side automation arcs "

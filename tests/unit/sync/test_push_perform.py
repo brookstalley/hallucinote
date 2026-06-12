@@ -836,6 +836,49 @@ def test_perform_batch_call_carries_finite_read_ceiling(
     assert call.read_timeout > 8.0  # comfortably above realtime playback
 
 
+def test_perform_slowdown_scales_cost_and_forwards_factor(
+    conn, song, session, master_arc,
+):
+    """ENV-2T9K: a >1 slowdown is forwarded to the handler AND scales the
+    operator cost estimates (purpose, alert, #5 read ceiling) — the pass plays
+    factor× slower, so Visible Costs must reflect it."""
+    from hallucinote.sync.push.perform import (
+        _PERFORM_READ_CEILING_BUFFER_S,
+        _PERFORM_READ_CEILING_FACTOR,
+    )
+
+    plan = push.plan_push_performed_automation(
+        conn, song_id=song, session_id=session, slowdown_factor=4.0,
+    )
+    call, _ = _batch_arcs(plan)
+    assert call.args["slowdown_factor"] == 4.0
+    # 16-beat span @120 BPM = 8s realtime → 32s at 4× slowdown.
+    assert "~32.0s" in call.purpose
+    assert any(
+        "~32.0s" in a and "slowdown for fidelity" in a for a in plan.alerts
+    ), plan.alerts
+    # The #5 read ceiling scales with the slowed wall-clock, not the realtime one.
+    assert call.read_timeout == pytest.approx(
+        32.0 * _PERFORM_READ_CEILING_FACTOR + _PERFORM_READ_CEILING_BUFFER_S,
+        abs=0.5,
+    )
+
+
+def test_perform_default_factor_omits_slowdown_from_wire_args(
+    conn, song, session, master_arc,
+):
+    """Default (off) keeps the wire args clean — no slowdown_factor=1.0."""
+    call, _ = _batch_arcs(_plan(conn, song, session))
+    assert "slowdown_factor" not in call.args
+
+
+def test_plan_perform_rejects_slowdown_below_one(conn, song, session, master_arc):
+    with pytest.raises(ValueError, match="slowdown_factor"):
+        push.plan_push_performed_automation(
+            conn, song_id=song, session_id=session, slowdown_factor=0.5,
+        )
+
+
 def test_collision_key_parity_planner_vs_handler():
     """The planner's duplicate-target key and the handler's collision-guard key
     must be field-for-field identical across the package boundary — if they

@@ -127,7 +127,7 @@ class FakePerformSong:
 
     def __init__(self, events: list[tuple]):
         self._events = events
-        self.tempo = 120.0
+        self._tempo = 120.0
         self.is_playing = False
         self.session_automation_record = False
         self.master_track = FakeTrack(events)
@@ -201,6 +201,16 @@ class FakePerformSong:
         self._events.append(("seek", float(v)))
         self._song_time = float(v)
 
+    # -- tempo: event-logged so ENV-2T9K's slow-down + restore is observable --
+    @property
+    def tempo(self) -> float:
+        return self._tempo
+
+    @tempo.setter
+    def tempo(self, v: float) -> None:
+        self._events.append(("tempo", round(float(v), 3)))
+        self._tempo = float(v)
+
     def start_playing(self) -> None:
         self._events.append(("play",))
         self.is_playing = True
@@ -265,12 +275,15 @@ def _bp(t: float, v: float, curve: str | None = None) -> dict[str, Any]:
     return bp
 
 
-def _one(ctx, *, settle_timeout_ms: int | None = None, **arc_fields):
+def _one(ctx, *, settle_timeout_ms: int | None = None,
+         slowdown_factor: float | None = None, **arc_fields):
     """Run perform_batch with a single arc; returns the full batched
     result (the arc is ``result["arcs"][0]``)."""
     kwargs: dict[str, Any] = {}
     if settle_timeout_ms is not None:
         kwargs["settle_timeout_ms"] = settle_timeout_ms
+    if slowdown_factor is not None:
+        kwargs["slowdown_factor"] = slowdown_factor
     return perform_batch_handler(ctx, arcs=[arc_fields], **kwargs)
 
 
@@ -623,6 +636,84 @@ def test_perform_batch_pins_authored_final_value_before_close():
     # The exact endpoint is pinned immediately before the gesture closes.
     assert param.own[-1] == ("end",)
     assert param.own[-2] == ("set", round(final_value, 6))
+
+
+def test_perform_batch_slows_tempo_during_record_and_restores():
+    """ENV-2T9K: slowdown_factor lowers the transport tempo for the record pass
+    (the lever for more breakpoints per beat at the fixed tick rate) and restores
+    the original after — the slowdown is a recording-time trick, gone from the
+    final set. (The density GAIN itself is a Live-only outcome; here we pin the
+    mechanism: the tempo is set low, then restored.)"""
+    ctx = FakeCtx()
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        slowdown_factor=4.0,
+    )
+    assert result["slowdown_factor"] == 4.0
+    assert result["record_tempo"] == 30.0  # 120 / 4
+    # Reduced tempo set during arm, original restored after the pass.
+    tempo_sets = [e[1] for e in ctx.events if e[0] == "tempo"]
+    assert tempo_sets == [30.0, 120.0]
+    assert ctx.song.tempo == 120.0
+    # The tempo drop happens BEFORE arming so the whole pass runs slowed.
+    assert ctx.events.index(("tempo", 30.0)) < ctx.events.index(
+        ("session_automation_record", True)
+    )
+
+
+def test_perform_batch_floors_reduced_tempo_at_live_minimum():
+    """A large factor can't drive the transport below Live's minimum tempo."""
+    ctx = FakeCtx()  # default 120 BPM
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        slowdown_factor=100.0,  # 120/100 = 1.2 BPM → floored
+    )
+    assert result["record_tempo"] == 20.0  # _PERFORM_MIN_RECORD_TEMPO_BPM
+
+
+def test_perform_batch_default_factor_does_not_touch_tempo():
+    """slowdown_factor defaults to off — no tempo event, no record-tempo change."""
+    ctx = FakeCtx()
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    )
+    assert result["slowdown_factor"] == 1.0
+    assert result["record_tempo"] == 120.0
+    assert not any(name == "tempo" for (name, *_rest) in ctx.events)
+
+
+def test_perform_batch_rejects_factor_below_one():
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="slowdown_factor"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+            slowdown_factor=0.5,
+        )
+
+
+def test_perform_batch_restores_tempo_even_when_pass_raises():
+    """ENV-2T9K: the tempo restore lives in the finally, so a ramp that raises
+    mid-pass still leaves the original tempo (no slowed set left behind)."""
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.raise_on_set_after = 1  # ramp raises
+
+    def _raising_stop() -> None:
+        raise RuntimeError("stop failed")
+
+    ctx.song.stop_playing = _raising_stop  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)],
+            slowdown_factor=4.0,
+        )
+    # Despite the raise, the tempo was restored to the original.
+    assert ctx.song.tempo == 120.0
+    assert ("tempo", 120.0) in ctx.events
 
 
 def test_perform_batch_exception_path_surfaces_armed_set():

@@ -276,6 +276,7 @@ def plan_push_performed_automation(
     *,
     song_id: str,
     session_id: str,
+    slowdown_factor: float = 1.0,
 ) -> PushPlan:
     """Plan the perform pass: ONE
     ``ableton_automation(action='perform_batch')`` call carrying every
@@ -286,10 +287,21 @@ def plan_push_performed_automation(
     data-safety feature, not just a speed one: an unchanged authored arc is
     never re-recorded, so a hand-edited Live lane survives.
 
+    ``slowdown_factor`` (ENV-2T9K, default 1.0 = off) is forwarded to the
+    handler, which lowers the transport tempo for the record pass to lay down
+    factor× more breakpoints per beat (fidelity). It costs factor× wall-clock,
+    so the cost estimates below — the purpose string, the overwrite alert, and
+    the #5 read ceiling — are all scaled by it, keeping Visible Costs honest.
+
     Visible Costs: the call's purpose names the union-span wall-clock (one
     pass, NOT the per-arc sum), and a loud operator-facing ``alert()``
     enumerates every span the pass will record/overwrite.
     """
+    if slowdown_factor < 1.0:
+        raise ValueError(
+            f"slowdown_factor must be >= 1.0 (1.0 = song tempo), got "
+            f"{slowdown_factor}"
+        )
     plan = PushPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
     eligible = [
@@ -378,20 +390,32 @@ def plan_push_performed_automation(
         union_start = min(s for (_, s, _) in spans)
         union_end = max(e for (_, _, e) in spans)
         union_seconds = _estimate_span_seconds(segments, union_start, union_end)
+        # ENV-2T9K: at a >1 slowdown the transport plays factor× slower, so the
+        # ACTUAL pass wall-clock — and everything derived from it (the operator
+        # cost, the #5 read ceiling) — is the realtime estimate × factor.
+        pass_seconds = union_seconds * slowdown_factor
+        slow_note = (
+            f" at {slowdown_factor:g}× slowdown for fidelity"
+            if slowdown_factor > 1.0 else ""
+        )
+        batch_args: dict[str, Any] = {"action": "perform_batch", "arcs": arcs}
+        if slowdown_factor > 1.0:
+            batch_args["slowdown_factor"] = slowdown_factor
         plan.add(ToolCall(
             tool="ableton_automation",
-            args={"action": "perform_batch", "arcs": arcs},
+            args=batch_args,
             key=f"perform_batch:{song_id}",
             purpose=(
                 f"perform {len(arcs)} arc(s) in ONE transport pass over "
                 f"beats {union_start:g}-{union_end:g} "
-                f"(~{union_seconds:.1f}s realtime playback)"
+                f"(~{pass_seconds:.1f}s realtime playback{slow_note})"
             ),
             # ENV-8K2R #5: cap the otherwise-unbounded read so a dead worker
-            # can't block push_cli forever, scaled to the realtime estimate so a
-            # legitimately-long pass is never falsely timed out.
+            # can't block push_cli forever, scaled to the ACTUAL pass duration
+            # (slowdown included) so a legitimately-long pass is never falsely
+            # timed out.
             read_timeout=round(
-                union_seconds * _PERFORM_READ_CEILING_FACTOR
+                pass_seconds * _PERFORM_READ_CEILING_FACTOR
                 + _PERFORM_READ_CEILING_BUFFER_S,
                 1,
             ),
@@ -401,9 +425,9 @@ def plan_push_performed_automation(
         )
         plan.alert(
             f"performed-automation: ONE transport pass over beats "
-            f"{union_start:g}-{union_end:g} (~{union_seconds:.1f}s realtime) "
-            f"WILL RECORD/OVERWRITE {len(arcs)} arc(s): {span_list}. "
-            f"{len(skipped)} unchanged arc(s) skipped."
+            f"{union_start:g}-{union_end:g} (~{pass_seconds:.1f}s realtime"
+            f"{slow_note}) WILL RECORD/OVERWRITE {len(arcs)} arc(s): "
+            f"{span_list}. {len(skipped)} unchanged arc(s) skipped."
         )
     for label in skipped:
         plan.warn(f"performed-automation: skipped (unchanged): {label}")

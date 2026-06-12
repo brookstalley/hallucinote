@@ -268,7 +268,10 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     conn = connect(_resolve_db_path(args))
     _session_for(conn, args, subcmd="plan")
     song_id = _resolve_song_id(conn, args.session_id)
-    phases = push.plan_push_song(conn, song_id=song_id, session_id=args.session_id)
+    phases = push.plan_push_song(
+        conn, song_id=song_id, session_id=args.session_id,
+        perform_slowdown_factor=getattr(args, "perform_slowdown", 1.0),
+    )
     chosen = next((p for p in phases if p.name == args.phase), None)
     if chosen is None:
         valid = ", ".join(p.name for p in phases)
@@ -652,6 +655,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         state_dir=state_dir,
         actor="sync",
         reason=args.reason or f"push_cli execute (session={args.session_id})",
+        perform_slowdown_factor=getattr(args, "perform_slowdown", 1.0),
     )
     sys.stdout.write(push_execute.format_summary(result))
 
@@ -1017,6 +1021,13 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("session_id", nargs="?", default=None,
                    help="ableton_sessions.id (omit to auto-select the "
                         "only/most-recent session in the DB; WFL-7Q2N)")
+    p_plan.add_argument(
+        "--perform-slowdown", type=float, default=1.0, metavar="FACTOR",
+        help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
+             "song tempo so the fixed tick rate lays down FACTOR× more "
+             "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
+             "off. Only affects the performed_automation phase.",
+    )
     _add_db_args(p_plan)
     p_plan.set_defaults(func=_cmd_plan)
 
@@ -1103,6 +1114,13 @@ def main(argv: list[str] | None = None) -> int:
                                    "silent default — now it's explicit.")
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
+    p_exec.add_argument(
+        "--perform-slowdown", type=float, default=1.0, metavar="FACTOR",
+        help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
+             "song tempo so the fixed tick rate lays down FACTOR× more "
+             "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
+             "off. Only affects the performed_automation phase.",
+    )
     p_exec.set_defaults(func=_cmd_execute)
 
     p_pn = sub.add_parser(

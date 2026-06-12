@@ -82,7 +82,19 @@ This plan extends an existing codebase — Project Structure / Dependency sectio
   non-verification (re-perform) still fires — an unconditional final-pin would record a lone
   endpoint for a sub-tick arc and mask it as done (ENV-2T9K tempo-reduction is the real fidelity
   fix for sub-tick arcs, not this). 1113 MCP tests pass (+2 new; degenerate test preserved green).
-- [ ] Chunk 04 — ENV-2T9K perform fidelity via tempo-reduction-during-record · batched Live smoke
+- [x] Chunk 04 — ENV-2T9K perform fidelity via tempo-reduction-during-record · CODE+tests done,
+  Live smoke PENDING (batched) — `slowdown_factor` (default 1.0 = off) threaded end-to-end:
+  handler lowers `song.tempo` to `tempo/factor` (floored at Live's 20 BPM min) for the record
+  pass and restores it in the `finally` (exception-safe), budget computed from the reduced
+  tempo; action schema exposes the param; planner forwards it + scales the Visible Costs
+  (purpose, overwrite alert, #5 read ceiling) by the factor; orchestrator → `execute_push` →
+  `push_cli plan`/`execute` `--perform-slowdown FACTOR` operator flag. Per-arc adaptive steepness
+  DEFERRED (backlog). Full suite 3387 passed / 2 skipped / 0 failed (+17 across the effort).
+
+**Remaining for the whole effort:** ONE `/mcp` reconnect → batched Live smoke covering chunks
+03 (SAR disarm settles; gesture endpoint lands its authored final) + 04 (0.5-beat dip authored
+to 0.1 records materially closer than the ~0.589 baseline at reduced tempo) → cumulative Critic
+→ backlog reconcile (ENV-8K2R + ENV-2T9K → shipped).
 
 Context (2026-06-12, branch `feature/perform-handler-hardening` off `develop`): clean baseline
 3370 passed / 2 skipped / 0 failed. **Chunk 01 done** (code-health dedup + re-export cleanup,

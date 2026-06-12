@@ -479,9 +479,11 @@ def test_execute_nine_section_fails_without_scene_provisioning(
     the provisioning phase."""
     real_plan_push_song = push_execute.push.plan_push_song
 
-    def plan_without_scenes(conn, *, song_id, session_id):
+    def plan_without_scenes(conn, *, song_id, session_id, **kwargs):
         return [
-            p for p in real_plan_push_song(conn, song_id=song_id, session_id=session_id)
+            p for p in real_plan_push_song(
+                conn, song_id=song_id, session_id=session_id, **kwargs
+            )
             if p.name != "scenes"
         ]
 

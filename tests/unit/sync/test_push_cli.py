@@ -765,6 +765,49 @@ def test_cli_plan_rejects_unknown_phase(conn, song, session, db_path):
         ])
 
 
+def _seed_master_perform_arc(conn, song):
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    eid = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                            target_track_id=master)
+    M.replace_breakpoints(conn, envelope_id=eid, breakpoints=[
+        {"time_beats": 0.0, "value": 0.85},
+        {"time_beats": 16.0, "value": 0.4},
+    ])
+
+
+def test_cli_plan_performed_automation_honors_perform_slowdown(
+    conn, song, session, db_path, capsys,
+):
+    """ENV-2T9K: the --perform-slowdown operator flag threads through to the
+    performed_automation phase plan (the agent-driven push path)."""
+    _seed_master_perform_arc(conn, song)
+    push_cli.main([
+        "plan", "performed_automation", session,
+        "--db", str(db_path), "--perform-slowdown", "4",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    call = next(
+        c for c in out["calls"] if c["args"].get("action") == "perform_batch"
+    )
+    assert call["args"]["slowdown_factor"] == 4.0
+
+
+def test_cli_plan_performed_automation_default_has_no_slowdown(
+    conn, song, session, db_path, capsys,
+):
+    """Without the flag the plan carries no slowdown override (off by default)."""
+    _seed_master_perform_arc(conn, song)
+    push_cli.main([
+        "plan", "performed_automation", session, "--db", str(db_path),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    call = next(
+        c for c in out["calls"] if c["args"].get("action") == "perform_batch"
+    )
+    assert "slowdown_factor" not in call["args"]
+
+
 def test_cli_apply_writes_link_from_result(conn, song, session, db_path, tmp_path, capsys):
     tid = M.create_track(conn, song_id=song, track_index=1, name="T", kind="midi")
     results = [{

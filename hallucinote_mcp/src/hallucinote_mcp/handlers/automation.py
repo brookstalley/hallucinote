@@ -1481,6 +1481,17 @@ _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS = 2000
 _PERFORM_WALL_CLOCK_FACTOR = 3.0
 _PERFORM_WALL_CLOCK_FLOOR_S = 10.0
 
+# ENV-2T9K — perform fidelity via tempo-reduction-during-record. The realtime
+# ramp is scheduling-bound at ~2.5 Hz, so denser AUTHORING can't yield denser
+# recording; the only lever is slowing the TRANSPORT so the fixed tick rate
+# yields more breakpoints PER BEAT. Because Live's FloatEvents are beat-keyed,
+# the captured automation plays back correctly at the song's real tempo — the
+# slowdown is a recording-time trick, invisible in the result, traded for
+# proportionally more wall-clock (factor× slower = factor× density = factor×
+# pass duration). Floor the reduced tempo at Live's minimum so a large factor
+# can't drive it below what Live accepts.
+_PERFORM_MIN_RECORD_TEMPO_BPM = 20.0
+
 
 @dataclass
 class _PreparedArc:
@@ -1692,6 +1703,7 @@ def perform_batch_handler(
     *,
     arcs: list[dict[str, Any]],
     settle_timeout_ms: int = _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS,
+    slowdown_factor: float = 1.0,
 ) -> dict[str, Any]:
     """Record N authored automation arcs into Live's ARRANGEMENT automation
     in a SINGLE transport pass (ENV-9P4T) — gesture recording with
@@ -1715,17 +1727,28 @@ def perform_batch_handler(
     others). The write path is for surfaces session clips can't reach:
     master / group / return mixer moves and device parameters.
 
+    ``slowdown_factor`` (ENV-2T9K, default 1.0 = off) temporarily lowers the
+    transport tempo to ``tempo / slowdown_factor`` (floored at Live's minimum)
+    for the duration of the recording pass, so the fixed ~2.5 Hz tick rate lays
+    down proportionally MORE breakpoints per beat — the only lever for perform
+    fidelity, since the ramp is scheduling-bound (denser authoring can't yield
+    denser recording). The captured automation is beat-keyed, so it plays back
+    correctly at the song's real tempo; the trade is wall-clock (factor× slower).
+    The original tempo is restored in the ``finally`` like every other transport
+    state.
+
     Returns ``{"arcs": [{arc_id?, target_kind, automation_state,
     span_beats, beats_performed, updates_written, breakpoint_count,
     <addressing echo>}, ...], "union_span_beats", "wall_clock_s",
-    "arc_count"}``. A non-1 ``automation_state`` is reported per arc, not
-    raised — the caller owns the failed-verification policy.
+    "arc_count", "slowdown_factor", "record_tempo"}``. A non-1
+    ``automation_state`` is reported per arc, not raised — the caller owns the
+    failed-verification policy.
 
     A failed pass must not leave the set armed or any gesture open: every
-    still-open gesture is closed and the transport / record state restored
-    in a ``finally`` with per-step isolation. ``re_enable_automation`` is
-    set-wide by design (design.md) — the correct post-record state for a
-    scripted writer.
+    still-open gesture is closed and the transport / record state (including the
+    tempo) restored in a ``finally`` with per-step isolation.
+    ``re_enable_automation`` is set-wide by design (design.md) — the correct
+    post-record state for a scripted writer.
     """
     if not isinstance(arcs, list) or not arcs:
         raise ValueError(
@@ -1735,6 +1758,12 @@ def perform_batch_handler(
     if settle_timeout_ms <= 0:
         raise ValueError(
             f"settle_timeout_ms must be > 0, got {settle_timeout_ms}"
+        )
+    if slowdown_factor < 1.0:
+        raise ValueError(
+            f"slowdown_factor must be >= 1.0 (1.0 = record at the song's tempo; "
+            f">1.0 slows the transport for denser breakpoints), got "
+            f"{slowdown_factor}"
         )
     settle_timeout_s = settle_timeout_ms / 1000.0
 
@@ -1833,6 +1862,17 @@ def perform_batch_handler(
 
         saved, tempo = context.run_on_main(_save_state)
 
+        # ENV-2T9K: the tempo the transport actually plays at during the record
+        # pass. > 1 slowdown lowers it (floored at Live's minimum) so the fixed
+        # tick rate lays down more breakpoints per beat; the budget below is
+        # computed from THIS tempo (a slower pass needs a longer deadline), and
+        # it is restored to ``tempo`` in the finally.
+        record_tempo = tempo
+        if slowdown_factor > 1.0:
+            record_tempo = max(
+                tempo / slowdown_factor, _PERFORM_MIN_RECORD_TEMPO_BPM
+            )
+
         restore_failures: list[str] = []
         wall_start = time.monotonic()
 
@@ -1883,6 +1923,10 @@ def perform_batch_handler(
                 song = context.song
                 if bool(song.is_playing):
                     song.stop_playing()
+                # ENV-2T9K: slow the transport BEFORE arming so the whole record
+                # pass runs at the reduced tempo (restored in the finally).
+                if slowdown_factor > 1.0:
+                    song.tempo = record_tempo
                 song.session_automation_record = True
                 song.record_mode = True
                 song.current_song_time = float(union_start)
@@ -1906,7 +1950,9 @@ def perform_batch_handler(
             # Ramp loop over the union span. Beat-space interpolation makes
             # tempo maps free: the playhead position IS the authored
             # coordinate, so each arc's window is compared in beats.
-            expected_s = (union_end - union_start) / (max(tempo, 1.0) / 60.0)
+            expected_s = (
+                (union_end - union_start) / (max(record_tempo, 1.0) / 60.0)
+            )
             deadline = wall_start + max(
                 expected_s * _PERFORM_WALL_CLOCK_FACTOR,
                 _PERFORM_WALL_CLOCK_FLOOR_S,
@@ -1955,6 +2001,12 @@ def perform_batch_handler(
                     )
                     a.state = "closed"
             _attempt("stop_playing", lambda: context.song.stop_playing())
+            # ENV-2T9K: restore the original tempo after the slowed pass. Only
+            # if we changed it — a no-op set would still log a tempo event.
+            if slowdown_factor > 1.0:
+                _attempt(
+                    "tempo", lambda: setattr(context.song, "tempo", tempo)
+                )
             _attempt(
                 "record_mode",
                 lambda: setattr(
@@ -2089,6 +2141,10 @@ def perform_batch_handler(
         "union_span_beats": [union_start, union_end],
         "wall_clock_s": round(time.monotonic() - wall_start, 3),
         "arc_count": len(prepared),
+        # ENV-2T9K: echo the fidelity trade so the apply layer / operator sees
+        # what tempo the pass actually recorded at (1.0 / unchanged = off).
+        "slowdown_factor": slowdown_factor,
+        "record_tempo": round(record_tempo, 3),
     }
     if restore_failures:
         result["restore_failures"] = restore_failures

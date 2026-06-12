@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import logging
 import math as _math
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -1958,6 +1959,26 @@ def perform_batch_handler(
                     saved["current_song_time"],
                 ),
             )
+
+            # If the pass is unwinding due to an exception AND a restore step
+            # ALSO failed, the set may be left ARMED — but this path skips
+            # result-building, so restore_failures (which the apply layer
+            # surfaces on the SUCCESS path) would otherwise reach only the
+            # server log. Enrich the propagating error so its wire response
+            # carries the armed-set pointer. Raising here replaces the
+            # in-flight exception (original rides __cause__); on the success
+            # path sys.exc_info() is empty, so this is a no-op.
+            in_flight = sys.exc_info()[1]
+            if restore_failures and in_flight is not None:
+                armed = (
+                    f"{in_flight} — perform_batch restore ALSO failed; the "
+                    f"Live set may be left ARMED: {restore_failures}"
+                )
+                try:
+                    enriched: BaseException = type(in_flight)(armed)
+                except Exception:  # prawduct:allow prawduct/broad-except -- not every exception type reconstructs from a single str
+                    enriched = RuntimeError(armed)
+                raise enriched from in_flight
 
         # Post-perform verification — per arc, the same automation_state
         # poll the single-arc path used (probe 4: 0 → 1 after a successful

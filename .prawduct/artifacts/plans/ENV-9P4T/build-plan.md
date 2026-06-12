@@ -55,7 +55,9 @@ per-parameter gesture windowing (`_PreparedArc` pending→open→closed), the pl
 one batched call (union-span cost + overwrite `alert()` + duplicate-target preflight),
 and `apply_push_results` gates each arc independently on its `automation_state` (+
 zero-write stale-lane guard). Critic `final` run 3× — 1 blocking (wire read-timeout
-severed verification at scale → `perform_batch` now unbounded in the server policy) + all
+severed verification at scale → `perform_batch` now unbounded in the shared `client.send`
+read-timeout policy, the single source BOTH recv routes use — server-only was the wrong
+layer) + all
 warnings resolved; suite 3358 green. **Chunk 01's step-0 `verify-api` Live probe (two
 gesture windows in one pass + breakpoint density) is DEFERRED** — the bridge was
 version-mismatched (`c0b443e0` vs `b0c3c347`) and a 2nd agent held a song. It is the

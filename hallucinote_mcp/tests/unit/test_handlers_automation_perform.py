@@ -579,6 +579,25 @@ def test_perform_batch_settle_verifies_disarm():
                for f in result.get("restore_failures", [])), result
 
 
+def test_perform_batch_exception_path_surfaces_armed_set():
+    """When the pass raises AND a restore step ALSO fails (set may be left
+    armed), the propagating wire error must carry the armed-set pointer — the
+    result dict that surfaces restore_failures on the success path is never
+    built on the exception path."""
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.raise_on_set_after = 1  # ramp raises
+
+    def _raising_stop() -> None:
+        raise RuntimeError("stop failed")
+
+    ctx.song.stop_playing = _raising_stop  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="may be left ARMED"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)],
+        )
+
+
 def test_perform_restore_attempts_every_step_when_one_fails():
     ctx = FakeCtx()
 

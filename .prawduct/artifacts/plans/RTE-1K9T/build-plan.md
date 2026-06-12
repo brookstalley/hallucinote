@@ -9,7 +9,9 @@ the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).
 
-**Context (2026-06-12):** Chunks **01+02+03+04+05 DONE.** 01+02: MCP layer ships first-class track
+**Context (2026-06-12):** **ALL CHUNKS DONE (01–06).** Code-complete; only the whole-plan operator
+Live-smoke (enqueued in `operator-verification.md`: chunk-04 push materialization + chunk-05 manual-
+reroute round-trip + the W1 input-default probe) and the PR remain. 01+02: MCP layer ships first-class track
 input/output routing + monitor state (6 new `ableton_track` actions) on shared `handlers/_routing.py`.
 **03 (commit `2ac2812`):** the DB layer persists routing through the mutator path — 7 nullable cols on
 `tracks` (output/input routing kind + FK `target_id` + channel + `monitoring_state`); target is a
@@ -44,8 +46,13 @@ deferred because Live's non-track input default is unprobed (a NULL≡default ru
 the live-probe is enqueued in `operator-verification.md`. Mutator `ValueError` caught per-track. 23 new
 pull tests. Critic (final): 0 blocking, 4 warnings resolved (W1 input-default premise → narrowed to
 track-targets; W2 stale test-path/count refs; W3 monitor out-of-vocab raw now surfaced; W4 added
-revert/out-of-vocab tests). **Next cycle: Chunk 06** (PRE-MAIN convention + docs — the only remaining
-chunk); recommend a fresh `/clear`.
+revert/out-of-vocab tests). **06 (this cycle):** PRE-MAIN convention documented in
+`docs/song-authoring-conventions.md` (a new section + TOC + See-also; the worked authoring code,
+Monitor=In-is-load-bearing, and the automation-fidelity caveat LINKED to the design doc, not restated
+per `feedback_link_dont_summarize`). A doc-drift-locking worked-example test
+(`tests/unit/sync/test_routing_convention.py`, 3 tests) runs the doc's exact authoring sequence
+end-to-end across push (materializes) + pull (ingests a hand-built bus + round-trip stable). NO
+`route_to_bus` helper/skill — friction-driven, the pattern has no second user yet (`do not gold-plate`).
 
 ---
 
@@ -126,7 +133,7 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
 **Acceptance criteria**
 - A routing change made in Live pulls into the DB through the mutator (events fall out). Green.
 
-### Chunk 06 — PRE-MAIN submaster convention + docs  ·  status: pending
+### Chunk 06 — PRE-MAIN submaster convention + docs  ·  status: done
 **Deliverables**
 - A worked, tested example authoring the submaster pattern on the new primitives (create audio bus →
   route instrument tracks → bus → master → Monitor=In) — as a song-authoring conventions-doc entry

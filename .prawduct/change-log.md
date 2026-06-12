@@ -4,6 +4,48 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-12 — ENV-9P4T: performed automation at mix scale
+
+<!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=merged -->
+
+Extends ENV-7G4K's performed automation toward real mixes: write automation at
+greater **performance** (one transport pass for all arcs) and broader **reach**
+(any track, not just master/group/return). Harvesting hand-edited arrangement
+automation is explicitly deferred. **Chunk 01 — single-pass batched recording:**
+the single-arc `perform` action becomes `perform_batch` (no back-compat) — all
+changed perform-routed arcs record in ONE transport pass over the union span with
+**per-parameter gesture windowing** (`_PreparedArc` pending→open→closed; each
+arc's `begin_gesture`/`end_gesture` opens at its span entry and closes at its
+exit, so a short arc never stamps a flat value across the song). The planner emits
+one batched call (union-span cost estimate + an operator `alert()` enumerating
+every overwritten span + a duplicate-target preflight); `apply_push_results` gates
+each arc independently on its own `automation_state`; the wire read-timeout is
+unbounded for `perform_batch` at the shared `client.send` chokepoint (the single
+source both recv routes use). **Chunk 02 — plain/audio-track perform targets:**
+`classify_envelope_route` gains infer-from-span — a track-hosted mixer/device
+envelope COVERED by a single session clip routes per-clip (session_clip for midi,
+refused/CLP-AUD2 for audio), UNCOVERED (incl. the song-spanning send across tacet
+gaps) routes perform; the `create_envelope` mutator admits audio hosts; perform
+addressing was already kind-agnostic (no change). The superseded v1.1
+"partition-by-hand" teaching is removed (this is that capability). **Chunk 03 —
+fidelity: conscious descope.** The verify-api probe proved the framed adaptive-
+tick-density approach unrealizable: the realtime loop is scheduling-bound at
+~2.5 Hz (not sleep-bound — adaptive ticking can't help), a 0.5-beat dip authored
+to 0.1 records to 0.589, and the perform target's `DeviceParameter` exposes only
+`begin/end_gesture` (no direct-write surface — live-confirmed). The achievable
+lever (tempo-reduction-during-record) is spun out as **ENV-2T9K**; perform-handler
+hardening carryovers as **ENV-8K2R**. **Live-verified this session** (no `.als`
+needed — seek-and-read suffices): chunk 01 windowing (return reads manual 0.85
+before its span, live ramp 0.499 at mid-span; `updates_written` bounds the
+gesture); chunk 02 plain-MIDI vol+pan + audio-track vol all `automation_state==1`
+in one pass with faithful mid-span reads. Cumulative Critic (develop base) caught
+three stale audio-refusal authoring docs (BLOCKING — fixed to the shipped
+behavior) and a chunk-02 verify-api gap (probe then run + recorded); a
+`verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
+Suite 3061 passed / 311 skipped. (Change-log entry added directly to develop
+post-merge — the feature-branch commit carrying it was not pushed before the
+squash; REL-6C3W-class gap, repaired here.)
+
 ## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
 
 <!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=merged -->

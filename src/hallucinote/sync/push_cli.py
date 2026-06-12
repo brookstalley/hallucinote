@@ -270,7 +270,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     song_id = _resolve_song_id(conn, args.session_id)
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=args.session_id,
-        perform_slowdown_factor=getattr(args, "perform_slowdown", 1.0),
+        perform_slowdown_factor=args.perform_slowdown,
     )
     chosen = next((p for p in phases if p.name == args.phase), None)
     if chosen is None:
@@ -655,7 +655,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         state_dir=state_dir,
         actor="sync",
         reason=args.reason or f"push_cli execute (session={args.session_id})",
-        perform_slowdown_factor=getattr(args, "perform_slowdown", 1.0),
+        perform_slowdown_factor=args.perform_slowdown,
     )
     sys.stdout.write(push_execute.format_summary(result))
 
@@ -987,6 +987,20 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
+def _perform_slowdown_arg(raw: str) -> float:
+    """argparse type for --perform-slowdown: validate at the CLI boundary so an
+    out-of-range value is rejected BEFORE any phase dispatches against Live
+    (ENV-2T9K — the planner/handler also validate as wire-boundary defense, but
+    a human-typed CLI value must fail fast, not 9 phases into a push)."""
+    value = float(raw)  # ValueError → argparse reports a clean parse error
+    if value < 1.0:
+        raise argparse.ArgumentTypeError(
+            f"--perform-slowdown must be >= 1.0 (1.0 = song tempo, off), got "
+            f"{value}"
+        )
+    return value
+
+
 def _add_db_args(p: argparse.ArgumentParser, *, mutex: bool = True) -> None:
     """Add --song / --db. By default mutually exclusive (one required).
 
@@ -1022,7 +1036,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="ableton_sessions.id (omit to auto-select the "
                         "only/most-recent session in the DB; WFL-7Q2N)")
     p_plan.add_argument(
-        "--perform-slowdown", type=float, default=1.0, metavar="FACTOR",
+        "--perform-slowdown", type=_perform_slowdown_arg, default=1.0,
+        metavar="FACTOR",
         help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
              "song tempo so the fixed tick rate lays down FACTOR× more "
              "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
@@ -1115,7 +1130,8 @@ def main(argv: list[str] | None = None) -> int:
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
     p_exec.add_argument(
-        "--perform-slowdown", type=float, default=1.0, metavar="FACTOR",
+        "--perform-slowdown", type=_perform_slowdown_arg, default=1.0,
+        metavar="FACTOR",
         help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
              "song tempo so the fixed tick rate lays down FACTOR× more "
              "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "

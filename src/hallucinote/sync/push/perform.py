@@ -318,16 +318,22 @@ def plan_push_performed_automation(
     # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
     # alert and the union-span cost.
     spans: list[tuple[str, float, float]] = []
-    # Addressing identity → first envelope id that CLAIMED it. Two envelopes
-    # addressing ONE Live parameter can't both ride a single transport pass (the
-    # handler rejects the whole batch on a collision), so the planner keeps the
-    # first claimant and loudly defers the rest. The claim is seeded by EVERY arc
-    # that owns a lane on the target — changed arcs queued this pass AND
-    # skipped-unchanged arcs whose lane is already recorded (ENV-8K2R #3) — so a
-    # changed arc colliding with an already-recorded lane is surfaced and
-    # deferred, never silently recorded over it.
-    queued_targets: dict[tuple, str] = {}
+    # Addressing identity → envelope id that OWNS the target's single arrangement
+    # lane. Two envelopes addressing ONE Live parameter can't both ride a single
+    # transport pass, so the planner keeps ONE and loudly defers the rest.
+    # Data-safety priority (ENV-8K2R #3): an already-recorded (skipped-unchanged)
+    # lane is claimed in a dedicated pre-pass BEFORE any changed arc, so a changed
+    # arc on the same target is always the one deferred — never recorded over the
+    # correct lane (which used to corrupt the skipped arc's stored fingerprint
+    # with no warning, and was visit-order-dependent in the single-pass version).
+    # Among changed arcs (no recorded lane to protect) the first visited wins.
+    claimed_targets: dict[tuple, str] = {}
 
+    # Validate + classify every eligible arc once (span / addressing warnings
+    # fire here, in eligible order); the claim/queue decision is deferred to the
+    # two ordered passes below so skipped lanes are claimed first.
+    skipped_candidates: list[tuple[tuple, str, str]] = []  # key, label, eid
+    changed_candidates: list[tuple] = []  # env, args, label, key, start, end, bps
     for env in eligible:
         breakpoints = Q.get_breakpoints(conn, env["id"])
         if not breakpoints:
@@ -353,31 +359,48 @@ def plan_push_performed_automation(
         if addressing is None:
             continue
         args, label = addressing
-
-        # Duplicate-target preflight BEFORE the fingerprint gate (ENV-8K2R #3):
-        # claim the target for every arc that owns a lane on it, INCLUDING a
-        # skipped-unchanged arc below. A changed arc that collides with an
-        # already-claimed target (whether queued this pass or an already-recorded
-        # skipped lane) is deferred with a loud alert — not silently recorded
-        # over the other lane, which used to corrupt the skipped arc's stored
-        # fingerprint with no warning.
         target_key = perform_target_key(args)
-        if target_key in queued_targets:
-            plan.alert(
-                f"performed-automation: arc {env['id']} ({label}) targets the "
-                f"same parameter as already-claimed arc "
-                f"{queued_targets[target_key]} — two performed arcs can't ride "
-                "one parameter in a single pass; performing only the first. "
-                "Merge them into one envelope."
-            )
-            continue
-        queued_targets[target_key] = env["id"]
 
         fingerprint = envelope_fingerprint(env, breakpoints)
         performed = Q.get_performed_automation(conn, env["id"], session_id)
         if performed is not None and performed["fingerprint"] == fingerprint:
-            skipped.append(label)
+            skipped_candidates.append((target_key, label, env["id"]))
+        else:
+            changed_candidates.append(
+                (env, args, label, target_key, span_start, span_end, breakpoints)
+            )
+
+    # Pass A — claim every already-recorded lane FIRST so the next pass can't
+    # queue a changed arc over it. Two recorded lanes on one parameter is a
+    # pre-existing authoring ambiguity (only one can actually exist in Live);
+    # surface it, keep the first.
+    for (target_key, label, eid) in skipped_candidates:
+        if target_key in claimed_targets:
+            plan.alert(
+                f"performed-automation: skipped (unchanged) arc {eid} ({label}) "
+                f"shares its parameter with already-recorded arc "
+                f"{claimed_targets[target_key]} — two envelopes on one "
+                "parameter; merge them into one envelope."
+            )
             continue
+        claimed_targets[target_key] = eid
+        skipped.append(label)
+
+    # Pass B — queue changed arcs against the fully-claimed skipped lanes.
+    for (env, args, label, target_key, span_start, span_end, breakpoints) in (
+        changed_candidates
+    ):
+        if target_key in claimed_targets:
+            owner = claimed_targets[target_key]
+            plan.alert(
+                f"performed-automation: arc {env['id']} ({label}) targets the "
+                f"same parameter as already-claimed arc {owner} — keeping "
+                f"{owner} and deferring this one (two performed arcs can't ride "
+                "one parameter in a single pass; an already-recorded lane is "
+                "always kept). Merge them into one envelope."
+            )
+            continue
+        claimed_targets[target_key] = env["id"]
 
         arcs.append({
             "arc_id": env["id"],

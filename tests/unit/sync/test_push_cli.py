@@ -793,6 +793,19 @@ def test_cli_plan_performed_automation_honors_perform_slowdown(
     assert call["args"]["slowdown_factor"] == 4.0
 
 
+def test_cli_plan_rejects_perform_slowdown_below_one_at_parse_time(
+    conn, song, session, db_path,
+):
+    """ENV-2T9K: an out-of-range --perform-slowdown is rejected at the argparse
+    boundary (SystemExit) — fail fast, BEFORE any phase dispatches against Live
+    (the old deferred-into-phase-10 check died 9 phases into a push)."""
+    with pytest.raises(SystemExit):
+        push_cli.main([
+            "plan", "performed_automation", session,
+            "--db", str(db_path), "--perform-slowdown", "0.5",
+        ])
+
+
 def test_cli_plan_performed_automation_default_has_no_slowdown(
     conn, song, session, db_path, capsys,
 ):

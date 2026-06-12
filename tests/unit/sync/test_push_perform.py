@@ -779,6 +779,42 @@ def test_phase_alerts_when_changed_arc_collides_with_skipped_lane(
     assert any("same parameter" in al for al in plan.alerts), plan.alerts
 
 
+def test_phase_keeps_skipped_lane_when_changed_arc_visited_first(
+    conn, song, session,
+):
+    """ENV-8K2R #3 (visit-order independence): even when the CHANGED arc is
+    EARLIER in the envelope order, the already-recorded (skipped-unchanged) lane
+    is kept and the changed arc is the one deferred. The two-pass claims recorded
+    lanes before queuing any changed arc, so a correct lane is never clobbered —
+    the gap the single-pass version had (the changed arc could win on order)."""
+    g1 = M.create_track(conn, song_id=song, track_index=2, name="Bus1",
+                        kind="group")
+    g2 = M.create_track(conn, song_id=song, track_index=3, name="Bus2",
+                        kind="group")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g1,
+                         ableton_index=3)
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g2,
+                         ableton_index=3)
+    # e_changed created FIRST (earlier in envelope order).
+    e_changed = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                                  target_track_id=g1)
+    _two_point_ramp(conn, e_changed)
+    # e_kept created second, then PERFORMED so it reads skipped-unchanged.
+    e_kept = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                               target_track_id=g2)
+    _two_point_ramp(conn, e_kept)
+    push.apply_push_results(
+        conn, [_batch_result(e_kept, song=song)], session_id=session,
+    )
+
+    plan = _plan(conn, song, session)
+    queued_ids = [
+        a["arc_id"] for c in plan.calls for a in c.args.get("arcs", [])
+    ]
+    assert e_changed not in queued_ids, queued_ids  # deferred, lane preserved
+    assert any("same parameter" in al for al in plan.alerts), plan.alerts
+
+
 def test_apply_warns_on_arc_count_mismatch(conn, song, session, master_arc):
     """ENV-8K2R #4: the apply layer cross-checks the handler's reported
     arc_count against the per-arc entries actually returned. A truncated/empty

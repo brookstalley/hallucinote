@@ -123,3 +123,54 @@ misbehavior). The bounded-batch fallback (max M arcs/pass) was the contingency
 if many simultaneous open gestures misbehaved; N=2 gives no signal that a
 ceiling is needed. A higher-N stress pass remains available if Chunk 02's
 10+-track use case ever shows contention — tracked as a non-blocking note.
+
+## Chunk 02 — plain/audio-track perform targets (implementation design)
+
+**Code survey corrected two discovery assumptions.** The discovery framed this
+as "almost entirely `_route_for_host_kind` + an authoring choice." Reading the
+code found: (1) the perform addressing (`_arc_addressing`, perform.py:116-157)
+is **already kind-agnostic** for non-master tracks — it addresses any track via
+`track_index`, so the "minimal addressing touch" is **unneeded**; (2) there is a
+**second contract surface** the survey missed — the `create_envelope` **mutator**
+(`db/mutations/devices.py:846`) **refuses audio hosts** for the host-kind-routed
+kinds, so an audio mixer envelope can't even be created. Both surfaces partition
+the same way ("single source of truth", classify's docstring), so both change.
+
+**The change (3 source files):**
+1. **`classify_envelope_route`** (envelopes.py) gains a `song_id` kwarg and, for
+   the track-hosted kinds (`mixer_volume`/`mixer_pan`/`send_level`/
+   `device_parameter`) on **midi+audio** hosts, does **infer-from-span** via the
+   existing `_resolve_envelope_session_clip` + `_envelope_beat_range`:
+   - **covered** by a single session clip → per-clip route: `session_clip`
+     (midi) / `refused_audio` (audio — its session-audio-clip push is CLP-AUD2);
+   - **uncovered** (no single clip spans it, incl. the song-spanning case) →
+     `perform` (continuous arrangement ride).
+   - master/group keep `perform` with **no** inference (no session clips to
+     ride); no-breakpoint envelopes fall back to the coarse host-kind route.
+   Applied uniformly across the 4 host-kind-routed kinds (memory: design
+   uniformly), reusing `_route_for_host_kind` as the covered/coarse map.
+2. **`create_envelope` mutator** admits `audio` (perform now gives it a route);
+   the dead audio-refusal branch in `_envelope_track_kind_refusal` is removed
+   (no back-compat to throwaway); comments updated.
+3. **`perform.py:282`** threads `song_id` into the classify call.
+
+**Supersession (not silently dropped):** the session-clip resolver's
+"no-covering-clip → skip with *(c) partition the envelope by hand … v1.1 scope*"
+teaching (`_resolve_and_translate_to_session_clip`, the D1 message) is the very
+deferred capability this chunk delivers. Uncovered envelopes now route to
+`perform` **before** reaching that emitter, so its no-cover branch becomes an
+internal-invariant guard (classify already guaranteed coverage), and the v1.1
+teaching is removed (memory: don't keep pre-bumped version labels for shipped
+scope). `_warn_non_session_route`'s `refused_audio` teaching is retargeted to
+CLP-AUD2 + points at the perform route for continuous rides.
+
+**Test-contract flips (changed requirement, not weakened):** uncovered →
+skip-with-warn becomes uncovered → perform. Rewritten with named reasons:
+`test_push_envelopes.py` — `test_mixer_volume_skipped_when_no_arrangement_clip`,
+`_skipped_when_envelope_exceeds_placement`, send/device `_skipped_when_no_
+arrangement_clip_covers`, both `test_d1_teaching_message_*`, and the partition
+test (signature + infer assertions); `test_mutations.py` —
+`test_create_envelope_mixer_volume_refuses_audio_target` and
+`_send_level_refuses_audio_target` flip to **succeed**. New: audio continuous
+ride → perform; audio per-clip (covered) → refused_audio/CLP-AUD2; within-clip
+midi → session_clip (preserved). Within-clip session-clip path is unchanged.

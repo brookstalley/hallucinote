@@ -642,16 +642,20 @@ _PARAMETER_PATH_REQUIRED = frozenset({
 NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
 
 # Track-hosted target_kinds whose push route depends on the host track's
-# kind (ENV-7G4K eligibility, superseding the W10-F blanket refusal):
-#   kind='midi'   -> session-clip route (Clip.create_automation_envelope on a
-#                    covering session clip — Live 12.4 only accepts these
-#                    targets on session clips)
+# kind (ENV-7G4K eligibility, superseding the W10-F blanket refusal;
+# ENV-9P4T extends it to audio + the per-clip/continuous infer-from-span):
+#   kind='midi'   -> session-clip route when a covering session clip exists
+#                    (Clip.create_automation_envelope — Live 12.4 only
+#                    accepts these targets on session clips), else perform
 #   'master'/'group' -> perform route (gesture-recorded arrangement
 #                    automation at push time; probe-verified, see
 #                    docs/research/audio-first-class/lom-probe-results.md)
-#   'audio'       -> refused until ENV-8H1T: their route is session-clip
-#                    envelopes on audio clips, which need the audio-clip
-#                    push surface (CLP-AUD1 landed the DB model only)
+#   'audio'       -> perform for a clip-independent continuous ride
+#                    (ENV-9P4T); a per-clip ride covered by an audio clip is
+#                    refused at PUSH time (session-audio-clip push is
+#                    CLP-AUD2). Authorable at create time either way.
+# The fine per-clip-vs-continuous decision needs the song's clips, so it is
+# made by the planner (classify_envelope_route), not this create-time gate.
 _HOST_KIND_ROUTED_KINDS = frozenset({
     "mixer_volume", "mixer_pan", "send_level", "device_parameter",
 })
@@ -703,31 +707,20 @@ def _resolve_envelope_host_track(
 
 
 def _envelope_track_kind_refusal(target_kind: str, host_kind: str) -> str:
-    """Teaching message for the host kinds that remain unreachable after
-    ENV-7G4K: audio tracks (until ENV-8H1T) and any unknown future kind.
+    """Teaching message for a host kind with no push route at all.
 
-    Master and group hosts are no longer refused — their envelopes are
-    *performed* into arrangement automation at push time (gesture
-    recording; see lom-probe-results.md probes 4/4b/12).
+    After ENV-9P4T every TRACK_KINDS value is authorable: midi/audio hosts
+    route per-clip (a covering session clip) OR continuous (perform), and
+    master/group hosts are performed into arrangement automation at push
+    time. So this is purely defensive against a future track kind that
+    lands without a route chosen — the schema CHECK already constrains kind
+    to {midi,audio,master,group}, so it is unreachable today.
     """
-    if host_kind == "audio":
-        # Audio tracks' route is session-clip envelopes hosted on audio
-        # clips (probe 3 verified the envelope mechanism). CLP-AUD1 landed
-        # the audio-clip DB model; the push surface is ENV-8H1T's scope.
-        return (
-            f"target_kind={target_kind!r} on an audio track is not reachable "
-            "yet: audio-track envelopes ride session audio clips, and the "
-            "audio-clip push surface is ENV-8H1T (not yet built). "
-            "Master/group/return automation no longer needs a workaround — "
-            "those targets are performed into arrangement automation at "
-            "push time."
-        )
-    # Defensive — TRACK_KINDS allowlist is {midi,audio,master,group}; any new
-    # kind that lands here should explicitly choose a route.
     return (
         f"target_kind={target_kind!r} on track kind={host_kind!r} has no "
-        "push route: kind='midi' hosts session-clip envelopes, "
-        "master/group are performed at push time, audio is ENV-8H1T scope."
+        "push route: midi/audio host envelopes route per-clip (session "
+        "clip) or continuous (perform); master/group are performed. A new "
+        "track kind must explicitly choose a route."
     )
 
 
@@ -829,11 +822,16 @@ def create_envelope(
                 f"clip_cc CC number {cc_number} out of MIDI range [0, 127]"
             )
 
-    # ENV-7G4K eligibility (supersedes the W10-F blanket refusal): midi
-    # hosts route through session clips, master/group hosts are performed
-    # at push time, audio hosts stay refused until ENV-8H1T builds their
-    # session-audio-clip route. The planner partitions the same way
-    # (sync/push/envelopes.py `classify_envelope_route`).
+    # ENV-7G4K eligibility (supersedes the W10-F blanket refusal), extended
+    # by ENV-9P4T: midi hosts route through session clips (per-clip) OR
+    # perform (clip-independent ride); master/group hosts are performed at
+    # push time; AUDIO hosts are now authorable too — perform gives an audio
+    # track a continuous arrangement ride (its per-clip session-audio-clip
+    # route stays CLP-AUD2, refused at PUSH time, not at create). The planner
+    # partitions the same way (sync/push/envelopes.py
+    # `classify_envelope_route` infer-from-span). This create-time gate is
+    # only the coarse authorability check; the per-clip-vs-continuous routing
+    # decision needs the song's clips and so lives in the planner.
     if target_kind in _HOST_KIND_ROUTED_KINDS:
         host_track_id = _resolve_envelope_host_track(
             conn,
@@ -844,7 +842,7 @@ def create_envelope(
         if host_track_id is not None:
             host_kind = _track_kind(conn, host_track_id)
             if host_kind is not None and host_kind not in (
-                "midi", "master", "group",
+                "midi", "master", "group", "audio",
             ):
                 raise ValueError(
                     _envelope_track_kind_refusal(target_kind, host_kind)

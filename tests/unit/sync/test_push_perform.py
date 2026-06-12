@@ -190,12 +190,48 @@ def test_phase_routes_group_and_return_arcs_into_one_batch(
     assert ret["return_index"] == 1
 
 
-def test_phase_ignores_session_clip_and_audio_envelopes(
+def test_phase_ignores_session_clip_routed_envelope(
     conn, song, session, master_arc,
 ):
-    """Only perform-routed envelopes reach this phase — midi-host arcs
-    belong to the envelopes phase and don't double-emit here."""
+    """Only perform-routed arcs reach this phase. A midi mixer envelope
+    COVERED by a session clip routes 'session_clip' (ENV-9P4T
+    infer-from-span) and belongs to the envelopes phase — it does NOT
+    double-emit here. The midi track is LINKED and has a covering placement,
+    so the exclusion is genuine routing, not an unlinked-arc drop. (An
+    UNCOVERED plain-track envelope DOES perform — see
+    test_phase_performs_uncovered_plain_track_arc.)"""
     midi = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=midi, ableton_index=5,
+    )
+    clip = M.create_clip(conn, track_id=midi, slot=1, length_beats=8.0,
+                         name="loop")
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=midi, clip_id=clip,
+        start_bar=1.0, end_bar=3.0,  # covers beats [0, 8]
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=midi,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[{"time_beats": 0.0, "value": 0.1},
+                     {"time_beats": 4.0, "value": 0.9}],  # within [0, 8]
+    )
+    _, arcs = _batch_arcs(_plan(conn, song, session))
+    assert [a["arc_id"] for a in arcs] == [master_arc]
+
+
+def test_phase_performs_uncovered_plain_track_arc(
+    conn, song, session, master_arc,
+):
+    """ENV-9P4T: a plain LINKED midi track whose mixer envelope no session
+    clip covers is a continuous ride — it joins the batched perform pass
+    alongside the master arc, addressed by its own track_index."""
+    midi = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=midi, ableton_index=5,
+    )
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume", target_track_id=midi,
     )
@@ -205,7 +241,11 @@ def test_phase_ignores_session_clip_and_audio_envelopes(
                      {"time_beats": 4.0, "value": 0.9}],
     )
     _, arcs = _batch_arcs(_plan(conn, song, session))
-    assert [a["arc_id"] for a in arcs] == [master_arc]
+    by_id = {a["arc_id"]: a for a in arcs}
+    assert set(by_id) == {master_arc, eid}
+    assert by_id[eid]["track_index"] == 5
+    assert by_id[eid]["target_kind"] == "mixer_volume"
+    assert "master" not in by_id[eid]
 
 
 def test_phase_warns_pending_when_group_unlinked(conn, song, session):

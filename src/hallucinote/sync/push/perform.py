@@ -279,7 +279,7 @@ def plan_push_performed_automation(
     envelopes = Q.get_envelopes_for_song(conn, song_id)
     eligible = [
         env for env in envelopes
-        if classify_envelope_route(conn, env) == "perform"
+        if classify_envelope_route(conn, env, song_id=song_id) == "perform"
     ]
     if not eligible:
         plan.warn("no perform-routed envelopes for this song; nothing to perform")

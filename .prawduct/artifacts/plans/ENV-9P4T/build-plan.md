@@ -46,7 +46,10 @@ was unavailable this session (a 2nd agent holds a song)** — every probe is a b
 - [x] Chunk 01: Single-pass batched recording (the performance keystone) — CODE + tests
   complete & Critic-clean (0 blocking); step-0 verify-api Live probe CONFIRMED 2026-06-11
   (windowing holds in Live, no `.als` needed — see api-notes.md)
-- [ ] Chunk 02: Plain-track + audio-track perform targets (the 10+-track capability)
+- [x] Chunk 02: Plain-track + audio-track perform targets (the 10+-track capability)
+  — infer-from-span routing in `classify_envelope_route` + audio admitted in the
+  `create_envelope` mutator; perform addressing was already kind-agnostic. Critic
+  `chunk` clean (0 blocking; 2 warnings + 1 note resolved). Suite green.
 - [ ] Chunk 03: Fidelity — adaptive sampling density + curve faithfulness
 
 Context (2026-06-11, branch `feature/env-9p4t-perform-scale` off `develop`): **Chunk 01

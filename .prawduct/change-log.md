@@ -4,6 +4,219 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
+
+<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=shipped | release=v0.9.5 -->
+
+First-class track signal routing end-to-end (MCP → DB → push → pull) and the
+convention it unlocks: a plain audio **PRE-MAIN** bus you route everything
+through for master-like automation and sub-mixing — the no-`.als` path to an
+automatable "master" that Live's clip-less master/group/return strips can't
+provide. The push pipeline grows from twelve to thirteen phases.
+
+- **MCP** (chunks 01–02): `ableton_track` gains `set/get_output_routing`,
+  `set/get_input_routing`, `set/get_monitoring_state` on a shared
+  capability-probing helper (`handlers/_routing.py`) — by-`display_name`,
+  source-dependent, teaching errors that list the real targets, set handlers
+  echo the requested name (same-callback readback is unreliable).
+- **DB** (chunk 03): routing on `tracks` as seven nullable columns written
+  through `set_track_routing` (one `TRACK_ROUTING_SET` event). The target is a
+  **semantic reference** (`kind` + FK to `tracks.id`), never Live's display_name,
+  so a submaster link survives renames + re-pushes. CHECK asymmetry (D6): output
+  + monitor schema-constrained; the open input domain is mutator-validated.
+- **Push** (chunk 04): a `routing` phase after `mix`, before `devices`; dangling
+  targets alert + skip, never silently drop. No fingerprint gating (D7).
+- **Pull** (chunk 05): a manual reroute ingests back through the mutator;
+  `DB-NULL ≡ Live-default` avoids churning every default into explicit state (D8).
+- **Convention + docs** (chunk 06): the PRE-MAIN bus documented for song authors
+  (`song-authoring-conventions.md`) and for agents driving Live
+  (`ableton://guides/conventions`); a doc-drift-locked worked example.
+
+Per-chunk Critic across the build, a whole-plan `final` review (2 real
+silent-drop bugs caught + fixed — tombstone-protection registration for the new
+event kind, master-subject routing reject), and a cumulative + verify-resolutions
+chain (3 warnings resolved: a pull silent-override of a manual input revert, a
+self/master target validation gap, a stale plan comment). Group-track support
+(TRK-2H6K) stays deferred — group *creation* is LOM-blocked. One operator
+Live-smoke is enqueued (`operator-verification.md`): push materialization +
+manual-reroute round-trip in a real set, plus a probe of Live's non-track input
+default (V1 pull persists only track→track input until that's pinned).
+
+## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
+
+<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=shipped | release=v0.9.5 -->
+
+Un-gates master-strip device loading. DEV-2M9K shipped the verdict "Live 12.4
+has no LOM path to load a device onto the master" (`song.view.selected_track =
+master` silently no-ops) and gated three surfaces; that premise is **refuted on
+Live 12.4.2** — the master selection *sticks*, so `select master →
+browser.load_item → delete_device` works end-to-end (live-proven; research spike
+in `.prawduct/artifacts/research-spike-automation-ingest.md`).
+
+The fix is pure subtraction — master now flows through the same generic path as
+track/return:
+- `handlers/device.py`: drop `load_handler`'s master refusal (the existing
+  silent-noop post-condition catches a hypothetical mis-load).
+- `analyzer/setup.py`: drop the master detect-only `RuntimeError` — the master
+  analyzer auto-loads like any surface.
+- `sync/push/devices.py`: drop the SYN-2M9P configure-only skip — an unlinked
+  master device emits `device.load(master=True)`, links via the `device:<id>`
+  key, and the SYN-9F2L convergence re-plan writes its params. No more
+  PARTIAL-by-master halt.
+- `server.py`: the `ableton_render` tool description no longer says master is
+  place-by-hand.
+
+Tests are corrected, not weakened — the test *double* (`FakeSongView`) encoded
+the refuted premise and now models Live 12.4.2; the `test_syn_2m9p_master_load.py`
+→ `test_dev_6m2k_master_load.py` rewrite adds multi-hop execute-path coverage.
+Live corroboration of the integrated paths (native non-M4L device, full
+master-chain push, fresh-set render auto-load) is enqueued in
+`.prawduct/operator-verification.md`; DEV-6M2K stays open until that lands, and
+the DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes then.
+
+## 2026-06-12 — ENV-9P4T: performed automation at mix scale
+
+<!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=shipped | release=v0.9.5 -->
+
+Extends ENV-7G4K's performed automation toward real mixes: write automation at
+greater **performance** (one transport pass for all arcs) and broader **reach**
+(any track, not just master/group/return). Harvesting hand-edited arrangement
+automation is explicitly deferred. **Chunk 01 — single-pass batched recording:**
+the single-arc `perform` action becomes `perform_batch` (no back-compat) — all
+changed perform-routed arcs record in ONE transport pass over the union span with
+**per-parameter gesture windowing** (`_PreparedArc` pending→open→closed; each
+arc's `begin_gesture`/`end_gesture` opens at its span entry and closes at its
+exit, so a short arc never stamps a flat value across the song). The planner emits
+one batched call (union-span cost estimate + an operator `alert()` enumerating
+every overwritten span + a duplicate-target preflight); `apply_push_results` gates
+each arc independently on its own `automation_state`; the wire read-timeout is
+unbounded for `perform_batch` at the shared `client.send` chokepoint (the single
+source both recv routes use). **Chunk 02 — plain/audio-track perform targets:**
+`classify_envelope_route` gains infer-from-span — a track-hosted mixer/device
+envelope COVERED by a single session clip routes per-clip (session_clip for midi,
+refused/CLP-AUD2 for audio), UNCOVERED (incl. the song-spanning send across tacet
+gaps) routes perform; the `create_envelope` mutator admits audio hosts; perform
+addressing was already kind-agnostic (no change). The superseded v1.1
+"partition-by-hand" teaching is removed (this is that capability). **Chunk 03 —
+fidelity: conscious descope.** The verify-api probe proved the framed adaptive-
+tick-density approach unrealizable: the realtime loop is scheduling-bound at
+~2.5 Hz (not sleep-bound — adaptive ticking can't help), a 0.5-beat dip authored
+to 0.1 records to 0.589, and the perform target's `DeviceParameter` exposes only
+`begin/end_gesture` (no direct-write surface — live-confirmed). The achievable
+lever (tempo-reduction-during-record) is spun out as **ENV-2T9K**; perform-handler
+hardening carryovers as **ENV-8K2R**. **Live-verified this session** (no `.als`
+needed — seek-and-read suffices): chunk 01 windowing (return reads manual 0.85
+before its span, live ramp 0.499 at mid-span; `updates_written` bounds the
+gesture); chunk 02 plain-MIDI vol+pan + audio-track vol all `automation_state==1`
+in one pass with faithful mid-span reads. Cumulative Critic (develop base) caught
+three stale audio-refusal authoring docs (BLOCKING — fixed to the shipped
+behavior) and a chunk-02 verify-api gap (probe then run + recorded); a
+`verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
+Suite 3061 passed / 311 skipped. (Change-log entry added directly to develop
+post-merge — the feature-branch commit carrying it was not pushed before the
+squash; REL-6C3W-class gap, repaired here.)
+
+## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
+
+<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=shipped | release=v0.9.5 -->
+
+Triaged from the 2026-06-10 swell first-compose friction log: one silent
+correctness bug plus reliability/teaching holes that tax every song's
+bootstrap-and-compose loop. **SYN-9F2L (01):** a snapshot-authored device
+parameter (`params_dialed`) loaded at push but its dial never landed and the
+next push fingerprint-skipped the devices phase — a permanent silent drop. Root
+cause: `set_parameter` calls were planned only for already-linked devices, so a
+device loaded in the same execute pass got its link after parameter planning and
+was never dialed. Fixed via the same-pass devices convergence re-plan (the
+parameter writes now emit for newly-loaded devices too); the wire write prefers
+the display `value` string over the center-zero-ambiguous `normalized`; and a
+no-writable-form params_dialed write now surfaces on a new severity-scoped
+`PushPlan.alert()` channel (operator-actionable, drained into the benign
+`warnings` channel) instead of `plan.notes`, which `push_execute` never drained.
+**SYN-6B4Q (02):** first push of a freshly-scaffolded song no longer halts
+false-PARTIAL at `cues` past the (empty) arrangement extent — handler
+`cue_create_batch` gains `on_out_of_range='refuse'|'skip'`, the planner
+partitions cues against the composed extent (past-composed-with-arrangement →
+hard `PushPlan.errors` channel halting the phase; skeleton → defer+warn), and
+deferred cues surface via the benign `ExecuteResult.warnings` channel (exit 0).
+**INV-3K8W (03):** `preset_query` strict-mode errors now teach the actual fix —
+a `/`-containing pattern points at `path_prefix`; a `path_prefix` repeating
+`root` says to drop the leading segment (0-match / not-found branches only, zero
+behavioral change for valid queries; `inventory.find` inherits both). **SYN-5C3J
++ MCP-4T6Y (04):** an engine↔Remote-Script version-mismatch refusal now prints
+the exact worktree+PYTHONPATH pin recovery (+ error-recovery guide section)
+instead of the misleading generic "fix build.py" footer; the MCP server's
+read-timeout becomes a `(tool,action)`-keyed policy — `ensure_loaded` gets a
+bounded 180s (was timing out at the 15s default on a 25-surface set), render
+stays unbounded, everything else the 15s default. **DEV-5R8Q + INS-2Q7F +
+SKL-8N3V (05):** documented the delete-descending/reload-in-order chain-rebuild
+pattern in `conventions.md` and DECIDED against a `rebuild_chain` convenience (it
+is not a pure-planner emission — it needs Remote-Script orchestration to sequence
+delete+reload); `/song-new` postlude now calls `ensure_loaded` with no params;
+INS-2Q7F recorded obsolete-on-arrival (the install-hardening refactor already
+replaced the hand-authored rsync with a Python `copytree`+`fnmatch` exclude).
+Cumulative Critic (develop base) caught SYN-9F2L's warning still discarded on the
+execute path — resolved by the `alert()` channel above and verified end-to-end;
+a `verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
+Suite 3340 passed / 2 skipped.
+
+## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
+
+<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=shipped | release=v0.9.5 -->
+
+AUD-1M4V stage 0b: the automation surface session clips can't reach —
+master/group mixer (volume, pan), group sends, return mixer, master- and
+return-chain device parameters — becomes authorable via gesture-recorded
+**performed automation**. **Bridge:** `ableton_automation(action='perform')`
+plays the transport through the arc's span in record while stepping the
+parameter (runs_on_worker, `live_state_lock`, settle-poll on `record_mode`,
+per-step `finally` restore incl. `re_enable_automation`, beat-space interp
+with linear/hold/fast/slow). Probe-verified end-to-end first (probes 4/4b/
+10/12/13: group-host recording + same-span re-record overwrite both
+CONFIRMED). **Engine:** `return_mixer_volume`/`return_mixer_pan` kinds +
+`performed_automation` state table; W10-F's dual-layer master/group refusal
+replaced by routing eligibility — `classify_envelope_route` is the single
+partition source (clip_scoped / session_clip / perform / refused_audio /
+unroutable); audio hosts keep their ENV-8H1T refusal; the false "route to a
+sub-bus" master teaching deleted. **Push:** twelfth phase
+`performed_automation` (after envelopes) — fingerprint-gated (unchanged arcs
+skip + are listed), per-arc tempo-map-aware wall-clock estimates in the plan
+(Visible Costs), apply records state + `AUTOMATION_PERFORMED` event gated on
+`automation_state == 1` (unverified writes retry next push). **Evidence:**
+S-7 wire smoke PASS on real Live 12.4.1 — 5 arc families, skip-all re-push,
+targeted re-perform; `.als` dump verdict: all 5 arcs faithful (~3 Hz step
+rate). Docs/gaps guide updated from "can't" to "performed via push". Scope
+notes: return→return sends not in wave-1 vocab; nested-rack device params
+unreachable on either route; pull/read of arrangement automation has no LOM
+surface.
+
+## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
+
+<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=shipped | release=v0.9.5 -->
+
+AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
+`'audio'`) plus the user-locked wave-1 audio field set — `audio_file`
+(song-relative POSIX or absolute, stored as-given), `audio_gain` (0–1 linear),
+`pitch_coarse`/`pitch_fine`, `warping`, `warp_mode` (Live enum ints, named via
+`WARP_MODES`), `start_marker`/`end_marker` (beats when warped, seconds when
+not) — via canonical `schema.sql` definitions + `_ADDED_COLUMNS` migration.
+New event-emitting `create_audio_clip` mutator (audio-host-track guard,
+audio_file required, idempotent rebuild). **Kind-guards at every
+MIDI-assuming surface:** `kind` immutable everywhere (MIDI<->audio is
+delete+create — `create_clip`/`create_audio_clip` both refuse a foreign-kind
+slot; `update_clip` refuses `kind`); `update_clip` whitelist gains the audio
+fields, refused on MIDI rows (and `audio_file` can't be cleared);
+`insert_notes`/`replace_clip_notes` refuse audio targets (notes live on MIDI
+clips); push planner refuses `kind='audio'` loudly — warn naming CLP-AUD2, no
+MIDI create emitted — with a matching kind-aware warn in the arrangement
+planner; pull exempts audio-clip rows (session-slot diff, arrangement-
+placement removal, note probes) so authored-but-unsynced state can't be
+clobbered. New pure `hallucinote.paths.resolve_audio_path(song_dir, ref)`
+(top-level home keeps it importable without the numpy-bound
+`hallucinote.audio` package). Docs: `docs/terminology.md` clips section gains
+the kind/audio-field semantics. Push/pull of audio clips is CLP-AUD2; envelope
+hosting ENV-8H1T; take lanes AUD-9R3V; warp markers deferred (lock 3).
+
 ## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
 
 <!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->
@@ -25,6 +238,111 @@ primary-source mastering norms, two LOM research passes (same dir). **Artifact:*
 (R1–R5) traced to mechanisms + staged plan. **Backlog:** AUD-1M4V → design;
 CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
 (performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
+
+## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+<!-- chunks=FRICTION-03 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
+whenever the devices phase applied at least one call — including pushes that
+halted at a later phase (the doc tracks current set state, not push success).
+`compat.regen_requirements(song_slug)` is the extracted callable seam; the
+`write-requirements` CLI command is a thin wrapper. `--db`-only pushes print a
+stale-notice with the manual command instead of guessing the song dir; regen
+failures degrade to a stderr notice (waivered broad catch) so the push's exit
+code is never masked. `docs/collaboration.md` handoff checklist updated.
+
+## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
+
+<!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->
+
+`session_id` may now be omitted on every session-taking `push_cli` /
+`pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
+it from the DB the command already opened: explicit id wins; one session →
+used; several → most recent, echoed on stderr with alternatives; apply
+commands treat a plan file's embedded `session_id` as authoritative (and
+refuse a conflicting explicit id); multi-song DBs refuse to guess; zero
+sessions → bootstrap guidance. New `db.queries.list_ableton_sessions`
+(newest-first). Render takes no session id — out of scope by inspection.
+Also: fixed a latent Hypothesis flake (per-example 200ms deadline under
+xdist load) by setting `deadline=None` in both profiles.
+
+## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
+
+<!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->
+
+`push_cli execute` failures previously printed only the errors-file path plus
+bare "top error patterns", forcing a read of `.last-push-errors.json` on every
+halt. `_group_errors` now carries a representative `tool`/`action` and the
+first non-null responder `hint` per pattern, and `format_summary` renders a
+"Halt cause" block: `tool.action: error (N calls)` + a `next:` line
+(responder hint first; hint-less `device.load` failures point at
+REQUIREMENTS.md; connection-class halts at the Live-running checklist;
+otherwise the generic fix→rebuild→re-execute loop). Summary redaction is now
+test-pinned (large payloads can never leak past the 60-char grouping prefix).
+`skills/ableton-push/SKILL.md` + `push-execute-design.md` updated to match.
+
+## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
+
+<!-- chunks=AUD-4W7K-02 status=shipped release=unreleased scope=aud-4w7k -->
+
+The seq keying layer: the MCP server reads the song's latest audit-log seq
+at render-forward time (`server._attach_render_db_seq` — the render handler
+runs in Live's hallucinote-less env, so the read lives server-side, a
+deviation from the plan's handler-side wording) and the handler writes it
+as `manifest.db_seq`; `CaptureSet` and `MixReport` carry it (old manifests
+load as None). `compare.resolve_baseline(analysis_dir, seq)` finds the
+matching report (latest tie-break, teaching error otherwise);
+`analyze_mix(compare_to=<seq>, analysis_dir=...)` and
+`ableton_analysis(analyze, compare_to=<seq>)` complete the loop, with the
+baseline validated before the DSP passes. Surfacing sweep: render-handler
+"deferred" paragraph, analyze action description/tips, `/mix-review` A/B
+recipe, spike decision-record updates. AUD-4W7K complete pending merge.
+
+## 2026-06-10 — AUD-4W7K chunk 1: compare_to baseline diffs via explicit path
+
+<!-- chunks=AUD-4W7K-01 status=shipped release=unreleased scope=aud-4w7k -->
+
+`MixReport.compare_to` is no longer a reserved skeleton: `audio/compare.py`
+diffs two serialized reports — per-surface loudness deltas keyed by
+track_id (added/removed surfaces explicit), overshoot count, significance
+floors calibrated on the six real sun-zone-done analysis JSONs (0.5 dB
+default; 1.0 dB for the timing-sensitive lufs_s_median). Deltas are neutral
+evidence — no finding kinds derive from them. `analyze_mix(compare_to=<path>)`
+loads the baseline fail-fast and populates the field. The v3→v4 real-pair
+diff tells the known story exactly (true peak 1.52→−0.96 dBTP, 8
+overshoots→0). Seq keying lands next chunk.
+
+## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
+
+<!-- chunks=AUD-3F8M-02 status=shipped release=unreleased scope=aud-3f8m -->
+
+`mixer_pan` joins `mixer_volume` on the master-bus verification path:
+constant-power pan gains × the stem's static fader gain (threaded from
+`analyze_mix`'s existing `stem_gains`) predict the expected L−R balance
+shift (`master_balance_db`); same detectability floor / model-breakdown /
+direction+0.3× semantics as volume. Real-capture evidence: sun-zone-done's
+break pan sweep (±0.95) verifies 4/4 measurable change-points REALIZED.
+Contract text updated everywhere the old "mixer kinds are unverifiable"
+claim lived (tool description, envelope collector, `/mix-review` skill,
+module docs). AUD-3F8M complete pending merge.
+
+## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
+
+<!-- chunks=AUD-3F8M-01 status=shipped release=unreleased scope=aud-3f8m -->
+
+`mixer_volume` envelopes are no longer skipped as post-fader-invisible:
+`audio/automation.py` windows the MASTER (post-fader sum) around each
+breakpoint and checks the level step against a prediction built from the
+declared fader values (`levels.live_fader_gain` calibration) + the measured
+pre-fader stem power (uncorrelated power model). Predicted step < 0.75 dB →
+honest `measurable=False` (stem too diluted/silent); model breakdown
+(stem-at-gain exceeding limited master power) is also an honest skip, never
+a false verdict; realized = declared direction + ≥0.3× predicted (lenient
+for the house master limiter). `master_audio` is a required kwarg through
+`analyze_mix`. Spike + real-capture evidence in the AUD-3F8M plan Status
+(sun-zone-done's one mixer_volume envelope is a subtle trim — honestly
+gated at all 12 change points). `mixer_pan` lands next chunk.
 
 ## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 

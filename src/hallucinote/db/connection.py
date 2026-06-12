@@ -85,9 +85,28 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     """
     _check_schema_canary()
     conn = connect(db_path)
+    _rebuild_disposable_tables(conn)
     conn.executescript(_SCHEMA_PATH.read_text())
     _ensure_added_columns(conn)
     return conn
+
+
+def _rebuild_disposable_tables(conn: sqlite3.Connection) -> None:
+    """One-shot rebuilds for DISPOSABLE sync-state tables whose shape changed
+    in a way ``ALTER TABLE`` can't express (constraint changes). Dropping
+    here is safe by design — these tables cache re-derivable sync state,
+    never authored content. Runs before ``schema.sql`` so the CREATE TABLE
+    IF NOT EXISTS recreates the new shape.
+
+    - ``performed_automation`` pre-session-keying (ENV-7G4K): the original
+      table was UNIQUE(envelope_id) — session-blind, so a second Live set
+      false-skipped every arc. Rebuilt as UNIQUE(envelope_id, session_id);
+      dropped fingerprints just mean the next push re-performs each arc
+      (slower, never wrong).
+    """
+    rows = conn.execute("PRAGMA table_info(performed_automation)").fetchall()
+    if rows and "session_id" not in {r["name"] for r in rows}:
+        conn.execute("DROP TABLE performed_automation")
 
 
 # Column additions that post-date the original schema CREATE statements.
@@ -166,6 +185,51 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
         "sections",
         "energy",
         "REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0))",
+    ),
+    # CLP-AUD1 (AUD-1M4V stage 0a): clips gain the kind discriminator +
+    # wave-1 audio fields. Existing rows are all MIDI — the DEFAULT keeps
+    # them valid with audio columns NULL. start/end markers carry Live's
+    # dual unit (beats when warping=1, seconds when warping=0); see the
+    # clips block in schema.sql for full column semantics.
+    ("clips", "kind", "TEXT NOT NULL DEFAULT 'midi'"),
+    ("clips", "audio_file", "TEXT"),
+    ("clips", "audio_gain", "REAL"),
+    ("clips", "pitch_coarse", "INTEGER"),
+    ("clips", "pitch_fine", "REAL"),
+    ("clips", "warping", "INTEGER"),
+    ("clips", "warp_mode", "INTEGER"),
+    ("clips", "start_marker", "REAL"),
+    ("clips", "end_marker", "REAL"),
+    # RTE-1K9T: track signal routing (output + input) + monitor switch (D6).
+    # Existing rows get NULL across all seven (no routing authored) -- the
+    # DEFAULT-NULL keeps every pre-column track valid. The routing target is a
+    # SEMANTIC reference (kind + FK target_id + channel), never Live's
+    # display_name; see the tracks block in schema.sql + set_track_routing.
+    # target_id self-FKs `tracks` (the requests.parent_id precedent — a
+    # self-referential FK added via ALTER) with ON DELETE SET NULL.
+    # CHECK asymmetry: output_routing_kind + monitoring_state are CHECK-
+    # constrained (closed domains); input_routing_kind is plain TEXT (open
+    # hardware-bound domain — the mutator validates). Keep each CHECK clause
+    # in sync with schema.sql's CREATE TABLE by hand: the canary only verifies
+    # column *presence* (PRAGMA table_info names), NOT the CHECK-clause text,
+    # so a divergent CHECK between the fresh-DB (schema.sql) and migrated-DB
+    # (this ALTER) paths would NOT be caught here.
+    (
+        "tracks",
+        "output_routing_kind",
+        "TEXT CHECK (output_routing_kind IS NULL OR "
+        "output_routing_kind IN ('master','track','sends_only','ext_out'))",
+    ),
+    ("tracks", "output_routing_target_id", "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
+    ("tracks", "output_routing_channel", "TEXT"),
+    ("tracks", "input_routing_kind", "TEXT"),
+    ("tracks", "input_routing_target_id", "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
+    ("tracks", "input_routing_channel", "TEXT"),
+    (
+        "tracks",
+        "monitoring_state",
+        "TEXT CHECK (monitoring_state IS NULL OR "
+        "monitoring_state IN ('In','Auto','Off'))",
     ),
 )
 

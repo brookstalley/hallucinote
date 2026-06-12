@@ -15,6 +15,7 @@ Conventions for authoring `build.py` against the Hallucinote library. Companion 
 - [Cue points and duplicate names](#cue-points-and-duplicate-names)
 - [Meter (4/4 vs. other)](#meter-44-vs-other)
 - [Master and audio-track envelopes](#master-and-audio-track-envelopes)
+- [The PRE-MAIN submaster bus (master-like automation without `.als`)](#the-pre-main-submaster-bus-master-like-automation-without-als)
 - [Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)](#enum-parameter-envelopes-amp-type-filter-type-lfo-sync-)
 - [Tempo of non-4/4 BPM](#tempo-of-non-44-bpm)
 - [Push session bootstrap (`--auto-session`)](#push-session-bootstrap---auto-session)
@@ -359,14 +360,68 @@ For non-4/4 sections:
 
 ---
 
-## Master and audio-track envelopes
+## Master, group, and return envelopes — performed automation
 
-Two structural non-supports the planner refuses:
+Master/group mixer (volume, pan), group sends, return mixer, and master- or return-chain `device_parameter` envelopes ARE authorable (ENV-7G4K) — author them in `build.py` like any other envelope. They can't ride session clips (Live LOM has no clip path for these hosts), so push **performs** them instead: a dedicated phase after envelopes gesture-records ALL changed arcs in ONE transport pass (ENV-9P4T), playing through the union span of the changed arcs while scripting each parameter inside its own gesture window.
 
-- **Master envelopes** can't be authored. Live LOM has no path. Workaround: route the sources to a sub-bus group track and automate the group's volume.
-- **Mixer envelopes on audio tracks** can't be authored. The DB doesn't model audio session clips; the existing envelope-emitter family needs a session clip on the target track. Workaround: same sub-bus pattern.
+What that means when you author one:
 
-Long envelopes spanning multiple session clips are also refused — author them with a per-section partition pattern (a future version may auto-partition).
+- **Push takes real wall-clock.** All changed arcs record in a single playthrough over their union span; the push plan names that union-span estimate (tempo-map-aware) and a loud alert lists every span it will overwrite. A 16-bar master fade at 120 BPM is ~32s of transport playback; adding a second overlapping arc costs no extra time (same pass).
+- **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
+- **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
+- **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
+
+## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
+
+**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
+
+**Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
+
+---
+
+## The PRE-MAIN submaster bus (master-like automation without `.als`)
+
+You want an automatable **master-like bus** — one fader / filter you can ride across the whole song — but Live's **master, group, and return tracks are clip-less summing points**: they have no LOM automation-envelope surface, so a lossless ride on them needs a `.als` cold-write or the lossy `perform` path (see "Master, group, and return envelopes" above). A **plain audio track is fully automatable AND routable**. So the convention is: route everything through a plain audio **"PRE-MAIN"** bus → master. No `.als`, no group track, no special-casing — the bus is an ordinary track that automates like any other.
+
+Author it with the routing mutator `set_track_routing`. The routing target is a **semantic reference** (`kind` + an FK to the target track), never Live's display name, so the bus link survives renames and re-pushes:
+
+```python
+# 1. Create the bus as a plain AUDIO track (it sums; it carries no clips of its own).
+bus = M.create_track(conn, song_id=song_id, track_index=BUS_INDEX, name="PRE-MAIN", kind="audio")
+
+# 2. Route each instrument track's OUTPUT to the bus (kind='track' + the bus's FK).
+for inst_id in (drums_id, bass_id, keys_id):
+    M.set_track_routing(conn, track_id=inst_id,
+                        output_routing_kind="track", output_routing_target_id=bus)
+
+# 3. Route the bus's own output to the master, and set Monitor='In' so it PASSES
+#    the routed audio through (a summing bus stays silent without Monitor=In).
+M.set_track_routing(conn, track_id=bus, output_routing_kind="master")
+M.set_track_routing(conn, track_id=bus, monitoring_state="In")
+```
+
+Push materializes this in the `routing` phase (after `mix`, before `devices`): each instrument's output chip reads `PRE-MAIN`, the bus's output reads `Main`, the bus Monitor reads `In`. Now author your "master" ride as an ordinary envelope on the **bus** track (volume, pan, or a filter on a device in its chain) — it rides the normal automation paths, no master special-casing. A manual reroute in Live pulls back into the DB through the same mutator (the `routing` reads in `mix-state` pull), so the convention round-trips.
+
+**Monitor=In is load-bearing**, not optional polish: a summing bus that receives routed audio is silent until its monitor is `In` (the live-probed dependency). The `routing` push phase sets it from `monitoring_state='In'`.
+
+**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip the audio bus can't carry until **CLP-AUD2** lands. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
+
+> A `route_to_bus` convenience helper is deliberately **not** shipped yet — the pattern has no second user. Friction-driven, like the interplay primitives above: the first song to adopt the bus authors it from these mutators; a helper earns its place when a second one does.
+
+### When to reach for the bus instead of the master
+
+Whenever you would automate or process the **master** — a master fader ride, a master filter sweep, master bus compression that moves over the song — author it on a **PRE-MAIN bus** instead. The master is a clip-less summing point: its automation is perform-only (lossy ~2.5 Hz, no session-clip host), and its device chain can't ride a normal envelope. The bus is an ordinary track, so a ride on it is a first-class, normally-automatable envelope. **Default: nothing rides the master; the master stays flat and the PRE-MAIN bus carries the moves.** (A static master Limiter / Ceiling is fine — it's the *automation* the master can't host losslessly.)
+
+### Other routing patterns the bus unlocks
+
+The same primitives (`set_track_routing` + a plain audio bus + `monitoring_state='In'`) are the programmatic **sub-mix / grouping** toolkit. Live **group tracks are not LOM-creatable** (Cmd+G is UI-only — TRK-2H6K deferred), so a routing bus is *the* way to sub-mix from `build.py`:
+
+- **Sub-mix bus (the group replacement).** Route every drum track's output to a `Drums` audio bus, process the bus once (glue compressor, bus EQ), and automate the *bus* to ride the whole kit as one. This is what a group track would do — build it as a routing bus instead.
+- **Parallel processing (parallel compression).** Feed a copy of a source to a bus in parallel (a send to a return, or a second output to a parallel audio bus), crush it (heavy compression / saturation), and blend it under the dry signal.
+- **FX pre-bus.** Route several sources into one bus, then a single send from the bus to a reverb/delay return — the group shares one space with one send level to ride.
+
+In every case the routing target is a **semantic reference** (survives renames + re-pushes), `Monitor='In'` is required on any bus that must pass routed audio, and the bus automates like any other track — the same reason it beats the master.
 
 ---
 
@@ -431,6 +486,7 @@ Both print the new session_id; use it for the rest of the push cycle and reuse i
 
 - [`.prawduct/artifacts/arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md) — the arrangement model + the **dimension taxonomy** (structure intents · realization layers · subsystems) these conventions sit within
 - [`.prawduct/artifacts/performance-model.md`](../.prawduct/artifacts/performance-model.md) — the performance realization layer (the formal model behind "microtiming is authorship")
+- [`.prawduct/artifacts/plans/RTE-1K9T/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
 - [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) — the **WHY** corpus: decisions/annotations, the frontmatter schema + controlled mix/groove **tag vocabulary** (the markdown companion to the `feel`-dict *WHAT* here)
 - `docs/snapshot-schema.md` — `captured_session.json` shape
 - `songs/falling-walking/` — historical worked example (~860 LoC, full song)

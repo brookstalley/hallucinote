@@ -74,6 +74,32 @@ size, author the notes as code in the song's `build.py`
 Live 12.4 exposes no public reorder API — plan the load order if chain order
 matters.
 
+### Reordering / inserting mid-chain: delete-descending, reload-in-order
+
+Because load only appends and there's no reorder API, changing the order of an
+already-materialized chain — e.g. inserting a device ahead of an existing FX
+chain, or swapping one in the middle — has exactly one path:
+
+1. **Delete the affected devices in DESCENDING index order** (highest
+   `device_index` first). Deleting top-down keeps every not-yet-deleted index
+   stable; deleting bottom-up shifts the indices out from under you.
+2. **Reload all of them in the desired order** (`load` appends, so loading
+   `[A, B, C]` in sequence yields that chain order).
+
+There is a window between step 1 and step 2 where the chain is empty — issue
+all the delete + reload calls back-to-back (don't pause for unrelated work
+while the chain is gutted). Afterward, re-run the push probe-and-link step so
+the DB↔Live device bindings re-attach to the rebuilt chain; the next
+`push_cli execute` then reports `devices: skipped (idempotent)`.
+
+> No `rebuild_chain` convenience ships for this (DEV-5R8Q). It isn't a
+> pure-planner emission: the push planner binds devices idempotently by
+> class+position and has no "reorder an existing chain" diff, so a convenience
+> would need new Remote-Script-side orchestration to sequence the
+> delete+reload and manage the transient-empty-chain window — out of scope
+> until the cost is justified by more than a one-off hand-edit. Hand-author the
+> two steps above when you need them.
+
 ## `kind` is the browser display name
 
 For built-in Live devices, `kind` is the device's **browser display name**
@@ -91,3 +117,35 @@ as `preset_uri`. Display-name matching only works for the built-in roots
 
 These are pure-math timing transforms. Hallucinote owns the math; push the
 result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
+
+## Routing & busses — prefer a PRE-MAIN bus over the master
+
+Live's **master, group, and return tracks are clip-less summing points**: they
+have no automation-envelope surface, so automating the master directly is
+perform-only (lossy ~2.5 Hz) and its device chain can't ride a normal envelope.
+**Don't reach for the master when you want an automatable "master" fader, filter,
+or bus compressor.** Route everything through a plain **audio bus** → master and
+automate the *bus* — an ordinary, fully-automatable track:
+
+1. Create a plain audio bus —
+   `ableton_track(action='create', kind='audio', name='PRE-MAIN')`.
+2. Route each source track's output to it —
+   `ableton_track(action='set_output_routing', track_index=N, type_display_name='PRE-MAIN')`.
+3. Route the bus to the master and arm it to pass the summed audio —
+   `ableton_track(action='set_output_routing', track_index=BUS, type_display_name='Main')`
+   then `ableton_track(action='set_monitoring_state', track_index=BUS, state='In')`.
+
+**`Monitor='In'` is load-bearing** — a summing bus that receives routed audio is
+silent without it (it's the live-probed dependency, not optional polish). A
+static master Limiter / Ceiling is still fine; it's *automation* the master
+can't host, so the moving parts live on the bus.
+
+The same primitives are the **sub-mix / grouping** tool, because Live group
+tracks **cannot be created via the LOM** (Cmd+G is UI-only): route related tracks
+(all drums, all vocals) to a shared audio bus to process + automate them as a
+group, do parallel compression (a bus fed in parallel, crushed, blended under the
+dry), or build an FX pre-bus (many sources → one bus → one reverb send). Targets
+are **source-dependent** — call `action='get_output_routing'` /
+`'get_input_routing'` first to see a track's available targets, and the set
+handlers **echo the requested name** (same-callback readback is unreliable; issue
+a follow-up `get_*` to confirm).

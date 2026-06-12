@@ -223,6 +223,19 @@ def _apply_arrangement_clips_for_track(
     # for the common case.
     db_by_pos: dict[tuple[float, float], sqlite3.Row] = {}
     for r in db_rows:
+        if r["clip_kind"] == "audio":
+            # CLP-AUD1: audio-clip rows are authored but not synced
+            # until CLP-AUD2, so Live never reports their placements —
+            # including them in the diff would delete authored state on
+            # every pull. Exempt them loudly.
+            out.warnings.append(
+                f"track {track_row['name']!r}: arrangement placement at "
+                f"bar {r['start_bar']:g}..{r['end_bar']:g} references "
+                f"audio clip {r['clip_name']!r} (kind='audio') — "
+                "audio-clip sync is CLP-AUD2 scope; the row is authored "
+                "but not synced, so pull leaves it untouched."
+            )
+            continue
         k = (_pos_key(r["start_bar"]), _pos_key(r["end_bar"]))
         if k in db_by_pos:
             kept = db_by_pos[k]
@@ -351,9 +364,24 @@ def _apply_session_clips_for_track(
         )
         return
 
-    db_by_slot: dict[int, sqlite3.Row] = {
-        int(c["slot"]): c for c in Q.get_clips_for_track(conn, track_id)
-    }
+    db_by_slot: dict[int, sqlite3.Row] = {}
+    audio_slots: set[int] = set()
+    for c in Q.get_clips_for_track(conn, track_id):
+        slot = int(c["slot"])
+        if c["kind"] == "audio":
+            # CLP-AUD1: audio-clip rows are authored but not synced
+            # until CLP-AUD2, so Live's slot state says nothing about
+            # them — diffing would delete (empty slot) or mis-ingest
+            # (foreign clip in the slot) authored state. Exempt loudly.
+            audio_slots.add(slot)
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} holds "
+                f"audio clip {c['name']!r} (kind='audio') — audio-clip "
+                "sync is CLP-AUD2 scope; the row is authored but not "
+                "synced, so pull does not diff or delete it."
+            )
+            continue
+        db_by_slot[slot] = c
     seen: set[int] = set()
 
     for entry in clips_in:
@@ -365,6 +393,11 @@ def _apply_session_clips_for_track(
             )
             continue
         slot = int(slot_in)
+        if slot in audio_slots:
+            # Guarded above: the DB row at this slot is an unsynced
+            # audio clip; neither the empty-slot delete nor the
+            # populated-slot diff may touch it.
+            continue
         seen.add(slot)
         empty = bool(entry.get("empty", False))
         db_clip = db_by_slot.get(slot)

@@ -86,7 +86,13 @@ def tiny_song(conn, song):
     return {"track_id": tid, "clip_id": cid, "song_id": song}
 
 
-def _make_send_fn(*, fail_keys: set[str] = frozenset(), raise_on_key: str | None = None):
+def _make_send_fn(
+    *,
+    fail_keys: set[str] = frozenset(),
+    raise_on_key: str | None = None,
+    fail_hint: str | None = None,
+    perform_automation_state: int | None = 1,
+):
     """Build a fake send_fn that returns synthetic ok results with monotonic
     link indexes per kind, unless the call's key is in ``fail_keys`` (returns
     ok=False) or matches ``raise_on_key`` (raises — simulates connection loss).
@@ -125,6 +131,7 @@ def _make_send_fn(*, fail_keys: set[str] = frozenset(), raise_on_key: str | None
         call_log.append({
             "tool": req.tool, "action": req.action,
             "params_keys": sorted(req.params.keys()),
+            "params": dict(req.params),
         })
 
         # The fake matches against the *request* shape. Tests that want to
@@ -134,7 +141,25 @@ def _make_send_fn(*, fail_keys: set[str] = frozenset(), raise_on_key: str | None
         if raise_on_key and composite == raise_on_key:
             raise ConnectionRefusedError("simulated Live unreachable")
         if composite in fail_keys:
-            return FakeResponse(ok=False, error=f"simulated failure for {composite}")
+            return FakeResponse(
+                ok=False,
+                error=f"simulated failure for {composite}",
+                hint=fail_hint,
+            )
+
+        # perform_batch (ENV-9P4T) fans out to a per-arc result list; echo
+        # each arc's arc_id with a configurable automation_state (default 1
+        # = verified). The apply layer gates each arc independently on it.
+        if req.tool == "ableton_automation" and req.action == "perform_batch":
+            return FakeResponse(ok=True, result={
+                "arcs": [
+                    {
+                        "arc_id": a.get("arc_id"),
+                        "automation_state": perform_automation_state,
+                    }
+                    for a in req.params.get("arcs", [])
+                ],
+            })
 
         kind = _kind_for(req.tool, req.action)
         if kind is None:
@@ -169,11 +194,12 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The eleven phases are present, in order.
+    # The thirteen phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "devices", "envelopes", "arrangement", "cues",
+        "scenes", "clips", "mix", "routing", "devices", "envelopes",
+        "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
     # content) or ok-with-zero-calls if the planner still emits acks.
@@ -272,7 +298,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all eleven plans before dispatching)."""
+    (e.g. a refactor that pre-builds all thirteen plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 
@@ -501,7 +527,7 @@ def test_execute_halts_at_phase_boundary_after_clip_failure(
     assert by_name["clips"]["status"] == "halted"
     assert by_name["clips"]["calls_failed"] == 1
     # Mix / devices / etc. all marked pending.
-    for downstream in ("mix", "devices", "envelopes", "arrangement", "cues"):
+    for downstream in ("mix", "routing", "devices", "envelopes", "arrangement", "cues"):
         assert by_name[downstream]["status"] == "pending", downstream
     # tracks ran before the failure.
     assert by_name["tracks"]["status"] == "ok"
@@ -584,7 +610,7 @@ def test_execute_connection_loss_immediate_halt(
     assert state["outcome"] == "connection_lost"
     # Downstream phases pending.
     by_name = {p["name"]: p for p in state["phases"]}
-    for downstream in ("mix", "devices", "envelopes", "arrangement", "cues"):
+    for downstream in ("mix", "routing", "devices", "envelopes", "arrangement", "cues"):
         assert by_name[downstream]["status"] == "pending"
 
     # The errors file records the connection-class exception.
@@ -679,9 +705,11 @@ def test_format_summary_ok_path(conn, song, session, tiny_song, state_dir):
     assert "clips" in text
 
 
-def test_format_summary_partial_includes_top_patterns(
+def test_format_summary_partial_includes_halt_cause_and_next_step(
     conn, song, session, tiny_song, state_dir,
 ):
+    """PSH-4E2W: a failed push's output names the halt cause (tool.action +
+    error) and a suggested next step — no JSON spelunking required."""
     send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
@@ -690,8 +718,61 @@ def test_format_summary_partial_includes_top_patterns(
     text = push_execute.format_summary(result)
     assert "PARTIAL" in text
     assert "halted" in text
-    assert "Top error patterns" in text
+    assert "Halt cause" in text
+    assert "ableton_clip.create" in text
     assert "simulated failure" in text
+    assert "next:" in text
+    # No responder hint → generic fix-rebuild-rerun suggestion.
+    assert "re-run" in text
+
+
+def test_format_summary_next_step_prefers_responder_hint(
+    conn, song, session, tiny_song, state_dir,
+):
+    """When the failing response carries a hint, the summary's next step IS
+    that hint — the responder knows the cause better than any heuristic."""
+    send_fn = _make_send_fn(
+        fail_keys={"ableton_clip:create"},
+        fail_hint="slot 1 is occupied; delete the clip in Live first",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    text = push_execute.format_summary(result)
+    assert "next: slot 1 is occupied; delete the clip in Live first" in text
+
+
+def test_format_summary_stays_payload_free_for_large_errors(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Governance checkpoint for PSH-4E2W: the richer summary must not
+    reintroduce bulk payloads. A failing response whose error message embeds
+    a large dump renders at most the 60-char grouping prefix."""
+    payload = "notes=[" + ", ".join(f"{{'pitch': {60 + i}}}" for i in range(500)) + "]"
+    send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
+
+    # Wrap the fake so the failure carries the giant message.
+    inner = send_fn
+
+    def send(req):
+        resp = inner(req)
+        if not resp.ok:
+            return FakeResponse(ok=False, error=f"clip rejected: {payload}")
+        return resp
+
+    send.call_log = inner.call_log  # type: ignore[attr-defined]
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    text = push_execute.format_summary(result)
+    assert "Halt cause" in text
+    assert payload not in text
+    # Only the 60-char grouping prefix of the error may appear.
+    assert ("clip rejected: " + payload)[:60] in text
+    assert all(len(line) < 200 for line in text.splitlines())
 
 
 def test_format_summary_connection_lost(
@@ -704,6 +785,38 @@ def test_format_summary_connection_lost(
     )
     text = push_execute.format_summary(result)
     assert "CONNECTION LOST" in text
+    # PSH-4E2W: connection-class halts point at the Live-side checklist.
+    assert "Live is running" in text
+
+
+def test_group_errors_carries_representative_tool_action_hint():
+    """PSH-4E2W: grouped patterns carry enough context (tool, action, first
+    non-null hint) for the summary to name the cause without the errors file."""
+    records = [
+        {"key": "clip:1", "tool": "ableton_clip", "action": "create",
+         "error": "boom A", "hint": None},
+        {"key": "clip:2", "tool": "ableton_clip", "action": "create",
+         "error": "boom A", "hint": "try deleting the slot"},
+        {"key": "dev:1", "tool": "ableton_device", "action": "load",
+         "error": "no such preset", "hint": None},
+    ]
+    grouped = push_execute._group_errors(records)
+    by_substr = {g["error_substring"]: g for g in grouped}
+    boom = by_substr["boom A"]
+    assert boom["count"] == 2
+    assert boom["tool"] == "ableton_clip"
+    assert boom["action"] == "create"
+    assert boom["hint"] == "try deleting the slot"
+    assert boom["affected_keys"] == ["clip:1", "clip:2"]
+
+
+def test_suggest_next_step_device_load_points_at_requirements():
+    """A hint-less device.load failure suggests the not-installed path —
+    the canonical cross-machine failure — and names REQUIREMENTS.md."""
+    pattern = {"tool": "ableton_device", "action": "load",
+               "error_substring": "preset not found", "hint": None, "count": 1}
+    step = push_execute._suggest_next_step(pattern, outcome="partial")
+    assert "REQUIREMENTS.md" in step
 
 
 # ---------------------------------------------------------------------------
@@ -1234,3 +1347,422 @@ def test_pad_probe_runs_on_idempotent_re_push(
     assert devices_phase["pad_probes_ok"] == 1
     # And the rows came back via the idempotent re-probe.
     assert len(Q.get_drum_pad_mappings(conn, drum_song["device_id"])) == 5
+
+
+# ---------------------------------------------------------------------------
+# ENV-7G4K: unverified perform surfacing
+# ---------------------------------------------------------------------------
+
+
+def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
+    conn, song, session, tiny_song, state_dir,
+):
+    """An ok perform_batch wire call whose handler could not verify an
+    arc's write (the fake echoes the arc with ``automation_state=0``) must
+    not vanish: the exit code stays 0 (every wire call succeeded), but the
+    errors file carries an ``apply_push_results`` record naming the arc,
+    and no performed-state row is written so the next push retries."""
+    master = M.create_track(
+        conn, song_id=song, track_index=0, name="Master", kind="master",
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 16.0, "value": 0.4},
+        ],
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(perform_automation_state=0),
+    )
+    assert result.exit_code == push_execute.EXIT_OK
+    assert result.errors_file is not None
+    errors = json.loads(result.errors_file.read_text())
+    apply_recs = [
+        e for e in errors["errors"] if e["tool"] == "apply_push_results"
+    ]
+    assert len(apply_recs) == 1
+    assert eid in apply_recs[0]["error"]
+    assert "automation_state" in apply_recs[0]["error"]
+    assert Q.get_performed_automation(conn, eid, session) is None
+
+
+# ---------------------------------------------------------------------------
+# SYN-9F2L — params_dialed lands in one execute (devices-phase convergence)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def song_with_dialed_device(conn, song):
+    """A track whose device carries a snapshot-authored dialed param —
+    the swell Saturator case (display '14 dB', normalized 0.389)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Glitch", kind="midi")
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator",
+        display_name="Saturator",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Drive",
+        value_display="14 dB", value_normalized=0.389,
+    )
+    return {"track_id": tid, "device_id": did}
+
+
+def test_devices_params_dialed_land_in_one_execute(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """SYN-9F2L regression: the device loads AND its dialed param is written
+    in the SAME execute. Before the fix, the set_parameter was deferred to a
+    'rerun plan_push_devices' that no execute ever performed — the param
+    silently never landed."""
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    set_param_calls = [
+        c for c in send.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "set_parameter"
+    ]
+    assert len(set_param_calls) == 1
+    params = set_param_calls[0]["params"]
+    assert params["parameter_name"] == "Drive"
+    # Display form preferred on the wire (center-zero-safe).
+    assert params["value_display"] == "14 dB"
+    assert "value" not in params
+    # The pass-2 write is ordered AFTER the load it depends on.
+    load_idx = next(
+        i for i, c in enumerate(send.call_log)
+        if c["tool"] == "ableton_device" and c["action"] == "load"
+    )
+    sp_idx = next(
+        i for i, c in enumerate(send.call_log)
+        if c["action"] == "set_parameter"
+    )
+    assert sp_idx > load_idx
+
+
+def test_devices_second_pass_does_not_redispatch_first_pass_keys(
+    conn, song, session, state_dir,
+):
+    """An already-linked device's params write in pass 1 and must NOT be
+    re-sent by the convergence pass."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Keys", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="EQ Eight", display_name="EQ",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Freq",
+        value_display="1.17 kHz", value_normalized=0.59,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    set_param_calls = [
+        c for c in send.call_log if c["action"] == "set_parameter"
+    ]
+    assert len(set_param_calls) == 1  # exactly once, not once per pass
+
+
+def test_devices_second_pass_failure_halts_partial(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """A failing pass-2 set_parameter is a real failure: the devices phase
+    halts partial, never a silent drop."""
+    send = _make_send_fn(fail_keys={"ableton_device:set_parameter"})
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+
+
+def test_devices_unwritable_param_surfaces_warning_already_linked(
+    conn, song, session, state_dir,
+):
+    """SYN-9F2L's 'OR warns' half, on the execute path: a param with no
+    writable form (no display, no normalized, no enum items) on an
+    already-linked device must surface a warning in the push report — not be
+    silently dropped. The planner warns into ``plan.notes``; before the fix
+    ``execute`` never drained ``plan.notes`` into ``ExecuteResult.warnings``, so
+    the warn was discarded and the silent drop SYN-9F2L was filed to kill
+    survived on the primary push path."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator", display_name="Saturator",
+    )
+    # No display, no normalized, no items → unwritable.
+    M.set_device_parameter(conn, device_id=did, name="Drive", value_display="")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    # Benign warning — the push is still OK (exit 0), not a PARTIAL halt.
+    assert result.outcome == "ok"
+    assert any(
+        "no writable form" in w and "Saturator" in w for w in result.warnings
+    ), f"unwritable-param warning not surfaced: {result.warnings!r}"
+
+
+def test_devices_unwritable_param_surfaces_warning_same_pass_load(
+    conn, song, session, state_dir,
+):
+    """The acute SYN-9F2L case: a device loaded THIS pass (track not pre-linked)
+    is unlinked when the primary plan runs, so its unwritable param only becomes
+    visible in the convergence re-plan. The re-plan's notes must drain too —
+    and the warning must appear exactly ONCE (the re-plan regenerates the full
+    plan, so a naive drain would double-report)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Glitch", kind="midi")
+    # Deliberately NOT linked — forces a same-pass load + convergence re-plan.
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Saturator", display_name="Saturator",
+    )
+    M.set_device_parameter(conn, device_id=did, name="Drive", value_display="")
+    send = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    matching = [w for w in result.warnings if "no writable form" in w and "Saturator" in w]
+    assert len(matching) == 1, (
+        f"expected exactly one unwritable-param warning (deduped), got: {result.warnings!r}"
+    )
+
+
+def test_set_parameter_enum_fallback_retries_display_as_enum(
+    conn, song, session, state_dir,
+):
+    """A display write the handler refuses with 'is an enum' is retried once
+    as value_type='enum' with the display string as the value — hand-authored
+    snapshot enums land instead of halting the phase."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Op", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Operator", display_name="Op",
+    )
+    M.set_device_parameter(conn, device_id=did, name="Filter Type",
+                           value_display="Lowpass")  # no items, no normalized
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'Filter Type' is an enum (is_quantized=True); "
+                    "use value_type='enum' with `value`, not `value_display`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    enum_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter"
+        and c["params"].get("value_type") == "enum"
+    ]
+    assert len(enum_writes) == 1
+    assert enum_writes[0]["params"]["value"] == "Lowpass"
+
+
+def test_set_parameter_display_fallback_retries_with_normalized(
+    conn, song, session, song_with_dialed_device, state_dir,
+):
+    """A display write the handler refuses with 'exposes no str_for_value'
+    is retried once with the DB's normalized value — the pre-SYN-9F2L wire
+    form — so params on curve-less parameters still land."""
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'Drive' exposes no str_for_value; set it via "
+                    "the normalized `value`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    normalized_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter" and "value" in c["params"]
+    ]
+    assert len(normalized_writes) == 1
+    assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.389)
+
+
+# ---------------------------------------------------------------------------
+# SYN-6B4Q: cue deferral (skip-with-warning) + plan-error halt
+# ---------------------------------------------------------------------------
+
+
+def _cue_skip_send_fn(skipped_out_of_range, *, last_event_time=0.0):
+    """Wrap the base fake send so ``cue_create_batch`` returns the handler's
+    skip-mode shape (some/all cues deferred past Live's extent)."""
+    base = _make_send_fn()
+
+    def send(req):
+        if req.tool == "ableton_arrangement" and req.action == "cue_create_batch":
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            n_in = len(req.params.get("cues", [])) - len(skipped_out_of_range)
+            return FakeResponse(ok=True, result={
+                "cue_count": max(n_in, 0),
+                "cues": [],
+                "skipped_out_of_range": skipped_out_of_range,
+                "last_event_time": last_event_time,
+            })
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_deferred_cues_surface_as_warning_not_partial(
+    conn, song, session, tiny_song, state_dir,
+):
+    """SYN-6B4Q: a skeleton push (cues authored, no arrangement) defers every
+    cue past Live's empty extent. The handler reports them in
+    ``skipped_out_of_range``; the executor surfaces a benign warning and the
+    push stays OK (exit 0) — NOT the old false PARTIAL."""
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
+    M.add_cue_point(conn, song_id=song, position_bar=33.0, name="chorus")
+    send = _cue_skip_send_fn([
+        {"position_beats": 64.0, "name": "verse"},
+        {"position_beats": 128.0, "name": "chorus"},
+    ])
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    assert result.exit_code == push_execute.EXIT_OK
+    assert result.phase_halted is None
+    # Deferred cues surface as a warning, not an error file.
+    assert result.errors_file is None
+    assert not (state_dir / ".last-push-errors.json").exists()
+    assert any("defer" in w.lower() for w in result.warnings)
+    assert any("verse" in w or "chorus" in w for w in result.warnings)
+    # State file carries the warnings channel.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "ok"
+    assert any("defer" in w.lower() for w in state["warnings"])
+    # The cues phase ran cleanly (the batch call itself succeeded).
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["cues"]["status"] == "ok"
+
+
+def test_execute_partial_cue_defer_does_not_pollute_warning(
+    conn, song, session, tiny_song, state_dir,
+):
+    """When only some cues defer, the warning names the deferred ones and the
+    push still succeeds."""
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=song, position_bar=33.0, name="late")
+    send = _cue_skip_send_fn(
+        [{"position_beats": 128.0, "name": "late"}], last_event_time=32.0,
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    assert len(result.warnings) == 1
+    assert "late" in result.warnings[0]
+    assert "intro" not in result.warnings[0]
+
+
+def test_execute_cue_past_composed_length_halts_partial(
+    conn, song, session, tiny_song, state_dir,
+):
+    """SYN-6B4Q: a cue past the composed song length is a hard authoring error.
+    The planner emits ``plan.error`` (no calls); the executor halts the cues
+    phase → PARTIAL, with the clear composed-length message in the errors file
+    — NOT the opaque runtime ``past last_event_time`` error."""
+    # Arrangement covers bars 1–2 (the tiny_song clip is 4 beats = 1 bar).
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    M.add_cue_point(conn, song_id=song, position_bar=32.0, name="late")
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted == "cues"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "composed song length" in blob
+    assert "late@bar32.00" in blob
+    # The cues phase is marked halted in the state file.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["cues"]["status"] == "halted"

@@ -447,23 +447,45 @@ def _make_arrangement_clip(conn, song_id: str, start_bar: float, end_bar: float)
     )
 
 
-def test_plan_push_cue_points_warns_when_no_arrangement(conn, song):
-    """Wave 0: cues exist but DB has no arrangement_clips — every cue past
-    bar 1 will fail Live's [0, last_event_time] clamp. Plan-time warn."""
+def test_plan_push_cue_points_defers_when_no_arrangement(conn, song):
+    """SYN-6B4Q skeleton case: cues exist but the DB has no arrangement_clips
+    yet — the song isn't composed. Cues are DEFERRED, not failed. The planner
+    emits the batch with ``on_out_of_range='skip'`` (so Live's handler skips
+    cues past its empty extent and reports them rather than failing the whole
+    batch atomically) and warns. No ``plan.error`` — deferral is benign; the
+    cues land on the next push once arrangement content covers them."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     M.add_cue_point(conn, song_id=song, position_bar=17.0, name="verse")
     plan = push.plan_push_cue_points(conn, song_id=song)
-    assert any("no arrangement_clips" in n for n in plan.notes)
-    # Plan still emits the batch — the warn surfaces the prereq; it doesn't
-    # block the push (the agent / user decides whether to proceed).
+    assert plan.errors == []
     assert len(plan.calls) == 1
+    assert plan.calls[0].args["on_out_of_range"] == "skip"
+    assert any("deferred" in n for n in plan.notes)
 
 
-def test_plan_push_cue_points_warns_when_cue_past_arrangement_extent(conn, song):
-    """Wave 0: arrangement covers bars 1–17 but a cue sits at bar 32 →
-    plan-time warn names the cue and the gap."""
+def test_plan_push_cue_points_sets_on_out_of_range_skip(conn, song):
+    """SYN-6B4Q: the planner explicitly sets ``on_out_of_range='skip'`` so a
+    cue ahead of Live's current arrangement extent (skeleton push, or an
+    arrangement that hasn't built yet) defers instead of failing the batch.
+    Pinned so a future edit can't silently drop the param and reintroduce the
+    false-PARTIAL friction."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _make_arrangement_clip(conn, song, start_bar=1.0, end_bar=17.0)
+    M.add_cue_point(conn, song_id=song, position_bar=1.0, name="intro")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert plan.calls[0].args.get("on_out_of_range") == "skip"
+
+
+def test_plan_push_cue_points_errors_when_cue_past_composed_length(conn, song):
+    """SYN-6B4Q: arrangement covers bars 1–17 but a cue sits at bar 32 — past
+    the composed song length. A cue that references content which can never
+    exist is a hard authoring error, NOT a deferral: the planner refuses
+    (``plan.error``) and emits no calls. The operator extends the arrangement
+    or moves the cue, then re-pushes (idempotent)."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
@@ -471,16 +493,20 @@ def test_plan_push_cue_points_warns_when_cue_past_arrangement_extent(conn, song)
     M.add_cue_point(conn, song_id=song, position_bar=8.0, name="mid")
     M.add_cue_point(conn, song_id=song, position_bar=32.0, name="late")
     plan = push.plan_push_cue_points(conn, song_id=song)
-    late_notes = [n for n in plan.notes if "past the DB's arrangement extent" in n]
-    assert len(late_notes) == 1
-    assert "late@bar32.00" in late_notes[0]
-    assert "max end_bar=17.00" in late_notes[0]
-    # The mid cue (within extent) is not in the warn message.
-    assert "mid@bar" not in late_notes[0]
+    # Hard error → no calls emitted (nothing half-applies in Live).
+    assert plan.calls == []
+    assert len(plan.errors) == 1
+    err = plan.errors[0]
+    assert "late@bar32.00" in err
+    assert "17.00" in err  # names the composed extent
+    # The in-extent cue is not named as an offender.
+    assert "mid@bar" not in err
 
 
-def test_plan_push_cue_points_no_warn_when_all_cues_within_arrangement(conn, song):
-    """Cues at bars 1, 5, 16; arrangement extends to bar 17. No late-cue warn."""
+def test_plan_push_cue_points_no_error_when_all_cues_within_arrangement(conn, song):
+    """Cues at bars 1, 5, 16; arrangement extends to bar 17. No overrun and no
+    skeleton deferral warn — the batch is emitted with ``on_out_of_range='skip'``
+    (a silent runtime-extent safety net) and no ``plan.error``."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
@@ -489,8 +515,23 @@ def test_plan_push_cue_points_no_warn_when_all_cues_within_arrangement(conn, son
     M.add_cue_point(conn, song_id=song, position_bar=5.0, name="b")
     M.add_cue_point(conn, song_id=song, position_bar=16.0, name="c")
     plan = push.plan_push_cue_points(conn, song_id=song)
-    assert not any("past the DB's arrangement extent" in n for n in plan.notes)
-    assert not any("no arrangement_clips" in n for n in plan.notes)
+    assert plan.errors == []
+    assert len(plan.calls) == 1
+    assert plan.calls[0].args["on_out_of_range"] == "skip"
+    assert not any("deferred" in n for n in plan.notes)
+
+
+def test_plan_push_cue_points_cue_at_exact_composed_extent_is_ok(conn, song):
+    """Boundary: a cue exactly at the composed extent (bar 17, end_bar 17) is
+    within the song — not an overrun. It's emitted, not errored."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _make_arrangement_clip(conn, song, start_bar=1.0, end_bar=17.0)
+    M.add_cue_point(conn, song_id=song, position_bar=17.0, name="end")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert plan.errors == []
+    assert len(plan.calls) == 1
 
 
 # ---------- plan_push_sections ----------

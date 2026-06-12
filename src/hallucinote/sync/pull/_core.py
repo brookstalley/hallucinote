@@ -35,6 +35,15 @@ class PullCall:
       - `track_info:<track_id>`  -> {name, type, volume, panning, mute?, solo?,
                                      arm?, color?, ...}  (mixer fields)
       - `track_sends:<track_id>` -> {<return_name>: level, ...}
+      - `track_output_routing:<track_id>` / `track_input_routing:<track_id>`
+                                 -> {has_<dir>_routing, current_type,
+                                     current_channel, available_types,
+                                     available_channels}  (RTE-1K9T — the Live
+                                     display_name is mapped back to a DB routing
+                                     reference; see sync/routing_names.py)
+      - `track_monitor:<track_id>`
+                                 -> {has_monitoring_state,
+                                     monitoring_state: 'In'|'Auto'|'Off'}
       - `track_arrangement_clips:<track_id>`
                                  -> {track_index, location: 'arrangement',
                                      clips: [{arrangement_clip_index, name,

@@ -282,6 +282,10 @@ technical_decisions:
       rationale: "Every mutator calls `_emit` exactly once in the same DB transaction as its state write. The event row carries `actor`, `reason`, `request_id`, `seq` (monotonic). This is the load-bearing invariant for a future event-store flip."
       alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
       date: "2026-05-15"
+    - decision: "Audio clips share the `clips` table via a `kind` discriminator (CLP-AUD1 wave 1)"
+      rationale: "Audio material is a clip row with kind='audio' + the locked wave-1 audio columns (audio_file song-relative-or-absolute stored as-authored, audio_gain LINEAR 0-1, pitch semitones/cents, warping + warp_mode as Live's enum int with WARP_MODES named constants, start/end markers in Live's dual unit — beats when warped, seconds when not). Invariants live in the mutators dual-layer (kind immutable; audio_file required; LOM value domains validated at authoring time), not schema CHECKs (ALTERed columns + house style). Path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path` (top-level home so neither the MCP startup path nor the sync layer drags numpy). Unsynced audio rows are exempted from pull's reconcile-delete and refused loudly by push until CLP-AUD2."
+      alternatives_considered: "Separate audio_clips table (rejected — slot uniqueness, arrangement placement, and reconcile sweeps all operate on clips; a second table would duplicate every constraint); warp_mode as TEXT enum (rejected — drifts from the LOM int domain); absolute-only file paths (rejected — breaks hallucinote-songs portability across machines)."
+      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/design.md)"
     - decision: "ableton_sessions + ableton_links projection separation"
       rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
       alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
@@ -472,6 +476,13 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
+# Active build plan pointer (.prawduct/-relative). RTE-1K9T (track routing) — all
+# chunks 01–06 DONE on `feature/rte-1k9t-track-routing`; code-complete + cumulative
+# Critic clean, opening the PR into develop. Only the operator Live-smoke remains
+# (enqueued in operator-verification.md). DEV-6M2K shipped + live-verified + CLOSED
+# (PR #162); its plan dir is stale and may be deleted.
+active_build_plan: artifacts/plans/RTE-1K9T/build-plan.md
+
 # =============================================================================
 # CHANGE LOG
 # =============================================================================
@@ -486,7 +497,31 @@ build_state:
 # .prawduct/change-log.md `scope=` tags. Do not hand-edit — edits will be
 # overwritten on next regen.
 
-scope_rollups: {}
+scope_rollups:
+  clip-audio:
+    chunks: ["CLP-AUD1-01", "CLP-AUD1-02"]
+    releases: ["v0.9.5"]
+  compose-loop-reliability:
+    chunks: ["CLR-A-01", "CLR-A-02", "CLR-A-03", "CLR-A-04", "CLR-A-05"]
+    releases: ["v0.9.5"]
+  mcp-bridge,db,sync-push:
+    chunks: ["ENV-7G4K-01", "ENV-7G4K-02", "ENV-7G4K-03", "ENV-7G4K-04"]
+    releases: ["v0.9.5"]
+  mcp-bridge,db,sync-push,sync-pull,docs:
+    chunks: ["RTE-1K9T-01", "RTE-1K9T-02", "RTE-1K9T-03", "RTE-1K9T-04", "RTE-1K9T-05", "RTE-1K9T-06"]
+    releases: ["v0.9.5"]
+  mcp-bridge,discovery:
+    chunks: ["AUD-1M4V-discovery"]
+    releases: ["v0.9.4"]
+  mcp-bridge,sync-push:
+    chunks: ["DEV-6M2K"]
+    releases: ["v0.9.5"]
+  mcp-bridge,sync-push,db:
+    chunks: ["ENV-9P4T-01", "ENV-9P4T-02"]
+    releases: ["v0.9.5"]
+  plugin-distribution:
+    chunks: ["INS-7V2D-cold-start-timeout"]
+    releases: ["v0.9.4"]
 
 # =============================================================================
 # DERIVED VIEWS (enabled by default, v1.4+)

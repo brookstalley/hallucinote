@@ -234,10 +234,11 @@ class _FakeCtx:
 
 
 def _master_with_analyzer(name: str = "Master") -> _FakeTrack:
-    """Real usage requires the master analyzer placed BY HAND once — Live 12.4
-    can't auto-load onto the master (DEV-2M9K), so the sweep is detect-only
-    there. Pre-place it so a sweep exercises the supported detect-and-configure
-    path instead of the loud "add it by hand" failure."""
+    """A master that already carries the analyzer. The sweep DETECTS it and
+    configures its ports without re-loading (idempotency). DEV-6M2K: the sweep
+    can also auto-load the master analyzer when absent (see
+    ``test_sweep_auto_loads_master_analyzer_when_absent``); pre-placing it here
+    exercises the detect-and-configure branch specifically."""
     return _FakeTrack(name, devices=[
         _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
     ])
@@ -262,9 +263,9 @@ def test_track_id_for_surface_rejects_unknown_kind():
 
 
 def test_sweep_configures_preplaced_master_analyzer():
-    """A song with only the master: since Live can't auto-load onto the master
-    (DEV-2M9K), the analyzer is placed by hand and the sweep DETECTS and
-    configures it — it is never loaded/duplicated."""
+    """A song whose master already carries the analyzer: the sweep DETECTS and
+    configures it — never loaded/duplicated (idempotency holds whether or not
+    the master can auto-load)."""
     ctx = _FakeCtx(_FakeSong(master=_master_with_analyzer()))
     layout = ensure_analyzers_loaded(ctx)
     assert len(layout.instances) == 1
@@ -273,18 +274,27 @@ def test_sweep_configures_preplaced_master_analyzer():
     assert inst.track_id == "master"
     assert inst.was_loaded is False  # detected, not loaded
     assert inst.device_index == 1
-    # Detect-only: the pre-placed analyzer is not duplicated.
+    # Detected, not duplicated.
     assert len(ctx.song.master_track.devices) == 1
 
 
-def test_sweep_fails_loudly_when_master_analyzer_absent():
-    """No master analyzer and no LOM way to add one (DEV-2M9K) → the sweep must
-    raise an actionable error pointing at the one-time manual placement, not
-    silently mis-load a regular track or skip the structurally-required
-    master."""
+def test_sweep_auto_loads_master_analyzer_when_absent():
+    """DEV-6M2K: a bare master (no pre-placed analyzer) is AUTO-LOADED like any
+    track/return — no loud "add it by hand" failure. The earlier DEV-2M9K
+    fail-loud rested on the refuted premise that Live can't load onto the
+    master; live-proven on Live 12.4.2 that it can."""
     ctx = _FakeCtx(_FakeSong(tracks=[_FakeTrack("Drums")]))  # default empty master
-    with pytest.raises(RuntimeError, match="by hand"):
-        ensure_analyzers_loaded(ctx)
+    layout = ensure_analyzers_loaded(ctx)
+    by_surface = layout.by_surface()
+    master_inst = by_surface[("master", 0)]
+    assert master_inst.was_loaded is True  # auto-loaded, not hand-placed
+    assert master_inst.osc_port == 11220  # the master's deterministic port
+    # The analyzer landed on the master chain.
+    master_analyzers = [
+        d for d in ctx.song.master_track.devices
+        if d.name == ANALYZER_DEVICE_NAME
+    ]
+    assert len(master_analyzers) == 1
 
 
 # --- idempotency: the most load-bearing property ---------------------
@@ -301,7 +311,7 @@ def test_sweep_is_idempotent_no_duplicates():
 
     first = ensure_analyzers_loaded(ctx)
     assert first.loaded_count == 3  # 2 tracks + 1 return (master is pre-placed)
-    assert first.existing_count == 1  # master detected, not loaded (DEV-2M9K)
+    assert first.existing_count == 1  # master pre-placed → detected, not loaded
 
     # All four surfaces should now have exactly one analyzer each.
     chain_counts_after_first = [
@@ -352,8 +362,7 @@ def test_sweep_detects_existing_analyzer_does_not_reload():
     assert track_inst.was_loaded is False
     # Found at position 2 (1-based), not 1 — order in the chain matters.
     assert track_inst.device_index == 2
-    # Master is detect-only (DEV-2M9K) — the pre-placed analyzer is detected,
-    # never loaded.
+    # Master pre-placed here — the analyzer is detected, not re-loaded.
     master_inst = by_surface[("master", 0)]
     assert master_inst.was_loaded is False
     # Track chain unchanged.
@@ -489,10 +498,11 @@ def test_layout_helpers_round_trip_instances():
 
 
 def test_sweep_marshals_each_live_touch_through_run_on_main():
-    """A loaded surface = 1 detect + 1 load + 2 set_param = 4 bouts; the
-    detect-only master (DEV-2M9K — pre-placed, never loaded) = 1 detect +
-    2 set_param = 3 bouts. Plus one initial run_on_main for the surface-list
-    snapshot. With 2 tracks + 1 return loaded fresh + a pre-placed master:
+    """A loaded surface = 1 detect + 1 load + 2 set_param = 4 bouts; a
+    pre-placed (detected) surface = 1 detect + 2 set_param = 3 bouts. Here the
+    master is pre-placed (3 bouts). Plus one initial run_on_main for the
+    surface-list snapshot. With 2 tracks + 1 return loaded fresh + a pre-placed
+    master:
         1 (plan) + 3 loaded * 4 + 1 master * 3 = 16 run_on_main bouts.
 
     The exact count matters less than the discipline: more than one bout
@@ -525,7 +535,7 @@ def test_sweep_when_analyzer_already_present_still_bounces_per_touch():
     before = ctx.run_on_main_calls
     ensure_analyzers_loaded(ctx)
     # 1 plan + (1 detect + 2 set_param) per surface × 2 surfaces (T1 + master)
-    # = 1 + 6 = 7. Both skip the load bout: T1's analyzer is already present,
-    # and the master is detect-only (DEV-2M9K — never auto-loaded).
+    # = 1 + 6 = 7. Both skip the load bout because both analyzers are already
+    # present (T1's and the pre-placed master's).
     delta = ctx.run_on_main_calls - before
     assert delta >= 7

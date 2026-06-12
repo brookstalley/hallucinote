@@ -352,6 +352,106 @@ def test_render_ensure_loaded_call_does_not_touch_output_dir(
 
 
 # ---------------------------------------------------------------------------
+# MCP-4T6Y: per-action socket read-timeout policy.
+#
+# The default 15s window fits actions that return within Live's main-thread
+# budget. Two ableton_render actions break it: render (full playback) needs no
+# bound; ensure_loaded loads the analyzer onto 25+ surfaces and routinely
+# outruns 15s while the work continues server-side — it needs a generous but
+# bounded window so a genuinely-stuck load still surfaces as a timeout.
+# ---------------------------------------------------------------------------
+
+
+def test_read_timeout_render_is_unbounded():
+    from hallucinote_mcp.server import _read_timeout_for
+    assert _read_timeout_for("ableton_render", "render") is None
+
+
+def test_read_timeout_perform_batch_is_unbounded():
+    """perform_batch plays the transport over the union span in record
+    (minutes at mix scale); a bounded socket timeout would sever the only
+    verification this write-only surface has (per-arc automation_state) and
+    misreport it as connection_lost while Live keeps recording (ENV-9P4T)."""
+    from hallucinote_mcp.server import _read_timeout_for
+    assert _read_timeout_for("ableton_automation", "perform_batch") is None
+
+
+def test_read_timeout_ensure_loaded_is_generous_but_bounded():
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
+    t = _read_timeout_for("ableton_render", "ensure_loaded")
+    # Bounded (not the unbounded render case) but well clear of the default —
+    # the whole point is that 15s was too short.
+    assert t is not None
+    assert t > _DEFAULT_READ_TIMEOUT
+
+
+def test_read_timeout_default_action_keeps_bounded_default():
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT, _read_timeout_for
+    assert _read_timeout_for("ableton_session", "set_tempo") == _DEFAULT_READ_TIMEOUT
+    # ensure_loaded on a non-render tool is NOT special-cased — the policy is
+    # keyed on (tool, action), not action alone.
+    assert _read_timeout_for("ableton_track", "ensure_loaded") == _DEFAULT_READ_TIMEOUT
+
+
+def test_handle_tool_call_forwards_ensure_loaded_with_generous_timeout(
+    tmp_path, monkeypatch,
+):
+    """The selected timeout must actually reach client.send — pin the wiring,
+    not just the policy table. Before MCP-4T6Y this forwarded with the 15s
+    default and timed out mid-load."""
+    from hallucinote_mcp.server import _ENSURE_LOADED_READ_TIMEOUT
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+    forwarded = Response(ok=True, result={"loaded_count": 25})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "ensure_loaded", {})
+    assert send.call_args.kwargs["read_timeout"] == _ENSURE_LOADED_READ_TIMEOUT
+
+
+def test_handle_tool_call_forwards_render_with_unbounded_timeout(
+    tmp_path, monkeypatch,
+):
+    """Regression: render must keep its unbounded (None) read timeout through
+    the refactor to the policy table."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.chdir(tmp_path)
+    forwarded = Response(ok=True, result={"captures_dir": str(tmp_path)})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "render", {"song_slug": "demo"})
+    assert send.call_args.kwargs["read_timeout"] is None
+
+
+def test_handle_tool_call_forwards_default_action_with_bounded_timeout(
+    isolated_registry,
+):
+    """A normal mutating call keeps the 15s default so a stalled handler
+    surfaces as a structured timeout instead of hanging the transport."""
+    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
+    from hallucinote_mcp.server import _DEFAULT_READ_TIMEOUT
+    from hallucinote_mcp.wire import Response
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session",
+            name="set_tempo",
+            description="",
+            params=(ParamSpec(name="value", type="float"),),
+            declarative_op=LiveOp(
+                kind="property_write", target="song", property="tempo"
+            ),
+        )
+    )
+    isolated_registry.register_help_actions()
+
+    forwarded = Response(ok=True, result={"new_tempo": 132.0})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+    assert send.call_args.kwargs["read_timeout"] == _DEFAULT_READ_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
 # Wire-shape regression: every tool's inputSchema must expose action params
 # as top-level kwargs (not nested under ``params``).
 #
@@ -550,6 +650,130 @@ def test_register_tool_detects_param_type_conflicts(isolated_registry):
     )
     with pytest.raises(ValueError, match="type conflict"):
         _collect_tool_params("ableton_session")
+
+
+def test_render_call_attaches_db_seq_from_song_db(tmp_path, monkeypatch):
+    """AUD-4W7K: the server reads the song's latest audit-log seq at
+    forward time and attaches it as db_seq — the render handler (inside
+    Live's hallucinote-less env) just writes it into the manifest."""
+    from hallucinote.db import mutations as M
+    from hallucinote.db import queries as Q
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"),
+    )
+    M.create_track(conn, song_id="song-demo", track_index=1, name="Drums")
+    expected_seq = Q.get_latest_seq_for_song(conn, "song-demo")
+    conn.commit()
+    conn.close()
+    assert expected_seq is not None  # the mutator emitted an event
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+        )
+    forwarded_request = send.call_args.args[0]
+    assert forwarded_request.params["db_seq"] == expected_seq
+
+
+def test_render_call_omits_db_seq_when_song_db_missing(tmp_path, monkeypatch):
+    """Provenance is best-effort: no song DB → the param simply isn't
+    attached (manifest.db_seq null); the render itself proceeds."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "nope", "output_dir": str(tmp_path / "captures")},
+        )
+    forwarded_request = send.call_args.args[0]
+    assert "db_seq" not in forwarded_request.params
+
+
+def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
+    """An explicitly-supplied db_seq is passed through untouched — the
+    server only fills the gap, it never overrides the caller."""
+    from hallucinote_mcp.wire import Response
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path), "db_seq": 99},
+        )
+    assert send.call_args.args[0].params["db_seq"] == 99
+
+
+def test_render_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
+    """A DB that exists but has no row for the slug degrades to no tag
+    (the get_song_by_name -> None branch), never an error."""
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call(
+            "ableton_render", "render",
+            {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+        )
+    assert "db_seq" not in send.call_args.args[0].params
+
+
+def test_render_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
+    """The waivered broad catch: a corrupt song DB logs a warning and
+    degrades to no tag — a render is never blocked over provenance."""
+    import logging
+    from hallucinote_mcp.wire import Response
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with caplog.at_level(logging.WARNING):
+        with patch(
+            "hallucinote_mcp.server.client.send", return_value=forwarded
+        ) as send:
+            handle_tool_call(
+                "ableton_render", "render",
+                {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
+            )
+    assert "db_seq" not in send.call_args.args[0].params
+    assert "could not read latest db seq" in caplog.text
 
 
 def test_annotated_param_type_any_is_explicit_not_fallback():

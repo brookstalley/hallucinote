@@ -54,6 +54,33 @@ CREATE TABLE IF NOT EXISTS tracks (
     solo                    INTEGER CHECK (solo IS NULL OR solo IN (0, 1)),
     arm                     INTEGER CHECK (arm IS NULL OR arm IN (0, 1)),
     color                   INTEGER,
+    -- RTE-1K9T: track signal routing (output + input) + monitor switch.
+    -- Single-valued per track (1:1) -> columns, not a side table (D4),
+    -- matching mixer-state-as-columns. The routing TARGET is a SEMANTIC
+    -- reference, never Live's display_name: *_routing_kind says WHAT the
+    -- target is and *_routing_target_id FKs the destination track when
+    -- kind='track' (the submaster bus) -- so it survives renames + re-pushes.
+    -- Push resolves the FK -> Live display_name; pull maps display_name back.
+    -- ON DELETE SET NULL: deleting a routed-to bus leaves a detectable
+    -- dangling state (kind='track', target_id=NULL) push treats as "target
+    -- gone", never a cascade-delete of the routing track itself.
+    --
+    -- CHECK asymmetry (D6): output_routing_kind + monitoring_state are CHECK-
+    -- constrained (closed, live-probed-certain domains); input_routing_kind is
+    -- NOT (input's domain is open/hardware-bound -- MIDI ports, interface
+    -- channels -- and a wrong CHECK is a destructive SQLite migration). The
+    -- mutator (set_track_routing) validates input_routing_kind in Python and
+    -- owns the cross-field invariant (target_id present <=> kind='track'),
+    -- which a column-level CHECK can't express.
+    output_routing_kind     TEXT CHECK (output_routing_kind IS NULL OR
+                                output_routing_kind IN ('master','track','sends_only','ext_out')),
+    output_routing_target_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    output_routing_channel  TEXT,
+    input_routing_kind      TEXT,
+    input_routing_target_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    input_routing_channel   TEXT,
+    monitoring_state        TEXT CHECK (monitoring_state IS NULL OR
+                                monitoring_state IN ('In','Auto','Off')),
     UNIQUE(song_id, track_index)
 );
 -- `kind` is the discriminator: 'midi' (default), 'audio', 'master', 'group'.
@@ -74,6 +101,30 @@ CREATE TABLE IF NOT EXISTS clips (
     section_role            TEXT,
     generator_call_json     TEXT,
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- CLP-AUD1 (AUD-1M4V stage 0a): `kind` discriminates 'midi' (default —
+    -- every pre-column row is already valid) from 'audio'. Column-level
+    -- CHECKs stay minimal by design (SQLite ALTER limits); the cross-field
+    -- invariants live in the mutators, dual-layer with the kind-guards:
+    -- kind='audio' requires audio_file + an audio host track; kind='midi'
+    -- leaves every audio column NULL. `length_beats` stays the authored
+    -- placement length for both kinds, never derived audio duration.
+    kind                    TEXT NOT NULL DEFAULT 'midi',
+    -- Song-relative POSIX path (canonically under assets/), or absolute —
+    -- stored exactly as authored, resolved at push/analysis time.
+    audio_file              TEXT,
+    -- Live clip gain, 0.0-1.0 LINEAR (not dB) -- LOM value domain.
+    audio_gain              REAL,
+    -- Transpose: semitones (-48..+48) / cents (-50.0..+50.0) -- LOM domains;
+    -- mutators validate (see mutations.clips._validate_audio_fields).
+    pitch_coarse            INTEGER,
+    pitch_fine              REAL,
+    warping                 INTEGER,
+    -- Live's warp-mode enum int; named constants in mutations.clips.WARP_MODES.
+    warp_mode               INTEGER,
+    -- Live's dual marker unit: BEATS when warping=1, SECONDS when warping=0.
+    -- Consumers must read `warping` before interpreting the markers.
+    start_marker            REAL,
+    end_marker              REAL,
     UNIQUE(track_id, slot)
 );
 
@@ -380,7 +431,7 @@ CREATE INDEX IF NOT EXISTS idx_drum_pad_mappings_device ON drum_pad_mappings(dev
 -- =============================================================================
 -- Mix: automation envelopes + breakpoints
 -- =============================================================================
--- Unified shape: one `envelopes` table covers seven target families and one
+-- Unified shape: one `envelopes` table covers nine target families and one
 -- `automation_breakpoints` table carries the (time, value) timeline. The same
 -- breakpoint shape works for a clip-CC ramp, a pitch-bend curve, an MPE
 -- expression on a single note, a device parameter sweep, a mixer fade, or a
@@ -400,6 +451,8 @@ CREATE INDEX IF NOT EXISTS idx_drum_pad_mappings_device ON drum_pad_mappings(dev
 --   mixer_volume      target_track_id;  parameter_path NULL
 --   mixer_pan         target_track_id;  parameter_path NULL
 --   send_level        target_track_id + target_send_return_id; parameter_path NULL
+--   return_mixer_volume  target_send_return_id; parameter_path NULL (ENV-7G4K:
+--   return_mixer_pan     a return track's OWN mixer — performed at push time)
 --
 -- Pointing device_parameter envelopes at `devices.id` (with the parameter
 -- name in `parameter_path`) rather than at `device_parameters.id` lets an
@@ -463,6 +516,18 @@ CREATE TABLE IF NOT EXISTS envelopes (
                 AND target_clip_id IS NULL
                 AND target_note_id IS NULL
                 AND target_device_id IS NULL
+            WHEN 'return_mixer_volume' THEN
+                target_send_return_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_track_id IS NULL
+            WHEN 'return_mixer_pan' THEN
+                target_send_return_id IS NOT NULL
+                AND target_clip_id IS NULL
+                AND target_note_id IS NULL
+                AND target_device_id IS NULL
+                AND target_track_id IS NULL
             ELSE 0
         END
     )
@@ -496,6 +561,31 @@ CREATE TABLE IF NOT EXISTS automation_breakpoints (
 
 CREATE INDEX IF NOT EXISTS idx_automation_breakpoints_env
     ON automation_breakpoints(envelope_id, time_beats);
+
+-- Performed-automation state (ENV-7G4K). Master/group/return-side envelopes
+-- can't ride session clips; push *performs* them into Live's arrangement
+-- automation via gesture recording (write-only — no LOM read surface, so
+-- there is nothing to diff against Live). The fingerprint is the honesty
+-- mechanism: push re-performs an arc only when the authored fingerprint
+-- (target addressing + parameter_path + ordered breakpoint list) differs
+-- from the one recorded at the last successful perform. Keyed per
+-- (envelope, session): a song bound to multiple Live sets carries one
+-- fingerprint per set, so pushing to a fresh session performs every arc
+-- there instead of false-skipping on another set's record. The table is
+-- disposable with the DB — a `build.py --reset` re-performs everything,
+-- which is slower but never wrong.
+
+CREATE TABLE IF NOT EXISTS performed_automation (
+    id            TEXT PRIMARY KEY,
+    envelope_id   TEXT NOT NULL REFERENCES envelopes(id) ON DELETE CASCADE,
+    session_id    TEXT NOT NULL REFERENCES ableton_sessions(id) ON DELETE CASCADE,
+    fingerprint   TEXT NOT NULL,
+    performed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(envelope_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_performed_automation_session
+    ON performed_automation(session_id);
 
 -- Cross-song reuse. Start optional; promote Python constants to rows when >1 song uses them.
 CREATE TABLE IF NOT EXISTS kits (

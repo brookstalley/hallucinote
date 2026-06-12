@@ -23,6 +23,7 @@ def _write_manifest(
     returns: list[dict] | None = None,
     master: dict | None = None,
     schema_version: str = "1",
+    db_seq: int | None = None,
 ) -> Path:
     manifest = {
         "schema_version": schema_version,
@@ -38,6 +39,10 @@ def _write_manifest(
         "returns": returns or [],
         "master": master,
     }
+    # Pre-tagging manifests carry no db_seq key at all — only include it
+    # when a test asks, so the default exercises the tolerant-load path.
+    if db_seq is not None:
+        manifest["db_seq"] = db_seq
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return path
@@ -186,3 +191,31 @@ def test_load_capture_requires_master(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="master"):
         load_capture(manifest_path)
+
+
+def test_load_capture_reads_db_seq_when_tagged(tmp_path: Path):
+    """AUD-4W7K: renders tag the song's audit-log seq into the manifest;
+    the loader lifts it so the report can carry the baseline-diff key."""
+    _write_stem(tmp_path, filename="master.wav", audio=pink_noise(0.5))
+    manifest_path = _write_manifest(
+        tmp_path,
+        master=_surface_entry("master", "master.wav", tmp_path),
+        db_seq=4823,
+    )
+    assert load_capture(manifest_path).db_seq == 4823
+
+
+def test_load_capture_tolerates_pre_tagging_manifest(tmp_path: Path):
+    """Captures made before seq tagging (no db_seq key) — and renders where
+    provenance couldn't be read (db_seq: null) — load with db_seq=None."""
+    _write_stem(tmp_path, filename="master.wav", audio=pink_noise(0.5))
+    manifest_path = _write_manifest(
+        tmp_path, master=_surface_entry("master", "master.wav", tmp_path),
+    )
+    assert load_capture(manifest_path).db_seq is None
+
+    # Explicit null (render ran, seq read failed) loads the same way.
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw["db_seq"] = None
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+    assert load_capture(manifest_path).db_seq is None

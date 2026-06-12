@@ -15,6 +15,8 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
+from .perform import plan_push_performed_automation, record_perform_result
+from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
@@ -45,7 +47,7 @@ class PushPhase:
     description: str
 
 
-# The eleven phases of the master push, in execution order. Order is
+# The thirteen phases of the master push, in execution order. Order is
 # load-bearing — see :func:`plan_push_song` for the dependency
 # rationale per phase. This tuple is the single source of truth; tests
 # pin both the names and the count.
@@ -57,8 +59,10 @@ _PHASE_NAMES: tuple[str, ...] = (
     "scenes",
     "clips",
     "mix",
+    "routing",
     "devices",
     "envelopes",
+    "performed_automation",
     "arrangement",
     "cues",
 )
@@ -70,7 +74,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
 ) -> list[PushPhase]:
-    """Master orchestration: return the eleven phases of a full song push, in order.
+    """Master orchestration: return the thirteen phases of a full song push, in order.
 
     Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
     fresh :class:`PushPlan` from current DB state at call time. The
@@ -103,20 +107,32 @@ def plan_push_song(
          hosting) and arrangement (duplicate source).
       7. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
          Needs tracks + returns linked. No clip dep.
-      8. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+      8. ``routing`` — :func:`plan_push_routing`. Materializes per-track
+         output/input routing + monitor state (RTE-1K9T; the PRE-MAIN
+         submaster pattern). After ``mix`` (routing is a mixer concern),
+         before ``devices`` (D5). Needs tracks linked — the source track
+         AND any track-route target are created in the ``tracks`` phase.
+         Idempotent re-emit like ``mix``/``devices`` (no fingerprint gate,
+         D7).
+      9. ``devices`` — :func:`plan_push_devices`. Loads instruments +
          effects and sets parameters. Needs tracks + returns linked.
          Prerequisite for ``device_parameter`` envelopes (need the
          target device linked).
-      9. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
+      10. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
          on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
          a snapshot copy, so the envelope must exist on the session
          clip BEFORE arrangement runs. Needs tracks + clips + returns
          + devices linked.
-      10. ``arrangement`` — :func:`plan_push_arrangement`. Emits
+      11. ``performed_automation`` — :func:`plan_push_performed_automation`.
+          Gesture-records master/group/return-side arcs into arrangement
+          automation (ENV-7G4K), fingerprint-gated. Needs tracks +
+          returns + devices linked. Realtime: the transport plays each
+          changed arc's span (the plan names the wall-clock cost).
+      12. ``arrangement`` — :func:`plan_push_arrangement`. Emits
           ``duplicate_to_arrangement`` per arrangement row. Carries
           session-clip envelopes as snapshot copies (W4-A finding).
           Needs clips linked (raises otherwise).
-      11. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
+      13. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
           Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
           clamped to ``[0, song.last_event_time]``; cues placed before
           arrangement exists get rejected.
@@ -125,7 +141,7 @@ def plan_push_song(
     canonical calls (Live has no section-marker concept distinct from
     cue points). Run it separately to surface its warn if needed.
 
-    Returns 11 phases regardless of whether the song actually has
+    Returns 13 phases regardless of whether the song actually has
     content for each phase — empty phases produce a plan with a
     ``no … to push`` warn instead of an empty plan, so the skill's
     progress reporting can distinguish "ran cleanly with nothing to
@@ -180,6 +196,13 @@ def plan_push_song(
             description="Push mixer state (volume/pan/mute/solo/arm/color) + master + sends.",
         ),
         PushPhase(
+            name="routing",
+            plan_fn=lambda: plan_push_routing(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Materialize per-track output/input routing + monitor state (RTE-1K9T PRE-MAIN submaster pattern).",
+        ),
+        PushPhase(
             name="devices",
             plan_fn=lambda: plan_push_devices(
                 conn, song_id=song_id, session_id=session_id,
@@ -192,6 +215,16 @@ def plan_push_song(
                 conn, song_id=song_id, session_id=session_id,
             ),
             description="Write envelopes on session clips (W4-A: must precede arrangement; duplicate_to_arrangement snapshots).",
+        ),
+        PushPhase(
+            name="performed_automation",
+            plan_fn=lambda: plan_push_performed_automation(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description=(
+                "Gesture-record master/group/return-side automation arcs "
+                "(fingerprint-gated; transport plays each changed span)."
+            ),
         ),
         PushPhase(
             name="arrangement",
@@ -241,8 +274,10 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # Key kinds that have no DB binding to record but are valid acks — the planner
 # emits them and the agent reports success/failure, but hallucinote has nothing
 # to write. Membership here is a contract: every key kind the planner emits
-# MUST appear in either `_LINK_KINDS` or `_ACK_ONLY_KINDS`, or
-# `apply_push_results` raises. This makes the dispatch surface auditable: when
+# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or the explicit
+# `perform_batch` branch in `apply_push_results` (ENV-9P4T per-arc
+# performed-state recording), or `apply_push_results` raises. This makes the
+# dispatch surface auditable: when
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
@@ -277,6 +312,14 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "master_volume",
     "master_pan",
     "send",
+    # RTE-1K9T (routing): per-track output/input routing + monitor go through
+    # ableton_track(set_output_routing / set_input_routing / set_monitoring_state).
+    # Ack-only — the routing state already lives in the DB (the push ORIGINATES
+    # from it, same as the mixer set_property keys above); there's no Live-side
+    # index to record back.
+    "track_output_routing",
+    "track_input_routing",
+    "track_monitor",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
@@ -295,7 +338,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
-) -> None:
+) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
     for `session_id`, not on core rows.
@@ -309,13 +352,22 @@ def apply_push_results(
           "error": "...optional..."
         }
 
-    Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding) and
-    `_ACK_ONLY_KINDS` (no DB write). An unknown kind raises `ValueError` so a
-    new planner-emitted key kind can't silently no-op past this layer.
+    Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding),
+    `_ACK_ONLY_KINDS` (no DB write), and the `perform_batch` branch (per-arc
+    performed-automation state). An unknown kind raises `ValueError` so a new
+    planner-emitted key kind can't silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
+
+    Returns apply-layer warnings (empty when everything recorded cleanly).
+    Today these come from the `perform_batch` branch — for any arc whose
+    handler could NOT verify the write (`automation_state != 1`) the apply
+    layer records nothing for that arc and the warning says so (never a
+    silent skip; the next push retries just that arc). Callers must surface
+    them.
     """
+    warnings: list[str] = []
     with transaction(conn):
         for r in results:
             if not r.get("ok"):
@@ -326,6 +378,47 @@ def apply_push_results(
                 raise ValueError(f"push result missing 'key': {r!r}")
 
             if kind in _ACK_ONLY_KINDS:
+                continue
+
+            if kind == "perform_batch":
+                # ENV-9P4T single-pass batched performed automation: the
+                # handler returns a per-arc result list, each arc carrying
+                # its opaque `arc_id` (the envelope id the planner stamped)
+                # and its own `automation_state`. Each arc records its
+                # fingerprint INDEPENDENTLY, gated on ITS automation_state
+                # == 1 — one unverified arc must not block the others, and
+                # an unverified write leaves that arc's fingerprint
+                # unwritten so the next push retries just that arc
+                # (record_perform_result owns the per-arc policy). The
+                # perform_batch handler RETURNS a non-1 state, not a raise.
+                res = r.get("result") or {}
+                # A restore failure means the pass may have left the set
+                # ARMED (record_mode / a gesture / playhead not restored) —
+                # operator-actionable, never swallowed.
+                for failure in res.get("restore_failures", []):
+                    warnings.append(
+                        f"perform_batch: a transport-state restore step "
+                        f"FAILED ({failure}) — the Live set may be left armed "
+                        "or the playhead moved; check record_mode in Live."
+                    )
+                for arc in res.get("arcs", []):
+                    arc_eid = arc.get("arc_id")
+                    if not arc_eid:
+                        raise ValueError(
+                            f"perform_batch result arc missing 'arc_id' "
+                            f"(key={key!r}): {arc!r}"
+                        )
+                    perform_warning = record_perform_result(
+                        conn,
+                        envelope_id=arc_eid,
+                        session_id=session_id,
+                        result=arc,
+                        actor=actor,
+                        request_id=request_id,
+                        reason=reason,
+                    )
+                    if perform_warning is not None:
+                        warnings.append(perform_warning)
                 continue
 
             if kind in _LINK_KINDS:
@@ -354,5 +447,7 @@ def apply_push_results(
 
             raise ValueError(
                 f"unknown push result key kind {kind!r} (full key={key!r}). "
-                f"Declare it in _LINK_KINDS or _ACK_ONLY_KINDS in sync/push.py."
+                "Declare it in _LINK_KINDS / _ACK_ONLY_KINDS (or add a "
+                "dedicated branch like 'perform_batch') in sync/push/plan.py."
             )
+    return warnings

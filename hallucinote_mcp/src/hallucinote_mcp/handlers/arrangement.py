@@ -356,6 +356,7 @@ def cue_list_handler(context: LiveContext) -> dict[str, Any]:
 
 
 _IF_EXISTS_VALUES: frozenset[str] = frozenset({"refuse", "skip"})
+_OUT_OF_RANGE_VALUES: frozenset[str] = frozenset({"refuse", "skip"})
 
 
 def _create_one_cue_locked(
@@ -616,6 +617,7 @@ def cue_create_batch_handler(
     *,
     cues: list[Any],
     if_exists: str = "skip",
+    on_out_of_range: str = "refuse",
 ) -> dict[str, Any]:
     """Create multiple cues in one call, holding ``live_state_lock`` once.
 
@@ -630,6 +632,26 @@ def cue_create_batch_handler(
     cue's info with ``"skipped": True`` when the name matches (or is
     None) and raises on name mismatch. ``"refuse"`` matches legacy
     behavior and raises on any collision.
+
+    **Out-of-range policy (SYN-6B4Q).** Live's ``set_or_delete_cue`` is
+    clamped to ``[0, last_event_time]`` — a cue past the current
+    arrangement extent can't be placed. ``on_out_of_range`` controls
+    what happens when one is:
+
+      * ``"refuse"`` (default) — the W5-C atomic contract: if ANY cue is
+        past ``last_event_time``, raise and write NOTHING. Direct/strict
+        callers keep this behavior unchanged.
+      * ``"skip"`` — create the cues within the extent and return the
+        rest in ``skipped_out_of_range`` (a list of
+        ``{position_beats, name}``) instead of failing. This is the
+        planner's path: a cue legitimately part of the composed song can
+        still be ahead of Live's CURRENT extent (a skeleton push, or an
+        arrangement that hasn't been built yet) — it defers and lands on
+        the next push once content covers it, rather than failing the
+        whole push. The result also carries ``last_event_time`` so the
+        caller can teach the gap. (The planner refuses cues past the
+        *composed* song length before they ever reach here, so a deferred
+        cue is always one that WILL become placeable.)
 
     **Index caveat**: the reported ``cue_index`` is the position in
     ``song.cue_points`` AT THE TIME each cue was created. Because Live
@@ -647,6 +669,11 @@ def cue_create_batch_handler(
         raise ValueError(
             f"cue_create_batch: if_exists={if_exists!r} not in "
             f"{sorted(_IF_EXISTS_VALUES)}"
+        )
+    if on_out_of_range not in _OUT_OF_RANGE_VALUES:
+        raise ValueError(
+            f"cue_create_batch: on_out_of_range={on_out_of_range!r} not in "
+            f"{sorted(_OUT_OF_RANGE_VALUES)}"
         )
 
     # Pre-validate the whole list so we fail loudly before any partial
@@ -698,25 +725,36 @@ def cue_create_batch_handler(
     # the prefix succeed before the bad cue raises. W4-E real-Live
     # smoke showed the per-cue check leaves partial state on failure.
     results: list[dict[str, Any]] = []
+    skipped_out_of_range: list[dict[str, Any]] = []
     with context.live_state_lock:
         song = context.song
         last_event_time = float(getattr(song, "last_event_time", 0.0))
-        out_of_range = [
-            (i, pos) for i, (pos, _) in enumerate(parsed)
+        out_of_range_idx = {
+            i for i, (pos, _) in enumerate(parsed)
             if pos > last_event_time + 1e-6
-        ]
-        if out_of_range:
+        }
+        if out_of_range_idx and on_out_of_range == "refuse":
+            # W5-C atomic contract: a single out-of-range position aborts
+            # the WHOLE batch and writes nothing.
             offending = ", ".join(
-                f"cues[{i}].position_beats={pos}" for i, pos in out_of_range
+                f"cues[{i}].position_beats={parsed[i][0]}"
+                for i in sorted(out_of_range_idx)
             )
             raise ValueError(
-                f"cue_create_batch: {len(out_of_range)} cue(s) past "
+                f"cue_create_batch: {len(out_of_range_idx)} cue(s) past "
                 f"last_event_time={last_event_time}: {offending}. Live's "
                 f"current_song_time setter is clamped to the arrangement's "
                 f"extent — place arrangement content covering these "
                 f"positions first. No cues written (atomic batch)."
             )
-        for position_beats, name in parsed:
+        for i, (position_beats, name) in enumerate(parsed):
+            if i in out_of_range_idx:
+                # on_out_of_range == "skip": defer this cue (it's ahead of
+                # Live's current extent) instead of failing the batch.
+                skipped_out_of_range.append(
+                    {"position_beats": position_beats, "name": name or ""}
+                )
+                continue
             results.append(
                 _create_one_cue_locked(
                     context,
@@ -725,7 +763,13 @@ def cue_create_batch_handler(
                     if_exists=if_exists,
                 )
             )
-    return {"cue_count": len(results), "cues": results}
+    out: dict[str, Any] = {"cue_count": len(results), "cues": results}
+    if on_out_of_range == "skip":
+        # Stable shape for the skip path: always present (possibly empty)
+        # plus the extent so the caller can teach the gap.
+        out["skipped_out_of_range"] = skipped_out_of_range
+        out["last_event_time"] = last_event_time
+    return out
 
 
 def cue_delete_handler(

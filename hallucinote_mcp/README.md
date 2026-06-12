@@ -30,7 +30,8 @@ pip install -e ./hallucinote_mcp
 ```
 
 Then run the install skill from Claude Code to copy the Remote Script into Ableton
-Live's User Library and write `.mcp.json` for your project:
+Live's User Library (the Hallucinote plugin launches the server itself, via uv — the
+skill writes no MCP-server config):
 
 ```
 /ableton-mcp-install
@@ -46,7 +47,7 @@ Live's Control Surface slot.
 | Tool | Scope |
 |---|---|
 | `ableton_session` | Global state, master, transport, view, tempo, signature, snapshot |
-| `ableton_track` | Tracks: lifecycle, mixer state, sends |
+| `ableton_track` | Tracks: lifecycle, mixer state, sends, input/output routing, monitor state |
 | `ableton_return` | Return tracks |
 | `ableton_clip` | Session + arrangement clips (lifecycle, set_property, replace_notes) |
 | `ableton_note` | Within-clip note operations |
@@ -69,7 +70,8 @@ for low-context-cost reads (`ableton://session/snapshot`,
 `ableton://guides/*`). Multi-step workflows live as Claude
 Code skills (`skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
 `/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,
-`/compose-part` — so they're assistant-callable, not just user-facing slash commands.
+`/compose-part`, and more (full menu: `docs/skills.md`) — so they're
+assistant-callable, not just user-facing slash commands.
 
 ## Development
 

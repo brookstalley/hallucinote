@@ -10,6 +10,13 @@ from hallucinote.return_naming import strip_return_slot_prefix
 
 from hallucinote.db import mutations as M, queries as Q
 
+from ..routing_names import (
+    OUTPUT_DISPLAY_NAME_KIND,
+    INPUT_DISPLAY_NAME_KIND,
+    OUTPUT_DEFAULT_KIND,
+    MONITOR_DEFAULT,
+)
+
 from ._core import (
     PullCall,
     PullPlan,
@@ -35,10 +42,11 @@ def plan_pull_mix(
     Ableton side has no DB-discovery mechanism we can rely on yet).
 
     Emits one ``ableton_session(action='info')`` + one
-    ``ableton_return(action='list')`` globally, plus one
-    ``ableton_track(action='info')`` and one ``ableton_track(action='get_sends')``
-    per linked track. All five domain probes use the unified surface as of
-    Wave M-2.
+    ``ableton_return(action='list')`` globally, plus — per linked track — one
+    ``ableton_track(action='info')``, one ``ableton_track(action='get_sends')``,
+    and (RTE-1K9T chunk 05) three routing reads:
+    ``get_output_routing`` / ``get_input_routing`` / ``get_monitoring_state``.
+    All domain probes use the unified surface as of Wave M-2.
     """
     plan = PullPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -100,6 +108,28 @@ def plan_pull_mix(
             args={"action": "get_sends", "track_index": track_at},
             key=f"track_sends:{t['id']}",
             purpose=f"pull sends for {t['name']}",
+        ))
+        # RTE-1K9T chunk 05: per-track routing — three independent LOM reads
+        # (one MCP call each), mirroring the three push routing keys. Probed
+        # for EVERY linked track (not gated on DB routing state) so a manual
+        # reroute in Live is discovered even when the DB carries no routing yet.
+        plan.add(PullCall(
+            tool="ableton_track",
+            args={"action": "get_output_routing", "track_index": track_at},
+            key=f"track_output_routing:{t['id']}",
+            purpose=f"pull output routing for {t['name']}",
+        ))
+        plan.add(PullCall(
+            tool="ableton_track",
+            args={"action": "get_input_routing", "track_index": track_at},
+            key=f"track_input_routing:{t['id']}",
+            purpose=f"pull input routing for {t['name']}",
+        ))
+        plan.add(PullCall(
+            tool="ableton_track",
+            args={"action": "get_monitoring_state", "track_index": track_at},
+            key=f"track_monitor:{t['id']}",
+            purpose=f"pull monitor state for {t['name']}",
         ))
 
     if not any_linked_track:
@@ -667,6 +697,334 @@ def _apply_track_sends(
         )
 
 
+# ---------------------------------------------------------------------------
+# RTE-1K9T chunk 05 — routing pull (inverse of sync/push/routing.py)
+# ---------------------------------------------------------------------------
+#
+# Push resolves a DB routing reference → a Live display_name; pull does the
+# inverse — maps the probed display_name back to a DB reference and writes it
+# through ``set_track_routing``. Two churn-avoidance rules govern the apply (D8):
+#
+#   1. DB-NULL ≡ Live-default. A track with no authored routing has NULL routing
+#      columns; Live still reports a concrete default ("Main" / "No Input" /
+#      "Auto"). Treating NULL as the default means a first pull of an unrouted
+#      track is a no-op instead of churning every NULL into an explicit default.
+#   2. Faithful, Ableton-authoritative writes. Only a NON-default Live route (or
+#      a user reverting a previously-authored route back to default) mutates the
+#      DB; the value written is exactly what Live reports.
+#
+# V1 input scope (D6/D8): pull persists ONLY a track→track input (input routed
+# from a sibling track's output). Fixed input kinds (Ext. In / No Input /
+# Resampling) and arbitrary hardware inputs are NOT persisted — Live's non-track
+# input default is open, hardware-bound, and NOT live-probed, so a NULL≡default
+# rule on them would risk churning every track's default on the first pull. They
+# are deferred until a live-probe pins Live's input defaults (enqueued in
+# operator-verification.md). Output + monitor — the PRE-MAIN bus's actual
+# mechanism — pull fully; input routing the bus pattern does not use.
+
+
+def _resolve_routing_reference(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    direction: str,            # 'output' | 'input'
+    display_name: str,
+    source_track_id: str,
+) -> tuple[str, str | None] | str | None:
+    """Map a Live routing ``display_name`` → a DB reference ``(kind, target_id)``.
+
+    Returns:
+      * ``(kind, None)``      — a fixed-vocabulary target (master / sends_only /
+                                ext_out / ext_in / no_input / resampling);
+      * ``("track", tid)``    — the name matched exactly one sibling track;
+      * ``"ambiguous"``       — the name matched 2+ sibling tracks (no reliable
+                                reference can be formed);
+      * ``None``              — unmappable (not a fixed name, not a known track).
+
+    Fixed names win over track-name resolution: "Main" always means the master
+    output even if some track happens to be named "Main". The source track and
+    the master row are excluded from track-target matching (a track never routes
+    to itself, and the master is reached via the fixed "Main" name, never as a
+    track-target).
+    """
+    inverse = (
+        OUTPUT_DISPLAY_NAME_KIND if direction == "output"
+        else INPUT_DISPLAY_NAME_KIND
+    )
+    fixed_kind = inverse.get(display_name)
+    if fixed_kind is not None:
+        return (fixed_kind, None)
+
+    matches = [
+        t for t in Q.get_tracks_for_song(conn, song_id)
+        if t["name"] == display_name
+        and t["id"] != source_track_id
+        and t["kind"] != "master"
+    ]
+    if len(matches) == 1:
+        return ("track", matches[0]["id"])
+    if len(matches) >= 2:
+        return "ambiguous"
+    return None
+
+
+def _apply_track_routing(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    track_id: str,
+    direction: str,            # 'output' | 'input'
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest one direction (output | input) of one track's routing from a
+    ``get_{output,input}_routing`` probe (shape: ``{has_*_routing, current_type,
+    current_channel, available_*}``).
+
+    Defense in depth: re-verifies the track link before mutating (the planner
+    already enforces it, but a hand-rolled results.json could route around it).
+    """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"track_{direction}_routing:{track_id} — track not linked in this "
+            "session; the planner would not have emitted this. Skipping."
+        )
+        return
+    row = Q.get_track(conn, track_id)
+    if row is None:
+        out.warnings.append(
+            f"track_{direction}_routing:{track_id} — DB row missing; skipping"
+        )
+        return
+
+    # No routing surface (a clip-less family) or no current target reported —
+    # nothing to ingest.
+    if result.get(f"has_{direction}_routing") is False:
+        out.no_ops += 1
+        return
+    current_type = result.get("current_type")
+    if current_type is None:
+        out.no_ops += 1
+        return
+    live_channel = result.get("current_channel")
+
+    ref = _resolve_routing_reference(
+        conn, song_id=row["song_id"], direction=direction,
+        display_name=current_type, source_track_id=track_id,
+    )
+    if ref == "ambiguous":
+        out.warnings.append(
+            f"track {row['name']!r} {direction} routing -> {current_type!r}: "
+            "matches multiple tracks by name; cannot form an unambiguous "
+            "reference — skipping (rename one of the colliding tracks)"
+        )
+        return
+    if ref is None:
+        if direction == "output":
+            out.warnings.append(
+                f"track {row['name']!r} output routing -> {current_type!r}: "
+                "not a known routing target or track in this song — skipping"
+            )
+            return
+        # INPUT, unmappable (an arbitrary MIDI / interface input, e.g. "All Ins").
+        # Falls through to the non-track-input path below (clears a stale
+        # authored route; otherwise a quiet no-op).
+        live_kind, live_target = None, None
+    else:
+        live_kind, live_target = ref
+
+    if direction == "input" and live_kind != "track":
+        # V1 pulls ONLY a track→track input — fixed input kinds (ext_in /
+        # no_input / resampling) and arbitrary hardware inputs sit on Live's
+        # open/hardware-bound, unprobed default, so persisting them risks
+        # churning every track (D6/D8). BUT if the DB holds an AUTHORED input
+        # route and Live now shows a non-track input, the user changed it in
+        # Live: clear the stale route (Ableton-authoritative) so the next push
+        # doesn't SILENTLY re-assert it over the manual edit. A track that never
+        # had an authored input route is a quiet no-op (the common default case).
+        if row["input_routing_kind"] is None:
+            out.no_ops += 1
+            return
+        try:
+            M.set_track_routing(
+                conn,
+                track_id=track_id,
+                input_routing_kind=None,
+                input_routing_target_id=None,
+                input_routing_channel=None,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+        except ValueError as e:
+            out.warnings.append(
+                f"track {row['name']!r} input routing -> {current_type!r}: "
+                f"clearing the stale authored route was rejected ({e}); DB unchanged"
+            )
+            return
+        out.mutations += 1
+        out.details.append(
+            f"track {row['name']!r} input routing: cleared the authored "
+            f"{row['input_routing_kind']!r} route — Live now shows non-track "
+            f"{current_type!r}, which V1 doesn't persist (so it won't re-assert "
+            "the old route on the next push)"
+        )
+        return
+
+    db_kind = row[f"{direction}_routing_kind"]
+    db_target = row[f"{direction}_routing_target_id"]
+    db_channel = row[f"{direction}_routing_channel"]
+
+    # A track-target (input or output) is never Live's default, so it always
+    # takes the persist path; only OUTPUT has a fixed-name default to collapse.
+    is_default_route = (
+        direction == "output"
+        and live_kind == OUTPUT_DEFAULT_KIND
+        and live_target is None
+    )
+    if is_default_route:
+        # Live shows the DEFAULT "Main" output. NULL ≡ default, so an unrouted
+        # DB track (or one explicitly at 'master') is a no-op — no churn (D8).
+        if db_kind is None or db_kind == OUTPUT_DEFAULT_KIND:
+            out.no_ops += 1
+            return
+        # A previously-authored non-default route was reverted to default in
+        # Live — Ableton-authoritative, so reset the DB to the default route.
+        changes: dict[str, Any] = {
+            f"{direction}_routing_kind": OUTPUT_DEFAULT_KIND,
+            f"{direction}_routing_target_id": None,
+            f"{direction}_routing_channel": None,
+        }
+    else:
+        # Non-default route — persist faithfully (kind + target + channel).
+        if (
+            live_kind == db_kind
+            and live_target == db_target
+            and live_channel == db_channel
+        ):
+            out.no_ops += 1
+            return
+        changes = {
+            f"{direction}_routing_kind": live_kind,
+            f"{direction}_routing_target_id": live_target,
+            f"{direction}_routing_channel": live_channel,
+        }
+
+    try:
+        M.set_track_routing(
+            conn,
+            track_id=track_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+            **changes,
+        )
+    except ValueError as e:
+        # Validation rejects BEFORE any write, so the transaction stays clean;
+        # surface and continue rather than abort the whole pull batch (mirrors
+        # _apply_track_sends' per-send ValueError guard).
+        out.warnings.append(
+            f"track {row['name']!r} {direction} routing -> {current_type!r}: "
+            f"rejected ({e}); DB unchanged"
+        )
+        return
+    out.mutations += 1
+    out.details.append(
+        f"track {row['name']!r} {direction} routing: "
+        f"{db_kind!r} -> {current_type!r}"
+        + (f" (channel {live_channel!r})" if live_channel is not None else "")
+    )
+
+
+def _apply_track_monitor(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    track_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest a track's monitor state from a ``get_monitoring_state`` probe
+    (shape: ``{has_monitoring_state, monitoring_state}``). Same NULL ≡ default
+    rule as ``_apply_track_routing`` — Live's default 'Auto' is a no-op against a
+    NULL (or explicitly-'Auto') DB column (D8)."""
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=track_id
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"track_monitor:{track_id} — track not linked in this session; "
+            "the planner would not have emitted this. Skipping."
+        )
+        return
+    row = Q.get_track(conn, track_id)
+    if row is None:
+        out.warnings.append(f"track_monitor:{track_id} — DB row missing; skipping")
+        return
+
+    if result.get("has_monitoring_state") is False:
+        out.no_ops += 1
+        return
+    live_ms = result.get("monitoring_state")
+    if live_ms is None:
+        # Don't persist a value the mutator would reject. The getter names an
+        # out-of-vocabulary Live enum int as monitoring_state=None + a
+        # monitoring_state_raw diagnostic (the future-Live-enum-shift signal it
+        # was built to surface) — propagate it so the one-constant fix is
+        # diagnosable rather than silently swallowed; a plain absent field is a
+        # benign no-op.
+        raw = result.get("monitoring_state_raw")
+        if raw is not None:
+            out.warnings.append(
+                f"track {row['name']!r} monitor: Live reported an "
+                f"out-of-vocabulary monitoring_state int ({raw!r}); not "
+                "persisted (update _MONITORING_STATE_NAMES in the MCP handler)"
+            )
+        out.no_ops += 1
+        return
+    db_ms = row["monitoring_state"]
+
+    if live_ms == MONITOR_DEFAULT:
+        if db_ms is None or db_ms == MONITOR_DEFAULT:
+            out.no_ops += 1
+            return
+        new_ms = MONITOR_DEFAULT
+    else:
+        if live_ms == db_ms:
+            out.no_ops += 1
+            return
+        new_ms = live_ms
+
+    try:
+        M.set_track_routing(
+            conn,
+            track_id=track_id,
+            monitoring_state=new_ms,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+    except ValueError as e:
+        out.warnings.append(
+            f"track {row['name']!r} monitor -> {live_ms!r}: "
+            f"rejected ({e}); DB unchanged"
+        )
+        return
+    out.mutations += 1
+    out.details.append(
+        f"track {row['name']!r} monitor: {db_ms!r} -> {new_ms!r}"
+    )
+
+
 __all__ = [
     "plan_pull_mix",
     "plan_pull_score_globals",
@@ -678,4 +1036,6 @@ __all__ = [
     "_apply_return_info",
     "_apply_track_info",
     "_apply_track_sends",
+    "_apply_track_routing",
+    "_apply_track_monitor",
 ]

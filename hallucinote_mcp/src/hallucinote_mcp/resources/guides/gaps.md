@@ -42,13 +42,30 @@ another track.").
 inherits the envelope. (`clip_cc / clip_pitch_bend / note_expression` on
 arrangement clips work normally.)
 
-### Master + audio-track envelopes (mixer / pan / send / device_parameter)
-The master track cannot host clips of any kind, so there's no
-`Clip.create_automation_envelope` path. Hallucinote v1 models clips as
-MIDI-only, so audio tracks are also unreachable.
-**Workaround:** author a sub-bus group track (`kind='midi'`) that receives the
-source(s), put the envelope on the group's mixer. The DB-mutator refuses these
-target kinds on master / audio / group hosts with a teaching error.
+### Audio-track envelopes (mixer / pan / send / device_parameter)
+ENV-9P4T: audio-track hosts are authorable. A clip-independent (e.g.
+song-spanning) ride routes to **perform** — a continuous arrangement lane,
+like a plain/group track (the mutator admits audio; the planner infers the
+route from the envelope's span: covered by one session clip → per-clip,
+else → perform). A per-clip ride that IS covered by a single audio session
+clip is still refused, pending the session-audio-clip push surface CLP-AUD2.
+
+### Master / group / return envelopes — performed, not clip-hosted
+The master track cannot host clips, so there is no
+`Clip.create_automation_envelope` path — but these targets are no longer
+refused (ENV-7G4K). `ableton_automation(action='perform_batch')`
+gesture-records scripted ramps into Live's arrangement automation: the
+transport plays ONCE over the union span of all changed arcs in record while
+the handler steps each parameter inside its own gesture window (ENV-9P4T —
+N arcs in one playthrough, not one pass per arc). Hallucinote's push routes
+master/group mixer + group sends, return mixer, and master-/return-chain
+device parameters through its performed-automation phase automatically
+(fingerprint-gated — unchanged arcs are skipped and listed, so a hand-edited
+lane survives).
+**Restrictions:** write-only (recorded arrangement automation has no LOM read
+surface; verify via each arc's returned `automation_state == 1`), real
+wall-clock for the UNION span (the changed arcs play once together in real
+time), and nested-rack device parameters are unreachable on this route too.
 
 ### MIDI CC + pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
 Live 12.4's LOM exposes neither `Clip.envelope_target_for_cc(N)` nor

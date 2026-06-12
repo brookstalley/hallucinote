@@ -51,7 +51,9 @@ register(
             "automation was realized in audio (a device-parameter timbre flip "
             "like Amp Type, a dynamic send level), and scopes per-stem loudness "
             "to each named section (verse / chorus / bridge) declared via "
-            "create_section. Writes the MixReport to "
+            "create_section. Pass compare_to=<seq> to diff against a "
+            "previous report (per-surface loudness deltas + significance "
+            "flags). Writes the MixReport to "
             "songs/<slug>/analysis/<ts>.json and returns the path + summary."
         ),
         params=(
@@ -76,6 +78,25 @@ register(
                     "lexicographically, so 'most recent' = max())."
                 ),
             ),
+            ParamSpec(
+                name="compare_to",
+                type="int",
+                required=False,
+                description=(
+                    "Song audit-log seq of the baseline: the previous "
+                    "analysis JSON whose db_seq matches (captures record "
+                    "theirs in manifest.db_seq at render time; each "
+                    "report carries it as db_seq). The report's "
+                    "compare_to field gets per-surface loudness deltas + "
+                    "significance flags vs that baseline — neutral "
+                    "evidence for did-the-change-do-what-it-predicted, "
+                    "graded against intent by the reader. Errors "
+                    "teach the available seqs when nothing matches. "
+                    "Caveat: the tag is the DB's latest seq at render "
+                    "time — render after pushing, or the audio won't "
+                    "reflect the state the seq names."
+                ),
+            ),
         ),
         handler=analysis_handlers.analyze_handler,
         runs_server_side=True,
@@ -96,13 +117,21 @@ register(
             "feeds reverb verification, automation envelopes "
             "(create_enum_envelope / volume_swell / dynamic sends) feed "
             "report.automation_verifications (realized-vs-declared per "
-            "breakpoint; mixer_volume/pan report measurable=false — post-fader, "
-            "invisible to the pre-fader stem), and create_section feeds "
+            "breakpoint; mixer_volume/pan are verified on the MASTER — "
+            "master_rms_db / master_balance_db — with measurable=false only "
+            "when the predicted effect is below the detectability floor or "
+            "the prediction model breaks down), and create_section feeds "
             "per-section loudness (report.per_section, keyed by section name; a "
             "master_overshoot finding's db_reference names the section it "
             "lands in). When any is undeclared, skipped_analyses "
-            "explains how to declare it. compare_to baseline diffs and "
-            "per-section contribution attribution are post-MVP backlog.",
+            "explains how to declare it. Per-section contribution "
+            "attribution is post-MVP backlog.",
+            "compare_to=<seq> resolves the baseline by db_seq, so the diff "
+            "answers 'did the mutations since that seq do what they "
+            "predicted?' — the summary carries significant_delta_count; "
+            "the report's compare_to field has the per-metric rows. "
+            "Reports written before seq tagging have db_seq=null and "
+            "can't be resolved by seq.",
         ),
     )
 )

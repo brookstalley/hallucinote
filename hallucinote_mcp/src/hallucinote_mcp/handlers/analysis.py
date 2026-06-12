@@ -204,9 +204,11 @@ def _collect_declared_envelopes(
         (device → chain → parent track/return → surface index). The pre-fader
         stem captures the device's timbre change (e.g. the Amp Type flip).
       - ``send_level`` → the RETURN the send feeds (more send → louder return).
-      - ``mixer_volume`` / ``mixer_pan`` → the track surface; passed through so
-        the audio module reports them unverifiable (post-fader, invisible to the
-        pre-fader stem) rather than dropping them silently.
+      - ``mixer_volume`` / ``mixer_pan`` → the track surface; the audio
+        module verifies them on the MASTER (post-fader sum, AUD-3F8M) using
+        the declared fader values / pan positions to predict the expected
+        master effect, with honest unmeasurable verdicts when the stem is
+        too diluted for the master to speak.
 
     Clip-/note-scoped MIDI automation (clip_cc, clip_pitch_bend,
     note_expression) is not mix-audio automation — dropped here. Breakpoint
@@ -410,12 +412,20 @@ def analyze_handler(
     *,
     song_slug: str,
     captures_dir: str | None = None,
+    compare_to: int | None = None,
 ) -> dict[str, Any]:
     """Run analyze_mix against a captures dir; write the report; return path.
 
+    ``compare_to`` is a song audit-log seq: the report is diffed against
+    the previous analysis JSON whose ``db_seq`` matches (per-surface
+    loudness deltas + significance flags in ``report.compare_to`` —
+    neutral evidence, no findings derived). Captures record their seq in
+    ``manifest.db_seq`` at render time.
+
     Returns: ``{report_path, schema_version, finding_count, summary}``
-    where summary names the master peak, overshoot count, and any
-    out-of-tolerance reverb sends.
+    where summary names the master peak, overshoot count, any
+    out-of-tolerance reverb sends, and (when ``compare_to`` was given)
+    the significant-delta count vs the baseline.
     """
     if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
         raise _AnalysisError(
@@ -456,6 +466,11 @@ def analyze_handler(
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
     finally:
         conn.close()
+
+    # The analysis dir doubles as the baseline pool compare_to resolves
+    # against — computed before analyze_mix so the seq lookup can fail fast.
+    analysis_dir = _resolve_song_dir(song_slug) / "analysis"
+
     report = analyze_mix(
         captures_path,
         declared_reverb_sends=declared_sends,
@@ -484,9 +499,10 @@ def analyze_handler(
         # static fader gain so masking sees mix balance, not source level.
         # Fader curve is Live-12-calibrated (see audio/levels.py).
         stem_gains=stem_gains,
+        compare_to=compare_to,
+        analysis_dir=analysis_dir,
     )
 
-    analysis_dir = _resolve_song_dir(song_slug) / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
     report_path = analysis_dir / f"{_utc_timestamp()}.json"
     report_dict = report.to_json_dict()
@@ -511,6 +527,21 @@ def analyze_handler(
         "section_count": len(report_dict["per_section"]),
         "skipped_analyses_count": len(report_dict["skipped_analyses"]),
     }
+    if report_dict["compare_to"] is not None:
+        diff = report_dict["compare_to"]
+        summary["compare_to"] = {
+            "baseline_ref": diff["baseline"]["ref"],
+            # Loudness rows + the overshoot-count change (always significant
+            # when nonzero — an overshoot appearing/disappearing is the
+            # headline a summary reader must not miss).
+            "significant_delta_count": (
+                sum(1 for d in diff["deltas"] if d["significant"])
+                + (1 if diff["overshoot_count"]["significant"] else 0)
+            ),
+            "overshoot_delta": diff["overshoot_count"]["delta"],
+            "added_surfaces": diff["added_surfaces"],
+            "missing_surfaces": diff["missing_surfaces"],
+        }
     return {
         "report_path": str(report_path),
         "schema_version": report_dict["schema_version"],

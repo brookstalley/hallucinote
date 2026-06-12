@@ -86,7 +86,8 @@ _BUILD_OWNED_KINDS: tuple[tuple[str, str, str], ...] = (
 _LATEST_ACTOR_EVENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "song":                  (("song_created", "song_id"), ("song_updated", "song_id")),
     "track":                 (("track_created", "track_id"), ("track_updated", "track_id"),
-                              ("track_mixer_set", "track_id")),
+                              ("track_mixer_set", "track_id"),
+                              ("track_routing_set", "track_id")),
     "clip":                  (("clip_created", "clip_id"), ("clip_updated", "clip_id")),
     "arrangement_clip":      (("arrangement_clip_added", "arrangement_clip_id"),),
     "section":               (("section_created", "section_id"),

@@ -21,12 +21,14 @@ the reverb-verification section is emitted as a structured
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alignment import trim_to_common_length
+from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
     band_attribution,
     find_master_overshoots,
@@ -45,6 +47,7 @@ from .density import section_onset_density
 from .energy import LOUDNESS, ONSET_DENSITY, realize_energy
 from .masking import analyze_masking_window
 from .report import (
+    SCHEMA_VERSION,
     EnergyRealization,
     EnvelopeVerification,
     Finding,
@@ -151,6 +154,8 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
+    compare_to: int | Path | str | None = None,
+    analysis_dir: Path | str | None = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
@@ -172,10 +177,44 @@ def analyze_mix(
     ``sections`` table converted to beats (for ``sections``), then passes
     populated lists. This function stays DB-agnostic so synthetic-fixture
     tests can drive it without a song DB.
+
+    ``compare_to`` selects a baseline for a before/after diff: an ``int`` is
+    a song audit-log seq, resolved against ``analysis_dir`` (the directory
+    of previously-written analysis JSONs — required for the seq form) via
+    ``compare.resolve_baseline``; a path names a baseline JSON directly.
+    The finished report is diffed against it (per-surface loudness deltas +
+    significance flags, see ``compare.diff_reports``) and the result lands
+    in ``MixReport.compare_to``. Deltas are neutral evidence graded against
+    intent by the consumer — no findings are derived from them.
     """
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
+
+    # Resolve + load + validate the baseline up front so a bad seq / path /
+    # song fails fast, before the expensive DSP passes — the diff itself
+    # runs at the end. diff_reports re-checks via the same shared
+    # ensure_comparable; this earlier call just moves the refusal ahead of
+    # the analysis cost.
+    baseline: dict | None = None
+    baseline_ref: str | None = None
+    if compare_to is not None:
+        if isinstance(compare_to, bool):
+            raise TypeError("compare_to must be a seq int or a path, not a bool")
+        if isinstance(compare_to, int):
+            if analysis_dir is None:
+                raise ValueError(
+                    "compare_to=<seq> requires analysis_dir — the directory "
+                    "of previous analysis JSONs to resolve the seq against"
+                )
+            baseline_path = resolve_baseline(analysis_dir, compare_to)
+        else:
+            baseline_path = Path(compare_to)
+        baseline_ref = str(baseline_path)
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        ensure_comparable(
+            SCHEMA_VERSION, capture.song_slug, baseline, baseline_ref=baseline_ref
+        )
 
     # Trim every surface to the common length (AUD-1C7K). Per-surface sfrecord~
     # instances finalize at staggered times, so the raw WAVs differ in length;
@@ -229,6 +268,7 @@ def analyze_mix(
         capture=capture,
         declared_envelopes=declared_envelopes,
         beat_map=beat_map,
+        stem_gains=stem_gains or {},
     )
     skipped.extend(automation_skips)
 
@@ -255,7 +295,7 @@ def analyze_mix(
         sections=sections,
     )
 
-    return MixReport(
+    report = MixReport(
         song_slug=capture.song_slug,
         captures_dir=str(capture.captures_dir),
         captured_at=capture.captured_at,
@@ -271,7 +311,15 @@ def analyze_mix(
         skipped_analyses=skipped,
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
+        db_seq=capture.db_seq,
     )
+
+    if baseline is not None:
+        report.compare_to = diff_reports(
+            report.to_json_dict(), baseline, baseline_ref=baseline_ref
+        )
+
+    return report
 
 
 def _measure_surface(surface) -> StemMetrics:
@@ -408,13 +456,16 @@ def _run_automation_verifications(
     capture: CaptureSet,
     declared_envelopes: Sequence[DeclaredEnvelope],
     beat_map: BeatSampleMap,
+    stem_gains: Mapping[str, float],
 ) -> tuple[list[EnvelopeVerification], list[dict]]:
     """Verify each declared automation envelope was realized in the audio.
 
     Looks each envelope's target surface up in the capture, windows it around
     every value-changing breakpoint, and confirms the expected change (timbre
-    shift for device_parameter, level step for send_level; mixer_volume/pan are
-    reported unverifiable — post-fader, invisible to the pre-fader stem).
+    shift for device_parameter, level step for send_level, master-bus level /
+    L−R balance step for mixer_volume / mixer_pan — AUD-3F8M; pan's
+    prediction uses the stem's static fader gain from ``stem_gains``, unity
+    when unknown).
 
     Empty ``declared_envelopes`` produces a structured skip teaching the caller
     to author automation — symmetric with the reverb and section skips.
@@ -449,6 +500,8 @@ def _run_automation_verifications(
             env, surface.audio,
             sample_rate=capture.sample_rate,
             beat_map=beat_map,
+            master_audio=capture.master.audio,
+            stem_gain=stem_gains.get(env.target_surface_id, 1.0),
         ))
     return verifications, skipped
 

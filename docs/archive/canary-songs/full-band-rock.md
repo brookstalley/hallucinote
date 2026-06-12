@@ -28,6 +28,8 @@ Mixing intent:
 
 **Status (2026-05-20):** Wave 0 surfaced the master-fade + lead-vocal-sidechain envelope targets as architectural blockers (bug-triage Group D); W10-F shipped dual-layer (DB + planner) refuse-with-teaching for D2 (master) + D3 (audio-track) hosts. The canary's `build.py::_author_envelopes` is now intentionally empty and documents the v1.1 sub-bus pattern as the working alternative. See `ableton://guides/gaps.md` Group D for the LOM rationale.
 
+**Superseded (2026-06-11):** ENV-7G4K replaced the D2 master refusal with performed automation — master/group/return envelopes are now gesture-recorded into arrangement automation by push. D3 (audio-track hosts) remains refused pending ENV-8H1T. See `docs/song-authoring-conventions.md` "performed automation".
+
 ## What this canary exercises
 
 **Third-party plugin path (Wave 13's target).** Keys uses a VST that may not be on the consuming machine. Exercises whether the capture/snapshot records enough identity to round-trip, and whether the push planner refuses gracefully when the plugin is missing. *(W13-A and W13-B aren't built yet; the canary's job is to confirm what happens TODAY — silent failure? confusing error? — so triage knows what shipping W13 actually buys.)*

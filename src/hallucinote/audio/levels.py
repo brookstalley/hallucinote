@@ -17,9 +17,13 @@ Scope of this first cut (build-plan C3):
   pan leaves the mono level ~unchanged; pan's real effect is *spatial*
   unmasking, which mono-sum can't see anyway (F3). Applying a pan law here would
   add complexity without changing the mono masking result.
-* **Masking only.** Loudness/attribution still run on raw captures; whether to
-  level-correct them too is a separate decision (they have the same pre-fader
-  property) — deferred so this change doesn't alter shipped metrics.
+* **Masking only** (for ``apply_stem_gains``). Loudness/attribution still run
+  on raw captures; whether to level-correct them too is a separate decision
+  (they have the same pre-fader property) — deferred so this change doesn't
+  alter shipped metrics. The calibration functions themselves
+  (``live_fader_db`` / ``live_fader_gain``) have a second consumer since
+  AUD-3F8M: ``audio/automation.py`` uses them to predict the expected
+  master-bus effect of declared post-fader mixer_volume / mixer_pan moves.
 
 **The fader curve is CALIBRATED against Live 12** (2026-05-28), by sweeping a
 track's ``mixer_device.volume`` and reading the parameter's ``display_value``

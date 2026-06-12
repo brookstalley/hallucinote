@@ -23,17 +23,27 @@ def plan_push_devices(
          position order.
       2. For each device, check the `ableton_links` projection for a 'device'
          binding. If missing, emit `ableton_device(action='load', ...)` with
-         the parent-addressing (`track_index` OR `return_index`) and warn —
-         parameter writes for that device have to wait for a second pass
-         after the link lands.
+         the parent-addressing (`track_index` OR `return_index`) and record a
+         diagnostic note — parameter writes for that device wait for the
+         executor's same-pass convergence re-plan (SYN-9F2L), which re-runs
+         this planner once the link has landed.
       3. For each linked device, emit
-         `ableton_device(action='set_parameter', ...)` per dialed param
-         that carries a continuous `value_normalized` (`value_type='continuous'`,
-         value stringified on the wire for schema uniformity between
-         continuous and enum). Discrete-enum params (Filter Type = "Lowpass"
-         etc.) have no normalized form — surface them as a warn so the
-         agent / UI knows the gap. Nested rack chains aren't pushed in
-         chunk 4a (snapshot doesn't capture them).
+         `ableton_device(action='set_parameter', ...)` per dialed param,
+         choosing the wire form by what the DB stored (SYN-9F2L):
+           * captured enum items → `value_type='enum'` with the display string
+             (the handler validates membership);
+           * a display string → `value_display` (`value_type='continuous'`; the
+             handler inverts the param's own display curve — exact, and
+             center-zero-safe where a naive normalized fraction dials the wrong
+             direction);
+           * normalized only → the raw `value` (stringified, `'continuous'`);
+           * none of those → an operator ALERT (`plan.alert`, drained into the
+             push report's warnings) — the dialed intent was authored but can't
+             be pushed; never a silent drop.
+         A refused display write is retried once by the executor (as enum, or
+         with the DB's normalized value) — see push_execute's set_parameter
+         fallback. Nested rack chains aren't pushed here (snapshot doesn't
+         capture them).
     """
     plan = PushPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -150,23 +160,14 @@ def _emit_device_calls(
         parent_kv = {"track_index": parent_at}
     else:
         parent_kv = {"return_index": parent_at}
-    # SYN-2M9P: master devices are CONFIGURE-ONLY across the whole stack.
-    # Ableton Live 12.4 has no LOM path to load a device onto the master
-    # strip, so DEV-2M9K made the load_handler + render setup refuse master
-    # loads ("place by hand once" contract). The planner must mirror that:
-    # emitting `device.load(master=True)` for an unlinked master device is an
-    # impossible call that FAILS at execute time and HALTS the devices phase
-    # (outcome='partial'), leaving every downstream phase PENDING. Skip the
-    # load with a place-by-hand note; set_parameter writes (below) still fire
-    # once the hand-placed device is linked.
-    if parent_kind == "master" and device_at is None:
-        plan.warn(
-            f"master device {device['display_name']!r} (kind {device['kind']!r}) "
-            "not loadable via LOM — Live 12.4 has no master-strip load path; "
-            "place it on the master by hand once, then re-run push to record "
-            "its index and write parameters"
-        )
-        return
+    # DEV-6M2K: master device chains push like track/return chains. The earlier
+    # SYN-2M9P skip here (emit no master load, surface a place-by-hand note)
+    # mirrored DEV-2M9K's refusal — both rested on a premise refuted on Live
+    # 12.4.2 (master device load works). An unlinked master device now falls
+    # through to the generic load emission below: `parent_kv = {"master": True}`
+    # is already set up, and `load_handler` no longer refuses master, so the
+    # load executes and the device links via the same `device:<id>` key path —
+    # no PARTIAL-by-master halt, no hand-placement step.
     if device_at is None:
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.
@@ -243,15 +244,41 @@ def _emit_device_calls(
         return
 
     params = Q.get_device_parameters(conn, device["id"])
-    enum_skipped: list[str] = []
+    unwritable: list[str] = []
     for p in params:
-        if p["value_normalized"] is None:
-            enum_skipped.append(p["name"])
+        # SYN-9F2L: pick the wire form per param.
+        #   * captured value_items → a known enum: value_type='enum' with the
+        #     display string (the handler validates membership);
+        #   * display string present → value_display (the handler inverts the
+        #     param's own display curve — exact, and safe for center-zero
+        #     params where a naive normalized fraction dials the wrong
+        #     direction);
+        #   * normalized only → the raw `value` (stringified on the wire);
+        #   * neither → warn, never drop silently.
+        # The executor retries a refused display write once (as enum, or with
+        # the DB's normalized value) — see push_execute's set_parameter
+        # fallback.
+        display = (p["value_display"] or "").strip()
+        if p["value_items_json"] is not None:
+            if not display:
+                unwritable.append(p["name"])
+                continue
+            value_kv: dict[str, object] = {
+                "value": display, "value_type": "enum",
+            }
+            chosen = f"enum {display!r}"
+        elif display:
+            value_kv = {"value_display": display, "value_type": "continuous"}
+            chosen = f"display {display!r}"
+        elif p["value_normalized"] is not None:
+            value_kv = {
+                "value": str(p["value_normalized"]),
+                "value_type": "continuous",
+            }
+            chosen = f"normalized {p['value_normalized']:g}"
+        else:
+            unwritable.append(p["name"])
             continue
-        # Wave M-4: unified ableton_device(action='set_parameter') replaces
-        # set_device_parameter / set_return_device_parameter narrow tools.
-        # value goes on the wire as a string so enum and continuous share
-        # one type (handler coerces back per value_type).
         plan.add(ToolCall(
             tool="ableton_device",
             args={
@@ -259,20 +286,22 @@ def _emit_device_calls(
                 **parent_kv,
                 "device_index": device_at,
                 "parameter_name": p["name"],
-                "value": str(p["value_normalized"]),
-                "value_type": "continuous",
+                **value_kv,
             },
             key=f"device_parameter:{device['id']}:{p['name']}",
             purpose=(
                 f"{parent_name} / {device['display_name']} / "
-                f"{p['name']} = {p['value_display']} "
-                f"(normalized {p['value_normalized']:g})"
+                f"{p['name']} = {chosen}"
             ),
         ))
-    if enum_skipped:
-        plan.warn(
+    if unwritable:
+        # Operator-actionable (SYN-9F2L): the dialed intent was authored but
+        # can't be pushed — surface it in the push report, not the diagnostic
+        # notes channel where it gets discarded.
+        plan.alert(
             f"device {device['display_name']!r} on {parent_kind} {parent_name!r}: "
-            f"{len(enum_skipped)} enum-only param(s) skipped "
-            f"({', '.join(enum_skipped[:3])}{'...' if len(enum_skipped) > 3 else ''}) "
-            "— no normalized form, MCP can't write discrete enums"
+            f"{len(unwritable)} param(s) have no writable form "
+            f"({', '.join(unwritable[:3])}{'...' if len(unwritable) > 3 else ''}) "
+            "— no display value and no normalized value stored; the dialed "
+            "intent was NOT pushed"
         )

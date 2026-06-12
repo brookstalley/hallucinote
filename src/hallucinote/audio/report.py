@@ -6,13 +6,17 @@ Produced by ``analyze_mix(captures_dir)`` and serialized to
 ``analyze_mix`` and writes this report.
 
 Schema version is pinned in the report itself; downstream consumers
-(future ``compare_to`` differs, dashboards) discriminate by
+(the ``compare_to`` differ, dashboards) discriminate by
 ``schema_version`` rather than file path or git tag.
 
-The MVP carries skeleton fields that aren't yet populated:
+Two fields carry honesty/optional payloads:
 
-  ``compare_to``         — baseline-diff field. Reserved per spike §9
-                            (P2 backlog). Always ``None`` in MVP output.
+  ``compare_to``         — baseline-diff payload (AUD-4W7K): per-surface
+                            loudness deltas + significance flags against a
+                            previous analysis JSON, populated when the
+                            caller passes ``analyze_mix(compare_to=...)``
+                            (see ``compare.diff_reports``). ``None`` when
+                            no baseline was requested.
   ``skipped_analyses``   — explicit record when a declared analysis
                             couldn't run (e.g. no declared decay times
                             in the song DB for the reverb check). Keeps
@@ -142,13 +146,17 @@ class EnvelopeVerification:
 
     One record per value-changing breakpoint of a declared envelope. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
-    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db`` for
-    a send-level step). ``realized`` says whether the authored change actually
-    happened in the audio. ``measurable`` is False when the change can't be
-    verified from this capture — a post-fader kind (mixer_volume/pan) invisible
-    to the pre-fader stem, or a window too quiet to characterise; in that case
-    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is the
-    human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db``
+    for a send-level step, ``master_rms_db`` / ``master_balance_db`` for the
+    post-fader mixer_volume / mixer_pan kinds — measured on the master, the
+    post-fader sum, per AUD-3F8M). ``realized`` says whether the authored
+    change actually happened in the audio. ``measurable`` is False when the
+    change can't be verified from this capture — a window too quiet to
+    characterise, a mixer move whose predicted master effect is below the
+    detectability floor (stem too diluted in the mix), or a master-chain-
+    compressed window where the prediction model breaks down; in that case
+    ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is
+    the human-readable explanation the interpreter (``/mix-review``) surfaces."""
     target_surface_id: str
     target_kind: str
     parameter_path: str | None
@@ -584,6 +592,12 @@ class MixReport:
     # without an alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
     compare_to: dict[str, Any] | None = None
+    # Song audit-log seq the analyzed capture reflects (copied from
+    # manifest.db_seq — AUD-4W7K). The key ``compare.resolve_baseline``
+    # matches when ``analyze_mix(compare_to=<seq>)`` resolves a baseline.
+    # None for pre-tagging captures — such reports can still be baselines
+    # via an explicit path, just not by seq.
+    db_seq: int | None = None
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -601,6 +615,7 @@ class MixReport:
             "captures_dir": self.captures_dir,
             "captured_at": self.captured_at,
             "analyzer_signature": self.analyzer_signature,
+            "db_seq": self.db_seq,
             "master": _stem_to_dict(self.master),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],
@@ -765,8 +780,9 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
         "metric": e.metric,
-        # NaN when measurable=False (post-fader / too-quiet) — serialized as JSON
-        # null (B1), the "honestly unmeasured" sentinel.
+        # NaN when measurable=False (too-quiet / too-diluted / model
+        # breakdown) — serialized as JSON null (B1), the "honestly
+        # unmeasured" sentinel.
         "before": _finite_or_none(e.before),
         "after": _finite_or_none(e.after),
         "measurable": e.measurable,

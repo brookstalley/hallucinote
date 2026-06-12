@@ -1,12 +1,12 @@
 ---
-description: Push the Hallucinote DB into Ableton Live. Drives eleven ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → envelopes → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
+description: Push the Hallucinote DB into Ableton Live. Drives thirteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
-You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving eleven ordered phases through MCP, and report what was created.
+You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving thirteen ordered phases through MCP, and report what was created.
 
 $ARGUMENTS
 
@@ -15,12 +15,13 @@ $ARGUMENTS
 You need TWO pieces of information from `$ARGUMENTS`:
 
 1. **The song slug** — filesystem-safe identifier. DB path: `songs/<slug>/<slug>-<branch>.db` (per-branch isolation; see `docs/snapshot-schema.md`). Outside a repo / detached HEAD falls back to `songs/<slug>/<slug>.db`.
-2. **The session_id** — `ableton_sessions.id` binding the DB to the open Live set. Three paths:
+2. **The session_id** — `ableton_sessions.id` binding the DB to the open Live set. Four paths:
    - **User passed an id**: use it.
+   - **Omitted (the common case, WFL-7Q2N)**: just omit it — every subcommand auto-selects the only / most-recent session in the DB and echoes the choice on stderr (multi-song DBs refuse to guess). Relay the echo to the user.
    - **"New session" / first push**: pass `--auto-session` to `probe-and-link`; CLI mints the row and returns its id (`session_id`, `auto_session_created: true`). Tell the user the new id — one session per Live set, not per push.
    - **"Create a session named X"**: run `push_cli create-session --song <slug> --name X` first; capture the printed id.
 
-If slug is missing, ask. For session, default to `--auto-session` only if the user explicitly signaled "first push" — otherwise ask.
+If slug is missing, ask. For session, omit it unless the user signaled "first push" (then `--auto-session`) — don't ask the user for an id the CLI can discover.
 
 ## Workflow overview
 
@@ -30,7 +31,7 @@ If slug is missing, ask. For session, default to `--auto-session` only if the us
 1.  push_cli probe-and-link --probe          → mints session, upserts matches,
                                                reconciles stale links
 2.  push_cli execute --probe                 → coherence check + dispatch all
-                                               eleven phases over MCP TCP
+                                               thirteen phases over MCP TCP
 2a. (conditional) cleanup-default-scaffold   → delete leftover defaults
 3.  Read .last-push-state.json + report.
 ```
@@ -97,14 +98,16 @@ Proceed only on explicit `yes`.
 python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 ```
 
-`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all eleven phases in order, dispatching every MCP call directly over TCP.
+`--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all thirteen phases in order, dispatching every MCP call directly over TCP.
+
+**The transport PLAYS during the `performed_automation` phase.** Master/group/return arcs are gesture-recorded in real time — all changed arcs record in ONE pass over their union span (the plan names that union-span wall-clock and a loud alert lists every span it will overwrite). Audible playback during push is expected, not a bug. Unchanged arcs are fingerprint-skipped (so a hand-edited lane survives); a `--reset` DB or a new session re-performs everything.
 
 **Exit codes:**
 
 | Code | Meaning | What to do |
 |------|---------|------------|
 | 0 | All phases ok | Step 3. |
-| 1 | Partial — halted at a phase boundary | Read `.last-push-errors.json`, diagnose, fix in `build.py`, rebuild, re-execute. Re-run is idempotent. |
+| 1 | Partial — halted at a phase boundary | The summary's "Halt cause" block names the failing tool.action, the error, and a next step — act on that. Fix in `build.py`, rebuild, re-execute. Re-run is idempotent. `.last-push-errors.json` has per-call forensics if the summary isn't enough. |
 | 2 | Connection lost | See `ableton://guides/error-recovery`. Re-execute. |
 
 `execute` writes:
@@ -131,7 +134,8 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 
 1. **Outcome + totals.** `outcome` field + per-phase counts.
 2. **Per-domain summary.** `"created 2 tracks, 1 return, 2 clips, 2 arrangement placements, 1 cue point; 1 envelope written"`.
-3. **On partial / connection_lost:** cite `.last-push-errors.json` path. Tell the user the loop: read errors → fix → rebuild → re-execute. Idempotent.
+3. **On partial / connection_lost:** relay the summary's "Halt cause" lines (cause + next step) verbatim. Tell the user the loop: act on the next step → fix → rebuild → re-execute. Idempotent. Cite `.last-push-errors.json` only when per-call forensics are needed.
+3a. **Unverified performs.** `.last-push-errors.json` can exist even on exit 0: a `tool: "apply_push_results"` record means a performed arc's write came back `automation_state != 1` — nothing was recorded, the next push retries that arc. Surface it; if it never verifies, the parameter is likely automation-overridden or locked in Live (the failure policy is yours, not the CLI's).
 4. **Live 12.4 UI heads-up — conditional, only emit rows that apply:**
    - **Empty mixer column.** If any track has zero devices: *"Track 'X' has no devices yet → Live hides its mixer column; loading any instrument restores the faders."*
    - **Hidden mixer envelopes on MIDI clips.** If `envelopes` wrote any `mixer_volume` / `mixer_pan` / `send_level` on a MIDI clip: *"Mixer envelope(s) on MIDI clip 'Y' are playing but Live hides them in the clip's envelope dropdown by default. Right-click the affected mixer slider and choose 'Show Modulation'. Live remembers the choice per-set."*
@@ -150,13 +154,14 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 | `mix` | `ableton_track(set_property / set_send)`, `ableton_return(set_property)`, `ableton_session(set_master_property)` |
 | `devices` | `ableton_device(action='load' / 'set_parameter')` |
 | `envelopes` | `ableton_automation(action='write_envelope')` |
+| `performed_automation` | `ableton_automation(action='perform_batch')` — realtime gesture recording, all changed arcs in one union-span pass; transport plays |
 | `arrangement` | `ableton_clip(action='duplicate_to_arrangement')` |
 | `cues` | `ableton_arrangement(action='cue_create_batch')` |
 
 ## Failure modes
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
-- **`execute` exits 1 (partial)**: read `.last-push-errors.json`, fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip.
+- **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 

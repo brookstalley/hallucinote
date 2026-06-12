@@ -103,6 +103,52 @@ def test_error_recovery_guide_documents_render_capture_preconditions():
     )
 
 
+def test_error_recovery_guide_documents_version_pin_recovery():
+    """SYN-5C3J: the parallel-engine-dev pin recovery must be discoverable in
+    the guide (the friction was reaching for it from scratch). Locks the
+    worktree + PYTHONPATH + preflight recipe and the no-`--pin`-flag rationale.
+    The subsection name is also cross-referenced by push_cli's recovery footer,
+    so this pins that link target too.
+    """
+    content = _read_guide("error-recovery").lower()
+    assert "engine version drift during a live compose session" in content, (
+        "guide should carry the subsection push_cli's recovery footer links to"
+    )
+    assert "git worktree add" in content
+    assert "pythonpath" in content
+    assert "preflight" in content
+
+
+def test_conventions_guide_documents_chain_rebuild_pattern():
+    """DEV-5R8Q: the delete-descending / reload-in-order recipe for reordering
+    a materialized device chain (no Live reorder API) must be discoverable in
+    the conventions guide. Locks the descending-delete ordering rule and the
+    transient-empty-chain caveat."""
+    content = _read_guide("conventions").lower()
+    assert "descending" in content, (
+        "guide should name descending delete order (so indices stay stable)"
+    )
+    assert "reload" in content
+    assert "empty" in content, (
+        "guide should warn about the transient empty-chain window"
+    )
+
+
+def test_conventions_guide_documents_pre_main_bus_routing():
+    """RTE-1K9T: agents must learn to route a master-like ride through a plain
+    audio PRE-MAIN bus instead of automating the clip-less master, that a summing
+    bus needs Monitor='In', and that busses are the sub-mix/grouping tool (Live
+    groups aren't LOM-creatable). Locks the routing best-practice guidance."""
+    content = _read_guide("conventions").lower()
+    assert "pre-main" in content, "guide should name the PRE-MAIN bus pattern"
+    assert "set_output_routing" in content, "guide should show the routing action"
+    assert "set_monitoring_state" in content and "'in'" in content, (
+        "guide should name the Monitor='In' requirement for a summing bus"
+    )
+    assert "master" in content, "guide should contrast the clip-less master"
+    assert "group" in content, "guide should name the sub-mix/grouping use"
+
+
 def test_scales_json_loads_with_expected_shape():
     raw = _read_reference_json("scales")
     data = json.loads(raw)

@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..dispatcher import LiveContext
+from ._routing import resolve_routing_write, routing_surface_fields
 from .display_value import display_number_for, resolve_continuous_write
 
 
@@ -329,6 +330,251 @@ def get_sends_handler(
     return {"track_index": track_index, "sends": sends_out}
 
 
+# ---------------------------------------------------------------------------
+# Output routing
+# ---------------------------------------------------------------------------
+#
+# A track's output routing is the signal path OUT of the track: which mixing
+# point it feeds (Main / another audio track acting as a bus / Sends Only /
+# Ext. Out) plus the sub-channel (Pre FX / Post FX / Post Mixer / Track In).
+# This is the keystone primitive for the "PRE-MAIN submaster" pattern
+# (RTE-1K9T): route instrument tracks' output to a plain audio bus track, then
+# route the bus to Main. Capability-probe + resolve-by-display_name, mirroring
+# the device sidechain-source handlers (`handlers/device.py`); the available
+# target set is SOURCE-dependent (a bare MIDI track lacks audio-track targets),
+# so the teaching error always lists the source track's own options.
+
+
+def set_output_routing_handler(
+    context: LiveContext,
+    *,
+    track_index: int,
+    type_display_name: str,
+    channel_display_name: str | None = None,
+) -> dict[str, Any]:
+    """Set a track's output routing target by ``display_name``.
+
+    ``type_display_name`` is the destination as it appears in Live's UI:
+    ``'Main'`` (the master), another audio track's name (a bus, e.g.
+    ``'PRE-MAIN'``), ``'Sends Only'``, or ``'Ext. Out'``. The available set is
+    source-dependent, so an unknown name raises a teaching error listing the
+    *source track's own* available targets. ``channel_display_name`` optionally
+    sets the output sub-channel (``'Pre FX'`` / ``'Post FX'`` / ``'Post Mixer'``
+    / ``'Track In'``); omit to leave it unchanged.
+    """
+    track = _resolve_track(context, track_index)
+    available_types = getattr(track, "available_output_routing_types", None)
+    if available_types is None:
+        raise NotImplementedError(
+            f"track {track_index} does not expose output_routing_* — its "
+            "output cannot be rerouted via the LOM (a clip-less summing "
+            "family such as the master would lack it)."
+        )
+
+    # Resolve type AND channel before writing either, so an unknown channel
+    # never leaves the type reroute half-applied to Live (atomic set).
+    matched_type, matched_channel = resolve_routing_write(
+        available_types=available_types,
+        type_display_name=type_display_name,
+        available_channels=getattr(track, "available_output_routing_channels", None),
+        channel_display_name=channel_display_name,
+        type_label=f"output routing type (track {track_index})",
+        channel_label=f"output routing channel (track {track_index})",
+        missing_channel_api_msg=(
+            f"track {track_index} exposes output_routing_type but not "
+            "output_routing_channel — cannot set channel_display_name"
+        ),
+    )
+    track.output_routing_type = matched_type
+    if matched_channel is not None:
+        track.output_routing_channel = matched_channel
+
+    # Echo the REQUESTED display_name, not a same-callback readback: Live may
+    # return the prior value when a routing type is read back in the same
+    # callback that set it (the success signal is the side effect).
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "output_routing_type": type_display_name,
+    }
+    if matched_channel is not None:
+        result["output_routing_channel"] = channel_display_name
+    return result
+
+
+def get_output_routing_handler(
+    context: LiveContext, *, track_index: int
+) -> dict[str, Any]:
+    """Read a track's output routing surface — current target + channel and the
+    available enums for each.
+
+    Returns ``has_output_routing: False`` (no raise) when the track doesn't
+    expose the API, symmetric with the device-side capability probe — so an
+    agent can discover what's configurable before attempting a write.
+    """
+    track = _resolve_track(context, track_index)
+    available_types = getattr(track, "available_output_routing_types", None)
+    has_routing = available_types is not None
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "has_output_routing": has_routing,
+    }
+    if has_routing:
+        result.update(routing_surface_fields(
+            current_type=getattr(track, "output_routing_type", None),
+            available_types=available_types,
+            current_channel=getattr(track, "output_routing_channel", None),
+            available_channels=getattr(track, "available_output_routing_channels", None),
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Input routing
+# ---------------------------------------------------------------------------
+#
+# Symmetric to output routing: the signal path INTO the track — which source
+# it listens to. For the PRE-MAIN submaster pattern (RTE-1K9T) the bus's
+# output routing carries the summed signal to Main; input routing + monitor
+# state govern whether a track PASSES a routed source through. A summing bus
+# that receives routed audio wants Monitor = In (see monitoring handlers).
+
+
+def set_input_routing_handler(
+    context: LiveContext,
+    *,
+    track_index: int,
+    type_display_name: str,
+    channel_display_name: str | None = None,
+) -> dict[str, Any]:
+    """Set a track's input routing source by ``display_name``.
+
+    ``type_display_name`` is the source as shown in Live's UI: another track's
+    name, an external input ('Ext. In'), or 'No Input'. Source-dependent and
+    capability-probed exactly like output routing — an unknown name raises a
+    teaching error listing this track's own available sources.
+    ``channel_display_name`` optionally sets the input sub-channel; omit to
+    leave it unchanged.
+    """
+    track = _resolve_track(context, track_index)
+    available_types = getattr(track, "available_input_routing_types", None)
+    if available_types is None:
+        raise NotImplementedError(
+            f"track {track_index} does not expose input_routing_* — its "
+            "input cannot be rerouted via the LOM (a clip-less summing "
+            "family such as the master would lack it)."
+        )
+
+    # Resolve type AND channel before writing either (atomic set — see
+    # set_output_routing_handler).
+    matched_type, matched_channel = resolve_routing_write(
+        available_types=available_types,
+        type_display_name=type_display_name,
+        available_channels=getattr(track, "available_input_routing_channels", None),
+        channel_display_name=channel_display_name,
+        type_label=f"input routing type (track {track_index})",
+        channel_label=f"input routing channel (track {track_index})",
+        missing_channel_api_msg=(
+            f"track {track_index} exposes input_routing_type but not "
+            "input_routing_channel — cannot set channel_display_name"
+        ),
+    )
+    track.input_routing_type = matched_type
+    if matched_channel is not None:
+        track.input_routing_channel = matched_channel
+
+    # Echo the REQUESTED display_name (same-callback readback is unreliable).
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "input_routing_type": type_display_name,
+    }
+    if matched_channel is not None:
+        result["input_routing_channel"] = channel_display_name
+    return result
+
+
+def get_input_routing_handler(
+    context: LiveContext, *, track_index: int
+) -> dict[str, Any]:
+    """Read a track's input routing surface — current source + channel and the
+    available enums for each. Returns ``has_input_routing: False`` (no raise)
+    when the track doesn't expose the API."""
+    track = _resolve_track(context, track_index)
+    available_types = getattr(track, "available_input_routing_types", None)
+    has_routing = available_types is not None
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "has_input_routing": has_routing,
+    }
+    if has_routing:
+        result.update(routing_surface_fields(
+            current_type=getattr(track, "input_routing_type", None),
+            available_types=available_types,
+            current_channel=getattr(track, "input_routing_channel", None),
+            available_channels=getattr(track, "available_input_routing_channels", None),
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Monitor state
+# ---------------------------------------------------------------------------
+#
+# Live's ``Track.current_monitoring_state`` is an int enum. The wire contract
+# is the string name ('In' / 'Auto' / 'Off'); the int mapping is internal and
+# isolated here so a future Live-version change is a one-constant fix. A
+# summing bus that receives routed audio needs Monitor = In to PASS that
+# audio (the live-probed dependency the build plan calls out). Master / return
+# tracks don't expose this attribute — the handlers report that, not crash.
+_MONITORING_STATES: dict[str, int] = {"In": 0, "Auto": 1, "Off": 2}
+_MONITORING_STATE_NAMES: dict[int, str] = {v: k for k, v in _MONITORING_STATES.items()}
+
+
+def set_monitoring_state_handler(
+    context: LiveContext, *, track_index: int, state: str
+) -> dict[str, Any]:
+    """Set a track's monitor state to 'In', 'Auto', or 'Off'."""
+    # Defense-in-depth: the action schema declares enum=('In','Auto','Off') so
+    # the dispatcher rejects out-of-enum values before reaching here; this
+    # guard covers direct handler calls (tests / future non-dispatch callers).
+    if state not in _MONITORING_STATES:
+        raise ValueError(
+            f"set_monitoring_state: state must be one of "
+            f"{sorted(_MONITORING_STATES)}, got {state!r}"
+        )
+    track = _resolve_track(context, track_index)
+    if not hasattr(track, "current_monitoring_state"):
+        raise NotImplementedError(
+            f"track {track_index} does not expose current_monitoring_state "
+            "(a clip-less family such as the master / a return track has no "
+            "monitor switch)."
+        )
+    track.current_monitoring_state = _MONITORING_STATES[state]
+    return {"track_index": track_index, "monitoring_state": state}
+
+
+def get_monitoring_state_handler(
+    context: LiveContext, *, track_index: int
+) -> dict[str, Any]:
+    """Read a track's monitor state. Returns ``has_monitoring_state: False``
+    (no raise) for tracks without the switch (master / returns)."""
+    track = _resolve_track(context, track_index)
+    raw = getattr(track, "current_monitoring_state", None)
+    if raw is None:
+        return {"track_index": track_index, "has_monitoring_state": False}
+    name = _MONITORING_STATE_NAMES.get(int(raw))
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "has_monitoring_state": True,
+        "monitoring_state": name,
+    }
+    if name is None:
+        # Out-of-vocabulary int (the future-Live-enum-shift the mapping
+        # isolates) — surface the raw value so it isn't silently lost and the
+        # one-constant fix is diagnosable from the wire response.
+        result["monitoring_state_raw"] = int(raw)
+    return result
+
+
 def deletion_status_handler(
     context: LiveContext, *, track_indices: list[int] | None = None
 ) -> dict[str, Any]:
@@ -376,5 +622,11 @@ __all__ = [
     "get_property_handler",
     "set_send_handler",
     "get_sends_handler",
+    "set_output_routing_handler",
+    "get_output_routing_handler",
+    "set_input_routing_handler",
+    "get_input_routing_handler",
+    "set_monitoring_state_handler",
+    "get_monitoring_state_handler",
     "deletion_status_handler",
 ]

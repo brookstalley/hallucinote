@@ -332,32 +332,99 @@ def test_plan_push_devices_emits_params_for_linked_device(
     assert freq.args["track_index"] == 5
     assert freq.args["device_index"] == 2
     assert freq.args["parameter_name"] == "Freq"
-    # value is stringified on the wire (schema uniformity continuous + enum)
-    assert float(freq.args["value"]) == pytest.approx(0.59)
+    # SYN-9F2L: the display value is the preferred wire form — the handler
+    # inverts the param's own display curve, which is exact for center-zero
+    # params where a naive normalized fraction dials the wrong direction.
+    assert freq.args["value_display"] == "1.17 kHz"
+    assert "value" not in freq.args
     assert freq.args["value_type"] == "continuous"
     assert freq.key == f"device_parameter:{did}:Freq"
 
 
-def test_plan_push_devices_warns_for_enum_only_params(
+def test_plan_push_devices_falls_back_to_normalized_without_display(
     conn, song, session, linked_track,
 ):
+    """A param with no display string still writes via its normalized value."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
+    M.set_device_parameter(
+        conn, device_id=did, name="Gain",
+        value_display="", value_normalized=0.42,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    by_action = _calls_by_action(plan)
+    call = by_action["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(0.42)
+    assert "value_display" not in call.args
+    assert call.args["value_type"] == "continuous"
+
+
+def test_plan_push_devices_writes_known_enums_as_enum(
+    conn, song, session, linked_track,
+):
+    """SYN-9F2L sweep: a param with captured value_items is a known enum —
+    the planner emits a value_type='enum' write (the handler validates
+    membership), closing the old silently-skipped-enum gap."""
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(conn, chain_id=cid, position=1, kind="Operator", display_name="Op")
     M.set_device_parameter(conn, device_id=did, name="Filter Type",
-                           value_display="Lowpass")  # no normalized
-    M.set_device_parameter(conn, device_id=did, name="Filter Freq",
-                           value_display="12.0 kHz", value_normalized=0.93)
+                           value_display="Lowpass",
+                           value_items=["Lowpass", "Highpass", "Bandpass"])
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
     )
-
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     by_action = _calls_by_action(plan)
-    # Only the continuous param emits a call.
-    assert len(by_action["set_parameter"]) == 1
-    assert by_action["set_parameter"][0].args["parameter_name"] == "Filter Freq"
-    # And the enum gets surfaced as a warn.
-    assert any("enum-only" in n and "Filter Type" in n for n in plan.notes)
+    call = by_action["set_parameter"][0]
+    assert call.args["value_type"] == "enum"
+    assert call.args["value"] == "Lowpass"
+    assert "value_display" not in call.args
+
+
+def test_plan_push_devices_ambiguous_param_writes_display(
+    conn, song, session, linked_track,
+):
+    """A display-only param with no captured value_items and no normalized
+    (hand-authored snapshot enum, or a continuous param authored by display
+    alone) emits a continuous display write — the executor's set_parameter
+    fallback retries it as an enum if the handler refuses."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Operator", display_name="Op")
+    M.set_device_parameter(conn, device_id=did, name="Filter Type",
+                           value_display="Lowpass")  # no normalized, no items
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    by_action = _calls_by_action(plan)
+    call = by_action["set_parameter"][0]
+    assert call.args["value_display"] == "Lowpass"
+    assert call.args["value_type"] == "continuous"
+
+
+def test_plan_push_devices_warns_for_unwritable_params(
+    conn, song, session, linked_track,
+):
+    """SYN-9F2L: a params_dialed write that cannot be planned in ANY form must
+    surface as an operator-actionable ALERT (drained into the push report's
+    warnings), never drop silently and never get buried in the diagnostic
+    `notes` channel that the executor discards."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Operator", display_name="Op")
+    M.set_device_parameter(conn, device_id=did, name="Mystery",
+                           value_display="")  # no display, no normalized
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    by_action = _calls_by_action(plan)
+    assert "set_parameter" not in by_action
+    assert any("Mystery" in a and "no writable form" in a for a in plan.alerts)
+    # Must NOT also land in the diagnostic notes channel (which execute drops).
+    assert not any("no writable form" in n for n in plan.notes)
 
 
 # ---------- returns ----------
@@ -399,7 +466,8 @@ def test_plan_push_devices_emits_return_specific_tools(
     assert param_call.args["return_index"] == 1
     assert param_call.args["device_index"] == 2
     assert param_call.args["parameter_name"] == "Decay"
-    assert float(param_call.args["value"]) == pytest.approx(0.6)
+    # SYN-9F2L: display form preferred on the wire.
+    assert param_call.args["value_display"] == "2.5 s"
 
 
 # ---------- apply_push_results integration ----------
@@ -499,17 +567,13 @@ def master_track(conn, song):
 def test_plan_push_devices_walks_master_chain(
     conn, song, session, master_track,
 ):
-    """plan_push_devices walks kind='master' tracks but — per SYN-2M9P /
-    DEV-2M9K — must NOT emit an impossible ``device.load(master=True)`` for an
-    UNLINKED master device: Ableton Live 12.4 has no LOM path to load a device
-    onto the master strip, so that call fails at execute time and HALTS the
-    devices phase (outcome='partial'), stranding every downstream phase. The
-    corrected contract: skip the load and surface a place-by-hand note. (An
-    earlier chunk asserted exactly one master load here, encoding the behavior
-    DEV-2M9K later proved impossible; that assertion is now corrected. Param
-    writes on a hand-placed+linked master device still fire — see
-    test_plan_push_devices_master_set_parameter_uses_master_kv. Fuller coverage
-    of the corrected contract lives in test_syn_2m9p_master_load.py.)"""
+    """DEV-6M2K: plan_push_devices walks kind='master' tracks and emits a
+    ``device.load(master=True)`` for an UNLINKED master device, exactly like a
+    track/return device. The earlier SYN-2M9P/DEV-2M9K skip (zero loads +
+    place-by-hand note) rested on a premise refuted on Live 12.4.2 — master
+    device load works, so the load executes and links via the same
+    ``device:<id>`` key path; no PARTIAL-by-master halt. (Fuller plan +
+    execute-path coverage lives in test_dev_6m2k_master_load.py.)"""
     cid = M.create_device_chain(conn, parent_track_id=master_track)
     M.create_device(
         conn, chain_id=cid, position=1,
@@ -518,10 +582,16 @@ def test_plan_push_devices_walks_master_chain(
 
     plan = push.plan_push_devices(conn, song_id=song, session_id=session)
     loads = [c for c in plan.calls if c.args.get("action") == "load"]
-    assert loads == [], f"unlinked master device must emit zero loads, got {loads}"
-    assert any(
-        "not loadable via LOM" in n and "by hand" in n for n in plan.notes
-    ), plan.notes
+    assert len(loads) == 1, f"unlinked master device must emit one load, got {loads}"
+    args = loads[0].args
+    assert args.get("master") is True
+    assert "track_index" not in args and "return_index" not in args
+    assert args["kind"] == "Limiter"
+    # Standard device-level "not linked yet" note (the generic path), NOT the
+    # retired "place by hand" note.
+    assert any("Master Limiter" in n and "not linked yet" in n for n in plan.notes), \
+        plan.notes
+    assert not any("by hand" in n or "not loadable via LOM" in n for n in plan.notes)
 
 
 def test_plan_push_devices_master_chain_no_unlinked_track_warn(

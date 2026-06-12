@@ -150,6 +150,39 @@ def test_whole_song_pushes_all_clips(conn, session, linked_song, state_dir):
     assert len(res.pushed) == 2
 
 
+def test_audio_clip_is_skipped_never_reported_pushed(
+    conn, session, linked_song, state_dir
+):
+    """CLP-AUD1: a kind='audio' clip in scope is skipped with a teaching
+    reason — without the guard, plan_push_clip's refuse-loudly empty plan
+    would fall through and misreport the clip as pushed (note_count 0)."""
+    audio_tid = M.create_track(
+        conn, song_id=linked_song["song_id"], track_index=2, name="Stems",
+        kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=audio_tid,
+        ableton_index=2, actor="sync",
+    )
+    ac = M.create_audio_clip(
+        conn, track_id=audio_tid, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    send = _make_send_fn()
+    res = push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert {p["clip_id"] for p in res.pushed} == {
+        linked_song["clip_a"], linked_song["clip_b"],
+    }
+    assert [s["clip_id"] for s in res.skipped] == [ac]
+    assert "CLP-AUD2" in res.skipped[0]["reason"]
+    # No wire call was dispatched for the audio clip (2 MIDI creates only).
+    assert len(send.call_log) == 2
+    assert all(c["action"] == "create" for c in send.call_log)
+
+
 # ---------------------------------------------------------------------------
 # changed_only — content fingerprint
 # ---------------------------------------------------------------------------

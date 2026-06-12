@@ -102,3 +102,186 @@ attended Live run:
    RANKS sections sensibly; if it reads implausibly (the C7 slow-attack risk),
    the report ships loudness-ρ as the primary signal with density caveated —
    never a confidently-wrong density ρ.
+
+## ENV-7G4K — performed automation: S-7 Live smoke (chunk 03 visual half)
+
+Queued 2026-06-11 (chunk 03 code + unit half complete; smoke pending the
+Remote Script refresh).
+
+1. **One-time setup (human):** `/ableton-mcp-install`, then fully quit and
+   reopen Live (the running Remote Script `a5479db86125` predates the
+   `perform` handler — Live caches Control Surface modules). Open a set
+   with a group track and a manually-placed master-chain device, then
+   `probe-and-link`.
+
+2. **Run S-7** (`tests/integration/test_live_smoke.md`): master volume
+   ride + group arc + return arc + master-device sweep authored in
+   build.py → push performs each (transport plays, wall-clock named in
+   the plan) → second push skips all as unchanged → one edited arc
+   re-performs alone, new shape audibly/visibly replacing the old.
+
+3. **Record here:** per-arc `automation_state`, the audible/visual
+   confirmation (automation lanes in the arrangement), and the `.als`
+   dump breakpoint-quality spot-check (closes the probe doc's
+   "breakpoint quality / thinning" open item).
+
+---
+
+## SYN-6B4Q — cue_create_batch skip-mode wire round-trip (CLR-A chunk 02)
+
+**Status:** UNIT-CONFIRMED, live smoke pending a Remote Script refresh.
+**Visual change:** no (locator strip; deferred cues simply don't appear yet).
+
+The handler `cue_create_batch` gained `on_out_of_range='skip'`: it now creates
+the in-`last_event_time` cues and returns the rest in `skipped_out_of_range`
+instead of the W5-C atomic raise. Covered by `FakeSong`/`FakeCtx` unit tests,
+but the running Remote Script predates this handler — Live caches Control
+Surface modules, so the real wire path needs a Live restart to exercise.
+
+1. **One-time setup (human):** `/ableton-mcp-install`, then fully quit and
+   reopen Live so the refreshed Remote Script loads.
+
+2. **Skeleton-defer check:** scaffold a song with cue_points but NO arrangement
+   content; `push_cli execute`. Expect: cues phase OK (exit 0), the stdout
+   "Warnings (push still OK)" section lists every cue as deferred, NO `.last-
+   push-errors.json`, and Live's locator strip is empty (nothing half-placed).
+
+3. **Land-on-next-push check:** compose the arrangement, re-push. Expect: the
+   previously-deferred cues now appear in Live's locator strip at the right
+   bars, idempotently (no duplicates).
+
+4. **Composed-overrun check:** author a cue past the arrangement's end; push.
+   Expect: cues phase HALTS PARTIAL with the "composed song length" message
+   (naming the offending cue), NOT the runtime "past last_event_time".
+
+---
+
+## ENV-9P4T chunk 01 — single-pass batched perform: verify-api probe + Live smoke
+
+**Status:** CONFIRMED LIVE 2026-06-11 — the keystone per-parameter-windowing
+claim is verified on a real bridge (no longer symbolic-only). Bridge healed
+(`/ableton-mcp-install` re-vendored the Remote Script to `725742c1`, Live
+restarted, `/mcp` reconnected); the prior mismatch (server `c0b443e0` vs
+Remote Script `b0c3c347`) is gone. **No `.als` dump was needed** — seek-and-read
+of `DeviceParameter.value` plus each arc's `updates_written` settle the
+windowing without the LOM envelope read surface (full capture +
+method:
+`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`). **Visual change:** no.
+
+1. ~~**One-time setup (human):** `/ableton-mcp-install` + Live restart.~~
+   **DONE** — bridge version-matched; clean calls confirm the handshake.
+
+2. ~~**Two-window-in-one-pass correctness (the keystone).**~~ **CONFIRMED.**
+   `perform_batch [master_vol [0,64], return1_vol [16,48]]`: BOTH
+   `automation_state == 1`; `wall_clock 34.32 s` ≈ one union-span pass (not the
+   48 s per-arc sum). Windowing proven WITHOUT `.als`: at beat 8 the return
+   reads its MANUAL 0.85 (a flat-stamp would read 0.2), at beat 32 it reads the
+   live ramp (0.499 ≈ 0.5, the control), and `updates_written = 41` ≈ its
+   32-beat span (vs master's 81 over 64 beats) — the gesture was open only over
+   [16,48], bounding both edges.
+
+3. ~~**Achieved breakpoint density (Hz)**~~ **CAPTURED:** ~2.5 Hz per arc
+   (81/64 beats, 41/32 beats), identical under 2-param batching → no
+   main-thread starvation; within the ENV-7G4K ~2.5–3 Hz baseline. This is the
+   *attempted* rate; the seek-read trace reconstructs both ramps to <0.5% error.
+   The exact Live-*retained* count (post-thinning) is the only `.als`-only
+   residual — a Chunk 03 fidelity detail, NOT a gate item.
+
+4. **Safe batch ceiling** — NOT stressed (N=2 recorded cleanly; no contention
+   signal). A higher-N stress pass (`env7g4k-smoke-driver.py`, 5 arcs) remains
+   available if Chunk 02's 10+-track use case ever shows main-thread contention;
+   tracked as a non-blocking note, not a Chunk 01 gate.
+
+---
+
+## DEV-6M2K — master device load re-enabled across the stack (live corroboration)
+
+**Status:** CONFIRMED LIVE 2026-06-12 — all three checks passed on the open set
+(Live 12.4.2; Remote Script re-vendored to `9093dfef`, Live reopened, `/mcp`
+reconnected — server's `ableton_render` description showed the DEV-6M2K text,
+confirming the new code). DEV-6M2K is fully verified; closed. **Visual change:**
+yes (devices appear on the Master strip — each probe loaded then deleted, set
+restored to an empty master).
+
+1. ~~**Native (non-M4L) device on master (the backlog's before-close caveat).**~~
+   **CONFIRMED.** `ableton_device(load, master=True, kind='EQ Eight')` → landed on
+   the master chain (`device_index=1`, `parent_kind='master'`, `class_name='Eq8'`),
+   `delete` removed it. Rules out a device-class quirk — master load now proven
+   for both M4L (Align Delay) and native (EQ Eight) devices.
+
+2. ~~**Full push of a DB-authored master-strip chain.**~~ **CONFIRMED.** Scratch
+   song (master Limiter + Ceiling `-1.0 dB`) driven through `execute_push` scoped
+   to the devices phase against the real bridge: `outcome=ok`, devices phase
+   `ok=2 failed=0` (the `device.load(master=True)` AND the convergence-replanned
+   `set_parameter`), device linked at index 1, NO PARTIAL halt. The old SYN-2M9P
+   trap is gone. Limiter removed after.
+
+3. ~~**Render auto-loads the master analyzer.**~~ **CONFIRMED (surgically).** The
+   one Live-specific unknown — does the analyzer `.amxd` resolve + load onto the
+   master in real Live — proven: `ableton_device(load, master=True,
+   preset_query=<the exact query ensure_analyzers_loaded uses>)` resolved the full
+   `user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer` walk
+   and landed it on the master; deleted after. The full-sweep port-11220 assignment
+   + idempotency is unit-tested; the full `ensure_loaded` sweep was NOT run live
+   (it would add analyzers to all tracks/returns of the open set).
+
+DEV-6M2K closed; DEV-2M9K (verdict retracted), SYN-2M9P (planner-skip retired),
+TPL-2D8K (`.als` master-template workaround reduced to a convenience) re-triaged.
+
+---
+
+## RTE-1K9T chunk 04 — routing push phase materializes a PRE-MAIN submaster in real Live
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** yes (tracks'
+output/input routing chips + monitor switch change in Live's mixer; a new audio bus
+sums the routed tracks). Unit-proven at the plan + apply layers
+(`tests/unit/sync/test_push_routing.py`, 16 tests): display-name resolution per kind,
+the track-target FK→name resolution, channel pass-through, the dangling-target alert,
+ack-only key round-trip, and the orchestration wiring. What unit tests CANNOT cover:
+the same-callback-readback caveat (design discovery row 6) and whether routed audio
+actually sums through the bus. Operator checks:
+
+1. **PRE-MAIN push materializes the routing.** Author a scratch song with an audio
+   bus "PRE-MAIN", route an instrument track's output → the bus (`output_routing_kind
+   ='track'`, `target_id`=bus), route the bus → master (`kind='master'`), set the bus
+   `monitoring_state='In'`. Drive `execute_push` (routing phase) against the real
+   bridge. Confirm in Live: the instrument track's output chip reads "PRE-MAIN", the
+   bus's output reads "Main", and the bus monitor is "In". `outcome=ok`, no PARTIAL halt.
+2. **Audio sums through the bus.** With the layout from #1, confirm the instrument is
+   audible through the bus (Monitor=In passes the routed audio) — silence here means
+   the monitor/input wiring is wrong, not the routing-type set.
+3. **Re-push is an effect-level no-op (D7).** Run the routing phase a second time; the
+   plan re-emits the same idempotent calls and Live's state is unchanged (no churn, no
+   error). Confirms the no-fingerprint-gating decision holds in practice.
+4. **(After chunk 05 — pull)** The full round-trip: reroute a track by hand in Live,
+   pull, and confirm the DB reference updates through the mutator. Deferred to chunk 05.
+
+---
+
+## RTE-1K9T chunk 05 — routing pull ingests a manual reroute + Live input-default probe
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** no (pull reads
+Live → writes the DB; nothing new appears in Live). Unit-proven at the plan + apply
+layers (`tests/unit/sync/test_pull.py`, 23 routing tests): per-track output/input/monitor
+probes, display-name→reference resolution (fixed-name-wins, ambiguity, unknown-target),
+the NULL≡default churn-avoidance state machine (no-op / revert / non-default-persist), the
+V1 input narrowing, and the out-of-vocab monitor diagnostic. What units CANNOT cover:
+whether the live MCP getters return the display_names/channels the inverse map assumes,
+and — the Critic-W1 open premise — what Live's **non-track input default actually is**.
+
+1. **Manual-reroute round-trip (the chunk's deliverable).** Starting from the chunk-04
+   PRE-MAIN layout, reroute an instrument's output to the bus **by hand in Live's mixer**,
+   then `pull_cli execute mix-state`. Confirm the DB ingests it through `set_track_routing`
+   (a `track_routing_set` event falls out, `output_routing_kind='track'` + the bus FK),
+   and that an immediate second pull is a clean no-op (mutations=0). Set the bus Monitor
+   by hand and confirm the same for `monitoring_state`.
+2. **Input-default probe (resolves Critic W1 — unblocks fixed-input-kind pull).** On a
+   fresh MIDI track AND a fresh audio track, run `ableton_track(action='get_input_routing')`
+   and record the `current_type` display_name (the hypothesis: MIDI → "All Ins", audio →
+   an interface channel / "Ext. In"). This pins Live's real input default. IF it is a
+   stable, closed value, a follow-up can add `INPUT_DEFAULT_KIND` + a NULL≡default rule and
+   widen input pull beyond track-targets; until then V1's track-only input pull is the
+   safe floor (it cannot churn regardless of what the default turns out to be).
+3. **Display-name / channel fidelity spot-check.** For a track routed to the bus, confirm
+   `get_output_routing` returns `current_type` == the bus's exact name and a `current_channel`
+   the inverse map round-trips (e.g. "Post Mixer") — i.e. push-then-pull is identity.

@@ -72,7 +72,7 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently.
+7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
 8. Report the result + tell the user what to do next.
 
 ## Gathering input
@@ -152,5 +152,5 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 - Per-song test files use unique basenames (`test_<slug>_build.py`, not bare `test_build.py`). Wave 0 surfaced the collision the hard way.
 - Sections default to 8 bars each. The scaffold uses this for cue-point placement; the user can adjust constants in `build.py` afterwards.
 - Generators today assume 4/4. For non-4/4 songs, hand-author until meter-parametrized generators ship.
-- Master automation isn't supported. If the user asks for master fade-out, route to a sub-bus group track first.
+- Master/group/return automation IS supported — author the envelope in `build.py`; push performs it into arrangement automation (transport plays in real time, fingerprint-gated). Plain MIDI/audio-track envelopes are also supported (ENV-9P4T): a song-spanning / clip-independent ride performs as a continuous arrangement lane; a within-one-clip ride routes through that session clip.
 - Within-section meter changes aren't supported. The meter map can only change between sections.

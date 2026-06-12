@@ -2,14 +2,14 @@
 
 Three subcommands:
 
-    pull_cli plan <domain> <session_id> (--song SLUG | --db PATH)
+    pull_cli plan <domain> [session_id] (--song SLUG | --db PATH)
         -> emit a PullPlan as JSON to stdout
 
-    pull_cli apply <session_id> (--song SLUG | --db PATH) --plan P --results R
+    pull_cli apply [session_id] (--song SLUG | --db PATH) --plan P --results R
         -> diff results against the DB, write mutations, print an
            ApplyResult summary as JSON
 
-    pull_cli execute <domain> <session_id> (--song SLUG | --db PATH)
+    pull_cli execute <domain> [session_id] (--song SLUG | --db PATH)
         -> plan + probe in-process via MCP + apply, all in one shot. Arc 3 / C3:
            the "bake mix-time tweaks" workflow asks for one command, not the
            two-step plan→file→apply dance the skill historically drove.
@@ -22,7 +22,9 @@ unaffected and remain MCP-free.
 
 DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
 `songs/<slug>/<slug>.db`. The `--db PATH` escape hatch exists for tests and
-non-standard layouts. Exactly one is required.
+non-standard layouts. Exactly one is required. `session_id` may be
+omitted (WFL-7Q2N): the only / most-recent session in the DB is
+auto-selected and echoed on stderr.
 
 `domain` is one of:
   - `mix-state`         — track + return + master mixer state + sends
@@ -71,6 +73,7 @@ from pathlib import Path
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import connect, resolve_db_path, transaction
 from hallucinote.sync import pull
+from hallucinote.sync.session_resolve import resolve_session_id
 
 
 class _DryRunRollback(Exception):
@@ -136,6 +139,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
             f"known: {sorted(_DOMAINS)}"
         )
     conn = connect(_resolve_db_path(args))
+    args.session_id = resolve_session_id(
+        conn, args.session_id, prog="pull_cli plan",
+    )
     song_id = _resolve_song_id(conn, args.session_id)
     planner = _DOMAINS[args.domain]
     plan = planner(conn, song_id=song_id, session_id=args.session_id)
@@ -158,6 +164,10 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         )
 
     conn = connect(_resolve_db_path(args))
+    args.session_id = resolve_session_id(
+        conn, args.session_id, prog="pull_cli apply",
+        plan_session_id=plan_dict.get("session_id"),
+    )
     # song_id is on the plan; fall back to resolving from session if absent
     # (older plan files without the field).
     song_id = plan_dict.get("song_id") or _resolve_song_id(conn, args.session_id)
@@ -277,6 +287,9 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             f"known: {sorted(_DOMAINS)}"
         )
     conn = connect(_resolve_db_path(args))
+    args.session_id = resolve_session_id(
+        conn, args.session_id, prog="pull_cli execute",
+    )
     song_id = _resolve_song_id(conn, args.session_id)
     planner = _DOMAINS[args.domain]
     plan = planner(conn, song_id=song_id, session_id=args.session_id)
@@ -362,12 +375,16 @@ def main(argv: list[str] | None = None) -> int:
 
     p_plan = sub.add_parser("plan", help="emit a PullPlan as JSON")
     p_plan.add_argument("domain", help="e.g. mix-state")
-    p_plan.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_plan.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_plan)
     p_plan.set_defaults(func=_cmd_plan)
 
     p_apply = sub.add_parser("apply", help="apply MCP probe results to the DB")
-    p_apply.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_apply.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_apply)
     p_apply.add_argument("--plan", required=True,
                          help="path to the plan JSON emitted by `plan`")
@@ -387,7 +404,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p_exec.add_argument("domain", help="e.g. device-parameters")
-    p_exec.add_argument("session_id", help="ableton_sessions.id (always explicit)")
+    p_exec.add_argument("session_id", nargs="?", default=None,
+                   help="ableton_sessions.id (omit to auto-select the "
+                        "only/most-recent session in the DB; WFL-7Q2N)")
     _add_db_args(p_exec)
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")

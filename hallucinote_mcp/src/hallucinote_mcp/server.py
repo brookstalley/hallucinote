@@ -84,7 +84,7 @@ structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
   ableton_session       global state, master, transport, view, tempo, signature
-  ableton_track         tracks: lifecycle, mixer state, sends
+  ableton_track         tracks: lifecycle, mixer state, sends, routing, monitor state
   ableton_return        return tracks
   ableton_clip          session + arrangement clips, replace_notes
   ableton_note          per-note ops (gap #4 blocked — read ableton://guides/gaps)
@@ -146,7 +146,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     # shared dispatcher; the wrapper exists only so FastMCP can register a
     # name + docstring for the MCP client to see.
     _register_tool(mcp, "ableton_session", "Global state, master, transport, view, tempo, signature, snapshot.")
-    _register_tool(mcp, "ableton_track", "Tracks: lifecycle, mixer state, sends.")
+    _register_tool(mcp, "ableton_track", "Tracks: lifecycle, mixer state, sends, input/output routing, monitor state.")
     _register_tool(mcp, "ableton_return", "Return tracks: lifecycle, mixer state.")
     _register_tool(mcp, "ableton_clip", "Session + arrangement clips: lifecycle, set_property, replace_notes. Timing transforms (quantize/swing/groove) deliberately live in Hallucinote — see design doc §6.2.")
     _register_tool(mcp, "ableton_note", "Within-clip note operations (gap #4 blocked).")
@@ -155,11 +155,24 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
-    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return (idempotent); the MASTER is detect-only — Live 12.4 can't add a device to the master via the API (DEV-2M9K), so place it on the Master strip by hand once and the render configures it from then on. The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
+    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return AND the master (idempotent; DEV-6M2K re-enabled master device load on Live 12.4.2 — no hand-placement step). The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
     _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, per-return reverb RT60 measured from each return's captured ring-out (dry-source-free), and realized-vs-declared automation verification (device-parameter timbre flips, dynamic sends). Writes a MixReport JSON to songs/<slug>/analysis/.")
     _register_tool(mcp, "ableton_probe", "LOM capability probing: describe (class/properties/methods with signature docstrings), get (one property), set (write one property — settability is itself a finding), call (invoke a method, 'then' chains onto returned objects; can mutate — probe in scratch sets). Constrained path grammar: 'song'/'application' roots + '.attr'/'[index]' steps only.")
 
     return mcp
+
+
+# Read-timeout policy lives in ``client`` — the single source of truth shared by
+# this agent-forward route AND push_cli's direct dispatch (the ENV-9P4T blocker
+# was the policy existing only here while the push route used the bare client
+# default). Re-exported under the historical names so existing callers/tests
+# keep working; ``client.send`` also auto-resolves it when no read_timeout is
+# passed, so the explicit pass below is belt-and-suspenders, not the only guard.
+from .client import (  # noqa: E402
+    _DEFAULT_READ_TIMEOUT,
+    _ENSURE_LOADED_READ_TIMEOUT,
+    read_timeout_for as _read_timeout_for,
+)
 
 
 def handle_tool_call(
@@ -209,16 +222,14 @@ def handle_tool_call(
     # before forwarding.
     if request.tool == "ableton_render" and request.action == "render":
         request = _absolutize_render_output_dir(request)
+        request = _attach_render_db_seq(request)
 
-    # Forward to the Remote Script. ableton_render(render) drives full-
-    # arrangement playback before responding (minutes for a long song),
-    # so disable the default 15s read timeout for that path. Every other
-    # action returns within Live's main-thread budget — keep the bounded
-    # default so a stalled handler surfaces as a structured timeout
-    # error instead of hanging the MCP transport.
-    read_timeout: float | None = 15.0
-    if request.tool == "ableton_render" and request.action == "render":
-        read_timeout = None
+    # Forward to the Remote Script with a per-action read-timeout (MCP-4T6Y):
+    # render is unbounded (full-arrangement playback), ensure_loaded gets a
+    # generous bounded window (25+ analyzer loads), everything else keeps the
+    # default so a stalled handler surfaces as a structured timeout instead of
+    # hanging the transport.
+    read_timeout = _read_timeout_for(request.tool, request.action)
     try:
         remote_response = client.send(request, read_timeout=read_timeout)
     except client.LiveConnectionError as exc:
@@ -285,6 +296,58 @@ def _absolutize_render_output_dir(request: Request) -> Request:
         song_dir = pathlib.Path(os.getcwd()) / "songs" / song_slug
     default = song_dir / "captures" / ts
     params["output_dir"] = str(default.resolve())
+    return dataclasses.replace(request, params=params)
+
+
+def _attach_render_db_seq(request: Request) -> Request:
+    """Tag the forwarded render call with the song's latest audit-log seq.
+
+    The render handler runs inside Live's vendored env (no hallucinote
+    package), so the seq is read HERE — the MCP server process has the
+    engine — and forwarded as the ``db_seq`` param the handler writes
+    into ``manifest.json``. Read at render-trigger time, which matches
+    the audio ONLY when the DB state has been pushed to Live first (the
+    normal flow). Mutate-without-push leaves the tag pointing at DB
+    state the audio doesn't reflect — the seq is "latest DB state at
+    render time", not a proof of what Live played; consumers comparing
+    by seq inherit that caveat (it's surfaced in the analyze action's
+    compare_to description).
+
+    Degrades to no tag (``manifest.db_seq`` absent → loads as None) when
+    the engine isn't importable, the song DB doesn't exist yet, or an
+    explicit ``db_seq`` was already supplied — never blocks a render over
+    provenance.
+    """
+    params = dict(request.params)
+    if params.get("db_seq") is not None:
+        return request
+    song_slug = params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return request  # let the handler emit its own teaching error
+    try:
+        from hallucinote.db.connection import connect, resolve_db_path
+        from hallucinote.db import queries as Q
+
+        db_path = resolve_db_path(song_slug)
+        if not db_path.exists():
+            return request
+        conn = connect(db_path)
+        try:
+            song = Q.get_song_by_name(conn, song_slug)
+            if song is None:
+                return request
+            seq = Q.get_latest_seq_for_song(conn, song["id"])
+        finally:
+            conn.close()
+    except Exception:  # prawduct:allow prawduct/broad-except -- provenance is best-effort; a render must never fail because the seq read did
+        logger.warning(
+            "render: could not read latest db seq for %r; manifest will "
+            "carry no db_seq", song_slug, exc_info=True,
+        )
+        return request
+    if seq is None:
+        return request
+    params["db_seq"] = seq
     return dataclasses.replace(request, params=params)
 
 

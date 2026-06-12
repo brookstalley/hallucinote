@@ -1,6 +1,6 @@
 """W10-E2: bulk push dispatcher that bypasses the agent's tool-use channel.
 
-The eleven-phase push planner emits plans the agent has historically dispatched
+The thirteen-phase push planner emits plans the agent has historically dispatched
 itself via MCP tool calls. For large songs that's the v1.0 ceiling: each call
 ships its full args (notably ``notes=[…]``) as inline JSON inside the agent's
 tool-use block, burning agent context budget per call. A 29-clip song measured
@@ -24,6 +24,7 @@ load-bearing decisions:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -33,6 +34,8 @@ from typing import Any, Callable
 from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.sync import push
+
+logger = logging.getLogger(__name__)
 
 # Imported lazily inside execute_push() to keep the unit-test import graph
 # light. The MCP package is a sibling install; tests substitute send_fn
@@ -92,6 +95,11 @@ class ExecuteResult:
     state_file: Path | None = None
     errors_file: Path | None = None
     top_error_patterns: list[dict[str, Any]] = field(default_factory=list)
+    # SYN-6B4Q: benign warnings that did NOT fail the push (exit stays 0) —
+    # e.g. cues deferred past Live's current arrangement extent, which land on
+    # the next push. Kept distinct from errors so a deferral never reads as a
+    # PARTIAL halt cause.
+    warnings: list[str] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -223,7 +231,11 @@ def _attempt_load_fallback(
     )
     try:
         search_resp = send_fn(search_req)
-    except Exception:  # prawduct:ok-broad-except — fallback must not crash the push loop; failure → no fallback
+    except Exception:  # prawduct:allow prawduct/broad-except -- fallback must not crash the push loop; failure → no fallback
+        logger.debug(
+            "load-fallback search failed for %r — no fallback",
+            display_name, exc_info=True,
+        )
         return None
     if not bool(getattr(search_resp, "ok", False)):
         return None
@@ -244,11 +256,99 @@ def _attempt_load_fallback(
     )
     try:
         retry_resp = send_fn(retry_req)
-    except Exception:  # prawduct:ok-broad-except — fallback must not crash the push loop; failure → no fallback
+    except Exception:  # prawduct:allow prawduct/broad-except -- fallback must not crash the push loop; failure → no fallback
+        logger.debug(
+            "load-fallback retry (uri=%s) failed — no fallback",
+            fallback_uri, exc_info=True,
+        )
         return None
     if not bool(getattr(retry_resp, "ok", False)):
         return None
     return retry_resp, fallback_uri
+
+
+# SYN-9F2L: the planner prefers the display form on the wire (exact via the
+# param's own display curve), but two handler refusals have a known second
+# form worth one retry each. Hint substrings match the handler's teaching
+# errors (handlers/display_value.py resolve_continuous_write).
+_SET_PARAM_ENUM_HINTS = ("is an enum", "is_quantized=True")
+_SET_PARAM_NO_CURVE_HINTS = ("str_for_value",)
+
+
+def _attempt_set_parameter_fallback(
+    *,
+    failed_call: Any,
+    conn: sqlite3.Connection,
+    send_fn: Callable[..., Any],
+    request_cls: type,
+    err_msg: str,
+) -> tuple[Any, str] | None:
+    """One-shot retries for a refused ``value_display`` write (SYN-9F2L).
+
+    Returns ``(retry_response, fallback_kind)`` on success, ``None`` when no
+    fallback applies or the retry failed (original error stands). Two cases:
+
+    * the handler refused because the parameter is actually an enum
+      (hand-authored snapshots store enum choices as bare display strings,
+      with no ``value_items`` captured) → retry as ``value_type='enum'``
+      with the display string as the value;
+    * the handler refused because the parameter exposes no ``str_for_value``
+      curve to invert → retry with the DB's stored normalized value (the
+      pre-SYN-9F2L wire form).
+    """
+    if failed_call.tool != "ableton_device":
+        return None
+    args = failed_call.args
+    if args.get("action") != "set_parameter":
+        return None
+    if args.get("value_display") is None:
+        return None
+    base = {
+        k: v for k, v in args.items()
+        if k not in ("action", "value_display", "value", "value_type")
+    }
+    if any(h in err_msg for h in _SET_PARAM_ENUM_HINTS):
+        retry_params = {
+            **base, "value": args["value_display"], "value_type": "enum",
+        }
+        fallback_kind = "enum"
+    elif any(h in err_msg for h in _SET_PARAM_NO_CURVE_HINTS):
+        key = failed_call.key or ""
+        parts = key.split(":", 2)
+        if len(parts) != 3 or parts[0] != "device_parameter":
+            return None
+        _, device_id, param_name = parts
+        row = next(
+            (
+                p for p in Q.get_device_parameters(conn, device_id)
+                if p["name"] == param_name
+            ),
+            None,
+        )
+        if row is None or row["value_normalized"] is None:
+            return None
+        retry_params = {
+            **base,
+            "value": str(row["value_normalized"]),
+            "value_type": "continuous",
+        }
+        fallback_kind = "normalized"
+    else:
+        return None
+    retry_req = request_cls(
+        tool=failed_call.tool, action="set_parameter", params=retry_params,
+    )
+    try:
+        retry_resp = send_fn(retry_req)
+    except Exception:  # prawduct:allow prawduct/broad-except -- fallback must not crash the push loop; failure → no fallback
+        logger.debug(
+            "set_parameter %s-fallback retry failed — no fallback",
+            fallback_kind, exc_info=True,
+        )
+        return None
+    if not bool(getattr(retry_resp, "ok", False)):
+        return None
+    return retry_resp, fallback_kind
 
 
 def _probe_pad_mappings_for_session(
@@ -304,10 +404,19 @@ def _probe_pad_mappings_for_session(
             resp = send_fn(request_cls(
                 tool="ableton_device", action="pad_info", params=params,
             ))
-        except Exception:  # prawduct:ok-broad-except — best-effort post-phase probe; connection or wire errors must not derail an otherwise-successful push
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort post-phase probe; connection or wire errors must not derail an otherwise-successful push
+            logger.debug(
+                "pad-probe send failed for device %s on %s %s — counted, skipped",
+                device_id, parent_kind, parent_idx, exc_info=True,
+            )
             probes_failed += 1
             continue
         if not bool(getattr(resp, "ok", False)):
+            logger.debug(
+                "pad-probe refused for device %s on %s %s: %s",
+                device_id, parent_kind, parent_idx,
+                getattr(resp, "error", None),
+            )
             probes_failed += 1
             continue
         payload = getattr(resp, "result", None) or {}
@@ -326,7 +435,11 @@ def _probe_pad_mappings_for_session(
                 request_id=request_id,
                 reason=reason or f"push pad-probe (session={session_id})",
             )
-        except Exception:  # prawduct:ok-broad-except — mutator validation (e.g. midi_note out of range from a malformed handler response) shouldn't halt the post-phase probe
+        except Exception:  # prawduct:allow prawduct/broad-except -- mutator validation (e.g. midi_note out of range from a malformed handler response) shouldn't halt the post-phase probe
+            logger.debug(
+                "pad-probe mapping write failed for device %s — counted, skipped",
+                device_id, exc_info=True,
+            )
             probes_failed += 1
             continue
         probes_ok += 1
@@ -339,15 +452,52 @@ def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     The substring is the first 60 chars of the error message — long enough
     to disambiguate distinct failures, short enough that ``RuntimeError:
     Couldn't create clip — slot 3`` and ``... slot 7`` group together.
+
+    Each group also carries a representative ``tool``/``action`` (the first
+    record's) and the first non-null ``hint`` in the group, so the CLI
+    summary can name the halt cause without the agent opening the errors
+    file (PSH-4E2W).
     """
-    groups: dict[str, list[str]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for e in errors:
         substr = (e.get("error") or "")[:60]
-        groups.setdefault(substr, []).append(e["key"])
+        groups.setdefault(substr, []).append(e)
     return [
-        {"error_substring": substr, "count": len(keys), "affected_keys": keys}
-        for substr, keys in sorted(groups.items(), key=lambda kv: -len(kv[1]))
+        {
+            "error_substring": substr,
+            "count": len(recs),
+            "affected_keys": [r["key"] for r in recs],
+            "tool": recs[0].get("tool"),
+            "action": recs[0].get("action"),
+            "hint": next((r.get("hint") for r in recs if r.get("hint")), None),
+        }
+        for substr, recs in sorted(groups.items(), key=lambda kv: -len(kv[1]))
     ]
+
+
+def _suggest_next_step(pattern: dict[str, Any], *, outcome: str) -> str:
+    """One actionable line per halt cause (PSH-4E2W).
+
+    Prefer the responder's own hint — it knows the cause better than any
+    heuristic here. Fall back to a per-class suggestion so the summary
+    always says what to do next, not just what broke.
+    """
+    if pattern.get("hint"):
+        return str(pattern["hint"])
+    if outcome == "connection_lost":
+        return (
+            "check Live is running with the Hallucinote control surface "
+            "loaded, then re-run execute (idempotent)"
+        )
+    if pattern.get("tool") == "ableton_device" and pattern.get("action") == "load":
+        return (
+            "device failed to load — likely not installed on this machine; "
+            "see REQUIREMENTS.md"
+        )
+    return (
+        "fix the cause in build.py / the snapshot, rebuild, then re-run "
+        "execute (idempotent — applied rows skip)"
+    )
 
 
 def execute_push(
@@ -360,7 +510,7 @@ def execute_push(
     actor: str = "sync",
     reason: str | None = None,
 ) -> ExecuteResult:
-    """Run the full eleven-phase push, dispatching each call via ``send_fn``.
+    """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
 
     ``send_fn`` defaults to :func:`hallucinote_mcp.client.send`. Tests pass
     their own to avoid touching the MCP package or Live.
@@ -423,11 +573,12 @@ def execute_push(
     phases = push.plan_push_song(conn, song_id=song_id, session_id=session_id)
 
     phase_outcomes: list[PhaseOutcome] = []
-    halt_phase: str | None = None
+    halt_phase: str | None = None  # also the errors-file "phase" — one source
     outcome = "ok"
     exit_code = EXIT_OK
     error_records: list[dict[str, Any]] = []
-    error_phase: str | None = None
+    # SYN-6B4Q: benign warnings (deferred cues) — do not flip outcome/exit.
+    warning_messages: list[str] = []
 
     def _maybe_pad_probe(phase_name: str) -> tuple[int, int]:
         """A3: best-effort pad-mapping probe for the devices phase.
@@ -453,20 +604,16 @@ def execute_push(
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
 
-    for idx, phase in enumerate(phases):
-        plan = phase.plan_fn()
-        if not plan.calls:
-            pad_ok, pad_failed = _maybe_pad_probe(phase.name)
-            phase_outcomes.append(PhaseOutcome(
-                name=phase.name, status=_STATUS_SKIPPED,
-                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
-            ))
-            continue
+    def _dispatch_calls(calls) -> tuple[list[dict[str, Any]], bool]:
+        """Dispatch ToolCalls via ``send_fn`` → (results, connection_lost).
 
+        Per-call failures append to ``error_records``; a connection-class
+        exception stops the batch immediately (no point continuing without
+        Live). Shared by the main per-phase pass and the devices-phase
+        convergence pass (SYN-9F2L).
+        """
         results: list[dict[str, Any]] = []
-        connection_lost = False
-
-        for call in plan.calls:
+        for call in calls:
             action = call.args.get("action")
             params = {k: v for k, v in call.args.items() if k != "action"}
             req = Request(tool=call.tool, action=action or "", params=params)
@@ -477,7 +624,6 @@ def execute_push(
                 # Halt immediately — no point continuing without Live. Wire
                 # protocol bugs (wire.FrameError) and other unexpected
                 # exceptions propagate so they're not mislabeled here.
-                connection_lost = True
                 error_records.append({
                     "key": call.key,
                     "tool": call.tool,
@@ -486,7 +632,7 @@ def execute_push(
                     "error": f"{type(exc).__name__}: {exc}",
                     "hint": None,
                 })
-                break
+                return results, True
 
             ok = bool(getattr(resp, "ok", False))
             err_msg = getattr(resp, "error", None) if not ok else None
@@ -513,8 +659,53 @@ def execute_push(
                     ok = True
                     err_msg = None
 
+            # SYN-9F2L: a refused value_display write has two known second
+            # forms (actual-enum, no-display-curve) worth one retry each.
+            set_param_fallback: str | None = None
+            if (
+                not ok
+                and call.tool == "ableton_device"
+                and action == "set_parameter"
+                and err_msg
+            ):
+                fb2 = _attempt_set_parameter_fallback(
+                    failed_call=call, conn=conn, send_fn=send_fn,
+                    request_cls=Request, err_msg=err_msg,
+                )
+                if fb2 is not None:
+                    resp, set_param_fallback = fb2
+                    ok = True
+                    err_msg = None
+
             result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
+
+            # SYN-6B4Q: a cue_create_batch dispatched in skip mode reports the
+            # cues it DEFERRED (ahead of Live's current extent). The call itself
+            # succeeded — surface the deferral as a benign warning, not a
+            # failure. The deferred cues land on the next push once arrangement
+            # content covers them (the planner already refused any cue past the
+            # composed song length, so these WILL become placeable).
+            if (
+                ok
+                and call.tool == "ableton_arrangement"
+                and action == "cue_create_batch"
+            ):
+                deferred = (result_payload or {}).get("skipped_out_of_range") or []
+                if deferred:
+                    let = (result_payload or {}).get("last_event_time")
+                    preview = ", ".join(
+                        f"{d.get('name') or '(unnamed)'}@beat"
+                        f"{float(d['position_beats']):.2f}"
+                        for d in deferred[:5]
+                    )
+                    ellipsis = " ..." if len(deferred) > 5 else ""
+                    warning_messages.append(
+                        f"cues: {len(deferred)} cue(s) deferred past Live's "
+                        f"current arrangement extent (last_event_time={let}) — "
+                        "they land on the next push once arrangement content "
+                        f"covers them: [{preview}{ellipsis}]"
+                    )
 
             result_entry: dict[str, Any] = {
                 "key": call.key,
@@ -528,6 +719,8 @@ def execute_push(
                 # fallback fired (and which URI was substituted). The DB's
                 # preset_uri stays untouched — the song remains portable.
                 result_entry["fallback_preset_uri"] = fallback_uri
+            if set_param_fallback is not None:
+                result_entry["set_parameter_fallback"] = set_param_fallback
             results.append(result_entry)
 
             if not ok:
@@ -539,55 +732,161 @@ def execute_push(
                     "error": err_msg,
                     "hint": hint,
                 })
+        return results, False
 
-        # Apply successes regardless of failure mix — push is idempotent and
-        # link rows must be live before the next phase plans. For
-        # connection-lost the loop broke before any subsequent ok rows could
-        # accumulate, so this is safe.
-        if results:
-            push.apply_push_results(
-                conn,
-                results,
-                session_id=session_id,
-                actor=actor,
-                request_id=request_id,
-                reason=reason or f"push_cli execute phase={phase.name}",
+    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
+        """Apply successes regardless of failure mix — push is idempotent and
+        link rows must be live before the next phase (or the devices-phase
+        convergence pass) plans."""
+        apply_warnings = push.apply_push_results(
+            conn,
+            batch,
+            session_id=session_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason or f"push_cli execute phase={phase_name}",
+        )
+        # Apply-layer warnings (e.g. a perform whose write Live could
+        # not verify — nothing recorded, next push retries) ride the
+        # errors file so the agent sees them. They don't flip the
+        # phase status: the wire call succeeded; what failed is the
+        # verification-gated DB record.
+        for w in apply_warnings:
+            error_records.append({
+                "key": None,
+                "tool": "apply_push_results",
+                "action": "apply",
+                "args_summary": {"phase": phase_name},
+                "error": w,
+                "hint": None,
+            })
+
+    def _drain_plan_warnings(plan_obj) -> None:
+        """SYN-9F2L: a planner records an operator-actionable, non-fatal warning
+        (e.g. a params_dialed write with no writable form) in ``plan.alerts``.
+        ``execute`` is the only operator-visible surface on this path, so route
+        alerts into the benign warnings channel — otherwise the warn is silently
+        discarded, the exact silent-drop SYN-9F2L exists to prevent. Drains
+        ``alerts`` (operator-facing), NOT ``notes`` (diagnostic "nothing to
+        push" / "not linked yet" noise). Deduped by message so the devices-phase
+        convergence re-plan (which regenerates the full plan, alerts included)
+        doesn't double-report an already-surfaced warning."""
+        for alert in plan_obj.alerts:
+            if alert not in warning_messages:
+                warning_messages.append(alert)
+
+    def _halt(phase_name: str, idx: int, *, outcome_label: str,
+              exit_code_val: int, calls_ok: int, calls_failed: int) -> None:
+        """Record a phase halt: mark the phase HALTED, set the terminal
+        outcome/exit, and fill every later phase as PENDING so the state file is
+        uniform. The three halt causes (plan-error, connection-lost, call-fail)
+        differ only in their counts + labels — this is the one place that
+        bookkeeping lives. The caller still issues ``break`` (loop control can't
+        cross the call boundary)."""
+        nonlocal halt_phase, outcome, exit_code
+        phase_outcomes.append(PhaseOutcome(
+            name=phase_name, status=_STATUS_HALTED,
+            calls_ok=calls_ok, calls_failed=calls_failed,
+        ))
+        halt_phase = phase_name
+        outcome = outcome_label
+        exit_code = exit_code_val
+        for remaining in phases[idx + 1:]:
+            phase_outcomes.append(PhaseOutcome(
+                name=remaining.name, status=_STATUS_PENDING, calls_planned=0,
+            ))
+
+    for idx, phase in enumerate(phases):
+        plan = phase.plan_fn()
+        _drain_plan_warnings(plan)
+
+        # SYN-6B4Q: a planner can flag a hard authoring error (e.g. a cue past
+        # the composed song length). Halt the phase WITHOUT dispatching — the
+        # DB describes something that can't be materialized, so nothing should
+        # half-apply in Live. The clear DB-grounded message rides the errors
+        # file; the operator fixes the authoring and re-pushes (idempotent).
+        if plan.errors:
+            for msg in plan.errors:
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "plan",
+                    "args_summary": {"phase": phase.name},
+                    "error": msg,
+                    "hint": (
+                        "fix the authoring in build.py (the message names the "
+                        "offending row[s]), rebuild, then re-run execute "
+                        "(idempotent — applied rows skip)"
+                    ),
+                })
+            _halt(
+                phase.name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=0,
+                calls_failed=len(plan.errors),
             )
+            break
+
+        if not plan.calls:
+            pad_ok, pad_failed = _maybe_pad_probe(phase.name)
+            phase_outcomes.append(PhaseOutcome(
+                name=phase.name, status=_STATUS_SKIPPED,
+                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
+            ))
+            continue
+
+        results, connection_lost = _dispatch_calls(plan.calls)
+
+        # For connection-lost the dispatch stopped before any subsequent ok
+        # rows could accumulate, so applying what we have is safe.
+        if results:
+            _apply_results(results, phase.name)
+
+        # SYN-9F2L convergence: a device loaded THIS pass gets its link at
+        # apply-time, after parameter planning — so its dialed parameters
+        # were unplannable above. Re-plan once now that links are live and
+        # dispatch only the NEW calls (loads already dispatched keep their
+        # keys, so nothing re-sends). Without this pass the params silently
+        # never land: the next push's planner sees no DB change and skips.
+        if (
+            phase.name == "devices"
+            and not connection_lost
+            and results
+            and all(r.get("ok") for r in results)
+        ):
+            replan = phase.plan_fn()
+            # SYN-9F2L: a device loaded THIS pass was unlinked when the primary
+            # plan ran, so its params (and any unwritable-form warning) first
+            # become visible in this re-plan — drain its new notes too, or the
+            # same-pass case stays silent.
+            _drain_plan_warnings(replan)
+            dispatched_keys = {c.key for c in plan.calls}
+            extra_calls = [
+                c for c in replan.calls
+                if c.key not in dispatched_keys
+            ]
+            if extra_calls:
+                extra_results, connection_lost = _dispatch_calls(extra_calls)
+                results.extend(extra_results)
+                if extra_results:
+                    _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
 
         if connection_lost:
-            phase_outcomes.append(PhaseOutcome(
-                name=phase.name, status=_STATUS_HALTED,
-                calls_ok=calls_ok, calls_failed=calls_failed + 1,
-            ))
-            halt_phase = phase.name
-            error_phase = phase.name
-            outcome = "connection_lost"
-            exit_code = EXIT_CONNECTION_LOST
-            # Mark remaining phases as pending so the state file is uniform.
-            for remaining in phases[idx + 1:]:
-                phase_outcomes.append(PhaseOutcome(
-                    name=remaining.name, status=_STATUS_PENDING,
-                    calls_planned=0,
-                ))
+            _halt(
+                phase.name, idx, outcome_label="connection_lost",
+                exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                calls_failed=calls_failed + 1,
+            )
             break
 
         if calls_failed > 0:
-            phase_outcomes.append(PhaseOutcome(
-                name=phase.name, status=_STATUS_HALTED,
-                calls_ok=calls_ok, calls_failed=calls_failed,
-            ))
-            halt_phase = phase.name
-            error_phase = phase.name
-            outcome = "partial"
-            exit_code = EXIT_PARTIAL
-            for remaining in phases[idx + 1:]:
-                phase_outcomes.append(PhaseOutcome(
-                    name=remaining.name, status=_STATUS_PENDING,
-                    calls_planned=0,
-                ))
+            _halt(
+                phase.name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                calls_failed=calls_failed,
+            )
             break
 
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
@@ -626,6 +925,9 @@ def execute_push(
             for p in phase_outcomes
         ],
         "errors_file": errors_file.name if error_records else None,
+        # SYN-6B4Q: benign warnings (deferred cues) — additive field; an OK
+        # push can carry warnings without an errors file.
+        "warnings": warning_messages,
     }
     state_file.write_text(json.dumps(state_payload, indent=2) + "\n")
 
@@ -634,7 +936,7 @@ def execute_push(
         grouped = _group_errors(error_records)
         errors_payload = {
             "ts": _now_iso(),
-            "phase": error_phase,
+            "phase": halt_phase,
             "errors": error_records,
             "grouped_by_error": grouped,
         }
@@ -669,6 +971,7 @@ def execute_push(
         state_file=state_file,
         errors_file=errors_file if error_records else None,
         top_error_patterns=top_patterns,
+        warnings=warning_messages,
     )
 
 
@@ -715,11 +1018,23 @@ def format_summary(result: ExecuteResult) -> str:
         lines.append(f"errors: {result.errors_file}")
     if result.top_error_patterns:
         lines.append("")
-        lines.append("Top error patterns:")
+        lines.append(f"Halt cause (phase {result.phase_halted!r}):")
         for pat in result.top_error_patterns:
             substr = pat["error_substring"]
             count = pat["count"]
-            lines.append(f"  - {substr!r} ({count} occurrences)")
+            tool = pat.get("tool")
+            action = pat.get("action")
+            target = f"{tool}.{action}" if tool and action else (tool or "call")
+            plural = "s" if count != 1 else ""
+            lines.append(f"  - {target}: {substr!r} ({count} call{plural})")
+            lines.append(f"    next: {_suggest_next_step(pat, outcome=result.outcome)}")
+    # SYN-6B4Q: deferred-cue warnings are benign (the push is still OK) — show
+    # them in their own section so they never read as a halt cause.
+    if result.warnings:
+        lines.append("")
+        lines.append("Warnings (push still OK):")
+        for w in result.warnings:
+            lines.append(f"  - {w}")
     return "\n".join(lines) + "\n"
 
 

@@ -1435,6 +1435,138 @@ def test_cue_create_rejects_unknown_if_exists_value(loaded_actions):
     assert "if_exists" in resp.error or "replace" in err
 
 
+# ---------- SYN-6B4Q: cue_create_batch on_out_of_range ----------
+
+
+def test_cue_create_batch_default_on_out_of_range_is_refuse_atomic(loaded_actions):
+    """SYN-6B4Q: omitting ``on_out_of_range`` preserves the W5-C atomic
+    contract — a single position past ``last_event_time`` aborts the whole
+    batch and writes nothing. Direct/strict callers are unaffected by the
+    new skip mode; only the planner opts into ``'skip'``."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 32.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={"cues": [
+                {"position_beats": 0.0, "name": "Intro"},
+                {"position_beats": 48.0, "name": "Past End"},
+            ]},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "No cues written" in (resp.error or "")
+    assert len(ctx.song.cue_points) == 0
+    # The result shape must NOT grow skipped_out_of_range in refuse mode.
+    assert resp.result is None or "skipped_out_of_range" not in (resp.result or {})
+
+
+def test_cue_create_batch_skip_creates_in_range_defers_out_of_range(loaded_actions):
+    """SYN-6B4Q: ``on_out_of_range='skip'`` creates the cues within
+    ``last_event_time`` and returns the rest in ``skipped_out_of_range``
+    rather than failing the batch. The push then continues (exit 0); the
+    deferred cues land on the next push once arrangement content covers
+    them."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 32.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={
+                "cues": [
+                    {"position_beats": 0.0, "name": "Intro"},
+                    {"position_beats": 16.0, "name": "Verse"},
+                    {"position_beats": 48.0, "name": "Chorus"},  # past extent
+                    {"position_beats": 64.0, "name": "Outro"},   # past extent
+                ],
+                "on_out_of_range": "skip",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    # Only the two in-extent cues were created.
+    assert resp.result["cue_count"] == 2
+    landed = {(c.time, c.name) for c in ctx.song.cue_points}
+    assert landed == {(0.0, "Intro"), (16.0, "Verse")}
+    # The two past-extent cues are reported as deferred, not silently dropped.
+    skipped = resp.result["skipped_out_of_range"]
+    assert {(s["position_beats"], s["name"]) for s in skipped} == {
+        (48.0, "Chorus"), (64.0, "Outro"),
+    }
+    # The result carries last_event_time so the caller can teach the gap.
+    assert resp.result["last_event_time"] == 32.0
+
+
+def test_cue_create_batch_skip_all_out_of_range_creates_nothing(loaded_actions):
+    """SYN-6B4Q skeleton case: an empty arrangement (last_event_time=0)
+    with authored cues defers EVERY cue — cue_count=0, all reported in
+    skipped_out_of_range, and the call still succeeds (no PARTIAL)."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 0.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={
+                "cues": [
+                    {"position_beats": 16.0, "name": "Verse"},
+                    {"position_beats": 48.0, "name": "Chorus"},
+                ],
+                "on_out_of_range": "skip",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, f"unexpected error: {resp.error!r}"
+    assert resp.result["cue_count"] == 0
+    assert resp.result["cues"] == []
+    assert len(ctx.song.cue_points) == 0
+    assert len(resp.result["skipped_out_of_range"]) == 2
+
+
+def test_cue_create_batch_skip_all_in_range_reports_empty_deferred(loaded_actions):
+    """SYN-6B4Q: skip mode with every cue inside the extent behaves exactly
+    like a normal create — nothing deferred, skipped_out_of_range empty."""
+    ctx = FakeCtx()
+    ctx.song.last_event_time = 64.0
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={
+                "cues": [
+                    {"position_beats": 0.0, "name": "A"},
+                    {"position_beats": 32.0, "name": "B"},
+                ],
+                "on_out_of_range": "skip",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["cue_count"] == 2
+    assert resp.result["skipped_out_of_range"] == []
+
+
+def test_cue_create_batch_rejects_unknown_on_out_of_range_value(loaded_actions):
+    """The enum is pinned to {'refuse', 'skip'}; anything else is rejected
+    before the handler runs."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_arrangement", action="cue_create_batch",
+            params={
+                "cues": [{"position_beats": 0.0}],
+                "on_out_of_range": "clamp",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "on_out_of_range" in (resp.error or "") or "clamp" in err
+
+
 def test_cue_create_batch_rejects_unknown_if_exists_value(loaded_actions):
     """Same enum guard at the batch entry."""
     ctx = FakeCtx()

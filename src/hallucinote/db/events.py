@@ -21,6 +21,11 @@ CLIP_DELETED = "clip_deleted"
 
 # Mix: track kind, mixer state, returns, sends
 TRACK_MIXER_SET = "track_mixer_set"
+# RTE-1K9T: track signal routing (output + input) + monitor switch. Payload
+# {track_id, changes} mirrors TRACK_MIXER_SET — `changes` is the subset of
+# routing/monitor fields that actually changed (semantic reference, not Live
+# display_name; see set_track_routing).
+TRACK_ROUTING_SET = "track_routing_set"
 RETURN_CREATED = "return_created"
 RETURN_UPDATED = "return_updated"
 RETURN_DELETED = "return_deleted"
@@ -43,6 +48,9 @@ ENVELOPE_DELETED = "envelope_deleted"
 BREAKPOINT_ADDED = "breakpoint_added"
 BREAKPOINT_REMOVED = "breakpoint_removed"
 BREAKPOINTS_REPLACED = "breakpoints_replaced"
+# ENV-7G4K: a perform-routed arc was gesture-recorded into Live's
+# arrangement automation (sync-state, like ABLETON_LINK_SET).
+AUTOMATION_PERFORMED = "automation_performed"
 
 # Score: sections, tempo map, time-signature map, cue points
 SECTION_CREATED = "section_created"

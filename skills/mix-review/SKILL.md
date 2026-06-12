@@ -158,11 +158,16 @@ first — see "Refreshing the analysis"). For each section, you have:
   audio? Per value-changing breakpoint: a `device_parameter` flip (e.g. Amp
   Type Clean→Heavy) is a **directional** timbre verdict (`spectral_centroid_hz`
   before/after — "a shift occurred", not a scalar target); a `send_level` step
-  is a level move in the declared direction. `realized=false` (with
-  `measurable=true`) means the authored gesture didn't happen in the render —
-  surface it. `measurable=false` means it can't be checked from this capture
-  (mixer_volume/pan are post-fader-invisible; or the window was silent) — report
-  the gap, don't read it as a failure. The `note` field explains each verdict.
+  is a level move in the declared direction; the post-fader mixer kinds are
+  verified on the MASTER (AUD-3F8M) — `mixer_volume` as a `master_rms_db`
+  level step, `mixer_pan` as a `master_balance_db` L−R shift, each judged
+  against a prediction from the declared values + the stem's contribution.
+  `realized=false` (with `measurable=true`) means the authored gesture didn't
+  happen in the render — surface it. `measurable=false` means it can't be
+  checked from this capture (the window was silent; or, for mixer kinds, the
+  stem is too diluted in the mix for the master to speak, or master-chain
+  limiting broke the prediction model) — report the gap, don't read it as a
+  failure. The `note` field explains each verdict.
 - `energy_realization` — declared-energy-curve vs rendered-intensity (ARR-7M3D):
   did the per-section `energy` the composer authored actually render as
   intensity? `correlate_rho` is Spearman ρ per correlate (`loudness`,
@@ -286,6 +291,21 @@ If there's no recent report (or the mix changed), render + analyze first:
 when the song declares sections. (If `ableton_analysis` returns a report with no
 `masking`/`attribution` keys, the MCP server is running stale code — tell the
 user to run `/mcp` to respawn it.)
+
+**Verifying a mix change (A/B):** after applying a fix, PUSH the change to
+Live before re-rendering (fixes land DB-first through mutators; `db_seq`
+asserts, not verifies, that Live matched the DB — a mutate→render without the
+push mislabels the report's own audio), then re-render + re-analyze with
+`compare_to=<db_seq of the before-report>` — each report carries its `db_seq`
+(the audit-log state its capture reflects). The new report's
+`compare_to` field lists per-surface loudness deltas with significance flags:
+read it to confirm the change did what it predicted instead of re-arguing from
+the absolute numbers. Deltas are neutral evidence — grade them against the
+declared intent, and remember the same caveats below apply to both sides of
+the diff. Significance floors are calibrated for master/stem surfaces;
+near-silent surfaces (quiet reverb returns) can flag large dB deltas that are
+capture-tail variance, not mix moves — weigh the before/after absolutes in
+each row.
 
 ## Honest confidence — caveats you MUST carry
 

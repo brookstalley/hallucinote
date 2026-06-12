@@ -50,13 +50,34 @@ When changing this surface:
   - `apply_push_results` takes `session_id` and writes bindings via
     `M.link_db_to_ableton`.
   - `ToolCall.key` is `"<kind>:<uuid>"` — the kind selects which link is
-    written when the result comes back.
+    written when the result comes back. Exception (ENV-9P4T): the
+    `perform_batch:<song>` key is ONE call whose result fans out to N
+    arc-results — `apply_push_results`' `perform_batch` branch iterates
+    `result["arcs"]` and correlates each to its envelope by the opaque
+    `arc_id` the handler echoes back (NOT by the call key), recording each
+    arc's performed-state independently on its own `automation_state`.
+  - `PushPlan` carries four channels: `calls` (dispatched), `notes`
+    (diagnostic — "nothing to push", "not linked yet"; NOT surfaced to the
+    operator), `alerts` (SYN-9F2L — operator-actionable, non-fatal warnings),
+    and `errors` (SYN-6B4Q — hard authoring errors). `push_execute` HALTS a
+    phase whose plan has non-empty `errors` without dispatching (the DB
+    describes something that can never be materialized); it drains `alerts`
+    (deduped, including the devices convergence re-plan's) into the push
+    report's benign `warnings` channel, exit stays 0. Pick the channel by
+    severity: `error()` when no re-push can fix it short of changing the
+    authored DB; `alert()` when the operator authored something that was
+    skipped and would want to know ("the dialed intent was NOT pushed");
+    `warn()` for diagnostic noise the operator shouldn't see. `to_dict()`
+    serializes all four keys (additive — `alerts` is the newest).
 
 When changing this surface:
 - Any signature change breaks the agent integration. Document in the build
   plan + chunk handoff.
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
+- MCP result fields a planner relies on (e.g. `cue_create_batch`'s
+  `skipped_out_of_range`, SYN-6B4Q) are additive optional fields — readers
+  default sanely when absent (same policy as the MixReport JSON surface).
 
 ### Pull Planner / Result API (`src/hallucinote/sync/pull.py` + `pull_cli.py`)
 
@@ -68,6 +89,14 @@ When changing this surface:
     walk `ableton_links` for linked rows, emit `PullCall` probes.
   - `PullCall.key` is `"<kind>"` (global) or `"<kind>:<uuid>"` (per-row) —
     dispatched by `_HANDLERS` in `apply_pull_results`.
+  - Routing (RTE-1K9T) rides in the `mix-state` domain: per linked track,
+    `plan_pull_mix` emits `track_output_routing:<id>` / `track_input_routing:<id>`
+    / `track_monitor:<id>` (one MCP read each — the three getters are separate
+    LOM surfaces). Apply maps Live's `display_name` back to a DB routing
+    reference via `sync/routing_names.py` (the SAME map push reads forward, so
+    the two never drift), then writes through `set_track_routing`. NULL routing
+    columns are treated as Live's default route, so a first pull of an unrouted
+    track is a no-op, not a churn of every NULL into an explicit default (D8).
   - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
     field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
     doesn't churn events.
@@ -116,6 +145,41 @@ When adding a new `db_kind`:
 - Extend `mutations.ABLETON_LINK_KINDS`.
 - Add a planner branch in `sync/push.py` that emits a `<kind>:<uuid>` key.
 - Add an `apply_push_results` branch that consumes the matching result shape.
+
+### MixReport JSON (`src/hallucinote/audio/report.py` `to_json_dict()`)
+
+- **Producer**: `analyze.py` `analyze_mix` → `report.to_json_dict()`, persisted
+  as `songs/<slug>/analysis/<iso-ts>.json`.
+- **Consumers**: `compare.py` (`diff_reports` / `resolve_baseline` read old
+  reports back as raw dicts — the JSON **is** the contract, no deserializer),
+  the `/mix-review` skill, calibration baselines.
+- **Contract**: `schema_version` is load-bearing — `ensure_comparable` REFUSES
+  to diff mismatched versions, so a bump severs baseline lineage (every saved
+  report with the old version becomes undiffable). **Bump on breaking shape
+  changes ONLY; additive optional fields do NOT bump.** Precedent: AUD-4W7K
+  added `db_seq` + `compare_to` while `SCHEMA_VERSION` stayed `"1"` — version
+  `"1"` deliberately spans both shapes, and consumers tolerate the fields'
+  absence (`db_seq=None` on old reports).
+
+When changing this surface:
+- Additive optional field → no bump; ensure readers default sanely when it's
+  absent (the AUD-4W7K pattern).
+- Breaking change → bump, and accept (record) that existing analysis baselines
+  are orphaned — or write a migration for them.
+
+### Capture Manifest (`captures/manifest.json`)
+
+- **Producer**: `hallucinote_mcp/handlers/render.py` (inside Live's vendored,
+  hallucinote-less env) writes it; the server (`server._attach_render_db_seq`)
+  injects `db_seq` into the render request because only the server side can
+  read the song DB.
+- **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
+  into the MixReport), `resolve_baseline` (seq → report resolution).
+- **Contract**: `db_seq` crosses three runtimes (server reads → vendored
+  handler writes → engine loads). It is best-effort provenance: absent/null on
+  old manifests and when the song DB can't be read — consumers must treat
+  `db_seq=None` as "unknown", never an error. Field additions are additive
+  (same policy as MixReport JSON).
 
 ## Test Levels
 

@@ -57,6 +57,36 @@ the pip package and the vendored Remote Script disagree. Run
 Surface modules at startup; `/mcp` alone is not enough). `hallucinote-mcp
 preflight` reports both versions without restarting.
 
+### Engine version drift during a live compose session
+
+If you're **developing the engine in parallel** (editable install) while a song
+session is mid-flight, this mismatch is common and the reinstall path above is
+the wrong move — quitting Live to re-vendor the Remote Script throws away the
+running set. The engine repo advanced (new commits, maybe a dirty tree) so every
+fresh `push_cli` process now reports a newer version than the Remote Script Live
+loaded at startup; the handshake refuses correctly, but the song work is blocked
+through no fault of its own.
+
+Recovery that keeps the live session: **pin the CLI to the Remote Script's
+commit** instead of upgrading Live. The refusal reports the Remote Script's
+version, and its `+<sha>` suffix is the commit it was vendored from. Check that
+commit out in a throwaway worktree, point `PYTHONPATH` at it, and verify the pin
+took with `preflight` before re-running:
+
+```
+git worktree add /tmp/hallucinote-pin <sha-from-the-refusal>
+export PYTHONPATH=/tmp/hallucinote-pin/src:/tmp/hallucinote-pin/hallucinote_mcp/src
+python3 -m hallucinote_mcp.cli preflight   # package.version must == the vendored remote_script version
+python3 -m hallucinote.sync.push_cli execute ...   # now handshakes clean
+```
+
+When the session is done, remove the pin (`git worktree remove
+/tmp/hallucinote-pin`) and reinstall normally to bring Live up to date. There is
+no `--pin` flag: a process that mutates `sys.path` after import has already
+imported the wrong package, so pinning has to happen in the environment before
+Python starts. `push_cli execute` prints this same recipe in its recovery
+footer when it detects the handshake refusal.
+
 ## Render capture errors (recorder won't arm)
 
 `ableton_render` can return **`render: the HallucinoteAnalyzer received 0

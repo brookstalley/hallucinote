@@ -994,3 +994,69 @@ def test_extract_bare_song_has_empty_collections(tmp_path: Path, monkeypatch):
     assert extract["returns"] == []
     assert extract["cue_points"] == []
     assert extract["song"]["name"] == slug
+
+
+def _tag_manifest_db_seq(captures_dir: Path, db_seq: int) -> None:
+    manifest_file = captures_dir / "manifest.json"
+    raw = json.loads(manifest_file.read_text(encoding="utf-8"))
+    raw["db_seq"] = db_seq
+    manifest_file.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
+    """AUD-4W7K full loop at the handler level: analyze a db_seq=1 capture
+    (report written with db_seq=1), then analyze a second capture with
+    compare_to=1 — the new report diffs against the first and the summary
+    carries the significant-delta count."""
+    first = _write_captures(
+        synthetic_song / "captures" / "20260610T010000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(first, 1)
+    baseline_result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(first),
+    )
+    baseline = json.loads(
+        Path(baseline_result["report_path"]).read_text(encoding="utf-8")
+    )
+    assert baseline["db_seq"] == 1
+    assert "compare_to" not in baseline_result["summary"]
+
+    second = _write_captures(
+        synthetic_song / "captures" / "20260610T020000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(second, 2)
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(second), compare_to=1,
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert report["db_seq"] == 2
+    assert report["compare_to"]["baseline"]["ref"] == baseline_result["report_path"]
+    # Identical synthetic captures → nothing significant; the overshoot
+    # delta rides the summary so a count change can't hide in the report.
+    assert result["summary"]["compare_to"] == {
+        "baseline_ref": baseline_result["report_path"],
+        "significant_delta_count": 0,
+        "overshoot_delta": 0,
+        "added_surfaces": [],
+        "missing_surfaces": [],
+    }
+
+
+def test_analyze_handler_compare_to_unknown_seq_teaches(synthetic_song: Path):
+    """A seq nothing matches refuses with the available seqs — before any
+    DSP runs (the analysis dir is resolved up front)."""
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260610T030000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(captures, 5)
+    analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures),
+    )
+    with pytest.raises(ValueError, match="db_seq=99"):
+        analysis_handlers.analyze_handler(
+            None, song_slug="test-song", captures_dir=str(captures),
+            compare_to=99,
+        )

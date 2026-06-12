@@ -216,6 +216,9 @@ _EXPECTED_AUTOMATION_ACTIONS = {
     "help", "list", "clear", "clear_all", "write_envelope", "get_envelope",
     # W6-G/W6-H: read_envelope is the new keystone; get_envelope kept as alias.
     "read_envelope",
+    # ENV-7G4K → ENV-9P4T: gesture-recorded arrangement automation, one
+    # transport pass for N arcs with per-parameter windowing.
+    "perform_batch",
 }
 
 

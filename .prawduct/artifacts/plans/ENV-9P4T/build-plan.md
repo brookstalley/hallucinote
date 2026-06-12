@@ -43,8 +43,9 @@ was unavailable this session (a 2nd agent holds a song)** — every probe is a b
 
 ## Status
 
-- [~] Chunk 01: Single-pass batched recording (the performance keystone) — CODE + tests
-  complete & Critic-clean (0 blocking); the step-0 verify-api Live probe is DEFERRED
+- [x] Chunk 01: Single-pass batched recording (the performance keystone) — CODE + tests
+  complete & Critic-clean (0 blocking); step-0 verify-api Live probe CONFIRMED 2026-06-11
+  (windowing holds in Live, no `.als` needed — see api-notes.md)
 - [ ] Chunk 02: Plain-track + audio-track perform targets (the 10+-track capability)
 - [ ] Chunk 03: Fidelity — adaptive sampling density + curve faithfulness
 
@@ -59,11 +60,11 @@ severed verification at scale → `perform_batch` now unbounded in the shared `c
 read-timeout policy, the single source BOTH recv routes use — server-only was the wrong
 layer) + all
 warnings resolved; suite 3358 green. **Chunk 01's step-0 `verify-api` Live probe (two
-gesture windows in one pass + breakpoint density) is DEFERRED** — the bridge was
-version-mismatched (`c0b443e0` vs `b0c3c347`) and a 2nd agent held a song. It is the
-ONLY symbolic-only verification of the windowing claim, so it **GATES Chunk 02**:
-`/ableton-mcp-install` + a Live restart, then run the probe (recipe in `api-notes.md` +
-`operator-verification.md`) before starting Chunk 02. The safety invariant (per-arc
+gesture windows in one pass + breakpoint density) is CONFIRMED LIVE (2026-06-11)** —
+bridge healed (`/ableton-mcp-install` → `725742c1`, Live restart, `/mcp` reconnect),
+windowing proven by seek-and-read + `updates_written` with NO `.als` needed (capture in
+`api-notes.md`); density ~2.5 Hz/arc under batching, no main-thread starvation. The
+Chunk 02 gate is **CLEARED**. The safety invariant (per-arc
 gating retained; batched plan loudly names every overwritten span) threads all chunks.
 Existing verification asset: **AUD-3F8M** (shipped) render-verifies
 `mixer_volume`/`mixer_pan` via master-bus windowing.

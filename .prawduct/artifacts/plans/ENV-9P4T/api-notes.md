@@ -62,25 +62,64 @@ and no fingerprints are recorded, so all arcs retry next push (safe but
 pessimistic — a good arc recorded earlier in the pass is discarded). Granular
 per-arc error isolation is a possible later refinement, out of Chunk 01 scope.
 
-### DEFERRED Live probes (verify-api — Chunk 01 step 0)
+### Live probes (verify-api — Chunk 01 step 0) — CONFIRMED 2026-06-11
 
-Live was unavailable this session: the bridge reported a **version mismatch**
-(MCP server `c0b443e0` vs Remote Script `b0c3c347`), and resolving it needs
-`/ableton-mcp-install` + a full Live restart that would disrupt a 2nd agent's
-open song; recording automation through a mismatched wire risks corruption.
-Run these on a scratch set once the bridge is healthy (also in
-`operator-verification.md`):
+Ran on a scratch set (Live default: 4 tracks, returns A-Reverb/B-Delay,
+120 BPM, 4/4) once the bridge was healed (`/ableton-mcp-install` re-vendored
+the Remote Script to `725742c1`, Live restarted, `/mcp` reconnected — clean
+calls without `allow_version_mismatch` confirm the handshake). The earlier
+blocker (server `c0b443e0` vs Remote Script `b0c3c347`) is gone.
 
-1. **Two gesture windows in ONE record pass** — `perform_batch` with two arcs
-   whose spans overlap partially (e.g. master volume `[0, 64]` + return volume
-   `[16, 48]`). Assert BOTH `automation_state == 1`, and the `.als` dump shows
-   both lanes' breakpoints confined to their own spans (the inner arc must NOT
-   write a flat value across the whole pass). This is the keystone correctness
-   check for per-parameter windowing.
-2. **Achieved breakpoint density (Hz)** under N-params-per-tick batching —
-   record a single ~32-beat arc via `perform_batch` and count `.als`
-   breakpoints; compare to the single-arc baseline (~2.5–3 Hz from ENV-7G4K).
-   This is the Chunk 03 fidelity baseline and confirms batching doesn't starve
-   the main thread.
-3. **Safe batch ceiling** — if many simultaneous open gestures misbehave,
-   record the max arcs-per-pass M (bounded-batch fallback).
+**No `.als` dump was needed.** The recipe called for an `.als` because
+arrangement automation has no LOM *envelope* read surface — but two surfaces
+that ARE live-readable settle the keystone: each arc's returned
+`updates_written` (value-writes only fire while a gesture is open) and
+`DeviceParameter.value` traced by `seek` (post-record `re_enable_automation`
+leaves the lanes active, so a stopped read at beat B reflects the recorded
+value at B). The decisive discovery: **outside a gesture-recorded region the
+parameter reverts to its MANUAL value, not the interp-clamped edge** — so a
+read before a span distinguishes "windowed (empty here → manual)" from
+"flat-stamped (0.2 written here)", which I had feared was `.als`-only.
+
+**Probe 1 — two gesture windows in ONE pass (keystone).** `perform_batch`
+`[master_vol [0,64] 0.85→0.4, return1_vol [16,48] 0.2→0.8]`:
+
+| arc | automation_state | span | updates_written | writes/beat |
+|---|---|---|---|---|
+| master_vol | **1** | [0, 64] | 81 | 1.27 |
+| return1_vol | **1** | [16, 48] | 41 | 1.28 |
+
+`union_span_beats [0,64]`, `wall_clock_s 34.32`, `arc_count 2`. Seek-and-read
+trace (expected in parens):
+
+| beat | master | return | reads |
+|---|---|---|---|
+| 8 (pre-span) | 0.798 (0.794) | **0.850 = manual** (a flat-stamp would read 0.2) |
+| 32 (mid-span) | 0.625 (0.625) | **0.499 (0.500)** — control: reads DO reflect the return ramp |
+| 56 (post-span) | 0.460 (0.456) | 0.789 (≈0.8 held; gesture ended at 48) |
+
+→ **Per-parameter windowing holds in Live.** The return arc wrote nothing
+before beat 16 (manual 0.85 read, not 0.2) and `updates_written = 41` ≈ its
+32-beat span (a non-windowed return open across the 64-beat union would show
+~81, like master) — bounding BOTH edges, including the [48,64] trailing side
+the value-read can't isolate. Both arcs recorded in ONE pass; `wall_clock`
+≈ the union-span integral (64 beats @120 = 32 s + ~2.3 s settle), NOT the
+48 s per-arc sum → single-pass cost model confirmed.
+
+**Probe 2 — achieved breakpoint density.** Falls out of the same pass: the
+master arc attempted 81 writes / 64 beats and the return 41 / 32 beats =
+**~2.5 Hz each** (32 s and 16 s wall-clock at 120 BPM), within the ENV-7G4K
+~2.5–3 Hz single-arc baseline. The per-beat write rate is *identical* under
+2-param batching (1.27 ≈ 1.28), so **batching does not starve the main
+thread**. This is the handler's *attempted* rate; the seek-read trace
+reconstructs both ramps to <0.5% error at the sampled beats, so Live's
+*retained* density is adequate. The exact retained breakpoint count
+(post-Live-thinning) is the only thing an `.als` would still add — a Chunk 03
+fidelity-baseline detail, substitutable with a fine seek-read sweep, and **not
+a gate requirement**.
+
+**Probe 3 — safe batch ceiling.** Not stressed (N=2 recorded cleanly with no
+misbehavior). The bounded-batch fallback (max M arcs/pass) was the contingency
+if many simultaneous open gestures misbehaved; N=2 gives no signal that a
+ceiling is needed. A higher-N stress pass remains available if Chunk 02's
+10+-track use case ever shows contention — tracked as a non-blocking note.

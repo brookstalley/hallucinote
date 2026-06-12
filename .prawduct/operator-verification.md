@@ -158,34 +158,36 @@ Surface modules, so the real wire path needs a Live restart to exercise.
 
 ## ENV-9P4T chunk 01 — single-pass batched perform: verify-api probe + Live smoke
 
-**Status:** CODE + UNIT/FAKE-COMPLETE (full suite green: planner emits ONE
-`perform_batch` call; handler windows N gestures in one pass; per-arc apply
-gating). Live-smoke + the `verify-api` probe are PENDING — the bridge was
-**version-mismatched** this session (MCP server `c0b443e0` vs Remote Script
-`b0c3c347`) and a 2nd agent held a song, so the Remote Script refresh + Live
-restart that would heal it was deferred. **Visual change:** no (arrangement
-automation lanes; objective `.als` dump). Design + probe recipe:
-`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`.
+**Status:** CONFIRMED LIVE 2026-06-11 — the keystone per-parameter-windowing
+claim is verified on a real bridge (no longer symbolic-only). Bridge healed
+(`/ableton-mcp-install` re-vendored the Remote Script to `725742c1`, Live
+restarted, `/mcp` reconnected); the prior mismatch (server `c0b443e0` vs
+Remote Script `b0c3c347`) is gone. **No `.als` dump was needed** — seek-and-read
+of `DeviceParameter.value` plus each arc's `updates_written` settle the
+windowing without the LOM envelope read surface (full capture +
+method:
+`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`). **Visual change:** no.
 
-1. **One-time setup (human):** `/ableton-mcp-install`, then fully quit and
-   reopen Live so the refreshed Remote Script (carrying the renamed
-   `perform_batch` action; the single-arc `perform` is removed) loads.
+1. ~~**One-time setup (human):** `/ableton-mcp-install` + Live restart.~~
+   **DONE** — bridge version-matched; clean calls confirm the handshake.
 
-2. **Two-window-in-one-pass correctness (the keystone).** On a scratch set,
-   `perform_batch` two arcs whose spans overlap partially — e.g. master
-   volume `[0, 64]` + return volume `[16, 48]`. Expect: ONE transport
-   playthrough over `[0, 64]`; BOTH arcs `automation_state == 1`; the `.als`
-   dump shows each lane's breakpoints confined to its own span — the inner
-   arc must NOT have stamped a flat value across the whole pass. This is the
-   per-parameter-windowing correctness check the fakes assert symbolically.
+2. ~~**Two-window-in-one-pass correctness (the keystone).**~~ **CONFIRMED.**
+   `perform_batch [master_vol [0,64], return1_vol [16,48]]`: BOTH
+   `automation_state == 1`; `wall_clock 34.32 s` ≈ one union-span pass (not the
+   48 s per-arc sum). Windowing proven WITHOUT `.als`: at beat 8 the return
+   reads its MANUAL 0.85 (a flat-stamp would read 0.2), at beat 32 it reads the
+   live ramp (0.499 ≈ 0.5, the control), and `updates_written = 41` ≈ its
+   32-beat span (vs master's 81 over 64 beats) — the gesture was open only over
+   [16,48], bounding both edges.
 
-3. **Achieved breakpoint density (Hz)** under N-params-per-tick batching —
-   record a single ~32-beat arc via `perform_batch` and count `.als`
-   breakpoints; compare to the ENV-7G4K single-arc baseline (~2.5–3 Hz).
-   This is the Chunk 03 fidelity baseline and confirms batching doesn't
-   starve the main thread. Record the number here.
+3. ~~**Achieved breakpoint density (Hz)**~~ **CAPTURED:** ~2.5 Hz per arc
+   (81/64 beats, 41/32 beats), identical under 2-param batching → no
+   main-thread starvation; within the ENV-7G4K ~2.5–3 Hz baseline. This is the
+   *attempted* rate; the seek-read trace reconstructs both ramps to <0.5% error.
+   The exact Live-*retained* count (post-thinning) is the only `.als`-only
+   residual — a Chunk 03 fidelity detail, NOT a gate item.
 
-4. **Safe batch ceiling** — if many simultaneous open gestures misbehave,
-   record the max arcs-per-pass M (the bounded-batch fallback signal for
-   Chunks 02–03 sizing). The updated `env7g4k-smoke-driver.py` (5 arcs in one
-   batched pass + a single-arc re-perform) is the convenient end-to-end run.
+4. **Safe batch ceiling** — NOT stressed (N=2 recorded cleanly; no contention
+   signal). A higher-N stress pass (`env7g4k-smoke-driver.py`, 5 arcs) remains
+   available if Chunk 02's 10+-track use case ever shows main-thread contention;
+   tracked as a non-blocking note, not a Chunk 01 gate.

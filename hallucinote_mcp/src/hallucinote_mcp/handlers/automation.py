@@ -1647,34 +1647,42 @@ def _resolve_perform_target(
     return mixer.volume if target_kind == "mixer_volume" else mixer.panning
 
 
-def _wait_for_record_mode_on_worker(
+def _wait_for_song_flag_on_worker(
     context: LiveContext,
+    attr: str,
     expected: bool,
     *,
     timeout_s: float,
     poll_interval_s: float = _PERFORM_SETTLE_POLL_S,
 ) -> None:
-    """Settle-poll ``song.record_mode`` until it reads ``expected``.
+    """Settle-poll ``bool(getattr(song, attr))`` until it reads ``expected``.
 
-    Probe 10 (Live 12.4.1): ``record_mode`` applies ASYNC — an immediate
-    read-back after the set returns the OLD value; it reads true ~300 ms
-    later. Runs on the worker thread; each read is its own main-thread
-    bout, with ``time.sleep`` between bouts on the worker so Live's main
-    thread can pump the state propagation we're waiting on.
+    Probe 10 (Live 12.4.1): both ``record_mode`` AND
+    ``session_automation_record`` apply ASYNC — an immediate read-back after the
+    set returns the OLD value; the new value lands ~300 ms later
+    (``session_automation_record`` empirically confirmed async 2026-06-12: set
+    True → immediate read False → later read True). Runs on the worker thread;
+    each read is its own main-thread bout, with ``time.sleep`` between bouts on
+    the worker so Live's main thread can pump the state propagation we're
+    waiting on.
+
+    MUST be called DIRECTLY on the worker thread (it polls via ``run_on_main``
+    itself); routing it through ``_attempt``'s ``run_on_main`` would nest
+    ``run_on_main`` from the main thread and deadlock until timeout.
     """
     deadline = time.monotonic() + timeout_s
     while True:
         observed = context.run_on_main(
-            lambda: bool(context.song.record_mode)
+            lambda: bool(getattr(context.song, attr))
         )
         if observed == expected:
             return
         if time.monotonic() >= deadline:
             raise TimeoutError(
-                f"song.record_mode did not settle to {expected} within "
-                f"{timeout_s:.1f}s (record_mode applies asynchronously — "
-                f"probe 10). Live may be busy or showing a modal dialog; "
-                f"retry, or pass a larger settle_timeout_ms."
+                f"song.{attr} did not settle to {expected} within "
+                f"{timeout_s:.1f}s ({attr} applies asynchronously — probe 10). "
+                f"Live may be busy or showing a modal dialog; retry, or pass a "
+                f"larger settle_timeout_ms."
             )
         time.sleep(poll_interval_s)
 
@@ -1842,6 +1850,26 @@ def perform_batch_handler(
                 if a.state != "open":
                     continue
                 if beat >= a.span_end:
+                    # ENV-8K2R #2: pin the arc's AUTHORED final value right
+                    # before closing — but ONLY when the gesture actually ramped
+                    # (updates_written > 0). The ramp's last sub-span_end tick
+                    # fired at beat < span_end (value = interp of that earlier
+                    # beat), so closing without this write left the recorded
+                    # endpoint up to ~0.8 beat short of the authored final;
+                    # writing interp(span_end) inside the still-open gesture lands
+                    # the exact endpoint. A DEGENERATE window (the playhead jumped
+                    # the whole span in one tick → zero ramp writes) is left at
+                    # zero writes ON PURPOSE: record_perform_result then still
+                    # treats its automation_state=1 as a stale-lane
+                    # non-verification and re-performs. Pinning a lone endpoint
+                    # there would mask a sub-tick arc the perform path can't
+                    # faithfully record and mark it done (ENV-2T9K
+                    # tempo-reduction is that fidelity fix, not this).
+                    if a.updates_written > 0:
+                        a.param.value = _interp_performed_value(
+                            a.cleaned, a.span_end
+                        )
+                        a.updates_written += 1
                     a.param.end_gesture()
                     a.state = "closed"
                 else:
@@ -1861,8 +1889,8 @@ def perform_batch_handler(
 
             context.run_on_main(_arm_and_seek)
 
-            _wait_for_record_mode_on_worker(
-                context, True, timeout_s=settle_timeout_s
+            _wait_for_song_flag_on_worker(
+                context, "record_mode", True, timeout_s=settle_timeout_s
             )
 
             # Open the gestures for arcs already active at the union start
@@ -1933,26 +1961,25 @@ def perform_batch_handler(
                     context.song, "record_mode", saved["record_mode"]
                 ),
             )
-            # record_mode applies ASYNCHRONOUSLY (probe 10) — a bare setattr
-            # that's accepted but never applies would leave the set armed with
-            # no signal. Settle-verify the disarm; a timeout lands in
-            # restore_failures (surfaced as an operator warning). NOTE: the
-            # sibling session_automation_record restore below is ALSO async
-            # (empirically confirmed 2026-06-12: set True → immediate read
-            # False → later read True) and is NOT yet settle-verified — the one
-            # remaining armed-set restore without detection. Tracked as
-            # ENV-8K2R item 1 (parametrize this helper over the attribute);
-            # deferred because the fix is a handler change needing an /mcp
-            # reconnect to live-verify the disarm path.
+            # Both record_mode AND session_automation_record apply
+            # ASYNCHRONOUSLY (probe 10) — a bare setattr that's accepted but
+            # never applies would leave the set ARMED with no signal, so the next
+            # playback could silently record clip envelopes. Settle-verify BOTH
+            # disarms (ENV-8K2R #1: session_automation_record — empirically
+            # confirmed async 2026-06-12, set True → immediate read False → later
+            # read True — was the one remaining armed-set restore without
+            # detection). A timeout lands in restore_failures (surfaced as an
+            # operator warning).
             #
-            # Call the helper DIRECTLY on this worker thread — it polls via
+            # Call the settle helper DIRECTLY on this worker thread — it polls via
             # run_on_main itself, so routing it through _attempt's run_on_main
             # would nest run_on_main FROM the main thread and deadlock until
             # timeout against real async Live (the arm-side call at the top is
             # direct for exactly this reason).
             try:
-                _wait_for_record_mode_on_worker(
-                    context, saved["record_mode"], timeout_s=settle_timeout_s
+                _wait_for_song_flag_on_worker(
+                    context, "record_mode", saved["record_mode"],
+                    timeout_s=settle_timeout_s,
                 )
             except Exception as exc:  # prawduct:allow prawduct/broad-except -- restore-path verification must record + continue, never mask the original failure
                 restore_failures.append(f"record_mode_settle: {exc}")
@@ -1967,6 +1994,20 @@ def perform_batch_handler(
                     saved["session_automation_record"],
                 ),
             )
+            try:
+                _wait_for_song_flag_on_worker(
+                    context, "session_automation_record",
+                    saved["session_automation_record"],
+                    timeout_s=settle_timeout_s,
+                )
+            except Exception as exc:  # prawduct:allow prawduct/broad-except -- restore-path verification must record + continue, never mask the original failure
+                restore_failures.append(
+                    f"session_automation_record_settle: {exc}"
+                )
+                logger.warning(
+                    "perform_batch session_automation_record disarm did not "
+                    "settle: %s", exc
+                )
             _attempt(
                 "re_enable_automation",
                 lambda: context.song.re_enable_automation(),

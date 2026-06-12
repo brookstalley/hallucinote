@@ -72,7 +72,16 @@ This plan extends an existing codebase — Project Structure / Dependency sectio
   a `read_timeout` field; the planner caps perform_batch at `union_seconds×3 + 90s` (clears the
   handler's own budget, bounds a dead worker); executor forwards it only when set (1-arg send_fn
   doubles untouched on the non-perform path). 722 sync tests pass (+5 new).
-- [ ] Chunk 03 — recording-path data-safety + fidelity (ENV-8K2R #1, #2) · batched Live smoke
+- [x] Chunk 03 — recording-path data-safety + fidelity (ENV-8K2R #1, #2) · CODE+tests done,
+  Live smoke PENDING (batched) — #1: `_wait_for_record_mode_on_worker` generalized to
+  `_wait_for_song_flag_on_worker(attr, ...)`; the `session_automation_record` disarm is now
+  settle-verified on the worker thread too (the last async armed-set restore without detection).
+  #2: `_write_or_close` pins the authored final value (`interp(span_end)`) before `end_gesture`
+  — but ONLY when the gesture actually ramped (`updates_written > 0`). **Design decision:** a
+  degenerate one-tick window is deliberately left at zero writes so its stale-lane
+  non-verification (re-perform) still fires — an unconditional final-pin would record a lone
+  endpoint for a sub-tick arc and mask it as done (ENV-2T9K tempo-reduction is the real fidelity
+  fix for sub-tick arcs, not this). 1113 MCP tests pass (+2 new; degenerate test preserved green).
 - [ ] Chunk 04 — ENV-2T9K perform fidelity via tempo-reduction-during-record · batched Live smoke
 
 Context (2026-06-12, branch `feature/perform-handler-hardening` off `develop`): clean baseline

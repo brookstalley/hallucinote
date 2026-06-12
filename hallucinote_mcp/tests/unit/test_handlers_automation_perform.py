@@ -139,6 +139,10 @@ class FakePerformSong:
         # When True, a disarm (record_mode=False) is accepted (event logged)
         # but never applies — Live's async-apply failing silently (probe 10).
         self.disarm_never_applies = False
+        # ENV-8K2R #1: the same async-disarm-never-applies simulation for
+        # session_automation_record (empirically async too) — set True to prove
+        # the restore-path settle-verify catches the silently-armed set.
+        self.sar_disarm_never_applies = False
         self._record_mode_actual = False
         self._record_mode_pending: bool | None = None
         self._record_mode_reads_until_apply = 0
@@ -177,6 +181,11 @@ class FakePerformSong:
         # log once _events exists and init is done.
         if hasattr(self, "_sar"):
             self._events.append(("session_automation_record", bool(v)))
+            # ENV-8K2R #1: simulate the async DISARM that's accepted but never
+            # applies (Live's silent async-apply failing) — the value is logged
+            # but _sar stays armed, so the settle-verify must catch it.
+            if not bool(v) and self.sar_disarm_never_applies:
+                return
         self._sar = bool(v)
 
     # -- current_song_time: advances while playing ---------------------
@@ -524,9 +533,11 @@ def test_perform_batch_closes_every_open_gesture_when_ramp_raises():
 def test_perform_batch_never_nests_run_on_main():
     """run_on_main marshals to Live's main thread and blocks — calling it from
     WITHIN a run_on_main bout (depth > 1) deadlocks against real async Live.
-    The disarm settle-verify calls the worker-only `_wait_for_record_mode_on_worker`
+    The disarm settle-verify calls the worker-only `_wait_for_song_flag_on_worker`
     (which itself polls via run_on_main) DIRECTLY on the worker, not via
-    `_attempt`'s run_on_main. This fails if anyone re-wraps it (max depth 2)."""
+    `_attempt`'s run_on_main — for BOTH the record_mode and the
+    session_automation_record disarm. This fails if anyone re-wraps it (max
+    depth 2)."""
     ctx = FakeCtx()
     _one(
         ctx, target_kind="mixer_volume", master=True,
@@ -579,6 +590,39 @@ def test_perform_batch_settle_verifies_disarm():
     )
     assert any("record_mode_settle" in f
                for f in result.get("restore_failures", [])), result
+
+
+def test_perform_batch_settle_verifies_session_automation_record_disarm():
+    """ENV-8K2R #1: session_automation_record ALSO applies asynchronously
+    (probe 10, confirmed 2026-06-12) — its restore-path disarm is now
+    settle-verified too. A disarm that's ACCEPTED but never applies surfaces in
+    restore_failures (operator-visible) instead of leaving the set silently
+    armed, where the next playback could record clip envelopes."""
+    ctx = FakeCtx()
+    ctx.song.sar_disarm_never_applies = True
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
+        settle_timeout_ms=20,
+    )
+    assert any("session_automation_record_settle" in f
+               for f in result.get("restore_failures", [])), result
+
+
+def test_perform_batch_pins_authored_final_value_before_close():
+    """ENV-8K2R #2: a normal (ramped) arc records its AUTHORED final breakpoint
+    value — the last value SET before end_gesture equals the endpoint, so the
+    recorded lane isn't left up to ~0.8 beat short of the authored final."""
+    ctx = FakeCtx()
+    param = ctx.song.master_track.mixer_device.volume
+    final_value = 0.137
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.9), _bp(8.0, final_value)],
+    )
+    # The exact endpoint is pinned immediately before the gesture closes.
+    assert param.own[-1] == ("end",)
+    assert param.own[-2] == ("set", round(final_value, 6))
 
 
 def test_perform_batch_exception_path_surfaces_armed_set():

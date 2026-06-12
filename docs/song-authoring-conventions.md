@@ -371,11 +371,11 @@ What that means when you author one:
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
 
-## Audio-track envelopes (still refused)
+## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 
-**Mixer envelopes on audio tracks** can't be authored yet. The DB models audio session clips (CLP-AUD1 wave 1 — `create_audio_clip`), but the envelope routing change that lets them host envelopes is ENV-8H1T scope. Until that ships, workaround: route the source to a sub-bus group track and automate the group — group envelopes are performed (above).
+**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
 
-Long envelopes spanning multiple session clips (midi-track hosts) are also refused — author them with a per-section partition pattern (a future version may auto-partition). Performed arcs have no such limit; they're span-bounded, not clip-bounded.
+**Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
 
 ---
 

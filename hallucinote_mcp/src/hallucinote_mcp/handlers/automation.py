@@ -1922,8 +1922,14 @@ def perform_batch_handler(
             # record_mode applies ASYNCHRONOUSLY (probe 10) — a bare setattr
             # that's accepted but never applies would leave the set armed with
             # no signal. Settle-verify the disarm; a timeout lands in
-            # restore_failures (surfaced as an operator warning), the one
-            # armed-set failure mode that otherwise had no detection.
+            # restore_failures (surfaced as an operator warning). NOTE: the
+            # sibling session_automation_record restore below is ALSO async
+            # (empirically confirmed 2026-06-12: set True → immediate read
+            # False → later read True) and is NOT yet settle-verified — the one
+            # remaining armed-set restore without detection. Tracked as
+            # ENV-8K2R item 1 (parametrize this helper over the attribute);
+            # deferred because the fix is a handler change needing an /mcp
+            # reconnect to live-verify the disarm path.
             #
             # Call the helper DIRECTLY on this worker thread — it polls via
             # run_on_main itself, so routing it through _attempt's run_on_main

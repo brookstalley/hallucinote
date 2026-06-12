@@ -175,6 +175,20 @@ test (signature + infer assertions); `test_mutations.py` —
 ride → perform; audio per-clip (covered) → refused_audio/CLP-AUD2; within-clip
 midi → session_clip (preserved). Within-clip session-clip path is unchanged.
 
+### Chunk 02 verify-api (Done-when step 0) — CONFIRMED LIVE 2026-06-12
+
+On the scratch set (`1-MIDI` = track_index 1, `3-Audio` = track_index 3),
+`perform_batch` of three arcs in one pass — plain-MIDI `mixer_volume` [0,16]
+0.8→0.4, plain-MIDI `mixer_pan` [0,16] −0.5→0.5, and AUDIO-track `mixer_volume`
+[0,16] 0.8→0.5 — recorded with **`automation_state == 1` on all three**
+(`updates_written` 22 each; `wall_clock` 10.6 s). Seek-read at beat 8 (mid-span):
+plain vol **0.612** (≈0.6), plain pan **−0.030** (≈0.0), audio vol **0.659**
+(≈0.65) — all faithful. So a non-master/non-group **plain MIDI track** AND an
+**audio track** perform their mixer volume/pan cleanly, exactly as master+return
+did (chunk 01). The handler path (`_resolve_perform_target` → `track.mixer_device`)
+was already kind-agnostic, so this exercised the existing handler through the
+new chunk-02 routing — no handler change involved.
+
 ## Chunk 03 — fidelity: verify-api verdict (the framing does not survive the probe)
 
 **Done-when step 0 (verify-api) — CONFIRMED LIVE 2026-06-12.** The chunk's

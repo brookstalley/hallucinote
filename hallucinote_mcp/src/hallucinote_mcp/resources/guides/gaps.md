@@ -43,12 +43,12 @@ inherits the envelope. (`clip_cc / clip_pitch_bend / note_expression` on
 arrangement clips work normally.)
 
 ### Audio-track envelopes (mixer / pan / send / device_parameter)
-Hallucinote v1 models session clips as MIDI-only, so audio-track hosts have
-no covering session clip to carry the envelope (the routing change that lets
-session audio clips host them is ENV-8H1T scope). The DB-mutator refuses
-audio-host target kinds with a teaching error.
-**Workaround:** route the source(s) to a sub-bus group track and put the
-envelope on the group's mixer — group hosts are performed (next entry).
+ENV-9P4T: audio-track hosts are authorable. A clip-independent (e.g.
+song-spanning) ride routes to **perform** — a continuous arrangement lane,
+like a plain/group track (the mutator admits audio; the planner infers the
+route from the envelope's span: covered by one session clip → per-clip,
+else → perform). A per-clip ride that IS covered by a single audio session
+clip is still refused, pending the session-audio-clip push surface CLP-AUD2.
 
 ### Master / group / return envelopes — performed, not clip-hosted
 The master track cannot host clips, so there is no

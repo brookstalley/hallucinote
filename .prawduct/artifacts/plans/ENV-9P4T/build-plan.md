@@ -1,7 +1,7 @@
 ---
 artifact: build-plan
 version: 2
-scope: null
+scope: ENV-9P4T
 depends_on:
   - artifact: discovery
     path: .prawduct/artifacts/plans/ENV-9P4T/discovery.md
@@ -49,7 +49,9 @@ was unavailable this session (a 2nd agent holds a song)** — every probe is a b
 - [x] Chunk 02: Plain-track + audio-track perform targets (the 10+-track capability)
   — infer-from-span routing in `classify_envelope_route` + audio admitted in the
   `create_envelope` mutator; perform addressing was already kind-agnostic. Critic
-  `chunk` clean (0 blocking; 2 warnings + 1 note resolved). Suite green.
+  `chunk` clean (0 blocking; 2 warnings + 1 note resolved). Suite green. verify-api
+  (Done-when step 0) CONFIRMED LIVE 2026-06-12: plain-MIDI vol+pan + audio-track vol
+  perform in one pass, `automation_state==1` ×3, faithful seek-read (api-notes.md).
 - [~] Chunk 03: Fidelity — PROBE COMPLETE, framing invalidated, implementation
   spun out. The verify-api probe (Done-when step 0, the chunk's real deliverable)
   CONFIRMED LIVE that "adaptive sampling for higher density" is **not realizable**:
@@ -71,8 +73,12 @@ and `apply_push_results` gates each arc independently on its `automation_state` 
 zero-write stale-lane guard). Critic `final` run 3× — 1 blocking (wire read-timeout
 severed verification at scale → `perform_batch` now unbounded in the shared `client.send`
 read-timeout policy, the single source BOTH recv routes use — server-only was the wrong
-layer) + all
-warnings resolved; suite 3358 green. **Chunk 01's step-0 `verify-api` Live probe (two
+layer) + most warnings resolved; suite 3358 green. **Two chunk-01 final warnings remain
+as tracked carryovers** (ENV-8K2R, surfaced by the ENV-9P4T cumulative Critic): the async
+`session_automation_record` restore needs a settle-verify, and `server.py`'s private
+read-timeout re-exports are back-compat to in-repo tests — both are perform-handler
+changes deferred because they need an `/mcp` reconnect to live-verify.
+**Chunk 01's step-0 `verify-api` Live probe (two
 gesture windows in one pass + breakpoint density) is CONFIRMED LIVE (2026-06-11)** —
 bridge healed (`/ableton-mcp-install` → `725742c1`, Live restart, `/mcp` reconnect),
 windowing proven by seek-and-read + `updates_written` with NO `.als` needed (capture in

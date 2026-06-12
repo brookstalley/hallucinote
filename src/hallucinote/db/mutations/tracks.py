@@ -250,12 +250,24 @@ def set_track_routing(
     if not changes:
         return
     actor, request_id = _resolve_actor_and_request(actor, request_id)
-    select_cols = ", ".join(["song_id", *sorted(_ROUTING_FIELDS)])
+    select_cols = ", ".join(["song_id", "kind", *sorted(_ROUTING_FIELDS)])
     row = conn.execute(
         f"SELECT {select_cols} FROM tracks WHERE id = ?", (track_id,)
     ).fetchone()
     if row is None:
         return
+    if row["kind"] == "master":
+        # The master row has no addressable routing surface in the push path
+        # (it carries no ableton_link track index, and plan_push_routing skips
+        # it), so persisting routing here would silently vanish at push. Reject
+        # at authoring time rather than accept a dead-end. To send another
+        # track's output to the master, set THAT track's
+        # output_routing_kind='master' (routing TO master, not ON it).
+        raise ValueError(
+            "routing on a master track is not supported (the master has no "
+            "addressable routing surface in the push path); route other tracks "
+            "TO the master via output_routing_kind='master' on those tracks"
+        )
     # Merge requested changes over current state; validate the MERGED row so a
     # partial update can never leave an inconsistent reference.
     merged = {f: (changes[f] if f in changes else row[f]) for f in _ROUTING_FIELDS}

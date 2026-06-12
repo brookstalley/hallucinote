@@ -258,6 +258,19 @@ def test_set_track_routing_rejects_bad_monitor_state(conn, track):
         M.set_track_routing(conn, track_id=track, monitoring_state="in")  # case matters
 
 
+def test_set_track_routing_on_master_track_rejected(conn, song):
+    """RTE-1K9T (Critic W2): the master row has no addressable routing surface in
+    the push path (no ableton_link index; plan_push_routing skips it), so routing
+    authored ON it would silently vanish at push. Reject at authoring instead.
+    (Routing a normal track's output TO the master — kind='master' — is fine.)"""
+    mid = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                         kind="master")
+    with pytest.raises(ValueError, match="master track is not supported"):
+        M.set_track_routing(conn, track_id=mid, monitoring_state="In")
+    # No event emitted for the rejected write.
+    assert Q.get_track(conn, mid)["monitoring_state"] is None
+
+
 def test_set_track_routing_track_kind_requires_target(conn, track):
     with pytest.raises(ValueError, match="requires output_routing_target_id"):
         M.set_track_routing(conn, track_id=track, output_routing_kind="track")

@@ -5,6 +5,12 @@
 the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 **Effort:** L. **Branch:** `feature/rte-1k9t-track-routing`. **Base for PR/Critic:** `develop`.
 
+**Requirements Confidence: High.** Goal + requirements (R1–R5) are user-ratified (2026-06-12) and
+live-probed (Live 12.4.2); the routing surfaces, source-dependence, monitor dependency, and the
+no-group-creation constraint are all evidence-backed (design.md discovery table), not recalled. The
+one residual unverified premise — Live's non-track *input* default — is consciously scoped out of V1
+(D8) with the live-probe enqueued in `operator-verification.md`, so it constrains no shipped behavior.
+
 **Governance:** medium+ work → Critic per chunk (or rolled-up at PR per
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).

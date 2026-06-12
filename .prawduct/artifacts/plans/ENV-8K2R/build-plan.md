@@ -64,7 +64,14 @@ This plan extends an existing codebase — Project Structure / Dependency sectio
   re-exports dropped, `test_server.py` repointed at `client.read_timeout_for` (4 duplicate
   policy-value tests removed — covered in test_client.py; 3 wiring tests consolidated to 1
   parametrized "consults the policy" test). Affected suites green (1107 MCP tests pass).
-- [ ] Chunk 02 — planner + apply + client robustness (ENV-8K2R #3, #4, #5) · NO reconnect
+- [x] Chunk 02 — planner + apply + client robustness (ENV-8K2R #3, #4, #5) · NO reconnect —
+  #3: duplicate-target preflight moved BEFORE the fingerprint gate and seeded by skipped-unchanged
+  arcs too, so a changed arc colliding with an already-recorded lane is alerted, not silently
+  recorded over it (both visit orders). #4: apply layer cross-checks the handler's `arc_count`
+  against the returned per-arc entries (truncated/empty result now warns). #5: `ToolCall` gained
+  a `read_timeout` field; the planner caps perform_batch at `union_seconds×3 + 90s` (clears the
+  handler's own budget, bounds a dead worker); executor forwards it only when set (1-arg send_fn
+  doubles untouched on the non-perform path). 722 sync tests pass (+5 new).
 - [ ] Chunk 03 — recording-path data-safety + fidelity (ENV-8K2R #1, #2) · batched Live smoke
 - [ ] Chunk 04 — ENV-2T9K perform fidelity via tempo-reduction-during-record · batched Live smoke
 

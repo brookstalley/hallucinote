@@ -36,6 +36,15 @@ class ToolCall:
     args: dict[str, Any]
     key: str  # caller-chosen identifier; used in apply_push_results
     purpose: str = ""  # human-readable hint for the agent
+    # Per-call socket read ceiling, in seconds (ENV-8K2R #5). ``None`` =
+    # defer to the client's (tool, action) read-timeout policy (the default
+    # for every call). A planner sets an explicit value only when it can
+    # derive a *better* bound than the static policy — e.g. perform_batch,
+    # whose policy is intentionally UNBOUNDED (a fixed timeout would sever its
+    # verification) but which the planner caps at a union-span-derived ceiling
+    # so a dead worker can't block the push forever. The executor forwards it
+    # to ``client.send(read_timeout=...)`` only when set.
+    read_timeout: float | None = None
 
 
 @dataclass

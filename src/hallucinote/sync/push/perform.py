@@ -34,6 +34,21 @@ from .envelopes import classify_envelope_route
 
 _DEFAULT_BPM = 120.0
 
+# Client-side read ceiling for the perform_batch wire call (ENV-8K2R #5). The
+# read-timeout POLICY leaves perform_batch unbounded on purpose — a fixed socket
+# timeout would sever the per-arc ``automation_state`` verification this
+# write-only surface depends on. But a worker that dies mid-pass while the TCP
+# socket stays open would block ``push_cli`` forever, so the planner derives a
+# ceiling from the union-span realtime estimate it already computes. The bound
+# must comfortably clear the HANDLER's own wall-clock budget
+# (≈ union_seconds × _PERFORM_WALL_CLOCK_FACTOR(3) + a 10s floor + ~2× the
+# record-settle + the post-pass verification poll), so factor 3 + a generous
+# fixed buffer keeps a legitimately-long pass alive while still bounding a dead
+# worker. A false timeout only costs a fingerprint-gated re-perform next push
+# (no corruption), so we err toward the generous side.
+_PERFORM_READ_CEILING_FACTOR = 3.0
+_PERFORM_READ_CEILING_BUFFER_S = 90.0
+
 
 def _tempo_segments(
     conn: sqlite3.Connection, song_id: str,
@@ -291,11 +306,14 @@ def plan_push_performed_automation(
     # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
     # alert and the union-span cost.
     spans: list[tuple[str, float, float]] = []
-    # Addressing identity → first envelope id queued for it. Two changed arcs
-    # on ONE parameter can't both ride a single transport pass (the handler
-    # rejects the whole batch on a collision), so the planner keeps the first
-    # and loudly defers the rest — surfacing the authoring ambiguity instead
-    # of guessing or failing the entire phase.
+    # Addressing identity → first envelope id that CLAIMED it. Two envelopes
+    # addressing ONE Live parameter can't both ride a single transport pass (the
+    # handler rejects the whole batch on a collision), so the planner keeps the
+    # first claimant and loudly defers the rest. The claim is seeded by EVERY arc
+    # that owns a lane on the target — changed arcs queued this pass AND
+    # skipped-unchanged arcs whose lane is already recorded (ENV-8K2R #3) — so a
+    # changed arc colliding with an already-recorded lane is surfaced and
+    # deferred, never silently recorded over it.
     queued_targets: dict[tuple, str] = {}
 
     for env in eligible:
@@ -324,23 +342,30 @@ def plan_push_performed_automation(
             continue
         args, label = addressing
 
-        fingerprint = envelope_fingerprint(env, breakpoints)
-        performed = Q.get_performed_automation(conn, env["id"], session_id)
-        if performed is not None and performed["fingerprint"] == fingerprint:
-            skipped.append(label)
-            continue
-
+        # Duplicate-target preflight BEFORE the fingerprint gate (ENV-8K2R #3):
+        # claim the target for every arc that owns a lane on it, INCLUDING a
+        # skipped-unchanged arc below. A changed arc that collides with an
+        # already-claimed target (whether queued this pass or an already-recorded
+        # skipped lane) is deferred with a loud alert — not silently recorded
+        # over the other lane, which used to corrupt the skipped arc's stored
+        # fingerprint with no warning.
         target_key = perform_target_key(args)
         if target_key in queued_targets:
             plan.alert(
                 f"performed-automation: arc {env['id']} ({label}) targets the "
-                f"same parameter as already-queued arc "
+                f"same parameter as already-claimed arc "
                 f"{queued_targets[target_key]} — two performed arcs can't ride "
                 "one parameter in a single pass; performing only the first. "
                 "Merge them into one envelope."
             )
             continue
         queued_targets[target_key] = env["id"]
+
+        fingerprint = envelope_fingerprint(env, breakpoints)
+        performed = Q.get_performed_automation(conn, env["id"], session_id)
+        if performed is not None and performed["fingerprint"] == fingerprint:
+            skipped.append(label)
+            continue
 
         arcs.append({
             "arc_id": env["id"],
@@ -361,6 +386,14 @@ def plan_push_performed_automation(
                 f"perform {len(arcs)} arc(s) in ONE transport pass over "
                 f"beats {union_start:g}-{union_end:g} "
                 f"(~{union_seconds:.1f}s realtime playback)"
+            ),
+            # ENV-8K2R #5: cap the otherwise-unbounded read so a dead worker
+            # can't block push_cli forever, scaled to the realtime estimate so a
+            # legitimately-long pass is never falsely timed out.
+            read_timeout=round(
+                union_seconds * _PERFORM_READ_CEILING_FACTOR
+                + _PERFORM_READ_CEILING_BUFFER_S,
+                1,
             ),
         ))
         span_list = "; ".join(

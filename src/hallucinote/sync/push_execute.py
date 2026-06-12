@@ -617,8 +617,15 @@ def execute_push(
             action = call.args.get("action")
             params = {k: v for k, v in call.args.items() if k != "action"}
             req = Request(tool=call.tool, action=action or "", params=params)
+            # ENV-8K2R #5: a planner-derived read ceiling (perform_batch) is
+            # forwarded only when set; every other call keeps the client's
+            # (tool, action) policy, so 1-arg ``send_fn`` test doubles are
+            # untouched by the non-perform path.
+            send_kwargs: dict[str, Any] = {}
+            if call.read_timeout is not None:
+                send_kwargs["read_timeout"] = call.read_timeout
             try:
-                resp = send_fn(req)
+                resp = send_fn(req, **send_kwargs)
             except _CONNECTION_EXCS as exc:
                 # Connection-class failure (Live unreachable, socket error).
                 # Halt immediately — no point continuing without Live. Wire

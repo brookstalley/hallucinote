@@ -9,15 +9,21 @@ the PRE-MAIN submaster convention. **TRK-2H6K (groups) deferred** (D2).
 `feedback_critic_cadence_for_small_chunks` for the small symmetric chunks 02/05). Tests are
 contracts; capability-probe, never whitelist (`feedback_third_party_devices_require_capability_probing`).
 
-**Context (2026-06-12):** Chunks **01+02 DONE** — the MCP layer ships first-class track
-input/output routing + monitor state (6 new `ableton_track` actions) on a shared
-`handlers/_routing.py` (resolve/enumerate/atomic-write/read-shape helpers; `device.py` refactored
-onto it). Critic (final mode) passed: 0 blocking; 5 warnings + 4 notes all resolved (atomic set
-across all 3 handlers, stale tool-desc surfaces, read dedup, echo-vs-readback artifact reconcile,
-monitor-int raw surfacing). Suite 3397 passed / 2 skipped. **Next cycle: Chunk 03** (DB schema +
-`set_track_routing` mutator) — crosses the DB Schema + Mutator API boundaries (see
-`boundary-patterns.md`) and locks the persisted routing-target reference shape (D4); recommend a
-fresh `/clear`. Then 04 push → 05 pull → 06 convention/docs.
+**Context (2026-06-12):** Chunks **01+02+03 DONE.** 01+02: MCP layer ships first-class track
+input/output routing + monitor state (6 new `ableton_track` actions) on shared `handlers/_routing.py`.
+**03 (commit `2ac2812`):** the DB layer persists routing through the mutator path — 7 nullable cols on
+`tracks` (output/input routing kind + FK `target_id` + channel + `monitoring_state`); target is a
+SEMANTIC reference (`kind` + FK→`tracks.id` when `kind='track'`), never Live's display_name, so the
+submaster bus link survives renames/re-pushes; `ON DELETE SET NULL` leaves a detectable dangling
+state (kind='track', target NULL) push will treat as "target gone". `set_track_routing` emits one
+`TRACK_ROUTING_SET` (mirrors `set_track_mixer`); cross-field invariant (`target_id` ⟺ `kind='track'`)
+lives in the mutator, re-validated only for touched directions. CHECK asymmetry (**D6, new**):
+output+monitor CHECK-constrained (closed domains), input plain TEXT (open/hardware-bound, mutator
+validates — extensible without a destructive migration). Critic (final): 1 warning resolved
+(migration comment overstated the canary's CHECK-text reach — the canary checks column *presence*
+only), 0 blocking. Suite **3417 passed / 2 skipped**. **Next cycle: Chunk 04** (push — new `routing`
+phase after `mix`/before `devices`, `plan_push_routing` resolving FK→display_name, fingerprint-gated);
+recommend a fresh `/clear`. Then 05 pull → 06 convention/docs.
 
 ---
 
@@ -60,7 +66,7 @@ with tests — independently useful (replaces raw `ableton_probe` for routing). 
 - A receiving audio track can be set Monitor=In and have its input routing read back.
 - Tests mirror chunk 01; monitor-state round-trips. Green.
 
-### Chunk 03 — DB schema + routing mutator (+ events)  ·  status: pending
+### Chunk 03 — DB schema + routing mutator (+ events)  ·  status: done
 **Deliverables**
 - Add routing to the `tracks` model (D4: columns on `tracks` — output routing kind/target/channel,
   input routing, `monitoring_state`). Confirm columns-vs-side-table against `schema.sql` shape before

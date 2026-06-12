@@ -57,6 +57,9 @@ class FakeGestureParam:
         self.own: list[tuple] = []
         self._value = 0.85
         self.automation_state = 0
+        # The state end_gesture flips to (probe 4: a successful record →1).
+        # Override to a non-1 value to simulate a write that never verifies.
+        self.verify_state = 1
         self.raise_on_set_after: int | None = None
         self._set_count = 0
 
@@ -68,7 +71,7 @@ class FakeGestureParam:
         self._events.append(("end_gesture",))
         self.own.append(("end",))
         # Probe 4: a successful record flips automation_state 0 → 1.
-        self.automation_state = 1
+        self.automation_state = self.verify_state
 
     @property
     def value(self) -> float:
@@ -206,6 +209,11 @@ class FakeCtx:
         self._song = FakePerformSong(self.events)
         self._lock = threading.RLock()
         self.run_on_main_calls = 0
+        # Real run_on_main marshals to Live's main thread and BLOCKS; calling
+        # it from within a run_on_main bout (depth > 1) deadlocks. Track the
+        # max nesting depth so a regression can assert no bout ever nests.
+        self._rom_depth = 0
+        self.max_run_on_main_depth = 0
 
     @property
     def song(self) -> FakePerformSong:
@@ -221,7 +229,14 @@ class FakeCtx:
 
     def run_on_main(self, fn):
         self.run_on_main_calls += 1
-        return fn()
+        self._rom_depth += 1
+        self.max_run_on_main_depth = max(
+            self.max_run_on_main_depth, self._rom_depth
+        )
+        try:
+            return fn()
+        finally:
+            self._rom_depth -= 1
 
 
 @pytest.fixture(autouse=True)
@@ -502,6 +517,50 @@ def test_perform_batch_closes_every_open_gesture_when_ramp_raises():
     assert ctx.song.is_playing is False
     assert ("record_mode", False) in ctx.events
     assert ("session_automation_record", False) in ctx.events
+
+
+def test_perform_batch_never_nests_run_on_main():
+    """run_on_main marshals to Live's main thread and blocks — calling it from
+    WITHIN a run_on_main bout (depth > 1) deadlocks against real async Live.
+    The disarm settle-verify calls the worker-only `_wait_for_record_mode_on_worker`
+    (which itself polls via run_on_main) DIRECTLY on the worker, not via
+    `_attempt`'s run_on_main. This fails if anyone re-wraps it (max depth 2)."""
+    ctx = FakeCtx()
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
+    )
+    assert ctx.max_run_on_main_depth == 1, ctx.max_run_on_main_depth
+
+
+def test_perform_batch_ramp_deadline_raises_and_restores(monkeypatch):
+    """A blocked transport (playhead never advances) trips the ramp wall-clock
+    deadline → TimeoutError; the set is still disarmed + restored in finally."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FLOOR_S", 0.0)
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FACTOR", 0.0)
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 0.0  # playhead frozen → never reaches union end
+    with pytest.raises(TimeoutError, match="union span end"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)], settle_timeout_ms=20,
+        )
+    assert ("record_mode", False) in ctx.events
+    assert ("session_automation_record", False) in ctx.events
+    assert ctx.song.is_playing is False
+
+
+def test_perform_batch_reports_unverified_arc_after_poll_timeout():
+    """An arc whose automation_state never reaches 1 within the settle window
+    is REPORTED with its non-1 state (poll-timeout branch), not raised — the
+    apply layer owns the failed-verification policy."""
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.verify_state = 0  # never verifies
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)], settle_timeout_ms=20,
+    )
+    assert _arc0(result)["automation_state"] == 0
 
 
 def test_perform_batch_settle_verifies_disarm():

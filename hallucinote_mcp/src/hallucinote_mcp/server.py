@@ -162,43 +162,17 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     return mcp
 
 
-# Read-timeout policy per (tool, action). The default suits actions that
-# return within Live's main-thread budget — a stall then surfaces as a
-# structured timeout instead of hanging the MCP transport. A few actions break
-# that budget by design and need a wider (or no) window:
-#   - ableton_render(render): drives full-arrangement playback before
-#     responding (minutes for a long song) → unbounded; only the operator
-#     stopping playback ends it.
-#   - ableton_automation(perform_batch): plays the transport once over the
-#     UNION span of all changed arcs in record (ENV-9P4T — minutes at mix
-#     scale) before returning the per-arc verification. Unbounded: the handler
-#     owns the timeout via its own ramp wall-clock deadline + finally-restore,
-#     so a 15s socket cutoff here would sever the ONLY verification this
-#     write-only surface has (per-arc automation_state) while Live keeps
-#     recording, and misreport it as connection_lost.
-#   - ableton_render(ensure_loaded): loads the analyzer M4L device onto every
-#     audio track + return (25+ surfaces on a large set), each load a few
-#     seconds on Live's main thread → routinely past the 15s default while the
-#     work continues server-side (MCP-4T6Y). A generous but BOUNDED ceiling
-#     keeps a genuinely-stuck load surfacing as a timeout rather than hanging.
-_DEFAULT_READ_TIMEOUT: float = 15.0
-_ENSURE_LOADED_READ_TIMEOUT: float = 180.0
-_READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
-    ("ableton_render", "render"): None,
-    ("ableton_automation", "perform_batch"): None,
-    ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
-}
-
-
-def _read_timeout_for(tool: str, action: str) -> float | None:
-    """Select the socket read timeout for a forwarded call (MCP-4T6Y).
-
-    Returns ``None`` (unbounded) for known full-playback actions, a generous
-    bounded value for known long-but-finite actions, and the default for
-    everything else. The async/progress protocol that would replace polling
-    with server-pushed progress stays a design note on MCP-4T6Y.
-    """
-    return _READ_TIMEOUTS.get((tool, action), _DEFAULT_READ_TIMEOUT)
+# Read-timeout policy lives in ``client`` — the single source of truth shared by
+# this agent-forward route AND push_cli's direct dispatch (the ENV-9P4T blocker
+# was the policy existing only here while the push route used the bare client
+# default). Re-exported under the historical names so existing callers/tests
+# keep working; ``client.send`` also auto-resolves it when no read_timeout is
+# passed, so the explicit pass below is belt-and-suspenders, not the only guard.
+from .client import (  # noqa: E402
+    _DEFAULT_READ_TIMEOUT,
+    _ENSURE_LOADED_READ_TIMEOUT,
+    read_timeout_for as _read_timeout_for,
+)
 
 
 def handle_tool_call(

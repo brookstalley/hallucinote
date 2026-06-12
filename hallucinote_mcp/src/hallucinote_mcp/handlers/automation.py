@@ -1923,12 +1923,21 @@ def perform_batch_handler(
             # no signal. Settle-verify the disarm; a timeout lands in
             # restore_failures (surfaced as an operator warning), the one
             # armed-set failure mode that otherwise had no detection.
-            _attempt(
-                "record_mode_settle",
-                lambda: _wait_for_record_mode_on_worker(
+            #
+            # Call the helper DIRECTLY on this worker thread — it polls via
+            # run_on_main itself, so routing it through _attempt's run_on_main
+            # would nest run_on_main FROM the main thread and deadlock until
+            # timeout against real async Live (the arm-side call at the top is
+            # direct for exactly this reason).
+            try:
+                _wait_for_record_mode_on_worker(
                     context, saved["record_mode"], timeout_s=settle_timeout_s
-                ),
-            )
+                )
+            except Exception as exc:  # prawduct:allow prawduct/broad-except -- restore-path verification must record + continue, never mask the original failure
+                restore_failures.append(f"record_mode_settle: {exc}")
+                logger.warning(
+                    "perform_batch record_mode disarm did not settle: %s", exc
+                )
             _attempt(
                 "session_automation_record",
                 lambda: setattr(

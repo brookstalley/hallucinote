@@ -117,3 +117,35 @@ as `preset_uri`. Display-name matching only works for the built-in roots
 
 These are pure-math timing transforms. Hallucinote owns the math; push the
 result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
+
+## Routing & busses — prefer a PRE-MAIN bus over the master
+
+Live's **master, group, and return tracks are clip-less summing points**: they
+have no automation-envelope surface, so automating the master directly is
+perform-only (lossy ~2.5 Hz) and its device chain can't ride a normal envelope.
+**Don't reach for the master when you want an automatable "master" fader, filter,
+or bus compressor.** Route everything through a plain **audio bus** → master and
+automate the *bus* — an ordinary, fully-automatable track:
+
+1. Create a plain audio bus —
+   `ableton_track(action='create', kind='audio', name='PRE-MAIN')`.
+2. Route each source track's output to it —
+   `ableton_track(action='set_output_routing', track_index=N, type_display_name='PRE-MAIN')`.
+3. Route the bus to the master and arm it to pass the summed audio —
+   `ableton_track(action='set_output_routing', track_index=BUS, type_display_name='Main')`
+   then `ableton_track(action='set_monitoring_state', track_index=BUS, state='In')`.
+
+**`Monitor='In'` is load-bearing** — a summing bus that receives routed audio is
+silent without it (it's the live-probed dependency, not optional polish). A
+static master Limiter / Ceiling is still fine; it's *automation* the master
+can't host, so the moving parts live on the bus.
+
+The same primitives are the **sub-mix / grouping** tool, because Live group
+tracks **cannot be created via the LOM** (Cmd+G is UI-only): route related tracks
+(all drums, all vocals) to a shared audio bus to process + automate them as a
+group, do parallel compression (a bus fed in parallel, crushed, blended under the
+dry), or build an FX pre-bus (many sources → one bus → one reverb send). Targets
+are **source-dependent** — call `action='get_output_routing'` /
+`'get_input_routing'` first to see a track's available targets, and the set
+handlers **echo the requested name** (same-callback readback is unreliable; issue
+a follow-up `get_*` to confirm).

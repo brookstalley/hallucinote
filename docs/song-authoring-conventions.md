@@ -409,6 +409,20 @@ Push materializes this in the `routing` phase (after `mix`, before `devices`): e
 
 > A `route_to_bus` convenience helper is deliberately **not** shipped yet — the pattern has no second user. Friction-driven, like the interplay primitives above: the first song to adopt the bus authors it from these mutators; a helper earns its place when a second one does.
 
+### When to reach for the bus instead of the master
+
+Whenever you would automate or process the **master** — a master fader ride, a master filter sweep, master bus compression that moves over the song — author it on a **PRE-MAIN bus** instead. The master is a clip-less summing point: its automation is perform-only (lossy ~2.5 Hz, no session-clip host), and its device chain can't ride a normal envelope. The bus is an ordinary track, so a ride on it is a first-class, normally-automatable envelope. **Default: nothing rides the master; the master stays flat and the PRE-MAIN bus carries the moves.** (A static master Limiter / Ceiling is fine — it's the *automation* the master can't host losslessly.)
+
+### Other routing patterns the bus unlocks
+
+The same primitives (`set_track_routing` + a plain audio bus + `monitoring_state='In'`) are the programmatic **sub-mix / grouping** toolkit. Live **group tracks are not LOM-creatable** (Cmd+G is UI-only — TRK-2H6K deferred), so a routing bus is *the* way to sub-mix from `build.py`:
+
+- **Sub-mix bus (the group replacement).** Route every drum track's output to a `Drums` audio bus, process the bus once (glue compressor, bus EQ), and automate the *bus* to ride the whole kit as one. This is what a group track would do — build it as a routing bus instead.
+- **Parallel processing (parallel compression).** Feed a copy of a source to a bus in parallel (a send to a return, or a second output to a parallel audio bus), crush it (heavy compression / saturation), and blend it under the dry signal.
+- **FX pre-bus.** Route several sources into one bus, then a single send from the bus to a reverb/delay return — the group shares one space with one send level to ride.
+
+In every case the routing target is a **semantic reference** (survives renames + re-pushes), `Monitor='In'` is required on any bus that must pass routed audio, and the bus automates like any other track — the same reason it beats the master.
+
 ---
 
 ## Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)

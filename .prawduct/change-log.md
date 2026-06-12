@@ -6,7 +6,7 @@
 
 ## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
 
-<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push -->
+<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=merged -->
 
 Un-gates master-strip device loading. DEV-2M9K shipped the verdict "Live 12.4
 has no LOM path to load a device onto the master" (`song.view.selected_track =

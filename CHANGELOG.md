@@ -22,7 +22,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Verified
 
-- Suite green (3468 passing / 2 skipped). New coverage spans the MCP routing actions, the DB mutator + routing invariants, the push planner + phase order, the pull apply + round-trip, a pre-routing-DB migration + a four-site vocabulary parity lock, and a doc-drift-locked worked example of the convention.
+- Suite green (3472 passing / 2 skipped). New coverage spans the MCP routing actions, the DB mutator + routing invariants, the push planner + phase order, the pull apply + round-trip, a pre-routing-DB migration + a four-site vocabulary parity lock, and a doc-drift-locked worked example of the convention.
 - Per-chunk Critic across the build, plus a whole-plan `final`-mode review (0 blocking; 4 warnings resolved, two of them real silent-drop bugs the cross-cutting review surfaced).
 
 ### Notes

@@ -473,7 +473,6 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_devices_by_parent=live_devices_by_parent,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
-        auto_session_created=auto_created,
     )
     out = result.to_dict()
     out["song_id"] = song_id
@@ -606,6 +605,31 @@ def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | No
     )
 
 
+def _stderr_progress(line: str) -> None:
+    """PSH-5T9D progress sink for ``execute``: stream per-phase lines to stderr
+    (flushed immediately) so a multi-minute push has a heartbeat, while stdout
+    stays the single parseable final summary."""
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()
+
+
+def _resume_phase_from_state(state_dir: Path) -> str | None:
+    """PSH-2R7K ``--resume``: the phase the last run halted at, or ``None``.
+
+    Reads ``<state_dir>/.last-push-state.json``'s ``phase_halted``. Returns
+    ``None`` when there's no file, it's unreadable/malformed, or the last run
+    didn't halt (``phase_halted`` is null) — the caller turns that into a
+    teaching error.
+    """
+    state_file = state_dir / ".last-push-state.json"
+    try:
+        data = json.loads(state_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    halted = data.get("phase_halted") if isinstance(data, dict) else None
+    return halted if isinstance(halted, str) and halted else None
+
+
 def _cmd_execute(args: argparse.Namespace) -> int:
     """W10-E2: dispatch the full thirteen-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
@@ -640,6 +664,36 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     _session_for(conn, args, subcmd="execute")
     song_id = _resolve_song_id(conn, args.session_id)
 
+    if args.state_dir:
+        state_dir = Path(args.state_dir)
+    else:
+        state_dir = db_path.parent
+
+    # PSH-2R7K: resolve phase-targeting up front (cheap; before the Live probe so
+    # a bad combination fails fast). --resume derives --start-at from the prior
+    # run's halted phase. (Unknown phase NAMES are validated inside execute_push
+    # against the canonical list and surface as PhaseTargetError below.)
+    only = args.only
+    start_at = args.start_at
+    stop_after = args.stop_after
+    if args.resume:
+        if only is not None or start_at is not None:
+            sys.stderr.write(
+                "push_cli execute: --resume cannot combine with --only/--start-at "
+                "(it derives --start-at from the last halt).\n"
+            )
+            return 2
+        resumed = _resume_phase_from_state(state_dir)
+        if resumed is None:
+            sys.stderr.write(
+                "push_cli execute: --resume found no halted prior run in "
+                f"{state_dir / '.last-push-state.json'} (no file, or the last run "
+                "completed without halting). Run a full execute first.\n"
+            )
+            return 2
+        start_at = resumed
+        sys.stderr.write(f"push_cli execute: --resume → --start-at {start_at}\n")
+
     if not args.no_coherence_check:
         # The mutex group makes --probe or --snapshot the only other paths,
         # so exactly one is set here.
@@ -660,20 +714,23 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
             return 1
 
-    if args.state_dir:
-        state_dir = Path(args.state_dir)
-    else:
-        state_dir = db_path.parent
-
-    result = push_execute.execute_push(
-        conn=conn,
-        song_id=song_id,
-        session_id=args.session_id,
-        state_dir=state_dir,
-        actor="sync",
-        reason=args.reason or f"push_cli execute (session={args.session_id})",
-        perform_slowdown_factor=args.perform_slowdown,
-    )
+    try:
+        result = push_execute.execute_push(
+            conn=conn,
+            song_id=song_id,
+            session_id=args.session_id,
+            state_dir=state_dir,
+            actor="sync",
+            reason=args.reason or f"push_cli execute (session={args.session_id})",
+            perform_slowdown_factor=args.perform_slowdown,
+            only=only,
+            start_at=start_at,
+            stop_after=stop_after,
+            progress_fn=_stderr_progress,
+        )
+    except push_execute.PhaseTargetError as exc:
+        sys.stderr.write(f"push_cli execute: {exc}\n")
+        return 2
     sys.stdout.write(push_execute.format_summary(result))
 
     # DOC-5W8B: a push whose devices phase applied anything leaves
@@ -1153,6 +1210,30 @@ def main(argv: list[str] | None = None) -> int:
              "song tempo so the fixed tick rate lays down FACTOR× more "
              "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
              "off. Only affects the performed_automation phase.",
+    )
+    # PSH-2R7K: phase-targeting. Run a scoped slice of the phase sequence so
+    # recovery from a halt is one command instead of a full replay (incl. the
+    # ~8-11 min realtime perform). All idempotent + still coherence-gated.
+    p_exec.add_argument(
+        "--only", default=None, metavar="PHASE",
+        help="run EXACTLY this one phase (e.g. --only devices). Mutually "
+             "exclusive with --start-at/--stop-after/--resume.",
+    )
+    p_exec.add_argument(
+        "--start-at", "--from", dest="start_at", default=None, metavar="PHASE",
+        help="run from this phase through the end (the resume case after a halt, "
+             "e.g. --start-at routing).",
+    )
+    p_exec.add_argument(
+        "--stop-after", dest="stop_after", default=None, metavar="PHASE",
+        help="run through this phase and stop (bound a run to a prefix; "
+             "combinable with --start-at to run a window).",
+    )
+    p_exec.add_argument(
+        "--resume", action="store_true",
+        help="continue from the phase the last run halted at (reads "
+             ".last-push-state.json's phase_halted → --start-at). Errors if "
+             "there's no halted prior run.",
     )
     p_exec.set_defaults(func=_cmd_execute)
 

@@ -65,10 +65,20 @@ import sqlite3
 import warnings
 from typing import Any
 
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.return_naming import strip_return_slot_prefix
 
-SNAPSHOT_FORMAT_VERSION = 1
+# SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
+# (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
+# Bumped deliberately when the snapshot schema changes in a way the migrator
+# must act on. v1 = "analyzer-free, dense authored device positions" (the
+# SNP-8R4K release). An unstamped snapshot (missing key) or one stamped < this
+# version is pre-SNP-8R4K and triggers the one-time cleanup
+# (`snapshot_needs_migration`). This is an INTENTIONAL schema version — bumped
+# by hand as part of a migration — not a freshness/staleness label, so the
+# "derive from content, never hand-bump" learning does not apply.
+SNAPSHOT_SCHEMA_VERSION = 1
 
 # Track types accepted in snapshot["tracks"][n]["type"]; mapped 1:1 to
 # `tracks.kind` in the DB. Unknown values raise; the snapshot is authoritative.
@@ -134,8 +144,16 @@ def _replay_devices(
     `_depth` is private — used to enforce the "one level of recursion only"
     invariant. A rack device inside a rack chain (nested-nested) raises on
     encounter; recursive support is deferred (tracked in backlog).
+
+    SNP-8R4K — defensive analyzer exclusion: capture filters the analyzer at
+    `compile_snapshot`, but a legacy-polluted snapshot on disk may still carry
+    an analyzer entry. We skip `is_analyzer_device` entries here so replay
+    never writes an analyzer device row, and assign each survivor's `position`
+    its 1-based rank among survivors (not the entry's raw `index`) so a dropped
+    analyzer can't leave a hole or shift authored positions.
     """
-    for d in devices_array:
+    survivors = [d for d in devices_array if not is_analyzer_device(d)]
+    for survivor_rank, d in enumerate(survivors, start=1):
         if "index" not in d or "class" not in d:
             raise ValueError(
                 f"snapshot device missing required keys (index, class): {d!r}"
@@ -174,7 +192,7 @@ def _replay_devices(
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
-            position=int(d["index"]),
+            position=survivor_rank,
             kind=d["class"],
             display_name=d.get("name", d["class"]),
             class_name=d.get("class_name"),
@@ -359,7 +377,35 @@ def replay_capture(
     — chunk 3 covers only the mix layout. Score-half (tempo/time-signature/
     sections/cue points) is also not populated by replay; build.py authors
     those alongside the captured mix.
+
+    SNP-8R4K chunk 2 — build-time migration trigger: if the snapshot predates
+    the clean-at-rest contract (unstamped/old version, or still carrying
+    analyzer device entries), emit a warning pointing at the migrate command.
+    Replay/build is READ-ONLY on source files — chunk 1's `_replay_devices`
+    already strips analyzer rows so the DB is correct either way; this is the
+    one-line nudge to clean the committed FILE, not an auto-rewrite.
     """
+
+    if snapshot_needs_migration(snapshot):
+        analyzer_count = sum(
+            _parent_analyzer_count(p)
+            for p in (snapshot.get("tracks") or []) + (snapshot.get("returns") or [])
+        )
+        if analyzer_count:
+            detail = f"{analyzer_count} analyzer device entr" + (
+                "y" if analyzer_count == 1 else "ies"
+            )
+        else:
+            detail = "unstamped/pre-SNP-8R4K"
+        warnings.warn(
+            f"replay_capture: snapshot predates SNP-8R4K ({detail}) — analyzer "
+            "rows are ignored on build (the DB is clean either way), but the "
+            "committed snapshot file is still dirty at rest. Run "
+            "`python -m hallucinote.tools.capture_cli migrate <captured_session.json>` "
+            "to clean + version-stamp the committed file.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     song_id = M.create_song(
         conn,
@@ -619,8 +665,24 @@ def compile_snapshot(
     [str, ...]}`. When supplied, the function injects `browser_path` into
     the matching top-level device entry on the assembled snapshot so the
     cross-machine fallback identity round-trips through capture.
+
+    SNP-8R4K — analyzer exclusion (THE off-by-one fix): the
+    HallucinoteAnalyzer is measurement infrastructure, not authored content.
+    Every parent's `devices` array is filtered to drop `is_analyzer_device`
+    entries before assembly, and each survivor's `index` is re-assigned its
+    1-based rank among survivors — NEVER the raw Live chain index. So an
+    interleaved analyzer can never shift an authored device's position, and
+    the analyzer (and its M4L params) never enters the snapshot. Browser-path
+    injection runs AFTER the densify so its `device_index` records address the
+    renumbered positions.
     """
+    returns = [_exclude_analyzer_from_parent(r) for r in returns]
+    tracks = [_exclude_analyzer_from_parent(t) for t in tracks]
     snapshot = {
+        # SNP-8R4K chunk 2 — every compiled snapshot carries the schema version
+        # so a consumer (and the at-rest cleanup) can tell a fresh capture from
+        # a pre-SNP-8R4K one without inspecting device arrays.
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
         "song": {
             "tempo": session_info.get("tempo"),
             "signature": session_info.get("signature"),
@@ -632,6 +694,122 @@ def compile_snapshot(
     if browser_paths:
         inject_browser_paths(snapshot, browser_paths)
     return snapshot
+
+
+def _exclude_analyzer_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a snapshot parent (track / return) whose top-level
+    `devices` array has the HallucinoteAnalyzer dropped and surviving devices
+    densely renumbered (`index` = 1-based rank among survivors). SNP-8R4K R3/R5.
+
+    Position-independent by construction: correct whether the analyzer is last
+    or interleaved. Parents without a `devices` array pass through unchanged.
+    Each surviving device entry is shallow-copied before its `index` is
+    rewritten so the caller's input dicts aren't mutated.
+    """
+    devices = parent.get("devices")
+    if not devices:
+        return parent
+    survivors = [d for d in devices if not is_analyzer_device(d)]
+    renumbered = [
+        {**d, "index": rank}
+        for rank, d in enumerate(survivors, start=1)
+    ]
+    return {**parent, "devices": renumbered}
+
+
+# ---------------------------------------------------------------------------
+# At-rest snapshot migration (SNP-8R4K chunk 2 — State-1 clean-at-rest)
+# ---------------------------------------------------------------------------
+# Chunk 1 already makes a polluted snapshot *functionally* clean on the next
+# build (`compile_snapshot` + `_replay_devices` both strip the analyzer and
+# densify). This chunk cleans the committed `captured_session.json` FILE so the
+# artifact itself stops carrying analyzer rows — strip + densify + stamp a
+# version so the rewrite runs exactly once, and announce per parent what was
+# stripped (never a silent rewrite). The migrate command (capture_cli) is the
+# action; `replay_capture` emits the warning that points users at it.
+
+
+def _parent_analyzer_count(parent: dict[str, Any]) -> int:
+    """Number of `is_analyzer_device` entries in a parent's top-level `devices`
+    array (0 if it has none / no array)."""
+    return sum(1 for d in (parent.get("devices") or []) if is_analyzer_device(d))
+
+
+def snapshot_needs_migration(snapshot: dict[str, Any]) -> bool:
+    """True if `snapshot` predates SNP-8R4K's clean-at-rest contract and the
+    one-time cleanup should run.
+
+    Two independent triggers (either fires):
+      * version: `snapshot_version` is missing or < SNAPSHOT_SCHEMA_VERSION
+        (an unstamped or older snapshot).
+      * pollution: any track or return `devices` array still carries an
+        `is_analyzer_device` entry (a polluted snapshot — even one that has
+        somehow been version-stamped — must still be cleaned).
+    """
+    version = snapshot.get("snapshot_version")
+    if version is None or version < SNAPSHOT_SCHEMA_VERSION:
+        return True
+    parents = (snapshot.get("tracks") or []) + (snapshot.get("returns") or [])
+    return any(_parent_analyzer_count(p) > 0 for p in parents)
+
+
+def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Clean a committed snapshot at rest: drop `is_analyzer_device` entries +
+    densely renumber survivors on every track and return, and stamp the schema
+    version. Pure function — the input dict is never mutated.
+
+    Returns ``(cleaned_snapshot, report)``. The report announces what was
+    stripped so the rewrite is never silent::
+
+        {
+          "stripped": [{"parent": <name>, "kind": "track"|"return",
+                        "removed": <count>}, ...],   # only parents with removals
+          "total_removed": <int>,
+          "version_before": <old version int or None>,
+          "version_after": SNAPSHOT_SCHEMA_VERSION,
+        }
+
+    Reuses `_exclude_analyzer_from_parent` (the chunk-1 strip+densify helper) so
+    the cleanup is identical to capture/replay — single source of truth, no
+    reimplementation. The master path is intentionally untouched: the master
+    has no device array in the snapshot today (SNP-4K7M); the analyzer filter
+    joins the master path when SNP-4K7M lands master-device capture.
+    """
+    stripped: list[dict[str, Any]] = []
+
+    def _clean(parents: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+        cleaned: list[dict[str, Any]] = []
+        for parent in parents:
+            removed = _parent_analyzer_count(parent)
+            if removed:
+                stripped.append({
+                    "parent": parent.get("name"),
+                    "kind": kind,
+                    "removed": removed,
+                })
+            cleaned.append(_exclude_analyzer_from_parent(parent))
+        return cleaned
+
+    cleaned_tracks = _clean(snapshot.get("tracks") or [], "track")
+    cleaned_returns = _clean(snapshot.get("returns") or [], "return")
+
+    # Shallow-copy the top level; `_exclude_analyzer_from_parent` already returns
+    # fresh parent/device dicts for the device arrays we rewrite, and untouched
+    # sub-trees (song/master) are carried by reference unchanged. The input dict
+    # is never mutated.
+    cleaned = dict(snapshot)
+    cleaned["tracks"] = cleaned_tracks
+    cleaned["returns"] = cleaned_returns
+    version_before = snapshot.get("snapshot_version")
+    cleaned["snapshot_version"] = SNAPSHOT_SCHEMA_VERSION
+
+    report = {
+        "stripped": stripped,
+        "total_removed": sum(s["removed"] for s in stripped),
+        "version_before": version_before,
+        "version_after": SNAPSHOT_SCHEMA_VERSION,
+    }
+    return cleaned, report
 
 
 # ---------------------------------------------------------------------------

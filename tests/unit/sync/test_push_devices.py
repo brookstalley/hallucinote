@@ -706,3 +706,51 @@ def test_plan_push_device_sidechain_defers_unlinked_device(
     # Device intentionally NOT linked.
     plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
     assert plan.calls == []
+
+
+# ---------- analyzer rows (SNP-8R4K chunk 1) ----------
+
+
+def test_plan_push_devices_skips_analyzer_row_with_warn(
+    conn, song, session, linked_track,
+):
+    """SNP-8R4K: a legacy-polluted DB carrying a HallucinoteAnalyzer row must
+    NOT emit a load (it's measurement infrastructure, not a loadable browser
+    node — emitting one would fail/halt the push). Skip cleanly with a warn,
+    placed alongside the placeholder skip.
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Max Audio Effect",
+        display_name="HallucinoteAnalyzer", class_name="MxDeviceAudioEffect",
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    assert plan.calls == []  # no load, no set_parameter
+    assert any(
+        "HallucinoteAnalyzer" in n and "skipping" in n for n in plan.notes
+    )
+
+
+def test_plan_push_devices_analyzer_skip_does_not_block_authored_devices(
+    conn, song, session, linked_track,
+):
+    """An analyzer row interleaved with authored devices in a polluted DB:
+    the analyzer is skipped (warned) but the authored devices still push."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(conn, chain_id=cid, position=1, kind="Operator",
+                    display_name="Operator")
+    M.create_device(
+        conn, chain_id=cid, position=2, kind="Max Audio Effect",
+        display_name="HallucinoteAnalyzer", class_name="MxDeviceAudioEffect",
+    )
+    M.create_device(conn, chain_id=cid, position=3, kind="EQ Eight",
+                    display_name="EQ Eight")
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    loads = [
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    ]
+    loaded_kinds = [c.args["kind"] for c in loads]
+    assert loaded_kinds == ["Operator", "EQ Eight"]
+    assert all(k != "Max Audio Effect" for k in loaded_kinds)
+    assert any("HallucinoteAnalyzer" in n for n in plan.notes)

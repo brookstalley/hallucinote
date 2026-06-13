@@ -59,8 +59,8 @@ _PHASE_NAMES: tuple[str, ...] = (
     "scenes",
     "clips",
     "mix",
-    "routing",
     "devices",
+    "routing",
     "device_sidechain",
     "envelopes",
     "performed_automation",
@@ -109,17 +109,20 @@ def plan_push_song(
          hosting) and arrangement (duplicate source).
       7. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
          Needs tracks + returns linked. No clip dep.
-      8. ``routing`` — :func:`plan_push_routing`. Materializes per-track
-         output/input routing + monitor state (RTE-1K9T; the PRE-MAIN
-         submaster pattern). After ``mix`` (routing is a mixer concern),
-         before ``devices`` (D5). Needs tracks linked — the source track
-         AND any track-route target are created in the ``tracks`` phase.
-         Idempotent re-emit like ``mix``/``devices`` (no fingerprint gate,
-         D7).
-      9. ``devices`` — :func:`plan_push_devices`. Loads instruments +
+      8. ``devices`` — :func:`plan_push_devices`. Loads instruments +
          effects and sets parameters. Needs tracks + returns linked.
          Prerequisite for ``device_parameter`` envelopes (need the
-         target device linked).
+         target device linked). Runs BEFORE ``routing``: a MIDI track
+         exposes *audio* output routing — the only kind that can target an
+         audio submaster bus like PRE-MAIN — only once it has an instrument,
+         so instruments must load before routing resolves (fresh-push fix).
+      9. ``routing`` — :func:`plan_push_routing`. Materializes per-track
+         output/input routing + monitor state (RTE-1K9T; the PRE-MAIN
+         submaster pattern). After ``devices`` (instrument-bearing MIDI
+         tracks have audio output routing to target the bus) and after
+         ``mix``. Needs tracks linked — the source track AND any track-route
+         target are created in the ``tracks`` phase. Idempotent re-emit like
+         ``mix``/``devices`` (no fingerprint gate, D7).
       9b. ``device_sidechain`` — :func:`plan_push_device_sidechain`.
           Materializes a device's sidechain SOURCE routing (SDC-7K3M) via
           ``ableton_device(set_input_routing)``, resolving the DB source-track
@@ -205,18 +208,18 @@ def plan_push_song(
             description="Push mixer state (volume/pan/mute/solo/arm/color) + master + sends.",
         ),
         PushPhase(
-            name="routing",
-            plan_fn=lambda: plan_push_routing(
-                conn, song_id=song_id, session_id=session_id,
-            ),
-            description="Materialize per-track output/input routing + monitor state (RTE-1K9T PRE-MAIN submaster pattern).",
-        ),
-        PushPhase(
             name="devices",
             plan_fn=lambda: plan_push_devices(
                 conn, song_id=song_id, session_id=session_id,
             ),
             description="Load instruments+effects and set parameters on tracks/returns.",
+        ),
+        PushPhase(
+            name="routing",
+            plan_fn=lambda: plan_push_routing(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Materialize per-track output/input routing + monitor state (RTE-1K9T PRE-MAIN submaster pattern). AFTER devices: a MIDI track exposes audio output routing only once an instrument is loaded.",
         ),
         PushPhase(
             name="device_sidechain",

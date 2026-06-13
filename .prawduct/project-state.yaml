@@ -301,7 +301,11 @@ technical_decisions:
       alternatives_considered: "Max for Live (heavier; not all users have it); OSC-only (lower-level than needed)."
       date: "2026-05-16"
 
-  operational: []
+  operational:
+    - decision: "Install resolves the running server's identity by asking the server (ableton://server/info), not by reconstructing the plugin root from env/disk (INS-3W8P)"
+      rationale: "/ableton-mcp-install must vendor + fingerprint against the hallucinote_mcp copy the plugin LAUNCHES, never the invoking interpreter's sys.path pick (a coexistence setup — installed plugin + editable clone — diverges and silently produces a handshake mismatch). CLAUDE_PLUGIN_ROOT is NOT available in the skill's bash env (verified empirically), and a --plugin-dir root is an arbitrary path no disk-scan can find — so the only reliable source of truth is the running server process. It self-reports {version, package_root} via a static, Live-independent resource; the skill threads those into preflight --server-version and install-remote-script --from-package-root/--require-server-version. resources/ is outside _FINGERPRINT_PATHS, so the new resource doesn't change the handshake fingerprint. Contract surface documented in boundary-patterns.md; topology guidance in docs/dev-vs-use-coexistence.md."
+      alternatives_considered: "(a) Pin the skill's CLI to the plugin uv env via UV_PROJECT_ENVIRONMENT/CLAUDE_PLUGIN_ROOT — rejected: that env var isn't present in the skill's bash. (b) Disk-discover ~/.claude/plugins/cache/… — rejected: can't locate an arbitrary --plugin-dir root and is fragile against Claude Code internals. The runtime handshake remains the ultimate safety net under all three."
+      date: "2026-06-13 (INS-3W8P)"
 
 # =============================================================================
 # DESIGN DECISIONS
@@ -461,8 +465,12 @@ artifact_manifest:
       depends_on: [vision, mcp-tool-design]
     - name: learnings
       file_path: .prawduct/learnings.md
-      version: 1
+      version: 2   # split into index (rules) + learnings-detail (narrative) 2026-06-13
       depends_on: []
+    - name: learnings-detail
+      file_path: .prawduct/learnings-detail.md
+      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md (rule-only entries omitted)
+      depends_on: [learnings]
     - name: backlog
       file_path: .prawduct/backlog.md
       version: 2
@@ -477,11 +485,12 @@ build_state:
   source_root: "src/hallucinote/"
 
 # Active build plan pointer (.prawduct/-relative). SMP-7K2D (sample-instrument +
-# reverse playback-param model) — chunks 1-2 (no-Live DB foundation) DONE on this
-# cleanup branch; push chunks 3-4 + the capability probe (chunk 0) are Live-gated
-# and pending. Prior plans RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K
-# (perform-handler hardening, merged in this cleanup) are shipped; their plan dirs
-# are stale and may be deleted.
+# reverse playback-param model) — chunks 1-2 (no-Live DB foundation) DONE; the
+# no-Live chunk 5 (ENV-4S2K lock) is still buildable, push chunks 3-4 + the
+# capability probe (chunk 0) are Live-gated and pending. ROUNDTRIP-CLUSTER and
+# RELIABILITY-CLUSTER (on this branch) are shipped/Critic-clean. Prior plans
+# RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
+# PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
 active_build_plan: artifacts/plans/SMP-7K2D/build-plan.md
 
 # =============================================================================
@@ -499,6 +508,9 @@ active_build_plan: artifacts/plans/SMP-7K2D/build-plan.md
 # overwritten on next regen.
 
 scope_rollups:
+  capture,sync-push,sync-pull,render:
+    chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
+    releases: ["v0.9.7"]
   clip-audio:
     chunks: ["CLP-AUD1-01", "CLP-AUD1-02"]
     releases: ["v0.9.5"]
@@ -526,6 +538,18 @@ scope_rollups:
   plugin-distribution:
     chunks: ["INS-7V2D-cold-start-timeout"]
     releases: ["v0.9.4"]
+  plugin-distribution,mcp-bridge:
+    chunks: ["INS-3W8P"]
+    releases: ["v0.9.7"]
+  sync-pull,analysis:
+    chunks: ["DEV-4X2N", "SDC-7K3M-pull"]
+    releases: ["v0.9.7"]
+  sync-push,cli:
+    chunks: ["PSH-2R7K", "PSH-5T9D"]
+    releases: ["v0.9.7"]
+  sync-push,db,mcp-bridge,skills:
+    chunks: ["DPP-7H2K", "RTE-2P9X", "SKL-8N3V", "SYN-3C8K"]
+    releases: ["v0.9.7"]
 
 # =============================================================================
 # DERIVED VIEWS (enabled by default, v1.4+)
@@ -546,7 +570,7 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-06-10
+backlog_last_groomed_at: 2026-06-13
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

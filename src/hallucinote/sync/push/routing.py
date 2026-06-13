@@ -3,8 +3,10 @@
 The ``routing`` phase materializes the DB's track-routing columns in Live —
 the keystone of the PRE-MAIN submaster pattern (route instrument tracks' output
 to an audio bus → route the bus to master → set the bus Monitor='In'). It runs
-after ``mix`` and before ``devices`` (D5): routing needs every track linked
-(created in the ``tracks`` phase) and is logically a mixer concern.
+after ``mix`` and after ``devices`` (RTE-2P9X): an instrument-bearing MIDI track
+exposes *audio* output routing — the only kind that can target an audio
+submaster bus — only once its instrument is loaded, so ``devices`` must precede
+it. Routing also needs every track linked (created in the ``tracks`` phase).
 
 Reference resolution (D6). The DB stores the routing target as a SEMANTIC
 reference — ``*_routing_kind`` + an FK ``*_routing_target_id`` when

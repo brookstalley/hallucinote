@@ -24,6 +24,11 @@ CLI usage is intentionally minimal — the heavy lifting is the agent's:
   * ``diff <old.json> <new.json>``  W12-B snapshot-refresh diff; structured
                                 JSON to stdout + human summary to stderr
                                 so the agent can pipe it both ways.
+  * ``migrate <captured_session.json>``  SNP-8R4K: clean a committed snapshot
+                                at rest — strip HallucinoteAnalyzer device
+                                entries, densify survivors, stamp the snapshot
+                                version. Writes in place + prints what it
+                                stripped; no-op (no write) if already clean.
 
 The diff path lets the `/song-snapshot` skill compare a fresh capture against
 the on-disk snapshot before overwriting — see `src/hallucinote/capture.py`
@@ -38,10 +43,13 @@ from pathlib import Path
 
 
 from hallucinote.capture import (
+    SNAPSHOT_SCHEMA_VERSION,
     capture_plan,
     diff_snapshots,
     format_diff_summary,
     merge_snapshots,
+    migrate_snapshot,
+    snapshot_needs_migration,
 )
 
 
@@ -99,6 +107,47 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_migrate(args: argparse.Namespace) -> int:
+    """SNP-8R4K chunk 2 — clean a committed `captured_session.json` AT REST:
+    strip HallucinoteAnalyzer device entries, densely renumber survivors, and
+    stamp the snapshot schema version so the rewrite runs exactly once.
+
+    Prints the report (what was stripped per parent + total) — never silent.
+    A clean + stamped snapshot is a no-op (no write), printing "already clean".
+    """
+    path = Path(args.path)
+    if not path.exists():
+        print(f"error: snapshot not found: {path}", file=sys.stderr)
+        return 2
+    snapshot = json.loads(path.read_text())
+
+    if not snapshot_needs_migration(snapshot):
+        version = snapshot.get("snapshot_version", SNAPSHOT_SCHEMA_VERSION)
+        print(f"{path}: already clean (v{version}) — no changes written.")
+        return 0
+
+    cleaned, report = migrate_snapshot(snapshot)
+    # Match the existing snapshot writes' formatting (indent=2). The committed
+    # snapshot is hand-readable + diff-friendly, so we don't sort_keys here —
+    # the merge path sorts for stable side-by-side diffs, but a migrate is an
+    # in-place rewrite where preserving the author's key order is friendlier.
+    path.write_text(json.dumps(cleaned, indent=2) + "\n")
+
+    version_before = report["version_before"]
+    before_label = "unstamped" if version_before is None else f"v{version_before}"
+    print(
+        f"{path}: migrated {before_label} -> v{report['version_after']}, "
+        f"stripped {report['total_removed']} analyzer device entr"
+        f"{'y' if report['total_removed'] == 1 else 'ies'}."
+    )
+    for entry in report["stripped"]:
+        print(
+            f"  - {entry['kind']} {entry['parent']!r}: "
+            f"removed {entry['removed']}"
+        )
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
@@ -134,6 +183,19 @@ def main() -> int:
         help="Write merged JSON to PATH (default: stdout)",
     )
     merge_p.set_defaults(func=_cmd_merge)
+
+    migrate_p = sub.add_parser(
+        "migrate",
+        help=(
+            "SNP-8R4K: clean a committed captured_session.json at rest — strip "
+            "HallucinoteAnalyzer device entries, densify survivors, stamp the "
+            "snapshot version (writes in place; no-op if already clean)"
+        ),
+    )
+    migrate_p.add_argument(
+        "path", help="Path to the captured_session.json to clean in place"
+    )
+    migrate_p.set_defaults(func=_cmd_migrate)
 
     args = p.parse_args()
     if args.plan:

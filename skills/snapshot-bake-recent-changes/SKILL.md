@@ -87,6 +87,7 @@ Confirm `applied.mutations` in the response matches the dry-run count. If it div
 - The DB now reflects Live's current device-parameter state. The next `push_cli execute` won't overwrite the tweaks.
 - The `captured_session.json` snapshot is **not** updated by this skill. If the user wants the snapshot to match too (e.g. for fresh `--reset` rebuilds), point them at `/song-snapshot`.
 - If the change spanned mix-state, sends, or new devices, those weren't baked here — they need `/song-snapshot` or `/ableton-pull` against a wider domain.
+- **Sidechain SOURCE** (the device input routing — not the `S/C On`/`S/C Gain` params, which ARE captured above) rides a separate domain. If the user added/changed sidechains in Live, run a second dry-run/apply pass against `device-sidechain` (same `pull_cli execute` flow) so `devices.sidechain_source_track_id` is baked too (SDC-7K3M).
 
 ## What this skill does NOT do
 

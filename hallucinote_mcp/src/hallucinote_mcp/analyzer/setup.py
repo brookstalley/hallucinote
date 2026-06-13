@@ -140,6 +140,21 @@ class AnalyzerInstance:
     osc_port: int
     osc_emit_port: int
     was_loaded: bool  # True if this sweep loaded it; False if pre-existing
+    # SNP-8R4K Mechanism 2 — terminal-tap observability (R9). The analyzer
+    # must be the chain's LAST device to measure the full authored chain;
+    # an under-tapped surface silently under-measures whatever landed past
+    # it. These two flags record the terminal-tap decision this sweep made:
+    #   terminal           — True iff the analyzer is the chain's last device
+    #                        AFTER this sweep (present + strictly last). False
+    #                        flags an under-tapped surface — the render
+    #                        manifest must never emit clean numbers for it.
+    #   was_repositioned   — True iff this sweep had to delete + re-add the
+    #                        analyzer to make it last (a device had landed
+    #                        past it since the previous render). Pure
+    #                        observability — the M4L reload cost was paid on
+    #                        THIS surface (R12).
+    terminal: bool = True
+    was_repositioned: bool = False
 
 
 @dataclass(frozen=True)
@@ -319,50 +334,102 @@ def _ensure_on_surface(
     handler is responsible for marshaling every Live access itself.
     """
     track_id = track_id_for_surface(surface_kind, surface_index)
-    existing_idx = context.run_on_main(
-        lambda: _find_analyzer_index(_existing_devices_for(context, track_address))
-    )
-    # DEV-6M2K: the master auto-loads like any other surface. The earlier
-    # DEV-2M9K detect-only carve-out (raise loudly when the master analyzer is
-    # absent) rested on the refuted premise that Live can't load onto the
-    # master; live-proven on Live 12.4.2 that it can. The master now falls
-    # through to the normal `preset_query` load path below — `track_address`
-    # already carries `master: True`, and `load_handler` no longer refuses it.
-    if existing_idx is None:
-        # Load via preset_query, NOT kind=. The .amxd is placed under
-        # ``user_library/Presets/Audio Effects/Max Audio Effect/`` by
-        # the install skill, but ``kind=`` triggers a walk that only
-        # covers the built-in browser roots (instruments / audio_effects
-        # / midi_effects / drums per ``_BROWSER_LOAD_ROOTS``). The
-        # User Library is reachable via ``preset_uri`` or ``preset_query``
-        # — we use ``preset_query`` because the URI is per-machine
-        # (Live's FileId varies). The ``path_prefix`` pins the exact
-        # location so a user-saved preset named "HallucinoteAnalyzer"
-        # elsewhere in their library can't shadow the canonical device.
-        # If the .amxd is absent, ``_resolve_preset_query`` raises a
-        # teaching error ("preset_query found no loadable matches").
-        result = context.run_on_main(lambda: device_handlers.load_handler(
-            context,
-            kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
-            preset_query={
-                "root": "user_library",
-                "pattern": ANALYZER_DEVICE_NAME,
-                "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
-                "mode": "substring",
-            },
-            **track_address,
-        ))
-        device_index = int(result.get("device_index", 0))
-        if device_index < 1:
-            raise RuntimeError(
-                f"ensure_analyzers_loaded: load_handler returned "
-                f"device_index {device_index!r} for {surface_kind} "
-                f"{surface_index} ({surface_name!r}); expected a 1-based index"
-            )
-        was_loaded = True
-    else:
-        device_index = existing_idx
+
+    def _index_and_len() -> tuple[int | None, int]:
+        # One main-thread bout reads BOTH the analyzer's index AND the chain
+        # length from the SAME device-list snapshot — they must agree (an
+        # interleaved analyzer's "is it last?" decision compares the two).
+        devices = _existing_devices_for(context, track_address)
+        return _find_analyzer_index(devices), len(devices)
+
+    existing_idx, chain_len = context.run_on_main(_index_and_len)
+    action = _reposition_action(existing_idx, chain_len)
+
+    # SNP-8R4K Mechanism 2 — re-assert the terminal-tap invariant. The
+    # analyzer must be the chain's strictly-LAST device at capture time so the
+    # per-stem WAV reflects the full authored chain. ``ensure_loaded`` used to
+    # guarantee only PRESENCE; a device loaded after a prior render lands past
+    # the analyzer (Live appends, no reorder API), leaving the tap mid-chain →
+    # silent under-measurement. We self-heal that here at render start (R8/R11).
+    was_repositioned = False
+    if action == "already_last":
+        # Common case. The analyzer is present AND last — do NOTHING. Touching
+        # it would pay the expensive M4L reload on an unchanged surface (R12).
+        # The snapshot already proved it terminal; the param writes target the
+        # index we just read.
+        device_index = existing_idx  # type: ignore[assignment]
         was_loaded = False
+        terminal = True
+    else:
+        if action == "reposition":
+            # Present but NOT last — a device landed past the analyzer since the
+            # previous render. Live has no reorder API, so "make last" = delete
+            # + re-add (the load appends → now terminal). The M4L reload cost is
+            # paid ONLY on this changed surface (R12). The analyzer pre-existed
+            # in the song, so was_loaded stays False — it was MOVED, not added.
+            #
+            # Non-atomicity (Critic SNP-8R4K-3 W): delete-then-reload is not
+            # atomic — if the reload fails to place the device, the re-read
+            # below RAISES loudly ("the load did not place the device"), so it
+            # is NOT silent, and the surface self-heals on the next render (the
+            # `absent` path reloads it). The stronger never-tapless form
+            # (load-the-new-last FIRST, then delete the old mid-chain one)
+            # introduces a transient two-analyzer state + old-vs-new
+            # disambiguation; it's deferred to the Live-hardening pass alongside
+            # operator-verification of this whole reposition path (real reload
+            # failures only surface in Live, which this no-Live chunk defers).
+            context.run_on_main(lambda: device_handlers.delete_handler(
+                context,
+                device_index=existing_idx,
+                **track_address,
+            ))
+            _load_analyzer(
+                context,
+                track_address=track_address,
+                surface_kind=surface_kind,
+                surface_index=surface_index,
+                surface_name=surface_name,
+            )
+            was_loaded = False
+            was_repositioned = True
+        else:  # "absent"
+            # DEV-6M2K: the master auto-loads like any other surface. The
+            # earlier DEV-2M9K detect-only carve-out (raise loudly when the
+            # master analyzer is absent) rested on the refuted premise that Live
+            # can't load onto the master; live-proven on Live 12.4.2 that it
+            # can. ``track_address`` already carries ``master: True`` and
+            # ``load_handler`` no longer refuses it, so the master falls through
+            # this normal load path.
+            _load_analyzer(
+                context,
+                track_address=track_address,
+                surface_kind=surface_kind,
+                surface_index=surface_index,
+                surface_name=surface_name,
+            )
+            was_loaded = True
+
+        # Re-read the chain after the load (R9 observability + robust param
+        # targeting). One bout reads BOTH the analyzer's ACTUAL index (the
+        # param writes below must target the real analyzer, not the load
+        # result's reported index — robust if the load didn't land terminal)
+        # AND whether it is strictly last. If it is NOT last (a concurrent edit
+        # / unexpected Live quirk), flag ``terminal=False`` — the render
+        # manifest surfaces this as ``analyzer_not_terminal`` so a reading agent
+        # never trusts the under-tapped stem (never measure-and-lie).
+        def _reread() -> tuple[int | None, bool]:
+            devices = _existing_devices_for(context, track_address)
+            idx = _find_analyzer_index(devices)
+            return idx, (idx == len(devices))
+
+        found_idx, terminal = context.run_on_main(_reread)
+        if found_idx is None:
+            raise RuntimeError(
+                f"ensure_analyzers_loaded: after load, no HallucinoteAnalyzer "
+                f"found on {surface_kind} {surface_index} ({surface_name!r}) — "
+                "the load did not place the device"
+            )
+        device_index = found_idx
 
     # Assert per-instance ports via Live params. The `Port` parameter
     # drives `[udpreceive]` so two analyzers listening on the same port
@@ -398,7 +465,56 @@ def _ensure_on_surface(
         osc_port=osc_port,
         osc_emit_port=osc_emit_port,
         was_loaded=was_loaded,
+        terminal=terminal,
+        was_repositioned=was_repositioned,
     )
+
+
+def _load_analyzer(
+    context: LiveContext,
+    *,
+    track_address: dict[str, Any],
+    surface_kind: str,
+    surface_index: int,
+    surface_name: str,
+) -> int:
+    """Load one HallucinoteAnalyzer onto the surface; return its 1-based index.
+
+    Each Live touch is its own ``context.run_on_main`` bout (worker-thread
+    caller invariant). Used by both the absent-load path and the reposition
+    re-add path in ``_ensure_on_surface``.
+
+    Loads via ``preset_query``, NOT ``kind=``. The .amxd is placed under
+    ``user_library/Presets/Audio Effects/Max Audio Effect/`` by the install
+    skill, but ``kind=`` triggers a walk that only covers the built-in browser
+    roots (instruments / audio_effects / midi_effects / drums per
+    ``_BROWSER_LOAD_ROOTS``). The User Library is reachable via ``preset_uri``
+    or ``preset_query`` — we use ``preset_query`` because the URI is per-machine
+    (Live's FileId varies). The ``path_prefix`` pins the exact location so a
+    user-saved preset named "HallucinoteAnalyzer" elsewhere in their library
+    can't shadow the canonical device. If the .amxd is absent,
+    ``_resolve_preset_query`` raises a teaching error ("preset_query found no
+    loadable matches"). The browser load APPENDS, so the analyzer lands last.
+    """
+    result = context.run_on_main(lambda: device_handlers.load_handler(
+        context,
+        kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
+        preset_query={
+            "root": "user_library",
+            "pattern": ANALYZER_DEVICE_NAME,
+            "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
+            "mode": "substring",
+        },
+        **track_address,
+    ))
+    device_index = int(result.get("device_index", 0))
+    if device_index < 1:
+        raise RuntimeError(
+            f"ensure_analyzers_loaded: load_handler returned "
+            f"device_index {device_index!r} for {surface_kind} "
+            f"{surface_index} ({surface_name!r}); expected a 1-based index"
+        )
+    return device_index
 
 
 def _existing_devices_for(
@@ -463,6 +579,38 @@ def _find_analyzer_index(devices: list[Any]) -> int | None:
         ):
             return i
     return None
+
+
+def _reposition_action(analyzer_idx: int | None, chain_len: int) -> str:
+    """Decide what the terminal-tap sweep must do on ONE surface (SNP-8R4K
+    Mechanism 2 — pure, Live-free, unit-testable).
+
+    The analyzer must be the chain's strictly-last device at capture time so
+    the per-stem WAV reflects the full authored chain. Given the analyzer's
+    1-based index in the chain (``None`` if absent) and the chain length,
+    returns one of three actions:
+
+      - ``"absent"``       — no analyzer in the chain → LOAD one (the load
+                             appends, landing it last; R5/ensure-present).
+      - ``"already_last"`` — analyzer present AND already the last device
+                             (``analyzer_idx == chain_len``) → NO-OP. This is
+                             the common case; do NOT churn (R12 — keeps the
+                             expensive M4L reload off unchanged surfaces).
+      - ``"reposition"``   — analyzer present but NOT last (a device landed
+                             past it since the previous render) → DELETE +
+                             re-add so it lands last. Live has no reorder API,
+                             so "make last" = delete + re-add; the reload cost
+                             is paid only on this changed surface (R8/R12).
+
+    Position-independent by construction: the decision is a pure function of
+    (index, length), so an analyzer interleaved anywhere short of last
+    self-heals to terminal at the next render (R11).
+    """
+    if analyzer_idx is None:
+        return "absent"
+    if analyzer_idx == chain_len:
+        return "already_last"
+    return "reposition"
 
 
 def _track_carries_audio(track: Any) -> bool:

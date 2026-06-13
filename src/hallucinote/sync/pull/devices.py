@@ -7,6 +7,7 @@ import json
 import sqlite3
 from typing import Any
 
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.capture import RACK_CLASS_NAMES
 
 from hallucinote.db import mutations as M, queries as Q
@@ -298,6 +299,212 @@ def plan_pull_device_parameters(
     return plan
 
 
+def plan_pull_device_sidechain(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PullPlan:
+    """Plan probes to pull each linked device's sidechain SOURCE (SDC-7K3M).
+
+    The PULL half of the device-sidechain round-trip whose author + push half
+    already ships (``set_device_sidechain`` mutator + ``plan_push_device_sidechain``
+    push phase). The ``S/C On`` / ``S/C Gain`` / ``S/C Mix`` params round-trip as
+    ordinary ``device_parameters``; the one piece they can't carry is the SOURCE —
+    the device's audio *input* routing, which on a sidechained compressor points
+    at another track. Push restores it via ``set_input_routing``; this captures it
+    via the symmetric ``get_input_routing``.
+
+    Emits one ``ableton_device(action='get_input_routing')`` per device on a
+    linked track or return, iterating the SAME structural pass as
+    ``plan_pull_device_parameters`` — top-level chain only (``position==0``;
+    nested rack chains gated by gap #17b), ``master`` tracks skipped. The handler
+    returns ``has_input_routing: False`` (no raise) for devices that lack the API,
+    so probing every device is cheap and the apply layer no-ops the ones without
+    a routing surface. Devices set in Ableton outside the DB are not
+    auto-discovered (V1 — same boundary as the rest of pull).
+    """
+    plan = PullPlan()
+    any_emitted = False
+
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if track_at is None:
+            plan.warn(
+                f"track {t['name']!r} ({t['id']}): not linked; skipping "
+                "device sidechain sources"
+            )
+            continue
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            if chain["position"] != 0:
+                continue  # nested rack chains gated by gap #17b
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_input_routing",
+                        "track_index": track_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"device_sidechain_source:{d['id']}",
+                    purpose=(
+                        f"pull sidechain source for device {d['kind']!r} "
+                        f"(pos {d['position']}) on track {t['name']!r}"
+                    ),
+                ))
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if return_at is None:
+            plan.warn(
+                f"return {r['name']!r} ({r['id']}): not linked; skipping "
+                "device sidechain sources"
+            )
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                any_emitted = True
+                plan.add(PullCall(
+                    tool="ableton_device",
+                    args={
+                        "action": "get_input_routing",
+                        "return_index": return_at,
+                        "device_index": d["position"],
+                    },
+                    key=f"device_sidechain_source:{d['id']}",
+                    purpose=(
+                        f"pull sidechain source for device {d['kind']!r} "
+                        f"(pos {d['position']}) on return {r['name']!r}"
+                    ),
+                ))
+
+    if not any_emitted:
+        plan.warn(
+            "no devices on linked tracks or returns — device-sidechain "
+            "pull will be empty (run plan_pull_devices first if you "
+            "expected devices)"
+        )
+    return plan
+
+
+def _device_host_track_id(
+    conn: sqlite3.Connection, device: sqlite3.Row,
+) -> str | None:
+    """The id of the track a device sits on, or ``None`` for a return- or
+    rack-hosted device. Used to distinguish a real sidechain source from a
+    device routed to its OWN track's signal (the default input)."""
+    chain = Q.get_device_chain(conn, device["chain_id"])
+    if chain is None:
+        return None
+    return chain["parent_track_id"]
+
+
+def _apply_device_sidechain_source(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    song_id: str,
+    device_id: str,
+    result: dict[str, Any],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest one device's sidechain SOURCE from a ``get_input_routing`` probe
+    (shape: ``{has_input_routing, current_type, current_channel, available_*}``).
+
+    The source is always a TRACK, so resolution is a track-name lookup (vs the
+    routing-kind map track routing uses). Policy (V1, Ableton-authoritative in
+    the SET direction; conservative on everything ambiguous):
+
+      - device not linked → skip (defense in depth; the planner already gates).
+      - ``has_input_routing`` False / ``current_type`` None → no-op.
+      - ``current_type`` resolves to exactly ONE song track, distinct from the
+        device's own host track → write it through ``set_device_sidechain``
+        (idempotent).
+      - resolves to the device's OWN host track → no-op (that's the default
+        input, not a sidechain).
+      - name collision (multiple tracks) → warning, skip.
+      - no song-track match → no-op. The input is a non-track route (device
+        default / external in / "No Input"). V1 does NOT auto-CLEAR an authored
+        source here: how Live reports an un-sidechained device's default input is
+        unverified without a session (operator-verification gates tightening this
+        to a clear). A documented limitation, not a silent drop.
+    """
+    if Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="device", db_id=device_id,
+    ) is None:
+        out.skipped_unlinked += 1
+        out.warnings.append(
+            f"device_sidechain_source:{device_id} — device not linked in this "
+            "session; the planner would not have emitted this. Skipping."
+        )
+        return
+    dev = Q.get_device(conn, device_id)
+    if dev is None:
+        out.warnings.append(
+            f"device_sidechain_source:{device_id} — DB row missing; skipping"
+        )
+        return
+
+    if result.get("has_input_routing") is False:
+        out.no_ops += 1
+        return
+    current_type = result.get("current_type")
+    if current_type is None:
+        out.no_ops += 1
+        return
+
+    matches = [
+        t for t in Q.get_tracks_for_song(conn, song_id)
+        if t["name"] == current_type
+    ]
+    if len(matches) > 1:
+        out.warnings.append(
+            f"device {dev['display_name']!r} sidechain source -> "
+            f"{current_type!r}: matches multiple tracks by name; cannot form an "
+            "unambiguous reference — skipping (rename one of the colliding tracks)"
+        )
+        return
+    if not matches:
+        # Non-track input (device default / external / "No Input"). V1 no-op —
+        # see the policy note above; auto-clear is operator-verification-gated.
+        out.no_ops += 1
+        return
+
+    source_track_id = matches[0]["id"]
+    if source_track_id == _device_host_track_id(conn, dev):
+        out.no_ops += 1  # routed to its own track's signal = default, not sidechain
+        return
+
+    live_channel = result.get("current_channel")
+    if (dev["sidechain_source_track_id"], dev["sidechain_source_channel"]) == (
+        source_track_id, live_channel,
+    ):
+        out.no_ops += 1
+        return
+
+    M.set_device_sidechain(
+        conn, device_id=device_id, source_track_id=source_track_id,
+        channel=live_channel, actor=actor, request_id=request_id, reason=reason,
+    )
+    out.mutations += 1
+    out.details.append(
+        f"device {dev['display_name']!r} sidechain source <- {current_type!r}"
+        + (f" (channel {live_channel!r})" if live_channel else "")
+    )
+
+
 def _apply_devices_for_parent(
     conn: sqlite3.Connection,
     *,
@@ -387,6 +594,31 @@ def _apply_devices_for_parent(
     )
 
 
+def _exclude_analyzer_entries(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop HallucinoteAnalyzer probe entries and densely renumber the
+    surviving authored devices' `device_index` (1-based rank among survivors).
+    SNP-8R4K — Live→DB boundary exclusion (R3/R5).
+
+    Position-independent: correct whether the analyzer is last or interleaved.
+    An entry with a missing/invalid `device_index` is NOT renumbered — it
+    passes through unchanged so `_diff_chain_devices`'s existing validation
+    still warns on a malformed hand-crafted `results.json`.
+    """
+    survivors = [e for e in entries if not is_analyzer_device(e)]
+    out: list[dict[str, Any]] = []
+    rank = 0
+    for e in survivors:
+        idx = e.get("device_index")
+        if isinstance(idx, int) and idx >= 1:
+            rank += 1
+            out.append({**e, "device_index": rank})
+        else:
+            out.append(e)
+    return out
+
+
 def _diff_chain_devices(
     conn: sqlite3.Connection,
     *,
@@ -415,7 +647,17 @@ def _diff_chain_devices(
     `label` is the per-row prefix in details lines (e.g. ``"track device"``,
     ``"rack chain 2 device"``). `context_label` is the prefix for warnings
     that name the surface being diffed.
+
+    SNP-8R4K — analyzer exclusion: the HallucinoteAnalyzer is measurement
+    infrastructure, not authored content. Probed entries that
+    `is_analyzer_device` are dropped before the diff so a pull never writes an
+    analyzer row, and the surviving authored devices are densely renumbered
+    (rank among survivors) so an interleaved analyzer can't shift authored
+    positions or leave a hole. Shared by both the top-level and nested-rack
+    callers, so both inherit the exclusion.
     """
+    entries = _exclude_analyzer_entries(entries)
+
     db_devices = list(Q.get_devices_for_chain(conn, chain_id))
     db_by_position = {d["position"]: d for d in db_devices}
 

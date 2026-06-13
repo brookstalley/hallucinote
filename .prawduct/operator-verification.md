@@ -6,6 +6,43 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## 2026-06-13 autonomous session — bridge prepped + new pending checks
+
+**Bridge is READY for the existing SNP-8R4K checks below.** This session re-vendored
+Live's Remote Script from the stale `4288d582ffc4` to **`0.1.0+46bd3bd7aa37`** (develop
+HEAD; the fingerprint is unchanged by this session's work — all of it is outside
+`_FINGERPRINT_PATHS`), and preflight confirms `matches_mcp_server: true`,
+`coexistence_divergence: false`, analyzer byte-identical. So on return:
+**reopen Live → `/mcp` reconnect → the develop server (`46bd` + the new
+`ableton://server/info` resource) and the vendored Remote Script (`46bd`) handshake-match.**
+Then the SNP-8R4K chunk 3 + chunk 4 checks (below) are unblocked, plus:
+
+### INS-3W8P — install resolves the running server (coexistence path)
+
+**Status:** PARTIALLY DOGFOODED. The right-source vendor + the
+`--require-server-version` assertion + the honest `preflight --server-version`
+(server `confirmed: true`, `coexistence_divergence: false`, `matches_mcp_server: true`)
+were all exercised live this session against the real User Library — but with
+server == invoking (`46bd`), so the *divergent* coexistence case wasn't forced.
+**Residual:** force a genuine divergence — e.g. enable the marketplace plugin
+(`4288`/main) so the running server differs from the editable dev clone (`46bd`),
+`/mcp` so the server carries `ableton://server/info`, then run `/ableton-mcp-install`:
+confirm the skill READS `server/info`, preflight flags `coexistence_divergence: true`,
+and `install-remote-script --from-package-root <server_root> --require-server-version
+<server_v>` vendors the SERVER's copy (or refuses a wrong source). Note: a transitional
+first run against an OLD server (pre-`server/info`) correctly falls back — `/mcp`
+respawns develop HEAD before relying on the resource.
+
+### PSH-2R7K / PSH-5T9D — push execute phase-targeting + mid-run progress (smoke; LOW priority)
+
+**Status:** UNIT-COMPLETE (engine-only, 23 tests; no Live behavior beyond what's
+tested). **Optional Live smoke:** on a real push, confirm `execute --only devices`
+runs exactly that phase, `--resume` continues from a halt, the per-phase stderr
+heartbeat appears, and `.last-push-state.json` is pollable mid-run (a `watch cat`
+shows `current_phase` advance). Not gating — the logic is fully unit-covered.
+
+---
+
 ## ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity (Live smoke)
 
 **Status:** PENDING — needs a `/mcp` reconnect (respawn the server on the new handler code,
@@ -315,3 +352,162 @@ and — the Critic-W1 open premise — what Live's **non-track input default act
 3. **Display-name / channel fidelity spot-check.** For a track routed to the bus, confirm
    `get_output_routing` returns `current_type` == the bus's exact name and a `current_channel`
    the inverse map round-trips (e.g. "Post Mixer") — i.e. push-then-pull is identity.
+
+---
+
+## SNP-8R4K chunk 4 — push-preflight surfaces stale-set rebuild guidance (State-2 trigger)
+
+**Status:** PENDING — needs an attended Live session + a `/mcp` reconnect (the running
+Remote Script + server must run this branch's `probe_and_link`). **Visual change:** no
+(the guidance is a `notes[]` string in the probe-and-link JSON the skill surfaces; no
+Live state changes). Unit-proven at the detection + wiring layers
+(`tests/unit/test_analyzer_staleness.py` — 18 pure-detector tests across
+track/return/master; `tests/unit/sync/test_push_cli.py` — 5 wiring tests through the
+`probe_and_link` seam with synthetic probe data). What units CANNOT cover: that Live's
+real `ableton_device(action='list')` surfaces the analyzer entry with
+`name=="HallucinoteAnalyzer"` (the predicate `is_analyzer_device` keys on `name`), and
+that `_probe_live_devices_via_mcp` forwards it unfiltered to `probe_and_link`.
+
+1. **Stale set surfaces the guidance (the deliverable).** Open a saved set, then load any
+   authored device (e.g. a Saturator) onto a track that already carries the
+   HallucinoteAnalyzer so it lands AFTER the analyzer (Live appends; the analyzer is no
+   longer terminal). Run `push_cli probe-and-link --probe`. Confirm the result JSON's
+   `notes[]` contains a `"STALE SET (SNP-8R4K)"` entry naming that surface (`track #N`) +
+   the trailing device, with the "rebuild the set from source: push into a fresh set"
+   guidance. No hard halt — `probe-and-link` still exits 0.
+
+2. **Clean / rebuilt set is silent.** On a set where the analyzer is terminal on every
+   tapped surface (a freshly-rebuilt push, or one where no device was loaded after the
+   render's tap), run the same `probe-and-link --probe`. Confirm NO `"STALE SET"` note
+   appears (the condition is the version key — a clean set has no authored-after-analyzer
+   surface, so detection is silent).
+
+3. **Master-surface gap (informational, not a gate).** The probe today walks tracks +
+   returns only (`_probe_live_devices_via_mcp`); the master chain isn't probed until
+   SNP-4K7M lands master-device capture. So a master-only staleness won't surface yet —
+   confirm this is the case and note it. The detector already handles a `("master", None)`
+   surface in the roll-up; only the probe feed is missing.
+
+---
+
+## SNP-8R4K chunk 3 — render re-asserts the terminal-tap + flags under-tapped surfaces
+
+**Status:** PENDING — needs an attended Live session + a `/mcp` reconnect (the running
+Remote Script + server must run this branch's `analyzer/setup.py` reposition code).
+**Visual change:** yes (on a repositioned surface the HallucinoteAnalyzer visibly moves
+to the END of the device chain — it is deleted mid-chain and re-added last). Unit-proven
+at the decision + wiring layers (`hallucinote_mcp/tests/unit/test_analyzer_setup.py` —
+the pure `_reposition_action` helper across absent / already-last / interleaved, plus
+`_ensure_on_surface` reposition / no-op / load / idempotent-after-reposition with the
+mocked Live chain; `hallucinote_mcp/tests/unit/test_actions_render.py` — the manifest's
+per-surface `terminal` / `was_repositioned` + the top-level `analyzer_not_terminal`
+roll-up, including a forced non-terminal surface). What units CANNOT cover: that Live's
+real `delete_device` + `browser.load_item` actually deletes the mid-chain analyzer and
+re-appends it terminal, and that the per-stem WAV then reflects the post-analyzer device.
+
+1. **Reposition fixes an under-tapped surface (the deliverable).** Open a set, render once
+   (analyzer lands last on every tapped surface). Then load any authored device (e.g. a
+   Saturator) onto a track that already carries the HallucinoteAnalyzer — Live appends, so
+   it lands AFTER the analyzer (analyzer no longer terminal → under-tapping). Re-render
+   (`ableton_render(action='render')`). Confirm in Live: the analyzer was MOVED to the END
+   of that track's chain (the Saturator now precedes it), and the render manifest's track
+   entry shows `"was_repositioned": true` + `"terminal": true`. Compare the per-stem WAV
+   to the pre-reposition render: it now reflects the Saturator's effect (e.g. its
+   saturation is audible / shows in the spectrum) — the post-analyzer device is captured.
+
+2. **Already-last surface is a no-op (R12 — no churn).** On a surface where the analyzer is
+   already last, the re-render must NOT delete + re-add it (the M4L reload is expensive).
+   Confirm the analyzer object/position is unchanged on those surfaces, the render didn't
+   stall, and the manifest entry reads `"was_repositioned": false` `"terminal": true`. (The
+   no-reload-on-unchanged-surface invariant — the `ensure_loaded` 25-surface load once blew
+   the socket window, so a churning render here would be a regression.)
+
+3. **Never measure-and-lie (R9).** If any surface cannot be made terminal (a Live quirk /
+   concurrent edit leaves a device after the re-added analyzer), confirm the manifest flags
+   that surface in the top-level `"analyzer_not_terminal"` list and sets the per-surface
+   `"terminal": false` — rather than emitting clean numbers for an under-tapped stem. (Hard
+   to force live; the unit test forces it via a misbehaving load. Note here if no natural
+   live case arises — the path is unit-covered.)
+
+---
+
+## DPP-7H2K — unit-aware value_display resolves a REAL Live param (Hz/kHz, ms/s)
+
+**Status:** CALIBRATION VERIFIED 2026-06-13 (live, via str_for_value probe + local
+solver). REMAINING: end-to-end `set_parameter(value_display=…)` THROUGH the new
+server — needs a re-vendor + `/mcp` reconnect (DPP-7H2K flips the MCP fingerprint;
+the session that ran the calibration was still on the pre-merge server, so the
+*new* inversion path couldn't be driven through the bridge — but its math was
+proven against the real device, below).
+**Visual change:** no (parameter value changes; verify via readback).
+
+**CALIBRATION EVIDENCE (2026-06-13, real Live 12.x — EQ Eight + Compressor on a
+scratch track, deleted after).** Captured the REAL display curves via the bridge:
+EQ Frequency `30 Hz … 1000 Hz → 2.00 kHz … 18.0 kHz` (the leading number reverses
+1000→2.00 at the Hz→kHz switch); Compressor Release `1.00 ms … 459 ms → 1.12 s …
+3.00 s` (459→1.12 at the ms→s switch). The shipped `canonical_magnitude` normalised
+EVERY real string correctly and made both sequences monotonic (the exact reversal
+that made the pre-DPP-7H2K code REFUSE). `solve_raw_for_display` resolved targets
+against the real-sample curve and the REAL device rendered them back:
+`150 Hz → raw 0.35187 → "150 Hz"` (exact), `2 kHz → 0.68848 → "2.00 kHz"` (exact),
+`120 ms → 0.29649 → "123 ms"` and `1.5 s → 0.78125 → "1.52 s"` (~2%, interpolation
+granularity of the 6-pt release sample, not the solver — the real server bisects on
+the real curve and converges exact). The "validate against real instances, not the
+synthetic corpus" learning is satisfied for the resolution math.
+
+Unit-proven against synthetic curves mirroring real device shapes
+(`hallucinote_mcp/tests/unit/test_display_value.py`: Hz/kHz + ms/s resolution,
+genuinely-non-monotonic-after-normalisation still refuses; `test_actions_device.py`:
+the value_real echo through both write sites). What units CANNOT cover — the project's
+own learning ("validate against real instances; the original display-value traps all
+came from real-Live probes, not the synthetic corpus"): that a REAL Live EQ frequency
+and a REAL compressor release actually render the Hz↔kHz / ms↔s switch the way the
+fixtures assume.
+
+1. **EQ freq by explicit unit.** On a real EQ Eight band Frequency param,
+   `ableton_device(set_parameter, …, parameter_name='Frequency', value_display='150 Hz')`
+   succeeds (no DisplayValueError) and `get_parameters` reads back ~150 Hz. Repeat with
+   `value_display='2 kHz'` → reads back ~2 kHz. Confirm the response carries
+   `value_real`≈150 / 2000 and `value_real_unit='Hz'`.
+2. **Comp release by explicit unit.** On a real Compressor Release,
+   `value_display='120 ms'` and `value_display='1.5 s'` each resolve and read back at the
+   right magnitude; `value_real_unit='ms'`.
+3. **Genuinely non-monotonic still refuses.** A param whose display reverses for a
+   non-unit reason still raises the teaching error pointing at the normalized `value`
+   (confirm at least one such param if one is reachable; else note units cover it).
+
+## RTE-2P9X — fresh push of an instrument-less MIDI track routed to PRE-MAIN
+
+**Status:** PENDING — attended Live session, a song with a PRE-MAIN submaster bus and a
+NEW (instrument-bearing) MIDI track routed to it. **Visual change:** no.
+Unit-proven: phase order is `mix < devices < routing` (`test_push_song.py`). What units
+can't cover: that Live actually exposes the MIDI track's audio output routing only after
+its instrument loads. **Check:** a from-scratch `execute` of such a song completes the
+`routing` phase (no `'PRE-MAIN' not in available output routing types'` halt).
+
+## SYN-3C8K — set-swap re-push completes the clips phase
+
+**Status:** PENDING — attended Live session. **Visual change:** no.
+Unit-proven: the cascade drops the stale clip link and the planner then emits `create`
+(`test_push_cli.py`). What units can't cover: the real set-swap. **Check:** push a song,
+close that Live set, open a fresh default set, re-run `probe-and-link --probe` then
+`execute` against the SAME session — the clips phase completes (no `IndexError: session
+slot N on track M is empty`), and probe-and-link reports `unlinked_stale_clips` > 0 and
+offers the default-scaffold cleanup despite the reused (not freshly-minted) session.
+
+## SDC-7K3M — device sidechain SOURCE survives a full pull→rebuild→push round-trip
+
+**Status:** PENDING — attended Live session (Live was occupied at author-time).
+**Visual change:** no.
+Unit-proven: the `device-sidechain` pull domain emits one `get_input_routing` probe per
+linked device, and apply resolves a distinct-track `current_type` → a source FK written
+via `set_device_sidechain` (idempotent; self/none/ambiguous/non-track all no-op) —
+`tests/unit/sync/test_pull.py` SDC-7K3M block (13 tests). What units can't cover: how a
+REAL Live device reports its input routing, and the full loop. **Check:** in Live, set a
+compressor's sidechain SOURCE to a sibling track (`ableton_device(set_sidechain)` or by
+hand); run `pull_cli execute device-sidechain <session>`; confirm
+`devices.sidechain_source_track_id` now names that track; then `build.py --reset` +
+`push_cli execute` and confirm the source re-resolves to the correct track in Live with
+no `.als` reliance. **Then (gates a follow-up):** observe what `get_input_routing`
+returns for an UN-sidechained compressor's default input — this decides whether V1's
+"non-track input → no-op" can tighten to an Ableton-authoritative auto-CLEAR.

@@ -97,6 +97,17 @@ When changing this surface:
     the two never drift), then writes through `set_track_routing`. NULL routing
     columns are treated as Live's default route, so a first pull of an unrouted
     track is a no-op, not a churn of every NULL into an explicit default (D8).
+  - Device sidechain SOURCE (SDC-7K3M) rides in its own `device-sidechain` domain
+    (symmetric with push's separate `device_sidechain` phase): per device on a
+    linked track/return, `plan_pull_device_sidechain` emits
+    `device_sidechain_source:<device_id>` = one `ableton_device(get_input_routing)`
+    read. The source is always a TRACK, so apply resolves Live's `current_type`
+    (a track `display_name`) to a song-track FK by name — NOT via `routing_names`
+    (that maps routing *kinds*) — and writes through `set_device_sidechain`. V1
+    apply is Ableton-authoritative in the SET direction only: a distinct-track
+    match is captured; self-match / name-collision / non-track input all no-op
+    (auto-CLEAR on a non-track input is operator-verification-gated — Live's
+    reporting of an un-sidechained device's default input is unverified).
   - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
     field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
     doesn't churn events.
@@ -180,6 +191,36 @@ When changing this surface:
   old manifests and when the song DB can't be read — consumers must treat
   `db_seq=None` as "unknown", never an error. Field additions are additive
   (same policy as MixReport JSON).
+
+### Remote Script Version Handshake + Server Identity (`hallucinote_mcp/__init__.py`, `resources/`, `cli/`)
+
+- **Producer**: `__init__.py` `__version__` (`BASE_VERSION` + content fingerprint
+  over `_FINGERPRINT_PATHS` = `wire.py`/`schema.py`/`dispatcher.py`/`actions`/
+  `handlers`/`remote_script`). The running server exposes its identity via the
+  `ableton://server/info` resource (`version`, `base_version`, `fingerprint`,
+  `package_root`) — Live-independent.
+- **Consumers**: the runtime handshake (`wire.py` — every dispatch); the
+  `ableton-mcp-install` skill (reads `ableton://server/info`, threads it into the
+  CLI); `cli/preflight.py` (`--server-version` → `matches_mcp_server` +
+  `coexistence_divergence`); `cli/install.py` (`--from-package-root` +
+  `--require-server-version`).
+- **Contract**: the server, the vendored Remote Script, and the install CLI's
+  reference must all agree on **which `hallucinote_mcp` copy is authoritative — the
+  one the *plugin launches***, never the invoking interpreter's `sys.path` pick
+  (INS-3W8P). `resources/` is deliberately **outside** `_FINGERPRINT_PATHS`, so
+  adding/altering a resource (e.g. `server/info`) does **not** change the handshake
+  fingerprint and never forces a re-vendor.
+
+When changing this surface:
+- A change to any `_FINGERPRINT_PATHS` file flips `__version__` → the vendored
+  Remote Script is stale until re-vendored; say so in the chunk handoff + the
+  operator-verification (it needs a Live restart, since Live caches Control Surface
+  modules at startup).
+- A change to the `ableton://server/info` payload shape, or to the preflight
+  `server`/`coexistence_divergence` keys or the `install-remote-script` flags,
+  breaks the install skill — update `skills/ableton-mcp-install/SKILL.md` in the
+  same change (the `test_install_skill_consistency.py` structural test guards the
+  subcommand calls; the JSON shape is the skill's contract).
 
 ## Test Levels
 

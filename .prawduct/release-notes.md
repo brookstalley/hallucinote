@@ -5,6 +5,40 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v0.9.7
+
+### sync-pull,analysis
+
+**Entry:** 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
+
+**Chunks shipped:** DEV-4X2N, SDC-7K3M-pull
+
+### sync-push,db,mcp-bridge,skills
+
+**Entry:** 2026-06-13 — song round-trip reliability (push ordering, clip-link cascade, unit-aware params)
+
+**Chunks shipped:** DPP-7H2K, RTE-2P9X, SKL-8N3V, SYN-3C8K
+
+### sync-push,cli
+
+**Entry:** 2026-06-12 — PSH-2R7K / PSH-5T9D: push `execute` phase-targeting + mid-run progress
+
+**Chunks shipped:** PSH-2R7K, PSH-5T9D
+
+### plugin-distribution,mcp-bridge
+
+**Entry:** 2026-06-13 — INS-3W8P: install/preflight resolve the running server, not the invoking interpreter
+
+**Chunks shipped:** INS-3W8P
+
+### capture,sync-push,sync-pull,render
+
+**Entry:** 2026-06-13 — SNP-8R4K: the analyzer is measurement infrastructure, excluded at every model boundary
+
+**Chunks shipped:** SNP-8R4K-01, SNP-8R4K-02, SNP-8R4K-03, SNP-8R4K-04
+
+See `.prawduct/change-log.md` for full details.
+
 ## v0.9.6
 
 **Entry:** 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening

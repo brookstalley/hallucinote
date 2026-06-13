@@ -1,5 +1,5 @@
 ---
-description: Push the Hallucinote DB into Ableton Live. Drives fourteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → device-sidechain → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
+description: Push the Hallucinote DB into Ableton Live. Drives fourteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device-sidechain → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
@@ -74,13 +74,13 @@ python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> -
 
 Display:
 - Matched counts (`"linked 3 of 5 DB tracks; 2 will be created"`).
-- `unlinked_stale_tracks` / `unlinked_stale_returns` counts if non-empty.
+- `unlinked_stale_tracks` / `unlinked_stale_returns` / `unlinked_stale_clips` counts if non-empty. (`unlinked_stale_clips` are clip links cascade-dropped because their parent track was no longer linked — the set-swap recovery, SYN-3C8K.)
 - `notes` verbatim if non-empty (duplicate names, kind mismatches, case-only near-matches).
 - `unmatched_live_tracks` / `unmatched_live_returns` if non-empty.
 
 **Confirmation gates when `unmatched_live_tracks` is non-empty.** Two cases; the CLI tells you which.
 
-**Case 1: clean-default-scaffold.** `auto_session_created==true` AND `default_scaffold_unmatched_tracks` non-empty (canonical default names like `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`). Default the prompt to "yes, clean":
+**Case 1: clean-default-scaffold.** `default_scaffold_unmatched_tracks` non-empty (canonical default names like `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`). Fires on a fresh `--auto-session` push AND on a reused session pushed onto a fresh default set (the set-swap case — SYN-3C8K dropped the earlier `auto_session_created==true` requirement; the CLI populates the field either way). Default the prompt to "yes, clean":
 
 > *"Live has its default scaffold tracks that this song doesn't use. Delete them after the push so only the song's tracks remain? (Y/n)"*
 
@@ -111,8 +111,16 @@ python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 | 2 | Connection lost | See `ableton://guides/error-recovery`. Re-execute. |
 
 `execute` writes:
-- **`.last-push-state.json`** — per-phase status, counts, halted phase name. Always written.
+- **`.last-push-state.json`** — per-phase status, counts, halted phase name. Always written. **Flushed after every phase (PSH-5T9D)**, so it's pollable mid-run: `current_phase` names the phase running now, and a `scope` field records any phase-targeting (null for a full run). `execute` also streams per-phase start/finish lines to **stderr** (stdout stays the parseable summary) — so a multi-minute push has a heartbeat (esp. the realtime `performed_automation` phase).
 - **`.last-push-errors.json`** — per-error forensics. Written only on failure. `args_summary` redacts large payloads to counts.
+
+**Recovery / scoped runs (PSH-2R7K).** `execute` accepts phase-targeting so a halt doesn't cost a full replay (incl. the ~8-11 min perform):
+- `--resume` — continue from the last run's halted phase (reads `.last-push-state.json`).
+- `--start-at PHASE` / `--from PHASE` — run from a phase to the end (resume case; assumes earlier phases already ran — it does NOT satisfy dependencies, e.g. `--start-at clips` needs `tracks` linked from a prior pass).
+- `--only PHASE` — run exactly one phase (e.g. `--only devices`).
+- `--stop-after PHASE` — bound a run to a prefix.
+
+Mutual exclusion: `--only` cannot combine with `--start-at`/`--stop-after`/`--resume`; `--resume` cannot combine with `--only`/`--start-at` (it derives `--start-at`), but **may** combine with `--stop-after` to resume into a bounded window. A typo'd phase name teaches with the valid list (exit 2). Scoped runs keep the coherence gate + idempotency.
 
 **Tempo / signature: bar-1 only.** Live's MCP exposes `set_tempo` / `set_signature` for the global value. Per-bar tempo / meter automation is an MCP gap (see `ableton://guides/gaps`). The planner emits bar-1 and warns + skips the rest.
 

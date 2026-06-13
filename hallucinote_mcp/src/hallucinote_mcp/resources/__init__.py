@@ -6,7 +6,8 @@ Resources differ from tools structurally:
   - **Resources** are addressable content; the MCP client (or the agent)
     reads them by URI without consuming a per-tool turn.
 
-Wave M-6 ships 11 static resources; Arc 5 / P3 adds 1 templated resource:
+Wave M-6 ships 11 static resources; Arc 5 / P3 adds 1 templated resource;
+INS-3W8P adds a 12th static (``ableton://server/info``):
 
 Live-backed (delegate to existing handlers via the server's
 ``handle_tool_call`` so they reuse the forward-to-Remote-Script path):
@@ -15,6 +16,12 @@ Live-backed (delegate to existing handlers via the server's
   - ``ableton://browser/effects``
   - ``ableton://browser/drums``
   - ``ableton://plugins/installed``
+
+Server self-report (process introspection — NO Live; readable while Live
+is closed, which the install skill requires):
+  - ``ableton://server/info`` — the running server's ``__version__`` +
+    ``package_root`` so the install skill vendors / fingerprints against
+    the copy THIS server runs, not whatever ``sys.path`` resolves (INS-3W8P).
 
 Static reference (shipped as JSON in the package data dir):
   - ``ableton://reference/scales``
@@ -65,6 +72,7 @@ RESOURCE_URIS: tuple[str, ...] = (
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
     "ableton://guides/gaps",
+    "ableton://server/info",
 )
 
 
@@ -146,6 +154,44 @@ def _plugins_installed() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Server self-report (process introspection — no Live)
+# ---------------------------------------------------------------------------
+
+
+def _server_info() -> str:
+    """Identity of the running MCP server process — version + on-disk root.
+
+    The authoritative answer to "which ``hallucinote_mcp`` copy is the plugin
+    actually running?" (INS-3W8P). The install skill reads this and threads it
+    into ``preflight --server-version`` and ``install-remote-script
+    --from-package-root`` so the vendored Remote Script + the ``matches_mcp_server``
+    comparison are computed against THIS server's copy — never whatever the
+    install shell's ``sys.path`` resolves first (an editable clone, the
+    marketplace plugin, …). Deliberately NO Live dependency: install runs with
+    Live closed, so this must answer from the server process alone.
+
+    - ``version``       — the full handshake string (``BASE_VERSION+fingerprint``).
+    - ``base_version``  — the semver-ish base.
+    - ``fingerprint``   — the wire-shape content fingerprint (suffix of ``version``).
+    - ``package_root``  — absolute path to this server's ``hallucinote_mcp`` package
+      (a valid ``--from-package-root`` source for the Remote Script vendor).
+    """
+    from .. import BASE_VERSION, __version__
+    from ..install_paths import package_root
+
+    fingerprint = __version__.split("+", 1)[1] if "+" in __version__ else ""
+    return json.dumps(
+        {
+            "version": __version__,
+            "base_version": BASE_VERSION,
+            "fingerprint": fingerprint,
+            "package_root": str(package_root()),
+        },
+        indent=2,
+    )
+
+
+# ---------------------------------------------------------------------------
 # DB-backed templated resources (W11-A: ``hallucinote://song/<slug>/...``)
 # ---------------------------------------------------------------------------
 # None today — the first surface (``.../annotations``) was retired with the
@@ -159,7 +205,7 @@ def _plugins_installed() -> str:
 
 
 def register_resources(mcp: Any) -> None:
-    """Wire all 12 resources (11 static + 1 templated) onto a FastMCP instance.
+    """Wire all 12 static resources onto a FastMCP instance.
 
     Called once at server boot from ``server.create_server``. Each
     resource's loader is a thin wrapper (most just delegate); the
@@ -296,6 +342,23 @@ def register_resources(mcp: Any) -> None:
     )
     def guide_gaps() -> str:
         return _read_guide("gaps")
+
+    # ---- Server self-report (process introspection; no Live) ----
+    @mcp.resource(
+        "ableton://server/info",
+        name="server_info",
+        description=(
+            "Identity of the running MCP server process: version "
+            "(BASE_VERSION+fingerprint), base_version, fingerprint, and the "
+            "absolute package_root of THIS server's hallucinote_mcp copy. No "
+            "Live dependency. The install skill reads this so it vendors / "
+            "fingerprints against the copy the plugin actually runs, not "
+            "whatever sys.path resolves (INS-3W8P)."
+        ),
+        mime_type="application/json",
+    )
+    def server_info() -> str:
+        return _server_info()
 
     # ---- Templated DB-backed resources (W11-A) ----
     # None registered today — the first surface (``.../annotations``) was

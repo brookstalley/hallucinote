@@ -33,11 +33,13 @@ _EXPECTED_URIS = {
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
     "ableton://guides/gaps",
+    "ableton://server/info",
 }
 
 
 def test_resource_uri_list_matches_design():
-    """Lock the M-6 surface: exactly these 11 URIs, no more, no less.
+    """Lock the surface: exactly these 12 URIs (11 M-6 + INS-3W8P server/info),
+    no more, no less.
 
     Carry-forward principle #3 (lock-the-surface negative test for
     deliberate omissions). A future PR that adds an unlisted resource
@@ -50,7 +52,7 @@ def test_resource_uri_list_matches_design():
     )
 
 
-def test_create_server_registers_all_eleven_resources():
+def test_create_server_registers_all_resources():
     """End-to-end: create_server wires every URI into FastMCP."""
     mcp = create_server()
     actual = set(registered_resource_uris(mcp))
@@ -259,6 +261,29 @@ def test_primer_advertises_resources():
     from hallucinote_mcp.server import PRIMER
     assert "Resources" in PRIMER or "resources" in PRIMER.lower()
     assert "ableton://" in PRIMER  # at least one URI shown
+
+
+def test_server_info_reports_running_server_identity():
+    """`ableton://server/info` self-reports THIS server's version + package_root,
+    with NO Live dependency (INS-3W8P). The install skill keys off this to vendor
+    the right copy, so the payload shape is a contract."""
+    import json as _json
+    from pathlib import Path
+
+    from hallucinote_mcp import BASE_VERSION, __version__
+    from hallucinote_mcp.resources import _server_info
+
+    payload = _json.loads(_server_info())
+    assert payload["version"] == __version__
+    assert payload["base_version"] == BASE_VERSION
+    # fingerprint is the post-'+' suffix of the version string.
+    assert __version__.endswith("+" + payload["fingerprint"])
+    # package_root points at a real hallucinote_mcp package on disk (a valid
+    # --from-package-root vendor source: it carries __init__.py).
+    root = Path(payload["package_root"])
+    assert root.is_dir()
+    assert (root / "__init__.py").is_file()
+    assert root.name == "hallucinote_mcp"
 
 
 def test_primer_resource_count_matches_actual_registry():

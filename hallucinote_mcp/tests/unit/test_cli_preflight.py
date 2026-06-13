@@ -15,6 +15,8 @@ def test_preflight_report_has_expected_top_level_keys():
     report = _build_report()
     assert set(report.keys()) == {
         "package",
+        "server",                 # INS-3W8P: the running server's identity
+        "coexistence_divergence",  # INS-3W8P: invoking != confirmed server
         "user_library",
         "live",
         "mcp_command",
@@ -81,6 +83,73 @@ def test_preflight_report_is_json_serializable():
     json.dumps(report)
 
 
+# ---------- INS-3W8P: running-server resolution ----------
+
+
+def test_preflight_server_block_unconfirmed_by_default():
+    """No --server-version → the server identity is UNconfirmed and mirrors the
+    invoking copy; no divergence is claimed. matches_mcp_server is then advisory."""
+    report = _build_report()
+    assert report["server"]["confirmed"] is False
+    assert report["server"]["version"] == report["package"]["version"]
+    assert report["coexistence_divergence"] is False
+
+
+def test_preflight_server_version_override_confirmed_no_divergence():
+    """Passing the invoking version as the server version → confirmed, no divergence."""
+    invoking = _build_report()["package"]["version"]
+    report = _build_report(server_version_override=invoking)
+    assert report["server"] == {"version": invoking, "confirmed": True}
+    assert report["coexistence_divergence"] is False
+
+
+def test_preflight_coexistence_divergence_detected():
+    """A confirmed server version that DIFFERS from the invoking copy is the
+    dev+marketplace hazard — flagged so the skill vendors from the server's copy."""
+    report = _build_report(server_version_override="0.1.0+server-side-different")
+    assert report["server"]["confirmed"] is True
+    assert report["server"]["version"] == "0.1.0+server-side-different"
+    assert report["coexistence_divergence"] is True
+
+
+def test_preflight_matches_mcp_server_compares_against_confirmed_server(tmp_path, monkeypatch):
+    """Defect-2 fix: matches_mcp_server is computed against the SERVER version, not
+    the invoking interpreter. A vendored copy equal to the server reads True; equal
+    to the invoking copy but not the server reads False."""
+    from hallucinote_mcp.cli import preflight as pf
+
+    # A candidate User Library with a (fake) vendored Remote Script present.
+    vendored_pkg = tmp_path / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp"
+    vendored_pkg.mkdir(parents=True)
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [tmp_path])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: tmp_path)
+    # The vendored copy's computed version is the SERVER's version.
+    monkeypatch.setattr(
+        pf.P, "installed_remote_script_version", lambda ul: "0.1.0+SERVER"
+    )
+
+    # Confirmed against the matching server → True.
+    report = _build_report(server_version_override="0.1.0+SERVER")
+    cand = report["remote_script"]["candidates"][0]
+    assert cand["installed"] is True
+    assert cand["version"] == "0.1.0+SERVER"
+    assert cand["matches_mcp_server"] is True
+
+    # Confirmed against a DIFFERENT server → False, even though the vendored copy
+    # might equal the invoking interpreter.
+    report2 = _build_report(server_version_override="0.1.0+OTHER")
+    assert report2["remote_script"]["candidates"][0]["matches_mcp_server"] is False
+    assert report2["coexistence_divergence"] is True
+
+
+def test_cli_preflight_accepts_server_version_flag(capsys):
+    """End-to-end through the dispatcher: --server-version flows into the report."""
+    rc = cli_main(["preflight", "--server-version", "0.1.0+from-resource"])
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["server"] == {"version": "0.1.0+from-resource", "confirmed": True}
+
+
 def test_preflight_report_package_block_includes_version_and_root():
     report = _build_report()
     assert "version" in report["package"]
@@ -145,8 +214,11 @@ def test_cli_preflight_help(capsys):
     rc = cli_main(["preflight", "--help"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Usage" in out
+    # argparse prints lowercase "usage:"; assert the behavioral contract (help
+    # mentions usage + the subcommand + the INS-3W8P --server-version flag).
+    assert "usage" in out.lower()
     assert "preflight" in out
+    assert "--server-version" in out
 
 
 def test_cli_unknown_command_still_reported(capsys):

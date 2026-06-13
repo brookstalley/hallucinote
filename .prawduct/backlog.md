@@ -82,17 +82,6 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** `/ableton-mcp-install`'s preflight + install-remote-script + install-analyzer steps resolve `hallucinote_mcp` to the package the plugin launches (the bundled uv env), not whatever `sys.path` finds first — provably so when the editable clone diverges from the installed plugin (a stale clone no longer vendors/fingerprints against itself). **Sized:** medium (pin the CLI env or thread `--plugin-root`, settle the env-availability question). (dev-machine `/ableton-mcp-install` friction, 2026-06-12)
 
-- **[AUD-2N6K]** MixReport schema gaps — masking entries lack display names + `section_id` always null
-  `effort: S · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-12 · status: open · stage: ready · related: AUD-1M4V`
-
-  Two read-side schema gaps in the MixReport, both surfaced by the first `/mix-review` pass on `swell` (full report + repro: `incoming-bugs/archives/2026-06-11-mixreport-masking-schema-gaps.md`).
-
-  **(1) Masking entries expose only raw track IDs, no display names — silent `None` for consumers.** `MaskingPair` (`src/hallucinote/audio/report.py:209-213`) and `BedMasking` (`:216-230`) carry `masker_track_id`/`maskee_track_id` (`"track:4"`) but no `masker_surface_name`/`maskee_surface_name`; `_masking_pair_to_dict` (`:729-736`) mirrors the gap. The `/mix-review` skill's narrative form ("Drums masks Bass 0.61 in lows") needs the names inline; code reading `m["masker"]` gets `None` and the masking read fails silently — and masking is the richest `/mix-review` input. The analyzer already holds the surface-name map at write time; add the name fields beside the raw IDs.
-
-  **(2) `per_section[n].section_id` is always null.** `SectionMetrics` (`:429-471`) has no `section_id` field; the `SectionWindow` built in `hallucinote_mcp/.../handlers/analysis.py` from `Q.get_sections_for_song()` never captures the DB row `id`, so it never reaches the report. `section_name` IS populated (the name path works), but anything correlating a finding back to a DB `sections` row can't use `section_id`. Populate it from the DB row at write time, or drop the field.
-
-  **Verifiable signal:** a fresh MixReport's `per_section[n].masking[k]` carries resolved `masker`/`maskee` (or `*_surface_name`) strings AND a non-null `section_id` matching the DB `sections` row. **Sized:** small (two field-population fixes in the report writer + the section-window lift). (swell mix-review dogfood, 2026-06-11)
-
 - **[SNP-4K7M]** Master-track devices aren't snapshot-authorable / no capture round-trip — push side exists, authorship middle missing
   `effort: M · impact: M · area: snapshot · source: dogfood · added: 2026-06-12 · status: open · stage: ready · related: DEV-6M2K, TPL-2D8K`
 
@@ -758,6 +747,17 @@ sections only via explicit `/backlog update` calls.
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[AUD-2N6K]** MixReport schema gaps — masking entries lack display names + `section_id` always null
+  `effort: S · impact: M · area: audio-analysis · source: dogfood · added: 2026-06-12 · status: shipped · stage: ready · closed-by: ec062ac (develop cleanup merge 2026-06-13) · related: AUD-1M4V · reviewed: 2026-06-13`
+
+  Two read-side schema gaps in the MixReport, both surfaced by the first `/mix-review` pass on `swell` (full report + repro: `incoming-bugs/archives/2026-06-11-mixreport-masking-schema-gaps.md`).
+
+  **(1) Masking entries expose only raw track IDs, no display names — silent `None` for consumers.** `MaskingPair` (`src/hallucinote/audio/report.py:209-213`) and `BedMasking` (`:216-230`) carry `masker_track_id`/`maskee_track_id` (`"track:4"`) but no `masker_surface_name`/`maskee_surface_name`; `_masking_pair_to_dict` (`:729-736`) mirrors the gap. The `/mix-review` skill's narrative form ("Drums masks Bass 0.61 in lows") needs the names inline; code reading `m["masker"]` gets `None` and the masking read fails silently — and masking is the richest `/mix-review` input. The analyzer already holds the surface-name map at write time; add the name fields beside the raw IDs.
+
+  **(2) `per_section[n].section_id` is always null.** `SectionMetrics` (`:429-471`) has no `section_id` field; the `SectionWindow` built in `hallucinote_mcp/.../handlers/analysis.py` from `Q.get_sections_for_song()` never captures the DB row `id`, so it never reaches the report. `section_name` IS populated (the name path works), but anything correlating a finding back to a DB `sections` row can't use `section_id`. Populate it from the DB row at write time, or drop the field.
+
+  **Verifiable signal:** a fresh MixReport's `per_section[n].masking[k]` carries resolved `masker`/`maskee` (or `*_surface_name`) strings AND a non-null `section_id` matching the DB `sections` row. **Sized:** small (two field-population fixes in the report writer + the section-window lift). (swell mix-review dogfood, 2026-06-11)
 
 - **[AST-6D3K]** Build-time derived audio assets (reverse / trim / normalize) — deterministic, content-addressed, declared in build.py
   `effort: M · impact: M · area: assets · source: user · added: 2026-06-13 · status: dropped · stage: requirements · related: SMP-7K2D, AUD-7R3M, ENV-4S2K · refs: .prawduct/artifacts/plans/SMP-7K2D/design.md, songs/swell/decisions/17-buried-we-centerpiece.md · reviewed: 2026-06-13`

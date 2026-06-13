@@ -97,6 +97,17 @@ When changing this surface:
     the two never drift), then writes through `set_track_routing`. NULL routing
     columns are treated as Live's default route, so a first pull of an unrouted
     track is a no-op, not a churn of every NULL into an explicit default (D8).
+  - Device sidechain SOURCE (SDC-7K3M) rides in its own `device-sidechain` domain
+    (symmetric with push's separate `device_sidechain` phase): per device on a
+    linked track/return, `plan_pull_device_sidechain` emits
+    `device_sidechain_source:<device_id>` = one `ableton_device(get_input_routing)`
+    read. The source is always a TRACK, so apply resolves Live's `current_type`
+    (a track `display_name`) to a song-track FK by name — NOT via `routing_names`
+    (that maps routing *kinds*) — and writes through `set_device_sidechain`. V1
+    apply is Ableton-authoritative in the SET direction only: a distinct-track
+    match is captured; self-match / name-collision / non-track input all no-op
+    (auto-CLEAR on a non-track input is operator-verification-gated — Live's
+    reporting of an un-sidechained device's default input is unverified).
   - `apply_pull_results` is **Ableton-authoritative** (V1 conflict policy);
     field-level diffs are tolerant of `_FLOAT_EPS` jitter so display rounding
     doesn't churn events.

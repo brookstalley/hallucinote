@@ -288,12 +288,26 @@ class ProbeAndLinkResult:
     counts so the user sees that probe-and-link recovered from a deleted-
     Live-track drift instead of silently leaving stale rows.
 
+    SYN-3C8K added ``unlinked_stale_clips``: ``clip`` links whose parent
+    track is no longer linked in this session (its track link was dropped as
+    stale, or never existed) and were cascade-deleted by reconciliation. The
+    W18-B sweep originally skipped nested kinds on the assumption they
+    cascade-invalidate from parent-track *deletion* — but a Live-set swap that
+    reuses the session drops the parent *track link* without deleting the clip
+    link, leaving it dangling. A dangling clip link makes the clips planner
+    downgrade ``create`` to ``replace_notes`` against an empty slot, halting
+    the clips phase. Cascading the clip-link drop restores the
+    "links describe Live truth" invariant the clips planner relies on.
+
     W18-D added ``default_scaffold_unmatched_tracks``: present (non-empty)
-    only when the caller passed ``auto_session_created=True`` AND every
-    entry in ``unmatched_live_tracks`` matches a canonical Live default
-    name. The skill keys its "delete defaults after push?" prompt off this
-    field, not off ``unmatched_live_tracks`` directly — that way an unrelated
-    set with the same names doesn't trigger destructive cleanup.
+    when every entry in ``unmatched_live_tracks`` matches a canonical Live
+    default name. The skill keys its "delete defaults after push?" prompt off
+    this field, not off ``unmatched_live_tracks`` directly — that way an
+    unrelated set with the same names doesn't trigger destructive cleanup.
+    (SYN-3C8K dropped the original ``auto_session_created=True`` gate: a
+    *reused* session pushed onto a fresh default set has the same canonical
+    scaffold to clean up, and the canonical-name signature is the real
+    discriminator, not whether the session was freshly minted.)
 
     W20-A added ``matched_devices``: per-device bindings created when
     ``live_devices_by_parent`` is supplied. Matching by ``(parent track or
@@ -311,6 +325,7 @@ class ProbeAndLinkResult:
     unmatched_live_returns: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_tracks: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_returns: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_clips: list[dict[str, Any]] = field(default_factory=list)
     default_scaffold_unmatched_tracks: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -328,7 +343,6 @@ def probe_and_link(
     live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
     actor: str = "sync",
     reason: str | None = None,
-    auto_session_created: bool = False,
 ) -> ProbeAndLinkResult:
     """Match Live tracks/returns by name against DB rows; write the
     matches as ``ableton_links`` so subsequent phases skip the
@@ -364,20 +378,24 @@ def probe_and_link(
 
     **W18-B: strict link reconciliation.** After the name-matching pass,
     any ``ableton_links`` row whose ``ableton_index`` no longer appears in
-    the fresh probe is deleted (track + return kinds; nested kinds —
-    clip / device / envelope — are not validated here, the parent-track
-    deletion cascade-invalidates them and the next push re-creates them).
-    This closes the punk-fate drift bug where a deleted Live track left a
-    stale link pointing at a now-vacant index, causing the next push to
-    silently dispatch clip creates against the wrong track.
+    the fresh probe is deleted (track + return kinds). ``clip`` links cascade
+    off their parent track (SYN-3C8K): a clip link whose parent track is no
+    longer linked is dropped, because a Live-set swap that reuses the session
+    drops the parent track link without deleting the clip link, and a dangling
+    clip link makes the clips planner emit ``replace_notes`` against an empty
+    slot. Other nested kinds (device / envelope / note) are re-established by
+    the next push's create-call path. This closes the punk-fate drift bug
+    (deleted Live track → stale link → clip creates against the wrong track)
+    and the swell set-swap halt (dangling clip links → clips phase IndexError).
 
-    **W18-D: default-scaffold detection.** When the caller flags
-    ``auto_session_created=True`` AND every entry in
+    **W18-D: default-scaffold detection.** When every entry in
     ``unmatched_live_tracks`` matches a canonical Live-default name
     (``1-MIDI`` / ``2-MIDI`` / ``3-Audio`` / ``4-Audio``), the unmatched
     list is also surfaced as ``default_scaffold_unmatched_tracks`` so the
     skill can offer "delete defaults after push?" as the prompt default
-    instead of the generic "continue alongside?" gate.
+    instead of the generic "continue alongside?" gate. (SYN-3C8K removed the
+    earlier ``auto_session_created=True`` precondition — a reused session
+    pushed onto a fresh default set has the same scaffold to clean up.)
     """
     result = ProbeAndLinkResult()
 
@@ -476,11 +494,12 @@ def probe_and_link(
     )
 
     # W18-B: strict reconciliation — sweep ableton_links for rows whose
-    # ableton_index no longer appears in the fresh probe. Only track + return
-    # kinds: nested kinds (clip/device/envelope/note/arrangement_clip) are
-    # cascade-invalidated when their parent track is deleted, and the next
-    # push's create-call path re-establishes them. Iterate over a snapshot of
-    # the rows because the unlink mutator deletes from the same table.
+    # ableton_index no longer appears in the fresh probe. Track + return kinds
+    # drop here directly; the clip kind cascades off its parent track below
+    # (SYN-3C8K). Other nested kinds (device/envelope/note/arrangement_clip)
+    # are re-established by the next push's create-call path. Iterate over a
+    # snapshot of the rows because the unlink mutator deletes from the same
+    # table.
     live_track_indexes = {lt["track_index"] for lt in live_tracks}
     live_return_indexes = {lr["return_index"] for lr in live_returns}
     for link in list(Q.get_ableton_links_for_session(conn, session_id)):
@@ -513,6 +532,41 @@ def probe_and_link(
                 "ableton_index": ableton_index,
             })
 
+    # SYN-3C8K: cascade stale clip-link drops. A `clip` link is valid only
+    # while its parent track is linked in this session; a Live-set swap that
+    # reuses the session drops the parent track link (above) but leaves the
+    # clip link, so the clips planner downgrades `create` to `replace_notes`
+    # against an empty slot and halts the clips phase. Drop a clip link whose
+    # parent track has no surviving link (just-dropped or never linked), or
+    # whose clip row is gone from the DB. Runs AFTER the track sweep so the
+    # parent-link lookup reflects the drops; fresh snapshot because the track
+    # sweep already consumed one and the unlink mutator mutates the same table.
+    for link in [
+        ln for ln in Q.get_ableton_links_for_session(conn, session_id)
+        if ln["db_kind"] == "clip"
+    ]:
+        clip_row = Q.get_clip(conn, link["db_id"])
+        parent_linked = clip_row is not None and Q.get_ableton_link(
+            conn,
+            session_id=session_id,
+            db_kind="track",
+            db_id=clip_row["track_id"],
+        ) is not None
+        if parent_linked:
+            continue
+        M.unlink_db_from_ableton(
+            conn,
+            session_id=session_id,
+            db_kind="clip",
+            db_id=link["db_id"],
+            actor=actor,
+            reason=reason or "probe-and-link: stale clip link (parent track unlinked)",
+        )
+        result.unlinked_stale_clips.append({
+            "db_id": link["db_id"],
+            "ableton_index": link["ableton_index"],
+        })
+
     # W20-A: bind devices by (parent, position, class_name). Run after track
     # + return matching so we know each parent's ableton_index. Closes the
     # re-push device duplication path where pre-existing Live devices that
@@ -538,15 +592,20 @@ def probe_and_link(
         # condition, so this is silent.
         _flag_stale_analyzer_set(result, live_devices_by_parent)
 
-    # W18-D: detect "first push onto Live's brand-new-set default scaffold."
-    # Fires only on auto-session bootstraps where every unmatched Live track
-    # is a canonical default — that name set is the unambiguous signature.
-    # When ANY unmatched-Live track has a non-canonical name, this is "some
-    # other song's tracks" territory and we deliberately don't suggest
-    # cleanup; the standard "continue alongside?" gate handles that case.
+    # W18-D: detect "push onto Live's brand-new-set default scaffold."
+    # Fires whenever every unmatched Live track is a canonical default — that
+    # name set is the unambiguous signature, the real discriminator. When ANY
+    # unmatched-Live track has a non-canonical name, this is "some other song's
+    # tracks" territory and we deliberately don't suggest cleanup; the standard
+    # "continue alongside?" gate handles that case.
+    # SYN-3C8K: this used to also require ``auto_session_created`` — but a
+    # *reused* session pushed onto a fresh default set (the set-swap case) has
+    # the identical canonical scaffold to clean up, and degrading to the
+    # generic unmatched-Live confirm there was a friction the dogfood hit. The
+    # canonical-name signature already excludes unrelated sets, so the
+    # fresh-vs-reused distinction added nothing but the missed-cleanup gap.
     if (
-        auto_session_created
-        and result.unmatched_live_tracks
+        result.unmatched_live_tracks
         and all(
             t["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
             for t in result.unmatched_live_tracks

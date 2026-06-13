@@ -25,6 +25,7 @@ from .devices import (
     _apply_devices_for_parent,
     _apply_nested_rack_chains_for_device,
     _apply_device_parameters_for_device,
+    _apply_device_sidechain_source,
 )
 from .clips import (
     _apply_arrangement_clips_for_track,
@@ -49,6 +50,7 @@ _HANDLERS = {
     "return_devices":            ("return_devices",            True),   # W3-3: top-level chain
     "nested_rack_chains":        ("nested_rack_chains",        True),   # W7-B: one level deep
     "device_parameters":         ("device_parameters",         True),   # W5-D: per-device param values
+    "device_sidechain_source":   ("device_sidechain_source",   True),   # SDC-7K3M: device sidechain SOURCE
     "track_arrangement_clips":   ("track_arrangement_clips",   True),   # M+1-3b / W3-4
     "track_session_clips":       ("track_session_clips",       True),   # V1 close-out C
     "clip_notes":                ("clip_notes",                True),   # V1 close-out D — gap #4 partial
@@ -190,6 +192,12 @@ def apply_pull_results(
                 _apply_device_parameters_for_device(
                     conn, device_id=db_id,
                     result=result_payload, out=out,
+                    actor=actor, request_id=request_id, reason=reason,
+                )
+            elif handler_name == "device_sidechain_source":
+                _apply_device_sidechain_source(
+                    conn, session_id=session_id, song_id=song_id,
+                    device_id=db_id, result=result_payload, out=out,
                     actor=actor, request_id=request_id, reason=reason,
                 )
             elif handler_name == "track_arrangement_clips":

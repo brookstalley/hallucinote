@@ -949,6 +949,56 @@ def test_extract_returns_full_nested_structure(populated_song: str):
     assert extract["returns"][0]["devices"] == []
 
 
+def test_extract_flattens_top_level_chain_only_excludes_nested_rack(
+    tmp_path: Path, monkeypatch
+):
+    """DEV-4X2N: pin the documented top-level-only exclusion. The extract walks
+    devices via get_devices_for_track/_return, which DON'T recurse into nested
+    rack chains (gap #17b / DEV-7K4H). A song using an Audio Effect Rack reports
+    the rack CONTAINER but not the devices inside it. This test fails the day a
+    regression starts dropping (or starts flattening) rack containers — the
+    _seed_full_song fixture has only a top-level chain, so the exclusion was
+    previously unpinned. When nested-rack pull lands, this test is the one to
+    flip (and the handler docstring's caveat with it).
+    """
+    slug = "nested-rack-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Nested Rack")
+        track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Lead")
+        top_chain = M.create_device_chain(
+            conn, parent_track_id=track_id, position=0
+        )
+        rack_id = M.create_device(
+            conn, chain_id=top_chain, position=1,
+            kind="Audio Effect Rack", display_name="Audio Effect Rack",
+        )
+        # A device living INSIDE the rack (one level deep). Its chain is parented
+        # to the rack device, not the track — so the top-level walk must skip it.
+        nested_chain = M.create_device_chain(
+            conn, parent_rack_device_id=rack_id, position=0
+        )
+        M.create_device(
+            conn, chain_id=nested_chain, position=1,
+            kind="Reverb", display_name="Inner Reverb",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path
+    )
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    devices = result["extract"]["tracks"][0]["devices"]
+    names = [d["display_name"] for d in devices]
+    assert names == ["Audio Effect Rack"]  # container reported
+    assert "Inner Reverb" not in names     # inner device excluded (top-level only)
+
+
 def test_extract_includes_exact_note_timings(populated_song: str):
     # The cliff tier: compose-review is blind to exact note timings; the
     # extract must carry them so the judge can read phase relationships.

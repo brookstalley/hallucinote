@@ -465,8 +465,12 @@ artifact_manifest:
       depends_on: [vision, mcp-tool-design]
     - name: learnings
       file_path: .prawduct/learnings.md
-      version: 1
+      version: 2   # split into index (rules) + learnings-detail (narrative) 2026-06-13
       depends_on: []
+    - name: learnings-detail
+      file_path: .prawduct/learnings-detail.md
+      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md 1:1
+      depends_on: [learnings]
     - name: backlog
       file_path: .prawduct/backlog.md
       version: 2
@@ -481,12 +485,13 @@ build_state:
   source_root: "src/hallucinote/"
 
 # Active build plan pointer (.prawduct/-relative). SMP-7K2D (sample-instrument +
-# reverse playback-param model) — chunks 1-2 (no-Live DB foundation) DONE on this
-# cleanup branch; push chunks 3-4 + the capability probe (chunk 0) are Live-gated
-# and pending. Prior plans RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K
-# (perform-handler hardening, merged in this cleanup) are shipped; their plan dirs
-# are stale and may be deleted.
-active_build_plan: artifacts/plans/PSH-CLUSTER/build-plan.md
+# reverse playback-param model) — chunks 1-2 (no-Live DB foundation) DONE; the
+# no-Live chunk 5 (ENV-4S2K lock) is still buildable, push chunks 3-4 + the
+# capability probe (chunk 0) are Live-gated and pending. ROUNDTRIP-CLUSTER and
+# RELIABILITY-CLUSTER (on this branch) are shipped/Critic-clean. Prior plans
+# RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
+# PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
+active_build_plan: artifacts/plans/SMP-7K2D/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

@@ -1702,6 +1702,63 @@ def test_set_parameter_continuous_writes_value(loaded_actions):
     assert dev.parameters[0].value == -24.0
 
 
+def _freq_hz_khz(raw: float) -> str:
+    """20 Hz .. 22 kHz across [0,1], rendered Hz below 1 kHz then kHz — the
+    real EQ-freq shape whose leading number reverses at the unit switch."""
+    hz = 20.0 * (1100.0 ** raw)
+    return f"{hz / 1000.0:.2f} kHz" if hz >= 1000.0 else f"{hz:.1f} Hz"
+
+
+def test_set_parameter_non_monotonic_unit_display_resolves_and_echoes_value_real(
+    loaded_actions,
+):
+    """DPP-7H2K(a)+(b): a Hz/kHz freq param is settable by an explicit-unit
+    display string (no reverse-engineering the raw curve), AND the response
+    echoes value_real/value_real_unit at full precision so a phase-critical
+    rate is verifiable beyond the device's rounded value_display."""
+    dev = FakeDevice("EQ", parameters=[
+        FakeParam("Freq", 0.5, min=0.0, max=1.0, display_fn=_freq_hz_khz),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Freq", "value_display": "2 kHz",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # (a) the param actually moved to ~2 kHz — canonical inversion worked.
+    assert _freq_hz_khz(dev.parameters[0].value) == "2.00 kHz"
+    # (b) the response carries the achieved magnitude in its base unit.
+    assert resp.result["value_real"] == pytest.approx(2000.0)
+    assert resp.result["value_real_unit"] == "Hz"
+
+
+def test_set_parameter_raw_value_omits_value_real(loaded_actions):
+    """value_real is only attached for a recognised-unit value_display write;
+    a raw `value` write carries the exact `value` already (no value_real)."""
+    dev = FakeDevice("Comp", parameters=[
+        FakeParam("Threshold", -12.0, min=-60.0, max=0.0),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "parameter_name": "Threshold", "value": "-24.0",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert "value_real" not in resp.result
+
+
 def test_set_parameter_continuous_out_of_range(loaded_actions):
     dev = FakeDevice("Comp", parameters=[
         FakeParam("Threshold", -12.0, min=-60.0, max=0.0),
@@ -1890,6 +1947,32 @@ def test_set_parameter_in_rack_value_display_parity(loaded_actions):
     assert resp.ok is True, resp.error
     assert threshold.value == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-3)
     assert resp.result["value_display"] == "-18.00 dB"
+
+
+def test_set_parameter_in_rack_unit_display_attaches_value_real(loaded_actions):
+    """The nested-rack handler shares _attach_real_unit_echo: a recognised-unit
+    value_display write echoes value_real/value_real_unit identically to the
+    top-level set_parameter (DPP-7H2K(b) parity across both write sites)."""
+    freq = FakeParam("Freq", 0.5, min=0.0, max=1.0, display_fn=_freq_hz_khz)
+    nested = FakeDevice("EQ", class_name="Eq8", parameters=[freq])
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 1, "nested_device_position": 1,
+                "parameter_name": "Freq", "value_display": "2 kHz",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert _freq_hz_khz(freq.value) == "2.00 kHz"
+    assert resp.result["value_real"] == pytest.approx(2000.0)
+    assert resp.result["value_real_unit"] == "Hz"
 
 
 def test_set_parameter_unknown_name(loaded_actions):

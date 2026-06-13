@@ -428,3 +428,86 @@ re-appends it terminal, and that the per-stem WAV then reflects the post-analyze
    `"terminal": false` — rather than emitting clean numbers for an under-tapped stem. (Hard
    to force live; the unit test forces it via a misbehaving load. Note here if no natural
    live case arises — the path is unit-covered.)
+
+---
+
+## DPP-7H2K — unit-aware value_display resolves a REAL Live param (Hz/kHz, ms/s)
+
+**Status:** CALIBRATION VERIFIED 2026-06-13 (live, via str_for_value probe + local
+solver). REMAINING: end-to-end `set_parameter(value_display=…)` THROUGH the new
+server — needs a re-vendor + `/mcp` reconnect (DPP-7H2K flips the MCP fingerprint;
+the session that ran the calibration was still on the pre-merge server, so the
+*new* inversion path couldn't be driven through the bridge — but its math was
+proven against the real device, below).
+**Visual change:** no (parameter value changes; verify via readback).
+
+**CALIBRATION EVIDENCE (2026-06-13, real Live 12.x — EQ Eight + Compressor on a
+scratch track, deleted after).** Captured the REAL display curves via the bridge:
+EQ Frequency `30 Hz … 1000 Hz → 2.00 kHz … 18.0 kHz` (the leading number reverses
+1000→2.00 at the Hz→kHz switch); Compressor Release `1.00 ms … 459 ms → 1.12 s …
+3.00 s` (459→1.12 at the ms→s switch). The shipped `canonical_magnitude` normalised
+EVERY real string correctly and made both sequences monotonic (the exact reversal
+that made the pre-DPP-7H2K code REFUSE). `solve_raw_for_display` resolved targets
+against the real-sample curve and the REAL device rendered them back:
+`150 Hz → raw 0.35187 → "150 Hz"` (exact), `2 kHz → 0.68848 → "2.00 kHz"` (exact),
+`120 ms → 0.29649 → "123 ms"` and `1.5 s → 0.78125 → "1.52 s"` (~2%, interpolation
+granularity of the 6-pt release sample, not the solver — the real server bisects on
+the real curve and converges exact). The "validate against real instances, not the
+synthetic corpus" learning is satisfied for the resolution math.
+
+Unit-proven against synthetic curves mirroring real device shapes
+(`hallucinote_mcp/tests/unit/test_display_value.py`: Hz/kHz + ms/s resolution,
+genuinely-non-monotonic-after-normalisation still refuses; `test_actions_device.py`:
+the value_real echo through both write sites). What units CANNOT cover — the project's
+own learning ("validate against real instances; the original display-value traps all
+came from real-Live probes, not the synthetic corpus"): that a REAL Live EQ frequency
+and a REAL compressor release actually render the Hz↔kHz / ms↔s switch the way the
+fixtures assume.
+
+1. **EQ freq by explicit unit.** On a real EQ Eight band Frequency param,
+   `ableton_device(set_parameter, …, parameter_name='Frequency', value_display='150 Hz')`
+   succeeds (no DisplayValueError) and `get_parameters` reads back ~150 Hz. Repeat with
+   `value_display='2 kHz'` → reads back ~2 kHz. Confirm the response carries
+   `value_real`≈150 / 2000 and `value_real_unit='Hz'`.
+2. **Comp release by explicit unit.** On a real Compressor Release,
+   `value_display='120 ms'` and `value_display='1.5 s'` each resolve and read back at the
+   right magnitude; `value_real_unit='ms'`.
+3. **Genuinely non-monotonic still refuses.** A param whose display reverses for a
+   non-unit reason still raises the teaching error pointing at the normalized `value`
+   (confirm at least one such param if one is reachable; else note units cover it).
+
+## RTE-2P9X — fresh push of an instrument-less MIDI track routed to PRE-MAIN
+
+**Status:** PENDING — attended Live session, a song with a PRE-MAIN submaster bus and a
+NEW (instrument-bearing) MIDI track routed to it. **Visual change:** no.
+Unit-proven: phase order is `mix < devices < routing` (`test_push_song.py`). What units
+can't cover: that Live actually exposes the MIDI track's audio output routing only after
+its instrument loads. **Check:** a from-scratch `execute` of such a song completes the
+`routing` phase (no `'PRE-MAIN' not in available output routing types'` halt).
+
+## SYN-3C8K — set-swap re-push completes the clips phase
+
+**Status:** PENDING — attended Live session. **Visual change:** no.
+Unit-proven: the cascade drops the stale clip link and the planner then emits `create`
+(`test_push_cli.py`). What units can't cover: the real set-swap. **Check:** push a song,
+close that Live set, open a fresh default set, re-run `probe-and-link --probe` then
+`execute` against the SAME session — the clips phase completes (no `IndexError: session
+slot N on track M is empty`), and probe-and-link reports `unlinked_stale_clips` > 0 and
+offers the default-scaffold cleanup despite the reused (not freshly-minted) session.
+
+## SDC-7K3M — device sidechain SOURCE survives a full pull→rebuild→push round-trip
+
+**Status:** PENDING — attended Live session (Live was occupied at author-time).
+**Visual change:** no.
+Unit-proven: the `device-sidechain` pull domain emits one `get_input_routing` probe per
+linked device, and apply resolves a distinct-track `current_type` → a source FK written
+via `set_device_sidechain` (idempotent; self/none/ambiguous/non-track all no-op) —
+`tests/unit/sync/test_pull.py` SDC-7K3M block (13 tests). What units can't cover: how a
+REAL Live device reports its input routing, and the full loop. **Check:** in Live, set a
+compressor's sidechain SOURCE to a sibling track (`ableton_device(set_sidechain)` or by
+hand); run `pull_cli execute device-sidechain <session>`; confirm
+`devices.sidechain_source_track_id` now names that track; then `build.py --reset` +
+`push_cli execute` and confirm the source re-resolves to the correct track in Live with
+no `.als` reliance. **Then (gates a follow-up):** observe what `get_input_routing`
+returns for an UN-sidechained compressor's default input — this decides whether V1's
+"non-track input → no-op" can tighten to an Ableton-authoritative auto-CLEAR.

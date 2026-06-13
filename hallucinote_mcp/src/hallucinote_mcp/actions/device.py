@@ -447,9 +447,11 @@ register(
                 name="type_display_name",
                 type="str",
                 description=(
-                    "Source name as shown in Live's UI: track name "
-                    "('1-Drums'), return name ('A-Reverb'), 'Main' "
-                    "(master), or 'No Input' to disable."
+                    "Source name as shown in Live's routing menu: the BARE "
+                    "track name ('Drums' / '02 Kit Punk' — NOT index-prefixed "
+                    "like '1-Drums', which fails), a return's letter-prefixed "
+                    "name ('A-Reverb'), 'Main' (master), or 'No Input' to "
+                    "disable."
                 ),
             ),
             ParamSpec(
@@ -465,7 +467,7 @@ register(
         handler=device_handlers.set_input_routing_handler,
         example=(
             "ableton_device(action='set_input_routing', track_index=4, "
-            "device_index=1, type_display_name='1-Drums', "
+            "device_index=1, type_display_name='Drums', "
             "channel_display_name='Post FX')"
         ),
     )
@@ -516,8 +518,10 @@ register(
                 type="str",
                 required=False,
                 description=(
-                    "Sidechain source display_name (e.g. '1-Drums', "
-                    "'A-Reverb'). Requires the device to expose "
+                    "Sidechain source display_name: the BARE track name "
+                    "(e.g. 'Drums' / '02 Kit Punk' — NOT index-prefixed like "
+                    "'1-Drums', which fails), or a return's letter-prefixed "
+                    "name ('A-Reverb'). Requires the device to expose "
                     "input_routing_*; otherwise the call raises a teaching "
                     "error after toggling enable."
                 ),
@@ -535,7 +539,7 @@ register(
         handler=device_handlers.set_sidechain_handler,
         example=(
             "ableton_device(action='set_sidechain', track_index=4, "
-            "device_index=1, enabled=True, source_display_name='1-Drums')"
+            "device_index=1, enabled=True, source_display_name='Drums')"
         ),
     )
 )

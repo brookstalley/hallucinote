@@ -4,6 +4,43 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
+
+<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis -->
+
+Completes the device-sidechain round-trip whose PUSH half shipped in v0.9.6: a
+sidechain SOURCE is now captured FROM a live set back into the DB, so a manual
+re-route in Ableton survives the next push instead of being silently dropped.
+
+- **SDC-7K3M pull-capture (author).** New `device-sidechain` pull domain
+  (`plan_pull_device_sidechain`) + `_apply_device_sidechain_source`, resolving
+  Live `get_input_routing` `current_type` → a song-track FK by name match →
+  `set_device_sidechain`. Conservative V1 policy: distinct-track captured;
+  self / none / ambiguous / non-track-input no-op; idempotent; link-gated. The
+  no-auto-clear limitation is documented (a removed sidechain isn't pulled). 13
+  dedicated tests. Engine-only — the MCP getter already existed, so no wire-shape
+  fingerprint flip / re-vendor. Live round-trip verification is operator-gated.
+- **DEV-4X2N coverage.** Regression test pinning the extract's documented
+  top-level-only chain exclusion (seeds a nested rack, asserts the inner device
+  is excluded) — bidirectional with the push-side guarantee.
+
+## 2026-06-13 — song round-trip reliability (push ordering, clip-link cascade, unit-aware params)
+
+<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills -->
+
+Round-trip reliability fixes traced to swell-dogfood findings.
+
+- **RTE-2P9X.** Push `routing` phase now runs AFTER `devices`, so an
+  instrument-bearing track's bus routing resolves on a fresh (from-empty) push
+  instead of targeting a track Live hasn't built yet.
+- **SYN-3C8K.** Cascade stale clip-link drops + classify scaffold on reuse, so a
+  set-swap re-push no longer carries dead clip links into the rebuilt set.
+- **DPP-7H2K.** Unit-aware `value_display` + `value_real` echo + bare-name
+  parameter routing docs; calibrated live against real EQ Eight + Compressor
+  curves (the value-display inversion validated against actual Live formatting).
+- **SKL-8N3V.** `/song-new` postlude pins `ensure_loaded` with no params (locks
+  the documented call shape).
+
 ## 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening
 
 <!-- prawduct: type=feature | chunks=SDC-7K3M,SMP-7K2D-01,SMP-7K2D-02,AUD-2N6K,ENV-8K2R,ENV-2T9K,MEL-1A7K-line | scope=db,sync-push,audio-analysis,mcp-bridge | status=shipped | release=v0.9.6 -->

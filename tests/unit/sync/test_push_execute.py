@@ -206,7 +206,7 @@ def test_execute_happy_path_writes_state_no_errors_file(
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "scenes", "clips", "mix", "devices", "routing", "device_sidechain",
         "envelopes", "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB

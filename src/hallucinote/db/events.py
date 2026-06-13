@@ -40,7 +40,7 @@ DEVICE_CREATED = "device_created"
 DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"
 DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
-# SDC-? : a device's sidechain SOURCE (input routing) — a semantic FK to the
+# SDC-7K3M: a device's sidechain SOURCE (input routing) — a semantic FK to the
 # source track, symmetric with TRACK_ROUTING_SET (resolved to/from Live's
 # display_name at push/pull). The S/C On / Gain / Mix params round-trip
 # separately as ordinary DEVICE_PARAMETER_SET events.

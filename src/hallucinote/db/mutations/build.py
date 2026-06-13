@@ -100,7 +100,8 @@ _LATEST_ACTOR_EVENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "return":                (("return_created", "return_id"),
                               ("return_updated", "return_id")),
     "device_chain":          (("device_chain_created", "chain_id"),),
-    "device":                (("device_created", "device_id"),),
+    "device":                (("device_created", "device_id"),
+                              ("device_sidechain_set", "device_id")),
     "device_parameter":      (("device_parameter_set", "parameter_id"),),
     "envelope":              (("envelope_created", "envelope_id"),),
 }

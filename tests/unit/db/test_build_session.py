@@ -459,6 +459,42 @@ def test_sync_routing_edit_protects_track_from_tombstone(conn):
     assert "Bus" in names, "sync routing edit must protect the track from tombstoning"
 
 
+def test_sync_sidechain_edit_protects_device_from_tombstone(conn):
+    """SDC-7K3M (Critic W): a build-owned device that later receives a pulled
+    sidechain SOURCE edit (set_device_sidechain, actor='sync') must NOT be
+    tombstoned when a subsequent build drops the device — `device_sidechain_set`
+    registers as a non-build touch (like `track_routing_set`). Without it the
+    captured sidechain source would be silently dropped on the next build
+    (the data-loss class L114 warns about)."""
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="Bass",
+                             kind="audio")
+        M.create_track(conn, song_id=sid, track_index=2, name="Kick")
+        chain = M.create_device_chain(conn, parent_track_id=tid)
+        M.create_device(conn, chain_id=chain, position=1, kind="Compressor",
+                        display_name="Punk")
+    did = Q.get_devices_for_chain(conn, chain)[0]["id"]
+    kick = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Kick"
+    )["id"]
+    # A pull sets the device's sidechain SOURCE (actor='sync'), outside the build.
+    M.set_device_sidechain(conn, device_id=did, source_track_id=kick, actor="sync")
+
+    # Re-build keeps the track + chain (touched) but DROPS the device.
+    with M.build_session(conn, song_name="s"):
+        sid2 = M.create_song(conn, name="s")
+        tid2 = M.create_track(conn, song_id=sid2, track_index=1, name="Bass",
+                              kind="audio")
+        M.create_track(conn, song_id=sid2, track_index=2, name="Kick")
+        M.create_device_chain(conn, parent_track_id=tid2)  # chain re-touched, no device
+
+    surviving = {d["display_name"] for d in Q.get_devices_for_chain(conn, chain)}
+    assert "Punk" in surviving, (
+        "sync sidechain edit must protect the device from tombstoning"
+    )
+
+
 def test_tombstone_preserves_llm_authored_rows(conn):
     """A clip authored mid-session by 'llm' actor survives build tombstoning."""
     with M.build_session(conn, song_name="s"):

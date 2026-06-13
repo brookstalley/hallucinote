@@ -2588,3 +2588,57 @@ def test_cli_execute_halted_push_with_device_changes_still_regenerates(
     assert rc == 1
     assert regen_calls == ["t"]
     assert "REQUIREMENTS.md regenerated" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# PSH-2R7K — execute phase-targeting (CLI wiring + --resume resolution)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_phase_from_state_reads_halted_phase(tmp_path):
+    (tmp_path / ".last-push-state.json").write_text(
+        json.dumps({"phase_halted": "routing"})
+    )
+    assert push_cli._resume_phase_from_state(tmp_path) == "routing"
+
+
+def test_resume_phase_from_state_none_when_no_file(tmp_path):
+    assert push_cli._resume_phase_from_state(tmp_path) is None
+
+
+def test_resume_phase_from_state_none_when_no_halt(tmp_path):
+    (tmp_path / ".last-push-state.json").write_text(
+        json.dumps({"phase_halted": None, "outcome": "ok"})
+    )
+    assert push_cli._resume_phase_from_state(tmp_path) is None
+
+
+def test_cli_execute_unknown_phase_exits_2(conn, song, session, db_path, capsys):
+    """A bad --only phase fails fast (exit 2) with the valid-phase list, before
+    any dispatch — so no Live is needed to prove it teaches."""
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--only", "bogus",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown --only phase 'bogus'" in err
+    assert "tempo_map" in err  # the valid list, in order
+
+
+def test_cli_execute_resume_no_prior_run_exits_2(conn, song, session, db_path, capsys):
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--resume",
+    ])
+    assert rc == 2
+    assert "no halted prior run" in capsys.readouterr().err
+
+
+def test_cli_execute_resume_with_only_exits_2(conn, song, session, db_path, capsys):
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--resume", "--only", "tracks",
+    ])
+    assert rc == 2
+    assert "cannot combine" in capsys.readouterr().err

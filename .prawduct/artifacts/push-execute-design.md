@@ -146,6 +146,8 @@ return 0
   "session_id": "...",
   "outcome": "ok | partial | connection_lost",
   "phase_halted": "clips",          // null on ok
+  "current_phase": "clips",         // PSH-5T9D: phase executing now; null at the terminal flush
+  "scope": null,                    // PSH-2R7K: phase-targeting filter; null for a full run
   "phases": [
     {"name": "tempo_map",      "status": "ok",      "calls_ok": 1, "calls_failed": 0},
     {"name": "time_signature", "status": "skipped", "calls_ok": 0, "calls_failed": 0},
@@ -162,6 +164,25 @@ Phase `status` values: `ok` (all calls succeeded), `skipped` (planner emitted
 zero calls — idempotent re-push), `halted` (one or more calls failed OR the
 plan carried a hard error; phase did not necessarily round-trip to Live),
 `pending` (phase not attempted due to upstream halt).
+
+**`current_phase` + per-phase flush (PSH-5T9D).** The state file is now written
+**after every phase** (and once at the terminal state), not only at exit — so it is
+**pollable mid-run** for phase-level progress. `current_phase` names the phase
+executing at the moment of the flush (`null` at the terminal write). `execute` also
+streams a per-phase start/finish line to **stderr** (stdout stays the single
+parseable summary), with a distinctive heads-up for the multi-minute realtime
+`performed_automation` phase so it isn't mistaken for a hang.
+
+**`scope` + phase-targeting (PSH-2R7K).** `execute` accepts `--only PHASE`,
+`--start-at`/`--from PHASE`, `--stop-after PHASE`, and `--resume` (continue from the
+last run's `phase_halted`). `scope` records the filter (`{"only": …}` /
+`{"start_at": …, "stop_after": …}`) or `null` for a full run, so a scoped run's state
+file is never mistaken for a full push. Filtering is **by phase name** (order-agnostic
+— it composes with a future phase reorder) and validated against the canonical phase
+list (a typo teaches with the valid names). The coherence gate + idempotency are
+unchanged: a scoped run is still safe because every phase's already-linked branch is a
+no-op. `--start-at` does **not** satisfy dependencies — resuming at `clips` requires
+`tracks` to have run in a prior pass (the operator's resume contract).
 
 `warnings` (SYN-6B4Q) is an additive field: benign, non-failing messages
 (e.g. cues deferred past Live's current arrangement extent). An `ok` push can

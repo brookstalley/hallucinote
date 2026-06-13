@@ -428,3 +428,51 @@ re-appends it terminal, and that the per-stem WAV then reflects the post-analyze
    `"terminal": false` — rather than emitting clean numbers for an under-tapped stem. (Hard
    to force live; the unit test forces it via a misbehaving load. Note here if no natural
    live case arises — the path is unit-covered.)
+
+---
+
+## DPP-7H2K — unit-aware value_display resolves a REAL Live param (Hz/kHz, ms/s)
+
+**Status:** PENDING — needs an attended Live session + `/mcp` reconnect (DPP-7H2K
+flips the MCP fingerprint: re-vendor the Remote Script + reconnect first).
+**Visual change:** no (parameter value changes; verify via readback).
+
+Unit-proven against synthetic curves mirroring real device shapes
+(`hallucinote_mcp/tests/unit/test_display_value.py`: Hz/kHz + ms/s resolution,
+genuinely-non-monotonic-after-normalisation still refuses; `test_actions_device.py`:
+the value_real echo through both write sites). What units CANNOT cover — the project's
+own learning ("validate against real instances; the original display-value traps all
+came from real-Live probes, not the synthetic corpus"): that a REAL Live EQ frequency
+and a REAL compressor release actually render the Hz↔kHz / ms↔s switch the way the
+fixtures assume.
+
+1. **EQ freq by explicit unit.** On a real EQ Eight band Frequency param,
+   `ableton_device(set_parameter, …, parameter_name='Frequency', value_display='150 Hz')`
+   succeeds (no DisplayValueError) and `get_parameters` reads back ~150 Hz. Repeat with
+   `value_display='2 kHz'` → reads back ~2 kHz. Confirm the response carries
+   `value_real`≈150 / 2000 and `value_real_unit='Hz'`.
+2. **Comp release by explicit unit.** On a real Compressor Release,
+   `value_display='120 ms'` and `value_display='1.5 s'` each resolve and read back at the
+   right magnitude; `value_real_unit='ms'`.
+3. **Genuinely non-monotonic still refuses.** A param whose display reverses for a
+   non-unit reason still raises the teaching error pointing at the normalized `value`
+   (confirm at least one such param if one is reachable; else note units cover it).
+
+## RTE-2P9X — fresh push of an instrument-less MIDI track routed to PRE-MAIN
+
+**Status:** PENDING — attended Live session, a song with a PRE-MAIN submaster bus and a
+NEW (instrument-bearing) MIDI track routed to it. **Visual change:** no.
+Unit-proven: phase order is `mix < devices < routing` (`test_push_song.py`). What units
+can't cover: that Live actually exposes the MIDI track's audio output routing only after
+its instrument loads. **Check:** a from-scratch `execute` of such a song completes the
+`routing` phase (no `'PRE-MAIN' not in available output routing types'` halt).
+
+## SYN-3C8K — set-swap re-push completes the clips phase
+
+**Status:** PENDING — attended Live session. **Visual change:** no.
+Unit-proven: the cascade drops the stale clip link and the planner then emits `create`
+(`test_push_cli.py`). What units can't cover: the real set-swap. **Check:** push a song,
+close that Live set, open a fresh default set, re-run `probe-and-link --probe` then
+`execute` against the SAME session — the clips phase completes (no `IndexError: session
+slot N on track M is empty`), and probe-and-link reports `unlinked_stale_clips` > 0 and
+offers the default-scaffold cleanup despite the reused (not freshly-minted) session.

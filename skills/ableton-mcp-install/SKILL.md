@@ -25,16 +25,47 @@ The copy's excludes, the verification, and the atomic vendor live in tested Pyth
 (`install_ops.py`); path + prerequisite (`uv`) detection lives in
 `install_paths.py`. Don't re-derive any of it in the skill body.
 
-## Step 1 — Preflight
+## Step 1 — Resolve the running server, then preflight
+
+**First, read the running server's identity** so the install vendors + verifies
+against the copy the *plugin actually launches*, not whatever the install shell's
+`sys.path` resolves (INS-3W8P). In a coexistence setup — the installed plugin **and**
+an editable `pip install -e` clone whose versions diverge — those are different
+copies, and vendoring the wrong one re-creates a server↔Remote-Script handshake
+mismatch that blocks every push until corrected (it cost multiple Live-restart
+cycles on 2026-06-13).
+
+Read the MCP resource **`ableton://server/info`**. It returns
+`{version, base_version, fingerprint, package_root}` for the running server and has
+**no Live dependency** (so it answers with Live closed, which install requires).
+Keep its `version` as `SERVER_VERSION` and `package_root` as `SERVER_ROOT`.
+
+- **Read succeeds** → you have the authoritative `SERVER_VERSION` + `SERVER_ROOT`;
+  pass them to preflight + install below.
+- **Read fails** (server not connected, or an older server predating the resource)
+  → proceed WITHOUT them. The install falls back to the invoking copy and preflight
+  reports `server.confirmed: false` (the match is advisory). Tell the user the match
+  is unconfirmed and the runtime handshake will catch any mismatch on the first Live
+  call. On a genuinely fresh install the server often isn't connected yet and there
+  is only one copy anyway — the fallback is correct there.
+
+Then run preflight, passing the server version when you have it:
 
 ```bash
-python -m hallucinote_mcp.cli preflight
+python -m hallucinote_mcp.cli preflight --server-version "<SERVER_VERSION>"
 ```
 
-(If import fails, stop and tell the user to `pip install hallucinote-mcp`. On
-Windows, if `python` opens the Microsoft Store, use `py -3`.)
+(Omit `--server-version` entirely if the resource read failed. If import fails, stop
+and tell the user to `pip install hallucinote-mcp`. On Windows, if `python` opens the
+Microsoft Store, use `py -3`.)
 
 The JSON report blocks you act on:
+
+- **`server`** + **`coexistence_divergence`** (INS-3W8P) — `server.confirmed: true`
+  means `matches_mcp_server` was computed against the **running** server (trust it).
+  `coexistence_divergence: true` means the server's copy differs from the invoking
+  interpreter's — you **must** vendor from `SERVER_ROOT` in Step 3 (`--from-package-root`);
+  vendoring the invoking copy would re-create the mismatch.
 
 - **`live.is_running`** — `true` → refuse (Live caches Control Surfaces at startup and can lock files); `null` → ask the user to confirm Live is fully quit (⌘Q, not just the window).
 - **`platform == "linux"`** → warn (Live doesn't officially ship for Linux); show the Wine candidate and ask before proceeding.
@@ -42,7 +73,7 @@ The JSON report blocks you act on:
 - **`live.installed_versions`** — multiple entries sharing one User Library is normal (one install covers all); empty → ask before continuing.
 - **`uv.present`** — `false` → the bundled MCP server **can't launch** (the plugin runs it via `uv run`). Tell the user to install uv (`brew install uv`, or `curl -LsSf https://astral.sh/uv/install.sh | sh`) and restart Claude Code, then re-run. This probes the install-process PATH; the authoritative check is whether `/mcp` lists the server (Step 4).
 - **`mcp_configs.malformed`** — non-empty → stop; tell the user to fix/delete those files (uninstall's `remove-mcp-config` refuses to edit malformed JSON anyway).
-- **`remote_script.candidates[*]`** — `installed: true` with `matches_mcp_server: false` is a stale install → this run is an **update** (Step 3 replaces it). `matches_mcp_server: true` → already current; you may skip to Step 4.
+- **`remote_script.candidates[*]`** — `installed: true` with `matches_mcp_server: false` is a stale install → this run is an **update** (Step 3 replaces it). `matches_mcp_server: true` → already current; you may skip to Step 4. (When `server.confirmed: true` this match is against the **running** server, so a `true` here genuinely means the next handshake succeeds; when `false`, treat it as advisory.)
 - **`mcp_configs.containing_entry`** — pre-existing `hallucinote-mcp` registrations from a *legacy* (pre-plugin) install; not needed for install (the plugin provides the server), but worth noting so the user can clean them via `/ableton-mcp-uninstall` if a stale entry shadows the plugin.
 
 ## Step 2 — Choose the User Library
@@ -58,13 +89,19 @@ One atomic command stages the vendored package (excludes applied in Python),
 verifies it, and swaps it into place with rollback:
 
 ```bash
-python -m hallucinote_mcp.cli install-remote-script --user-library "<chosen User Library>"
+python -m hallucinote_mcp.cli install-remote-script --user-library "<chosen User Library>" --from-package-root "<SERVER_ROOT>" --require-server-version "<SERVER_VERSION>"
 ```
 
+- **`--from-package-root` + `--require-server-version`** (INS-3W8P) — pass both
+  whenever the Step 1 resource read gave you `SERVER_ROOT` + `SERVER_VERSION`. They
+  vendor the *exact* copy the server runs and **refuse, without mutating**, if that
+  source doesn't compute the server version — so a stale/divergent copy can never be
+  silently vendored into a mismatch. If the resource read failed, omit **both**
+  (vendor the invoking copy — the only one on a fresh install).
 - **Updating an existing install?** Preflight showed `installed: true`. Confirm
   the overwrite with the user, then add `--force` — a clean remove-and-replace,
   not a merge.
-- The command prints JSON: `{"ok": true, "replaced_existing": ..., "verify": {"ok": true, "missing": [], "unexpected": []}}`. If `ok` is false or `verify.ok` is false, **stop** and show the user the `error` / `missing` / `unexpected` fields — the live install was *not* touched (the staged tree failed verification before any swap).
+- The command prints JSON: `{"ok": true, "replaced_existing": ..., "source_root": ..., "vendored_version": ..., "verify": {"ok": true, "missing": [], "unexpected": []}}`. Confirm `vendored_version` equals `SERVER_VERSION` (guaranteed when you passed `--require-server-version`). If `ok` is false or `verify.ok` is false, **stop** and show the user the `error` / `missing` / `unexpected` fields — the live install was *not* touched (the source check / staged verification ran before any swap).
 
 You do not hand-author the copy, the excludes, or a sanity check; they live in
 `install_ops.vendor_remote_script` / `verify_remote_script` and are unit-tested.
@@ -194,7 +231,7 @@ version strings from preflight.
 **Update / reinstall** — render as:
 
 - [x] ~~**Me** — Remote Script re-vendored in the User Library (old copy removed first, atomically)~~
-- [x] ~~**Me** — version handshake will match (server `<package.version>` == vendored)~~
+- [x] ~~**Me** — version handshake will match (vendored `<vendored_version>` == running server `<SERVER_VERSION>`, INS-3W8P)~~
 - [x] ~~**Me** — MCP server: provided by the `hallucinote` plugin (uv-launched from the committed lock) — nothing written~~
 - [ ] **You** — Reopen Ableton Live so it loads the refreshed Control Surface (the *Hallucinote* slot is almost certainly still assigned — just reopen; re-check Preferences only if not)
 - [ ] **You** — Run `/mcp` → `hallucinote-mcp` → reconnect *(required to finish)*

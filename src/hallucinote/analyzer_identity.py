@@ -58,6 +58,14 @@ def is_analyzer_device(device: Mapping[str, Any] | Any) -> bool:
     ``name`` / ``display_name`` is present (preferring ``name``, the snapshot /
     probe field) and compare.
 
+    Discriminator asymmetry (intentional): the MCP-side ``_find_analyzer_index``
+    additionally requires ``class_display_name == "Max Audio Effect"`` to guard
+    against a live-browser preset name-collision when *loading*. At the model
+    boundary the render-stamped name alone is reliable + sufficient (the class
+    field isn't always captured into snapshot / DB rows), so the engine keys on
+    name-only. The drift-guard test pins the shared NAME constant, NOT this
+    context-specific discriminator logic — the two stay deliberately asymmetric.
+
     Accepts any Mapping or ``sqlite3.Row``-like object (anything indexable with
     a ``.keys()`` or supporting ``in`` / ``[]``). Returns False for anything
     that doesn't expose a name field.

@@ -219,6 +219,11 @@ the trigger + guidance, never a silent stale state.
 - Capture (no filter today): `capture.py` `compile_snapshot`, `sync/pull/devices.py`,
   `tools/capture_cli.py`.
 - Push (no skip today): `sync/push/devices.py` `_emit_device_calls`.
+- **Master path (known follow-up):** `compile_snapshot` filters tracks + returns;
+  the master has no device array in the snapshot today (SNP-4K7M), so there is no
+  master-analyzer pollution via snapshot — but the render DOES tap the master, so
+  **when SNP-4K7M lands master-device capture, the analyzer filter MUST extend to
+  the master path.** Inert today; tracked here so it isn't lost (Critic NOTE).
 
 ## Boundary / contract notes
 - **Snapshot contract** + **device-chain contract** (`boundary-patterns.md`):

@@ -107,23 +107,3 @@ flagged, not silently under-measured. Enqueue in `operator-verification.md`.
 
 **Done when:** Live-verified terminal-tap reposition + the observability flag in the
 report; no full-chain reload on unchanged surfaces.
-
-## Chunk 3 — Render terminal-tap + observability (Live; durable correctness)
-
-**Deliverable (Mechanism 2):** at render start, before the capture pass, for each
-measured surface ensure the analyzer is **present and strictly last**:
-- absent → load (appends last);
-- present + already last → **no-op** (common case, zero cost);
-- present + not last → delete + re-add (lands last) — the M4L re-load cost paid
-  *only on changed surfaces* (R8/R12). Self-heals intervening mis-order (R11).
-- **Observability (R9):** record per-surface terminal-tap confirmation in the
-  capture manifest / MixReport; flag any surface that can't be made compliant
-  (`analyzer_not_terminal`) so a reading agent never trusts an under-tapped stem.
-
-**Acceptance (operator-verified):** after loading a device post-render (so it lands
-after the analyzer), the next render repositions the analyzer to last on that surface
-and the per-stem capture reflects the post-analyzer device; an un-fixable surface is
-flagged, not silently under-measured. Enqueue in `operator-verification.md`.
-
-**Done when:** Live-verified terminal-tap reposition + the observability flag in the
-report; no full-chain reload on unchanged surfaces.

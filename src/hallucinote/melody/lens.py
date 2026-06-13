@@ -93,8 +93,10 @@ Classification = Literal["active", "static", "insufficient-data"]
 # is exactly why the reggae-hook universal-verdict bug cannot recur (model §7).
 ShapedReading = Literal["shaped", "aimless", "ungraded"]
 
-# Onsets closer than this (beats) are treated as ONE melodic event — a melody is
-# monophonic, so a block-chord onset collapses to its TOP voice (the melody note).
+# Float tolerance (beats) for "same onset" / "already ended" in the skyline reduction
+# (_extract_melodic_line): notes within this window count as one melodic event (a
+# block-chord onset collapses to its TOP voice), and a note ending within it of the
+# next onset is treated as no longer sounding (back-to-back notes don't mask).
 _ONSET_EPS = 1e-6
 
 # Below this many distinct melodic onsets a line is too sparse for contour /
@@ -338,21 +340,62 @@ class SectionMelody:
     profiles: Mapping[str, MelodicProfile] | None = None
 
 
-def _melodic_sequence(notes: Sequence[NoteDict]) -> list[tuple[float, int]]:
-    """Reduce a track's notes to an onset-ordered monophonic ``(start, pitch)``
-    line: sort by onset, and for effectively-simultaneous notes keep the TOP voice
-    (highest pitch) — the melody note. A melody is one note at a time; this makes
-    the contour/interval read robust to an incidental block-chord onset."""
-    pairs = sorted(
-        ((float(n["start_beats"]), int(n["pitch"])) for n in notes),
-        key=lambda sp: (sp[0], -sp[1]),
+def _extract_melodic_line(notes: Sequence[NoteDict]) -> list[NoteDict]:
+    """Reduce a track's notes to an onset-ordered, monophonic TOP-VOICE line.
+
+    A note is dropped from the line iff a strictly-higher note temporally CONTAINS it
+    — starts no later and ends no earlier (within :data:`_ONSET_EPS`). Containment is
+    the faithful test for "this note sits entirely beneath a sustained higher voice":
+    an octave double, a held-over chord tone, a backing voice under a long melody note.
+    It deliberately does NOT mask on mere tail overlap: in a legato *monophonic* line a
+    note's tail laps the next (lower) note's onset, and that next note IS the melody —
+    masking it would gut a descending legato line (sun-zone-done's reggae hook is
+    exactly this). Containment generalizes the prior exact-onset top-voice collapse to
+    octave-doubles / sustained voices struck at STAGGERED onsets (the bug: an
+    integration section's staggered octave-double the exact-onset rule missed), while
+    leaving monophonic articulation — and genuinely wide single-voice lines — untouched.
+
+    This is the SINGLE source of the monophonic line: the contour / interval read,
+    harmony-fit, AND LBDM phrase segmentation all consume it, so none re-derives the
+    line from the raw (possibly polyphonic) notes. The melody layer models monophonic
+    lines (model §6); brief/incidental polyphony folds into the top voice rather than
+    interleaving into a zig-zag.
+
+    Reads ``duration_beats`` (default 0.0). Returns the kept note dicts unchanged, in
+    onset order."""
+    ordered = sorted(
+        notes, key=lambda n: (float(n["start_beats"]), -int(n["pitch"]))
     )
-    seq: list[tuple[float, int]] = []
-    for start, pitch in pairs:
-        if seq and abs(start - seq[-1][0]) <= _ONSET_EPS:
-            continue  # same onset — keep the first (highest) = top voice
-        seq.append((start, pitch))
-    return seq
+    spans = [
+        (float(n["start_beats"]),
+         float(n["start_beats"]) + float(n.get("duration_beats", 0.0)),
+         int(n["pitch"]))
+        for n in ordered
+    ]
+    line: list[NoteDict] = []
+    last_onset: float | None = None
+    for n, (start, end, pitch) in zip(ordered, spans):
+        contained = any(
+            hp > pitch and hs <= start + _ONSET_EPS and he >= end - _ONSET_EPS
+            for (hs, he, hp) in spans
+        )
+        # Drop a unison double sharing an onset with the note just kept (containment
+        # leaves equal-pitch simultaneous notes both standing; one is the melody).
+        same_onset = last_onset is not None and abs(start - last_onset) <= _ONSET_EPS
+        if not contained and not same_onset:
+            line.append(n)
+            last_onset = start
+    return line
+
+
+def _melodic_sequence(notes: Sequence[NoteDict]) -> list[tuple[float, int]]:
+    """The reduced monophonic line as onset-ordered ``(start, pitch)`` pairs — the
+    contour / interval read's input. A thin ``(start, pitch)`` view over
+    :func:`_extract_melodic_line` (the single source of the monophonic line)."""
+    return [
+        (float(n["start_beats"]), int(n["pitch"]))
+        for n in _extract_melodic_line(notes)
+    ]
 
 
 def _confidence(onset_count: int) -> float:
@@ -462,7 +505,10 @@ def _line(
     sec: SectionMelody,
     profile: MelodicProfile | None = None,
 ) -> MelodicLine:
-    seq = _melodic_sequence(notes)
+    # Extract the monophonic top-voice line ONCE; the interval/contour read,
+    # harmony-fit, and LBDM segmentation all consume the same reduced line.
+    line_notes = _extract_melodic_line(notes)
+    seq = [(float(n["start_beats"]), int(n["pitch"])) for n in line_notes]
     pitches = [p for _start, p in seq]
     onset_count = len(seq)
     note_count = len(notes)
@@ -492,7 +538,7 @@ def _line(
     # Per-phrase contour (LBDM, research C8b): surfaced only when the line actually
     # segments into more than one phrase — a single-phrase line's shape IS the
     # whole-line ``contour_shape``, so an empty tuple avoids redundant noise.
-    phrases = tuple(_per_phrase_contours(notes))
+    phrases = tuple(_per_phrase_contours(line_notes))
     phrase_contours = phrases if len(phrases) > 1 else ()
     shaped = _shaped_reading(
         profile,

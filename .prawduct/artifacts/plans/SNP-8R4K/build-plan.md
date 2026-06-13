@@ -15,9 +15,10 @@ is complementary, not a gate.
 
 ## Status
 
-- [ ] **1 — Centralized identity + boundary exclusion** (no-Live; the keystone — kills pollution/accumulation/off-by-one)
-- [ ] **2 — Legacy cleanup** (no-Live; strip analyzer rows from already-polluted snapshots/DBs)
+- [x] **1 — Centralized identity + boundary exclusion** (no-Live; keystone) — DONE on `fix/snp-8r4k-boundary-exclusion`: `analyzer_identity.py` + filter/dense-renumber at `compile_snapshot`, `_replay_devices`, pull `_diff_chain_devices`, + push `_emit_device_calls` skip; 23 tests; full suite 3550. Also **auto-migrates the model** (State-1 functional clean — see design §Migration).
+- [ ] **2 — Snapshot-file cleanup + version stamp** (no-Live; State-1 clean-at-rest)
 - [ ] **3 — Render terminal-tap + observability** (Live; durable measurement correctness)
+- [ ] **4 — Push-preflight stale-set detection + rebuild guidance** (Live; State-2 migration trigger)
 
 ## Chunk 1 — Centralized identity + boundary exclusion (no-Live; keystone)
 
@@ -44,19 +45,68 @@ position drift. Full suite green.
 a single identity definition); tests cover the interleaved-capture renumber, the
 push-skip, and a capture→push→capture stability assertion.
 
-## Chunk 2 — Legacy cleanup (no-Live; depends on chunk 1's predicate)
+## Chunk 2 — Snapshot-file cleanup + version stamp (no-Live; State-1 clean-at-rest)
 
-**Deliverable (R10):** a one-time pass (a `capture_cli`/snapshot migration or a
-documented one-shot) that strips `is_analyzer` device rows from already-polluted
-committed snapshots/DBs and re-densifies positions, reporting per file what it
-stripped (never a silent rewrite).
+Chunk 1 already makes a polluted snapshot *functionally* clean (strip-on-replay), so
+the model self-corrects on the next build. This chunk cleans the committed
+`captured_session.json` **at rest** so the artifact itself stops carrying analyzer
+rows (design §Migration, State 1).
 
-**Acceptance:** running it on a snapshot known to contain analyzer rows produces a
-clean, dense, analyzer-free snapshot and prints the removals; running it on a clean
-snapshot is a no-op.
+**Deliverable (R10):** strip `is_analyzer_device` entries from a committed snapshot +
+densify survivor positions, **stamp a snapshot version** so the rewrite runs exactly
+once (an unstamped/old snapshot triggers it; a stamped one is a no-op), and
+**announce per file what was stripped** (never silent). Triggered either by a
+detect-and-rewrite on `/song-snapshot` / build, or an explicit migrate command —
+keyed to the SNP-8R4K release version so it fires when users update.
 
-**Done when:** the cleanup exists + is documented; a test fixture (polluted snapshot)
-round-trips to clean.
+**Acceptance:** a snapshot containing analyzer rows rewrites to clean + dense +
+stamped, printing the removals; a clean/stamped snapshot is a no-op; the rewritten
+snapshot builds + pushes identically to a hand-cleaned one.
+
+**Done when:** the cleanup + version stamp exist + are documented; a polluted-snapshot
+fixture round-trips to clean; the version stamp gates re-runs.
+
+## Chunk 4 — Push-preflight stale-set detection + rebuild guidance (Live; State-2 trigger)
+
+The migration trigger for already-saved Live sets where authored devices landed
+after the analyzer (under-measured captures). The fix is **rebuild from source**
+(user-blessed "rebuild entire set is OK") — this chunk DETECTS + GUIDES, never
+auto-rebuilds (the operator owns the set). Design §Migration, State 2.
+
+**Deliverable:** in the push/compat preflight (`sync/compat.py` / probe-and-link),
+probe the bound set; if any chain has authored devices *after* the analyzer (or the
+analyzer interleaved among authored devices), flag the set as pre-SNP-8R4K and emit
+operator guidance — "this set predates the analyzer-infrastructure fix; devices after
+the measurement tap were under-measured. Rebuild from source: push into a fresh set."
+A warning (not a hard halt), version-keyed so it fires on the first push to a stale
+set after updating.
+
+**Acceptance (operator-verified):** pushing to a set with a device after the analyzer
+surfaces the rebuild guidance; pushing to a clean/rebuilt set is silent. Enqueue in
+`operator-verification.md`.
+
+**Done when:** the preflight detection + guidance exist; Live-verified on a stale set;
+no false-positive on a clean set.
+
+## Chunk 3 — Render terminal-tap + observability (Live; durable correctness)
+
+**Deliverable (Mechanism 2):** at render start, before the capture pass, for each
+measured surface ensure the analyzer is **present and strictly last**:
+- absent → load (appends last);
+- present + already last → **no-op** (common case, zero cost);
+- present + not last → delete + re-add (lands last) — the M4L re-load cost paid
+  *only on changed surfaces* (R8/R12). Self-heals intervening mis-order (R11).
+- **Observability (R9):** record per-surface terminal-tap confirmation in the
+  capture manifest / MixReport; flag any surface that can't be made compliant
+  (`analyzer_not_terminal`) so a reading agent never trusts an under-tapped stem.
+
+**Acceptance (operator-verified):** after loading a device post-render (so it lands
+after the analyzer), the next render repositions the analyzer to last on that surface
+and the per-stem capture reflects the post-analyzer device; an un-fixable surface is
+flagged, not silently under-measured. Enqueue in `operator-verification.md`.
+
+**Done when:** Live-verified terminal-tap reposition + the observability flag in the
+report; no full-chain reload on unchanged surfaces.
 
 ## Chunk 3 — Render terminal-tap + observability (Live; durable correctness)
 

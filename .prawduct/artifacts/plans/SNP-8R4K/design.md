@@ -167,6 +167,48 @@ those reasons.
   be the terminal device to measure a chain's full output; there is no faithful
   out-of-chain equivalent.
 
+## Migration (existing polluted songs + stale Live sets)
+
+Two stale states already exist in the wild; both must be handled when users update
+to the release that ships this fix. **"Rebuild the entire set is valid and OK"
+(user, 2026-06-13)** — so we do NOT surgically reorder live sets (Live has no
+reorder API anyway); we clean the source of truth and *guide* a rebuild. Two prongs
+plus a version trigger:
+
+**State 1 — polluted source of truth** (a committed `captured_session.json` / song
+DB that already captured analyzer device rows).
+- **Auto-migrated by chunk 1, functionally:** `compile_snapshot`, `_replay_devices`,
+  and the pull path all strip `is_analyzer_device` + densify on read. So the first
+  `build.py` / pull / push after updating produces a clean DB automatically — no
+  analyzer rows reach the model, authored positions densify. The DB is derived
+  (rebuilt from build.py + snapshot), so it is self-correcting; chunk 1 IS the
+  State-1 trigger.
+- **Clean-at-rest (chunk 2):** the committed snapshot FILE may still carry analyzer
+  entries (ignored on replay, but dirty at rest). A cleanup pass rewrites
+  `captured_session.json` — strip + densify — stamps a snapshot version so it runs
+  once, and **announces what it stripped** (never a silent rewrite).
+
+**State 2 — mis-ordered saved Live set** (an `.als` where authored devices were
+loaded after the analyzer → per-stem captures under-measured them).
+- The set is materialized output, not source of truth. With the model clean
+  (chunk 1), the fix is to **rebuild the set from source** — a full push into a fresh
+  set re-materializes authored devices in order and the render adds the analyzer last
+  (chunk 3). User-blessed; no surgical reorder.
+- **Guidance + trigger (chunk 4):** the push/compat preflight probes the bound set;
+  if any chain has authored devices *after* the analyzer (or the analyzer interleaved
+  among authored devices), it flags the set as pre-SNP-8R4K and emits guidance — *"this
+  set predates the analyzer-infrastructure fix; devices after the measurement tap were
+  under-measured. Rebuild from source: push into a fresh set."* **Not auto** — the
+  operator owns the set; the rebuild is their action.
+
+**The trigger ("on update to the version we push"):** State 1's model-clean is
+automatic on the first build/pull/push after update (chunk 1's filters); the
+snapshot-file rewrite (chunk 2) fires via a snapshot version stamp (rewrite once when
+an unstamped/old snapshot is seen) or the `/song-snapshot` command. State 2's
+guidance fires from the push preflight (chunk 4) on the first push to a stale set
+after update. **All ship in the SAME release as chunks 1–3** so updating users get
+the trigger + guidance, never a silent stale state.
+
 ## Touchpoints (current-state map, for the build)
 - Identity: `analyzer/setup.py:428` `_find_analyzer_index` (only site that knows the
   analyzer) → promote to a shared `is_analyzer`/`is_infrastructure` helper (R1).

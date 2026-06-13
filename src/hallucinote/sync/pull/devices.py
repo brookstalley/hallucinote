@@ -7,6 +7,7 @@ import json
 import sqlite3
 from typing import Any
 
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.capture import RACK_CLASS_NAMES
 
 from hallucinote.db import mutations as M, queries as Q
@@ -387,6 +388,31 @@ def _apply_devices_for_parent(
     )
 
 
+def _exclude_analyzer_entries(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop HallucinoteAnalyzer probe entries and densely renumber the
+    surviving authored devices' `device_index` (1-based rank among survivors).
+    SNP-8R4K — Live→DB boundary exclusion (R3/R5).
+
+    Position-independent: correct whether the analyzer is last or interleaved.
+    An entry with a missing/invalid `device_index` is NOT renumbered — it
+    passes through unchanged so `_diff_chain_devices`'s existing validation
+    still warns on a malformed hand-crafted `results.json`.
+    """
+    survivors = [e for e in entries if not is_analyzer_device(e)]
+    out: list[dict[str, Any]] = []
+    rank = 0
+    for e in survivors:
+        idx = e.get("device_index")
+        if isinstance(idx, int) and idx >= 1:
+            rank += 1
+            out.append({**e, "device_index": rank})
+        else:
+            out.append(e)
+    return out
+
+
 def _diff_chain_devices(
     conn: sqlite3.Connection,
     *,
@@ -415,7 +441,17 @@ def _diff_chain_devices(
     `label` is the per-row prefix in details lines (e.g. ``"track device"``,
     ``"rack chain 2 device"``). `context_label` is the prefix for warnings
     that name the surface being diffed.
+
+    SNP-8R4K — analyzer exclusion: the HallucinoteAnalyzer is measurement
+    infrastructure, not authored content. Probed entries that
+    `is_analyzer_device` are dropped before the diff so a pull never writes an
+    analyzer row, and the surviving authored devices are densely renumbered
+    (rank among survivors) so an interleaved analyzer can't shift authored
+    positions or leave a hole. Shared by both the top-level and nested-rack
+    callers, so both inherit the exclusion.
     """
+    entries = _exclude_analyzer_entries(entries)
+
     db_devices = list(Q.get_devices_for_chain(conn, chain_id))
     db_by_position = {d["position"]: d for d in db_devices}
 

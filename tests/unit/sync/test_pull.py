@@ -4895,3 +4895,90 @@ def test_pull_cli_execute_dry_run_default_off_preserves_existing_behavior(
     conn.close()
     assert row["value_display"] == "-6.0 dB"
     assert row["value_normalized"] == pytest.approx(0.55)
+
+
+# ---------------------------------------------------------------------------
+# SNP-8R4K chunk 1 — analyzer exclusion at the Live→DB pull boundary
+# (probed analyzer dropped; survivors dense-renumbered; no analyzer row)
+# ---------------------------------------------------------------------------
+
+_ANALYZER = "HallucinoteAnalyzer"
+
+
+def test_apply_track_devices_drops_analyzer_and_densifies(conn, song, session):
+    """A probed chain with an INTERLEAVED HallucinoteAnalyzer must write only
+    the authored devices, densely renumbered (no off-by-one, no analyzer row)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_devices:{tid}",
+            _devices_payload(
+                (1, "Operator", "Operator"),
+                (2, "MxDeviceAudioEffect", _ANALYZER, "Max Audio Effect"),
+                (3, "Eq8", "EQ Eight", "EQ Eight"),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    # 2 authored devices created; analyzer never written.
+    assert out.mutations == 2
+    chains = Q.get_device_chains_for_track(conn, tid)
+    devs = Q.get_devices_for_chain(conn, chains[0]["id"])
+    assert [(d["position"], d["display_name"]) for d in devs] == [
+        (1, "Operator"),
+        (2, "EQ Eight"),  # raw index 3 → dense position 2, no off-by-one
+    ]
+    assert all(d["display_name"] != _ANALYZER for d in devs)
+
+
+def test_apply_track_devices_analyzer_last_no_op_when_authored_match(
+    conn, song, session
+):
+    """Analyzer LAST in the probe + DB already holds the authored devices →
+    pure no-op (no spurious analyzer create, no churn)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Operator", display_name="Operator",
+                    class_name="Operator")
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_devices:{tid}",
+            _devices_payload(
+                (1, "Operator", "Operator", "Operator"),
+                (2, "MxDeviceAudioEffect", _ANALYZER, "Max Audio Effect"),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    devs = Q.get_devices_for_chain(conn, chain_id)
+    assert [d["display_name"] for d in devs] == ["Operator"]
+
+
+def test_apply_track_devices_pull_never_writes_analyzer_row(conn, song, session):
+    """A chain that is ONLY an analyzer pulls to an empty authored chain."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_devices:{tid}",
+            _devices_payload(
+                (1, "MxDeviceAudioEffect", _ANALYZER, "Max Audio Effect"),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?", (_ANALYZER,)
+    ).fetchone()["n"]
+    assert n == 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import queries as Q
 
 from ._core import PushPlan, ToolCall
@@ -146,6 +147,21 @@ def _emit_device_calls(
             f"{device['position']} on {parent_kind} {parent_name!r} — "
             "skipping load (author left this slot intentionally empty; "
             "load any instrument/effect there in Live before producing)"
+        )
+        return
+    # SNP-8R4K: the HallucinoteAnalyzer is measurement infrastructure owned
+    # solely by the render subsystem — never a loadable, authored device.
+    # Capture/pull exclude it at the boundary, so a clean DB never holds one;
+    # this defensive skip protects a legacy-polluted DB from breaking a
+    # rebuild (it's not a loadable browser node — emitting a load would
+    # fail/halt the push). Never emit a load for it.
+    if is_analyzer_device(device):
+        plan.warn(
+            f"HallucinoteAnalyzer row {device['display_name']!r} at position "
+            f"{device['position']} on {parent_kind} {parent_name!r} — "
+            "skipping (measurement infrastructure, not an authored device; "
+            "the render injects it at capture time). A clean DB shouldn't "
+            "carry this row — run the SNP-8R4K legacy cleanup to strip it."
         )
         return
     device_at = Q.get_ableton_link(

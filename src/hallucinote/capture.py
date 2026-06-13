@@ -65,6 +65,7 @@ import sqlite3
 import warnings
 from typing import Any
 
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.return_naming import strip_return_slot_prefix
 
@@ -134,8 +135,16 @@ def _replay_devices(
     `_depth` is private — used to enforce the "one level of recursion only"
     invariant. A rack device inside a rack chain (nested-nested) raises on
     encounter; recursive support is deferred (tracked in backlog).
+
+    SNP-8R4K — defensive analyzer exclusion: capture filters the analyzer at
+    `compile_snapshot`, but a legacy-polluted snapshot on disk may still carry
+    an analyzer entry. We skip `is_analyzer_device` entries here so replay
+    never writes an analyzer device row, and assign each survivor's `position`
+    its 1-based rank among survivors (not the entry's raw `index`) so a dropped
+    analyzer can't leave a hole or shift authored positions.
     """
-    for d in devices_array:
+    survivors = [d for d in devices_array if not is_analyzer_device(d)]
+    for survivor_rank, d in enumerate(survivors, start=1):
         if "index" not in d or "class" not in d:
             raise ValueError(
                 f"snapshot device missing required keys (index, class): {d!r}"
@@ -174,7 +183,7 @@ def _replay_devices(
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
-            position=int(d["index"]),
+            position=survivor_rank,
             kind=d["class"],
             display_name=d.get("name", d["class"]),
             class_name=d.get("class_name"),
@@ -619,7 +628,19 @@ def compile_snapshot(
     [str, ...]}`. When supplied, the function injects `browser_path` into
     the matching top-level device entry on the assembled snapshot so the
     cross-machine fallback identity round-trips through capture.
+
+    SNP-8R4K — analyzer exclusion (THE off-by-one fix): the
+    HallucinoteAnalyzer is measurement infrastructure, not authored content.
+    Every parent's `devices` array is filtered to drop `is_analyzer_device`
+    entries before assembly, and each survivor's `index` is re-assigned its
+    1-based rank among survivors — NEVER the raw Live chain index. So an
+    interleaved analyzer can never shift an authored device's position, and
+    the analyzer (and its M4L params) never enters the snapshot. Browser-path
+    injection runs AFTER the densify so its `device_index` records address the
+    renumbered positions.
     """
+    returns = [_exclude_analyzer_from_parent(r) for r in returns]
+    tracks = [_exclude_analyzer_from_parent(t) for t in tracks]
     snapshot = {
         "song": {
             "tempo": session_info.get("tempo"),
@@ -632,6 +653,27 @@ def compile_snapshot(
     if browser_paths:
         inject_browser_paths(snapshot, browser_paths)
     return snapshot
+
+
+def _exclude_analyzer_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a snapshot parent (track / return) whose top-level
+    `devices` array has the HallucinoteAnalyzer dropped and surviving devices
+    densely renumbered (`index` = 1-based rank among survivors). SNP-8R4K R3/R5.
+
+    Position-independent by construction: correct whether the analyzer is last
+    or interleaved. Parents without a `devices` array pass through unchanged.
+    Each surviving device entry is shallow-copied before its `index` is
+    rewritten so the caller's input dicts aren't mutated.
+    """
+    devices = parent.get("devices")
+    if not devices:
+        return parent
+    survivors = [d for d in devices if not is_analyzer_device(d)]
+    renumbered = [
+        {**d, "index": rank}
+        for rank, d in enumerate(survivors, start=1)
+    ]
+    return {**parent, "devices": renumbered}
 
 
 # ---------------------------------------------------------------------------

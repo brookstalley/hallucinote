@@ -1052,3 +1052,180 @@ def test_preserve_browser_paths_empty_old_is_noop():
     before = json.dumps(new, sort_keys=True)
     preserve_browser_paths({"song": {}, "returns": [], "tracks": []}, new)
     assert json.dumps(new, sort_keys=True) == before
+
+
+# ---------------------------------------------------------------------------
+# SNP-8R4K chunk 1 — analyzer exclusion at the capture boundary
+# (compile_snapshot drop + dense renumber; _replay_devices defensive skip)
+# ---------------------------------------------------------------------------
+
+ANALYZER = "HallucinoteAnalyzer"
+
+
+def _analyzer_device(index: int) -> dict:
+    """A snapshot device entry shaped like a captured HallucinoteAnalyzer."""
+    return {
+        "index": index,
+        "name": ANALYZER,
+        "class": "Max Audio Effect",
+        "class_name": "MxDeviceAudioEffect",
+        "params_dialed": {"Peak": {"value": "0.5", "normalized": 0.5}},
+    }
+
+
+def test_compile_snapshot_drops_analyzer_last_on_track():
+    """Analyzer as the LAST device on a track is dropped; survivors stay 1..N."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {}},
+        returns=[],
+        tracks=[{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                {"index": 2, "name": "EQ Eight", "class": "EQ Eight"},
+                _analyzer_device(3),
+            ],
+        }],
+    )
+    devs = snap["tracks"][0]["devices"]
+    assert [d["name"] for d in devs] == ["Operator", "EQ Eight"]
+    assert [d["index"] for d in devs] == [1, 2]
+    assert all(d["name"] != ANALYZER for d in devs)
+
+
+def test_compile_snapshot_drops_interleaved_analyzer_and_densifies():
+    """THE off-by-one regression: an INTERLEAVED analyzer must not shift the
+    authored device that follows it. Survivors renumber to dense 1..N."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {}},
+        returns=[],
+        tracks=[{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                _analyzer_device(2),
+                {"index": 3, "name": "EQ Eight", "class": "EQ Eight"},
+                {"index": 4, "name": "Saturator", "class": "Saturator"},
+            ],
+        }],
+    )
+    devs = snap["tracks"][0]["devices"]
+    assert [d["name"] for d in devs] == ["Operator", "EQ Eight", "Saturator"]
+    # EQ Eight (raw index 3) lands at dense position 2, NOT 3 — no off-by-one.
+    assert [d["index"] for d in devs] == [1, 2, 3]
+
+
+def test_compile_snapshot_drops_analyzer_on_returns_too():
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {}},
+        returns=[{
+            "index": 1, "name": "A-Reverb",
+            "devices": [
+                {"index": 1, "name": "Reverb", "class": "Reverb"},
+                _analyzer_device(2),
+            ],
+        }],
+        tracks=[],
+    )
+    devs = snap["returns"][0]["devices"]
+    assert [d["name"] for d in devs] == ["Reverb"]
+    assert devs[0]["index"] == 1
+
+
+def test_compile_snapshot_does_not_mutate_caller_devices():
+    """Filtering/renumbering happens on copies — caller's input is untouched."""
+    track_devices = [
+        {"index": 1, "name": "Operator", "class": "Operator"},
+        _analyzer_device(2),
+        {"index": 3, "name": "EQ Eight", "class": "EQ Eight"},
+    ]
+    tracks = [{"index": 1, "name": "Drums", "type": "midi",
+               "devices": track_devices}]
+    compile_snapshot(
+        session_info={"master": {}}, returns=[], tracks=tracks,
+    )
+    # Original list still has 3 entries with their original indices.
+    assert len(track_devices) == 3
+    assert track_devices[2]["index"] == 3
+
+
+def test_compile_snapshot_passes_through_parent_without_devices():
+    snap = compile_snapshot(
+        session_info={"master": {}},
+        returns=[],
+        tracks=[{"index": 1, "name": "Empty", "type": "midi"}],
+    )
+    assert "devices" not in snap["tracks"][0]
+
+
+def test_replay_skips_analyzer_row_from_polluted_snapshot(conn):
+    """Defensive: a legacy-polluted snapshot (analyzer entry survived on disk)
+    must not write an analyzer device row, and survivors land at dense
+    positions (no hole left by the dropped analyzer)."""
+    snapshot = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "volume": 0.6, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                _analyzer_device(2),
+                {"index": 3, "name": "EQ Eight", "class": "EQ Eight"},
+            ],
+        }],
+    }
+    sid = replay_capture(conn, snapshot, song_name="t")
+    drums = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums"
+    )
+    devices = Q.get_devices_for_track(conn, drums["id"])
+    assert [d["display_name"] for d in devices] == ["Operator", "EQ Eight"]
+    # Dense positions: EQ Eight at 2 (not 3), no analyzer row at all.
+    assert [d["position"] for d in devices] == [1, 2]
+    assert all(d["display_name"] != ANALYZER for d in devices)
+    # And no analyzer row anywhere in the DB.
+    rows = conn.execute(
+        "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?",
+        (ANALYZER,),
+    ).fetchone()
+    assert rows["n"] == 0
+
+
+def test_capture_replay_roundtrip_is_analyzer_free_and_dense(conn):
+    """Round-trip: a Live chain with an interleaved analyzer → compile_snapshot
+    → replay → DB has only authored devices at dense positions. Re-running
+    replay is stable (no accumulation, no position drift)."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4",
+                      "master": {"volume": 0.85, "panning": 0.0}},
+        returns=[],
+        tracks=[{
+            "index": 1, "name": "Drums", "type": "midi",
+            "volume": 0.6, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                _analyzer_device(2),
+                {"index": 3, "name": "EQ Eight", "class": "EQ Eight"},
+            ],
+        }],
+    )
+    sid = replay_capture(conn, snap, song_name="t")
+
+    def _positions():
+        drums = next(
+            t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums"
+        )
+        return [
+            (d["position"], d["display_name"])
+            for d in Q.get_devices_for_track(conn, drums["id"])
+        ]
+
+    expected = [(1, "Operator"), (2, "EQ Eight")]
+    assert _positions() == expected
+    # Re-replay the SAME snapshot: idempotent, no analyzer, no drift.
+    replay_capture(conn, snap, song_name="t")
+    assert _positions() == expected
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?", (ANALYZER,)
+    ).fetchone()["n"] == 0

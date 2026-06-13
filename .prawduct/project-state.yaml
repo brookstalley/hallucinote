@@ -546,7 +546,7 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-06-10
+backlog_last_groomed_at: 2026-06-13
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

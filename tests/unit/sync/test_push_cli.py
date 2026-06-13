@@ -508,7 +508,6 @@ def test_probe_and_link_detects_default_scaffold_on_auto_session(conn, song, ses
             {"track_index": 4, "name": "4-Audio", "kind": "audio"},
         ],
         live_returns=[],
-        auto_session_created=True,
     )
     assert len(result.default_scaffold_unmatched_tracks) == 4
     assert {t["track_index"] for t in result.default_scaffold_unmatched_tracks} == {1, 2, 3, 4}
@@ -522,7 +521,6 @@ def test_probe_and_link_detects_partial_default_scaffold(conn, song, session):
         conn, song_id=song, session_id=session,
         live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
         live_returns=[],
-        auto_session_created=True,
     )
     assert result.default_scaffold_unmatched_tracks == [
         {"track_index": 1, "name": "1-MIDI"},
@@ -544,7 +542,6 @@ def test_probe_and_link_default_scaffold_classified_on_session_reuse(conn, song,
         conn, song_id=song, session_id=session,
         live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
         live_returns=[],
-        auto_session_created=False,
     )
     assert result.default_scaffold_unmatched_tracks == [
         {"track_index": 1, "name": "1-MIDI"},
@@ -563,7 +560,6 @@ def test_probe_and_link_no_default_scaffold_when_extras_present(conn, song, sess
             {"track_index": 2, "name": "SomeoneElsesTrack", "kind": "midi"},
         ],
         live_returns=[],
-        auto_session_created=True,
     )
     assert result.default_scaffold_unmatched_tracks == []
 
@@ -578,7 +574,6 @@ def test_probe_and_link_no_default_scaffold_when_nothing_unmatched(conn, song, s
         conn, song_id=song, session_id=session,
         live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
         live_returns=[],
-        auto_session_created=True,
     )
     assert result.matched_tracks
     assert result.default_scaffold_unmatched_tracks == []
@@ -593,7 +588,6 @@ def test_probe_and_link_default_scaffold_is_case_sensitive(conn, song, session):
         conn, song_id=song, session_id=session,
         live_tracks=[{"track_index": 1, "name": "1-midi", "kind": "midi"}],
         live_returns=[],
-        auto_session_created=True,
     )
     assert result.default_scaffold_unmatched_tracks == []
 

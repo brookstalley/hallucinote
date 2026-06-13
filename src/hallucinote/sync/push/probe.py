@@ -343,7 +343,6 @@ def probe_and_link(
     live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
     actor: str = "sync",
     reason: str | None = None,
-    auto_session_created: bool = False,
 ) -> ProbeAndLinkResult:
     """Match Live tracks/returns by name against DB rows; write the
     matches as ``ableton_links`` so subsequent phases skip the

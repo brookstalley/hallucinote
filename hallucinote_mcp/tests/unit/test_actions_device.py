@@ -1949,6 +1949,32 @@ def test_set_parameter_in_rack_value_display_parity(loaded_actions):
     assert resp.result["value_display"] == "-18.00 dB"
 
 
+def test_set_parameter_in_rack_unit_display_attaches_value_real(loaded_actions):
+    """The nested-rack handler shares _attach_real_unit_echo: a recognised-unit
+    value_display write echoes value_real/value_real_unit identically to the
+    top-level set_parameter (DPP-7H2K(b) parity across both write sites)."""
+    freq = FakeParam("Freq", 0.5, min=0.0, max=1.0, display_fn=_freq_hz_khz)
+    nested = FakeDevice("EQ", class_name="Eq8", parameters=[freq])
+    chain = _FakeChain("Lead", devices=[nested])
+    rack = _FakeRackDevice("Rack", chains=[chain])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter_in_rack",
+            params={
+                "track_index": 1, "device_index": 1,
+                "chain_index": 1, "nested_device_position": 1,
+                "parameter_name": "Freq", "value_display": "2 kHz",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert _freq_hz_khz(freq.value) == "2.00 kHz"
+    assert resp.result["value_real"] == pytest.approx(2000.0)
+    assert resp.result["value_real_unit"] == "Hz"
+
+
 def test_set_parameter_unknown_name(loaded_actions):
     dev = FakeDevice("Comp", parameters=[FakeParam("Threshold", -12.0)])
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))

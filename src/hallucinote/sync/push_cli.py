@@ -473,7 +473,6 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_devices_by_parent=live_devices_by_parent,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
-        auto_session_created=auto_created,
     )
     out = result.to_dict()
     out["song_id"] = song_id

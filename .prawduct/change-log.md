@@ -4,6 +4,39 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening
+
+<!-- prawduct: type=feature | chunks=SDC-7K3M,SMP-7K2D-01,SMP-7K2D-02,AUD-2N6K,ENV-8K2R,ENV-2T9K,MEL-1A7K-line | scope=db,sync-push,audio-analysis,mcp-bridge | status=shipped | release=v0.9.6 -->
+
+A consolidation release. The headline is **device sidechain SOURCE now survives the
+DB round-trip** — previously sidechains only lived in the saved `.als` and were
+silently dropped on any device-chain rebuild.
+
+- **SDC-7K3M — device sidechain source round-trip (author + push).**
+  `devices.sidechain_source_track_id` (semantic FK, survives renames) +
+  `sidechain_source_channel`; `set_device_sidechain()` mutator; a new push phase
+  `device_sidechain` (after `devices`) that resolves the source FK to the Live
+  display_name and emits `ableton_device(set_input_routing)`. Symmetric with
+  RTE-1K9T track routing; registered as a non-build actor touch so a captured
+  source isn't tombstoned on rebuild. Pull-capture half + Live round-trip
+  verification are the open remainder (tracked on SDC-7K3M).
+- **SMP-7K2D chunks 1-2 — sample-instrument + reverse playback-param model.**
+  `devices.audio_file` (a sampler's assigned sample as DB source-of-truth) +
+  `clips.reverse` (the missing CLP-AUD1 playback-param sibling), on the principle
+  that reverse/window/gain/pitch are declared playback parameters on one immutable
+  asset, never an author-declared derived file. Push materialization (chunks 3-4)
+  is Live-gated and pending.
+- **AUD-2N6K — MixReport schema gaps closed.** Masking / bed_masking entries carry
+  resolved `masker_surface_name` / `maskee_surface_name` beside the raw ids;
+  `per_section` carries the DB `section_id`. Additive — no `schema_version` bump.
+- **ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity.**
+  Settle-verified async disarms, gesture-endpoint pinning, planner/apply/client
+  robustness, and perform fidelity via tempo-reduction-during-record.
+- **MEL-1A7K — faithful top-voice line extraction + single-source reduction.**
+
+The push pipeline grows from thirteen to **fourteen phases** (adds
+`device_sidechain` after `devices`).
+
 ## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
 
 <!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=shipped | release=v0.9.5 -->

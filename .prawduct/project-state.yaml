@@ -505,6 +505,9 @@ scope_rollups:
   compose-loop-reliability:
     chunks: ["CLR-A-01", "CLR-A-02", "CLR-A-03", "CLR-A-04", "CLR-A-05"]
     releases: ["v0.9.5"]
+  db,sync-push,audio-analysis,mcp-bridge:
+    chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
+    releases: ["v0.9.6"]
   mcp-bridge,db,sync-push:
     chunks: ["ENV-7G4K-01", "ENV-7G4K-02", "ENV-7G4K-03", "ENV-7G4K-04"]
     releases: ["v0.9.5"]

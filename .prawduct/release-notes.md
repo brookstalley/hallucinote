@@ -5,6 +5,16 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v0.9.6
+
+**Entry:** 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening
+
+**Chunks shipped:** AUD-2N6K, ENV-2T9K, ENV-8K2R, MEL-1A7K-line, SDC-7K3M, SMP-7K2D-01, SMP-7K2D-02
+
+**Scope:** db,sync-push,audio-analysis,mcp-bridge
+
+See `.prawduct/change-log.md` for full details.
+
 ## v0.9.5
 
 ### mcp-bridge,db,sync-push,sync-pull,docs

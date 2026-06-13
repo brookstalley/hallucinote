@@ -59,7 +59,7 @@ truly-unbuilt items.
   center-zero `normalized`, and **WARNS whenever a dialed write is skipped** (the silent drop is
   the bug). *Signal:* a snapshot-authored device's dialed value lands after push; any skip warns.
 
-- [ ] **7 · DPP-7H2K** — (a) non-monotonic params settable by explicit-unit display string
+- [x] **7 · DPP-7H2K** — DONE this session. (a) `canonical_magnitude` normalizes unit-scaling families (Hz/kHz, ms/s) so non-monotonic displays resolve via `value_display='150 Hz'`/`'120 ms'` instead of refusing (strict generalization — single-unit params unchanged, genuinely-non-monotonic still refuse). (b) `value_real`/`value_real_unit` echoed on a recognised-unit `value_display` write (shared `_attach_real_unit_echo` across both set_parameter sites). (c) bare track-name routing examples (NOT index-prefixed `1-Drums`) in action help + handler docstring + mix-sidechain skill. **Flips the MCP fingerprint** (touches `handlers/`+`actions/`) → re-vendor + `/mcp` reconnect needed to go live. 1196 MCP tests green. — (a) non-monotonic params settable by explicit-unit display string
   (`'150 Hz'`, `'120 ms'`) via unit-keyed parsing; (b) `set_parameter` echoes a
   sub-display-precision real-unit value; (c) doc fix — bare track-name in `set_sidechain` /
   `set_input_routing` examples. *Signal:* each sub-signal in the backlog entry.

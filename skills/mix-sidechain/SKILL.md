@@ -18,7 +18,7 @@ $ARGUMENTS
 
 2. **Load a Compressor** if none was found. `ableton_device(action='load', track_index=<target_track>, kind='Compressor')` (`kind` = browser display name; see `ableton://guides/conventions`), optionally `preset_uri=<compressor-uri>` if supplied. Capture the returned `device_index`.
 
-3. **Resolve the source's display name.** `set_sidechain` addresses routing by display name (`1-Drums`, `A-Reverb`, `Main`), not by index. Call `ableton_track(action='list')` and pick out the source track's `name`.
+3. **Resolve the source's display name.** `set_sidechain` addresses routing by display name, not by index — and for a track that's the **bare** `name` (`Drums`, `02 Kit Punk`), NOT the index-prefixed `1-Drums` (which fails); returns are letter-prefixed (`A-Reverb`) and the master is `Main`. Call `ableton_track(action='list')` and pass the source track's `name` verbatim.
 
 4. **Configure sidechain routing.** `ableton_device(action='set_sidechain', track_index=<target_track>, device_index=<from step 2>, enabled=True, source_display_name=<name from step 3>, gain_db=0.0)`. Uses capability probing — works on any device with the canonical `S/C On` parameter (Compressor / Compressor2 / Glue Compressor / Gate / Multiband Dynamics + third-party plugins matching the naming). If source-routing fails on a device without `input_routing_*` (Glue / Gate / Multiband), use `ableton_device(action='capabilities', ...)` to confirm, then fall back to manual UI routing.
 

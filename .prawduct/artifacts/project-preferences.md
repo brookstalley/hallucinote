@@ -62,6 +62,7 @@ Developer preferences for how code is written in this project. Captured during d
 - **Protected branches**: `main`, `develop` (no direct commits).
 - **PR creation**: `wait_for_user` (default — only create PRs when explicitly asked; set to "automatic" to create PRs after Critic review passes).
 - **PR merge**: `automatic` — merge after CI passes (or no CI configured) and PR review is clean. The cumulative Critic + independent PR reviewer gates already provide review independence; a second user-side confirmation adds friction without added safety.
+- **Incoming-bugs triage → archive**: `incoming-bugs/` is the dropbox where dogfood / agent bug + feature reports land. Triage each through `/prawduct:backlog` into a backlog item. Reports are **linked evidence** — open items `refs:`/"Full report:" them rather than restating (link-don't-summarize). Once a report is triaged, **move it to `incoming-bugs/archives/`** (don't delete — that preserves the evidence; and never `rm -rf` the dropbox, other agents actively drop reports there) **and, in the same change, update every `refs:`/body pointer that cites it** (a path that points at a moved/deleted report is a coherence violation the Critic flags). The `archives/` subdir keeps the active dropbox clean while keeping the links live.
 
 ---
 

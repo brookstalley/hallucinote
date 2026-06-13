@@ -6,7 +6,7 @@
 
 ## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
 
-<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=merged -->
+<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=shipped | release=v0.9.7 -->
 
 Completes the device-sidechain round-trip whose PUSH half shipped in v0.9.6: a
 sidechain SOURCE is now captured FROM a live set back into the DB, so a manual
@@ -26,7 +26,7 @@ re-route in Ableton survives the next push instead of being silently dropped.
 
 ## 2026-06-13 — song round-trip reliability (push ordering, clip-link cascade, unit-aware params)
 
-<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills | status=merged -->
+<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills | status=shipped | release=v0.9.7 -->
 
 Round-trip reliability fixes traced to swell-dogfood findings.
 
@@ -40,6 +40,69 @@ Round-trip reliability fixes traced to swell-dogfood findings.
   curves (the value-display inversion validated against actual Live formatting).
 - **SKL-8N3V.** `/song-new` postlude pins `ensure_loaded` with no params (locks
   the documented call shape).
+
+## 2026-06-12 — PSH-2R7K / PSH-5T9D: push `execute` phase-targeting + mid-run progress
+
+<!-- prawduct: type=feature | chunks=PSH-2R7K,PSH-5T9D | scope=sync-push,cli | status=shipped | release=v0.9.7 -->
+
+Two swell-dogfood findings, engine-only (no MCP fingerprint change).
+
+- **PSH-2R7K — `execute` is no longer all-or-nothing.** New `--only` / `--start-at`
+  (`--from`) / `--stop-after` / `--resume` slice the phase sequence, so recovering from
+  a halt is one command instead of a full replay (including the ~8–11 min realtime
+  perform). Filtering is by phase NAME (order-agnostic, composes with a future phase
+  reorder) and validated against the canonical list before the audit row is created (a
+  typo teaches the valid phases, no dangling row). `--resume` reads
+  `.last-push-state.json`'s `phase_halted`; a `scope` field marks scoped runs so they're
+  never mistaken for a full push.
+- **PSH-5T9D — mid-run progress.** `.last-push-state.json` is flushed after every phase
+  (pollable mid-run, adds `current_phase`), and per-phase start/finish lines stream to
+  stderr (stdout stays the final summary), with a heads-up for the multi-minute perform
+  phase so it isn't mistaken for a hang.
+
+## 2026-06-13 — INS-3W8P: install/preflight resolve the running server, not the invoking interpreter
+
+<!-- prawduct: type=bugfix | chunks=INS-3W8P | scope=plugin-distribution,mcp-bridge | status=shipped | release=v0.9.7 -->
+
+The install resolved `hallucinote_mcp` via the invoking interpreter (`package_root` from
+`__file__`), so in a coexistence setup (installed plugin + editable clone, incl. the
+README's `pip install -e`) it vendored the WRONG source and preflight computed
+`matches_mcp_server` against the wrong copy — reporting a match while the real server
+refused (cost multiple Live-restart cycles 2026-06-13).
+
+- New `ableton://server/info` resource (static, Live-independent) →
+  `{version, base_version, fingerprint, package_root}`. `resources/` is outside
+  `_FINGERPRINT_PATHS`, so the handshake fingerprint is unchanged.
+- `preflight --server-version` relabels `package` as the invoking interpreter and adds a
+  `server` block + `coexistence_divergence`; the install skill reads `server/info` and
+  `install-remote-script --from-package-root --require-server-version` vendors the
+  SERVER's copy (or refuses a wrong source). A transitional run against an old
+  (pre-`server/info`) server falls back correctly.
+
+## 2026-06-13 — SNP-8R4K: the analyzer is measurement infrastructure, excluded at every model boundary
+
+<!-- prawduct: type=feature | chunks=SNP-8R4K-01,SNP-8R4K-02,SNP-8R4K-03,SNP-8R4K-04 | scope=capture,sync-push,sync-pull,render | status=shipped | release=v0.9.7 -->
+
+Ends the capture-pollution → push-as-own-device → duplicate-accumulation cycle and the
+off-by-one authored-position drift the HallucinoteAnalyzer caused when treated as
+authored content.
+
+- **Chunk 1 — exclude by identity.** `analyzer_identity.py` (`ANALYZER_DEVICE_NAME` +
+  `is_analyzer_device`, drift-guarded against the MCP constant) consumed at every
+  Live↔model boundary: capture drops the analyzer + dense-renumbers survivors; pull's
+  chain-diff and push's device-emit filter it too. Auto-migrates the model.
+- **Chunk 2 — clean-at-rest.** `SNAPSHOT_SCHEMA_VERSION` + a pure `migrate_snapshot` + a
+  `capture_cli migrate` subcommand clean the committed `captured_session.json` file
+  (strip + densify + stamp); replay warns (read-only) when a snapshot needs it.
+- **Chunk 3 — render re-asserts the terminal tap.** The analyzer is repositioned
+  strictly-last at render start (delete + re-add only when not already last — no needless
+  M4L reload), with per-surface `terminal` status + an `analyzer_not_terminal` roll-up in
+  the render manifest so a reading agent never trusts an under-tapped stem.
+- **Chunk 4 — push-preflight stale-set detection.** A pure detector flags a saved set
+  whose authored devices were loaded after the analyzer (non-terminal tap), with
+  non-fatal rebuild guidance.
+
+Live firing of chunks 3–4 is deferred to operator-verification.
 
 ## 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening
 

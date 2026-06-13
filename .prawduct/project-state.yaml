@@ -469,7 +469,7 @@ artifact_manifest:
       depends_on: []
     - name: learnings-detail
       file_path: .prawduct/learnings-detail.md
-      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md 1:1
+      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md (rule-only entries omitted)
       depends_on: [learnings]
     - name: backlog
       file_path: .prawduct/backlog.md
@@ -508,6 +508,9 @@ active_build_plan: artifacts/plans/SMP-7K2D/build-plan.md
 # overwritten on next regen.
 
 scope_rollups:
+  capture,sync-push,sync-pull,render:
+    chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
+    releases: ["v0.9.7"]
   clip-audio:
     chunks: ["CLP-AUD1-01", "CLP-AUD1-02"]
     releases: ["v0.9.5"]
@@ -535,6 +538,18 @@ scope_rollups:
   plugin-distribution:
     chunks: ["INS-7V2D-cold-start-timeout"]
     releases: ["v0.9.4"]
+  plugin-distribution,mcp-bridge:
+    chunks: ["INS-3W8P"]
+    releases: ["v0.9.7"]
+  sync-pull,analysis:
+    chunks: ["DEV-4X2N", "SDC-7K3M-pull"]
+    releases: ["v0.9.7"]
+  sync-push,cli:
+    chunks: ["PSH-2R7K", "PSH-5T9D"]
+    releases: ["v0.9.7"]
+  sync-push,db,mcp-bridge,skills:
+    chunks: ["DPP-7H2K", "RTE-2P9X", "SKL-8N3V", "SYN-3C8K"]
+    releases: ["v0.9.7"]
 
 # =============================================================================
 # DERIVED VIEWS (enabled by default, v1.4+)

@@ -9,6 +9,7 @@ import pytest
 from hallucinote_mcp.analyzer import setup as analyzer_setup
 from hallucinote_mcp.analyzer.setup import (
     ANALYZER_DEVICE_NAME,
+    _reposition_action,
     ensure_analyzers_loaded,
     track_id_for_surface,
 )
@@ -110,6 +111,12 @@ class _FakeTrack:
         self.has_midi_input = has_midi_input
         self.has_audio_input = not has_midi_input
         self.is_foldable = is_foldable
+
+    def delete_device(self, index0: int) -> None:
+        """Live's 0-based ``Track.delete_device``. ``delete_handler`` reaches
+        for it by name; the analyzer reposition path (SNP-8R4K) deletes the
+        mid-chain analyzer here before re-adding it last."""
+        del self.devices[index0]
 
 
 class _FakeBrowserItem:
@@ -539,3 +546,166 @@ def test_sweep_when_analyzer_already_present_still_bounces_per_touch():
     # present (T1's and the pre-placed master's).
     delta = ctx.run_on_main_calls - before
     assert delta >= 7
+
+
+# --- SNP-8R4K Mechanism 2: terminal-tap reposition --------------------
+#
+# The analyzer must be the chain's strictly-LAST device at capture time so the
+# per-stem WAV reflects the full authored chain. ``ensure_analyzers_loaded``
+# now RE-ASSERTS that invariant on every surface at render start: no-op if the
+# analyzer is already last, delete+re-add (the only way — Live has no reorder
+# API) if a device landed past it, load if absent. The pure ``_reposition_action``
+# helper encodes the decision; ``_ensure_on_surface`` carries it out and records
+# ``terminal`` / ``was_repositioned`` on the instance for the render manifest.
+
+
+# --- pure decision helper (Live-free) --------------------------------
+
+
+def test_reposition_action_absent():
+    """No analyzer in the chain → load (which appends, landing it last)."""
+    assert _reposition_action(None, 0) == "absent"
+    assert _reposition_action(None, 3) == "absent"
+
+
+def test_reposition_action_already_last():
+    """Analyzer present AND last → no-op (the common case; no M4L reload)."""
+    assert _reposition_action(1, 1) == "already_last"
+    assert _reposition_action(4, 4) == "already_last"
+
+
+def test_reposition_action_reposition_when_interleaved():
+    """Analyzer present but NOT last (a device landed past it) → reposition."""
+    # analyzer at index 1 of 2 (an authored device sits after it).
+    assert _reposition_action(1, 2) == "reposition"
+    # analyzer at index 2 of 4 (interleaved among authored devices).
+    assert _reposition_action(2, 4) == "reposition"
+
+
+# --- _ensure_on_surface terminal-tap behavior (mocked Live) ----------
+
+
+def test_sweep_repositions_analyzer_when_not_last():
+    """A surface where a device landed AFTER the analyzer: the sweep deletes the
+    mid-chain analyzer and re-adds it (appends → now last). Ends terminal,
+    flagged was_repositioned. The interleaving device survives, now BEFORE the
+    analyzer."""
+    analyzer = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+    # A Saturator loaded after a prior render → analyzer is no longer last.
+    saturator = _FakeDevice(class_display_name="Saturator")
+    track = _FakeTrack("Drums", devices=[analyzer, saturator])  # analyzer at idx 1 of 2
+    ctx = _FakeCtx(_FakeSong(tracks=[track], master=_master_with_analyzer()))
+
+    layout = ensure_analyzers_loaded(ctx)
+    inst = layout.by_surface()[("track", 1)]
+
+    # Exactly one analyzer survives (delete + re-add, no duplicate).
+    analyzers = [d for d in track.devices if d.name == ANALYZER_DEVICE_NAME]
+    assert len(analyzers) == 1
+    # The analyzer is now the LAST device in the chain.
+    assert track.devices[-1].name == ANALYZER_DEVICE_NAME
+    # The interleaving Saturator survived, now before the analyzer.
+    assert [d.name for d in track.devices] == ["Saturator", ANALYZER_DEVICE_NAME]
+    # Observability: terminal + flagged as repositioned. was_loaded stays False —
+    # the analyzer pre-existed in the song; it was MOVED, not newly added.
+    assert inst.terminal is True
+    assert inst.was_repositioned is True
+    assert inst.was_loaded is False
+    assert inst.device_index == 2  # 1-based, now last
+
+
+def test_sweep_no_reposition_when_analyzer_already_last():
+    """A surface where the analyzer is ALREADY last: the sweep must NOT delete +
+    re-add (that pays the expensive M4L reload on an unchanged surface — R12).
+    The chain is untouched and the same analyzer object stays in place."""
+    eq = _FakeDevice(class_display_name="EQ Eight")
+    analyzer = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+    track = _FakeTrack("Drums", devices=[eq, analyzer])  # analyzer at idx 2 of 2 (last)
+    ctx = _FakeCtx(_FakeSong(tracks=[track], master=_master_with_analyzer()))
+
+    browser = ctx.application.browser
+    loads_before = len(browser.load_calls)
+    layout = ensure_analyzers_loaded(ctx)
+    inst = layout.by_surface()[("track", 1)]
+
+    # No load happened on this track surface (the already-last analyzer).
+    # The only load_calls come from surfaces that needed one — this surface and
+    # the pre-placed master are both already-last, so NO loads at all here.
+    assert len(browser.load_calls) == loads_before
+    # The very same analyzer object is still last — no delete + re-add churn.
+    assert track.devices[-1] is analyzer
+    assert [d.name for d in track.devices] == ["EQ Eight", ANALYZER_DEVICE_NAME]
+    # Observability: terminal, not repositioned, not (re)loaded.
+    assert inst.terminal is True
+    assert inst.was_repositioned is False
+    assert inst.was_loaded is False
+    assert inst.device_index == 2
+
+
+def test_sweep_loads_analyzer_when_absent_and_marks_terminal():
+    """A surface with NO analyzer: the sweep loads one (appends → last). Ends
+    terminal, flagged was_loaded, NOT was_repositioned."""
+    eq = _FakeDevice(class_display_name="EQ Eight")
+    track = _FakeTrack("Drums", devices=[eq])  # no analyzer
+    ctx = _FakeCtx(_FakeSong(tracks=[track], master=_master_with_analyzer()))
+
+    layout = ensure_analyzers_loaded(ctx)
+    inst = layout.by_surface()[("track", 1)]
+
+    # One analyzer loaded, landing last after the EQ.
+    assert [d.name for d in track.devices] == ["EQ Eight", ANALYZER_DEVICE_NAME]
+    assert inst.terminal is True
+    assert inst.was_loaded is True
+    assert inst.was_repositioned is False
+    assert inst.device_index == 2
+
+
+def test_sweep_reposition_deletes_via_delete_handler_then_reloads():
+    """The reposition path must use delete_handler (delete_device) to remove the
+    mid-chain analyzer, then the load path to re-add it. Asserts the delete
+    actually fired by observing the chain shrink-then-grow back to a single
+    analyzer at the end (Live has no reorder API → delete + re-add is the only
+    'make last')."""
+    analyzer = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+    dev_after_1 = _FakeDevice(class_display_name="Reverb")
+    dev_after_2 = _FakeDevice(class_display_name="Saturator")
+    # analyzer at idx 1 of 3 — two authored devices landed after it.
+    track = _FakeTrack("Drums", devices=[analyzer, dev_after_1, dev_after_2])
+    ctx = _FakeCtx(_FakeSong(tracks=[track], master=_master_with_analyzer()))
+
+    browser = ctx.application.browser
+    loads_before = len(browser.load_calls)
+    layout = ensure_analyzers_loaded(ctx)
+    inst = layout.by_surface()[("track", 1)]
+
+    # A re-load fired on this surface (delete + re-add).
+    assert len(browser.load_calls) == loads_before + 1
+    # Final chain: the two authored devices, then the single re-added analyzer.
+    assert [d.name for d in track.devices] == ["Reverb", "Saturator", ANALYZER_DEVICE_NAME]
+    assert inst.was_repositioned is True
+    assert inst.terminal is True
+    assert inst.device_index == 3
+
+
+def test_sweep_idempotent_after_reposition():
+    """Multi-hop: after one render repositions the analyzer to last, the NEXT
+    render sees it already-last → no-op (no churn, no second reposition). Guards
+    against a reposition that doesn't actually settle the invariant."""
+    analyzer = _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+    saturator = _FakeDevice(class_display_name="Saturator")
+    track = _FakeTrack("Drums", devices=[analyzer, saturator])
+    ctx = _FakeCtx(_FakeSong(tracks=[track], master=_master_with_analyzer()))
+
+    first = ensure_analyzers_loaded(ctx)
+    assert first.by_surface()[("track", 1)].was_repositioned is True
+
+    browser = ctx.application.browser
+    loads_after_first = len(browser.load_calls)
+    second = ensure_analyzers_loaded(ctx)
+    inst = second.by_surface()[("track", 1)]
+    # Second sweep: analyzer already last → no-op, no further load/reposition.
+    assert inst.was_repositioned is False
+    assert inst.terminal is True
+    assert len(browser.load_calls) == loads_after_first
+    # Still exactly one analyzer, still last.
+    assert [d.name for d in track.devices] == ["Saturator", ANALYZER_DEVICE_NAME]

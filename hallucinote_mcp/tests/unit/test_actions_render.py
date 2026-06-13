@@ -93,6 +93,11 @@ class _FakeTrack:
         self.has_audio_input = not has_midi_input
         self.is_foldable = is_foldable
 
+    def delete_device(self, index0: int) -> None:
+        """Live's 0-based ``Track.delete_device`` — ``delete_handler`` reaches
+        for it by name. Exercised by the SNP-8R4K analyzer reposition path."""
+        del self.devices[index0]
+
 
 class _FakeBrowserItem:
     def __init__(self, name: str):
@@ -1058,3 +1063,137 @@ def test_render_manifest_records_db_seq_param(
     )
     manifest = json.loads(Path(untagged["manifest_path"]).read_text())
     assert manifest["db_seq"] is None
+
+
+# --- SNP-8R4K Mechanism 2: terminal-tap observability in the manifest ----
+#
+# The render re-asserts the analyzer-is-last invariant at render start (the
+# ensure_analyzers_loaded sweep). The manifest must record, per surface, the
+# terminal-tap status (R9) so a reading agent never trusts an under-tapped
+# stem: each track/return/master entry carries terminal + was_repositioned,
+# and a top-level analyzer_not_terminal lists any under-tapped surface.
+
+
+def test_render_manifest_records_terminal_tap_status_clean(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """A clean render (every analyzer present + last) records terminal=True on
+    every surface, was_repositioned=False, and an empty analyzer_not_terminal."""
+    result = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    manifest = result["manifest"]
+    assert manifest["analyzer_not_terminal"] == []
+    entries = manifest["tracks"] + manifest["returns"] + [manifest["master"]]
+    for entry in entries:
+        assert entry["terminal"] is True
+        assert entry["was_repositioned"] is False
+
+
+def test_render_repositions_analyzer_landed_past_it_and_flags_manifest(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """The chunk's core case: a device was loaded after a prior render so it
+    landed PAST the analyzer (analyzer no longer last → under-tapping). At the
+    next render the sweep repositions the analyzer to last on that surface; the
+    manifest entry flags was_repositioned=True and the surface ends terminal."""
+    analyzer = _FakeDevice(class_display_name="Max Audio Effect", name="HallucinoteAnalyzer")
+    # A Saturator loaded after the prior render sits AFTER the analyzer.
+    saturator = _FakeDevice(class_display_name="Saturator")
+    song = _FakeSong(
+        tracks=[_FakeTrack("Drums", devices=[analyzer, saturator])],
+        returns=[_FakeTrack("A-Reverb")],
+        master=_master_with_analyzer(),
+        last_event_time=64.0,
+    )
+    ctx = _FakeCtx(song)
+    result = render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    manifest = result["manifest"]
+    # The analyzer is now last on the Drums track (Saturator before it).
+    assert [d.name for d in song.tracks[0].devices] == ["Saturator", "HallucinoteAnalyzer"]
+    drums_entry = next(t for t in manifest["tracks"] if t["surface_index"] == 1)
+    assert drums_entry["was_repositioned"] is True
+    assert drums_entry["terminal"] is True
+    # Repositioning fixed the under-tap → nothing flagged not-terminal.
+    assert manifest["analyzer_not_terminal"] == []
+    # The return + master were already-last → not repositioned.
+    assert manifest["returns"][0]["was_repositioned"] is False
+    assert manifest["master"]["was_repositioned"] is False
+
+
+def test_render_manifest_flags_surface_that_cannot_be_made_terminal(
+    tmp_path, osc_factory, osc_sink, stub_sidecar,
+):
+    """Never measure-and-lie (R9): if a surface's analyzer cannot be made
+    strictly last (here a misbehaving load that does NOT append it terminal),
+    the manifest flags that surface in analyzer_not_terminal and marks the
+    per-surface entry terminal=False — rather than emitting clean numbers for an
+    under-tapped stem."""
+    # A browser whose load_item appends the analyzer but ALSO leaves a device
+    # after it (simulates a load that doesn't land terminal — a Live quirk /
+    # concurrent edit). The terminal-verify re-read then sees it NOT last.
+    class _NonTerminalBrowser(_FakeBrowser):
+        def load_item(self, item):
+            self.load_calls.append(item)
+            target = self._song.view.selected_track
+            target.devices.append(_FakeDevice(
+                class_display_name="Max Audio Effect", name=item.name,
+            ))
+            # An interloper lands AFTER the analyzer — it is no longer last.
+            target.devices.append(_FakeDevice(class_display_name="Utility"))
+
+    class _NonTerminalApp(_FakeApplication):
+        def __init__(self, song):
+            self.browser = _NonTerminalBrowser(song)
+
+    # Drums has NO analyzer → the sweep loads one, but the misbehaving browser
+    # leaves a Utility after it → the surface can't be made terminal.
+    song = _FakeSong(
+        tracks=[_FakeTrack("Drums")],
+        master=_master_with_analyzer(),  # master already-last (clean)
+        last_event_time=64.0,
+    )
+    ctx = _FakeCtx(song)
+    ctx._application = _NonTerminalApp(song)
+
+    result = render_handlers.render_handler(
+        ctx,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    manifest = result["manifest"]
+    drums_entry = next(t for t in manifest["tracks"] if t["surface_index"] == 1)
+    assert drums_entry["terminal"] is False
+    assert "track:1" in manifest["analyzer_not_terminal"]
+    # The clean master is NOT flagged.
+    assert manifest["master"]["terminal"] is True
+    assert "master" not in manifest["analyzer_not_terminal"]
+
+
+def test_ensure_loaded_action_surfaces_terminal_status(ctx_two_tracks_one_return):
+    """The ensure_loaded action response surfaces terminal/was_repositioned per
+    instance too, so a structural-mutation postlude sweep shows an under-tapped
+    or repositioned surface to the LLM."""
+    resp = dispatch(
+        Request(tool="ableton_render", action="ensure_loaded", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    assert resp.ok is True, resp.error
+    for inst in resp.result["instances"]:
+        assert inst["terminal"] is True
+        assert inst["was_repositioned"] is False

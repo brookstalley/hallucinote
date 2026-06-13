@@ -350,3 +350,44 @@ that `_probe_live_devices_via_mcp` forwards it unfiltered to `probe_and_link`.
    SNP-4K7M lands master-device capture. So a master-only staleness won't surface yet —
    confirm this is the case and note it. The detector already handles a `("master", None)`
    surface in the roll-up; only the probe feed is missing.
+
+---
+
+## SNP-8R4K chunk 3 — render re-asserts the terminal-tap + flags under-tapped surfaces
+
+**Status:** PENDING — needs an attended Live session + a `/mcp` reconnect (the running
+Remote Script + server must run this branch's `analyzer/setup.py` reposition code).
+**Visual change:** yes (on a repositioned surface the HallucinoteAnalyzer visibly moves
+to the END of the device chain — it is deleted mid-chain and re-added last). Unit-proven
+at the decision + wiring layers (`hallucinote_mcp/tests/unit/test_analyzer_setup.py` —
+the pure `_reposition_action` helper across absent / already-last / interleaved, plus
+`_ensure_on_surface` reposition / no-op / load / idempotent-after-reposition with the
+mocked Live chain; `hallucinote_mcp/tests/unit/test_actions_render.py` — the manifest's
+per-surface `terminal` / `was_repositioned` + the top-level `analyzer_not_terminal`
+roll-up, including a forced non-terminal surface). What units CANNOT cover: that Live's
+real `delete_device` + `browser.load_item` actually deletes the mid-chain analyzer and
+re-appends it terminal, and that the per-stem WAV then reflects the post-analyzer device.
+
+1. **Reposition fixes an under-tapped surface (the deliverable).** Open a set, render once
+   (analyzer lands last on every tapped surface). Then load any authored device (e.g. a
+   Saturator) onto a track that already carries the HallucinoteAnalyzer — Live appends, so
+   it lands AFTER the analyzer (analyzer no longer terminal → under-tapping). Re-render
+   (`ableton_render(action='render')`). Confirm in Live: the analyzer was MOVED to the END
+   of that track's chain (the Saturator now precedes it), and the render manifest's track
+   entry shows `"was_repositioned": true` + `"terminal": true`. Compare the per-stem WAV
+   to the pre-reposition render: it now reflects the Saturator's effect (e.g. its
+   saturation is audible / shows in the spectrum) — the post-analyzer device is captured.
+
+2. **Already-last surface is a no-op (R12 — no churn).** On a surface where the analyzer is
+   already last, the re-render must NOT delete + re-add it (the M4L reload is expensive).
+   Confirm the analyzer object/position is unchanged on those surfaces, the render didn't
+   stall, and the manifest entry reads `"was_repositioned": false` `"terminal": true`. (The
+   no-reload-on-unchanged-surface invariant — the `ensure_loaded` 25-surface load once blew
+   the socket window, so a churning render here would be a regression.)
+
+3. **Never measure-and-lie (R9).** If any surface cannot be made terminal (a Live quirk /
+   concurrent edit leaves a device after the re-added analyzer), confirm the manifest flags
+   that surface in the top-level `"analyzer_not_terminal"` list and sets the per-surface
+   `"terminal": false` — rather than emitting clean numbers for an under-tapped stem. (Hard
+   to force live; the unit test forces it via a misbehaving load. Note here if no natural
+   live case arises — the path is unit-covered.)

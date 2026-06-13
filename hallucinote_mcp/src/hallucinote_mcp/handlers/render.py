@@ -573,6 +573,16 @@ def render_handler(
     status = "ok" if outcome == "crossed" else "incomplete"
     frames_after = sidecar.frames_received
 
+    # SNP-8R4K Mechanism 2 (R9) — observability roll-up. Any surface whose
+    # analyzer could NOT be made strictly terminal (present + last) at render
+    # start is under-tapped: its WAV misses whatever device sits past the
+    # analyzer. Surface the offending surfaces' track_ids at the top of the
+    # manifest so a reading agent (ableton_analysis) never trusts an
+    # under-measured stem as if it were faithful — never measure-and-lie.
+    analyzer_not_terminal = [
+        inst.track_id for inst in layout.instances if not inst.terminal
+    ]
+
     now_iso = (_now_iso() if _now_iso is not None else _utc_timestamp())
     manifest = {
         "schema_version": "1",
@@ -580,6 +590,9 @@ def render_handler(
         "song_slug": song_slug,
         "start_at_beat": start_at_beat,
         "stop_at_beat": end_beat,
+        # Per-render terminal-tap health (SNP-8R4K). Empty list = every tapped
+        # surface had the analyzer strictly last (the healthy, common case).
+        "analyzer_not_terminal": analyzer_not_terminal,
         # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
         # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
         # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
@@ -701,6 +714,11 @@ def _instance_to_dict(inst: AnalyzerInstance) -> dict[str, Any]:
         "osc_port": inst.osc_port,
         "osc_emit_port": inst.osc_emit_port,
         "was_loaded": inst.was_loaded,
+        # SNP-8R4K Mechanism 2 (R9) — terminal-tap status surfaced through the
+        # ensure_loaded action response too, so the LLM sees a repositioned or
+        # under-tapped surface after a structural-mutation postlude sweep.
+        "terminal": inst.terminal,
+        "was_repositioned": inst.was_repositioned,
     }
 
 
@@ -716,6 +734,15 @@ def _track_manifest_entry(
         "osc_port": inst.osc_port,
         "filename": wav_path.name,
         "absolute_path": str(wav_path),
+        # SNP-8R4K Mechanism 2 (R9) — per-surface terminal-tap status. The
+        # analyzer must be the chain's LAST device for the WAV to reflect the
+        # full authored chain; ``terminal=False`` flags an under-tapped stem so
+        # a reading agent never trusts its numbers (see the top-level
+        # ``analyzer_not_terminal`` flag, which lists every such surface).
+        # ``was_repositioned`` records that this render had to move the analyzer
+        # back to last on this surface (a device had landed past it).
+        "terminal": inst.terminal,
+        "was_repositioned": inst.was_repositioned,
     }
 
 

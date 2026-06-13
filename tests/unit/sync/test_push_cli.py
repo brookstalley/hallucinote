@@ -313,6 +313,95 @@ def test_probe_and_link_unlinks_stale_return_link(conn, song, session):
     ) is None
 
 
+def test_probe_and_link_cascades_stale_clip_link_when_parent_track_dropped(
+    conn, song, session,
+):
+    """SYN-3C8K: a Live-set swap that reuses the session drops the parent
+    track link (its index is gone) but the clip link survives — and a dangling
+    clip link makes the clips planner emit replace_notes against an empty slot,
+    halting the clips phase. Reconciliation must cascade: when the parent track
+    link is dropped, drop its clip links too."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    # Fresh default set: index 5 is gone and 'Drums' isn't matched by name.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 5}]
+    assert result.unlinked_stale_clips == [{"db_id": cid, "ableton_index": 0}]
+    # Both link rows are gone — the next push will re-create + re-link the clip.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) is None
+
+
+def test_probe_and_link_keeps_clip_link_when_parent_track_survives(
+    conn, song, session,
+):
+    """The cascade must NOT over-drop: when the parent track survives the probe
+    (matched by name, link rewritten to its new index), its clip link is still
+    valid and must be left intact."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    # 'Drums' still present (shifted to index 1) → track link rewritten, kept.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_clips == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) is not None
+
+
+def test_clips_planner_emits_create_after_stale_clip_link_cascade(
+    conn, song, session,
+):
+    """End-to-end payoff (SYN-3C8K): after reconciliation cascades the stale
+    clip-link drop and the tracks phase re-links the track at its new index,
+    the clips planner emits `create` (not the empty-slot `replace_notes` that
+    raised IndexError on every clip), so the clips phase completes."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    # Set-swap reconciliation drops the stale track + clip links.
+    push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    # Tracks phase re-creates + re-links the track at its new index.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=2,
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+    actions = [c.args["action"] for c in plan.calls]
+    assert actions == ["create"], (
+        "after the stale clip link is cascaded away, the planner must re-create "
+        "the clip, not replace_notes into an empty slot"
+    )
+
+
 def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, session):
     """Live track survives but at a new index (e.g., earlier track was
     deleted, this one shifted down). Name still matches → link rewritten
@@ -337,12 +426,14 @@ def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, ses
     ) == 1
 
 
-def test_probe_and_link_does_not_touch_nested_links_on_stale_parent(
+def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
     conn, song, session,
 ):
-    """A stale parent-track link doesn't make this function touch nested
-    clip/device/envelope links — they cascade-invalidate at next push and
-    walking deep would require extra MCP probes. Document the boundary."""
+    """The stale-parent cascade is CLIP-scoped (SYN-3C8K): a clip link drops
+    with its parent track (a dangling clip link halts the clips phase), but
+    other nested kinds (device/envelope/note) are still left intact — they're
+    re-established by the next push's own create-call path, and walking deep
+    would require extra MCP probes. This locks the corrected boundary."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
     M.link_db_to_ableton(
@@ -351,18 +442,26 @@ def test_probe_and_link_does_not_touch_nested_links_on_stale_parent(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
     )
+    # A non-clip nested link parented to the same (now-stale) track.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id="dev-synthetic",
+        ableton_index=0,
+    )
     push.probe_and_link(
         conn, song_id=song, session_id=session,
         live_tracks=[],  # parent at index 5 gone
         live_returns=[],
     )
-    # Parent link cleared, nested link left intact (will be re-emitted by
-    # the next push's clips phase).
+    # Parent track link cleared; clip link cascaded away (SYN-3C8K)...
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="track", db_id=tid,
     ) is None
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="clip", db_id=cid,
+    ) is None
+    # ...but the device link is left intact (boundary: cascade is clip-only).
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id="dev-synthetic",
     ) == 0
 
 
@@ -430,11 +529,16 @@ def test_probe_and_link_detects_partial_default_scaffold(conn, song, session):
     ]
 
 
-def test_probe_and_link_no_default_scaffold_when_not_auto_session(conn, song, session):
-    """Without the auto_session_created flag, the skill is in a "user is
-    pushing onto a known Live set" mode — never offer to clean defaults
-    there even if the names happen to match (could be another song's tracks
-    renamed coincidentally)."""
+def test_probe_and_link_default_scaffold_classified_on_session_reuse(conn, song, session):
+    """SYN-3C8K: classify a default scaffold even when the session is REUSED
+    (auto_session_created=False). The set-swap case — a reused session pushed
+    onto a freshly-opened default set — has the identical canonical scaffold to
+    clean up, and degrading it to the generic unmatched-Live confirm was a
+    dogfood friction. The canonical-name signature is the real discriminator
+    (an exact, case-sensitive '1-MIDI'/.../'4-Audio' set is what Live
+    auto-generates, the names users rename AWAY from — not a plausible
+    coincidental rename), so the fresh-vs-reused distinction only cost the
+    missed cleanup. (Earlier W18-D gated this on auto_session_created=True.)"""
     M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     result = push.probe_and_link(
         conn, song_id=song, session_id=session,
@@ -442,7 +546,9 @@ def test_probe_and_link_no_default_scaffold_when_not_auto_session(conn, song, se
         live_returns=[],
         auto_session_created=False,
     )
-    assert result.default_scaffold_unmatched_tracks == []
+    assert result.default_scaffold_unmatched_tracks == [
+        {"track_index": 1, "name": "1-MIDI"},
+    ]
 
 
 def test_probe_and_link_no_default_scaffold_when_extras_present(conn, song, session):

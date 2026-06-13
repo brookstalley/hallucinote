@@ -17,6 +17,15 @@ so requirements precede code (no invented scope).
   MCP async-render (MCP-4T6Y, `stage: design`, touches the fingerprint), and the BAK-3M9T
   umbrella (`stage: requirements`). These need a live set or a requirements pass.
 
+## Triage finding (2026-06-13)
+Verifying each `ready` item against real code (the project's "verify the proposed fix
+against the real code before building" learning) revealed that **CLR-A (#160) already
+landed four of them** — INV-3K8W, SYN-6B4Q, SYN-9F2L, SKL-8N3V (doc-half) — but left
+them `open` in the backlog (BLG-7K2Q drift). The genuine remaining build collapses to
+**DPP-7H2K + SYN-3C8K**, plus the `--pin` knob half of SYN-5C3J. RTE-2P9X was completed
+from the parallel agent's stash. This is quality-over-breadth: deep work on the two
+truly-unbuilt items.
+
 ## Chunks
 
 - [x] **1 · RTE-2P9X** — Push `routing` phase now runs AFTER `devices`, so an instrument-bearing
@@ -28,15 +37,15 @@ so requirements precede code (no invented scope).
   *Signal:* phase order is `mix < devices < routing`; no fresh-push routing halt for an
   instrument-bearing MIDI track.
 
-- [ ] **2 · SKL-8N3V** — `/song-new` postlude says call `ensure_loaded` with no params (the
+- [x] **2 · SKL-8N3V** — `/song-new` postlude says call `ensure_loaded` with no params (the
   `song_slug` reading errors unknown-param). Skill text + a parity assertion if one exists.
   *Signal:* the skill shows the no-params call.
 
-- [ ] **3 · INV-3K8W** — `preset_query` teaching errors point AT the fix: a pattern containing
+- [x] **3 · INV-3K8W** — already done + tested in CLR-A (#160), both branches. No code; close backlog. — `preset_query` teaching errors point AT the fix: a pattern containing
   `/` teaches name-only matching + `path_prefix`; `path_prefix[0] == root` is detected and
   named. *Signal:* both error strings name the correct call shape.
 
-- [ ] **4 · SYN-6B4Q** — cues planner skips-with-warning cues beyond the current arrangement
+- [x] **4 · SYN-6B4Q** — already done in CLR-A (#160): extent-partition cue planner + benign deferred-cue warnings. No code; close backlog. — cues planner skips-with-warning cues beyond the current arrangement
   extent (idempotently placed on a later push once the arrangement grows); hard-errors only
   past the composed song length. *Signal:* a skeleton push with out-of-extent cues completes
   (warned); a later push places them.
@@ -45,7 +54,7 @@ so requirements precede code (no invented scope).
   engine version for the editable-install + parallel-engine-dev mismatch lockout; error-recovery
   guide documents it. *Signal:* `--pin` runs a pinned push; the guide documents the recovery.
 
-- [ ] **6 · SYN-9F2L** *(keystone, impact L)* — push devices planner applies `params_dialed`
+- [x] **6 · SYN-9F2L** *(keystone, impact L)* — already done in CLR-A (#160): devices planner picks wire form per param (display→value_display, normalized-only→raw value, neither→warn-never-drop), center-zero-safe, with `test_plan_push_devices_warns_for_unwritable_params` + display-preferred tests. No code; close backlog. — push devices planner applies `params_dialed`
   by preferring the display `value` string (inverted via the param display curve), handles
   center-zero `normalized`, and **WARNS whenever a dialed write is skipped** (the silent drop is
   the bug). *Signal:* a snapshot-authored device's dialed value lands after push; any skip warns.
@@ -55,7 +64,7 @@ so requirements precede code (no invented scope).
   sub-display-precision real-unit value; (c) doc fix — bare track-name in `set_sidechain` /
   `set_input_routing` examples. *Signal:* each sub-signal in the backlog entry.
 
-- [ ] **8 · SYN-3C8K** — `probe-and-link` reconciliation cascades stale **clip**-link drops (and/or
+- [x] **8 · SYN-3C8K** — DONE this session. Reconciliation cascades stale clip-link drops (clip link dangles when its parent track link is dropped on a set-swap → clips-phase halt); classifier now populates `default_scaffold_unmatched_tracks` on session reuse, not only fresh auto-session (**decision: dropped the `auto_session_created` gate** — the canonical-name signature is the real discriminator; flipped `test_..._no_default_scaffold_when_not_auto_session` → `..._classified_on_session_reuse` to the corrected spec, per the SYN-3C8K dogfood requirement). Repurposed the nested-link boundary test to lock clip-only cascade. New field `unlinked_stale_clips` (auto-serialized via `asdict`); skill surfaces it + Case 1 relaxed. 822 sync tests green. — `probe-and-link` reconciliation cascades stale **clip**-link drops (and/or
   the clips planner verifies slot non-emptiness against the probe before downgrading to
   replace-only); `default_scaffold_unmatched_tracks` classifies on session reuse, not only on
   fresh `auto_session_created`. *Signal:* re-push across a set-swap completes the clips phase;

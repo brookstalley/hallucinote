@@ -74,13 +74,13 @@ python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> -
 
 Display:
 - Matched counts (`"linked 3 of 5 DB tracks; 2 will be created"`).
-- `unlinked_stale_tracks` / `unlinked_stale_returns` counts if non-empty.
+- `unlinked_stale_tracks` / `unlinked_stale_returns` / `unlinked_stale_clips` counts if non-empty. (`unlinked_stale_clips` are clip links cascade-dropped because their parent track was no longer linked — the set-swap recovery, SYN-3C8K.)
 - `notes` verbatim if non-empty (duplicate names, kind mismatches, case-only near-matches).
 - `unmatched_live_tracks` / `unmatched_live_returns` if non-empty.
 
 **Confirmation gates when `unmatched_live_tracks` is non-empty.** Two cases; the CLI tells you which.
 
-**Case 1: clean-default-scaffold.** `auto_session_created==true` AND `default_scaffold_unmatched_tracks` non-empty (canonical default names like `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`). Default the prompt to "yes, clean":
+**Case 1: clean-default-scaffold.** `default_scaffold_unmatched_tracks` non-empty (canonical default names like `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`). Fires on a fresh `--auto-session` push AND on a reused session pushed onto a fresh default set (the set-swap case — SYN-3C8K dropped the earlier `auto_session_created==true` requirement; the CLI populates the field either way). Default the prompt to "yes, clean":
 
 > *"Live has its default scaffold tracks that this song doesn't use. Delete them after the push so only the song's tracks remain? (Y/n)"*
 

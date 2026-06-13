@@ -433,9 +433,27 @@ re-appends it terminal, and that the per-stem WAV then reflects the post-analyze
 
 ## DPP-7H2K — unit-aware value_display resolves a REAL Live param (Hz/kHz, ms/s)
 
-**Status:** PENDING — needs an attended Live session + `/mcp` reconnect (DPP-7H2K
-flips the MCP fingerprint: re-vendor the Remote Script + reconnect first).
+**Status:** CALIBRATION VERIFIED 2026-06-13 (live, via str_for_value probe + local
+solver). REMAINING: end-to-end `set_parameter(value_display=…)` THROUGH the new
+server — needs a re-vendor + `/mcp` reconnect (DPP-7H2K flips the MCP fingerprint;
+the session that ran the calibration was still on the pre-merge server, so the
+*new* inversion path couldn't be driven through the bridge — but its math was
+proven against the real device, below).
 **Visual change:** no (parameter value changes; verify via readback).
+
+**CALIBRATION EVIDENCE (2026-06-13, real Live 12.x — EQ Eight + Compressor on a
+scratch track, deleted after).** Captured the REAL display curves via the bridge:
+EQ Frequency `30 Hz … 1000 Hz → 2.00 kHz … 18.0 kHz` (the leading number reverses
+1000→2.00 at the Hz→kHz switch); Compressor Release `1.00 ms … 459 ms → 1.12 s …
+3.00 s` (459→1.12 at the ms→s switch). The shipped `canonical_magnitude` normalised
+EVERY real string correctly and made both sequences monotonic (the exact reversal
+that made the pre-DPP-7H2K code REFUSE). `solve_raw_for_display` resolved targets
+against the real-sample curve and the REAL device rendered them back:
+`150 Hz → raw 0.35187 → "150 Hz"` (exact), `2 kHz → 0.68848 → "2.00 kHz"` (exact),
+`120 ms → 0.29649 → "123 ms"` and `1.5 s → 0.78125 → "1.52 s"` (~2%, interpolation
+granularity of the 6-pt release sample, not the solver — the real server bisects on
+the real curve and converges exact). The "validate against real instances, not the
+synthetic corpus" learning is satisfied for the resolution math.
 
 Unit-proven against synthetic curves mirroring real device shapes
 (`hallucinote_mcp/tests/unit/test_display_value.py`: Hz/kHz + ms/s resolution,

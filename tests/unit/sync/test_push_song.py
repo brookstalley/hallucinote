@@ -113,8 +113,8 @@ def test_plan_push_song_phase_names_and_order(conn, song, session):
         "scenes",
         "clips",
         "mix",
-        "routing",
         "devices",
+        "routing",
         "device_sidechain",
         "envelopes",
         "performed_automation",
@@ -134,14 +134,16 @@ def test_plan_push_song_scenes_phase_precedes_clips(conn, song, session):
     assert names.index("scenes") < names.index("clips")
 
 
-def test_plan_push_song_routing_phase_between_mix_and_devices(conn, song, session):
-    """RTE-1K9T / D5 invariant: the ``routing`` phase runs after ``mix``
-    (routing is a mixer concern) and before ``devices``. Routing needs every
-    track linked (the source track and any track-route target are created in
-    the ``tracks`` phase, which runs well before this)."""
+def test_plan_push_song_routing_phase_after_devices(conn, song, session):
+    """RTE-1K9T / fresh-push fix: the ``routing`` phase runs after ``mix`` AND
+    after ``devices``. A MIDI track exposes *audio* output routing — the only
+    kind that can target an audio submaster bus like PRE-MAIN — only once an
+    instrument is loaded, so ``devices`` must precede ``routing`` or a fresh
+    push fails ('PRE-MAIN not in available output routing types'). Routing also
+    needs every track linked (created in the ``tracks`` phase, far earlier)."""
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
     names = [p.name for p in phases]
-    assert names.index("mix") < names.index("routing") < names.index("devices")
+    assert names.index("mix") < names.index("devices") < names.index("routing")
 
 
 def test_plan_push_song_envelopes_phase_precedes_arrangement(conn, song, session):

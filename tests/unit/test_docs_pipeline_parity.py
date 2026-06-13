@@ -15,11 +15,12 @@ from hallucinote.sync.push.plan import _PHASE_NAMES
 
 _REPO = Path(__file__).resolve().parents[2]
 
-# Docs that print the FULL pipeline (canonical `mix → routing → devices` middle).
+# Docs that print the FULL pipeline (canonical `mix → devices → routing` middle).
 _ENUMERATING_DOCS = (
     _REPO / "README.md",
     _REPO / "docs" / "quickstart.md",
     _REPO / "docs" / "skills.md",
+    _REPO / "skills" / "ableton-push" / "SKILL.md",
 )
 
 
@@ -36,7 +37,7 @@ def test_pipeline_docs_include_the_routing_phase():
     all four pipeline docs still listed the pre-routing 10 phases."""
     for doc in _ENUMERATING_DOCS:
         text = doc.read_text(encoding="utf-8")
-        assert "mix → routing → devices" in text, (
+        assert "mix → devices → routing" in text, (
             f"{doc.relative_to(_REPO)}: push-pipeline list omits the 'routing' "
             "phase (RTE-1K9T) — update it to the current 13-phase order"
         )

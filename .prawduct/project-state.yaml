@@ -476,12 +476,13 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). RTE-1K9T (track routing) — all
-# chunks 01–06 DONE on `feature/rte-1k9t-track-routing`; code-complete + cumulative
-# Critic clean, opening the PR into develop. Only the operator Live-smoke remains
-# (enqueued in operator-verification.md). DEV-6M2K shipped + live-verified + CLOSED
-# (PR #162); its plan dir is stale and may be deleted.
-active_build_plan: artifacts/plans/RTE-1K9T/build-plan.md
+# Active build plan pointer (.prawduct/-relative). SMP-7K2D (sample-instrument +
+# reverse playback-param model) — chunks 1-2 (no-Live DB foundation) DONE on this
+# cleanup branch; push chunks 3-4 + the capability probe (chunk 0) are Live-gated
+# and pending. Prior plans RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K
+# (perform-handler hardening, merged in this cleanup) are shipped; their plan dirs
+# are stale and may be deleted.
+active_build_plan: artifacts/plans/SMP-7K2D/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

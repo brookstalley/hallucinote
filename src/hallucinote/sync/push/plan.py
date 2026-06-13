@@ -73,6 +73,7 @@ def plan_push_song(
     *,
     song_id: str,
     session_id: str,
+    perform_slowdown_factor: float = 1.0,
 ) -> list[PushPhase]:
     """Master orchestration: return the thirteen phases of a full song push, in order.
 
@@ -220,6 +221,7 @@ def plan_push_song(
             name="performed_automation",
             plan_fn=lambda: plan_push_performed_automation(
                 conn, song_id=song_id, session_id=session_id,
+                slowdown_factor=perform_slowdown_factor,
             ),
             description=(
                 "Gesture-record master/group/return-side automation arcs "
@@ -401,6 +403,7 @@ def apply_push_results(
                         f"FAILED ({failure}) — the Live set may be left armed "
                         "or the playhead moved; check record_mode in Live."
                     )
+                processed = 0
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -419,6 +422,23 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    processed += 1
+                # ENV-8K2R #4: planned-vs-returned cross-check. The handler
+                # reports `arc_count` = how many arcs it prepared (== the
+                # planner's queued count on the success path). If fewer per-arc
+                # entries came back — a truncated wire payload, or an empty arcs
+                # list — the missing arcs recorded NOTHING and would re-perform
+                # every push with no signal. Surface the disagreement instead of
+                # silently trusting a short result.
+                expected = res.get("arc_count")
+                if expected is not None and processed != expected:
+                    warnings.append(
+                        f"perform_batch: handler reported arc_count={expected} "
+                        f"but the result carried {processed} per-arc "
+                        f"entr{'y' if processed == 1 else 'ies'} — the counts "
+                        "disagree, so some arcs may have recorded nothing (they "
+                        "re-perform next push). Suspect a truncated wire payload."
+                    )
                 continue
 
             if kind in _LINK_KINDS:

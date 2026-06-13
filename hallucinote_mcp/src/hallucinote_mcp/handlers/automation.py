@@ -360,13 +360,9 @@ def _resolve_read_envelope_target_and_clip(
             "read_envelope target_kind='send_level' requires track_index"
         )
     track = _resolve_track(context, track_index)
-    sends = track.mixer_device.sends
-    if return_index < 1 or return_index > len(sends):
-        raise IndexError(
-            f"return_index {return_index} out of range "
-            f"[1, {len(sends)}] for track {track_index}"
-        )
-    target = sends[return_index - 1]
+    target = _resolve_send(
+        track, track_index=track_index, return_index=return_index
+    )
     clip = _resolve_clip(track, location, clip_index)
     return clip, target
 
@@ -1037,13 +1033,9 @@ def write_envelope_handler(
                     "(the source track of the send)"
                 )
             track = _resolve_track(context, track_index)
-            sends = track.mixer_device.sends
-            if return_index < 1 or return_index > len(sends):
-                raise IndexError(
-                    f"return_index {return_index} out of range "
-                    f"[1, {len(sends)}] for track {track_index}"
-                )
-            target = sends[return_index - 1]
+            target = _resolve_send(
+                track, track_index=track_index, return_index=return_index
+            )
             clip = _resolve_clip(track, location, clip_index)
         clip.clear_envelope(target)
         envelope = clip.create_automation_envelope(target)
@@ -1207,13 +1199,9 @@ def clear_handler(
                 "AND return_index"
             )
         track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(sends)}] for track {track_index}"
-            )
-        target = sends[return_index - 1]
+        target = _resolve_send(
+            track, track_index=track_index, return_index=return_index
+        )
         clip = _resolve_clip(track, location, clip_index)
     clip.clear_envelope(target)
     return {"target_kind": target_kind, "cleared": True}
@@ -1324,9 +1312,23 @@ def _require_clip(
 def _require_parent(
     context: LiveContext,
     *,
+    master: bool = False,
     track_index: int | None,
     return_index: int | None,
 ) -> Any:
+    """Resolve the mixer parent (master / track / return) addressed by exactly
+    one of the three selectors. ``master`` is opt-in (default off) so the
+    clip-envelope callers — which can't address the master strip — keep their
+    track/return-only contract; the perform path passes ``master=True`` through.
+    Single home for return-track bounds resolution (the block ``perform`` used to
+    duplicate)."""
+    if master:
+        if track_index is not None or return_index is not None:
+            raise ValueError(
+                "specify exactly one of master=True / track_index / "
+                "return_index, not a combination"
+            )
+        return context.song.master_track
     if track_index is not None and return_index is not None:
         raise ValueError(
             "specify exactly one of track_index / return_index, not both"
@@ -1342,6 +1344,26 @@ def _require_parent(
             )
         return song.return_tracks[return_index - 1]
     raise ValueError("must specify track_index or return_index")
+
+
+def _resolve_send(
+    track: Any,
+    *,
+    track_index: int | None,
+    return_index: int,
+) -> Any:
+    """Resolve the Send on an already-resolved ``track`` feeding return
+    ``return_index`` (1-based). Single home for the send-bounds check shared by
+    every ``send_level`` path (read / write / clear envelope + perform); the
+    callers resolve ``track`` first because most of them reuse it afterward (the
+    containing clip). ``track_index`` is carried only for the bounds message."""
+    sends = track.mixer_device.sends
+    if return_index < 1 or return_index > len(sends):
+        raise IndexError(
+            f"return_index {return_index} out of range "
+            f"[1, {len(sends)}] for track {track_index}"
+        )
+    return sends[return_index - 1]
 
 
 def _midi_cc_envelope_target(clip: Any, cc_number: int) -> Any:
@@ -1458,6 +1480,17 @@ _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS = 2000
 # can slow playback well below the tempo read at span start.
 _PERFORM_WALL_CLOCK_FACTOR = 3.0
 _PERFORM_WALL_CLOCK_FLOOR_S = 10.0
+
+# ENV-2T9K — perform fidelity via tempo-reduction-during-record. The realtime
+# ramp is scheduling-bound at ~2.5 Hz, so denser AUTHORING can't yield denser
+# recording; the only lever is slowing the TRANSPORT so the fixed tick rate
+# yields more breakpoints PER BEAT. Because Live's FloatEvents are beat-keyed,
+# the captured automation plays back correctly at the song's real tempo — the
+# slowdown is a recording-time trick, invisible in the result, traded for
+# proportionally more wall-clock (factor× slower = factor× density = factor×
+# pass duration). Floor the reduced tempo at Live's minimum so a large factor
+# can't drive it below what Live accepts.
+_PERFORM_MIN_RECORD_TEMPO_BPM = 20.0
 
 
 @dataclass
@@ -1584,13 +1617,9 @@ def _resolve_perform_target(
                 "Return-host sends are not in the wave-1 perform surface."
             )
         track = _resolve_track(context, track_index)
-        sends = track.mixer_device.sends
-        if return_index < 1 or return_index > len(sends):
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(sends)}] for track {track_index}"
-            )
-        return sends[return_index - 1]
+        return _resolve_send(
+            track, track_index=track_index, return_index=return_index
+        )
 
     # mixer_volume / mixer_pan / device_parameter — parent is exactly one
     # of master / track / return.
@@ -1608,18 +1637,14 @@ def _resolve_perform_target(
             f"perform target_kind={target_kind!r} requires exactly one of "
             f"master=True / track_index / return_index, got {selected or 'none'}"
         )
-    if master:
-        parent = context.song.master_track
-    elif track_index is not None:
-        parent = _resolve_track(context, track_index)
-    else:
-        song = context.song
-        if return_index < 1 or return_index > len(song.return_tracks):  # type: ignore[operator]
-            raise IndexError(
-                f"return_index {return_index} out of range "
-                f"[1, {len(song.return_tracks)}]"
-            )
-        parent = song.return_tracks[return_index - 1]  # type: ignore[index]
+    # Selection validated above (perform-specific message); _require_parent is
+    # the single home for the master/track/return resolution itself.
+    parent = _require_parent(
+        context,
+        master=master,
+        track_index=track_index,
+        return_index=return_index,
+    )
 
     if target_kind == "device_parameter":
         if device_index is None or parameter_name is None:
@@ -1633,34 +1658,42 @@ def _resolve_perform_target(
     return mixer.volume if target_kind == "mixer_volume" else mixer.panning
 
 
-def _wait_for_record_mode_on_worker(
+def _wait_for_song_flag_on_worker(
     context: LiveContext,
+    attr: str,
     expected: bool,
     *,
     timeout_s: float,
     poll_interval_s: float = _PERFORM_SETTLE_POLL_S,
 ) -> None:
-    """Settle-poll ``song.record_mode`` until it reads ``expected``.
+    """Settle-poll ``bool(getattr(song, attr))`` until it reads ``expected``.
 
-    Probe 10 (Live 12.4.1): ``record_mode`` applies ASYNC — an immediate
-    read-back after the set returns the OLD value; it reads true ~300 ms
-    later. Runs on the worker thread; each read is its own main-thread
-    bout, with ``time.sleep`` between bouts on the worker so Live's main
-    thread can pump the state propagation we're waiting on.
+    Probe 10 (Live 12.4.1): both ``record_mode`` AND
+    ``session_automation_record`` apply ASYNC — an immediate read-back after the
+    set returns the OLD value; the new value lands ~300 ms later
+    (``session_automation_record`` empirically confirmed async 2026-06-12: set
+    True → immediate read False → later read True). Runs on the worker thread;
+    each read is its own main-thread bout, with ``time.sleep`` between bouts on
+    the worker so Live's main thread can pump the state propagation we're
+    waiting on.
+
+    MUST be called DIRECTLY on the worker thread (it polls via ``run_on_main``
+    itself); routing it through ``_attempt``'s ``run_on_main`` would nest
+    ``run_on_main`` from the main thread and deadlock until timeout.
     """
     deadline = time.monotonic() + timeout_s
     while True:
         observed = context.run_on_main(
-            lambda: bool(context.song.record_mode)
+            lambda: bool(getattr(context.song, attr))
         )
         if observed == expected:
             return
         if time.monotonic() >= deadline:
             raise TimeoutError(
-                f"song.record_mode did not settle to {expected} within "
-                f"{timeout_s:.1f}s (record_mode applies asynchronously — "
-                f"probe 10). Live may be busy or showing a modal dialog; "
-                f"retry, or pass a larger settle_timeout_ms."
+                f"song.{attr} did not settle to {expected} within "
+                f"{timeout_s:.1f}s ({attr} applies asynchronously — probe 10). "
+                f"Live may be busy or showing a modal dialog; retry, or pass a "
+                f"larger settle_timeout_ms."
             )
         time.sleep(poll_interval_s)
 
@@ -1670,6 +1703,7 @@ def perform_batch_handler(
     *,
     arcs: list[dict[str, Any]],
     settle_timeout_ms: int = _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS,
+    slowdown_factor: float = 1.0,
 ) -> dict[str, Any]:
     """Record N authored automation arcs into Live's ARRANGEMENT automation
     in a SINGLE transport pass (ENV-9P4T) — gesture recording with
@@ -1693,17 +1727,28 @@ def perform_batch_handler(
     others). The write path is for surfaces session clips can't reach:
     master / group / return mixer moves and device parameters.
 
+    ``slowdown_factor`` (ENV-2T9K, default 1.0 = off) temporarily lowers the
+    transport tempo to ``tempo / slowdown_factor`` (floored at Live's minimum)
+    for the duration of the recording pass, so the fixed ~2.5 Hz tick rate lays
+    down proportionally MORE breakpoints per beat — the only lever for perform
+    fidelity, since the ramp is scheduling-bound (denser authoring can't yield
+    denser recording). The captured automation is beat-keyed, so it plays back
+    correctly at the song's real tempo; the trade is wall-clock (factor× slower).
+    The original tempo is restored in the ``finally`` like every other transport
+    state.
+
     Returns ``{"arcs": [{arc_id?, target_kind, automation_state,
     span_beats, beats_performed, updates_written, breakpoint_count,
     <addressing echo>}, ...], "union_span_beats", "wall_clock_s",
-    "arc_count"}``. A non-1 ``automation_state`` is reported per arc, not
-    raised — the caller owns the failed-verification policy.
+    "arc_count", "slowdown_factor", "record_tempo"}``. A non-1
+    ``automation_state`` is reported per arc, not raised — the caller owns the
+    failed-verification policy.
 
     A failed pass must not leave the set armed or any gesture open: every
-    still-open gesture is closed and the transport / record state restored
-    in a ``finally`` with per-step isolation. ``re_enable_automation`` is
-    set-wide by design (design.md) — the correct post-record state for a
-    scripted writer.
+    still-open gesture is closed and the transport / record state (including the
+    tempo) restored in a ``finally`` with per-step isolation.
+    ``re_enable_automation`` is set-wide by design (design.md) — the correct
+    post-record state for a scripted writer.
     """
     if not isinstance(arcs, list) or not arcs:
         raise ValueError(
@@ -1713,6 +1758,12 @@ def perform_batch_handler(
     if settle_timeout_ms <= 0:
         raise ValueError(
             f"settle_timeout_ms must be > 0, got {settle_timeout_ms}"
+        )
+    if slowdown_factor < 1.0:
+        raise ValueError(
+            f"slowdown_factor must be >= 1.0 (1.0 = record at the song's tempo; "
+            f">1.0 slows the transport for denser breakpoints), got "
+            f"{slowdown_factor}"
         )
     settle_timeout_s = settle_timeout_ms / 1000.0
 
@@ -1811,6 +1862,17 @@ def perform_batch_handler(
 
         saved, tempo = context.run_on_main(_save_state)
 
+        # ENV-2T9K: the tempo the transport actually plays at during the record
+        # pass. > 1 slowdown lowers it (floored at Live's minimum) so the fixed
+        # tick rate lays down more breakpoints per beat; the budget below is
+        # computed from THIS tempo (a slower pass needs a longer deadline), and
+        # it is restored to ``tempo`` in the finally.
+        record_tempo = tempo
+        if slowdown_factor > 1.0:
+            record_tempo = max(
+                tempo / slowdown_factor, _PERFORM_MIN_RECORD_TEMPO_BPM
+            )
+
         restore_failures: list[str] = []
         wall_start = time.monotonic()
 
@@ -1828,6 +1890,26 @@ def perform_batch_handler(
                 if a.state != "open":
                     continue
                 if beat >= a.span_end:
+                    # ENV-8K2R #2: pin the arc's AUTHORED final value right
+                    # before closing — but ONLY when the gesture actually ramped
+                    # (updates_written > 0). The ramp's last sub-span_end tick
+                    # fired at beat < span_end (value = interp of that earlier
+                    # beat), so closing without this write left the recorded
+                    # endpoint up to ~0.8 beat short of the authored final;
+                    # writing interp(span_end) inside the still-open gesture lands
+                    # the exact endpoint. A DEGENERATE window (the playhead jumped
+                    # the whole span in one tick → zero ramp writes) is left at
+                    # zero writes ON PURPOSE: record_perform_result then still
+                    # treats its automation_state=1 as a stale-lane
+                    # non-verification and re-performs. Pinning a lone endpoint
+                    # there would mask a sub-tick arc the perform path can't
+                    # faithfully record and mark it done (ENV-2T9K
+                    # tempo-reduction is that fidelity fix, not this).
+                    if a.updates_written > 0:
+                        a.param.value = _interp_performed_value(
+                            a.cleaned, a.span_end
+                        )
+                        a.updates_written += 1
                     a.param.end_gesture()
                     a.state = "closed"
                 else:
@@ -1841,14 +1923,18 @@ def perform_batch_handler(
                 song = context.song
                 if bool(song.is_playing):
                     song.stop_playing()
+                # ENV-2T9K: slow the transport BEFORE arming so the whole record
+                # pass runs at the reduced tempo (restored in the finally).
+                if slowdown_factor > 1.0:
+                    song.tempo = record_tempo
                 song.session_automation_record = True
                 song.record_mode = True
                 song.current_song_time = float(union_start)
 
             context.run_on_main(_arm_and_seek)
 
-            _wait_for_record_mode_on_worker(
-                context, True, timeout_s=settle_timeout_s
+            _wait_for_song_flag_on_worker(
+                context, "record_mode", True, timeout_s=settle_timeout_s
             )
 
             # Open the gestures for arcs already active at the union start
@@ -1864,7 +1950,9 @@ def perform_batch_handler(
             # Ramp loop over the union span. Beat-space interpolation makes
             # tempo maps free: the playhead position IS the authored
             # coordinate, so each arc's window is compared in beats.
-            expected_s = (union_end - union_start) / (max(tempo, 1.0) / 60.0)
+            expected_s = (
+                (union_end - union_start) / (max(record_tempo, 1.0) / 60.0)
+            )
             deadline = wall_start + max(
                 expected_s * _PERFORM_WALL_CLOCK_FACTOR,
                 _PERFORM_WALL_CLOCK_FLOOR_S,
@@ -1913,32 +2001,37 @@ def perform_batch_handler(
                     )
                     a.state = "closed"
             _attempt("stop_playing", lambda: context.song.stop_playing())
+            # ENV-2T9K: restore the original tempo after the slowed pass. Only
+            # if we changed it — a no-op set would still log a tempo event.
+            if slowdown_factor > 1.0:
+                _attempt(
+                    "tempo", lambda: setattr(context.song, "tempo", tempo)
+                )
             _attempt(
                 "record_mode",
                 lambda: setattr(
                     context.song, "record_mode", saved["record_mode"]
                 ),
             )
-            # record_mode applies ASYNCHRONOUSLY (probe 10) — a bare setattr
-            # that's accepted but never applies would leave the set armed with
-            # no signal. Settle-verify the disarm; a timeout lands in
-            # restore_failures (surfaced as an operator warning). NOTE: the
-            # sibling session_automation_record restore below is ALSO async
-            # (empirically confirmed 2026-06-12: set True → immediate read
-            # False → later read True) and is NOT yet settle-verified — the one
-            # remaining armed-set restore without detection. Tracked as
-            # ENV-8K2R item 1 (parametrize this helper over the attribute);
-            # deferred because the fix is a handler change needing an /mcp
-            # reconnect to live-verify the disarm path.
+            # Both record_mode AND session_automation_record apply
+            # ASYNCHRONOUSLY (probe 10) — a bare setattr that's accepted but
+            # never applies would leave the set ARMED with no signal, so the next
+            # playback could silently record clip envelopes. Settle-verify BOTH
+            # disarms (ENV-8K2R #1: session_automation_record — empirically
+            # confirmed async 2026-06-12, set True → immediate read False → later
+            # read True — was the one remaining armed-set restore without
+            # detection). A timeout lands in restore_failures (surfaced as an
+            # operator warning).
             #
-            # Call the helper DIRECTLY on this worker thread — it polls via
+            # Call the settle helper DIRECTLY on this worker thread — it polls via
             # run_on_main itself, so routing it through _attempt's run_on_main
             # would nest run_on_main FROM the main thread and deadlock until
             # timeout against real async Live (the arm-side call at the top is
             # direct for exactly this reason).
             try:
-                _wait_for_record_mode_on_worker(
-                    context, saved["record_mode"], timeout_s=settle_timeout_s
+                _wait_for_song_flag_on_worker(
+                    context, "record_mode", saved["record_mode"],
+                    timeout_s=settle_timeout_s,
                 )
             except Exception as exc:  # prawduct:allow prawduct/broad-except -- restore-path verification must record + continue, never mask the original failure
                 restore_failures.append(f"record_mode_settle: {exc}")
@@ -1953,6 +2046,20 @@ def perform_batch_handler(
                     saved["session_automation_record"],
                 ),
             )
+            try:
+                _wait_for_song_flag_on_worker(
+                    context, "session_automation_record",
+                    saved["session_automation_record"],
+                    timeout_s=settle_timeout_s,
+                )
+            except Exception as exc:  # prawduct:allow prawduct/broad-except -- restore-path verification must record + continue, never mask the original failure
+                restore_failures.append(
+                    f"session_automation_record_settle: {exc}"
+                )
+                logger.warning(
+                    "perform_batch session_automation_record disarm did not "
+                    "settle: %s", exc
+                )
             _attempt(
                 "re_enable_automation",
                 lambda: context.song.re_enable_automation(),
@@ -2034,6 +2141,10 @@ def perform_batch_handler(
         "union_span_beats": [union_start, union_end],
         "wall_clock_s": round(time.monotonic() - wall_start, 3),
         "arc_count": len(prepared),
+        # ENV-2T9K: echo the fidelity trade so the apply layer / operator sees
+        # what tempo the pass actually recorded at (1.0 / unchanged = off).
+        "slowdown_factor": slowdown_factor,
+        "record_tempo": round(record_tempo, 3),
     }
     if restore_failures:
         result["restore_failures"] = restore_failures

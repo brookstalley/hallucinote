@@ -1,9 +1,10 @@
 # Learnings
 
 Accumulated wisdom from building this product. Each entry below is the **rule in brief** —
-the When-X-do-Y-because-Z statement. The incident that produced each rule and its
-how-to-apply guidance live in [learnings-detail.md](learnings-detail.md) under the **same
-heading, in the same order**. Add new rules here; put the narrative there.
+the When-X-do-Y-because-Z statement. Where a rule has an incident + how-to-apply
+narrative, it lives in [learnings-detail.md](learnings-detail.md) under the **same heading**,
+in the same order (a rule with no narrative has no detail counterpart). Add new rules here;
+put any narrative there.
 
 ## Threading a new param means making the test doubles faithful — not weakening tests
 

@@ -1,7 +1,8 @@
 # Learnings — Detail
 
-Incident narratives and how-to-apply guidance for each rule in
-[learnings.md](learnings.md). Headings match that file one-to-one and in order.
+Incident narratives and how-to-apply guidance for the rules in
+[learnings.md](learnings.md). Headings mirror that file's, in the same order — every
+heading here matches one there (a rule with no narrative simply has no entry here).
 **Never delete an entry here** — this is the long-term memory the index points at.
 
 ## Threading a new param means making the test doubles faithful — not weakening tests

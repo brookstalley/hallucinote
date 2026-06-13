@@ -6,6 +6,43 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## 2026-06-13 autonomous session — bridge prepped + new pending checks
+
+**Bridge is READY for the existing SNP-8R4K checks below.** This session re-vendored
+Live's Remote Script from the stale `4288d582ffc4` to **`0.1.0+46bd3bd7aa37`** (develop
+HEAD; the fingerprint is unchanged by this session's work — all of it is outside
+`_FINGERPRINT_PATHS`), and preflight confirms `matches_mcp_server: true`,
+`coexistence_divergence: false`, analyzer byte-identical. So on return:
+**reopen Live → `/mcp` reconnect → the develop server (`46bd` + the new
+`ableton://server/info` resource) and the vendored Remote Script (`46bd`) handshake-match.**
+Then the SNP-8R4K chunk 3 + chunk 4 checks (below) are unblocked, plus:
+
+### INS-3W8P — install resolves the running server (coexistence path)
+
+**Status:** PARTIALLY DOGFOODED. The right-source vendor + the
+`--require-server-version` assertion + the honest `preflight --server-version`
+(server `confirmed: true`, `coexistence_divergence: false`, `matches_mcp_server: true`)
+were all exercised live this session against the real User Library — but with
+server == invoking (`46bd`), so the *divergent* coexistence case wasn't forced.
+**Residual:** force a genuine divergence — e.g. enable the marketplace plugin
+(`4288`/main) so the running server differs from the editable dev clone (`46bd`),
+`/mcp` so the server carries `ableton://server/info`, then run `/ableton-mcp-install`:
+confirm the skill READS `server/info`, preflight flags `coexistence_divergence: true`,
+and `install-remote-script --from-package-root <server_root> --require-server-version
+<server_v>` vendors the SERVER's copy (or refuses a wrong source). Note: a transitional
+first run against an OLD server (pre-`server/info`) correctly falls back — `/mcp`
+respawns develop HEAD before relying on the resource.
+
+### PSH-2R7K / PSH-5T9D — push execute phase-targeting + mid-run progress (smoke; LOW priority)
+
+**Status:** UNIT-COMPLETE (engine-only, 23 tests; no Live behavior beyond what's
+tested). **Optional Live smoke:** on a real push, confirm `execute --only devices`
+runs exactly that phase, `--resume` continues from a halt, the per-phase stderr
+heartbeat appears, and `.last-push-state.json` is pollable mid-run (a `watch cat`
+shows `current_phase` advance). Not gating — the logic is fully unit-covered.
+
+---
+
 ## ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity (Live smoke)
 
 **Status:** PENDING — needs a `/mcp` reconnect (respawn the server on the new handler code,

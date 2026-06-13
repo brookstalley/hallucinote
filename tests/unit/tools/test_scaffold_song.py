@@ -193,6 +193,9 @@ def test_scaffolded_captured_session_is_valid_json(tmp_path):
     assert snap["song"]["signature"] == "4/4"
     assert len(snap["tracks"]) == 4
     assert len(snap["returns"]) == 2
+    # SNP-8R4K: a freshly-scaffolded snapshot is version-stamped so its first
+    # build doesn't false-trigger the pre-SNP-8R4K migration warning.
+    assert snap["snapshot_version"] == 1
 
 
 def test_scaffolded_build_py_imports_cleanly(tmp_path):

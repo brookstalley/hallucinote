@@ -2018,8 +2018,11 @@ def test_apply_nested_rack_chains_round_trip_simulated_no_op(
     """End-to-end round-trip: capture rack with two chains into DB; the
     `get_device_chains` probe should return the same shape; apply
     produces zero mutations. This is the convergence invariant."""
-    from hallucinote.capture import replay_capture
+    from hallucinote.capture import SNAPSHOT_SCHEMA_VERSION, replay_capture
     snap = {
+        # SNP-8R4K: stamp so this current-shape round-trip fixture doesn't
+        # false-trigger the pre-SNP-8R4K migration warning on replay.
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
         "song": {}, "returns": [],
         "tracks": [{
             "index": 1, "name": "Drums", "type": "midi",

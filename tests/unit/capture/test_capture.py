@@ -6,8 +6,10 @@ import json
 import pytest
 
 from hallucinote.capture import (
+    SNAPSHOT_SCHEMA_VERSION,
     capture_plan, compile_snapshot, inject_browser_paths,
-    preserve_browser_paths, replay_capture, strip_return_slot_prefix,
+    migrate_snapshot, preserve_browser_paths, replay_capture,
+    snapshot_needs_migration, strip_return_slot_prefix,
 )
 from hallucinote.db import init_db, mutations as M, queries as Q
 
@@ -18,9 +20,18 @@ from hallucinote.db import init_db, mutations as M, queries as Q
 # (`test_replay_warns_when_stripping_slot_prefix`) uses `pytest.warns(...)`
 # which overrides this filter for its scope; everywhere else the warn is
 # strip-path-working-correctly noise, not a fixture defect.
-pytestmark = pytest.mark.filterwarnings(
-    r"ignore:.*stripped Live's <letter>- slot prefix.*:UserWarning"
-)
+pytestmark = [
+    pytest.mark.filterwarnings(
+        r"ignore:.*stripped Live's <letter>- slot prefix.*:UserWarning"
+    ),
+    # SNP-8R4K chunk 2: many fixtures here are unstamped pre-SNP-8R4K snapshots,
+    # so `replay_capture` emits the one-time migration-trigger warning for them.
+    # That's working-as-intended noise everywhere except the dedicated warn
+    # tests, which use `pytest.warns(...)` (it overrides this filter in scope).
+    pytest.mark.filterwarnings(
+        r"ignore:.*snapshot predates SNP-8R4K.*:UserWarning"
+    ),
+]
 
 
 # ---------- W4-C: strip_return_slot_prefix ----------
@@ -1229,3 +1240,222 @@ def test_capture_replay_roundtrip_is_analyzer_free_and_dense(conn):
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?", (ANALYZER,)
     ).fetchone()["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# SNP-8R4K chunk 2 — snapshot schema version + at-rest migration
+# (SNAPSHOT_SCHEMA_VERSION stamp, migrate_snapshot, snapshot_needs_migration,
+#  replay_capture migration-trigger warning)
+# ---------------------------------------------------------------------------
+
+
+def _polluted_snapshot() -> dict:
+    """A pre-SNP-8R4K snapshot: unstamped, analyzer entries on a track AND a
+    return, both last AND interleaved."""
+    return {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "volume": 0.6, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                _analyzer_device(2),  # interleaved
+                {"index": 3, "name": "EQ Eight", "class": "EQ Eight"},
+                _analyzer_device(4),  # last
+            ],
+        }],
+        "returns": [{
+            "index": 1, "name": "A-Reverb",
+            "devices": [
+                {"index": 1, "name": "Reverb", "class": "Reverb"},
+                _analyzer_device(2),  # last
+            ],
+        }],
+    }
+
+
+def test_compile_snapshot_stamps_schema_version():
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {}},
+        returns=[],
+        tracks=[{"index": 1, "name": "x", "type": "midi"}],
+    )
+    assert snap["snapshot_version"] == SNAPSHOT_SCHEMA_VERSION
+
+
+def test_migrate_snapshot_strips_analyzers_densifies_and_stamps():
+    """A polluted snapshot (analyzers last + interleaved, on tracks AND returns)
+    → analyzer-free, dense positions, version-stamped, accurate report."""
+    snapshot = _polluted_snapshot()
+    cleaned, report = migrate_snapshot(snapshot)
+
+    track_devs = cleaned["tracks"][0]["devices"]
+    assert [d["name"] for d in track_devs] == ["Operator", "EQ Eight"]
+    assert [d["index"] for d in track_devs] == [1, 2]
+    assert all(d["name"] != ANALYZER for d in track_devs)
+
+    return_devs = cleaned["returns"][0]["devices"]
+    assert [d["name"] for d in return_devs] == ["Reverb"]
+    assert [d["index"] for d in return_devs] == [1]
+
+    assert cleaned["snapshot_version"] == SNAPSHOT_SCHEMA_VERSION
+
+    assert report["total_removed"] == 3  # 2 on the track, 1 on the return
+    assert report["version_before"] is None
+    assert report["version_after"] == SNAPSHOT_SCHEMA_VERSION
+    by_parent = {(s["kind"], s["parent"]): s["removed"] for s in report["stripped"]}
+    assert by_parent == {("track", "Drums"): 2, ("return", "A-Reverb"): 1}
+
+
+def test_migrate_snapshot_does_not_mutate_input():
+    snapshot = _polluted_snapshot()
+    # Snapshot of the input shape before migrating, for an equality assertion.
+    before = json.loads(json.dumps(snapshot))
+    migrate_snapshot(snapshot)
+    assert snapshot == before
+
+
+def test_migrate_snapshot_clean_stamped_is_noop():
+    """A clean + stamped snapshot → migrate is a no-op (total_removed=0)."""
+    clean = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        "returns": [],
+    }
+    cleaned, report = migrate_snapshot(clean)
+    assert report["total_removed"] == 0
+    assert report["stripped"] == []
+    assert report["version_before"] == SNAPSHOT_SCHEMA_VERSION
+    assert cleaned["tracks"][0]["devices"][0]["name"] == "Operator"
+    assert not snapshot_needs_migration(clean)
+
+
+def test_snapshot_needs_migration_true_for_unstamped():
+    """Unstamped (missing snapshot_version) but otherwise clean → needs it."""
+    snap = {
+        "song": {"master": {}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        "returns": [],
+    }
+    assert snapshot_needs_migration(snap) is True
+
+
+def test_snapshot_needs_migration_true_for_polluted_but_stamped():
+    """A stamped-but-still-polluted snapshot must still trigger the cleanup —
+    the analyzer-entry check is independent of the version stamp."""
+    snap = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                _analyzer_device(2),
+            ],
+        }],
+        "returns": [],
+    }
+    assert snapshot_needs_migration(snap) is True
+
+
+def test_snapshot_needs_migration_false_for_clean_stamped():
+    snap = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        "returns": [{"index": 1, "name": "Reverb",
+                     "devices": [{"index": 1, "name": "Reverb", "class": "Reverb"}]}],
+    }
+    assert snapshot_needs_migration(snap) is False
+
+
+def test_compile_snapshot_output_does_not_need_migration():
+    """A fresh compile is stamped + analyzer-free, so it never re-triggers."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {}},
+        returns=[{"index": 1, "name": "A-Reverb",
+                  "devices": [{"index": 1, "name": "Reverb", "class": "Reverb"},
+                              _analyzer_device(2)]}],
+        tracks=[{"index": 1, "name": "Drums", "type": "midi",
+                 "devices": [{"index": 1, "name": "Operator", "class": "Operator"},
+                             _analyzer_device(2)]}],
+    )
+    assert snapshot_needs_migration(snap) is False
+
+
+def test_replay_warns_on_needs_migration_snapshot(conn):
+    """A needs-migration snapshot triggers the build-time guidance warning that
+    names the analyzer count + the migrate command."""
+    snapshot = _polluted_snapshot()
+    with pytest.warns(UserWarning, match=r"predates SNP-8R4K.*capture_cli migrate"):
+        replay_capture(conn, snapshot, song_name="t")
+    # DB is clean regardless (chunk 1's _replay_devices strips analyzers).
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?", (ANALYZER,)
+    ).fetchone()["n"] == 0
+
+
+def test_replay_warning_names_analyzer_count(conn):
+    snapshot = _polluted_snapshot()  # 3 analyzer entries total
+    with pytest.warns(UserWarning, match=r"3 analyzer device entries"):
+        replay_capture(conn, snapshot, song_name="t")
+
+
+def test_replay_warning_unstamped_clean_says_unstamped(conn):
+    """An unstamped but analyzer-free snapshot warns with the unstamped phrasing
+    (no analyzer count to name)."""
+    snapshot = {
+        "song": {"master": {}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "devices": [{"index": 1, "name": "Operator", "class": "Operator"}],
+        }],
+        "returns": [],
+    }
+    with pytest.warns(UserWarning, match=r"unstamped/pre-SNP-8R4K"):
+        replay_capture(conn, snapshot, song_name="t")
+
+
+def test_replay_does_not_warn_on_clean_stamped_snapshot(conn, recwarn):
+    """A clean + stamped snapshot must NOT emit the migration-trigger warning;
+    the DB result is identical to the polluted-then-stripped case."""
+    snapshot = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "tracks": [{
+            "index": 1, "name": "Drums", "type": "midi",
+            "volume": 0.6, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Operator", "class": "Operator"},
+                {"index": 2, "name": "EQ Eight", "class": "EQ Eight"},
+            ],
+        }],
+        "returns": [],
+    }
+    sid = replay_capture(conn, snapshot, song_name="t")
+    migration_warnings = [
+        w for w in recwarn.list
+        if issubclass(w.category, UserWarning)
+        and "predates SNP-8R4K" in str(w.message)
+    ]
+    assert migration_warnings == []
+    # DB result is the same as the polluted-then-stripped case: two authored
+    # devices at dense positions, no analyzer row.
+    drums = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums"
+    )
+    devices = Q.get_devices_for_track(conn, drums["id"])
+    assert [(d["position"], d["display_name"]) for d in devices] == [
+        (1, "Operator"), (2, "EQ Eight"),
+    ]
+

@@ -331,6 +331,12 @@ def _attach_render_db_seq(request: Request) -> Request:
         db_path = resolve_db_path(song_slug)
         if not db_path.exists():
             return request
+        # Bare connect (not init_db) is deliberate here: this is a best-effort,
+        # side-effect-free provenance read on the render path — it must not ALTER
+        # the song's schema as a side effect of a render. It reads only `songs` +
+        # `events` (no post-schema-bump columns), so the legacy-DB column crash
+        # the sync CLIs guard against can't occur; and the surrounding try/except
+        # degrades to no db_seq if the read fails for any other reason.
         conn = connect(db_path)
         try:
             song = Q.get_song_by_name(conn, song_slug)

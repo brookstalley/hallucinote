@@ -175,17 +175,24 @@ After Chunk 1, `melody_report()` over `sun-zone-done`:
   sections; containment is a no-op on this song's main-path reads + forward-robustness.
 - [x] Verify: melody suite green; `melody_report()` main-path reads byte-identical to ship;
   per-phrase contour fixed on chorus2/development/integration (72/25/41 → 17/21/15).
-- [ ] **DECISION PENDING (user):** keep the containment generalization (forward-robust to
-  staggered doubles / backing vocals, no-op now) + segmentation fix, OR trim to only the
-  segmentation-bypass fix. See message.
-- [ ] Full suite (all 2855) green
-- [ ] Critic (chunk) — held until scope confirmed
-- [ ] Backlog + change-log entry
+- [x] **DECISION (user, 2026-06-13): KEEP as-is** — containment generalization (forward-
+  robust to staggered doubles / backing vocals) + segmentation fix + single-source extractor.
+- [x] Full suite green — `prawduct-hook test-evidence record`: 3487 passed / 0 failed / 2
+  skipped @ HEAD.
+- [x] Critic — `cumulative base=develop` on commit `02ae01d`: **mergeable, no BLOCKING**.
+  Melody code verified clean (containment reducer, legato preservation, single-source line
+  all independently traced). Two warnings were commit-scope hygiene (the commit had bundled
+  two unrelated `incoming-bugs/` deletions from the earlier backlog task) — RESOLVED by
+  re-scoping the commit to the 3 melody files only; the code reviewed is byte-identical.
+- [ ] change-log entry — deferred to PR/merge (repo convention: stamped at merge).
 
-**Context (handoff):** branch `fix/mel-line-extraction-fidelity`. The investigation
-falsified the premise (no main-path extraction artifact on sun-zone-done; the back-half
-width is genuine). The kept change fixes a real latent segmentation bug + adds no-op
-forward-robustness. Awaiting user keep/trim call before Critic + PR.
+**Context (handoff):** committed clean as `02ae01d` on `fix/mel-line-extraction-fidelity`
+(3 files: lens.py + test_line_extraction.py + this plan). The investigation FALSIFIED the
+original premise (no main-path extraction artifact on sun-zone-done; the back-half width is
+genuine legato). The kept change fixes a real latent segmentation over-segmentation on
+octave-doubled sections + adds no-op forward-robustness for staggered polyphony. Ready for
+PR when the user asks. Phase-3 by-ear calibration is now unblocked (the numbers it will
+calibrate against are confirmed faithful).
 
 **Context (handoff):** root cause pinned with real-arrangement evidence; DR-1 = option A
 (skyline top-voice, brief polyphony folded in) locked by user. Engine resolves to the dev

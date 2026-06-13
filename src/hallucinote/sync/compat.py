@@ -47,8 +47,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from hallucinote.db import queries as Q, resolve_db_path
-from hallucinote.db.connection import connect
+from hallucinote.db import init_db, queries as Q, resolve_db_path
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
 from hallucinote.workspace import resolve_song_dir
 
@@ -403,7 +402,11 @@ def check_song(
     match count drives ``kind_unresolvable`` (0) /
     ``kind_ambiguous`` (2+) / native (1).
     """
-    conn = connect(db_path)
+    # Open via init_db (not bare connect) so a song DB built by an earlier
+    # release is migrated to the current schema first — check_song reads
+    # post-0.9.0 device columns (class_name / preset_query / browser_path_json),
+    # which a legacy DB lacks. Same rationale as push_cli/_open_db.
+    conn = init_db(db_path)
     try:
         songs = conn.execute("SELECT id, name, title FROM songs").fetchall()
         if len(songs) != 1:
@@ -863,7 +866,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         installed = _load_installed_plugins(Path(args.installed_plugins))
     browser_dry_runs = None
     if args.probe:
-        conn = connect(db_path)
+        conn = init_db(db_path)  # migrate-on-open; see check_song
         try:
             browser_dry_runs = _probe_browser_dry_runs(conn)
         finally:

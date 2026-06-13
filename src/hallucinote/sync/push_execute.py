@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -704,7 +705,14 @@ def execute_push(
             # push can carry warnings without an errors file.
             "warnings": warning_messages,
         }
-        state_file.write_text(json.dumps(state_payload, indent=2) + "\n")
+        # Atomic write (temp sibling + os.replace): PSH-5T9D made this file a
+        # mid-run READ contract (pollers + --resume), and it's now rewritten
+        # N+1× per push — a bare write_text would expose a torn file to a
+        # concurrent reader between truncate and flush (learnings.md: state
+        # writes must be atomic). os.replace is atomic on POSIX + Windows.
+        tmp = state_file.with_name(f".{state_file.name}.tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(state_payload, indent=2) + "\n")
+        os.replace(tmp, state_file)
 
     def _emit_progress(line: str) -> None:
         """Forward a one-line progress message to the caller's sink (PSH-5T9D)."""

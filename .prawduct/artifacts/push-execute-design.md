@@ -146,7 +146,7 @@ return 0
   "session_id": "...",
   "outcome": "ok | partial | connection_lost",
   "phase_halted": "clips",          // null on ok
-  "current_phase": "clips",         // PSH-5T9D: phase executing now; null at the terminal flush
+  "current_phase": null,            // PSH-5T9D: phase executing now; null at the terminal flush (as here — this is a finished, halted run)
   "scope": null,                    // PSH-2R7K: phase-targeting filter; null for a full run
   "phases": [
     {"name": "tempo_map",      "status": "ok",      "calls_ok": 1, "calls_failed": 0},

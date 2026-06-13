@@ -119,7 +119,8 @@ python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
 - `--start-at PHASE` / `--from PHASE` — run from a phase to the end (resume case; assumes earlier phases already ran — it does NOT satisfy dependencies, e.g. `--start-at clips` needs `tracks` linked from a prior pass).
 - `--only PHASE` — run exactly one phase (e.g. `--only devices`).
 - `--stop-after PHASE` — bound a run to a prefix.
-A typo'd phase name teaches with the valid list (exit 2). Scoped runs keep the coherence gate + idempotency.
+
+Mutual exclusion: `--only` cannot combine with `--start-at`/`--stop-after`/`--resume`; `--resume` cannot combine with `--only`/`--start-at` (it derives `--start-at`), but **may** combine with `--stop-after` to resume into a bounded window. A typo'd phase name teaches with the valid list (exit 2). Scoped runs keep the coherence gate + idempotency.
 
 **Tempo / signature: bar-1 only.** Live's MCP exposes `set_tempo` / `set_signature` for the global value. Per-bar tempo / meter automation is an MCP gap (see `ableton://guides/gaps`). The planner emits bar-1 and warns + skips the rest.
 

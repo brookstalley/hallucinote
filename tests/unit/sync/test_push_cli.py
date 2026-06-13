@@ -2642,3 +2642,37 @@ def test_cli_execute_resume_with_only_exits_2(conn, song, session, db_path, caps
     ])
     assert rc == 2
     assert "cannot combine" in capsys.readouterr().err
+
+
+def test_resume_phase_from_state_none_on_corrupt_file(tmp_path):
+    """A corrupt/half-written state file resolves to None (not a crash) — the
+    operator gets the teaching 'no halted prior run' message."""
+    (tmp_path / ".last-push-state.json").write_text("{not json")
+    assert push_cli._resume_phase_from_state(tmp_path) is None
+
+
+def test_cli_execute_resume_resolves_and_passes_targeting(
+    conn, song, session, db_path, monkeypatch, capsys,
+):
+    """End-to-end CLI wiring: --resume reads the halted phase into start_at and
+    --stop-after rides through to execute_push (resume + stop-after is allowed)."""
+    (db_path.parent / ".last-push-state.json").write_text(
+        json.dumps({"phase_halted": "routing"})
+    )
+    captured: dict = {}
+
+    def fake_execute(**kw):
+        captured.update(kw)
+        return push_cli.push_execute.ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+        )
+
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", fake_execute)
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--resume", "--stop-after", "devices",
+    ])
+    assert rc == 0
+    assert captured["start_at"] == "routing"   # --resume resolved it
+    assert captured["stop_after"] == "devices"  # passed through
+    assert captured["only"] is None

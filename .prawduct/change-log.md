@@ -6,7 +6,7 @@
 
 ## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
 
-<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis -->
+<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=merged -->
 
 Completes the device-sidechain round-trip whose PUSH half shipped in v0.9.6: a
 sidechain SOURCE is now captured FROM a live set back into the DB, so a manual
@@ -26,7 +26,7 @@ re-route in Ableton survives the next push instead of being silently dropped.
 
 ## 2026-06-13 — song round-trip reliability (push ordering, clip-link cascade, unit-aware params)
 
-<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills -->
+<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills | status=merged -->
 
 Round-trip reliability fixes traced to swell-dogfood findings.
 

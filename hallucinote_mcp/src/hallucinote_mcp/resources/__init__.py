@@ -1,13 +1,15 @@
-"""MCP resources — 11 URIs covering session reads, browser trees,
-reference lookups, and agent-facing guides.
+"""MCP resources — 12 URIs covering session reads, browser trees,
+reference lookups, agent-facing guides, and a server self-report.
 
 Resources differ from tools structurally:
   - **Tools** are imperative; the agent decides to call them.
   - **Resources** are addressable content; the MCP client (or the agent)
     reads them by URI without consuming a per-tool turn.
 
-Wave M-6 ships 11 static resources; Arc 5 / P3 adds 1 templated resource;
-INS-3W8P adds a 12th static (``ableton://server/info``):
+The surface is **12 static resources, 0 templated** (the Arc 5 / P3 templated
+slot — ``hallucinote://song/{slug}/annotations`` — was retired with the DB
+annotations table; ``RESOURCE_TEMPLATE_URIS`` is empty). Wave M-6 shipped 11
+static; INS-3W8P added the 12th (``ableton://server/info``):
 
 Live-backed (delegate to existing handlers via the server's
 ``handle_tool_call`` so they reuse the forward-to-Remote-Script path):

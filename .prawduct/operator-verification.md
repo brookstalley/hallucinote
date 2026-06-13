@@ -315,3 +315,38 @@ and — the Critic-W1 open premise — what Live's **non-track input default act
 3. **Display-name / channel fidelity spot-check.** For a track routed to the bus, confirm
    `get_output_routing` returns `current_type` == the bus's exact name and a `current_channel`
    the inverse map round-trips (e.g. "Post Mixer") — i.e. push-then-pull is identity.
+
+---
+
+## SNP-8R4K chunk 4 — push-preflight surfaces stale-set rebuild guidance (State-2 trigger)
+
+**Status:** PENDING — needs an attended Live session + a `/mcp` reconnect (the running
+Remote Script + server must run this branch's `probe_and_link`). **Visual change:** no
+(the guidance is a `notes[]` string in the probe-and-link JSON the skill surfaces; no
+Live state changes). Unit-proven at the detection + wiring layers
+(`tests/unit/test_analyzer_staleness.py` — 18 pure-detector tests across
+track/return/master; `tests/unit/sync/test_push_cli.py` — 5 wiring tests through the
+`probe_and_link` seam with synthetic probe data). What units CANNOT cover: that Live's
+real `ableton_device(action='list')` surfaces the analyzer entry with
+`name=="HallucinoteAnalyzer"` (the predicate `is_analyzer_device` keys on `name`), and
+that `_probe_live_devices_via_mcp` forwards it unfiltered to `probe_and_link`.
+
+1. **Stale set surfaces the guidance (the deliverable).** Open a saved set, then load any
+   authored device (e.g. a Saturator) onto a track that already carries the
+   HallucinoteAnalyzer so it lands AFTER the analyzer (Live appends; the analyzer is no
+   longer terminal). Run `push_cli probe-and-link --probe`. Confirm the result JSON's
+   `notes[]` contains a `"STALE SET (SNP-8R4K)"` entry naming that surface (`track #N`) +
+   the trailing device, with the "rebuild the set from source: push into a fresh set"
+   guidance. No hard halt — `probe-and-link` still exits 0.
+
+2. **Clean / rebuilt set is silent.** On a set where the analyzer is terminal on every
+   tapped surface (a freshly-rebuilt push, or one where no device was loaded after the
+   render's tap), run the same `probe-and-link --probe`. Confirm NO `"STALE SET"` note
+   appears (the condition is the version key — a clean set has no authored-after-analyzer
+   surface, so detection is silent).
+
+3. **Master-surface gap (informational, not a gate).** The probe today walks tracks +
+   returns only (`_probe_live_devices_via_mcp`); the master chain isn't probed until
+   SNP-4K7M lands master-device capture. So a master-only staleness won't surface yet —
+   confirm this is the case and note it. The detector already handles a `("master", None)`
+   surface in the roll-up; only the probe feed is missing.

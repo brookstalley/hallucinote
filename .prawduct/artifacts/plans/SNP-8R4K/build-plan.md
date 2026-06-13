@@ -18,7 +18,7 @@ is complementary, not a gate.
 - [x] **1 — Centralized identity + boundary exclusion** (no-Live; keystone) — DONE on `fix/snp-8r4k-boundary-exclusion`: `analyzer_identity.py` + filter/dense-renumber at `compile_snapshot`, `_replay_devices`, pull `_diff_chain_devices`, + push `_emit_device_calls` skip; 23 tests; full suite 3550. Also **auto-migrates the model** (State-1 functional clean — see design §Migration).
 - [ ] **2 — Snapshot-file cleanup + version stamp** (no-Live; State-1 clean-at-rest)
 - [ ] **3 — Render terminal-tap + observability** (Live; durable measurement correctness)
-- [ ] **4 — Push-preflight stale-set detection + rebuild guidance** (Live; State-2 migration trigger)
+- [x] **4 — Push-preflight stale-set detection + rebuild guidance** (Live; State-2 migration trigger) — DONE on `fix/snp-8r4k-live-chunks`: pure detector `analyzer_staleness.py` (`find_authored_after_analyzer` + `detect_stale_analyzer_surfaces`, reuses `is_analyzer_device`, position-based on probe chain order); wired into `probe_and_link` (`_flag_stale_analyzer_set`) over the same `live_devices_by_parent` probe map, guidance via the non-fatal `result.notes` channel (no hard halt); 18 pure + 5 wiring tests; operator-verification enqueued (Live: yes — real firing deferred). Full suite green. NOT committed.
 
 ## Chunk 1 — Centralized identity + boundary exclusion (no-Live; keystone)
 

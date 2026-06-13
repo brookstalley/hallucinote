@@ -724,6 +724,129 @@ def test_probe_and_link_skips_devices_on_unlinked_parent(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# SNP-8R4K chunk 4: stale-set detection through the probe-and-link seam
+# ---------------------------------------------------------------------------
+#
+# The probe data shape is the same `live_devices_by_parent` map the device
+# matcher consumes — `{(parent_kind, index): [ordered probe entries]}` from
+# `_probe_live_devices_via_mcp`, which does NOT filter the analyzer out (it
+# forwards the raw `ableton_device(action='list')` output, so the analyzer
+# entry with name=="HallucinoteAnalyzer" reaches the detector). The guidance
+# is surfaced through the existing `result.notes` channel (non-fatal — same
+# channel device-drift uses), never a hard halt.
+
+_ANALYZER_PROBE = {
+    "device_index": 2,
+    "name": "HallucinoteAnalyzer",
+    "class_name": "MxDeviceAudioEffect",
+}
+
+
+def test_probe_and_link_flags_stale_set_with_device_after_analyzer(
+    conn, song, session,
+):
+    """A surface whose chain has an authored device AFTER the analyzer emits
+    the rebuild guidance note, naming the stale surface + the device."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 4, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 4): [
+                {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+                {**_ANALYZER_PROBE, "device_index": 2},
+                {"device_index": 3, "name": "Saturator", "class_name": "Saturator"},
+            ],
+        },
+    )
+    stale_notes = [n for n in result.notes if "STALE SET (SNP-8R4K)" in n]
+    assert len(stale_notes) == 1, result.notes
+    note = stale_notes[0]
+    assert "track #4" in note
+    assert "Saturator" in note
+    assert "rebuild the set from source".upper() in note.upper()
+
+
+def test_probe_and_link_silent_on_clean_set_analyzer_last(conn, song, session):
+    """Analyzer terminal on every surface → no stale note (a clean/rebuilt set
+    is silent — the condition is the version key)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.create_return(conn, song_id=song, name="Reverb", position=1)
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 4, "name": "Drums", "kind": "midi"}],
+        live_returns=[{"return_index": 1, "name": "A-Reverb"}],
+        live_devices_by_parent={
+            ("track", 4): [
+                {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+                {**_ANALYZER_PROBE, "device_index": 2},
+            ],
+            ("return", 1): [
+                {"device_index": 1, "name": "Reverb", "class_name": "Reverb"},
+                {**_ANALYZER_PROBE, "device_index": 2},
+            ],
+        },
+    )
+    assert not any("STALE SET" in n for n in result.notes), result.notes
+
+
+def test_probe_and_link_silent_when_no_analyzer_in_chain(conn, song, session):
+    """A set the render never tapped (no analyzer) → not stale; the render
+    loads the analyzer terminal at the next capture (chunk 3)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Lead", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 1): [
+                {"device_index": 1, "name": "Operator", "class_name": "Operator"},
+                {"device_index": 2, "name": "Reverb", "class_name": "Reverb"},
+            ],
+        },
+    )
+    assert not any("STALE SET" in n for n in result.notes), result.notes
+
+
+def test_probe_and_link_no_stale_note_when_devices_arg_omitted(
+    conn, song, session,
+):
+    """No probe device data → no detection runs (nothing to flag)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Lead", "kind": "midi"}],
+        live_returns=[],
+        # live_devices_by_parent omitted
+    )
+    assert not any("STALE SET" in n for n in result.notes), result.notes
+
+
+def test_probe_and_link_flags_stale_set_on_unlinked_parent(conn, song, session):
+    """Staleness is a property of the PROBED SET, independent of DB linkage:
+    a surface that doesn't match any DB track still surfaces under-measurement
+    guidance (the operator's set is stale regardless of what this song binds)."""
+    M.create_track(conn, song_id=song, track_index=1, name="Lead", kind="midi")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        # Live has "Bass" at index 1; DB's "Lead" doesn't match it.
+        live_tracks=[{"track_index": 1, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 1): [
+                {**_ANALYZER_PROBE, "device_index": 1},
+                {"device_index": 2, "name": "Limiter", "class_name": "Limiter"},
+            ],
+        },
+    )
+    assert result.matched_devices == []  # parent unlinked → no device binding
+    stale_notes = [n for n in result.notes if "STALE SET (SNP-8R4K)" in n]
+    assert len(stale_notes) == 1, result.notes
+    assert "Limiter" in stale_notes[0]
+
+
+# ---------------------------------------------------------------------------
 # push_cli — argument plumbing
 # ---------------------------------------------------------------------------
 
@@ -737,7 +860,7 @@ def test_cli_phases_emits_fourteen_phase_metadata(conn, song, session, db_path, 
     assert out["session_id"] == session
     assert [p["name"] for p in out["phases"]] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "scenes", "clips", "mix", "devices", "routing", "device_sidechain",
         "envelopes", "performed_automation", "arrangement", "cues",
     ]
     for p in out["phases"]:
@@ -1138,7 +1261,7 @@ def test_cli_end_to_end_drive_links_everything(
     phase_list = json.loads(capsys.readouterr().out)["phases"]
     assert [p["name"] for p in phase_list] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "scenes", "clips", "mix", "devices", "routing", "device_sidechain",
         "envelopes", "performed_automation", "arrangement", "cues",
     ]
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.analyzer_staleness import detect_stale_analyzer_surfaces
 from hallucinote.db import mutations as M, queries as Q
 
 
@@ -526,6 +527,16 @@ def probe_and_link(
             actor=actor,
             reason=reason,
         )
+        # SNP-8R4K chunk 4: State-2 migration trigger. The probed device chains
+        # are in chain order; if any surface has authored devices AFTER the
+        # HallucinoteAnalyzer, the analyzer isn't the terminal measurement tap
+        # and per-stem captures under-measured those trailing devices. This is
+        # the pre-SNP-8R4K signature of a stale saved set. Emit operator
+        # GUIDANCE (a note, not a hard halt — push is still safe; the SET's
+        # captures are the only thing affected, and the fix is the operator's
+        # to make). A clean/rebuilt set has no authored-after-analyzer
+        # condition, so this is silent.
+        _flag_stale_analyzer_set(result, live_devices_by_parent)
 
     # W18-D: detect "first push onto Live's brand-new-set default scaffold."
     # Fires only on auto-session bootstraps where every unmatched Live track
@@ -636,6 +647,42 @@ def _match_devices_for_linked_parents(
                     "position": pos,
                     "class_name": db_class,
                 })
+
+
+def _flag_stale_analyzer_set(
+    result: ProbeAndLinkResult,
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]],
+) -> None:
+    """SNP-8R4K chunk 4: detect a pre-SNP-8R4K stale Live set + emit guidance.
+
+    A set is stale when any probed chain has an authored (non-analyzer) device
+    AFTER the HallucinoteAnalyzer — the analyzer is no longer terminal, so the
+    render's per-stem capture under-measured those trailing devices. Rolls the
+    pure :func:`hallucinote.analyzer_staleness.detect_stale_analyzer_surfaces`
+    detector over the same per-chain ORDERED probe map ``probe_and_link``
+    already binds devices from, then appends operator guidance to
+    ``result.notes`` (the non-fatal channel — same place device-drift surfaces;
+    NOT a hard halt). Naming the stale surfaces + their trailing devices makes
+    the "rebuild from source" guidance actionable.
+
+    Silent on a clean/rebuilt set: with the analyzer terminal (or absent) on
+    every surface, the detector returns ``[]`` and no note is added.
+    """
+    stale_surfaces = detect_stale_analyzer_surfaces(live_devices_by_parent)
+    if not stale_surfaces:
+        return
+    surface_lines = "; ".join(stale_surfaces)
+    result.notes.append(
+        "STALE SET (SNP-8R4K): the HallucinoteAnalyzer is not the terminal "
+        "device on " + str(len(stale_surfaces)) + " surface(s) — authored "
+        "devices sit after the measurement tap, so per-stem captures "
+        "under-measured them: " + surface_lines + ". This set predates the "
+        "analyzer-infrastructure fix (SNP-8R4K). Live has no reorder API, so "
+        "the fix is to REBUILD THE SET FROM SOURCE: push into a fresh set (the "
+        "model is already analyzer-free, and the render adds the analyzer last "
+        "on capture). The push itself is unaffected — only this set's captured "
+        "measurements were wrong."
+    )
 
 
 def _flag_case_near_matches(

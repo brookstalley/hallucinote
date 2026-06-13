@@ -52,11 +52,11 @@ Claude will:
    a snapshot, tests, and intent/decision folders.
 2. Pick instrument **chains** per track (instrument + effects + send levels).
 3. Write note-generating code in `build.py` using the generator library.
-4. Build the song's DB and **push it into Live** through thirteen ordered
+4. Build the song's DB and **push it into Live** through fourteen ordered
    phases — with sound design baked in:
 
    ```
-   tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed automation → arrangement → cues
+   tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → device sidechain → envelopes → performed automation → arrangement → cues
    ```
 
 **What you should see:** Live fills with named tracks (drums, bass, …), return

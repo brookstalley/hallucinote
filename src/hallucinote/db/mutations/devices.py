@@ -349,6 +349,83 @@ def create_device(
     return MutatorResult(device_id, "created")
 
 
+def set_device_sidechain(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    source_track_id: str | None,
+    channel: str | None = None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Set (or clear) a device's sidechain SOURCE — SDC-7K3M.
+
+    The source is a SEMANTIC reference (FK to the source track), symmetric with
+    ``set_track_routing``'s track-FK input routing: it survives renames + the
+    rebuild→push loop. Push resolves it to Live's display_name via the device's
+    ``set_input_routing``; pull captures it via ``get_input_routing``. The
+    ``S/C On`` / ``S/C Gain`` / ``S/C Mix`` params are ordinary
+    ``device_parameters`` and round-trip separately — the SOURCE is the one piece
+    they can't carry.
+
+    ``source_track_id=None`` clears the sidechain source (and forces ``channel``
+    NULL — a channel with no source is meaningless). ``channel`` is Live's input
+    channel display_name (Pre FX / Post FX / Post Mixer); NULL = device default.
+
+    No device-kind guard: sidechain capability is probed at push (Live exposes
+    input routing on Compressor / Gate / plugins carrying an ``S/C`` param),
+    never whitelisted.
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    row = conn.execute(
+        """SELECT sidechain_source_track_id, sidechain_source_channel
+           FROM devices WHERE id = ?""",
+        (device_id,),
+    ).fetchone()
+    if row is None:
+        return
+    song_id = _resolve_device_song(conn, device_id=device_id)
+    if source_track_id is None:
+        channel = None  # no source ⇒ no channel
+    else:
+        trow = conn.execute(
+            "SELECT song_id FROM tracks WHERE id = ?", (source_track_id,)
+        ).fetchone()
+        if trow is None:
+            raise ValueError(
+                f"sidechain source_track_id {source_track_id!r} does not "
+                "reference an existing track"
+            )
+        if song_id is not None and trow["song_id"] != song_id:
+            raise ValueError(
+                f"sidechain source_track_id {source_track_id!r} belongs to a "
+                "different song than the device"
+            )
+    # Idempotent — skip the event when nothing changes.
+    if (row["sidechain_source_track_id"], row["sidechain_source_channel"]) == (
+        source_track_id, channel,
+    ):
+        _record_touch_if_session("device", device_id)
+        return
+    conn.execute(
+        """UPDATE devices SET sidechain_source_track_id = ?,
+                              sidechain_source_channel = ?
+           WHERE id = ?""",
+        (source_track_id, channel, device_id),
+    )
+    _emit(
+        conn,
+        E.DEVICE_SIDECHAIN_SET,
+        {"device_id": device_id, "source_track_id": source_track_id,
+         "channel": channel},
+        song_id=song_id, actor=actor, request_id=request_id, reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    _record_touch_if_session("device", device_id)
+
+
 def _resolve_device_song(
     conn: sqlite3.Connection,
     *,

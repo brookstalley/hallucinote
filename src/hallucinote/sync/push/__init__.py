@@ -76,6 +76,7 @@ from .mix import (
 )
 from .devices import (
     plan_push_devices,
+    plan_push_device_sidechain,
     _emit_device_calls,
 )
 from .routing import (
@@ -167,6 +168,7 @@ __all__ = [
     "plan_push_mix",
     # Devices
     "plan_push_devices",
+    "plan_push_device_sidechain",
     "_emit_device_calls",
     # Routing (RTE-1K9T)
     "plan_push_routing",

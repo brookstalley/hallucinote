@@ -305,3 +305,107 @@ def _emit_device_calls(
             "— no display value and no normalized value stored; the dialed "
             "intent was NOT pushed"
         )
+
+
+def plan_push_device_sidechain(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Materialize device sidechain SOURCE routing (SDC-7K3M).
+
+    Runs AFTER the ``devices`` phase: a device must exist + be linked before its
+    sidechain input routing can be set. Mirrors ``plan_push_routing``'s track-FK
+    resolution — the DB stores the source as a ``tracks`` FK, we resolve it to
+    the source track's Live display_name (``name``) and emit
+    ``ableton_device(action='set_input_routing')``. The ``S/C On`` / ``S/C Gain``
+    params are pushed by the ``devices`` phase as ordinary parameters; this phase
+    restores the one piece they can't carry — the SOURCE.
+
+    Ack-only (like routing): the state originates from the DB, no Live-side index
+    to record back. A device whose source FK doesn't resolve to a song track is
+    ALERTed (operator-actionable); an unlinked device is deferred to the
+    devices-convergence re-plan.
+    """
+    plan = PushPlan()
+    by_id = {t["id"]: t for t in Q.get_tracks_for_song(conn, song_id)}
+    returns = Q.get_returns_for_song(conn, song_id)
+
+    def _emit_for_device(device, parent_kv, parent_kind, parent_name):
+        keys = device.keys()
+        src_id = (
+            device["sidechain_source_track_id"]
+            if "sidechain_source_track_id" in keys else None
+        )
+        if src_id is None:
+            return  # no sidechain source authored on this device
+        src = by_id.get(src_id)
+        if src is None:
+            plan.alert(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r}: sidechain source track {src_id!r} is not in "
+                "this song — cannot resolve a Live source; skipped"
+            )
+            return
+        device_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="device", db_id=device["id"]
+        )
+        if device_at is None:
+            plan.warn(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r} not linked yet; sidechain source deferred to "
+                "the devices-convergence re-plan"
+            )
+            return
+        args = {
+            **parent_kv,
+            "action": "set_input_routing",
+            "device_index": device_at,
+            "type_display_name": src["name"],
+        }
+        channel = (
+            device["sidechain_source_channel"]
+            if "sidechain_source_channel" in keys else None
+        )
+        if channel is not None:
+            args["channel_display_name"] = channel
+        plan.add(ToolCall(
+            tool="ableton_device",
+            args=args,
+            key=f"device_sidechain:{device['id']}",
+            purpose=(
+                f"sidechain {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r} ← source {src['name']!r}"
+            ),
+        ))
+
+    for t in by_id.values():
+        if t["kind"] == "master":
+            parent_kv: dict[str, object] = {"master": True}
+            parent_kind = "master"
+        else:
+            track_at = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="track", db_id=t["id"]
+            )
+            if track_at is None:
+                continue
+            parent_kv = {"track_index": track_at}
+            parent_kind = "track"
+        for chain in Q.get_device_chains_for_track(conn, t["id"]):
+            for device in Q.get_devices_for_chain(conn, chain["id"]):
+                _emit_for_device(device, parent_kv, parent_kind, t["name"])
+
+    for r in returns:
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        )
+        if return_at is None:
+            continue
+        for chain in Q.get_device_chains_for_return(conn, r["id"]):
+            for device in Q.get_devices_for_chain(conn, chain["id"]):
+                _emit_for_device(
+                    device, {"return_index": return_at}, "return", r["name"]
+                )
+
+    return plan

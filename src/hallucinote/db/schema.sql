@@ -383,6 +383,16 @@ CREATE TABLE IF NOT EXISTS devices (
     -- or device_parameter envelopes (automated). See
     -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
     audio_file      TEXT,
+    -- SDC-7K3M: device sidechain SOURCE routing, symmetric with track-level
+    -- input routing (tracks.input_routing_*). A SEMANTIC reference (FK to the
+    -- source track, survives renames) — push resolves it to Live's display_name
+    -- via set_input_routing, pull captures it via get_input_routing. NULL when
+    -- the device has no sidechain source. The S/C On / Gain / Mix params
+    -- round-trip separately as device_parameters; this column is the one piece
+    -- those can't carry (the source). `channel` is Live's input channel
+    -- display_name (Pre FX / Post FX / Post Mixer), NULL = device default.
+    sidechain_source_track_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    sidechain_source_channel  TEXT,
     UNIQUE(chain_id, position)
 );
 

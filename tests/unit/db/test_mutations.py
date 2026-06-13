@@ -187,6 +187,69 @@ def test_set_track_routing_input_and_monitor_round_trip(conn, track):
     assert row["monitoring_state"] == "In"
 
 
+# --- SDC-7K3M: device sidechain SOURCE routing --------------------------------
+
+
+def _sidechain_device(conn, track_id) -> str:
+    chain = M.create_device_chain(conn, parent_track_id=track_id, position=0)
+    return M.create_device(
+        conn, chain_id=chain, position=1, kind="Compressor",
+        display_name="Bass Punk",
+    )
+
+
+def test_set_device_sidechain_persists_source_and_emits_event(conn, song, track):
+    """SDC-7K3M: a device's sidechain SOURCE persists as a track FK (survives
+    renames) + emits one event — the piece the S/C params can't carry."""
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    before = len(_events(conn))
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick, channel="Post FX")
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] == kick
+    assert row["sidechain_source_channel"] == "Post FX"
+    evs = _events(conn)
+    assert len(evs) == before + 1
+    assert evs[-1]["kind"] == E.DEVICE_SIDECHAIN_SET
+    payload = json.loads(evs[-1]["payload_json"])
+    assert payload["device_id"] == dev and payload["source_track_id"] == kick
+
+
+def test_set_device_sidechain_is_idempotent(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick)
+    before = len(_events(conn))
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick)
+    assert len(_events(conn)) == before
+
+
+def test_set_device_sidechain_clear_resets_source_and_channel(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick, channel="Post FX")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=None)
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] is None
+    assert row["sidechain_source_channel"] is None  # channel forced None on clear
+
+
+def test_set_device_sidechain_rejects_unknown_source(conn, track):
+    dev = _sidechain_device(conn, track)
+    with pytest.raises(ValueError, match="does not reference an existing track"):
+        M.set_device_sidechain(conn, device_id=dev, source_track_id="nope")
+
+
+def test_set_device_sidechain_rejects_cross_song_source(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    other = M.create_song(conn, name="other-song")
+    other_track = M.create_track(
+        conn, song_id=other, track_index=1, name="X", kind="midi"
+    )
+    with pytest.raises(ValueError, match="different song"):
+        M.set_device_sidechain(conn, device_id=dev, source_track_id=other_track)
+
+
 def test_set_track_routing_multi_field_emits_single_event(conn, song, track):
     bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
     before = len(_events(conn))

@@ -81,6 +81,7 @@ from .devices import (
     replace_breakpoints,
     replace_drum_pad_mappings,
     set_device_parameter,
+    set_device_sidechain,
 )
 from .links import (
     ABLETON_LINK_KINDS,
@@ -214,6 +215,7 @@ __all__ = [
     "replace_breakpoints",
     "replace_drum_pad_mappings",
     "set_device_parameter",
+    "set_device_sidechain",
     # links + reset
     "ABLETON_LINK_KINDS",
     "create_ableton_session",

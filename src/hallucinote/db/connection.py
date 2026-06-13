@@ -207,6 +207,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # / reverse / pitch / gain stay device_parameters + envelopes, not columns.
     # See .prawduct/artifacts/plans/SMP-7K2D/design.md.
     ("devices", "audio_file", "TEXT"),
+    # SDC-7K3M: device sidechain SOURCE routing (symmetric with track input
+    # routing) — a semantic FK to the source track + the input channel. Existing
+    # devices get NULL (no sidechain source). Resolved to/from Live's
+    # display_name at push/pull; the S/C On/Gain/Mix params round-trip separately
+    # as device_parameters. target FK self-references tracks ON DELETE SET NULL.
+    ("devices", "sidechain_source_track_id",
+     "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
+    ("devices", "sidechain_source_channel", "TEXT"),
     # AUD-7R3M / SMP-7K2D: clips gain `reverse` — the missing playback-param
     # sibling of the CLP-AUD1 family (NULL/0 = forward, 1 = reversed). Existing
     # rows get NULL (forward). Materialized at push as Live's clip reverse, a

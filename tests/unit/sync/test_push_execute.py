@@ -202,12 +202,12 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The thirteen phases are present, in order.
+    # The fourteen phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "envelopes",
-        "performed_automation", "arrangement", "cues",
+        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "envelopes", "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
     # content) or ok-with-zero-calls if the planner still emits acks.

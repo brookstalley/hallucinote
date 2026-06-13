@@ -1812,3 +1812,202 @@ def test_execute_cue_past_composed_length_halts_partial(
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     by_name = {p["name"]: p for p in state["phases"]}
     assert by_name["cues"]["status"] == "halted"
+
+
+# ---------------------------------------------------------------------------
+# PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
+# ---------------------------------------------------------------------------
+
+
+class _FakePhase:
+    """Minimal phase stand-in for the pure _filter_phases unit tests."""
+    def __init__(self, name):
+        self.name = name
+
+
+_DEMO_PHASES = [_FakePhase(n) for n in ("a", "b", "c", "d")]
+
+
+def test_filter_phases_only_selects_one():
+    sliced, scope = push_execute._filter_phases(_DEMO_PHASES, only="c")
+    assert [p.name for p in sliced] == ["c"]
+    assert scope == {"only": "c"}
+
+
+def test_filter_phases_start_at_to_end():
+    sliced, scope = push_execute._filter_phases(_DEMO_PHASES, start_at="c")
+    assert [p.name for p in sliced] == ["c", "d"]
+    assert scope == {"start_at": "c"}
+
+
+def test_filter_phases_stop_after_prefix():
+    sliced, scope = push_execute._filter_phases(_DEMO_PHASES, stop_after="b")
+    assert [p.name for p in sliced] == ["a", "b"]
+    assert scope == {"stop_after": "b"}
+
+
+def test_filter_phases_window():
+    sliced, scope = push_execute._filter_phases(
+        _DEMO_PHASES, start_at="b", stop_after="c"
+    )
+    assert [p.name for p in sliced] == ["b", "c"]
+    assert scope == {"start_at": "b", "stop_after": "c"}
+
+
+def test_filter_phases_full_run_scope_none():
+    sliced, scope = push_execute._filter_phases(_DEMO_PHASES)
+    assert [p.name for p in sliced] == ["a", "b", "c", "d"]
+    assert scope is None
+
+
+def test_filter_phases_is_order_agnostic():
+    """Filters by NAME, not index — so it composes with a future phase reorder
+    (RTE-2P9X) without assuming positions. A reversed list still slices from the
+    named start through that list's end."""
+    reordered = [_FakePhase(n) for n in ("d", "c", "b", "a")]
+    sliced, _ = push_execute._filter_phases(reordered, start_at="c")
+    assert [p.name for p in sliced] == ["c", "b", "a"]
+
+
+def test_filter_phases_unknown_name_teaches():
+    with pytest.raises(push_execute.PhaseTargetError) as exc:
+        push_execute._filter_phases(_DEMO_PHASES, only="nope")
+    msg = str(exc.value)
+    assert "unknown --only phase 'nope'" in msg
+    assert "a, b, c, d" in msg  # the valid list, in order
+
+
+def test_filter_phases_only_excludes_window():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute._filter_phases(_DEMO_PHASES, only="a", start_at="b")
+
+
+def test_filter_phases_stop_before_start_errors():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute._filter_phases(_DEMO_PHASES, start_at="c", stop_after="a")
+
+
+def test_execute_only_runs_one_phase(conn, song, session, tiny_song, state_dir):
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(), only="tracks",
+    )
+    assert result.outcome == "ok"
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert [p["name"] for p in state["phases"]] == ["tracks"]
+    assert state["scope"] == {"only": "tracks"}
+
+
+def test_execute_start_at_resumes_after_earlier_phases(
+    conn, song, session, tiny_song, state_dir,
+):
+    """The real --start-at use (resume): earlier phases already ran — here tracks
+    are linked by a first scoped run — so resuming from clips plans + runs
+    clips→cues without replaying tracks. (--start-at does NOT magic dependencies:
+    starting at clips on a fresh set correctly fails, since clips need a linked
+    track; that's the operator's resume contract, mirroring the dogfood case.)"""
+    push_execute.execute_push(  # run 1: push through tracks → track linked
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(), stop_after="tracks",
+    )
+    push_execute.execute_push(  # run 2: resume from clips
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(), start_at="clips",
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    names = [p["name"] for p in state["phases"]]
+    assert names[0] == "clips"
+    assert "tracks" not in names          # earlier phases not replayed
+    assert names[-1] == "cues"
+    assert state["scope"] == {"start_at": "clips"}
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["clips"]["status"] == "ok"  # clips ran (track linked in run 1)
+
+
+def test_execute_stop_after_bounds_run(conn, song, session, tiny_song, state_dir):
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(), stop_after="tracks",
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert [p["name"] for p in state["phases"]] == [
+        "tempo_map", "time_signature_map", "tracks",
+    ]
+    assert state["scope"] == {"stop_after": "tracks"}
+
+
+def test_execute_unknown_phase_raises_before_request(
+    conn, song, session, tiny_song, state_dir,
+):
+    """A bad phase name fails fast with a teaching error and leaves NO dangling
+    open request row (validation happens before create_request)."""
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute.execute_push(
+            conn=conn, song_id=song, session_id=session,
+            state_dir=state_dir, send_fn=_make_send_fn(), only="bogus",
+        )
+    assert Q.list_requests_for_song(conn, song, kind="push") == []
+
+
+def test_execute_full_run_scope_is_none(conn, song, session, tiny_song, state_dir):
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["scope"] is None
+
+
+# ---------------------------------------------------------------------------
+# PSH-5T9D — mid-run progress (per-phase flush + progress_fn)
+# ---------------------------------------------------------------------------
+
+
+def test_progress_fn_emits_per_phase_lines(conn, song, session, tiny_song, state_dir):
+    lines: list[str] = []
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+        progress_fn=lines.append,
+    )
+    # Phases that dispatch announce a start + a finish; skips announce a skip.
+    assert any(l.startswith("[tracks] running") for l in lines)
+    assert any(l.startswith("[tracks] ok") for l in lines)
+    assert any(l.startswith("[clips] running") for l in lines)
+    assert any(l.startswith("[clips] ok") for l in lines)
+    assert any("skipped" in l for l in lines)
+
+
+def test_state_file_is_pollable_midrun(conn, song, session, tiny_song, state_dir):
+    """The state file reflects progress BEFORE the run finishes (PSH-5T9D): a
+    snapshot taken while the clips phase dispatches shows tracks already ok,
+    current_phase=clips, and NO later phase (cues) recorded yet."""
+    base = _make_send_fn()
+    snapshots: list[dict] = []
+
+    def spy(req, **kw):
+        if req.tool == "ableton_clip" and req.action == "create":
+            snapshots.append(
+                json.loads((state_dir / ".last-push-state.json").read_text())
+            )
+        return base(req, **kw)
+
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=spy,
+    )
+    assert snapshots, "clip create never dispatched — fixture changed?"
+    mid = snapshots[0]
+    assert mid["current_phase"] == "clips"
+    by_name = {p["name"]: p for p in mid["phases"]}
+    assert by_name.get("tracks", {}).get("status") == "ok"
+    assert "cues" not in by_name  # a later phase — genuinely mid-run, not the end
+
+
+def test_terminal_state_has_current_phase_none(conn, song, session, tiny_song, state_dir):
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["current_phase"] is None

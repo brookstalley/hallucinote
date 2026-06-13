@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -67,6 +68,71 @@ _LARGE_LIST_KEYS = frozenset({
     "points",        # ableton_session(set_time_signature_map)
     "cues",          # ableton_arrangement(set_cues), if it lands
 })
+
+
+class PhaseTargetError(ValueError):
+    """A phase-targeting flag named an unknown phase or an invalid combination.
+
+    Raised by :func:`_filter_phases`; the CLI catches it and exits 2 with the
+    teaching message (which lists the valid phases in order).
+    """
+
+
+def _filter_phases(
+    phases,
+    *,
+    only: str | None = None,
+    start_at: str | None = None,
+    stop_after: str | None = None,
+):
+    """Slice the planned phase list for PSH-2R7K phase-targeting.
+
+    Order-agnostic: filters by phase NAME against the list it's handed, so it
+    composes with any future reordering of the phase sequence (RTE-2P9X) without
+    assuming indices. Returns ``(filtered_phases, scope)`` where ``scope`` is a
+    JSON-friendly dict describing the filter (or ``None`` for a full run) recorded
+    into ``.last-push-state.json`` so a scoped run is never mistaken for a full one.
+
+    Raises :class:`PhaseTargetError` (teaching message + valid-phase list) on an
+    unknown phase name, ``--only`` combined with a window flag, or a window whose
+    stop precedes its start.
+    """
+    names = [p.name for p in phases]
+
+    def _check(flag: str, value: str | None) -> None:
+        if value is not None and value not in names:
+            raise PhaseTargetError(
+                f"unknown {flag} phase {value!r}. Valid phases (in order): "
+                + ", ".join(names)
+            )
+
+    _check("--only", only)
+    _check("--start-at", start_at)
+    _check("--stop-after", stop_after)
+
+    if only is not None:
+        if start_at is not None or stop_after is not None:
+            raise PhaseTargetError(
+                "--only cannot be combined with --start-at/--stop-after"
+            )
+        return tuple(p for p in phases if p.name == only), {"only": only}
+
+    lo = names.index(start_at) if start_at is not None else 0
+    hi = names.index(stop_after) if stop_after is not None else len(names) - 1
+    if hi < lo:
+        raise PhaseTargetError(
+            f"--stop-after {stop_after!r} precedes --start-at {start_at!r} "
+            "in the phase order"
+        )
+    sliced = tuple(phases[lo:hi + 1])
+    scope: dict[str, str] | None = None
+    if start_at is not None or stop_after is not None:
+        scope = {}
+        if start_at is not None:
+            scope["start_at"] = start_at
+        if stop_after is not None:
+            scope["stop_after"] = stop_after
+    return sliced, scope
 
 
 @dataclass
@@ -510,6 +576,10 @@ def execute_push(
     actor: str = "sync",
     reason: str | None = None,
     perform_slowdown_factor: float = 1.0,
+    only: str | None = None,
+    start_at: str | None = None,
+    stop_after: str | None = None,
+    progress_fn: Callable[[str], None] | None = None,
 ) -> ExecuteResult:
     """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
 
@@ -551,6 +621,18 @@ def execute_push(
     state_file = state_dir / ".last-push-state.json"
     errors_file = state_dir / ".last-push-errors.json"
 
+    # PSH-2R7K: plan + resolve phase-targeting BEFORE creating the request, so a
+    # bad --only/--start-at/--stop-after fails fast (PhaseTargetError) without
+    # leaving a dangling open audit row. plan_push_song is pure-data (no side
+    # effects), so the reorder is safe.
+    phases = push.plan_push_song(
+        conn, song_id=song_id, session_id=session_id,
+        perform_slowdown_factor=perform_slowdown_factor,
+    )
+    phases, scope = _filter_phases(
+        phases, only=only, start_at=start_at, stop_after=stop_after,
+    )
+
     # W23-C: every full-song push is one attributed request. Threading the
     # request_id through `apply_push_results`'s actor/request kwargs tags
     # every link-binding event the apply layer emits, so the provenance
@@ -563,17 +645,12 @@ def execute_push(
         actor=actor,
         intent=f"push_cli execute (session={session_id})",
         kind="push",
-        payload={"session_id": session_id, "song_id": song_id},
+        payload={"session_id": session_id, "song_id": song_id, "scope": scope},
         song_id=song_id,
         reason=reason,
         metadata=M.provenance_metadata(
             extra={"driver": "push_cli", "session_id": session_id},
         ),
-    )
-
-    phases = push.plan_push_song(
-        conn, song_id=song_id, session_id=session_id,
-        perform_slowdown_factor=perform_slowdown_factor,
     )
 
     phase_outcomes: list[PhaseOutcome] = []
@@ -583,6 +660,64 @@ def execute_push(
     error_records: list[dict[str, Any]] = []
     # SYN-6B4Q: benign warnings (deferred cues) — do not flip outcome/exit.
     warning_messages: list[str] = []
+
+    def _flush_state(current_phase: str | None = None) -> None:
+        """Write ``.last-push-state.json`` reflecting progress SO FAR (PSH-5T9D).
+
+        Called at the top of every phase (with the phase as ``current_phase``)
+        and at the terminal state, so the file is **pollable mid-run** for
+        phase-level progress + the current phase — instead of only materializing
+        at exit (the opacity PSH-5T9D fixes). Reads the live accumulators by
+        closure, so each call snapshots the current state.
+        """
+        state_payload = {
+            "ts": _now_iso(),
+            "song_id": song_id,
+            "session_id": session_id,
+            "outcome": outcome,
+            "phase_halted": halt_phase,
+            # PSH-5T9D: the phase currently executing (None at the terminal
+            # flush) — lets a poller see "where are we right now".
+            "current_phase": current_phase,
+            # PSH-2R7K: the phase-targeting filter (None for a full run) so a
+            # scoped run's state file is never mistaken for a full push.
+            "scope": scope,
+            "phases": [
+                {
+                    "name": p.name,
+                    "status": p.status,
+                    **({"calls_ok": p.calls_ok, "calls_failed": p.calls_failed}
+                       if p.status in {_STATUS_OK, _STATUS_HALTED}
+                       else {}),
+                    **({"calls_planned": p.calls_planned}
+                       if p.status == _STATUS_PENDING
+                       else {}),
+                    # A3: only emit pad-probe counts when probes actually ran.
+                    **({"pad_probes_ok": p.pad_probes_ok,
+                        "pad_probes_failed": p.pad_probes_failed}
+                       if (p.pad_probes_ok or p.pad_probes_failed)
+                       else {}),
+                }
+                for p in phase_outcomes
+            ],
+            "errors_file": errors_file.name if error_records else None,
+            # SYN-6B4Q: benign warnings (deferred cues) — additive field; an OK
+            # push can carry warnings without an errors file.
+            "warnings": warning_messages,
+        }
+        # Atomic write (temp sibling + os.replace): PSH-5T9D made this file a
+        # mid-run READ contract (pollers + --resume), and it's now rewritten
+        # N+1× per push — a bare write_text would expose a torn file to a
+        # concurrent reader between truncate and flush (learnings.md: state
+        # writes must be atomic). os.replace is atomic on POSIX + Windows.
+        tmp = state_file.with_name(f".{state_file.name}.tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(state_payload, indent=2) + "\n")
+        os.replace(tmp, state_file)
+
+    def _emit_progress(line: str) -> None:
+        """Forward a one-line progress message to the caller's sink (PSH-5T9D)."""
+        if progress_fn is not None:
+            progress_fn(line)
 
     def _maybe_pad_probe(phase_name: str) -> tuple[int, int]:
         """A3: best-effort pad-mapping probe for the devices phase.
@@ -806,8 +941,14 @@ def execute_push(
             phase_outcomes.append(PhaseOutcome(
                 name=remaining.name, status=_STATUS_PENDING, calls_planned=0,
             ))
+        _emit_progress(f"[{phase_name}] HALTED — {outcome_label}")
 
     for idx, phase in enumerate(phases):
+        # PSH-5T9D: flush at the START of each phase so a poller of
+        # .last-push-state.json sees the current phase before it runs (the
+        # per-phase progress the opacity bug asked for). The stderr heartbeat
+        # below fires only for phases that actually dispatch.
+        _flush_state(current_phase=phase.name)
         plan = phase.plan_fn()
         _drain_plan_warnings(plan)
 
@@ -843,7 +984,19 @@ def execute_push(
                 name=phase.name, status=_STATUS_SKIPPED,
                 pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
             ))
+            _emit_progress(f"[{phase.name}] skipped (nothing to push)")
             continue
+
+        # PSH-5T9D: announce a phase that actually dispatches. The realtime
+        # perform gets a distinctive heads-up + ETA framing so a multi-minute
+        # phase isn't mistaken for a hang (the worst-case the bug named).
+        if phase.name == "performed_automation":
+            _emit_progress(
+                f"[{phase.name}] realtime perform — plays the arrangement; "
+                "this can take several minutes…"
+            )
+        else:
+            _emit_progress(f"[{phase.name}] running ({len(plan.calls)} call(s))…")
 
         results, connection_lost = _dispatch_calls(plan.calls)
 
@@ -906,41 +1059,11 @@ def execute_push(
             calls_ok=calls_ok, calls_failed=0,
             pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
         ))
+        _emit_progress(f"[{phase.name}] ok ({calls_ok} call(s))")
 
-    # Persist state + errors.
-    state_payload = {
-        "ts": _now_iso(),
-        "song_id": song_id,
-        "session_id": session_id,
-        "outcome": outcome,
-        "phase_halted": halt_phase,
-        "phases": [
-            {
-                "name": p.name,
-                "status": p.status,
-                **({"calls_ok": p.calls_ok, "calls_failed": p.calls_failed}
-                   if p.status in {_STATUS_OK, _STATUS_HALTED}
-                   else {}),
-                **({"calls_planned": p.calls_planned}
-                   if p.status == _STATUS_PENDING
-                   else {}),
-                # A3: only emit pad-probe counts when probes actually ran
-                # (devices phase with at least one linked Drum Rack).
-                # Keeps the state file uncluttered for songs without
-                # Drum Racks.
-                **({"pad_probes_ok": p.pad_probes_ok,
-                    "pad_probes_failed": p.pad_probes_failed}
-                   if (p.pad_probes_ok or p.pad_probes_failed)
-                   else {}),
-            }
-            for p in phase_outcomes
-        ],
-        "errors_file": errors_file.name if error_records else None,
-        # SYN-6B4Q: benign warnings (deferred cues) — additive field; an OK
-        # push can carry warnings without an errors file.
-        "warnings": warning_messages,
-    }
-    state_file.write_text(json.dumps(state_payload, indent=2) + "\n")
+    # Persist the terminal state (PSH-5T9D: the per-phase flushes above already
+    # made it pollable mid-run; this is the final, current_phase=None write).
+    _flush_state(current_phase=None)
 
     top_patterns: list[dict[str, Any]] = []
     if error_records:

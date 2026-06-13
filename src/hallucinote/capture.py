@@ -69,8 +69,6 @@ from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.return_naming import strip_return_slot_prefix
 
-SNAPSHOT_FORMAT_VERSION = 1
-
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
 # Bumped deliberately when the snapshot schema changes in a way the migrator

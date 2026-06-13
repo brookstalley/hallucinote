@@ -38,6 +38,17 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[SDC-7K3M]** Device sidechain SOURCE routing survives the DB round-trip — symmetric with track routing (PARTIALLY SHIPPED: author+push done, pull-capture remaining)
+  `effort: M · impact: M · area: sync · source: dogfood · added: 2026-06-13 · status: open · stage: ready · related: RTE-1K9T · refs: incoming-bugs/archives/2026-06-13-device-sidechain-source-not-in-snapshot-model.md`
+
+  **The bug (swell mix dogfood, 2026-06-13).** Added five sidechains in Live via `ableton_device(set_sidechain)` — a machine kick-pump (kick → Bass Punk, kick → Gtr Power), a timpani-audibility duck (Timpani → Contrabass, Timpani → Celli), and a ducked reverb (PRE-MAIN → Hall return). The `S/C On`/`S/C Gain`/`S/C Mix` params round-trip as ordinary `device_parameters`, but the **SOURCE** (the device's input routing — `set_input_routing` / `set_sidechain`'s `source_display_name`) was **lost on rebuild**: every sidechained compressor came back with `S/C On = 1` but no source assigned, silently breaking the sidechain. The mix only survived in the saved `.als`, defeating the "build.py + snapshot are source-of-truth, the `.als` is regenerable" model. Full report: `incoming-bugs/archives/2026-06-13-device-sidechain-source-not-in-snapshot-model.md`.
+
+  **PARTIALLY SHIPPED — author + push half done.** On branch `fix/sdc-7k3m-device-sidechain-roundtrip` (commit `9868e75`, `feat(sync): SDC-7K3M — device sidechain SOURCE survives DB round-trip (author + push)`): added `devices.sidechain_source_track_id` (nullable semantic FK → tracks, survives renames like the PRE-MAIN bus FK) + `sidechain_source_channel` + migration; a `set_device_sidechain(device_id, source_track_id, channel)` mutator so build.py can author it directly; and a new push phase `device_sidechain` **after** `devices` (so the device exists first) — `plan_push_device_sidechain` emits `set_input_routing` resolving the FK to the source track's `display_name`. Symmetric with **RTE-1K9T** track routing.
+
+  **Operator note (concurrency unblock):** a parallel agent was blocked on freeing Live until this landed — the author+push half unblocks them: author the five swell sidechains in `build.py` via `set_device_sidechain`, and push materializes them.
+
+  **REMAINING (this item's open scope) — the PULL-capture chunk + Live verification:** (1) **PULL-capture** — auto-bake the SOURCE from a live set via `ableton_device(get_input_routing)` into the DB: a pull domain + apply handler resolving `display_name` → track FK, feeding the agent's `/snapshot-bake-recent-changes` workflow (the probe already exists). This is the `stage: ready` chunk. (2) **LIVE round-trip verification** (Live was occupied at author-time): bake → rebuild → push round-trips all five sidechain sources with no `.als` reliance. **Verifiable signal:** a sidechain set in Live is captured by pull into `devices.sidechain_source_track_id`, survives a full `--reset` rebuild + push, and the source re-resolves to the correct track. **Sized:** medium (pull domain + apply handler + Live verification).
+
 - **[ENV-4S2K]** Sample-accurate, semantically-addressed device-parameter clip envelopes (driver: swell's windowed sample reveal)
   `effort: S · impact: S · area: envelope · source: user · added: 2026-06-13 · status: open · stage: requirements · related: SMP-7K2D, AUD-7R3M, AST-6D3K, ENV-7G4K, ENV-2T9K · refs: .prawduct/artifacts/plans/SMP-7K2D/design.md, songs/swell/decisions/17-buried-we-centerpiece.md · reviewed: 2026-06-13`
 

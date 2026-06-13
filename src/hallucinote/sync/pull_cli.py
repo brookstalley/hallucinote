@@ -90,6 +90,7 @@ _DOMAINS = {
     "devices":            pull.plan_pull_devices,
     "nested-rack-chains": pull.plan_pull_nested_rack_chains,
     "device-parameters":  pull.plan_pull_device_parameters,
+    "device-sidechain":   pull.plan_pull_device_sidechain,
     "arrangement-clips":  pull.plan_pull_arrangement_clips,
     "session-clips":      pull.plan_pull_session_clips,
     "clip-notes":         pull.plan_pull_notes_for_clips,

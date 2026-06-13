@@ -494,3 +494,20 @@ close that Live set, open a fresh default set, re-run `probe-and-link --probe` t
 `execute` against the SAME session — the clips phase completes (no `IndexError: session
 slot N on track M is empty`), and probe-and-link reports `unlinked_stale_clips` > 0 and
 offers the default-scaffold cleanup despite the reused (not freshly-minted) session.
+
+## SDC-7K3M — device sidechain SOURCE survives a full pull→rebuild→push round-trip
+
+**Status:** PENDING — attended Live session (Live was occupied at author-time).
+**Visual change:** no.
+Unit-proven: the `device-sidechain` pull domain emits one `get_input_routing` probe per
+linked device, and apply resolves a distinct-track `current_type` → a source FK written
+via `set_device_sidechain` (idempotent; self/none/ambiguous/non-track all no-op) —
+`tests/unit/sync/test_pull.py` SDC-7K3M block (13 tests). What units can't cover: how a
+REAL Live device reports its input routing, and the full loop. **Check:** in Live, set a
+compressor's sidechain SOURCE to a sibling track (`ableton_device(set_sidechain)` or by
+hand); run `pull_cli execute device-sidechain <session>`; confirm
+`devices.sidechain_source_track_id` now names that track; then `build.py --reset` +
+`push_cli execute` and confirm the source re-resolves to the correct track in Live with
+no `.als` reliance. **Then (gates a follow-up):** observe what `get_input_routing`
+returns for an UN-sidechained compressor's default input — this decides whether V1's
+"non-track input → no-op" can tighten to an Ableton-authoritative auto-CLEAR.

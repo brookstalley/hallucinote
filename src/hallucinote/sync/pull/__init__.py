@@ -75,10 +75,12 @@ from .devices import (
     plan_pull_devices,
     plan_pull_nested_rack_chains,
     plan_pull_device_parameters,
+    plan_pull_device_sidechain,
     _apply_devices_for_parent,
     _diff_chain_devices,
     _apply_nested_rack_chains_for_device,
     _apply_device_parameters_for_device,
+    _apply_device_sidechain_source,
 )
 from .clips import (
     plan_pull_arrangement_clips,
@@ -144,10 +146,12 @@ __all__ = [
     "plan_pull_devices",
     "plan_pull_nested_rack_chains",
     "plan_pull_device_parameters",
+    "plan_pull_device_sidechain",
     "_apply_devices_for_parent",
     "_diff_chain_devices",
     "_apply_nested_rack_chains_for_device",
     "_apply_device_parameters_for_device",
+    "_apply_device_sidechain_source",
     # Clips
     "plan_pull_arrangement_clips",
     "plan_pull_session_clips",

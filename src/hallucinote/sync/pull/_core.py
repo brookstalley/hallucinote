@@ -44,6 +44,14 @@ class PullCall:
       - `track_monitor:<track_id>`
                                  -> {has_monitoring_state,
                                      monitoring_state: 'In'|'Auto'|'Off'}
+      - `device_sidechain_source:<device_id>`
+                                 -> {has_input_routing, current_type,
+                                     current_channel, available_types,
+                                     available_channels}  (SDC-7K3M — the device
+                                     input-routing display_name is resolved to a
+                                     song-track FK and written via
+                                     set_device_sidechain; same get_input_routing
+                                     shape as track_input_routing)
       - `track_arrangement_clips:<track_id>`
                                  -> {track_index, location: 'arrangement',
                                      clips: [{arrangement_clip_index, name,

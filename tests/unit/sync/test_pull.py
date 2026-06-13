@@ -4985,3 +4985,187 @@ def test_apply_track_devices_pull_never_writes_analyzer_row(conn, song, session)
         "SELECT COUNT(*) AS n FROM devices WHERE display_name = ?", (_ANALYZER,)
     ).fetchone()["n"]
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# SDC-7K3M — device sidechain SOURCE pull-capture
+# ---------------------------------------------------------------------------
+
+
+def _link_device(conn, *, session, db_id, ableton_index):
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=db_id,
+        ableton_index=ableton_index,
+    )
+
+
+def _seed_sidechain_device(conn, song, session, *, host_name="Bass"):
+    """A linked Compressor on a host track, plus a distinct sibling source
+    track. Returns (device_id, source_track_id, host_track_id)."""
+    host = M.create_track(conn, song_id=song, track_index=1, name=host_name)
+    src = M.create_track(conn, song_id=song, track_index=2, name="Kick")
+    _link_track(conn, session=session, db_id=host, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_track_id=host, position=0)
+    dev = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor", display_name="Compressor",
+    )
+    _link_device(conn, session=session, db_id=dev, ableton_index=1)
+    return dev, src, host
+
+
+def test_plan_pull_device_sidechain_emits_one_probe_per_linked_device(conn, song, session):
+    dev, _src, _host = _seed_sidechain_device(conn, song, session)
+    plan = pull.plan_pull_device_sidechain(conn, song_id=song, session_id=session)
+    keys = [c.key for c in plan.calls]
+    assert keys == [f"device_sidechain_source:{dev}"]
+    call = plan.calls[0]
+    assert call.tool == "ableton_device"
+    assert call.args["action"] == "get_input_routing"
+    assert call.args["device_index"] == 1  # device position
+    assert call.args["track_index"] == 1   # host track ableton index
+
+
+def test_plan_pull_device_sidechain_skips_unlinked_track(conn, song, session):
+    host = M.create_track(conn, song_id=song, track_index=1, name="Bass")
+    chain_id = M.create_device_chain(conn, parent_track_id=host, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor", display_name="Compressor")
+    # host track NOT linked
+    plan = pull.plan_pull_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("not linked" in n for n in plan.notes)
+
+
+def test_plan_pull_device_sidechain_skips_master_track(conn, song, session, master):
+    # master track devices are not probed (symmetry with the rest of pull)
+    chain_id = M.create_device_chain(conn, parent_track_id=master, position=0)
+    M.create_device(conn, chain_id=chain_id, position=1,
+                    kind="Compressor", display_name="Compressor")
+    plan = pull.plan_pull_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+
+
+def test_apply_device_sidechain_source_distinct_track_persisted(conn, song, session):
+    """The capture case: Live reports a distinct sibling track as the device's
+    input → write the source FK through set_device_sidechain."""
+    dev, src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Kick"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] == src
+    assert row["sidechain_source_channel"] is None
+
+
+def test_apply_device_sidechain_source_with_channel(conn, song, session):
+    dev, src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(
+        f"device_sidechain_source:{dev}", _in_routing("Kick", channel="Post FX")
+    )]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 1
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] == src
+    assert row["sidechain_source_channel"] == "Post FX"
+
+
+def test_apply_device_sidechain_source_emits_event_actor_sync(conn, song, session):
+    dev, _src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Kick"))]
+    pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session, actor="sync",
+        reason="pull from draft",
+    )
+    events = Q.get_events_for_song(conn, song)
+    sc = [e for e in events if e["kind"] == "device_sidechain_set"]
+    assert len(sc) == 1
+    assert sc[0]["actor"] == "sync"
+
+
+def test_apply_device_sidechain_source_no_input_routing_is_no_op(conn, song, session):
+    dev, _src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(
+        f"device_sidechain_source:{dev}", _in_routing(None, has=False)
+    )]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_device(conn, dev)["sidechain_source_track_id"] is None
+
+
+def test_apply_device_sidechain_source_none_current_type_is_no_op(conn, song, session):
+    dev, _src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing(None))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_sidechain_source_self_match_is_no_op(conn, song, session):
+    """A device routed to its OWN host track's signal is the default input, not a
+    sidechain — must not author a spurious source."""
+    dev, _src, _host = _seed_sidechain_device(conn, song, session, host_name="Bass")
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Bass"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_device(conn, dev)["sidechain_source_track_id"] is None
+
+
+def test_apply_device_sidechain_source_non_track_input_is_no_op_v1(conn, song, session):
+    """V1: a non-track input (external / "No Input") does not auto-CLEAR an
+    authored source — quiet no-op (operator-verification gates the clear)."""
+    dev, src, _host = _seed_sidechain_device(conn, song, session)
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=src)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("No Input"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    # authored source is preserved, not clobbered
+    assert Q.get_device(conn, dev)["sidechain_source_track_id"] == src
+
+
+def test_apply_device_sidechain_source_ambiguous_name_warns(conn, song, session):
+    """Two tracks share the source name → no unambiguous FK; warn + skip."""
+    host = M.create_track(conn, song_id=song, track_index=1, name="Bass")
+    M.create_track(conn, song_id=song, track_index=2, name="Kick")
+    M.create_track(conn, song_id=song, track_index=3, name="Kick")  # collision
+    _link_track(conn, session=session, db_id=host, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_track_id=host, position=0)
+    dev = M.create_device(conn, chain_id=chain_id, position=1,
+                          kind="Compressor", display_name="Compressor")
+    _link_device(conn, session=session, db_id=dev, ableton_index=1)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Kick"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert any("multiple tracks" in w for w in out.warnings)
+    assert Q.get_device(conn, dev)["sidechain_source_track_id"] is None
+
+
+def test_apply_device_sidechain_source_unlinked_device_skips_with_warning(conn, song, session):
+    host = M.create_track(conn, song_id=song, track_index=1, name="Bass")
+    M.create_track(conn, song_id=song, track_index=2, name="Kick")
+    _link_track(conn, session=session, db_id=host, ableton_index=1)
+    chain_id = M.create_device_chain(conn, parent_track_id=host, position=0)
+    dev = M.create_device(conn, chain_id=chain_id, position=1,
+                          kind="Compressor", display_name="Compressor")
+    # device NOT linked — a hand-rolled results.json could route around the planner
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Kick"))]
+    out = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert out.mutations == 0
+    assert out.skipped_unlinked == 1
+    assert any("not linked" in w for w in out.warnings)
+
+
+def test_apply_device_sidechain_source_idempotent_round_trip(conn, song, session):
+    dev, src, _host = _seed_sidechain_device(conn, song, session)
+    results = [_result(f"device_sidechain_source:{dev}", _in_routing("Kick"))]
+    first = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert first.mutations == 1
+    # second apply of the SAME live state is a no-op (no event churn)
+    second = pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    assert second.mutations == 0
+    assert second.no_ops == 1
+    events = Q.get_events_for_song(conn, song)
+    assert sum(1 for e in events if e["kind"] == "device_sidechain_set") == 1

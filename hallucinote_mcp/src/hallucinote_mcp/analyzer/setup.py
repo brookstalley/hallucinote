@@ -367,6 +367,17 @@ def _ensure_on_surface(
             # + re-add (the load appends → now terminal). The M4L reload cost is
             # paid ONLY on this changed surface (R12). The analyzer pre-existed
             # in the song, so was_loaded stays False — it was MOVED, not added.
+            #
+            # Non-atomicity (Critic SNP-8R4K-3 W): delete-then-reload is not
+            # atomic — if the reload fails to place the device, the re-read
+            # below RAISES loudly ("the load did not place the device"), so it
+            # is NOT silent, and the surface self-heals on the next render (the
+            # `absent` path reloads it). The stronger never-tapless form
+            # (load-the-new-last FIRST, then delete the old mid-chain one)
+            # introduces a transient two-analyzer state + old-vs-new
+            # disambiguation; it's deferred to the Live-hardening pass alongside
+            # operator-verification of this whole reposition path (real reload
+            # failures only surface in Live, which this no-Live chunk defers).
             context.run_on_main(lambda: device_handlers.delete_handler(
                 context,
                 device_index=existing_idx,

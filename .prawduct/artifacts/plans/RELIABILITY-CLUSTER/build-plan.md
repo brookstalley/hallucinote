@@ -50,7 +50,7 @@ truly-unbuilt items.
   past the composed song length. *Signal:* a skeleton push with out-of-extent cues completes
   (warned); a later push places them.
 
-- [ ] **5 · SYN-5C3J** — `push_cli --pin <version>` (or env knob) runs a push under a pinned
+- [x] **5 · SYN-5C3J** — already resolved in CLR-A (#160): recovery teaching (`_version_mismatch_recovery`, 4 tests) + error-recovery guide "Engine version drift" section. **DECISION (pre-existing, sound): the `--pin` flag was consciously rejected** — a process that mutates `sys.path` after import already imported the wrong package, so pinning must happen in the environment (PYTHONPATH) before import; the env mechanism IS the documented knob. Not overriding a deliberate, documented decision to satisfy literal wording. No code; close backlog. — `push_cli --pin <version>` (or env knob) runs a push under a pinned
   engine version for the editable-install + parallel-engine-dev mismatch lockout; error-recovery
   guide documents it. *Signal:* `--pin` runs a pinned push; the guide documents the recovery.
 
@@ -71,4 +71,7 @@ truly-unbuilt items.
   scaffold classification populated on reuse.
 
 ## Context
-Chunk 1 done. Next: chunk 2 (SKL-8N3V).
+ALL chunks resolved. Built this session: **RTE-2P9X, SYN-3C8K, DPP-7H2K** (+ SKL-8N3V
+regression lock). Verified-already-done-in-CLR-A (#160), backlog to be closed:
+**INV-3K8W, SYN-6B4Q, SYN-9F2L, SYN-5C3J**. Next: full suite → cumulative Critic →
+merge to develop → backlog reconcile (shipped→Archive for all 8).

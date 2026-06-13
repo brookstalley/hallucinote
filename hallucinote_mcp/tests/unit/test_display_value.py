@@ -13,6 +13,8 @@ import pytest
 
 from hallucinote_mcp.handlers.display_value import (
     DisplayValueError,
+    canonical_magnitude,
+    canonical_unit_echo,
     display_number_for,
     parse_leading_number,
     resolve_continuous_write,
@@ -66,6 +68,64 @@ def test_parse_leading_float_wins_over_inf_substring() -> None:
     assert parse_leading_number("1.5 (was inf)") == pytest.approx(1.5)
 
 
+# ---------- canonical_magnitude (DPP-7H2K unit normalisation) ----------
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("150 Hz", 150.0),
+        ("2 kHz", 2000.0),
+        ("1.00 kHz", 1000.0),
+        ("120 ms", 120.0),
+        ("2.5 s", 2500.0),
+        ("3.00 s", 3000.0),
+        ("0.1544 Hz", 0.1544),
+        # Unrecognised / single-scale units fall back to the bare leading number
+        # (unchanged from pre-DPP-7H2K): dB, %, ratio, plain.
+        ("-18 dB", -18.0),
+        ("100 %", 100.0),
+        ("3 : 1", 3.0),
+        (".71", 0.71),
+        # inf endpoints pass straight through (no scaling).
+        ("-inf dB", float("-inf")),
+    ],
+)
+def test_canonical_magnitude(text: str, expected: float) -> None:
+    assert canonical_magnitude(text) == pytest.approx(expected)
+
+
+def test_canonical_magnitude_case_insensitive_units() -> None:
+    assert canonical_magnitude("2 KHZ") == pytest.approx(2000.0)
+    assert canonical_magnitude("500 MS") == pytest.approx(500.0)
+
+
+def test_canonical_magnitude_non_numeric() -> None:
+    assert canonical_magnitude("On") is None
+
+
+# ---------- canonical_unit_echo (DPP-7H2K(b) value_real) ----------
+
+@pytest.mark.parametrize(
+    "value_display,expected",
+    [
+        ("0.1544 Hz", (0.1544, "Hz")),
+        ("2 kHz", (2000.0, "Hz")),
+        ("120 ms", (120.0, "ms")),
+        ("2.5 s", (2500.0, "ms")),
+    ],
+)
+def test_canonical_unit_echo_recognised(value_display, expected) -> None:
+    mag, unit = canonical_unit_echo(value_display)
+    assert mag == pytest.approx(expected[0])
+    assert unit == expected[1]
+
+
+@pytest.mark.parametrize("value_display", ["-18 dB", "100 %", "3 : 1", "On"])
+def test_canonical_unit_echo_unrecognised_is_none(value_display: str) -> None:
+    # No recognised scale unit → no value_real echo (the raw `value` serves it).
+    assert canonical_unit_echo(value_display) is None
+
+
 # ---------- synthetic curves mirroring real Compressor params ----------
 
 def threshold_db(raw: float) -> str:
@@ -97,10 +157,25 @@ def ratio_display_inf_max(raw: float) -> str:
 
 def freq_hz_khz(raw: float) -> str:
     """Frequency that scales Hz -> kHz across the range (real EQ-freq shape).
-    The leading number is a non-monotonic proxy across the unit boundary, so
-    value_display must refuse rather than resolve to the wrong magnitude."""
+    The leading number reverses at the unit boundary (999 -> 1.0), but
+    canonical_magnitude normalises kHz -> Hz (DPP-7H2K), so value_display
+    resolves it instead of refusing."""
     hz = 20.0 * (1100.0 ** raw)  # 20 Hz .. 22 kHz (distinct endpoint numbers)
     return f"{hz / 1000.0:.2f} kHz" if hz >= 1000.0 else f"{hz:.1f} Hz"
+
+
+def time_ms_s(raw: float) -> str:
+    """Time that scales ms -> s across the range (comp release / LFO rate shape).
+    1 ms .. 3000 ms; canonical_magnitude normalises s -> ms (DPP-7H2K)."""
+    ms = 1.0 * (3000.0 ** raw)  # 1 ms .. 3 s
+    return f"{ms / 1000.0:.2f} s" if ms >= 1000.0 else f"{ms:.2f} ms"
+
+
+def fold_back_unitless(raw: float) -> str:
+    """A genuinely non-monotonic curve with NO recognised scale unit: the
+    magnitude rises then falls (V-shaped), so unit normalisation can't rescue
+    it and value_display must still refuse (DPP-7H2K only fixes unit-scaling)."""
+    return f"{abs(0.5 - raw):.3f} x"
 
 
 def threshold_db_inf_floor(raw: float) -> str:
@@ -213,14 +288,48 @@ def test_refuses_constant_display_trap() -> None:
         )
 
 
-def test_refuses_non_monotonic_unit_scaling() -> None:
-    # Hz -> kHz: the leading number reverses (999 -> 1.0) at the unit boundary,
-    # so the monotonicity check refuses rather than resolve to a wrong magnitude.
-    # No unit-parsing code — non-monotonicity is the general signal.
+def test_refuses_non_monotonic_after_unit_normalisation() -> None:
+    # A V-shaped curve in an unrecognised unit ("x") stays non-monotonic after
+    # canonical_magnitude (no scale to apply), so it still refuses — DPP-7H2K
+    # only rescues displays whose reversal is a pure unit-scale switch.
     with pytest.raises(DisplayValueError, match="monotonic"):
         solve_raw_for_display(
-            "5 kHz", p_min=0.0, p_max=1.0, str_for_value=freq_hz_khz
+            "0.1 x", p_min=0.0, p_max=1.0, str_for_value=fold_back_unitless
         )
+
+
+# ---------- DPP-7H2K: explicit-unit non-monotonic resolution ----------
+
+def test_resolves_hz_khz_by_unit_normalisation() -> None:
+    # "5 kHz" -> 5000 Hz; freq_hz_khz maps 20*1100**raw, so raw solves to
+    # log(5000/20)/log(1100). The display at that raw rounds to "5.00 kHz".
+    raw = solve_raw_for_display(
+        "5 kHz", p_min=0.0, p_max=1.0, str_for_value=freq_hz_khz
+    )
+    assert freq_hz_khz(raw) == "5.00 kHz"
+
+
+def test_resolves_hz_form_on_same_unit_scaling_param() -> None:
+    # A target in the OTHER unit of the same family ("150 Hz") resolves too —
+    # the canonical magnitude (150 Hz) bisects the normalised curve.
+    raw = solve_raw_for_display(
+        "150 Hz", p_min=0.0, p_max=1.0, str_for_value=freq_hz_khz
+    )
+    assert freq_hz_khz(raw) == "150.0 Hz"
+
+
+def test_resolves_ms_s_by_unit_normalisation() -> None:
+    raw = solve_raw_for_display(
+        "1.5 s", p_min=0.0, p_max=1.0, str_for_value=time_ms_s
+    )
+    assert time_ms_s(raw) == "1.50 s"
+
+
+def test_resolves_ms_form_on_same_time_scaling_param() -> None:
+    raw = solve_raw_for_display(
+        "120 ms", p_min=0.0, p_max=1.0, str_for_value=time_ms_s
+    )
+    assert time_ms_s(raw) == "120.00 ms"
 
 
 def test_refuses_non_numeric_display() -> None:

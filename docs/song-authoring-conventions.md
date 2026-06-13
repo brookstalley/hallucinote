@@ -401,7 +401,7 @@ M.set_track_routing(conn, track_id=bus, output_routing_kind="master")
 M.set_track_routing(conn, track_id=bus, monitoring_state="In")
 ```
 
-Push materializes this in the `routing` phase (after `mix`, before `devices`): each instrument's output chip reads `PRE-MAIN`, the bus's output reads `Main`, the bus Monitor reads `In`. Now author your "master" ride as an ordinary envelope on the **bus** track (volume, pan, or a filter on a device in its chain) — it rides the normal automation paths, no master special-casing. A manual reroute in Live pulls back into the DB through the same mutator (the `routing` reads in `mix-state` pull), so the convention round-trips.
+Push materializes this in the `routing` phase (after `mix` and `devices` — an instrument-bearing MIDI track only exposes audio output routing once its instrument is loaded, RTE-2P9X): each instrument's output chip reads `PRE-MAIN`, the bus's output reads `Main`, the bus Monitor reads `In`. Now author your "master" ride as an ordinary envelope on the **bus** track (volume, pan, or a filter on a device in its chain) — it rides the normal automation paths, no master special-casing. A manual reroute in Live pulls back into the DB through the same mutator (the `routing` reads in `mix-state` pull), so the convention round-trips.
 
 **Monitor=In is load-bearing**, not optional polish: a summing bus that receives routed audio is silent until its monitor is `In` (the live-probed dependency). The `routing` push phase sets it from `monitoring_state='In'`.
 

@@ -32,7 +32,7 @@ from typing import Any, NoReturn
 from .. import device_names
 from ..dispatcher import LiveContext
 from ._routing import resolve_routing_write, routing_surface_fields
-from .display_value import resolve_continuous_write
+from .display_value import canonical_unit_echo, resolve_continuous_write
 
 
 _PARENT_KINDS = ("track", "return", "master")
@@ -909,6 +909,23 @@ def _attach_achieved_display(result: dict[str, Any], param: Any) -> None:
         result["value_display"] = str_for_value(param.value)
 
 
+def _attach_real_unit_echo(result: dict[str, Any], value_display: str | None) -> None:
+    """Echo the achieved magnitude in its base unit (DPP-7H2K b).
+
+    When a continuous write used a ``value_display`` carrying a recognised
+    scale unit (Hz/kHz, ms/s), attach ``value_real`` + ``value_real_unit`` — the
+    target magnitude at full precision, so a phase-critical rate is verifiable
+    beyond the device's rounded ``value_display`` (which can't distinguish
+    0.150 Hz from 0.1544 Hz). No-op for raw-``value`` writes or unrecognised
+    units; the raw ``value`` echo already serves those.
+    """
+    if value_display is None:
+        return
+    echo = canonical_unit_echo(value_display)
+    if echo is not None:
+        result["value_real"], result["value_real_unit"] = echo
+
+
 def _set_active(
     context: LiveContext,
     *,
@@ -1114,6 +1131,7 @@ def set_parameter_handler(
         "parent_kind": kind,
     }
     _attach_achieved_display(result, target_param)
+    _attach_real_unit_echo(result, value_display)
     result.update(_parent_address(kind, idx))
     return result
 
@@ -1174,7 +1192,9 @@ def set_input_routing_handler(
     pointing at the workarounds.
 
     ``type_display_name`` is the routing source's display name as it
-    appears in Live's UI ("1-Drums", "A-Reverb", "Main", "No Input", etc.).
+    appears in Live's routing menu: the BARE track name ("Drums" /
+    "02 Kit Punk" — NOT index-prefixed like "1-Drums", which fails), a
+    return's letter-prefixed name ("A-Reverb"), "Main", "No Input", etc.
     Pass "No Input" to disable the sidechain source without removing the
     device. ``channel_display_name`` optionally sets the sub-routing
     (Pre FX / Post FX / Post Mixer); omit to leave the channel unchanged.
@@ -1993,6 +2013,7 @@ def set_parameter_in_rack_handler(
         "parent_kind": parent_kind,
     }
     _attach_achieved_display(result, param)
+    _attach_real_unit_echo(result, value_display)
     result.update(_parent_address(parent_kind, parent_idx))
     return result
 

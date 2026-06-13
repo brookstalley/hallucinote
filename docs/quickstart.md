@@ -56,7 +56,7 @@ Claude will:
    phases — with sound design baked in:
 
    ```
-   tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → device sidechain → envelopes → performed automation → arrangement → cues
+   tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device sidechain → envelopes → performed automation → arrangement → cues
    ```
 
 **What you should see:** Live fills with named tracks (drums, bass, …), return

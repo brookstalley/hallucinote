@@ -12,11 +12,13 @@ import json
 import pytest
 
 from hallucinote.audio.report import (
+    BedMasking,
     EnergyInversion,
     EnergyRealization,
     EnvelopeVerification,
     Finding,
     LoudnessMetrics,
+    MaskingPair,
     MasterOvershoot,
     MixReport,
     PartCrossRhythm,
@@ -167,11 +169,112 @@ def test_per_section_serializes_with_scoped_surfaces():
     serialized = json.loads(json.dumps(out))
     section = serialized["per_section"][0]
     assert section["section_name"] == "chorus1"
+    # No section_id supplied (hand-built fixture) → serializes as null, not absent.
+    assert section["section_id"] is None
     assert section["start_beat"] == 32.0
     assert section["end_beat"] == 48.0
     assert section["master"]["surface_kind"] == "master"
     assert section["stems"][0]["track_id"] == "track:1"
     assert section["returns"][0]["track_id"] == "return:1"
+
+
+def test_masking_entries_carry_resolved_surface_names_and_section_id():
+    """AUD-2N6K: masking / bed_masking entries serialize resolved display names
+    beside the raw track ids (joined from the report's surfaces), and a
+    DB-identified section carries its ``section_id`` through to JSON."""
+    drums = StemMetrics(
+        track_id="track:4", surface_kind="track",
+        surface_name="04 Drums", loudness=_make_loudness(),
+    )
+    bass = StemMetrics(
+        track_id="track:9", surface_kind="track",
+        surface_name="09 Bass", loudness=_make_loudness(),
+    )
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[drums, bass],
+        master=_make_stem("master"),
+        per_section=[
+            SectionMetrics(
+                section_name="breathe1",
+                section_id="sec-7f3a",
+                start_beat=32.0,
+                end_beat=165.0,
+                master=_make_stem("master"),
+                stems=[drums, bass],
+                masking=[
+                    MaskingPair(
+                        masker_track_id="track:4",
+                        maskee_track_id="track:9",
+                        masked_fraction=0.893,
+                        dominant_band="mud (250-500)",
+                        dominant_region_hz=(200.0, 300.0),
+                    )
+                ],
+                bed_masking=[
+                    BedMasking(
+                        maskee_track_id="track:9",
+                        masked_fraction=0.61,
+                        dominant_band="lows",
+                        dominant_region_hz=(80.0, 250.0),
+                    )
+                ],
+            )
+        ],
+    )
+    section = json.loads(json.dumps(report.to_json_dict()))["per_section"][0]
+
+    assert section["section_id"] == "sec-7f3a"
+
+    m = section["masking"][0]
+    # Raw ids preserved (programmatic use) ...
+    assert m["masker_track_id"] == "track:4"
+    assert m["maskee_track_id"] == "track:9"
+    # ... and resolved names added beside them (narrative use, no manual join).
+    assert m["masker_surface_name"] == "04 Drums"
+    assert m["maskee_surface_name"] == "09 Bass"
+
+    b = section["bed_masking"][0]
+    assert b["maskee_track_id"] == "track:9"
+    assert b["maskee_surface_name"] == "09 Bass"
+
+
+def test_masking_surface_name_is_none_for_unknown_track():
+    """A masking id that isn't a captured surface resolves to None (honest) —
+    the raw id is still present, so a consumer can fall back to it."""
+    report = MixReport(
+        song_slug="s",
+        captures_dir="/x",
+        captured_at="20260528T120000Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        stems=[_make_stem("track:1")],
+        master=_make_stem("master"),
+        per_section=[
+            SectionMetrics(
+                section_name="verse",
+                start_beat=0.0,
+                end_beat=16.0,
+                master=_make_stem("master"),
+                stems=[_make_stem("track:1")],
+                masking=[
+                    MaskingPair(
+                        masker_track_id="track:1",
+                        maskee_track_id="track:404",  # not in surfaces
+                        masked_fraction=0.5,
+                        dominant_band="body",
+                        dominant_region_hz=(400.0, 800.0),
+                    )
+                ],
+            )
+        ],
+    )
+    m = report.to_json_dict()["per_section"][0]["masking"][0]
+    assert m["masker_surface_name"] == "01 Drums"  # track:1 via _make_stem
+    assert m["maskee_surface_name"] is None
+    assert m["maskee_track_id"] == "track:404"
 
 
 def test_additive_grouping_and_polymeter_serialize():

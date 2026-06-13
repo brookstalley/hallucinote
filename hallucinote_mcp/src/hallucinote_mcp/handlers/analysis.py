@@ -333,6 +333,7 @@ def _collect_sections(
             name=row["name"],
             start_beat=_position_bar_to_beats(row["start_bar"], ts_points),
             end_beat=_position_bar_to_beats(row["end_bar"], ts_points),
+            section_id=row["id"],
         )
         for row in section_rows
     ]

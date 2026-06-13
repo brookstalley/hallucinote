@@ -642,6 +642,7 @@ def _measure_sections(
                     )
         per_section.append(SectionMetrics(
             section_name=window.name,
+            section_id=window.section_id,
             start_beat=window.start_beat,
             end_beat=window.end_beat,
             master=_measure_window(capture.master, sl),

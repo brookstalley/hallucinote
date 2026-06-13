@@ -430,6 +430,11 @@ class SectionMetrics:
     start_beat: float
     end_beat: float
     master: StemMetrics
+    # The DB ``sections`` row id this window came from (handler-supplied via
+    # ``SectionWindow``). ``None`` when ``analyze_mix`` is driven by hand-built
+    # fixtures that carry no DB identity. Lets a consumer correlate a finding
+    # back to its ``sections`` row without a name/beat match (AUD-2N6K).
+    section_id: str | None = None
     stems: list[StemMetrics] = field(default_factory=list)
     returns: list[StemMetrics] = field(default_factory=list)
     # Per-band stem-dominance over the section window (one entry per BANDS
@@ -609,6 +614,16 @@ class MixReport:
         lists in JSON anyway — we make that explicit at the boundary so
         round-trip equality of typed objects works.
         """
+        # Resolve masking track ids → display names at the JSON boundary from
+        # the report's own surfaces (the single id→name source of truth).
+        # Masking entries are produced by the pure-DSP ``masking`` module, which
+        # has no surface-name map; rather than denormalize the name onto every
+        # frozen ``MaskingPair`` / ``BedMasking``, the consumer-facing names are
+        # joined here from ``master`` / ``stems`` / ``returns`` (AUD-2N6K).
+        surface_names = {
+            s.track_id: s.surface_name
+            for s in (self.master, *self.stems, *self.returns)
+        }
         return {
             "schema_version": self.schema_version,
             "song_slug": self.song_slug,
@@ -626,7 +641,9 @@ class MixReport:
             "automation_verifications": [
                 _envelope_to_dict(e) for e in self.automation_verifications
             ],
-            "per_section": [_section_to_dict(s) for s in self.per_section],
+            "per_section": [
+                _section_to_dict(s, surface_names) for s in self.per_section
+            ],
             "findings": [_finding_to_dict(f) for f in self.findings],
             "skipped_analyses": list(self.skipped_analyses),
             "energy_realization": (
@@ -656,9 +673,12 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
     }
 
 
-def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
+def _section_to_dict(
+    s: SectionMetrics, surface_names: dict[str, str]
+) -> dict[str, Any]:
     return {
         "section_name": s.section_name,
+        "section_id": s.section_id,
         "start_beat": s.start_beat,
         "end_beat": s.end_beat,
         "master": _stem_to_dict(s.master),
@@ -671,8 +691,10 @@ def _section_to_dict(s: SectionMetrics) -> dict[str, Any]:
             }
             for bc in s.attribution
         ],
-        "masking": [_masking_pair_to_dict(m) for m in s.masking],
-        "bed_masking": [_bed_masking_to_dict(b) for b in s.bed_masking],
+        "masking": [_masking_pair_to_dict(m, surface_names) for m in s.masking],
+        "bed_masking": [
+            _bed_masking_to_dict(b, surface_names) for b in s.bed_masking
+        ],
         "timing": [_part_timing_to_dict(t) for t in s.timing],
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
@@ -726,19 +748,30 @@ def _part_timing_to_dict(t: PartTiming) -> dict[str, Any]:
     }
 
 
-def _masking_pair_to_dict(m: MaskingPair) -> dict[str, Any]:
+def _masking_pair_to_dict(
+    m: MaskingPair, surface_names: dict[str, str]
+) -> dict[str, Any]:
+    # Resolved display names beside the raw ids (AUD-2N6K): the narrative form
+    # ("Drums masks Bass") needs names inline so a consumer doesn't silently get
+    # None joining against the stems list. ``None`` only if a masker/maskee id
+    # isn't a captured surface (shouldn't happen — masking runs over the stems).
     return {
         "masker_track_id": m.masker_track_id,
         "maskee_track_id": m.maskee_track_id,
+        "masker_surface_name": surface_names.get(m.masker_track_id),
+        "maskee_surface_name": surface_names.get(m.maskee_track_id),
         "masked_fraction": m.masked_fraction,
         "dominant_band": m.dominant_band,
         "dominant_region_hz": list(m.dominant_region_hz),
     }
 
 
-def _bed_masking_to_dict(b: BedMasking) -> dict[str, Any]:
+def _bed_masking_to_dict(
+    b: BedMasking, surface_names: dict[str, str]
+) -> dict[str, Any]:
     return {
         "maskee_track_id": b.maskee_track_id,
+        "maskee_surface_name": surface_names.get(b.maskee_track_id),
         "masked_fraction": b.masked_fraction,
         "dominant_band": b.dominant_band,
         "dominant_region_hz": list(b.dominant_region_hz),

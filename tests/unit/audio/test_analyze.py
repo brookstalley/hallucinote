@@ -716,8 +716,14 @@ def test_analyze_mix_populates_section_masking_when_enabled(tmp_path: Path):
 
     sec_json = on.to_json_dict()["per_section"][0]
     assert sec_json["masking"][0]["masker_track_id"] == "track:1"
+    # AUD-2N6K: resolved display names land beside the raw ids end-to-end
+    # (the capture declared surface names "Loud" / "Quiet").
+    assert sec_json["masking"][0]["masker_surface_name"] == "Loud"
+    assert sec_json["masking"][0]["maskee_surface_name"] == "Quiet"
     assert isinstance(sec_json["masking"][0]["masked_fraction"], float)
     assert "bed_masking" in sec_json
+    if sec_json["bed_masking"]:
+        assert "maskee_surface_name" in sec_json["bed_masking"][0]
 
 
 def test_analyze_mix_populates_section_timing_when_enabled(tmp_path: Path):

@@ -194,6 +194,7 @@ def create_device(
     preset_uri: str | None = None,
     preset_query: dict[str, Any] | str | None = None,
     browser_path: list[str] | None = None,
+    audio_file: str | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -226,6 +227,16 @@ def create_device(
     Arc 3 / C2: ``preset_query`` also accepts a path-shape string like
     ``"Drums/Kit-Core 909"`` — normalized to the canonical dict via
     :func:`hallucinote.preset_query.parse_path_shape` before persistence.
+
+    SMP-7K2D: ``audio_file`` assigns a sample to a sampler instrument
+    (Simpler/Sampler) — a song-relative POSIX path (canonically under
+    ``assets/``) or absolute, stored exactly as authored and resolved at push
+    via :func:`hallucinote.paths.resolve_audio_path` (the same resolver
+    ``clips.audio_file`` uses). NULL for non-sampler devices. No device-kind
+    guard here on purpose — capability is probed/adapted at push, not whitelisted
+    (third-party samplers must work too). Window / reverse / pitch / gain are
+    NOT carried here; they are ``device_parameters`` (static) or
+    ``device_parameter`` envelopes (automated).
     """
     if position < 1:
         raise ValueError(f"device position {position} must be >= 1")
@@ -257,7 +268,7 @@ def create_device(
     )
     existing = conn.execute(
         """SELECT id, kind, display_name, class_name, preset_uri, preset_query,
-                  browser_path_json
+                  browser_path_json, audio_file
            FROM devices WHERE chain_id = ? AND position = ?""",
         (chain_id, position),
     ).fetchone()
@@ -270,20 +281,20 @@ def create_device(
         if (
             existing["kind"], existing["display_name"], existing["class_name"],
             existing["preset_uri"], existing["preset_query"],
-            existing_browser_path_json,
+            existing_browser_path_json, existing["audio_file"],
         ) == (
             kind, display_name, class_name, preset_uri, preset_query_json,
-            browser_path_json,
+            browser_path_json, audio_file,
         ):
             _record_touch_if_session("device", device_id)
             return MutatorResult(device_id, "unchanged")
         conn.execute(
             """UPDATE devices SET kind = ?, display_name = ?, class_name = ?,
                                   preset_uri = ?, preset_query = ?,
-                                  browser_path_json = ?
+                                  browser_path_json = ?, audio_file = ?
                WHERE id = ?""",
             (kind, display_name, class_name, preset_uri, preset_query_json,
-             browser_path_json, device_id),
+             browser_path_json, audio_file, device_id),
         )
         song_id = _resolve_device_song(conn, device_id=device_id)
         _emit(
@@ -293,6 +304,7 @@ def create_device(
              "class_name": class_name,
              "preset_uri": preset_uri, "preset_query": preset_query,
              "browser_path": browser_path,
+             "audio_file": audio_file,
              "result_kind": "updated"},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
@@ -304,10 +316,11 @@ def create_device(
     conn.execute(
         """INSERT INTO devices (id, chain_id, position, kind, display_name,
                                 class_name, preset_uri, preset_query,
-                                browser_path_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                browser_path_json, audio_file)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (device_id, chain_id, position, kind, display_name,
-         class_name, preset_uri, preset_query_json, browser_path_json),
+         class_name, preset_uri, preset_query_json, browser_path_json,
+         audio_file),
     )
     song_id = _resolve_device_song(conn, device_id=device_id)
     _emit(
@@ -323,6 +336,7 @@ def create_device(
             "preset_uri": preset_uri,
             "preset_query": preset_query,
             "browser_path": browser_path,
+            "audio_file": audio_file,
         },
         song_id=song_id,
         actor=actor,

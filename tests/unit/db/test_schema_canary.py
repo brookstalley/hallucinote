@@ -174,7 +174,9 @@ def _make_pre_audio_clip_db(db_path) -> None:
             continue
         kept.append(line)
     pre_schema = "".join(kept)
-    assert "audio_file" not in pre_schema, "audio columns not fully stripped"
+    # `audio_file` now also names a devices column (SMP-7K2D), so it can no
+    # longer be the strip sentinel; assert on a clip-UNIQUE audio column.
+    assert "audio_gain" not in pre_schema, "clip audio columns not fully stripped"
     conn = sqlite3.connect(str(db_path))
     try:
         conn.executescript(pre_schema)
@@ -233,6 +235,82 @@ def test_clip_audio_columns_present_on_fresh_db(tmp_path):
     try:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(clips)")}
         assert _CLIP_AUDIO_COLUMNS <= cols
+    finally:
+        conn.close()
+
+
+def _make_pre_device_audio_file_db(db_path) -> None:
+    """Build a full-schema DB with the SMP-7K2D ``devices.audio_file`` block
+    stripped — the shape of a DB built before the sample-instrument model
+    landed. Same construction as ``_make_pre_audio_clip_db``: the real
+    ``schema.sql`` minus the one block (comment header through the column
+    line), so every other table is byte-identical to today's schema.
+    """
+    schema = conn_mod._SCHEMA_PATH.read_text()
+    lines = schema.splitlines(keepends=True)
+    kept = []
+    skipping = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("-- SMP-7K2D"):
+            skipping = True
+            continue
+        if skipping:
+            if stripped.startswith("audio_file"):
+                skipping = False
+            continue
+        kept.append(line)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript("".join(kept))
+        # The devices block's audio_file is gone; the clips one survives.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(devices)")}
+        assert "audio_file" not in cols, "devices.audio_file not stripped"
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_device_audio_file_lands_on_pre_column_db_and_defaults_legacy_rows(tmp_path):
+    """SMP-7K2D's ``devices.audio_file`` ALTER lands idempotently on a
+    pre-column DB, and a legacy device row written BEFORE the migration is
+    valid afterwards: audio_file reads NULL (a non-sampler device).
+    """
+    db_path = tmp_path / "pre_device_audio.db"
+    _make_pre_device_audio_file_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Seed a legacy device in the pre-column shape (raw SQL is the point).
+        conn.execute("INSERT INTO songs (id, name) VALUES ('s1', 'legacy-song')")
+        conn.execute(
+            "INSERT INTO tracks (id, song_id, track_index, name) "
+            "VALUES ('t1', 's1', 1, 'Lead')"
+        )
+        conn.execute(
+            "INSERT INTO device_chains (id, parent_track_id, position) "
+            "VALUES ('dc1', 't1', 0)"
+        )
+        conn.execute(
+            "INSERT INTO devices (id, chain_id, position, kind, display_name) "
+            "VALUES ('d1', 'dc1', 1, 'Operator', 'Operator')"
+        )
+        assert "audio_file" not in {
+            r["name"] for r in conn.execute("PRAGMA table_info(devices)")
+        }
+
+        # Migration lands the column; re-run is a no-op.
+        conn_mod._ensure_added_columns(conn)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
+        assert "audio_file" in cols
+        conn_mod._ensure_added_columns(conn)
+        cols2 = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
+        assert cols2 == cols
+
+        # The legacy device row is valid: audio_file reads NULL.
+        row = conn.execute("SELECT * FROM devices WHERE id = 'd1'").fetchone()
+        assert row["audio_file"] is None
     finally:
         conn.close()
 

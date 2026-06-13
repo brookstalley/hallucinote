@@ -200,6 +200,18 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("clips", "warp_mode", "INTEGER"),
     ("clips", "start_marker", "REAL"),
     ("clips", "end_marker", "REAL"),
+    # SMP-7K2D: devices gain a sample-instrument assignment — the song-relative
+    # (assets/) or absolute path of a sampler's assigned sample, stored as
+    # authored and resolved at push via paths.resolve_audio_path (the SAME
+    # resolver clips.audio_file uses). NULL for every non-sampler device. Window
+    # / reverse / pitch / gain stay device_parameters + envelopes, not columns.
+    # See .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    ("devices", "audio_file", "TEXT"),
+    # AUD-7R3M / SMP-7K2D: clips gain `reverse` — the missing playback-param
+    # sibling of the CLP-AUD1 family (NULL/0 = forward, 1 = reversed). Existing
+    # rows get NULL (forward). Materialized at push as Live's clip reverse, a
+    # playback parameter, not a derived file.
+    ("clips", "reverse", "INTEGER"),
     # RTE-1K9T: track signal routing (output + input) + monitor switch (D6).
     # Existing rows get NULL across all seven (no routing authored) -- the
     # DEFAULT-NULL keeps every pre-column track valid. The routing target is a

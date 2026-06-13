@@ -125,6 +125,12 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Consumers must read `warping` before interpreting the markers.
     start_marker            REAL,
     end_marker              REAL,
+    -- AUD-7R3M / SMP-7K2D: reverse is the playback-param sibling the audio
+    -- family above is missing — ONE immutable audio_file, played reversed when
+    -- set (NULL/0 = forward, 1 = reversed). Materialized at push as Live's clip
+    -- reverse (a playback parameter, NOT a derived/committed file). See
+    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    reverse                 INTEGER,
     UNIQUE(track_id, slot)
 );
 
@@ -367,6 +373,16 @@ CREATE TABLE IF NOT EXISTS devices (
     -- machine plugin loads when the per-machine FileId in preset_uri
     -- doesn't resolve.
     browser_path_json TEXT,
+    -- SMP-7K2D: sample-instrument assignment. When this device is a sampler
+    -- (Simpler/Sampler/...), the song-relative POSIX path (canonically under
+    -- assets/) or absolute path of its assigned sample — stored exactly as
+    -- authored, resolved at push via paths.resolve_audio_path (the SAME
+    -- resolver clips.audio_file uses). NULL for every non-sampler device
+    -- (mirrors how clips.audio_file is NULL for MIDI clips). Window / reverse /
+    -- pitch / gain are NOT columns here — they are device_parameters (static)
+    -- or device_parameter envelopes (automated). See
+    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    audio_file      TEXT,
     UNIQUE(chain_id, position)
 );
 

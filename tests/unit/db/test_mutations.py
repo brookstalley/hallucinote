@@ -187,6 +187,69 @@ def test_set_track_routing_input_and_monitor_round_trip(conn, track):
     assert row["monitoring_state"] == "In"
 
 
+# --- SDC-7K3M: device sidechain SOURCE routing --------------------------------
+
+
+def _sidechain_device(conn, track_id) -> str:
+    chain = M.create_device_chain(conn, parent_track_id=track_id, position=0)
+    return M.create_device(
+        conn, chain_id=chain, position=1, kind="Compressor",
+        display_name="Bass Punk",
+    )
+
+
+def test_set_device_sidechain_persists_source_and_emits_event(conn, song, track):
+    """SDC-7K3M: a device's sidechain SOURCE persists as a track FK (survives
+    renames) + emits one event — the piece the S/C params can't carry."""
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    before = len(_events(conn))
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick, channel="Post FX")
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] == kick
+    assert row["sidechain_source_channel"] == "Post FX"
+    evs = _events(conn)
+    assert len(evs) == before + 1
+    assert evs[-1]["kind"] == E.DEVICE_SIDECHAIN_SET
+    payload = json.loads(evs[-1]["payload_json"])
+    assert payload["device_id"] == dev and payload["source_track_id"] == kick
+
+
+def test_set_device_sidechain_is_idempotent(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick)
+    before = len(_events(conn))
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick)
+    assert len(_events(conn)) == before
+
+
+def test_set_device_sidechain_clear_resets_source_and_channel(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=kick, channel="Post FX")
+    M.set_device_sidechain(conn, device_id=dev, source_track_id=None)
+    row = Q.get_device(conn, dev)
+    assert row["sidechain_source_track_id"] is None
+    assert row["sidechain_source_channel"] is None  # channel forced None on clear
+
+
+def test_set_device_sidechain_rejects_unknown_source(conn, track):
+    dev = _sidechain_device(conn, track)
+    with pytest.raises(ValueError, match="does not reference an existing track"):
+        M.set_device_sidechain(conn, device_id=dev, source_track_id="nope")
+
+
+def test_set_device_sidechain_rejects_cross_song_source(conn, song, track):
+    dev = _sidechain_device(conn, track)
+    other = M.create_song(conn, name="other-song")
+    other_track = M.create_track(
+        conn, song_id=other, track_index=1, name="X", kind="midi"
+    )
+    with pytest.raises(ValueError, match="different song"):
+        M.set_device_sidechain(conn, device_id=dev, source_track_id=other_track)
+
+
 def test_set_track_routing_multi_field_emits_single_event(conn, song, track):
     bus = M.create_track(conn, song_id=song, track_index=9, name="bus", kind="audio")
     before = len(_events(conn))
@@ -485,6 +548,34 @@ def test_create_audio_clip_is_idempotent_and_updates_in_place(conn, audio_track)
     ev = _events(conn)[-1]
     assert ev["kind"] == E.CLIP_UPDATED
     assert json.loads(ev["payload_json"])["changes"]["audio_gain"] == pytest.approx(0.5)
+
+
+def test_create_audio_clip_reverse_defaults_forward(conn, audio_track):
+    """AUD-7R3M: reverse is the missing playback-param sibling — omitted means
+    NULL (forward), like every other CLP-AUD1 audio field left undeclared."""
+    cid = M.create_audio_clip(conn, track_id=audio_track, **_AUDIO_CLIP_KWARGS)
+    assert Q.get_clip(conn, cid)["reverse"] is None
+
+
+def test_create_audio_clip_persists_reverse(conn, audio_track):
+    """reverse=1 round-trips as a declared playback parameter (one immutable
+    audio_file, played reversed) — NOT a derived/committed reversed file."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, **dict(_AUDIO_CLIP_KWARGS, reverse=1)
+    )
+    assert Q.get_clip(conn, cid)["reverse"] == 1
+    payload = json.loads(_events(conn)[-1]["payload_json"])
+    assert payload["reverse"] == 1
+
+
+def test_create_audio_clip_rejects_bad_reverse(conn, audio_track):
+    """reverse is a 0/1 flag (forward/reversed), validated at authoring time
+    like warping — a stray value is refused before any write."""
+    with pytest.raises(ValueError, match="reverse"):
+        M.create_audio_clip(
+            conn, track_id=audio_track, **dict(_AUDIO_CLIP_KWARGS, reverse=2)
+        )
+    assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
 
 
 def test_create_audio_clip_refuses_existing_midi_clip_in_slot(conn, audio_track):
@@ -2207,6 +2298,85 @@ def test_create_device_rejects_bad_browser_path_shapes(conn, song, track):
             conn, chain_id=chain_id, position=1, kind="Op",
             display_name="Op", browser_path=[1, 2, 3],  # type: ignore[list-item]
         )
+
+
+# ---------- SMP-7K2D: devices.audio_file (sample-instrument assignment) ----------
+
+
+def test_create_device_persists_audio_file(conn, song, track):
+    """SMP-7K2D: a sample-instrument's assigned sample is stored exactly as
+    authored (song-relative under assets/) in the new column — the keystone
+    primitive that makes a sampler's sample part of the DB source-of-truth."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    dev_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Simpler", display_name="we-all",
+        audio_file="assets/we-all.wav",
+    )
+    row = Q.get_device(conn, dev_id)
+    assert row["audio_file"] == "assets/we-all.wav"
+
+
+def test_create_device_audio_file_defaults_none(conn, song, track):
+    """A non-sampler device carries NULL audio_file (mirrors clips.audio_file
+    being NULL for MIDI clips) — no device-kind guard, just absence."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    dev_id = M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Compressor", display_name="Compressor",
+    )
+    assert Q.get_device(conn, dev_id)["audio_file"] is None
+
+
+def test_create_device_audio_file_round_trips_in_event(conn, song, track):
+    """The DEVICE_CREATED event surfaces audio_file so request-replay consumers
+    reconstruct the sample assignment."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Simpler", display_name="we-all",
+        audio_file="assets/we-all.wav",
+    )
+    rows = [e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED]
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload_json"])["audio_file"] == "assets/we-all.wav"
+
+
+def test_create_device_audio_file_idempotent_no_event(conn, song, track):
+    """Re-create with an identical audio_file is a no-op — the idempotency
+    tuple includes audio_file, so no spurious second event."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Simpler",
+        display_name="we-all", audio_file="assets/we-all.wav",
+    )
+    n_before = len([e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED])
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Simpler",
+        display_name="we-all", audio_file="assets/we-all.wav",
+    )
+    n_after = len([e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED])
+    assert n_after == n_before
+
+
+def test_create_device_audio_file_change_emits_update_event(conn, song, track):
+    """Re-authoring with a different sample triggers a DEVICE_CREATED update —
+    the column participates in change detection (flip the fold's source asset
+    and the device re-materializes, not a silent no-op)."""
+    chain_id = M.create_device_chain(conn, parent_track_id=track, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Simpler",
+        display_name="we-all", audio_file="assets/we-all.wav",
+    )
+    M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Simpler",
+        display_name="we-all", audio_file="assets/we-all-rev.wav",
+    )
+    rows = [e for e in _events(conn) if e["kind"] == E.DEVICE_CREATED]
+    assert len(rows) == 2
+    p2 = json.loads(rows[1]["payload_json"])
+    assert p2["audio_file"] == "assets/we-all-rev.wav"
+    assert p2["result_kind"] == "updated"
 
 
 # ---------- E1: value_items capture + create_enum_envelope ----------

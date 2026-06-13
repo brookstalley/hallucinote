@@ -747,6 +747,177 @@ def test_phase_defers_duplicate_target_with_alert(conn, song, session):
     assert any("same parameter" in al for al in plan.alerts), plan.alerts
 
 
+def test_phase_alerts_when_changed_arc_collides_with_skipped_lane(
+    conn, song, session,
+):
+    """ENV-8K2R #3: a CHANGED arc colliding on one wire target with an already
+    recorded (skipped-unchanged) arc must be SURFACED — not silently recorded
+    over the skipped arc's lane, which corrupted its stored fingerprint with no
+    warning. The skipped arc now seeds the duplicate-target preflight too, so the
+    collision alerts regardless of which arc the planner visits first."""
+    g1 = M.create_track(conn, song_id=song, track_index=2, name="Bus1",
+                        kind="group")
+    g2 = M.create_track(conn, song_id=song, track_index=3, name="Bus2",
+                        kind="group")
+    # Link drift: both group tracks point at one Ableton index → one wire param.
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g1,
+                         ableton_index=3)
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g2,
+                         ableton_index=3)
+    e1 = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                          target_track_id=g1)
+    _two_point_ramp(conn, e1)
+    # Perform e1 → its fingerprint is recorded → next plan it is skipped-unchanged.
+    push.apply_push_results(
+        conn, [_batch_result(e1, song=song)], session_id=session,
+    )
+    # e2 on the SAME wire target, changed (never performed).
+    e2 = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                          target_track_id=g2)
+    _two_point_ramp(conn, e2)
+
+    plan = _plan(conn, song, session)
+    # The collision is surfaced. Before the fix this was SILENT: the skipped e1
+    # never claimed the target, so e2 queued + recorded over e1's lane.
+    assert any("same parameter" in al for al in plan.alerts), plan.alerts
+
+
+def test_phase_keeps_skipped_lane_when_changed_arc_visited_first(
+    conn, song, session,
+):
+    """ENV-8K2R #3 (visit-order independence): even when the CHANGED arc is
+    EARLIER in the envelope order, the already-recorded (skipped-unchanged) lane
+    is kept and the changed arc is the one deferred. The two-pass claims recorded
+    lanes before queuing any changed arc, so a correct lane is never clobbered —
+    the gap the single-pass version had (the changed arc could win on order)."""
+    g1 = M.create_track(conn, song_id=song, track_index=2, name="Bus1",
+                        kind="group")
+    g2 = M.create_track(conn, song_id=song, track_index=3, name="Bus2",
+                        kind="group")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g1,
+                         ableton_index=3)
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=g2,
+                         ableton_index=3)
+    # e_changed created FIRST (earlier in envelope order).
+    e_changed = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                                  target_track_id=g1)
+    _two_point_ramp(conn, e_changed)
+    # e_kept created second, then PERFORMED so it reads skipped-unchanged.
+    e_kept = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                               target_track_id=g2)
+    _two_point_ramp(conn, e_kept)
+    push.apply_push_results(
+        conn, [_batch_result(e_kept, song=song)], session_id=session,
+    )
+
+    plan = _plan(conn, song, session)
+    queued_ids = [
+        a["arc_id"] for c in plan.calls for a in c.args.get("arcs", [])
+    ]
+    assert e_changed not in queued_ids, queued_ids  # deferred, lane preserved
+    assert any("same parameter" in al for al in plan.alerts), plan.alerts
+
+
+def test_apply_warns_on_arc_count_mismatch(conn, song, session, master_arc):
+    """ENV-8K2R #4: the apply layer cross-checks the handler's reported
+    arc_count against the per-arc entries actually returned. A truncated/empty
+    arcs list would record nothing and re-perform forever — it must surface."""
+    result = {
+        "key": f"perform_batch:{song}",
+        "ok": True,
+        "tool": "ableton_automation",
+        "result": {
+            # Handler claims 2 prepared but only 1 came back (truncated payload).
+            "arcs": [{"arc_id": master_arc, "automation_state": 1}],
+            "arc_count": 2,
+        },
+    }
+    warnings = push.apply_push_results(conn, [result], session_id=session)
+    assert any(
+        "arc_count=2" in w and "carried 1" in w for w in warnings
+    ), warnings
+
+
+def test_apply_no_count_warning_when_arc_counts_agree(
+    conn, song, session, master_arc,
+):
+    """The cross-check is silent on the happy path (returned == reported)."""
+    result = {
+        "key": f"perform_batch:{song}",
+        "ok": True,
+        "tool": "ableton_automation",
+        "result": {
+            "arcs": [{"arc_id": master_arc, "automation_state": 1}],
+            "arc_count": 1,
+        },
+    }
+    warnings = push.apply_push_results(conn, [result], session_id=session)
+    assert not any("counts disagree" in w for w in warnings), warnings
+
+
+def test_perform_batch_call_carries_finite_read_ceiling(
+    conn, song, session, master_arc,
+):
+    """ENV-8K2R #5: the planner caps the otherwise-unbounded perform_batch read
+    at a union-span-derived ceiling, so a worker that dies mid-pass can't block
+    push_cli forever. The ceiling must clear the realtime playback estimate (so a
+    legitimate pass is never falsely timed out) yet stay finite."""
+    from hallucinote.sync.push.perform import (
+        _PERFORM_READ_CEILING_BUFFER_S,
+        _PERFORM_READ_CEILING_FACTOR,
+    )
+
+    call, _ = _batch_arcs(_plan(conn, song, session))
+    assert call.read_timeout is not None  # finite — bounds a dead worker
+    # 16-beat span @120 BPM = 8s realtime; ceiling = 8*factor + buffer.
+    expected = 8.0 * _PERFORM_READ_CEILING_FACTOR + _PERFORM_READ_CEILING_BUFFER_S
+    assert call.read_timeout == pytest.approx(expected, abs=0.5)
+    assert call.read_timeout > 8.0  # comfortably above realtime playback
+
+
+def test_perform_slowdown_scales_cost_and_forwards_factor(
+    conn, song, session, master_arc,
+):
+    """ENV-2T9K: a >1 slowdown is forwarded to the handler AND scales the
+    operator cost estimates (purpose, alert, #5 read ceiling) — the pass plays
+    factor× slower, so Visible Costs must reflect it."""
+    from hallucinote.sync.push.perform import (
+        _PERFORM_READ_CEILING_BUFFER_S,
+        _PERFORM_READ_CEILING_FACTOR,
+    )
+
+    plan = push.plan_push_performed_automation(
+        conn, song_id=song, session_id=session, slowdown_factor=4.0,
+    )
+    call, _ = _batch_arcs(plan)
+    assert call.args["slowdown_factor"] == 4.0
+    # 16-beat span @120 BPM = 8s realtime → 32s at 4× slowdown.
+    assert "~32.0s" in call.purpose
+    assert any(
+        "~32.0s" in a and "slowdown for fidelity" in a for a in plan.alerts
+    ), plan.alerts
+    # The #5 read ceiling scales with the slowed wall-clock, not the realtime one.
+    assert call.read_timeout == pytest.approx(
+        32.0 * _PERFORM_READ_CEILING_FACTOR + _PERFORM_READ_CEILING_BUFFER_S,
+        abs=0.5,
+    )
+
+
+def test_perform_default_factor_omits_slowdown_from_wire_args(
+    conn, song, session, master_arc,
+):
+    """Default (off) keeps the wire args clean — no slowdown_factor=1.0."""
+    call, _ = _batch_arcs(_plan(conn, song, session))
+    assert "slowdown_factor" not in call.args
+
+
+def test_plan_perform_rejects_slowdown_below_one(conn, song, session, master_arc):
+    with pytest.raises(ValueError, match="slowdown_factor"):
+        push.plan_push_performed_automation(
+            conn, song_id=song, session_id=session, slowdown_factor=0.5,
+        )
+
+
 def test_collision_key_parity_planner_vs_handler():
     """The planner's duplicate-target key and the handler's collision-guard key
     must be field-for-field identical across the package boundary — if they

@@ -144,10 +144,10 @@ Setup is one-time. Day to day: open Live, start Claude Code in your **songs work
 
 > *"Let's make a 2-minute punk rock song that condenses the chord progressions of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-The agent runs `/song-new punk-fate` to scaffold `songs/punk-fate/` in your workspace, picks instrument chains, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live through **thirteen ordered phases**:
+The agent runs `/song-new punk-fate` to scaffold `songs/punk-fate/` in your workspace, picks instrument chains, writes a `build.py` against the generator library, builds `punk-fate-<branch>.db`, and pushes the result into Live through **fourteen ordered phases**:
 
 ```
-tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → envelopes → performed automation → arrangement → cues
+tempo → meter → tracks → returns → scenes → clips → mix → routing → devices → device sidechain → envelopes → performed automation → arrangement → cues
 ```
 
 When it finishes you have a fully-built session — named tracks, returns, clips, device chains, the mix, and any signal routing — ready to play. Iterate by talking — *"the bridge feels flat, lift the lead an octave there"* — and ask Claude to push again; re-runs are idempotent. (Already have a songs repo? Just name a song — *"load falling-walking into Live"* — and Claude builds + pushes it the same way.)

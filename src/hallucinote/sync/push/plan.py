@@ -12,7 +12,7 @@ from hallucinote.db.connection import transaction
 from ._core import PushPlan
 from .arrangement import plan_push_arrangement, plan_push_cue_points
 from .clips import plan_push_clips
-from .devices import plan_push_devices
+from .devices import plan_push_devices, plan_push_device_sidechain
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
 from .perform import plan_push_performed_automation, record_perform_result
@@ -61,6 +61,7 @@ _PHASE_NAMES: tuple[str, ...] = (
     "mix",
     "routing",
     "devices",
+    "device_sidechain",
     "envelopes",
     "performed_automation",
     "arrangement",
@@ -73,6 +74,7 @@ def plan_push_song(
     *,
     song_id: str,
     session_id: str,
+    perform_slowdown_factor: float = 1.0,
 ) -> list[PushPhase]:
     """Master orchestration: return the thirteen phases of a full song push, in order.
 
@@ -118,6 +120,13 @@ def plan_push_song(
          effects and sets parameters. Needs tracks + returns linked.
          Prerequisite for ``device_parameter`` envelopes (need the
          target device linked).
+      9b. ``device_sidechain`` — :func:`plan_push_device_sidechain`.
+          Materializes a device's sidechain SOURCE routing (SDC-7K3M) via
+          ``ableton_device(set_input_routing)``, resolving the DB source-track
+          FK to its Live display_name. AFTER ``devices`` — the device must
+          exist + be linked before its input routing can be set. The S/C
+          On/Gain params ride the ``devices`` phase as ordinary parameters;
+          this restores the one piece they can't carry (the source). Ack-only.
       10. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
          on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
          a snapshot copy, so the envelope must exist on the session
@@ -210,6 +219,13 @@ def plan_push_song(
             description="Load instruments+effects and set parameters on tracks/returns.",
         ),
         PushPhase(
+            name="device_sidechain",
+            plan_fn=lambda: plan_push_device_sidechain(
+                conn, song_id=song_id, session_id=session_id,
+            ),
+            description="Materialize device sidechain SOURCE routing (SDC-7K3M) — after devices, since the device must exist before its input routing can be set.",
+        ),
+        PushPhase(
             name="envelopes",
             plan_fn=lambda: plan_push_envelopes(
                 conn, song_id=song_id, session_id=session_id,
@@ -220,6 +236,7 @@ def plan_push_song(
             name="performed_automation",
             plan_fn=lambda: plan_push_performed_automation(
                 conn, song_id=song_id, session_id=session_id,
+                slowdown_factor=perform_slowdown_factor,
             ),
             description=(
                 "Gesture-record master/group/return-side automation arcs "
@@ -320,6 +337,10 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "track_output_routing",
     "track_input_routing",
     "track_monitor",
+    # SDC-7K3M: device sidechain SOURCE via ableton_device(set_input_routing).
+    # Ack-only — same rationale as the track-routing keys (state originates from
+    # the DB FK; no Live-side index to record back).
+    "device_sidechain",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
@@ -401,6 +422,7 @@ def apply_push_results(
                         f"FAILED ({failure}) — the Live set may be left armed "
                         "or the playhead moved; check record_mode in Live."
                     )
+                processed = 0
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -419,6 +441,23 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    processed += 1
+                # ENV-8K2R #4: planned-vs-returned cross-check. The handler
+                # reports `arc_count` = how many arcs it prepared (== the
+                # planner's queued count on the success path). If fewer per-arc
+                # entries came back — a truncated wire payload, or an empty arcs
+                # list — the missing arcs recorded NOTHING and would re-perform
+                # every push with no signal. Surface the disagreement instead of
+                # silently trusting a short result.
+                expected = res.get("arc_count")
+                if expected is not None and processed != expected:
+                    warnings.append(
+                        f"perform_batch: handler reported arc_count={expected} "
+                        f"but the result carried {processed} per-arc "
+                        f"entr{'y' if processed == 1 else 'ies'} — the counts "
+                        "disagree, so some arcs may have recorded nothing (they "
+                        "re-perform next push). Suspect a truncated wire payload."
+                    )
                 continue
 
             if kind in _LINK_KINDS:

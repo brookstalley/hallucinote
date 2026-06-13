@@ -23,11 +23,11 @@ _ENUMERATING_DOCS = (
 )
 
 
-def test_push_pipeline_phase_count_is_thirteen():
+def test_push_pipeline_phase_count_is_fourteen():
     """Tripwire: when you add/remove a push phase, update the user docs' phase
     count + lists (README / quickstart / skills / collaboration — grep
     'ordered phases') and bump this assertion."""
-    assert len(_PHASE_NAMES) == 13
+    assert len(_PHASE_NAMES) == 14
 
 
 def test_pipeline_docs_include_the_routing_phase():

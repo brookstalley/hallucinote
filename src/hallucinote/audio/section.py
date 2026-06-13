@@ -65,10 +65,16 @@ class SectionWindow:
 
     The MCP handler builds these from ``sections`` rows; callers invoking
     ``analyze_mix`` directly can construct them by hand for fixtures.
+
+    ``section_id`` carries the DB ``sections`` row id when the handler built
+    the window, so the resulting ``SectionMetrics`` can correlate back to its
+    row (AUD-2N6K); it is ``None`` for hand-built fixture windows that have no
+    DB identity.
     """
     name: str
     start_beat: float
     end_beat: float
+    section_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -56,6 +56,9 @@ def _validate_audio_fields(fields: dict[str, Any]) -> None:
     warping = fields.get("warping")
     if warping is not None and warping not in (0, 1):
         raise ValueError(f"warping {warping!r} invalid: 0 or 1.")
+    reverse = fields.get("reverse")
+    if reverse is not None and reverse not in (0, 1):
+        raise ValueError(f"reverse {reverse!r} invalid: 0 (forward) or 1.")
     warp_mode = fields.get("warp_mode")
     if warp_mode is not None and warp_mode not in WARP_MODES.values():
         names = ", ".join(f"{n}={v}" for n, v in WARP_MODES.items())
@@ -180,6 +183,7 @@ def create_audio_clip(
     warp_mode: int | None = None,
     start_marker: float | None = None,
     end_marker: float | None = None,
+    reverse: int | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -213,7 +217,7 @@ def create_audio_clip(
     existing = conn.execute(
         """SELECT id, kind, length_beats, name, audio_file, audio_gain,
                   pitch_coarse, pitch_fine, warping, warp_mode,
-                  start_marker, end_marker
+                  start_marker, end_marker, reverse
            FROM clips WHERE track_id = ? AND slot = ?""",
         (track_id, slot),
     ).fetchone()
@@ -228,6 +232,7 @@ def create_audio_clip(
         "warp_mode": warp_mode,
         "start_marker": start_marker,
         "end_marker": end_marker,
+        "reverse": reverse,
     }
     _validate_audio_fields(fields)
     if existing is not None:
@@ -304,6 +309,7 @@ _AUDIO_CLIP_UPDATE_FIELDS = frozenset({
     "warp_mode",
     "start_marker",
     "end_marker",
+    "reverse",
 })
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from hallucinote.db import init_db, mutations as M
+from hallucinote.db import connect, init_db, mutations as M
 from hallucinote.sync import compat as C
 
 
@@ -31,7 +31,7 @@ def db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def conn(db_path: Path) -> sqlite3.Connection:
-    c = C.connect(db_path)
+    c = connect(db_path)
     yield c
     c.close()
 

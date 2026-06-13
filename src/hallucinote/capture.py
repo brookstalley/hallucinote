@@ -167,6 +167,10 @@ def _replay_devices(
         # authored snapshots may omit `class_name`. The mutator accepts
         # None for that field — informational column, drives plugin
         # classification when present.
+        # SMP-7K2D: a sample-instrument device entry carries `audio_file`
+        # (song-relative under assets/, or absolute) — the sampler's assigned
+        # sample. Non-sampler devices omit it. Push resolves it via
+        # paths.resolve_audio_path, the same resolver clips use.
         device_id = M.create_device(
             conn,
             chain_id=chain_id,
@@ -177,6 +181,7 @@ def _replay_devices(
             preset_uri=preset_uri,
             preset_query=preset_query,
             browser_path=browser_path,
+            audio_file=d.get("audio_file"),
             actor=actor,
             request_id=request_id,
             reason=reason,

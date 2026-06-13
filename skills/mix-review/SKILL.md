@@ -80,8 +80,14 @@ Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). For each section, you have:
 
 - `masking` — ranked ordered pairs `masker → maskee`, `masked_fraction` (0–1),
-  `dominant_band` (musical region). "Drums masks Bass 0.61 in lows."
-- `bed_masking` — each maskee vs the **summed** bed. This catches *distributed*
+  `dominant_band` (musical region). "Drums masks Bass 0.61 in lows." Each entry
+  carries resolved display names — `masker_surface_name` / `maskee_surface_name`
+  — beside the raw `masker_track_id` / `maskee_track_id`; use the names for the
+  narrative (no manual join against `stems`). Each `per_section` entry also
+  carries `section_id` (the DB `sections` row id) for correlating a finding back
+  to its row.
+- `bed_masking` — each maskee (`maskee_surface_name` + raw `maskee_track_id`) vs
+  the **summed** bed. This catches *distributed*
   buildup a single pair misses ("Organ buried 0.98 in mud" = it's clear against
   any one part but drowned by everything together — the classic mud problem).
 - `timing` — per-part onset-vs-grid feel (the read-side counterpart to the

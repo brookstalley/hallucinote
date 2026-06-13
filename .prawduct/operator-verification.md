@@ -6,6 +6,36 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity (Live smoke)
+
+**Status:** PENDING — needs a `/mcp` reconnect (respawn the server on the new handler code,
+which the session that built it does NOT yet run) + a usable Live set. **Visual change:** no
+(audio / LOM state).
+
+All code + unit tests + the cumulative-Critic chain are complete (branch
+`feature/perform-handler-hardening`, 3389 passed / 2 skipped; cumulative 0-blocking →
+verify-resolutions clean). The fakes can't model tempo→beat-advance coupling or Live's async
+Song state, so the runtime recording outcomes need a live transport pass. Checks:
+
+1. **ENV-8K2R #1 — SAR disarm settles.** After a `perform_batch` pass, read
+   `session_automation_record` via LOM — it must read back the pre-pass value (False), not
+   leave the set armed. A `restore_failures` entry naming `session_automation_record_settle`
+   in the result is the failure signal.
+2. **ENV-8K2R #2 — gesture endpoint lands the authored final.** Author a ramping arc; after the
+   pass, seek-read the recorded arrangement automation at `span_end` — it must equal the
+   authored final breakpoint, not sit ~0.8 beat short.
+3. **ENV-2T9K — tempo-reduction fidelity.** Author a 0.5-beat dip to depth 0.1; record once at
+   `slowdown_factor=1` (baseline ~0.589 per the ENV-9P4T probe) and once at e.g.
+   `slowdown_factor=4`; the slowed pass must record the dip materially closer to 0.1. Confirm
+   the transport tempo is restored to the song tempo after the pass (handler echoes
+   `record_tempo` + `slowdown_factor` in its result).
+
+Recipe: drive `ableton_automation(action='perform_batch', arcs=[...], slowdown_factor=N)`
+directly, or `push_cli plan performed_automation --perform-slowdown N`. Verify via the `.als`
+dump / seek-read approach in `.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`.
+
+---
+
 ## INS-7V2D follow-up — MCP startup timeout survives a cold build on a real install
 
 **Status:** PARTIALLY CONFIRMED — the make-or-break check (#1, cold-start survives a real

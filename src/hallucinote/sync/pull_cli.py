@@ -67,11 +67,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
-from hallucinote.db import mutations as M, queries as Q
-from hallucinote.db.connection import connect, resolve_db_path, transaction
+from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db.connection import resolve_db_path, transaction
 from hallucinote.sync import pull
 from hallucinote.sync.session_resolve import resolve_session_id
 
@@ -123,6 +124,20 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
     return path
 
 
+def _open_db(args: argparse.Namespace) -> sqlite3.Connection:
+    """Open the song DB through ``init_db`` so an older on-disk DB is migrated to
+    the current schema before any read/sync runs.
+
+    Mirrors ``push_cli._open_db``: bare ``connect()`` skips the additive-column
+    migration (``_ensure_added_columns`` lives only in ``init_db``), so a DB built
+    by an earlier release reads raw and the first planner to touch a newer column
+    crashes with sqlite3's ``IndexError: No item with that key``. ``init_db`` is
+    idempotent and safe on existing DBs, so opening through it self-heals across
+    schema-adding upgrades.
+    """
+    return init_db(_resolve_db_path(args))
+
+
 def _resolve_song_id(conn, session_id: str) -> str:
     session = Q.get_ableton_session(conn, session_id)
     if session is None:
@@ -138,7 +153,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
             f"pull_cli: unknown domain {args.domain!r}; "
             f"known: {sorted(_DOMAINS)}"
         )
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     args.session_id = resolve_session_id(
         conn, args.session_id, prog="pull_cli plan",
     )
@@ -163,7 +178,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             "{key, ok, tool, result} dicts"
         )
 
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     args.session_id = resolve_session_id(
         conn, args.session_id, prog="pull_cli apply",
         plan_session_id=plan_dict.get("session_id"),
@@ -286,7 +301,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             f"pull_cli execute: unknown domain {args.domain!r}; "
             f"known: {sorted(_DOMAINS)}"
         )
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     args.session_id = resolve_session_id(
         conn, args.session_id, prog="pull_cli execute",
     )

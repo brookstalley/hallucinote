@@ -728,7 +728,7 @@ def test_probe_and_link_skips_devices_on_unlinked_parent(conn, song, session):
 # ---------------------------------------------------------------------------
 
 
-def test_cli_phases_emits_thirteen_phase_metadata(conn, song, session, db_path, capsys):
+def test_cli_phases_emits_fourteen_phase_metadata(conn, song, session, db_path, capsys):
     push_cli.main([
         "phases", session, "--db", str(db_path),
     ])
@@ -737,8 +737,8 @@ def test_cli_phases_emits_thirteen_phase_metadata(conn, song, session, db_path, 
     assert out["session_id"] == session
     assert [p["name"] for p in out["phases"]] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "envelopes",
-        "performed_automation", "arrangement", "cues",
+        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "envelopes", "performed_automation", "arrangement", "cues",
     ]
     for p in out["phases"]:
         assert p["description"], f"phase {p['name']!r} has empty description"
@@ -763,6 +763,62 @@ def test_cli_plan_rejects_unknown_phase(conn, song, session, db_path):
         push_cli.main([
             "plan", "bogus", session, "--db", str(db_path),
         ])
+
+
+def _seed_master_perform_arc(conn, song):
+    master = M.create_track(conn, song_id=song, track_index=0, name="Master",
+                            kind="master")
+    eid = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",
+                            target_track_id=master)
+    M.replace_breakpoints(conn, envelope_id=eid, breakpoints=[
+        {"time_beats": 0.0, "value": 0.85},
+        {"time_beats": 16.0, "value": 0.4},
+    ])
+
+
+def test_cli_plan_performed_automation_honors_perform_slowdown(
+    conn, song, session, db_path, capsys,
+):
+    """ENV-2T9K: the --perform-slowdown operator flag threads through to the
+    performed_automation phase plan (the agent-driven push path)."""
+    _seed_master_perform_arc(conn, song)
+    push_cli.main([
+        "plan", "performed_automation", session,
+        "--db", str(db_path), "--perform-slowdown", "4",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    call = next(
+        c for c in out["calls"] if c["args"].get("action") == "perform_batch"
+    )
+    assert call["args"]["slowdown_factor"] == 4.0
+
+
+def test_cli_plan_rejects_perform_slowdown_below_one_at_parse_time(
+    conn, song, session, db_path,
+):
+    """ENV-2T9K: an out-of-range --perform-slowdown is rejected at the argparse
+    boundary (SystemExit) — fail fast, BEFORE any phase dispatches against Live
+    (the old deferred-into-phase-10 check died 9 phases into a push)."""
+    with pytest.raises(SystemExit):
+        push_cli.main([
+            "plan", "performed_automation", session,
+            "--db", str(db_path), "--perform-slowdown", "0.5",
+        ])
+
+
+def test_cli_plan_performed_automation_default_has_no_slowdown(
+    conn, song, session, db_path, capsys,
+):
+    """Without the flag the plan carries no slowdown override (off by default)."""
+    _seed_master_perform_arc(conn, song)
+    push_cli.main([
+        "plan", "performed_automation", session, "--db", str(db_path),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    call = next(
+        c for c in out["calls"] if c["args"].get("action") == "perform_batch"
+    )
+    assert "slowdown_factor" not in call["args"]
 
 
 def test_cli_apply_writes_link_from_result(conn, song, session, db_path, tmp_path, capsys):
@@ -1082,8 +1138,8 @@ def test_cli_end_to_end_drive_links_everything(
     phase_list = json.loads(capsys.readouterr().out)["phases"]
     assert [p["name"] for p in phase_list] == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "envelopes",
-        "performed_automation", "arrangement", "cues",
+        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "envelopes", "performed_automation", "arrangement", "cues",
     ]
 
     # Step 3: drive each phase. We share counters across the loop so

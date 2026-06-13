@@ -641,3 +641,68 @@ def test_plan_push_devices_master_set_parameter_uses_master_kv(
     assert "track_index" not in args
     assert "return_index" not in args
     assert args["parameter_name"] == "Ceiling"
+
+
+# ---------- SDC-7K3M: device sidechain SOURCE routing ----------
+
+
+def test_plan_push_device_sidechain_emits_set_input_routing(
+    conn, song, session, linked_track,
+):
+    """A device carrying a sidechain source FK emits set_input_routing,
+    resolving the FK to the source track's Live display_name (symmetric with
+    track routing). Ack-only, keyed device_sidechain:<id>."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="Bass Punk"
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(
+        conn, device_id=did, source_track_id=kick, channel="Post FX",
+    )
+
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_device"
+    assert call.args["action"] == "set_input_routing"
+    assert call.args["track_index"] == 5       # the device's parent track
+    assert call.args["device_index"] == 2
+    assert call.args["type_display_name"] == "Kick"   # source FK → display_name
+    assert call.args["channel_display_name"] == "Post FX"
+    assert call.key == f"device_sidechain:{did}"
+
+
+def test_plan_push_device_sidechain_skips_devices_without_source(
+    conn, song, session, linked_track,
+):
+    """A device with no sidechain source (NULL FK) emits nothing."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="C"
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+
+
+def test_plan_push_device_sidechain_defers_unlinked_device(
+    conn, song, session, linked_track,
+):
+    """An unlinked device (the devices phase hasn't landed its link yet) is
+    deferred with a warn, not emitted — the devices-convergence re-plan picks
+    it up once the device_index exists."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="C"
+    )
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=did, source_track_id=kick)
+    # Device intentionally NOT linked.
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []

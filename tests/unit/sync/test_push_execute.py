@@ -127,11 +127,15 @@ def _make_send_fn(
             return "envelope"
         return None
 
-    def send(req):
+    def send(req, *, read_timeout=None):
+        # Mirror client.send's signature: a planner-derived read ceiling
+        # (perform_batch, ENV-8K2R #5) rides in as a keyword; record it so a
+        # test can assert the ceiling was forwarded.
         call_log.append({
             "tool": req.tool, "action": req.action,
             "params_keys": sorted(req.params.keys()),
             "params": dict(req.params),
+            "read_timeout": read_timeout,
         })
 
         # The fake matches against the *request* shape. Tests that want to
@@ -151,14 +155,18 @@ def _make_send_fn(
         # each arc's arc_id with a configurable automation_state (default 1
         # = verified). The apply layer gates each arc independently on it.
         if req.tool == "ableton_automation" and req.action == "perform_batch":
+            arcs_in = req.params.get("arcs", [])
             return FakeResponse(ok=True, result={
                 "arcs": [
                     {
                         "arc_id": a.get("arc_id"),
                         "automation_state": perform_automation_state,
                     }
-                    for a in req.params.get("arcs", [])
+                    for a in arcs_in
                 ],
+                # The real handler reports how many arcs it prepared; the apply
+                # layer cross-checks it against the returned count (ENV-8K2R #4).
+                "arc_count": len(arcs_in),
             })
 
         kind = _kind_for(req.tool, req.action)
@@ -194,12 +202,12 @@ def test_execute_happy_path_writes_state_no_errors_file(
     assert state["outcome"] == "ok"
     assert state["phase_halted"] is None
     assert state["errors_file"] is None
-    # The thirteen phases are present, in order.
+    # The fourteen phases are present, in order.
     names = [p["name"] for p in state["phases"]]
     assert names == [
         "tempo_map", "time_signature_map", "tracks", "returns",
-        "scenes", "clips", "mix", "routing", "devices", "envelopes",
-        "performed_automation", "arrangement", "cues",
+        "scenes", "clips", "mix", "routing", "devices", "device_sidechain",
+        "envelopes", "performed_automation", "arrangement", "cues",
     ]
     # Per fixture: tracks + clips run. Others are skipped (idempotent — no DB
     # content) or ok-with-zero-calls if the planner still emits acks.
@@ -471,9 +479,11 @@ def test_execute_nine_section_fails_without_scene_provisioning(
     the provisioning phase."""
     real_plan_push_song = push_execute.push.plan_push_song
 
-    def plan_without_scenes(conn, *, song_id, session_id):
+    def plan_without_scenes(conn, *, song_id, session_id, **kwargs):
         return [
-            p for p in real_plan_push_song(conn, song_id=song_id, session_id=session_id)
+            p for p in real_plan_push_song(
+                conn, song_id=song_id, session_id=session_id, **kwargs
+            )
             if p.name != "scenes"
         ]
 
@@ -1390,6 +1400,42 @@ def test_execute_unverified_perform_surfaces_in_errors_file_on_exit_0(
     assert eid in apply_recs[0]["error"]
     assert "automation_state" in apply_recs[0]["error"]
     assert Q.get_performed_automation(conn, eid, session) is None
+
+
+def test_execute_forwards_perform_batch_read_ceiling(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ENV-8K2R #5: the planner-derived read ceiling on the perform_batch
+    ToolCall must actually reach the wire send — otherwise the unbounded default
+    policy would let a worker that dies mid-pass block push_cli forever."""
+    master = M.create_track(
+        conn, song_id=song, track_index=0, name="Master", kind="master",
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 16.0, "value": 0.4},
+        ],
+    )
+    send_fn = _make_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    perform_calls = [
+        c for c in send_fn.call_log if c["action"] == "perform_batch"
+    ]
+    assert len(perform_calls) == 1, send_fn.call_log
+    # A finite, span-derived ceiling reached the wire — not the unbounded None.
+    assert perform_calls[0]["read_timeout"] is not None
+    assert perform_calls[0]["read_timeout"] > 16.0
+    # Non-perform calls keep the policy default (no explicit override forwarded).
+    other = [c for c in send_fn.call_log if c["action"] != "perform_batch"]
+    assert all(c["read_timeout"] is None for c in other), other
 
 
 # ---------------------------------------------------------------------------

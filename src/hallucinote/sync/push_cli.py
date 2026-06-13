@@ -57,12 +57,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
 
-from hallucinote.db import mutations as M, queries as Q, resolve_db_path
-from hallucinote.db.connection import connect
+from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.sync import push, push_execute, push_notes
 from hallucinote.sync.session_resolve import resolve_session_id
 
@@ -228,6 +228,23 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
     return path
 
 
+def _open_db(args: argparse.Namespace) -> sqlite3.Connection:
+    """Open the song DB through ``init_db`` so an older on-disk DB is migrated to
+    the current schema before any read/sync runs.
+
+    The sync CLIs historically opened with bare ``connect()``, which never runs
+    the additive-column migration — ``_ensure_added_columns`` lives only inside
+    ``init_db``. A song DB built by an earlier release (e.g. one predating the
+    RTE-1K9T track-routing columns) was then read raw, and the first planner to
+    touch a newer column crashed with sqlite3's ``IndexError: No item with that
+    key``. ``init_db`` is idempotent and safe on existing DBs — ``run_build``
+    opens every existing song this way — so routing all sync-CLI opens through it
+    makes the tool self-heal across schema-adding upgrades. See ``_ADDED_COLUMNS``
+    in ``db/connection.py``.
+    """
+    return init_db(_resolve_db_path(args))
+
+
 def _resolve_song_id(conn, session_id: str) -> str:
     session = Q.get_ableton_session(conn, session_id)
     if session is None:
@@ -248,7 +265,7 @@ def _session_for(conn, args: argparse.Namespace, *, subcmd: str) -> str:
 
 
 def _cmd_phases(args: argparse.Namespace) -> int:
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     _session_for(conn, args, subcmd="phases")
     song_id = _resolve_song_id(conn, args.session_id)
     phases = push.plan_push_song(conn, song_id=song_id, session_id=args.session_id)
@@ -265,10 +282,13 @@ def _cmd_phases(args: argparse.Namespace) -> int:
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     _session_for(conn, args, subcmd="plan")
     song_id = _resolve_song_id(conn, args.session_id)
-    phases = push.plan_push_song(conn, song_id=song_id, session_id=args.session_id)
+    phases = push.plan_push_song(
+        conn, song_id=song_id, session_id=args.session_id,
+        perform_slowdown_factor=args.perform_slowdown,
+    )
     chosen = next((p for p in phases if p.name == args.phase), None)
     if chosen is None:
         valid = ", ".join(p.name for p in phases)
@@ -293,7 +313,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             "{key, ok, tool, result} dicts OR a minimal-format array of "
             "{ok, result} dicts (use --plan to enrich)"
         )
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     # When --plan is passed, its embedded session_id is authoritative for an
     # omitted positional id (and a conflicting explicit id is refused) — the
     # plan was produced against that session.
@@ -404,7 +424,7 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
             args.snapshot, subcmd="probe-and-link",
         )
 
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     session_id = args.session_id
     auto_created = False
 
@@ -514,7 +534,7 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
     if any check fails. The skill uses the recovery hints to fix the state
     before retrying.
     """
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     _session_for(conn, args, subcmd="check-coherence")
     live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
         args, subcmd="check-coherence",
@@ -616,7 +636,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
       silently skip the check (the pre-A1-resid default).
     """
     db_path = _resolve_db_path(args)
-    conn = connect(db_path)
+    conn = init_db(db_path)  # migrate-on-open; see _open_db
     _session_for(conn, args, subcmd="execute")
     song_id = _resolve_song_id(conn, args.session_id)
 
@@ -652,6 +672,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         state_dir=state_dir,
         actor="sync",
         reason=args.reason or f"push_cli execute (session={args.session_id})",
+        perform_slowdown_factor=args.perform_slowdown,
     )
     sys.stdout.write(push_execute.format_summary(result))
 
@@ -720,7 +741,7 @@ def _cmd_push_notes(args: argparse.Namespace) -> int:
     clip whose track isn't linked yet (run a full ``execute`` first).
     """
     db_path = _resolve_db_path(args)
-    conn = connect(db_path)
+    conn = init_db(db_path)  # migrate-on-open; see _open_db
     _session_for(conn, args, subcmd="push-notes")
     song_id = _resolve_song_id(conn, args.session_id)
 
@@ -758,7 +779,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     ``cleanup-default-scaffold`` or explicit removal. Scope is session clips,
     matching the scoped-push compose loop; arrangement prune is out of scope.
     """
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     _session_for(conn, args, subcmd="prune")
     song_id = _resolve_song_id(conn, args.session_id)
     send_fn = _resolve_send_fn()
@@ -848,7 +869,7 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
         raise SystemExit(
             "push_cli cleanup-default-scaffold: need --song <slug> or --db <path>"
         )
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     _session_for(conn, args, subcmd="cleanup-default-scaffold")
     song_id = _resolve_song_id(conn, args.session_id)
 
@@ -953,7 +974,7 @@ def _cmd_create_session(args: argparse.Namespace) -> int:
     """W9-B: low-level helper. Creates an ableton_sessions row for the song,
     prints its id on stdout. Used by ableton-push skill when the user hasn't
     bound a session yet."""
-    conn = connect(_resolve_db_path(args))
+    conn = _open_db(args)
     song = Q.get_song_by_name(conn, args.song)
     if song is None:
         raise SystemExit(
@@ -981,6 +1002,20 @@ def _timestamp() -> str:
     """Compact UTC timestamp for default session names. Avoids `:` for paths."""
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _perform_slowdown_arg(raw: str) -> float:
+    """argparse type for --perform-slowdown: validate at the CLI boundary so an
+    out-of-range value is rejected BEFORE any phase dispatches against Live
+    (ENV-2T9K — the planner/handler also validate as wire-boundary defense, but
+    a human-typed CLI value must fail fast, not 9 phases into a push)."""
+    value = float(raw)  # ValueError → argparse reports a clean parse error
+    if value < 1.0:
+        raise argparse.ArgumentTypeError(
+            f"--perform-slowdown must be >= 1.0 (1.0 = song tempo, off), got "
+            f"{value}"
+        )
+    return value
 
 
 def _add_db_args(p: argparse.ArgumentParser, *, mutex: bool = True) -> None:
@@ -1017,6 +1052,14 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("session_id", nargs="?", default=None,
                    help="ableton_sessions.id (omit to auto-select the "
                         "only/most-recent session in the DB; WFL-7Q2N)")
+    p_plan.add_argument(
+        "--perform-slowdown", type=_perform_slowdown_arg, default=1.0,
+        metavar="FACTOR",
+        help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
+             "song tempo so the fixed tick rate lays down FACTOR× more "
+             "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
+             "off. Only affects the performed_automation phase.",
+    )
     _add_db_args(p_plan)
     p_plan.set_defaults(func=_cmd_plan)
 
@@ -1103,6 +1146,14 @@ def main(argv: list[str] | None = None) -> int:
                                    "silent default — now it's explicit.")
     p_exec.add_argument("--reason", default=None,
                         help="optional reason annotation for emitted events")
+    p_exec.add_argument(
+        "--perform-slowdown", type=_perform_slowdown_arg, default=1.0,
+        metavar="FACTOR",
+        help="ENV-2T9K performed-automation fidelity: record at 1/FACTOR of the "
+             "song tempo so the fixed tick rate lays down FACTOR× more "
+             "breakpoints per beat (costs FACTOR× wall-clock). Default 1.0 = "
+             "off. Only affects the performed_automation phase.",
+    )
     p_exec.set_defaults(func=_cmd_execute)
 
     p_pn = sub.add_parser(

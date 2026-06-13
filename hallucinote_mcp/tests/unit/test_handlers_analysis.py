@@ -544,8 +544,12 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
             "SELECT id FROM songs WHERE name = ?", (slug,)
         ).fetchone()["id"]
         # 4/4 default: bar 1 -> beat 0, bar 2 -> beat 4, bar 3 -> beat 8.
-        M.create_section(conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0)
-        M.create_section(conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0)
+        verse_id = M.create_section(
+            conn, song_id=song_id, name="verse", start_bar=1.0, end_bar=2.0
+        )
+        chorus_id = M.create_section(
+            conn, song_id=song_id, name="chorus", start_bar=2.0, end_bar=3.0
+        )
         conn.commit()
     finally:
         conn.close()
@@ -561,6 +565,11 @@ def test_analyze_handler_picks_up_db_declared_sections(synthetic_song: Path):
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     names = [s["section_name"] for s in report["per_section"]]
     assert names == ["verse", "chorus"]
+    # AUD-2N6K: each per_section entry carries the DB sections row id, so a
+    # finding can correlate back to its row (not just by name/beat).
+    section_ids = [s["section_id"] for s in report["per_section"]]
+    assert section_ids == [verse_id, chorus_id]
+    assert all(sid is not None for sid in section_ids)
     verse = report["per_section"][0]
     assert verse["start_beat"] == 0.0
     assert verse["end_beat"] == 4.0

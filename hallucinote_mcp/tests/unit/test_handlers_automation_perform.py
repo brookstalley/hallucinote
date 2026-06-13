@@ -33,6 +33,8 @@ from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import automation as automation_handlers
 from hallucinote_mcp.handlers.automation import (
     _interp_performed_value,
+    _require_parent,
+    _resolve_send,
     _validate_breakpoints,
     perform_batch_handler,
 )
@@ -125,7 +127,7 @@ class FakePerformSong:
 
     def __init__(self, events: list[tuple]):
         self._events = events
-        self.tempo = 120.0
+        self._tempo = 120.0
         self.is_playing = False
         self.session_automation_record = False
         self.master_track = FakeTrack(events)
@@ -137,6 +139,10 @@ class FakePerformSong:
         # When True, a disarm (record_mode=False) is accepted (event logged)
         # but never applies — Live's async-apply failing silently (probe 10).
         self.disarm_never_applies = False
+        # ENV-8K2R #1: the same async-disarm-never-applies simulation for
+        # session_automation_record (empirically async too) — set True to prove
+        # the restore-path settle-verify catches the silently-armed set.
+        self.sar_disarm_never_applies = False
         self._record_mode_actual = False
         self._record_mode_pending: bool | None = None
         self._record_mode_reads_until_apply = 0
@@ -175,6 +181,11 @@ class FakePerformSong:
         # log once _events exists and init is done.
         if hasattr(self, "_sar"):
             self._events.append(("session_automation_record", bool(v)))
+            # ENV-8K2R #1: simulate the async DISARM that's accepted but never
+            # applies (Live's silent async-apply failing) — the value is logged
+            # but _sar stays armed, so the settle-verify must catch it.
+            if not bool(v) and self.sar_disarm_never_applies:
+                return
         self._sar = bool(v)
 
     # -- current_song_time: advances while playing ---------------------
@@ -189,6 +200,16 @@ class FakePerformSong:
     def current_song_time(self, v: float) -> None:
         self._events.append(("seek", float(v)))
         self._song_time = float(v)
+
+    # -- tempo: event-logged so ENV-2T9K's slow-down + restore is observable --
+    @property
+    def tempo(self) -> float:
+        return self._tempo
+
+    @tempo.setter
+    def tempo(self, v: float) -> None:
+        self._events.append(("tempo", round(float(v), 3)))
+        self._tempo = float(v)
 
     def start_playing(self) -> None:
         self._events.append(("play",))
@@ -254,12 +275,15 @@ def _bp(t: float, v: float, curve: str | None = None) -> dict[str, Any]:
     return bp
 
 
-def _one(ctx, *, settle_timeout_ms: int | None = None, **arc_fields):
+def _one(ctx, *, settle_timeout_ms: int | None = None,
+         slowdown_factor: float | None = None, **arc_fields):
     """Run perform_batch with a single arc; returns the full batched
     result (the arc is ``result["arcs"][0]``)."""
     kwargs: dict[str, Any] = {}
     if settle_timeout_ms is not None:
         kwargs["settle_timeout_ms"] = settle_timeout_ms
+    if slowdown_factor is not None:
+        kwargs["slowdown_factor"] = slowdown_factor
     return perform_batch_handler(ctx, arcs=[arc_fields], **kwargs)
 
 
@@ -522,9 +546,11 @@ def test_perform_batch_closes_every_open_gesture_when_ramp_raises():
 def test_perform_batch_never_nests_run_on_main():
     """run_on_main marshals to Live's main thread and blocks — calling it from
     WITHIN a run_on_main bout (depth > 1) deadlocks against real async Live.
-    The disarm settle-verify calls the worker-only `_wait_for_record_mode_on_worker`
+    The disarm settle-verify calls the worker-only `_wait_for_song_flag_on_worker`
     (which itself polls via run_on_main) DIRECTLY on the worker, not via
-    `_attempt`'s run_on_main. This fails if anyone re-wraps it (max depth 2)."""
+    `_attempt`'s run_on_main — for BOTH the record_mode and the
+    session_automation_record disarm. This fails if anyone re-wraps it (max
+    depth 2)."""
     ctx = FakeCtx()
     _one(
         ctx, target_kind="mixer_volume", master=True,
@@ -577,6 +603,117 @@ def test_perform_batch_settle_verifies_disarm():
     )
     assert any("record_mode_settle" in f
                for f in result.get("restore_failures", [])), result
+
+
+def test_perform_batch_settle_verifies_session_automation_record_disarm():
+    """ENV-8K2R #1: session_automation_record ALSO applies asynchronously
+    (probe 10, confirmed 2026-06-12) — its restore-path disarm is now
+    settle-verified too. A disarm that's ACCEPTED but never applies surfaces in
+    restore_failures (operator-visible) instead of leaving the set silently
+    armed, where the next playback could record clip envelopes."""
+    ctx = FakeCtx()
+    ctx.song.sar_disarm_never_applies = True
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
+        settle_timeout_ms=20,
+    )
+    assert any("session_automation_record_settle" in f
+               for f in result.get("restore_failures", [])), result
+
+
+def test_perform_batch_pins_authored_final_value_before_close():
+    """ENV-8K2R #2: a normal (ramped) arc records its AUTHORED final breakpoint
+    value — the last value SET before end_gesture equals the endpoint, so the
+    recorded lane isn't left up to ~0.8 beat short of the authored final."""
+    ctx = FakeCtx()
+    param = ctx.song.master_track.mixer_device.volume
+    final_value = 0.137
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.9), _bp(8.0, final_value)],
+    )
+    # The exact endpoint is pinned immediately before the gesture closes.
+    assert param.own[-1] == ("end",)
+    assert param.own[-2] == ("set", round(final_value, 6))
+
+
+def test_perform_batch_slows_tempo_during_record_and_restores():
+    """ENV-2T9K: slowdown_factor lowers the transport tempo for the record pass
+    (the lever for more breakpoints per beat at the fixed tick rate) and restores
+    the original after — the slowdown is a recording-time trick, gone from the
+    final set. (The density GAIN itself is a Live-only outcome; here we pin the
+    mechanism: the tempo is set low, then restored.)"""
+    ctx = FakeCtx()
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        slowdown_factor=4.0,
+    )
+    assert result["slowdown_factor"] == 4.0
+    assert result["record_tempo"] == 30.0  # 120 / 4
+    # Reduced tempo set during arm, original restored after the pass.
+    tempo_sets = [e[1] for e in ctx.events if e[0] == "tempo"]
+    assert tempo_sets == [30.0, 120.0]
+    assert ctx.song.tempo == 120.0
+    # The tempo drop happens BEFORE arming so the whole pass runs slowed.
+    assert ctx.events.index(("tempo", 30.0)) < ctx.events.index(
+        ("session_automation_record", True)
+    )
+
+
+def test_perform_batch_floors_reduced_tempo_at_live_minimum():
+    """A large factor can't drive the transport below Live's minimum tempo."""
+    ctx = FakeCtx()  # default 120 BPM
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        slowdown_factor=100.0,  # 120/100 = 1.2 BPM → floored
+    )
+    assert result["record_tempo"] == 20.0  # _PERFORM_MIN_RECORD_TEMPO_BPM
+
+
+def test_perform_batch_default_factor_does_not_touch_tempo():
+    """slowdown_factor defaults to off — no tempo event, no record-tempo change."""
+    ctx = FakeCtx()
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    )
+    assert result["slowdown_factor"] == 1.0
+    assert result["record_tempo"] == 120.0
+    assert not any(name == "tempo" for (name, *_rest) in ctx.events)
+
+
+def test_perform_batch_rejects_factor_below_one():
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="slowdown_factor"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+            slowdown_factor=0.5,
+        )
+
+
+def test_perform_batch_restores_tempo_even_when_pass_raises():
+    """ENV-2T9K: the tempo restore lives in the finally, so a ramp that raises
+    mid-pass still leaves the original tempo (no slowed set left behind)."""
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.raise_on_set_after = 1  # ramp raises
+
+    def _raising_stop() -> None:
+        raise RuntimeError("stop failed")
+
+    ctx.song.stop_playing = _raising_stop  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)],
+            slowdown_factor=4.0,
+        )
+    # Despite the raise, the tempo was restored to the original.
+    assert ctx.song.tempo == 120.0
+    assert ("tempo", 120.0) in ctx.events
 
 
 def test_perform_batch_exception_path_surfaces_armed_set():
@@ -909,3 +1046,54 @@ def test_perform_batch_wire_validation_rejects_bad_target_kind(loaded_actions):
     )
     assert resp.ok is False
     assert "target_kind" in resp.error.lower() or "clip_cc" in resp.error
+
+
+# ---------------------------------------------------------------------------
+# ENV-8K2R #7 — addressing dedup. ``_require_parent`` gained an opt-in master
+# branch (so ``_resolve_perform_target`` delegates its parent resolution there
+# instead of duplicating the return-bounds block), and ``_resolve_send`` is the
+# single home for the send_level bounds check shared by all four envelope paths.
+# ---------------------------------------------------------------------------
+
+
+def test_require_parent_master_returns_master_track():
+    ctx = FakeCtx()
+    assert (
+        _require_parent(ctx, master=True, track_index=None, return_index=None)
+        is ctx.song.master_track
+    )
+
+
+def test_require_parent_rejects_master_combined_with_track_or_return():
+    ctx = FakeCtx()
+    with pytest.raises(ValueError, match="exactly one"):
+        _require_parent(ctx, master=True, track_index=1, return_index=None)
+    with pytest.raises(ValueError, match="exactly one"):
+        _require_parent(ctx, master=True, track_index=None, return_index=1)
+
+
+def test_require_parent_non_master_paths_unchanged():
+    ctx = FakeCtx()
+    assert (
+        _require_parent(ctx, track_index=1, return_index=None)
+        is ctx.song.tracks[0]
+    )
+    assert (
+        _require_parent(ctx, track_index=None, return_index=1)
+        is ctx.song.return_tracks[0]
+    )
+    with pytest.raises(ValueError, match="not both"):
+        _require_parent(ctx, track_index=1, return_index=1)
+
+
+def test_resolve_send_resolves_and_bounds_check():
+    events: list[tuple] = []
+    track = FakeTrack(events)
+    send = FakeGestureParam(events)
+    track.mixer_device.sends = [send]
+    assert _resolve_send(track, track_index=2, return_index=1) is send
+    # 1-based: index 0 and index past the end both out of range, same message.
+    with pytest.raises(IndexError, match="out of range"):
+        _resolve_send(track, track_index=2, return_index=2)
+    with pytest.raises(IndexError, match="out of range"):
+        _resolve_send(track, track_index=2, return_index=0)

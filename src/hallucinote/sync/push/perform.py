@@ -34,6 +34,21 @@ from .envelopes import classify_envelope_route
 
 _DEFAULT_BPM = 120.0
 
+# Client-side read ceiling for the perform_batch wire call (ENV-8K2R #5). The
+# read-timeout POLICY leaves perform_batch unbounded on purpose — a fixed socket
+# timeout would sever the per-arc ``automation_state`` verification this
+# write-only surface depends on. But a worker that dies mid-pass while the TCP
+# socket stays open would block ``push_cli`` forever, so the planner derives a
+# ceiling from the union-span realtime estimate it already computes. The bound
+# must comfortably clear the HANDLER's own wall-clock budget
+# (≈ union_seconds × _PERFORM_WALL_CLOCK_FACTOR(3) + a 10s floor + ~2× the
+# record-settle + the post-pass verification poll), so factor 3 + a generous
+# fixed buffer keeps a legitimately-long pass alive while still bounding a dead
+# worker. A false timeout only costs a fingerprint-gated re-perform next push
+# (no corruption), so we err toward the generous side.
+_PERFORM_READ_CEILING_FACTOR = 3.0
+_PERFORM_READ_CEILING_BUFFER_S = 90.0
+
 
 def _tempo_segments(
     conn: sqlite3.Connection, song_id: str,
@@ -261,6 +276,7 @@ def plan_push_performed_automation(
     *,
     song_id: str,
     session_id: str,
+    slowdown_factor: float = 1.0,
 ) -> PushPlan:
     """Plan the perform pass: ONE
     ``ableton_automation(action='perform_batch')`` call carrying every
@@ -271,10 +287,21 @@ def plan_push_performed_automation(
     data-safety feature, not just a speed one: an unchanged authored arc is
     never re-recorded, so a hand-edited Live lane survives.
 
+    ``slowdown_factor`` (ENV-2T9K, default 1.0 = off) is forwarded to the
+    handler, which lowers the transport tempo for the record pass to lay down
+    factor× more breakpoints per beat (fidelity). It costs factor× wall-clock,
+    so the cost estimates below — the purpose string, the overwrite alert, and
+    the #5 read ceiling — are all scaled by it, keeping Visible Costs honest.
+
     Visible Costs: the call's purpose names the union-span wall-clock (one
     pass, NOT the per-arc sum), and a loud operator-facing ``alert()``
     enumerates every span the pass will record/overwrite.
     """
+    if slowdown_factor < 1.0:
+        raise ValueError(
+            f"slowdown_factor must be >= 1.0 (1.0 = song tempo), got "
+            f"{slowdown_factor}"
+        )
     plan = PushPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
     eligible = [
@@ -291,13 +318,22 @@ def plan_push_performed_automation(
     # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
     # alert and the union-span cost.
     spans: list[tuple[str, float, float]] = []
-    # Addressing identity → first envelope id queued for it. Two changed arcs
-    # on ONE parameter can't both ride a single transport pass (the handler
-    # rejects the whole batch on a collision), so the planner keeps the first
-    # and loudly defers the rest — surfacing the authoring ambiguity instead
-    # of guessing or failing the entire phase.
-    queued_targets: dict[tuple, str] = {}
+    # Addressing identity → envelope id that OWNS the target's single arrangement
+    # lane. Two envelopes addressing ONE Live parameter can't both ride a single
+    # transport pass, so the planner keeps ONE and loudly defers the rest.
+    # Data-safety priority (ENV-8K2R #3): an already-recorded (skipped-unchanged)
+    # lane is claimed in a dedicated pre-pass BEFORE any changed arc, so a changed
+    # arc on the same target is always the one deferred — never recorded over the
+    # correct lane (which used to corrupt the skipped arc's stored fingerprint
+    # with no warning, and was visit-order-dependent in the single-pass version).
+    # Among changed arcs (no recorded lane to protect) the first visited wins.
+    claimed_targets: dict[tuple, str] = {}
 
+    # Validate + classify every eligible arc once (span / addressing warnings
+    # fire here, in eligible order); the claim/queue decision is deferred to the
+    # two ordered passes below so skipped lanes are claimed first.
+    skipped_candidates: list[tuple[tuple, str, str]] = []  # key, label, eid
+    changed_candidates: list[tuple] = []  # env, args, label, key, start, end, bps
     for env in eligible:
         breakpoints = Q.get_breakpoints(conn, env["id"])
         if not breakpoints:
@@ -323,24 +359,48 @@ def plan_push_performed_automation(
         if addressing is None:
             continue
         args, label = addressing
+        target_key = perform_target_key(args)
 
         fingerprint = envelope_fingerprint(env, breakpoints)
         performed = Q.get_performed_automation(conn, env["id"], session_id)
         if performed is not None and performed["fingerprint"] == fingerprint:
-            skipped.append(label)
-            continue
+            skipped_candidates.append((target_key, label, env["id"]))
+        else:
+            changed_candidates.append(
+                (env, args, label, target_key, span_start, span_end, breakpoints)
+            )
 
-        target_key = perform_target_key(args)
-        if target_key in queued_targets:
+    # Pass A — claim every already-recorded lane FIRST so the next pass can't
+    # queue a changed arc over it. Two recorded lanes on one parameter is a
+    # pre-existing authoring ambiguity (only one can actually exist in Live);
+    # surface it, keep the first.
+    for (target_key, label, eid) in skipped_candidates:
+        if target_key in claimed_targets:
             plan.alert(
-                f"performed-automation: arc {env['id']} ({label}) targets the "
-                f"same parameter as already-queued arc "
-                f"{queued_targets[target_key]} — two performed arcs can't ride "
-                "one parameter in a single pass; performing only the first. "
-                "Merge them into one envelope."
+                f"performed-automation: skipped (unchanged) arc {eid} ({label}) "
+                f"shares its parameter with already-recorded arc "
+                f"{claimed_targets[target_key]} — two envelopes on one "
+                "parameter; merge them into one envelope."
             )
             continue
-        queued_targets[target_key] = env["id"]
+        claimed_targets[target_key] = eid
+        skipped.append(label)
+
+    # Pass B — queue changed arcs against the fully-claimed skipped lanes.
+    for (env, args, label, target_key, span_start, span_end, breakpoints) in (
+        changed_candidates
+    ):
+        if target_key in claimed_targets:
+            owner = claimed_targets[target_key]
+            plan.alert(
+                f"performed-automation: arc {env['id']} ({label}) targets the "
+                f"same parameter as already-claimed arc {owner} — keeping "
+                f"{owner} and deferring this one (two performed arcs can't ride "
+                "one parameter in a single pass; an already-recorded lane is "
+                "always kept). Merge them into one envelope."
+            )
+            continue
+        claimed_targets[target_key] = env["id"]
 
         arcs.append({
             "arc_id": env["id"],
@@ -353,14 +413,34 @@ def plan_push_performed_automation(
         union_start = min(s for (_, s, _) in spans)
         union_end = max(e for (_, _, e) in spans)
         union_seconds = _estimate_span_seconds(segments, union_start, union_end)
+        # ENV-2T9K: at a >1 slowdown the transport plays factor× slower, so the
+        # ACTUAL pass wall-clock — and everything derived from it (the operator
+        # cost, the #5 read ceiling) — is the realtime estimate × factor.
+        pass_seconds = union_seconds * slowdown_factor
+        slow_note = (
+            f" at {slowdown_factor:g}× slowdown for fidelity"
+            if slowdown_factor > 1.0 else ""
+        )
+        batch_args: dict[str, Any] = {"action": "perform_batch", "arcs": arcs}
+        if slowdown_factor > 1.0:
+            batch_args["slowdown_factor"] = slowdown_factor
         plan.add(ToolCall(
             tool="ableton_automation",
-            args={"action": "perform_batch", "arcs": arcs},
+            args=batch_args,
             key=f"perform_batch:{song_id}",
             purpose=(
                 f"perform {len(arcs)} arc(s) in ONE transport pass over "
                 f"beats {union_start:g}-{union_end:g} "
-                f"(~{union_seconds:.1f}s realtime playback)"
+                f"(~{pass_seconds:.1f}s realtime playback{slow_note})"
+            ),
+            # ENV-8K2R #5: cap the otherwise-unbounded read so a dead worker
+            # can't block push_cli forever, scaled to the ACTUAL pass duration
+            # (slowdown included) so a legitimately-long pass is never falsely
+            # timed out.
+            read_timeout=round(
+                pass_seconds * _PERFORM_READ_CEILING_FACTOR
+                + _PERFORM_READ_CEILING_BUFFER_S,
+                1,
             ),
         ))
         span_list = "; ".join(
@@ -368,9 +448,9 @@ def plan_push_performed_automation(
         )
         plan.alert(
             f"performed-automation: ONE transport pass over beats "
-            f"{union_start:g}-{union_end:g} (~{union_seconds:.1f}s realtime) "
-            f"WILL RECORD/OVERWRITE {len(arcs)} arc(s): {span_list}. "
-            f"{len(skipped)} unchanged arc(s) skipped."
+            f"{union_start:g}-{union_end:g} (~{pass_seconds:.1f}s realtime"
+            f"{slow_note}) WILL RECORD/OVERWRITE {len(arcs)} arc(s): "
+            f"{span_list}. {len(skipped)} unchanged arc(s) skipped."
         )
     for label in skipped:
         plan.warn(f"performed-automation: skipped (unchanged): {label}")

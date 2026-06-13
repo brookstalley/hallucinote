@@ -324,6 +324,33 @@ def test_replay_reads_preset_query_from_snapshot(conn):
     assert parsed == {"root": "drums", "pattern": "909", "mode": "substring"}
 
 
+def test_replay_reads_audio_file_from_snapshot(conn):
+    """SMP-7K2D: a snapshot device with `audio_file` (a sample-instrument)
+    lands in `devices.audio_file`, so a sampler's assigned sample round-trips
+    as song source-of-truth. Non-sampler devices omit the key → NULL column."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Buried We", "type": "midi",
+            "devices": [
+                {
+                    "index": 1, "name": "we-all", "class": "Simpler",
+                    "audio_file": "assets/we-all.wav",
+                },
+                {"index": 2, "name": "EQ Eight", "class": "EQ Eight"},
+            ],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Buried We"
+    )
+    devices = Q.get_devices_for_track(conn, track["id"])
+    assert devices[0]["audio_file"] == "assets/we-all.wav"
+    # Non-sampler device omits the key → column stays NULL.
+    assert devices[1]["audio_file"] is None
+
+
 def test_replay_reads_browser_path_from_snapshot(conn):
     """E3 (W13-A v1.0): a snapshot device with `browser_path` lands in
     `devices.browser_path_json` so the push planner can thread it back

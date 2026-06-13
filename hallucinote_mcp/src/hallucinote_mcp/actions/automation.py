@@ -288,6 +288,19 @@ register(
                     "2000."
                 ),
             ),
+            ParamSpec(
+                name="slowdown_factor", type="float", required=False,
+                minimum=1.0,
+                description=(
+                    "ENV-2T9K fidelity lever (default 1.0 = record at the "
+                    "song's tempo). >1.0 temporarily lowers the transport "
+                    "tempo to tempo/factor (floored at Live's minimum) for the "
+                    "record pass, so the fixed ~2.5 Hz tick rate lays down "
+                    "factor× more breakpoints per beat. The capture is "
+                    "beat-keyed (plays back correctly at the real tempo); the "
+                    "trade is factor× wall-clock. The tempo is restored after."
+                ),
+            ),
         ),
         handler=automation_handlers.perform_batch_handler,
         # Sleeps and settle-polls between main-thread bouts; acquires

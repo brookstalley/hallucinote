@@ -165,14 +165,12 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
 # Read-timeout policy lives in ``client`` — the single source of truth shared by
 # this agent-forward route AND push_cli's direct dispatch (the ENV-9P4T blocker
 # was the policy existing only here while the push route used the bare client
-# default). Re-exported under the historical names so existing callers/tests
-# keep working; ``client.send`` also auto-resolves it when no read_timeout is
-# passed, so the explicit pass below is belt-and-suspenders, not the only guard.
-from .client import (  # noqa: E402
-    _DEFAULT_READ_TIMEOUT,
-    _ENSURE_LOADED_READ_TIMEOUT,
-    read_timeout_for as _read_timeout_for,
-)
+# default). We consume the resolver for the explicit pass below; ``client.send``
+# also auto-resolves it when no read_timeout is passed, so the explicit pass is
+# belt-and-suspenders, not the only guard. (The private timeout CONSTANTS are not
+# re-exported here — tests assert the policy through ``client.read_timeout_for``,
+# ENV-8K2R #6.)
+from .client import read_timeout_for as _read_timeout_for  # noqa: E402
 
 
 def handle_tool_call(
@@ -331,6 +329,12 @@ def _attach_render_db_seq(request: Request) -> Request:
         db_path = resolve_db_path(song_slug)
         if not db_path.exists():
             return request
+        # Bare connect (not init_db) is deliberate here: this is a best-effort,
+        # side-effect-free provenance read on the render path — it must not ALTER
+        # the song's schema as a side effect of a render. It reads only `songs` +
+        # `events` (no post-schema-bump columns), so the legacy-DB column crash
+        # the sync CLIs guard against can't occur; and the surrounding try/except
+        # degrades to no db_seq if the read fails for any other reason.
         conn = connect(db_path)
         try:
             song = Q.get_song_by_name(conn, song_slug)

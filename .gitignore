@@ -50,6 +50,8 @@ dist/
 .prawduct/.session-start
 .prawduct/.subagent-briefing.md
 .prawduct/.gates-waived
+.prawduct/.governance-ledger.jsonl
+.prawduct/.work-model-index.json
 .prawduct/.sync-pending
 .prawduct/reflections.md
 .prawduct/sync-manifest.json

@@ -90,18 +90,20 @@ def session(conn, song):
 # ---------------------------------------------------------------------------
 
 
-def test_plan_push_song_returns_thirteen_phases(conn, song, session):
+def test_plan_push_song_returns_fourteen_phases(conn, song, session):
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
-    assert len(phases) == 13
+    assert len(phases) == 14
 
 
 def test_plan_push_song_phase_names_and_order(conn, song, session):
-    """The thirteen phase names are the contract between the planner and the
+    """The fourteen phase names are the contract between the planner and the
     push skill — renaming any breaks the skill prose. Order is
     load-bearing (see plan_push_song docstring). ``scenes`` runs
     immediately before ``clips`` (SYN-4P2D): session clip slots are scene
     rows, so the set must have enough scenes before clip-create. ``routing``
-    runs after ``mix`` and before ``devices`` (RTE-1K9T / D5)."""
+    runs after ``mix`` and before ``devices`` (RTE-1K9T / D5).
+    ``device_sidechain`` runs immediately after ``devices`` (SDC-7K3M): a
+    device's sidechain input routing can only be set once the device exists."""
     phases = push.plan_push_song(conn, song_id=song, session_id=session)
     assert [p.name for p in phases] == [
         "tempo_map",
@@ -113,6 +115,7 @@ def test_plan_push_song_phase_names_and_order(conn, song, session):
         "mix",
         "routing",
         "devices",
+        "device_sidechain",
         "envelopes",
         "performed_automation",
         "arrangement",

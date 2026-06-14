@@ -30,10 +30,27 @@ import numpy as np
 
 from .report import ReverbVerification
 
-# Success criterion #5 (audio-analysis MVP): measured vs declared RT60 must
-# agree within this tolerance on a synthetic known-RT60 ring-out. Real-world
-# noisy material gets wider tolerance per the audio-analysis spike §7.
-REVERB_TOLERANCE_S = 0.15
+# Verdict band: measured RT60 vs the composer's DECLARED intent (AUD-3T6L).
+# Live's Reverb RT60 is a nonlinear function of Decay Time + Room Size +
+# diffusion, so the realized RT60 legitimately diverges from the nominal knob
+# by an amount that scales with the RT60 magnitude — hence a RELATIVE band
+# (`reverb_tolerance_s`), not the old fixed ±0.15 s absolute one that
+# false-positived on clean long-decay captures (sun-zone A-Plate 3.37 vs 3.0
+# read as out-of-tolerance). The floor keeps a sane band for very short RT60s
+# and doubles as the synthetic-measurement-accuracy bound the calibration tests
+# assert (the algorithm recovers a known synthetic RT60 to within the floor).
+REVERB_TOLERANCE_FLOOR_S = 0.15
+REVERB_REL_TOLERANCE = 0.20
+
+
+def reverb_tolerance_s(declared_rt60_s: float) -> float:
+    """The verdict band for a declared RT60: a relative fraction of the
+    declared value, never tighter than the absolute floor.
+
+    `max(REVERB_TOLERANCE_FLOOR_S, REVERB_REL_TOLERANCE * declared)` — so a 3.0 s
+    Plate gets a ±0.60 s band (a 0.37 s realized gap passes) while a 0.5 s Room
+    keeps the ±0.15 s floor (0.20 × 0.5 = 0.10 < floor)."""
+    return max(REVERB_TOLERANCE_FLOOR_S, REVERB_REL_TOLERANCE * declared_rt60_s)
 
 # Below this, the decay region is too short to be a ring-out at all (e.g. a
 # capture with no recorded tail — the dry input played to the last sample).
@@ -116,9 +133,13 @@ def measure_return_rt60(
     decay_onset_sample: int,
     declared_rt60_s: float,
     return_track_id: str,
-    tolerance_s: float = REVERB_TOLERANCE_S,
+    tolerance_s: float | None = None,
 ) -> ReverbVerification:
     """Measure a return's RT60 from its ring-out, compare to declared.
+
+    ``tolerance_s`` defaults to the relative verdict band for ``declared_rt60_s``
+    (:func:`reverb_tolerance_s`); pass an explicit value only to override (the
+    calibration tests pass the floor to assert measurement accuracy).
 
     ``return_audio`` is the return surface's stereo (n, 2) float capture.
     ``decay_onset_sample`` is the sample where the ring-out begins — the point
@@ -130,6 +151,8 @@ def measure_return_rt60(
     ``measured_rt60_s`` is NaN — the honest "no usable ring-out" outcome, whose
     remedy is a re-render with a longer ``ring_out_beats``.
     """
+    if tolerance_s is None:
+        tolerance_s = reverb_tolerance_s(declared_rt60_s)
     if return_audio.ndim != 2 or return_audio.shape[1] != 2:
         raise ValueError(
             f"return_audio must be stereo (n, 2); got shape {return_audio.shape}"
@@ -217,7 +240,9 @@ def measure_return_rt60(
 
 
 __all__ = [
-    "REVERB_TOLERANCE_S",
+    "REVERB_TOLERANCE_FLOOR_S",
+    "REVERB_REL_TOLERANCE",
+    "reverb_tolerance_s",
     "find_decay_onset",
     "measure_return_rt60",
 ]

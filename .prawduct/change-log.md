@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
 
-<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills -->
+<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=merged -->
 
 **Re-vendor: REQUIRED** (the `strip` action + status.json heartbeat touch `handlers/`/`actions/`,
 flipping the MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). Bugs 4/1A/3-doc are

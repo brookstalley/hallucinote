@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
 
-<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests -->
+<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=merged -->
 
 **Re-vendor: not required** — engine-only (no `actions/`/`handlers/` touched). Behavior-preserving
 dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drift-guard).

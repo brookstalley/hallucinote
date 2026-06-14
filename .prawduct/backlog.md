@@ -38,11 +38,6 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
-- **[SYN-6T2W]** Shared linked-device iterator for the plan_pull_* family
-  `effort: S · impact: S · area: sync · source: critic · added: 2026-06-13 · status: open · stage: ready`
-
-  ROUNDTRIP-CLUSTER cumulative-Critic NOTE (2026-06-13): plan_pull_device_sidechain is the 4th plan_pull_* planner (alongside plan_pull_devices, plan_pull_nested_rack_chains, plan_pull_device_parameters in src/hallucinote/sync/pull/devices.py) to repeat the same ~25-line walk — for each linked track (skip master) and each linked return, iterate the top-level (position==0) device chain and emit one PullCall per device. Not a regression (each follows the established pattern), but drift-prone. Extract a shared iterator helper (e.g. `_for_each_linked_device(conn, song_id, session_id) -> yields (parent_kind, parent_at, device_row)`) that the four planners consume, so the linked-device + top-level-chain + master-skip logic lives in one place. Behavior-preserving, fully test-caught by the existing per-planner tests. Verifiable signal: the four plan_pull_* device planners share one iteration helper; grep for the `if t["kind"] == "master"` + `chain["position"] != 0` walk finds a single definition.
-
 - **[BAK-3M9T]** UMBRELLA: the live→source "bake" should be ONE turnkey command, not an expert-only multi-trap operation
   `effort: L · impact: L · area: snapshot/sync · source: dogfood · added: 2026-06-13 · status: open · stage: requirements · related: SDC-7K3M, SYN-9F2L, SNP-4K7M, AUD-2N6K, SNP-8R4K, DPP-7H2K · refs: incoming-bugs/archives/2026-06-13-live-to-source-bake-should-be-turnkey.md`
 
@@ -532,13 +527,6 @@ sections only via explicit `/backlog update` calls.
 
   **FRAMEWORK-COUPLED / deferred (verify-first triage, 2026-06-13).** The parser (`TAG_LINE_RE`, stamp-merged / typo-guard) lives in the PLUGIN-provided `tools/product-hook`, which is NOT tracked in this repo (`git ls-files tools/` shows only 5 migrate/eval scripts). The tooling-side canonicalization lands with the upstream framework sync per memory `project_prawduct_framework_authorship`. Future pickers: do not re-attempt the tooling half here (the in-repo change-log mechanical sweep can be done independently if desired).
 
-- **[ENV-5R2J]** Dedup the host-kind→push-route mapping — encoded twice (push planner + DB eligibility layer)
-  `effort: S · impact: S · area: envelope · source: critic · added: 2026-06-11 · status: open · stage: ready · related: ENV-7G4K · reviewed: 2026-06-13`
-
-  From the ENV-7G4K cumulative Critic (note finding): the host-kind→push-route mapping is encoded in two places — `sync/push/envelopes.py` `_route_for_host_kind` and the DB-mutator eligibility layer in `db/mutations` — so the two partitions can drift independently. Dedup to one shared source of truth (chunk 02 already named `classify_envelope_route` as "the single partition source"; make that literally true by having both sites consume it). Low priority, code-health. **Verifiable signal:** exactly one module encodes the host-kind→route partition; `grep` for the mapping table finds a single definition, with `sync/push/envelopes.py` and `db/mutations` both importing it.
-
-  **Sharpened (verify-first triage, 2026-06-13) — these are RELATED-BUT-DISTINCT concerns, not a trivial dedup.** The mutator gate (`db/mutations/devices.py`) encodes host-kind **ELIGIBILITY** (which host kinds may carry a device-param envelope at all); the planner (`sync/push/envelopes.py` `_route_for_host_kind`) encodes the **ROUTE partition** (given an eligible host, which push path it takes). They merely share the `{midi, master, group, audio}` host-kind set — they are not the same table. A true single-source dedup needs a **neutral shared module** both can import: having `db/mutations` import from `sync/push` is a layering inversion. So this is its own focused change (extract a neutral host-kind module, point both eligibility + route sites at it), NOT a quick bundle onto adjacent envelope work.
-
 - **[DEV-5R8Q]** No replace-instrument-keep-FX-chain path — device load is append-only, Live 12.4 has no reorder API
   `effort: M · impact: M · area: device · source: dogfood · added: 2026-06-10 · status: open · stage: requirements · related: SNP-8R4K · refs: incoming-bugs/archives/2026-06-10-swell-first-compose-friction.md · reviewed: 2026-06-11`
 
@@ -697,6 +685,22 @@ sections only via explicit `/backlog update` calls.
 ## Archive
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
+- **[SYN-6T2W]** Shared linked-device iterator for the plan_pull_* family
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-06-13 · status: shipped · stage: ready · reviewed: 2026-06-14 · closed-by: PR #169 (c150572) → develop`
+
+  ROUNDTRIP-CLUSTER cumulative-Critic NOTE (2026-06-13): plan_pull_device_sidechain is the 4th plan_pull_* planner (alongside plan_pull_devices, plan_pull_nested_rack_chains, plan_pull_device_parameters in src/hallucinote/sync/pull/devices.py) to repeat the same ~25-line walk — for each linked track (skip master) and each linked return, iterate the top-level (position==0) device chain and emit one PullCall per device. Not a regression (each follows the established pattern), but drift-prone. Extract a shared iterator helper (e.g. `_for_each_linked_device(conn, song_id, session_id) -> yields (parent_kind, parent_at, device_row)`) that the four planners consume, so the linked-device + top-level-chain + master-skip logic lives in one place. Behavior-preserving, fully test-caught by the existing per-planner tests. Verifiable signal: the four plan_pull_* device planners share one iteration helper; grep for the `if t["kind"] == "master"` + `chain["position"] != 0` walk finds a single definition.
+
+  **SHIPPED 2026-06-14 (PR #169 (c150572) → develop, Critic-debt refactor batch).** Extracted the shared linked-parent/device iterators for the plan_pull_* family.
+
+- **[ENV-5R2J]** Dedup the host-kind→push-route mapping — encoded twice (push planner + DB eligibility layer)
+  `effort: S · impact: S · area: envelope · source: critic · added: 2026-06-11 · status: shipped · stage: ready · related: ENV-7G4K · reviewed: 2026-06-14 · closed-by: PR #169 (c150572) → develop`
+
+  From the ENV-7G4K cumulative Critic (note finding): the host-kind→push-route mapping is encoded in two places — `sync/push/envelopes.py` `_route_for_host_kind` and the DB-mutator eligibility layer in `db/mutations` — so the two partitions can drift independently. Dedup to one shared source of truth (chunk 02 already named `classify_envelope_route` as "the single partition source"; make that literally true by having both sites consume it). Low priority, code-health. **Verifiable signal:** exactly one module encodes the host-kind→route partition; `grep` for the mapping table finds a single definition, with `sync/push/envelopes.py` and `db/mutations` both importing it.
+
+  **Sharpened (verify-first triage, 2026-06-13) — these are RELATED-BUT-DISTINCT concerns, not a trivial dedup.** The mutator gate (`db/mutations/devices.py`) encodes host-kind **ELIGIBILITY** (which host kinds may carry a device-param envelope at all); the planner (`sync/push/envelopes.py` `_route_for_host_kind`) encodes the **ROUTE partition** (given an eligible host, which push path it takes). They merely share the `{midi, master, group, audio}` host-kind set — they are not the same table. A true single-source dedup needs a **neutral shared module** both can import: having `db/mutations` import from `sync/push` is a layering inversion. So this is its own focused change (extract a neutral host-kind module, point both eligibility + route sites at it), NOT a quick bundle onto adjacent envelope work.
+
+  **SHIPPED 2026-06-14 (PR #169 (c150572) → develop, Critic-debt refactor batch).** Pointed create_envelope's host-kind gate at the canonical TRACK_KINDS and added the planner route-completeness drift-guard test.
 
 - **[SNP-8R4K]** Snapshot capture records the HallucinoteAnalyzer devices (+ post-render device loads land after the analyzer → per-stem captures under-measure)
   `effort: M · impact: M · area: snapshot/sync · source: dogfood · added: 2026-06-13 · status: shipped · stage: design · related: BAK-3M9T, DEV-5R8Q, SDC-7K3M, MCP-4T6Y · refs: .prawduct/artifacts/plans/SNP-8R4K/design.md, .prawduct/artifacts/plans/SNP-8R4K/build-plan.md, incoming-bugs/archives/2026-06-13-snapshot-capture-includes-hallucinote-analyzer-devices.md · reviewed: 2026-06-13 · closed-by: chunks 1-4 → develop (dacb141, aa20196, 9be32cc, 39487be; operator-verification treated complete+passed per user)`

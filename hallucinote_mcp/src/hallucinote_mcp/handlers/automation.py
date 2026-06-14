@@ -339,7 +339,7 @@ def _resolve_read_envelope_target_and_clip(
         parent = _require_parent(
             context, track_index=track_index, return_index=return_index,
         )
-        device = _resolve_device_on(parent, device_index)
+        device = _resolve_device_path(parent, device_index)
         target = _find_parameter(device, parameter_name)
         clip = _resolve_clip(parent, location, clip_index)
         return clip, target
@@ -598,15 +598,6 @@ def _resolve_clip(track: Any, location: str, clip_index: int) -> Any:
     )
 
 
-def _resolve_device_on(parent: Any, device_index: int) -> Any:
-    devices = parent.devices
-    if device_index < 1 or device_index > len(devices):
-        raise IndexError(
-            f"device_index {device_index} out of range [1, {len(devices)}]"
-        )
-    return devices[device_index - 1]
-
-
 def _find_parameter(device: Any, parameter_name: str) -> Any:
     for p in getattr(device, "parameters", ()):
         if p.name == parameter_name:
@@ -817,7 +808,7 @@ def _resolve_enum_breakpoint_values(
     parent = _require_parent(
         context, track_index=track_index, return_index=return_index,
     )
-    device = _resolve_device_on(parent, device_index)
+    device = _resolve_device_path(parent, device_index)
     target_param = _find_parameter(device, parameter_name)
     if not bool(getattr(target_param, "is_quantized", False)):
         raise ValueError(
@@ -1029,7 +1020,7 @@ def write_envelope_handler(
             parent = _require_parent(
                 context, track_index=track_index, return_index=return_index,
             )
-            device = _resolve_device_on(parent, device_index)
+            device = _resolve_device_path(parent, device_index)
             target = _find_parameter(device, parameter_name)
             clip = _resolve_clip(parent, location, clip_index)
         elif target_kind in ("mixer_volume", "mixer_pan"):
@@ -1200,7 +1191,7 @@ def clear_handler(
         parent = _require_parent(
             context, track_index=track_index, return_index=return_index,
         )
-        device = _resolve_device_on(parent, device_index)
+        device = _resolve_device_path(parent, device_index)
         target = _find_parameter(device, parameter_name)
         clip = _resolve_clip(parent, location, clip_index)
     elif target_kind in ("mixer_volume", "mixer_pan"):

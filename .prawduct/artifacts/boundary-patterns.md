@@ -222,6 +222,40 @@ When changing this surface:
   same change (the `test_install_skill_consistency.py` structural test guards the
   subcommand calls; the JSON shape is the skill's contract).
 
+### MCP Action Wire Shape (`hallucinote_mcp/.../actions/*.py`)
+
+- **Producer**: `actions/*.py` `register(Action(...))` — the agent-facing tool
+  surface. Each `Action` declares its `name`, `ParamSpec`s (the wire params), and
+  the handler it dispatches to.
+- **Consumers**: the agent/LLM (calls `ableton_<tool>(action=..., ...)`); the
+  `sync/push/*` and `sync/pull/*` planners (emit `ToolCall`s whose `args` MUST
+  match a registered action's params); the skills under `skills/` and the
+  resource guides under `resources/guides/` that document actions; the
+  `test_*_well_formed` / action-registration tests.
+- **Contract**: the set of action **names** per tool, and each action's **param
+  names + types**. Retiring an action, renaming it, or removing/renaming a param
+  breaks every planner `ToolCall` and skill that uses it. Adding an OPTIONAL
+  param (`required=False`) is non-breaking — existing callers omit it and the
+  handler defaults it (the DEEP-RACK-ADDR pattern: `device_path` added to
+  `set_parameter` / `get_parameters` / `load` / `write_envelope` and per-arc in
+  `perform_batch`). Note this is DISTINCT from the version handshake below: the
+  fingerprint is computed over `actions/` + `handlers/` content, so any wire-shape
+  change ALSO forces a re-vendor — but a planner/skill mismatch is a logic break
+  the fingerprint won't catch.
+
+When changing this surface:
+- Retiring/renaming an action or a required param → grep the WHOLE repo
+  (`sync/`, `skills/`, `docs/`, `resources/guides/`, tests) for callers and
+  update each; never leave a parallel/duplicate surface (no-backcompat-to-
+  throwaway). Precedent: DEEP-RACK-ADDR retired `set_parameter_in_rack` /
+  `load_in_rack` (zero production callers; folded into `set_parameter` /
+  `load` + `device_path`/`chain_index`; tests migrated, guides updated).
+- The action's params and the handler signature are two halves of one contract:
+  a ParamSpec the handler doesn't accept (or vice versa) is a dispatch-time
+  `TypeError`. Add/remove on both sides together.
+- Re-vendor is required for any `actions/` change (it's inside the fingerprint
+  paths) — say so in the chunk handoff.
+
 ## Test Levels
 
 Tests fall into three categories that must stay disjoint: platform (the `hallucinote` library), MCP plugin (the `hallucinote-mcp` server), and song-specific. Platform and MCP tests must not load song data; song tests must not test platform/MCP behavior beyond what's incidental to the song.

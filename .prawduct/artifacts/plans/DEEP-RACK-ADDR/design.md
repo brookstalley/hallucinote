@@ -1,6 +1,6 @@
 # DEEP-RACK-ADDR — Holistic Design
 
-**Status:** BUILDING (approved 2026-06-13) — Chunk 1 shipped; Chunks 2-4 in progress.
+**Status:** COMPLETE (2026-06-13) — all 4 chunks shipped (cumulative Critic: 0 blocking). Re-vendor required at release (Chunks 1 & 3 flip the MCP fingerprint); ask #4 property branch + the deep-param live checks are operator-verification-pending.
 **Source:** `incoming-bugs/2026-06-14-nested-nested-rack-params-unreachable-read-set-automate-snapshot.md` (Severity H).
 **Scope decision (user):** all four asks — depth-N read/set/enumerate, snapshot durability, nested automation, voices accessor.
 **Addressing decision (user):** positional `device_path` + name read-back.

@@ -6,15 +6,18 @@ chunk 4a) device chains with dialed parameters. It is the seed mechanism for
 `build.py`: capture once (live Ableton -> snapshot.json), then replay into the
 DB through mutators.
 
-Scope (chunks 3 + 4a + W7-B): tracks + returns + sends + master + mixer state +
-top-level device chains + dialed device parameters + one level of nested rack
-chains. Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
+Scope (chunks 3 + 4a + W7-B + DEEP-RACK-ADDR): tracks + returns + sends + master
++ mixer state + device chains (top-level AND nested) + dialed device parameters.
+Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
 ``Instrument Rack``, ``Audio Effect Rack``; pre-D4 these were the internal
 class names ``DrumGroupDevice``/``InstrumentGroupDevice``/``AudioEffectGroupDevice``)
 may optionally carry a ``chains: [{chain_index, name, devices: [...]}]``
-array; replay walks one level. Recursively nested racks
-(rack-inside-a-rack) are deferred (raises on encounter) — tracked in backlog
-under "nested-nested rack support". Automation envelopes (chunk 4b) are
+array, and a nested device may itself be a rack — replay (`_replay_rack_chains`)
+recurses to ARBITRARY depth (DEEP-RACK-ADDR; the DB's ``device_chains`` /
+``device_parameters`` are depth-agnostic). NOTE: the snapshot-refresh PREVIEW
+(`diff_snapshots` / `merge_snapshots`) itemizes only one level and summarizes
+deeper subtrees opaquely — a preview simplification, NOT a data limit (replay
+ingests the full snapshot regardless). Automation envelopes (chunk 4b) are
 schema-modeled and push-plannable but the capture/replay path doesn't ingest
 them yet — MCP exposes no read surface for the seven envelope target families
 (see `ableton://guides/gaps`).
@@ -1119,9 +1122,11 @@ def preserve_browser_paths(
 # duplicate track names, so name is not a reliable identity).
 #
 # Per-device dialed-param drift is diffed in full; nested rack chains are
-# walked one level (matching `_replay_devices`). Recursively nested racks
-# are reported as a single "subtree_changed" flag — keeping the depth bounded
-# matches what replay supports anyway.
+# walked one level by this PREVIEW diff, reporting anything deeper as a single
+# "nested_chains_subtree_changed" flag. That is a preview simplification only —
+# replay (`_replay_rack_chains`) and push handle nested params at ARBITRARY
+# depth (DEEP-RACK-ADDR), so a deep change is never lost, just not itemized in
+# the operator-facing diff.
 
 
 _MIXER_FIELDS = ("volume", "panning", "mute", "solo", "arm", "color")

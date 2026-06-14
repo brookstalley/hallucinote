@@ -4,6 +4,27 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
+
+<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md -->
+
+**No re-vendor** — the MCP `server.py` PRIMER string is outside `_FINGERPRINT_PATHS`
+(effective on the next `/mcp` respawn). Fixes the problem that agents don't discover
+`/compose-review` and `/mix-review` exist.
+
+- **New `/song-workflow` skill** — a thin, always-in-context lifecycle map; its
+  description names both review checkpoints so they surface even in a flat skill list.
+  Plus `docs/song-workflow.md`, the depth doc: the full lifecycle, the five expertise
+  layers, and links into the research corpus (link, never summarize).
+- **Layer 0 wiring (always loaded):** the MCP PRIMER's flat 7-skill list — which
+  omitted both review skills *and* `/ableton-push` — is now the lifecycle arc + a
+  pointer to `/song-workflow`; CLAUDE.md's skill-chain names the full arc incl. both
+  checkpoints.
+- **Layer 2 wiring (in-flow handoffs):** `/compose-part` → `/compose-review` (the
+  critical broken link — compose-part tells agents not to stop), `/song-pick-instruments`
+  → compose, `/ableton-push` → `/mix-review`. Index back-references added in
+  `docs/skills.md` (a "Start here" row) and the README "Learn more" table.
+
 ## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
 
 <!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=merged -->

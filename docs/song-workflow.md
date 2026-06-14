@@ -139,7 +139,7 @@ through the mutator path. Then loop back to compose or mix.
 
 ## The expertise behind the tools — five layers
 
-The corpus is ~320KB of adversarially-verified design research. It groups into
+The corpus is a deep, adversarially-verified body of design research. It groups into
 five layers; each lens and skill above draws on one or more. Go here when you
 want to understand *why*, or to author at a depth the helpers don't reach.
 

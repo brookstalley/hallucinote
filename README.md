@@ -205,6 +205,7 @@ Either Live isn't running, or you didn't assign the Hallucinote Control Surface 
 | If you want to… | Read |
 |---|---|
 | Build your first song, step by step | [`docs/quickstart.md`](docs/quickstart.md) |
+| Understand the whole song-making lifecycle | [`docs/song-workflow.md`](docs/song-workflow.md) |
 | See every command (skill) you can ask for | [`docs/skills.md`](docs/skills.md) |
 | Understand the design philosophy | [`docs/VISION.md`](docs/VISION.md) |
 | Write or edit a song's `build.py` | [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) |

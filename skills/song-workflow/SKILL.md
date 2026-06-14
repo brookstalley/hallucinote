@@ -66,7 +66,7 @@ after you analyze, run `/mix-review`.**
 ## Go deeper
 
 [docs/song-workflow.md](../../docs/song-workflow.md) carries the full lifecycle,
-the **five expertise layers**, and links into the ~320KB research corpus
+the **five expertise layers**, and links into the research corpus
 (arrangement · melody · performance · masking · intent). The depth ladder:
 helpers → review lenses → the research → hand-author. Go as far down as the art
 demands.

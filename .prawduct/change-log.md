@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
 
-<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md -->
+<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=merged -->
 
 **No re-vendor** — the MCP `server.py` PRIMER string is outside `_FINGERPRINT_PATHS`
 (effective on the next `/mcp` respawn). Fixes the problem that agents don't discover

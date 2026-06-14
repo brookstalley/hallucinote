@@ -14,6 +14,8 @@ from typing import Any, Sequence
 from hallucinote.db import queries as Q
 from hallucinote.preset_query import normalize as _normalize_preset_query
 
+from .tracks import TRACK_KINDS
+
 from ._core import (
     E,
     MutatorResult,
@@ -932,9 +934,7 @@ def create_envelope(
         )
         if host_track_id is not None:
             host_kind = _track_kind(conn, host_track_id)
-            if host_kind is not None and host_kind not in (
-                "midi", "master", "group", "audio",
-            ):
+            if host_kind is not None and host_kind not in TRACK_KINDS:
                 raise ValueError(
                     _envelope_track_kind_refusal(target_kind, host_kind)
                 )

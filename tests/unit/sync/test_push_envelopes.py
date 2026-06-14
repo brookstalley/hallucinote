@@ -1138,6 +1138,29 @@ def test_planner_routes_return_mixer_envelope_to_perform(
                for n in plan.notes), plan.notes
 
 
+def test_route_for_host_kind_covers_every_track_kind():
+    """Drift-guard (ENV-5R2J): the host-kind→route map must assign a concrete
+    route to EVERY canonical track kind, so a new track kind added without a
+    push route fails here instead of silently routing to 'unroutable' at push
+    time. Pins the planner's route policy to the single host-kind vocabulary
+    (db.mutations.TRACK_KINDS) the DB eligibility gate also keys off — the two
+    encodings can no longer drift apart unnoticed. Routing and eligibility stay
+    separate policies; only the vocabulary is shared.
+    """
+    from hallucinote.sync.push.envelopes import _route_for_host_kind
+    from hallucinote.db.mutations import TRACK_KINDS
+
+    unrouted = {k for k in TRACK_KINDS if _route_for_host_kind(k) == "unroutable"}
+    assert not unrouted, (
+        f"track kinds with no push route: {sorted(unrouted)} — add a branch in "
+        "_route_for_host_kind (ENV-5R2J: single host-kind vocabulary)"
+    )
+    # A kind OUTSIDE the vocabulary (and None) still falls through to the
+    # explicit 'unroutable' belt-and-suspenders.
+    assert _route_for_host_kind("synthetic-unknown-kind") == "unroutable"
+    assert _route_for_host_kind(None) == "unroutable"
+
+
 def test_classify_envelope_route_partitions_all_kinds(
     conn, song, session, linked_track, linked_clip, arr_clip,
     linked_return, linked_device,

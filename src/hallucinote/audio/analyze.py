@@ -35,7 +35,7 @@ from .attribution import (
     master_bus_attribution,
 )
 from .io import CaptureSet, Surface, load_capture
-from .levels import apply_stem_gains
+from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
 from .cross_rhythm import (
     analyze_cross_rhythm_window,
@@ -154,6 +154,7 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
+    master_fader_volume: float | None = None,
     compare_to: int | Path | str | None = None,
     analysis_dir: Path | str | None = None,
 ) -> MixReport:
@@ -246,6 +247,19 @@ def analyze_mix(
     stem_metrics = [_measure_surface(s) for s in capture.stems]
     return_metrics = [_measure_surface(r) for r in capture.returns]
 
+    # The master metrics are PRE master-fader — the HallucinoteAnalyzer taps the
+    # master DEVICE CHAIN, before the master mixer volume. When the caller supplies
+    # the master fader volume, surface the post-fader DELIVERED true-peak (bus TP +
+    # the calibrated fader gain) so the report answers "is the delivered output
+    # clipping?" — the master fader is a linear gain after the captured chain.
+    master_fader_db: float | None = None
+    delivered_true_peak_dbtp: float | None = None
+    if master_fader_volume is not None:
+        master_fader_db = live_fader_db(float(master_fader_volume))
+        delivered_true_peak_dbtp = (
+            master_metrics.loudness.true_peak_dbtp + master_fader_db
+        )
+
     overshoot_windows = find_master_overshoots(
         capture.master.audio,
         capture.sample_rate,
@@ -312,6 +326,9 @@ def analyze_mix(
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
         db_seq=capture.db_seq,
+        master_fader_volume=master_fader_volume,
+        master_fader_db=master_fader_db,
+        delivered_true_peak_dbtp=delivered_true_peak_dbtp,
     )
 
     if baseline is not None:

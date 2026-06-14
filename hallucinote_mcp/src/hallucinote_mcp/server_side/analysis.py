@@ -390,6 +390,25 @@ def _collect_stem_gains(
     return gains
 
 
+def _collect_master_fader_volume(
+    conn: "sqlite3.Connection", song_id: str,
+) -> float | None:
+    """The master track's normalized fader volume (0..1), for the report's
+    DELIVERED (post-fader) true-peak.
+
+    The master loudness/true-peak is captured PRE-fader (the HallucinoteAnalyzer
+    taps the master DEVICE CHAIN, before the master mixer volume), so `analyze_mix`
+    needs the fader to emit `delivered_true_peak_dbtp` (it converts via
+    `live_fader_db`). Returns None when there's no master row or a NULL volume —
+    then the report's master block stays pre-fader bus only (no false delivered #).
+    """
+    for row in Q.get_tracks_for_song(conn, song_id):
+        if row["kind"] == "master":
+            vol = row["volume"]
+            return float(vol) if vol is not None else None
+    return None
+
+
 def _collect_sections(
     conn: "sqlite3.Connection", song_id: str,
 ) -> list["SectionWindow"]:
@@ -551,6 +570,9 @@ def analyze_handler(
         declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
+        master_fader_volume = (
+            _collect_master_fader_volume(conn, song_id) if song_id else None
+        )
     finally:
         conn.close()
 
@@ -596,6 +618,12 @@ def analyze_handler(
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).
             stem_gains=stem_gains,
+            # The master metrics are captured PRE master-fader (the analyzer taps
+            # the master DEVICE CHAIN). Thread the master fader volume so the
+            # report can surface the post-fader DELIVERED true-peak — the number
+            # that answers "is the delivered output clipping?" (None → the master
+            # block stays pre-fader bus only).
+            master_fader_volume=master_fader_volume,
             compare_to=compare_to,
             analysis_dir=analysis_dir,
         )
@@ -635,7 +663,13 @@ def analyze_handler(
         if not r["within_tolerance"]
     ]
     summary = {
+        # `master_true_peak_dbtp` is the PRE-fader mix bus (the analyzer taps the
+        # master device chain). `delivered_true_peak_dbtp` is the post-fader number
+        # a clipping check actually needs; both None-when-unknown values come from
+        # the already-sanitized report_dict (muted master → null, not -inf).
         "master_true_peak_dbtp": report_dict["master"]["loudness"]["true_peak_dbtp"],
+        "delivered_true_peak_dbtp": report_dict["delivered_true_peak_dbtp"],
+        "master_fader_db": report_dict["master_fader_db"],
         "overshoot_count": len(report_dict["overshoots"]),
         "reverb_out_of_tolerance_count": len(out_of_tolerance),
         "section_count": len(report_dict["per_section"]),

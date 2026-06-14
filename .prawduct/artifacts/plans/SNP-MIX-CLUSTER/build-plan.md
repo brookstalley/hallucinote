@@ -86,7 +86,7 @@ per user). Action: flip backlog `status=shipped` → Archive; no code.
       `create_device_chain(parent_track_id=master_id)`; compile_snapshot + migrate +
       snapshot_needs_migration join the master to the analyzer strip; capture_plan
       master probe; snapshot-schema.md doc; 8 tests + updated probe-set contract test).
-- [ ] Chunk C: MIX-3S7P close-out
+- [x] Chunk C: MIX-3S7P close-out (6 items → Archive: AUD-3T6L, SNP-4K7M, MIX-3S7P, ARR-9K4T, SNP-8R4K, SDC-7K3M; MEL-1A7K held open — by-ear remains)
 
 ## Boundary investigation (Critic G5)
 - **ReverbVerification contract** (`within_tolerance`/`tolerance_s`) — consumers:

@@ -4,6 +4,15 @@ Entries here are checks that need a human operator and/or a live Ableton
 session that wasn't available when the work landed. `/pr create` surfaces
 pending entries when `operator_verification_required: true`.
 
+> **2026-06-14 — blanket acceptance (user, brooks@tangentry.com).** During the
+> SNP-MIX-CLUSTER close-out the user directed: *"Consider all operator-verification
+> complete and passed."* Every entry below is therefore treated as **operator-accepted
+> (user-asserted, not agent-Live-verified)** as of this date — this is the operator
+> vouching for the checks, the only authority that can. Items closed on this basis:
+> **SNP-8R4K** + **SDC-7K3M** (→ backlog Archive), the **SNP-4K7M** master-device Live
+> round-trip, and **MIX-3S7P** chunk-2 render verification. New entries added *after*
+> this date are not covered and block PRs as usual.
+
 ---
 
 ## 2026-06-13 autonomous session — bridge prepped + new pending checks

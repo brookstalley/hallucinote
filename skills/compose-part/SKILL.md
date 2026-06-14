@@ -69,3 +69,12 @@ Full signatures live in the source (`src/hallucinote/generators/`); the index in
 - **Per-note surgical edits** — blocked by the Live per-note-ID gap; the whole-array path makes it unnecessary anyway (author the end-state).
 - **Velocity-only humanize** — that's `/clip-humanize` (a different axis: jitter on already-feel-correct parts). Don't use it to inject groove.
 - **Structure** (creating tracks, instruments, clips for the first time) — that's `/ableton-push` / `/track-new-with-instrument`. This skill composes *notes* into structure that already exists in the DB.
+
+## Next: read what you composed
+
+When the part — or a section's first compositional pass — is finished, run
+**`/compose-review`**: it reads the composition + the melody and recurrence
+lenses against the song's intent and tells you whether the hook is landing and
+the cheapest musical change if not. It's the checkpoint **after** composing and
+**before** the mix — the one agents most often forget exists. The full lifecycle
+is `/song-workflow`.

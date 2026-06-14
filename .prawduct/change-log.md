@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
 
-<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio -->
+<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=merged -->
 
 - **SNP-4K7M — master-track device snapshot authorship.** The push side shipped
   (DEV-6M2K loads master devices) but the capture/replay middle was missing, so a

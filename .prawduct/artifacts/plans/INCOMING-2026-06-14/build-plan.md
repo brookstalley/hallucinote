@@ -83,7 +83,7 @@ Chunks 1/2/3/6 are engine/docs/skill only → **no flip, immediately effective**
       MCP flip)
 - [x] Chunk 5: BUG3 status.json heartbeat (render + analyze handlers + glob-exclusion boundary fix
       + 5 tests; MCP flip). Interim toward MCP-4T6Y (full async render); that item stays open.
-- [ ] Chunk 6: BUG2 + incoming-bugs close-out (no code)
+- [x] Chunk 6: BUG2 + incoming-bugs close-out — 4 reports archived (BUG1/2/3/4); BUG2 was INS-3W8P. NOTE: a 5th report (analyzer-master-tap pre-fader) arrived mid-session, left un-triaged for next pass. MCP-4T6Y (full async render) stays open, interim shipped.
 
 ## Re-vendor note (release-time)
 Chunks 4+5 flip the MCP fingerprint → **`Re-vendor: required`** for the release that ships this.

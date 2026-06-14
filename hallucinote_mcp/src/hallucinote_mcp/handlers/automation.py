@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..dispatcher import LiveContext
+from .device import _resolve_device_path
 
 
 logger = logging.getLogger(__name__)
@@ -863,6 +864,7 @@ def write_envelope_handler(
     location: str | None = None,
     device_index: int | None = None,
     parameter_name: str | None = None,
+    device_path: list[dict[str, int]] | None = None,
     cc_number: int | None = None,
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
@@ -1007,6 +1009,22 @@ def write_envelope_handler(
                 raise ValueError(
                     "target_kind='device_parameter' requires device_index "
                     "and parameter_name"
+                )
+            if device_path:
+                # DEEP-RACK-ADDR honest gap: the session-clip route writes via
+                # Clip.create_automation_envelope, which on Live 12.4 can't
+                # address a parameter on a nested-rack device. Nested device
+                # automation rides the continuous PERFORM surface instead
+                # (ableton_automation(action='perform_batch') addresses nested
+                # params via device_path). Refuse here rather than silently
+                # writing to the wrong (top-level) parameter.
+                raise NotImplementedError(
+                    "write_envelope can't automate a NESTED-rack device "
+                    "parameter (device_path given): Live 12.4's "
+                    "Clip.create_automation_envelope addresses only top-level "
+                    "device parameters. Use ableton_automation(action="
+                    "'perform_batch') — it rides nested params via device_path "
+                    "(gesture-recorded arrangement automation)."
                 )
             parent = _require_parent(
                 context, track_index=track_index, return_index=return_index,
@@ -1512,6 +1530,7 @@ class _PreparedArc:
     cleaned: list[dict[str, Any]]
     span_start: float
     span_end: float
+    device_path: list[dict[str, int]] | None = None
     param: Any = None
     state: str = "pending"  # pending -> open -> closed
     updates_written: int = 0
@@ -1524,10 +1543,20 @@ class _PreparedArc:
     def addressing_key(self) -> tuple:
         """Identity of the Live parameter this arc rides — two arcs with the
         same key resolve to the SAME param and would fight for one gesture in
-        a single pass (a same-target collision)."""
+        a single pass (a same-target collision).
+
+        DEEP-RACK-ADDR: device_path is part of the identity (two arcs on
+        different nested devices share a top-level device_index but differ by
+        path). MUST stay field-for-field identical to the planner's
+        ``perform.perform_target_key`` — a cross-package parity test pins them.
+        """
         return (
             self.target_kind, self.master, self.track_index,
             self.return_index, self.device_index, self.parameter_name,
+            tuple(
+                (int(s["chain_index"]), int(s["device_position"]))
+                for s in (self.device_path or ())
+            ),
         )
 
 
@@ -1590,6 +1619,7 @@ def _resolve_perform_target(
     return_index: int | None,
     device_index: int | None,
     parameter_name: str | None,
+    device_path: list[dict[str, int]] | None = None,
 ) -> Any:
     """Resolve the Live ``DeviceParameter`` the gesture will ride.
 
@@ -1652,7 +1682,11 @@ def _resolve_perform_target(
                 "perform target_kind='device_parameter' requires "
                 "device_index and parameter_name"
             )
-        device = _resolve_device_on(parent, device_index)
+        # DEEP-RACK-ADDR: device_path (optional) addresses a param on a device
+        # nested inside a rack at any depth. The perform/gesture surface rides
+        # the Parameter object directly, so nested params ARE reachable here
+        # (unlike the session-clip route, which Live gates).
+        device = _resolve_device_path(parent, device_index, device_path)
         return _find_parameter(device, parameter_name)
     mixer = parent.mixer_device
     return mixer.volume if target_kind == "mixer_volume" else mixer.panning
@@ -1796,6 +1830,7 @@ def perform_batch_handler(
             return_index=arc.get("return_index"),
             device_index=arc.get("device_index"),
             parameter_name=arc.get("parameter_name"),
+            device_path=arc.get("device_path"),
             cleaned=cleaned,
             span_start=span_start,
             span_end=span_end,
@@ -1842,6 +1877,7 @@ def perform_batch_handler(
                     return_index=a.return_index,
                     device_index=a.device_index,
                     parameter_name=a.parameter_name,
+                    device_path=a.device_path,
                 )
 
         context.run_on_main(_resolve_all)
@@ -2133,6 +2169,7 @@ def perform_batch_handler(
             return_index=a.return_index,
             device_index=a.device_index,
             parameter_name=a.parameter_name,
+            device_path=a.device_path,
         )
         arcs_result.append(entry)
 

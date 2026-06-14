@@ -313,10 +313,13 @@ def test_device_parameter_skipped_when_device_unlinked(
     assert any("device not linked" in n for n in plan.notes)
 
 
-def test_device_parameter_skipped_for_nested_rack(
+def test_device_parameter_nested_routes_to_perform(
     conn, song, session, linked_track,
 ):
-    """Nested-rack device envelopes are a gap; planner warns instead of emitting."""
+    """DEEP-RACK-ADDR: a nested-rack device_parameter envelope routes to the
+    PERFORM phase (the perform handler rides it via device_path). The
+    session-clip envelope phase emits nothing and notes the perform route — no
+    longer the old 'nested-rack — push not yet supported (MCP gap)' skip."""
     top_chain = M.create_device_chain(conn, parent_track_id=linked_track)
     rack = M.create_device(conn, chain_id=top_chain, position=1,
                            kind="Drum Rack", display_name="Kit")
@@ -328,9 +331,16 @@ def test_device_parameter_skipped_for_nested_rack(
         target_device_id=inner, parameter_path="Volume",
     )
     _add_one_breakpoint(conn, eid)
+    # classify routes it to perform...
+    row = conn.execute(
+        "SELECT * FROM envelopes WHERE id = ?", (eid,),
+    ).fetchone()
+    assert push.classify_envelope_route(conn, row, song_id=song) == "perform"
+    # ...so the session-clip phase emits nothing and notes the perform route.
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("nested-rack" in n for n in plan.notes)
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
+    assert not any("not yet supported" in n for n in plan.notes), plan.notes
 
 
 def test_device_parameter_routes_to_perform_when_no_arrangement_clip_covers(

@@ -635,6 +635,10 @@ def test_replay_persists_nested_nested_rack(conn):
     ]
     # A top-level device has an empty path.
     assert Q.get_device_nesting_path(conn, outer["id"]) == []
+    # The deep device's top-level ancestor (the linked one) is the outer rack;
+    # a top-level device is its own ancestor.
+    assert Q.get_top_level_device(conn, deep["id"])["id"] == outer["id"]
+    assert Q.get_top_level_device(conn, outer["id"])["id"] == outer["id"]
 
 
 def test_replay_rejects_chains_on_non_rack(conn):

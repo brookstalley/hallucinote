@@ -431,6 +431,51 @@ def get_device_chains_for_rack_device(
     ).fetchall()
 
 
+def _walk_to_top_level_device(
+    conn: sqlite3.Connection, device_id: str,
+) -> tuple[sqlite3.Row | None, list[dict[str, int]]]:
+    """Walk UP the nested-rack hierarchy from ``device_id`` to its top-level
+    ancestor (the device whose chain hangs off a track/return,
+    ``parent_rack_device_id IS NULL``).
+
+    Returns ``(top_level_device_row, steps)`` where ``steps`` is the positional
+    ``device_path`` from the top-level device down to ``device_id``. For a
+    top-level device, ``top_level`` is the device itself and ``steps`` is empty.
+    ``(None, [])`` when the device is gone. Shared by
+    :func:`get_device_nesting_path` and :func:`get_top_level_device` so the two
+    can never disagree on the same hierarchy.
+
+    ``device_chains.position`` is the 1-based chain index within its parent rack
+    (matching the LOM chain order push reloads); ``devices.position`` is the
+    1-based device position within its chain — so a path matches the reloaded
+    rack preset's structure (design §5).
+    """
+    steps: list[dict[str, int]] = []
+    dev = get_device(conn, device_id)
+    if dev is None:
+        return None, []
+    # Live racks can't nest cyclically; the bound guards a corrupt DB from
+    # spinning forever rather than imposing a real depth limit.
+    for _ in range(64):
+        chain = get_device_chain(conn, dev["chain_id"])
+        if chain is None or chain["parent_rack_device_id"] is None:
+            steps.reverse()
+            return dev, steps
+        steps.append({
+            "chain_index": int(chain["position"]),
+            "device_position": int(dev["position"]),
+        })
+        parent = get_device(conn, chain["parent_rack_device_id"])
+        if parent is None:
+            steps.reverse()
+            return dev, steps
+        dev = parent
+    raise ValueError(
+        f"device {device_id!r} nesting path exceeds depth 64 — "
+        "cyclic device_chains?"
+    )
+
+
 def get_device_nesting_path(
     conn: sqlite3.Connection, device_id: str,
 ) -> list[dict[str, int]]:
@@ -442,38 +487,22 @@ def get_device_nesting_path(
     the exact address shape ``ableton_device(action='set_parameter')`` and the
     perform handler accept. Empty ``[]`` for a top-level device (one whose chain
     hangs off a track/return, ``parent_rack_device_id IS NULL``).
-
-    Walks UP: each device sits in a chain; a chain either hangs off a
-    track/return (top-level → stop) or off a rack device (record this step,
-    ascend to that rack). ``device_chains.position`` is the 1-based chain index
-    within its parent rack (matching the LOM chain order push reloads), and
-    ``devices.position`` is the 1-based device position within its chain — so a
-    path push emits matches the reloaded rack preset's structure (design §5).
     """
-    steps: list[dict[str, int]] = []
-    dev = get_device(conn, device_id)
-    if dev is None:
-        return []
-    # Live racks can't nest cyclically; the bound guards a corrupt DB from
-    # spinning forever rather than imposing a real depth limit.
-    for _ in range(64):
-        chain = get_device_chain(conn, dev["chain_id"])
-        if chain is None or chain["parent_rack_device_id"] is None:
-            break
-        steps.append({
-            "chain_index": int(chain["position"]),
-            "device_position": int(dev["position"]),
-        })
-        dev = get_device(conn, chain["parent_rack_device_id"])
-        if dev is None:
-            break
-    else:
-        raise ValueError(
-            f"device {device_id!r} nesting path exceeds depth 64 — "
-            "cyclic device_chains?"
-        )
-    steps.reverse()
-    return steps
+    return _walk_to_top_level_device(conn, device_id)[1]
+
+
+def get_top_level_device(
+    conn: sqlite3.Connection, device_id: str,
+) -> sqlite3.Row | None:
+    """The top-level ancestor device of ``device_id`` — the one whose chain
+    hangs off a track/return (DEEP-RACK-ADDR). For a top-level device, returns
+    it unchanged; ``None`` when the device is gone.
+
+    This is the device that carries the ``ableton_links`` binding (only
+    top-level devices are loaded/linked); a nested device addresses from its
+    top-level ancestor's Live index plus :func:`get_device_nesting_path`.
+    """
+    return _walk_to_top_level_device(conn, device_id)[0]
 
 
 def get_devices_for_chain(

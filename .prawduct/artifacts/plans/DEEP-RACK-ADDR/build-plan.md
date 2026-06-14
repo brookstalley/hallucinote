@@ -83,8 +83,25 @@ song/Live-side. (Design + planning are collision-free; building is not.)
 ## Status
 - [x] Chunk 1: canonical device_path primitive + shared resolver
 - [x] Chunk 2: snapshot durability — capture + push depth-N
-- [ ] Chunk 3: nested-rack device_parameter automation
+- [x] Chunk 3: nested-rack device_parameter automation
 - [ ] Chunk 4: voices accessor
+
+**Context (Chunk 3 done):** Nested device-param automation rides the PERFORM
+surface. Wire: write_envelope + perform_batch accept device_path; perform
+handler resolves the target via Chunk 1's `_resolve_device_path` (imported
+device→automation, no cycle); write_envelope REFUSES a nested device_parameter
+with a teaching error → perform_batch (Live's Clip.create_automation_envelope is
+top-level-only — honest gap, not silent). Planner: `classify_envelope_route`
+nested device_parameter → 'perform' (was 'unroutable'); the perform arc builder
+resolves the TOP-LEVEL ancestor (`Q.get_top_level_device`, shared walker with
+get_device_nesting_path) for the link + emits device_path; session-clip emitter
+now NOTES the perform route (dropped the stale "MCP gap" skip). device_path is
+in BOTH `_PreparedArc.addressing_key` AND `perform_target_key` (same hashable
+normalization — cross-package parity test extended with a nested case + a
+distinct-path non-collision check). Full suite 3728 passed. Re-vendor required
+(actions/ + handlers/automation.py flip the fingerprint) — bundles with Chunk 1.
+Next: Chunk 4 (voices accessor — probe whether 'Voices' is a DeviceParameter via
+the depth-N get_parameters).
 
 **Context (Chunk 2 done):** THE unblocker shipped. capture.py replay `_depth>0`
 raise DELETED — `_replay_devices`/`_replay_rack_chains` recurse to arbitrary

@@ -4,6 +4,31 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
+
+<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills -->
+
+**Re-vendor: REQUIRED** (the `strip` action + status.json heartbeat touch `handlers/`/`actions/`,
+flipping the MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). Bugs 4/1A/3-doc are
+no-flip and effective immediately. Four bugs from the 2026-06-14 swell mix dogfood; Bug 2
+(install `--plugins-dir`) was already fixed by INS-3W8P (v0.9.7) → no code.
+
+- **BUG4 — static device-param authoring (`params_dialed`).** Documented `params_dialed` as the
+  home for static device params in `docs/snapshot-schema.md` — sparse, the per-entry shape, and the
+  display-value workflow: a continuous param authored as a display string (`{"value":"180 Hz"}`)
+  already flows through to the live setter's curve inversion (DPP-7H2K), so authors never hand-invert
+  a log knob. `replay_capture` now warns on the bare-numeric-no-`normalized` trap.
+- **BUG1A — analyzer-aware push device-matching.** `probe_and_link` excludes the trailing
+  HallucinoteAnalyzer before position-matching, so a newly authored device at the analyzer's slot no
+  longer false-drifts + skips its link (which forced manual analyzer deletion before a re-push). Engine-only.
+- **BUG1B — bulk `ableton_render(action='strip')`.** The inverse of `ensure_loaded`: removes the
+  analyzer from every track/return/master in one call (idempotent), for a clean deterministic push /
+  save instead of ~29 hand-deletes.
+- **BUG3 — render/analyze 60 s false-failure.** `render` + `analyze` handlers write a `status.json`
+  heartbeat (`{state: running|done|error}`) so a poller sees a robust completion signal; mix-review
+  documents the expected 60 s wrapper timeout + the poll. Interim toward MCP-4T6Y (full async render),
+  which stays open.
+
 ## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
 
 <!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=merged -->

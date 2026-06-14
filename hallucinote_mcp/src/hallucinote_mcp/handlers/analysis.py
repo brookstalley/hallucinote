@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+
+logger = logging.getLogger("hallucinote_mcp.analysis")
 
 # Guarded import: the `hallucinote` package is NOT vendored into Live's
 # User Library, so a module-level import would crash the Remote Script
@@ -119,11 +122,20 @@ def _latest_captures_dir(song_slug: str) -> Path:
 
 
 def _latest_report_path(song_slug: str) -> Path | None:
-    """Most recent MixReport JSON in ``songs/<slug>/analysis/``, or None."""
+    """Most recent MixReport JSON in ``songs/<slug>/analysis/``, or None.
+
+    Excludes ``status.json`` — that's the BUG3 completion heartbeat the
+    analyze handler writes into the same dir, not a report. Report files are
+    named ``<utc-ts>.json``; the heartbeat is the lone fixed-name ``.json``,
+    so a name match is the precise exclusion (a glob like ``*Z.json`` would be
+    brittle to a future report-naming change)."""
     analysis_root = _resolve_song_dir(song_slug) / "analysis"
     if not analysis_root.exists():
         return None
-    candidates = sorted(p for p in analysis_root.glob("*.json"))
+    candidates = sorted(
+        p for p in analysis_root.glob("*.json")
+        if p.name != ANALYSIS_STATUS_FILENAME
+    )
     return candidates[-1] if candidates else None
 
 
@@ -132,6 +144,33 @@ def _utc_timestamp() -> str:
     capture-dir naming convention so MixReport files sort alongside
     their source captures."""
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+# The completion-heartbeat filename, written into <analysis_dir> around the
+# analyze_mix call (BUG3). analyze_mix runs server-side and can take long
+# enough that the MCP wrapper red-times-out at 60s before the report JSON
+# (the only completion signal today) appears, forcing fragile dir-watching.
+# status.json is the robust signal: running before analyze, then a terminal
+# done (with the report path) / error.
+ANALYSIS_STATUS_FILENAME = "status.json"
+
+
+def _write_analysis_status(analysis_dir: Path, status: dict[str, Any]) -> None:
+    """Best-effort heartbeat write into <analysis_dir>/status.json.
+
+    Observability only, never analysis-affecting: a write failure must not break
+    an analysis whose report is otherwise fine, so the rare filesystem error is
+    swallowed (no logic depends on it — the real result is the report JSON; a
+    missed heartbeat only costs a poller one more poll). Not an error-hiding
+    catch: nothing downstream reads the write's success.
+    """
+    try:
+        (analysis_dir / ANALYSIS_STATUS_FILENAME).write_text(
+            json.dumps(status, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 def _analysis_code_status() -> dict[str, Any]:
@@ -471,51 +510,78 @@ def analyze_handler(
     # The analysis dir doubles as the baseline pool compare_to resolves
     # against — computed before analyze_mix so the seq lookup can fail fast.
     analysis_dir = _resolve_song_dir(song_slug) / "analysis"
-
-    report = analyze_mix(
-        captures_path,
-        declared_reverb_sends=declared_sends,
-        declared_envelopes=declared_envelopes,
-        sections=sections,
-        declared_energy=declared_energy,
-        tempo_map=tempo_map,
-        # Masking is per-section evidence; enable it whenever the song declares
-        # sections (the handler already gated section work on that). It is
-        # neutral measurement — the holistic interpreter grades it vs intent.
-        # F1 (pre-fader capture) is handled: stem_gains below reconstructs
-        # mix-level before the masking pass.
-        analyze_masking=bool(sections),
-        # Per-part onset-vs-grid feel (push/drag/swing) — the read-side
-        # counterpart to the `feel` generator. Per-section like masking; gated
-        # on declared sections. Level-blind (gain doesn't move onsets), so it
-        # needs no stem_gains. Neutral measurement — the interpreter grades it.
-        analyze_timing=bool(sections),
-        # Per-part cross-rhythm / subdivision naming (3:2, quintuplets, ...) —
-        # names what grid a part is on when it fights the straight grid timing
-        # measures against (the question C7 leaves open). Per-section, gated on
-        # declared sections; level-blind. Composes with timing: the timing
-        # pass's swing read feeds cross-rhythm's swing-deference internally.
-        analyze_cross_rhythm=bool(sections),
-        # Mix-level reconstruction (F1): scale each pre-fader stem by its
-        # static fader gain so masking sees mix balance, not source level.
-        # Fader curve is Live-12-calibrated (see audio/levels.py).
-        stem_gains=stem_gains,
-        compare_to=compare_to,
-        analysis_dir=analysis_dir,
-    )
-
+    # Create the dir up front so the running heartbeat can land before the
+    # (potentially long) analyze_mix call (BUG3). The report write below
+    # reuses it.
     analysis_dir.mkdir(parents=True, exist_ok=True)
-    report_path = analysis_dir / f"{_utc_timestamp()}.json"
-    report_dict = report.to_json_dict()
-    report_path.write_text(
-        # allow_nan=False is a structural backstop (ARR-7M3D B1): the report's
-        # value objects guarantee None-or-finite by construction (the energy lens
-        # records None for an undefined Spearman ρ, never nan), so any stray nan
-        # from a future regression fails loud here instead of writing invalid
-        # JSON that strict consumers (JSON.parse, the eval judge) would reject.
-        json.dumps(report_dict, indent=2, allow_nan=False),
-        encoding="utf-8",
-    )
+
+    # Heartbeat=running before analyze_mix — analyze_mix has no progress
+    # callback (and the spec is not to plumb one in), so the pre/post writes
+    # are the completion signal. Wrapped so a failure inside analyze_mix or the
+    # report write lands a terminal status.json=error for a poller.
+    _write_analysis_status(analysis_dir, {"state": "running"})
+    try:
+        report = analyze_mix(
+            captures_path,
+            declared_reverb_sends=declared_sends,
+            declared_envelopes=declared_envelopes,
+            sections=sections,
+            declared_energy=declared_energy,
+            tempo_map=tempo_map,
+            # Masking is per-section evidence; enable it whenever the song declares
+            # sections (the handler already gated section work on that). It is
+            # neutral measurement — the holistic interpreter grades it vs intent.
+            # F1 (pre-fader capture) is handled: stem_gains below reconstructs
+            # mix-level before the masking pass.
+            analyze_masking=bool(sections),
+            # Per-part onset-vs-grid feel (push/drag/swing) — the read-side
+            # counterpart to the `feel` generator. Per-section like masking; gated
+            # on declared sections. Level-blind (gain doesn't move onsets), so it
+            # needs no stem_gains. Neutral measurement — the interpreter grades it.
+            analyze_timing=bool(sections),
+            # Per-part cross-rhythm / subdivision naming (3:2, quintuplets, ...) —
+            # names what grid a part is on when it fights the straight grid timing
+            # measures against (the question C7 leaves open). Per-section, gated on
+            # declared sections; level-blind. Composes with timing: the timing
+            # pass's swing read feeds cross-rhythm's swing-deference internally.
+            analyze_cross_rhythm=bool(sections),
+            # Mix-level reconstruction (F1): scale each pre-fader stem by its
+            # static fader gain so masking sees mix balance, not source level.
+            # Fader curve is Live-12-calibrated (see audio/levels.py).
+            stem_gains=stem_gains,
+            compare_to=compare_to,
+            analysis_dir=analysis_dir,
+        )
+
+        report_path = analysis_dir / f"{_utc_timestamp()}.json"
+        report_dict = report.to_json_dict()
+        report_path.write_text(
+            # allow_nan=False is a structural backstop (ARR-7M3D B1): the report's
+            # value objects guarantee None-or-finite by construction (the energy lens
+            # records None for an undefined Spearman ρ, never nan), so any stray nan
+            # from a future regression fails loud here instead of writing invalid
+            # JSON that strict consumers (JSON.parse, the eval judge) would reject.
+            json.dumps(report_dict, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+    except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level analyze supervisor: write status.json=error then re-raise so a poller sees a terminal state for an analysis that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
+        # Every catch logs context (project norm) before the terminal heartbeat —
+        # the dispatcher surfaces the re-raised exception to the caller, but the
+        # server log is where a stuck-analyze postmortem reads what actually blew up.
+        logger.exception(
+            "analyze: failed for song_slug=%s (analysis_dir=%s) — wrote "
+            "status.json=error and re-raising", song_slug, analysis_dir,
+        )
+        _write_analysis_status(analysis_dir, {"state": "error", "error": str(e)})
+        raise
+
+    # Heartbeat=done — the report JSON is on disk. The robust completion signal
+    # an agent polls for; carries the report path so the poller can read it
+    # directly without re-globbing the analysis dir.
+    _write_analysis_status(analysis_dir, {
+        "state": "done",
+        "report_path": str(report_path),
+    })
 
     out_of_tolerance = [
         r for r in report_dict["reverb_verifications"]

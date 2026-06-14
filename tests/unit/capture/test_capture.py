@@ -470,6 +470,50 @@ def test_replay_rejects_param_bad_shape(conn):
         replay_capture(conn, snap, song_name="t")
 
 
+def test_replay_display_string_continuous_param_passes_through(conn, recwarn):
+    """BUG4: a hand-authored continuous param as a DISPLAY STRING (no `normalized`)
+    stores as value_display and is pushed via the display path (the live setter
+    inverts the curve at push time) — no hand-inversion, and no bare-float warning."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "EQ Eight", "class": "EQ Eight",
+                "params_dialed": {"1 Frequency A": {"value": "180 Hz"}},
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    assert not [w for w in recwarn if "bare numeric" in str(w.message)]
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_display"] == "180 Hz"
+    assert param["value_normalized"] is None
+
+
+def test_replay_bare_float_param_no_normalized_warns(conn):
+    """BUG4 trap: a bare numeric value with no `normalized` is the authoring
+    mistake (stored as the display string, mis-dialed at push) — replay warns and
+    points at the two correct forms (explicit `normalized`, or a display string)."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "EQ Eight", "class": "EQ Eight",
+                "params_dialed": {"1 Frequency A": {"value": 0.71}},
+            }],
+        }],
+    }
+    with pytest.warns(UserWarning, match="bare numeric"):
+        sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_display"] == "0.71"
+    assert param["value_normalized"] is None
+
+
 # ---------- W7-B: nested rack chains ----------
 
 

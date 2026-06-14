@@ -68,6 +68,33 @@ register(
 register(
     Action(
         tool="ableton_render",
+        name="strip",
+        description=(
+            "Bulk REMOVAL — delete the HallucinoteAnalyzer from every audio "
+            "track + return + master where it's present. The inverse of "
+            "ensure_loaded: after a render the analyzer sits on ~N+R+1 "
+            "surfaces, so this gives a clean device set for a deterministic "
+            "push or a clean save in one call instead of deleting each "
+            "analyzer by hand. Idempotent — re-running once every surface is "
+            "clear is a no-op. Returns {stripped_count, instances:[surface "
+            "descriptor + the removed device_index]}."
+        ),
+        handler=render_handlers.strip_handler,
+        runs_on_worker=True,
+        example="ableton_render(action='strip')",
+        tips=(
+            "Run after a render (or before a deterministic push / clean "
+            "save) to clear the auto-loaded analyzers in one call.",
+            "Idempotent — a surface with no analyzer is skipped, so running "
+            "twice strips on the first pass and no-ops on the second.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_render",
         name="render",
         description=(
             "End-to-end capture pass. Ensure analyzers are present, deliver "

@@ -10,7 +10,9 @@ from hallucinote_mcp.analyzer import setup as analyzer_setup
 from hallucinote_mcp.analyzer.setup import (
     ANALYZER_DEVICE_NAME,
     _reposition_action,
+    _strip_action,
     ensure_analyzers_loaded,
+    strip_analyzers,
     track_id_for_surface,
 )
 
@@ -709,3 +711,106 @@ def test_sweep_idempotent_after_reposition():
     assert len(browser.load_calls) == loads_after_first
     # Still exactly one analyzer, still last.
     assert [d.name for d in track.devices] == ["Saturator", ANALYZER_DEVICE_NAME]
+
+
+# --- strip sweep (bulk removal — the inverse of ensure_analyzers_loaded) ----
+#
+# ``strip_analyzers`` walks the SAME _plan_surfaces snapshot, finds the analyzer
+# per surface via _find_analyzer_index, and deletes it via delete_handler. The
+# pure ``_strip_action`` helper encodes the per-surface decision (delete vs
+# already-clean), mirroring _reposition_action's pure style.
+
+
+# --- pure decision helper (Live-free) --------------------------------
+
+
+def test_strip_action_absent():
+    """No analyzer in the chain → no-op (already clean; keeps re-runs idempotent)."""
+    assert _strip_action(None) == "absent"
+
+
+def test_strip_action_delete_when_present():
+    """Analyzer present (at any 1-based index) → delete it."""
+    assert _strip_action(1) == "delete"
+    assert _strip_action(3) == "delete"
+
+
+# --- strip_analyzers behavior (mocked Live) --------------------------
+
+
+def test_strip_removes_analyzer_from_every_surface():
+    """Bulk strip: a song with the analyzer on every surface ends with NONE.
+    The result names each surface a deletion fired on, with the device_index
+    the analyzer occupied; interleaving authored devices survive."""
+    eq = _FakeDevice(class_display_name="EQ Eight")
+    drums = _FakeTrack("Drums", devices=[
+        eq,
+        _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+    ])  # analyzer at idx 2 of 2
+    bass = _FakeTrack("Bass", devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+    ])  # analyzer at idx 1 of 1
+    reverb = _FakeTrack("A-Reverb", devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+    ])
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[drums, bass], returns=[reverb], master=_master_with_analyzer(),
+    ))
+
+    result = strip_analyzers(ctx)
+
+    # Every surface had its analyzer removed (2 tracks + 1 return + master = 4).
+    assert result.stripped_count == 4
+    # The authored EQ survives on Drums; no analyzer left anywhere.
+    assert [d.name for d in drums.devices] == ["EQ Eight"]
+    assert bass.devices == []
+    assert reverb.devices == []
+    assert [d.name for d in ctx.song.master_track.devices] == []
+    # Result records the surface + the device_index the analyzer occupied.
+    by_surface = {(s.surface_kind, s.surface_index): s for s in result.stripped}
+    assert by_surface[("track", 1)].device_index == 2  # last on Drums
+    assert by_surface[("track", 2)].device_index == 1
+    assert by_surface[("return", 1)].device_index == 1
+    assert by_surface[("master", 0)].device_index == 1
+    assert by_surface[("track", 1)].surface_name == "Drums"
+
+
+def test_strip_skips_surfaces_without_analyzer():
+    """A surface with no analyzer is skipped (no delete fired) — only
+    analyzer-bearing surfaces appear in the result."""
+    plain = _FakeTrack("Drums", devices=[_FakeDevice(class_display_name="EQ Eight")])
+    tapped = _FakeTrack("Bass", devices=[
+        _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+    ])
+    # Master with NO analyzer so its surface is also skipped.
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[plain, tapped], master=_FakeTrack("Master"),
+    ))
+
+    result = strip_analyzers(ctx)
+
+    # Only the Bass track had an analyzer.
+    assert result.stripped_count == 1
+    assert [(s.surface_kind, s.surface_index) for s in result.stripped] == [("track", 2)]
+    # The plain track's EQ is untouched.
+    assert [d.name for d in plain.devices] == ["EQ Eight"]
+    assert tapped.devices == []
+
+
+def test_strip_is_idempotent():
+    """Multi-hop: after one strip clears every surface, the next strip sees no
+    analyzers → no-op (stripped_count 0, no further deletes)."""
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[_FakeTrack("Drums", devices=[
+            _FakeDevice(class_display_name="Max Audio Effect", name=ANALYZER_DEVICE_NAME),
+        ])],
+        master=_master_with_analyzer(),
+    ))
+
+    first = strip_analyzers(ctx)
+    assert first.stripped_count == 2  # Drums + master
+
+    second = strip_analyzers(ctx)
+    assert second.stripped_count == 0
+    assert ctx.song.tracks[0].devices == []
+    assert ctx.song.master_track.devices == []

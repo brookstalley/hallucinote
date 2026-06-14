@@ -258,8 +258,8 @@ def plan_pull_device_parameters(
 
     for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
         conn, song_id=song_id, session_id=session_id, plan=plan,
-        unlinked_warn=lambda pk, row: (
-            f"{pk} {row['name']!r} ({row['id']}): not linked; skipping "
+        unlinked_warn=lambda _pk, _row: (
+            f"{_pk} {_row['name']!r} ({_row['id']}): not linked; skipping "
             "device parameters"
         ),
     ):
@@ -319,8 +319,8 @@ def plan_pull_device_sidechain(
 
     for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
         conn, song_id=song_id, session_id=session_id, plan=plan,
-        unlinked_warn=lambda pk, row: (
-            f"{pk} {row['name']!r} ({row['id']}): not linked; skipping "
+        unlinked_warn=lambda _pk, _row: (
+            f"{_pk} {_row['name']!r} ({_row['id']}): not linked; skipping "
             "device sidechain sources"
         ),
     ):

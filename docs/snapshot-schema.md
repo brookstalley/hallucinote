@@ -35,13 +35,15 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
     "key":       "(optional)",
     "tempo":     132.0,
     "signature": "4/4",
-    "master":    {"volume": 0.85, "panning": 0.0}
+    "master":    {"volume": 0.85, "panning": 0.0,
+                  "devices": [ ... ]}
   }
 }
 ```
 
 - `tempo` and `signature` are **informational** — the score-half `tempo_map` / `time_signature_map` tables are the source of truth. `build.py` writes those via `M.add_tempo_point` / `M.add_time_signature_point`.
 - `master` becomes a `tracks` row with `kind='master'` and `track_index=0` (sentinel). Volume and panning use Live's normalized 0.0–1.0 / -1.0–1.0 ranges.
+- `master.devices` (optional, **SNP-4K7M**) — a device chain on the master, same shape as a track's `devices[]` (see "Device chain shape" below). A master Limiter / EQ declared here round-trips: `replay_capture` materializes it on the master chain, the push side loads it (DEV-6M2K), and `/song-snapshot` captures a hand-placed master device back. The `HallucinoteAnalyzer` is filtered out at capture/migration exactly as on tracks and returns. Master **automation envelopes** are a separate, still-open surface (MAW-4K7P).
 
 ---
 

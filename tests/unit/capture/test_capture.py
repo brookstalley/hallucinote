@@ -632,6 +632,8 @@ def test_capture_plan_lists_expected_probes():
     tools = {p["tool"] for p in plan}
     assert tools == {
         "ableton_session(action='info')",
+        # SNP-4K7M: master device-chain probe (attached as song.master.devices)
+        "ableton_device(action='list', target='master')",
         "ableton_return(action='list')",
         "ableton_track(action='info')",
         "ableton_track(action='get_sends')",
@@ -1332,6 +1334,143 @@ def test_migrate_snapshot_clean_stamped_is_noop():
     assert report["version_before"] == SNAPSHOT_SCHEMA_VERSION
     assert cleaned["tracks"][0]["devices"][0]["name"] == "Operator"
     assert not snapshot_needs_migration(clean)
+
+
+# ---------------------------------------------------------------------------
+# SNP-4K7M — master-track device snapshot authorship
+# ---------------------------------------------------------------------------
+
+
+def _master_id(conn, sid):
+    master = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["kind"] == "master"
+    )
+    return master["id"]
+
+
+def test_replay_creates_master_device_chain(conn):
+    """SNP-4K7M: a master with a `devices` array materializes a master device
+    chain (parent_track_id = master) — the authorship middle DEV-6M2K's push
+    side was missing."""
+    snap = {
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Glue Compressor", "class": "Glue Compressor"},
+                {"index": 2, "name": "Limiter", "class": "Limiter",
+                 "params_dialed": {"Ceiling": {"value": "-0.3", "normalized": 0.97}}},
+            ],
+        }},
+        "returns": [],
+        "tracks": [],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    chains = conn.execute(
+        "SELECT * FROM device_chains WHERE parent_track_id = ?", (mid,)
+    ).fetchall()
+    assert len(chains) == 1
+    assert chains[0]["position"] == 0
+    devices = Q.get_devices_for_track(conn, mid)
+    assert [d["display_name"] for d in devices] == ["Glue Compressor", "Limiter"]
+    assert [d["kind"] for d in devices] == ["Glue Compressor", "Limiter"]
+
+
+def test_replay_master_without_devices_creates_no_chain(conn):
+    """A {volume, panning}-only master → no master chain (back-compat)."""
+    snap = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [], "tracks": [],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    chains = conn.execute(
+        "SELECT * FROM device_chains WHERE parent_track_id = ?", (mid,)
+    ).fetchall()
+    assert chains == []
+
+
+def test_compile_snapshot_drops_analyzer_on_master_too():
+    """SNP-4K7M: the master joins the analyzer strip (the one parent the
+    SNP-8R4K filter skipped while the master had no device array)."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        returns=[], tracks=[],
+    )
+    devs = snap["song"]["master"]["devices"]
+    assert [d["name"] for d in devs] == ["Limiter"]
+    assert devs[0]["index"] == 1
+
+
+def test_compile_snapshot_master_without_devices_passes_through():
+    """A {volume, panning}-only master is carried through unchanged."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4",
+                      "master": {"volume": 0.85, "panning": 0.0}},
+        returns=[], tracks=[],
+    )
+    assert snap["song"]["master"] == {"volume": 0.85, "panning": 0.0}
+
+
+def test_migrate_snapshot_strips_master_analyzer():
+    """SNP-4K7M: at-rest migration cleans a polluted master too, reporting it."""
+    snapshot = {
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        "tracks": [], "returns": [],
+    }
+    cleaned, report = migrate_snapshot(snapshot)
+    master_devs = cleaned["song"]["master"]["devices"]
+    assert [d["name"] for d in master_devs] == ["Limiter"]
+    assert [d["index"] for d in master_devs] == [1]
+    assert report["total_removed"] == 1
+    by_parent = {(s["kind"], s["parent"]): s["removed"] for s in report["stripped"]}
+    assert by_parent == {("master", "Master"): 1}
+
+
+def test_snapshot_needs_migration_detects_polluted_master():
+    """A version-stamped snapshot whose MASTER still carries an analyzer must
+    still migrate (the pollution trigger now covers the master)."""
+    snapshot = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [_analyzer_device(1)],
+        }},
+        "tracks": [], "returns": [],
+    }
+    assert snapshot_needs_migration(snapshot)
+
+
+def test_master_device_roundtrip_compile_replay(conn):
+    """Full SNP-4K7M loop: compile a snapshot with a probed master chain (an
+    analyzer present, filtered at compile) → replay → the master chain
+    materializes with only the authored devices."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        returns=[], tracks=[],
+    )
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    devices = Q.get_devices_for_track(conn, mid)
+    assert [d["display_name"] for d in devices] == ["Limiter"]
 
 
 def test_snapshot_needs_migration_true_for_unstamped():

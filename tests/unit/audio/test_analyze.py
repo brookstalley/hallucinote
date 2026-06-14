@@ -24,7 +24,7 @@ from hallucinote.audio import (
     analyze_mix,
 )
 from hallucinote.audio.report import SCHEMA_VERSION
-from hallucinote.audio.reverb import REVERB_TOLERANCE_S
+from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S
 
 from .fixtures import (
     SAMPLE_RATE,
@@ -204,7 +204,7 @@ def test_analyze_mix_runs_declared_reverb_verification(tmp_path: Path):
     assert v.contributing_track_ids == ("track:1",)
     assert v.conflicting_declarations == ()
     assert v.sufficient_tail is True
-    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_FLOOR_S
     assert v.within_tolerance is True
     # No skipped reverb entry when a send was actually declared.
     assert not any(s.get("kind") == "reverb_verification"
@@ -245,7 +245,7 @@ def test_analyze_mix_groups_sends_into_one_per_return(tmp_path: Path):
     assert v.return_track_id == "return:1"
     assert set(v.contributing_track_ids) == {"track:1", "track:2"}
     assert v.sufficient_tail is True
-    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+    assert abs(v.measured_rt60_s - rt60) <= REVERB_TOLERANCE_FLOOR_S
 
 
 def test_analyze_mix_surfaces_conflicting_rt60_declarations(tmp_path: Path):

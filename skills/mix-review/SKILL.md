@@ -158,6 +158,12 @@ first — see "Refreshing the analysis"). For each section, you have:
   ring-out — not per send). When `sufficient_tail` is false the capture had no
   usable ring-out: report it as "RT60 unverifiable — re-render with a larger
   `ring_out_beats`", NOT as a measurement (`measured_rt60_s` is NaN).
+  When `sufficient_tail` is true but `within_tolerance` is false, frame it as a
+  producer's note — "the Plate decays ~N% longer/shorter than your 3.0 s intent"
+  (`measured/declared − 1`), not a pass/fail verdict: the band is now RELATIVE
+  to the declared RT60 (AUD-3T6L — Live's Reverb RT60 is nonlinear, so the
+  realized decay legitimately diverges from the nominal knob), so an
+  out-of-band reading is a real, audible divergence worth a question, not noise.
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in

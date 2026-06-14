@@ -16,9 +16,11 @@ from __future__ import annotations
 import numpy as np
 
 from hallucinote.audio.reverb import (
-    REVERB_TOLERANCE_S,
+    REVERB_REL_TOLERANCE,
+    REVERB_TOLERANCE_FLOOR_S,
     find_decay_onset,
     measure_return_rt60,
+    reverb_tolerance_s,
 )
 
 from .fixtures import (
@@ -76,7 +78,7 @@ def test_recovers_known_rt60_from_ringout():
     r = _measure(ring, declared=rt60)
     assert r.sufficient_tail
     assert r.measurement_method == "decay_tail"
-    assert abs(r.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S, (
+    assert abs(r.measured_rt60_s - rt60) <= REVERB_TOLERANCE_FLOOR_S, (
         f"declared={rt60} measured={r.measured_rt60_s}"
     )
     assert r.within_tolerance is True
@@ -95,10 +97,10 @@ def test_rt60_invariant_to_number_of_sources():
     r1 = _measure(one, declared=rt60)
     r5 = _measure(five, declared=rt60)
     assert r1.sufficient_tail and r5.sufficient_tail
-    assert abs(r1.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
-    assert abs(r5.measured_rt60_s - rt60) <= REVERB_TOLERANCE_S
+    assert abs(r1.measured_rt60_s - rt60) <= REVERB_TOLERANCE_FLOOR_S
+    assert abs(r5.measured_rt60_s - rt60) <= REVERB_TOLERANCE_FLOOR_S
     # Source-count invariance: the two agree despite totally different inputs.
-    assert abs(r1.measured_rt60_s - r5.measured_rt60_s) <= REVERB_TOLERANCE_S
+    assert abs(r1.measured_rt60_s - r5.measured_rt60_s) <= REVERB_TOLERANCE_FLOOR_S
 
 
 def test_no_decay_continuous_signal_is_honest_insufficient_tail():
@@ -135,7 +137,7 @@ def test_out_of_tolerance_when_actual_differs_from_declared():
     r = _measure(ring, declared=0.5)
     assert r.sufficient_tail
     assert r.within_tolerance is False
-    assert r.measured_rt60_s > 0.5 + REVERB_TOLERANCE_S
+    assert r.measured_rt60_s > 0.5 + REVERB_TOLERANCE_FLOOR_S
 
 
 def test_find_decay_onset_locates_last_excitation():
@@ -154,3 +156,50 @@ def test_find_decay_onset_returns_n_when_search_starts_at_end():
     ring = silence(1.0)
     n = ring.shape[0]
     assert find_decay_onset(ring, search_start_sample=n, sample_rate=SAMPLE_RATE) == n
+
+
+def test_reverb_tolerance_s_is_relative_with_floor():
+    """AUD-3T6L: the verdict band scales with declared RT60 but never drops
+    below the absolute floor."""
+    # Long RT60s get a proportional band (the device-nonlinearity error scales).
+    assert reverb_tolerance_s(3.0) == REVERB_REL_TOLERANCE * 3.0  # 0.60
+    assert reverb_tolerance_s(2.0) == REVERB_REL_TOLERANCE * 2.0  # 0.40
+    # Short RT60s clamp to the floor (0.20 × 0.5 = 0.10 < 0.15).
+    assert reverb_tolerance_s(0.5) == REVERB_TOLERANCE_FLOOR_S
+    # Boundary: floor and relative meet at declared = floor / rel = 0.75 s.
+    boundary = REVERB_TOLERANCE_FLOOR_S / REVERB_REL_TOLERANCE
+    assert reverb_tolerance_s(boundary) == REVERB_TOLERANCE_FLOOR_S
+
+
+def test_clean_long_decay_passes_relative_band_not_old_absolute():
+    """AUD-3T6L regression: a clean long-decay capture whose realized RT60
+    diverges from declared intent by MORE than the old fixed ±0.15 s absolute
+    floor — but within the relative band — no longer reads as out-of-tolerance.
+    (The sun-zone A-Plate 3.37-vs-3.0 false positive.) FAILS under pre-AUD-3T6L.
+
+    Robust to the measurement under-reading long RT60s: we declare intent at a
+    fixed FRACTION below the *actual* measured value, so the realized gap is
+    ``0.15 × measured`` — always past the 0.15 s floor (measured > 1 s) yet
+    inside the relative band, independent of the exact measurement."""
+    ring = _ring_out(3.4, sources=[sine(180.0, 2.0)], input_s=2.0, total_s=12.0)
+    onset = find_decay_onset(
+        ring, search_start_sample=int(round(2.0 * SAMPLE_RATE)),
+        sample_rate=SAMPLE_RATE,
+    )
+    measured = measure_return_rt60(
+        ring, sample_rate=SAMPLE_RATE, decay_onset_sample=onset,
+        declared_rt60_s=1.0, return_track_id="return:1",
+    ).measured_rt60_s
+    assert measured > 1.0  # a long-decay capture → a > floor realized gap below
+
+    # Declare intent 15% under the realized RT60 — a divergence past the old
+    # absolute ±0.15 s floor (measured > 1 s) but within the relative band.
+    declared = measured * 0.85
+    r = measure_return_rt60(
+        ring, sample_rate=SAMPLE_RATE, decay_onset_sample=onset,
+        declared_rt60_s=declared, return_track_id="return:1",
+    )
+    gap = abs(r.measured_rt60_s - declared)
+    assert gap > REVERB_TOLERANCE_FLOOR_S          # old absolute band would WARN
+    assert gap <= reverb_tolerance_s(declared)     # new relative band accepts
+    assert r.within_tolerance is True

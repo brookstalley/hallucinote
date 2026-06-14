@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
 
-<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs -->
+<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=merged -->
 
 **Re-vendor: REQUIRED** (DEEP-RACK-ADDR chunks 1 & 3 touch `actions/`+`handlers/`, flipping the
 MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). PULL-DRIFT-DETECT and the

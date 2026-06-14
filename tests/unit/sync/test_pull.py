@@ -4441,6 +4441,43 @@ def test_pull_cli_plan_and_apply_roundtrip(tmp_path):
     assert summary["mutations"] == 1
 
 
+def test_pull_cli_apply_exits_nonzero_when_results_unreadable(tmp_path):
+    """PULL-DRIFT-DETECT: the two-step `apply` path also exits non-zero when a
+    probe result is unreadable (ok=False) — parity with `execute`, so a wrapper
+    never reads a failed two-step pull as 'in sync'."""
+    import subprocess
+    import sys
+
+    db_path = tmp_path / "applyfail.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="af", key="Dm")
+    M.create_track(conn, song_id=song_id, track_index=0, name="Master",
+                   kind="master")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.close()
+
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({
+        "domain": "mix-state", "song_id": song_id, "session_id": session_id,
+        "calls": [], "notes": [],
+    }))
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps([
+        {"key": "session_info", "ok": False, "tool": "ableton_session",
+         "result": None, "error": "Remote Script version mismatch"},
+    ]))
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "apply", session_id, "--db", str(db_path),
+         "--plan", str(plan_path), "--results", str(results_path)],
+        capture_output=True, text=True,
+    )
+    assert p.returncode == 2, p.stderr
+    summary = json.loads(p.stdout)
+    assert summary["unreadable"] >= 1
+
+
 def test_skill_allowed_tools_cover_every_planner_emitted_tool(
     conn, song, session
 ):

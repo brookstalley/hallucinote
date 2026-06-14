@@ -21,6 +21,84 @@ from ._core import (
 )
 
 
+def _iter_linked_parents(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    plan: PullPlan,
+    unlinked_warn,
+):
+    """Yield ``(parent_kind, parent_at, parent_row)`` for each linked track
+    (``master`` skipped) then each linked return — the link-resolution pass
+    shared by every ``plan_pull_*`` planner.
+
+    ``parent_kind`` is ``"track"`` or ``"return"``; ``parent_at`` is the 1-based
+    Ableton index from the session link; ``parent_row`` is the DB row. For a
+    parent not linked in this session, ``unlinked_warn(parent_kind, parent_row)``
+    is consulted: a returned string is appended via ``plan.warn`` and the parent
+    skipped; ``None`` skips it silently. The warning text and the callers'
+    ``any_emitted`` bookkeeping stay in the planners, where they legitimately
+    differ (some warn on an unlinked parent, some don't).
+    """
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            continue
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if track_at is None:
+            msg = unlinked_warn("track", t)
+            if msg:
+                plan.warn(msg)
+            continue
+        yield "track", track_at, t
+
+    for r in Q.get_returns_for_song(conn, song_id):
+        return_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if return_at is None:
+            msg = unlinked_warn("return", r)
+            if msg:
+                plan.warn(msg)
+            continue
+        yield "return", return_at, r
+
+
+def _iter_linked_top_level_devices(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    plan: PullPlan,
+    unlinked_warn,
+):
+    """Yield ``(parent_kind, parent_at, parent_row, device_row)`` for every
+    device on the top-level chain (``position == 0``) of each linked parent.
+
+    Layered on ``_iter_linked_parents`` (same link resolution, master-skip, and
+    unlinked-warn policy), then descends one level — the top-level chain only,
+    the gap-#17b boundary every per-device planner already draws. Yields in
+    (tracks…, returns…) order, one tuple per device, so callers keep their
+    per-device emission, rack filtering, and "nothing emitted" bookkeeping
+    unchanged.
+    """
+    for parent_kind, parent_at, parent_row in _iter_linked_parents(
+        conn, song_id=song_id, session_id=session_id,
+        plan=plan, unlinked_warn=unlinked_warn,
+    ):
+        if parent_kind == "track":
+            chains = Q.get_device_chains_for_track(conn, parent_row["id"])
+        else:
+            chains = Q.get_device_chains_for_return(conn, parent_row["id"])
+        for chain in chains:
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                yield parent_kind, parent_at, parent_row, d
+
+
 def plan_pull_devices(
     conn: sqlite3.Connection,
     *,
@@ -52,41 +130,26 @@ def plan_pull_devices(
     plan = PullPlan()
     any_emitted = False
 
-    for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] == "master":
-            continue
-        track_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=t["id"]
-        )
-        if track_at is None:
-            plan.warn(
-                f"track {t['name']!r} ({t['id']}) not linked in session — "
+    def _warn(parent_kind, row):
+        if parent_kind == "track":
+            return (
+                f"track {row['name']!r} ({row['id']}) not linked in session — "
                 "push it via plan_push_clip first, then re-run pull"
             )
-            continue
-        any_emitted = True
-        plan.add(PullCall(
-            tool="ableton_device",
-            args={"action": "list", "track_index": track_at},
-            key=f"track_devices:{t['id']}",
-            purpose=f"pull device chain for track {t['name']!r}",
-        ))
-
-    for r in Q.get_returns_for_song(conn, song_id):
-        return_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="return", db_id=r["id"]
+        return (
+            f"return {row['name']!r} ({row['id']}) not linked in session — skipping"
         )
-        if return_at is None:
-            plan.warn(
-                f"return {r['name']!r} ({r['id']}) not linked in session — skipping"
-            )
-            continue
+
+    for parent_kind, parent_at, row in _iter_linked_parents(
+        conn, song_id=song_id, session_id=session_id, plan=plan, unlinked_warn=_warn,
+    ):
         any_emitted = True
+        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
         plan.add(PullCall(
             tool="ableton_device",
-            args={"action": "list", "return_index": return_at},
-            key=f"return_devices:{r['id']}",
-            purpose=f"pull device chain for return {r['name']!r}",
+            args={"action": "list", index_kwarg: parent_at},
+            key=f"{parent_kind}_devices:{row['id']}",
+            purpose=f"pull device chain for {parent_kind} {row['name']!r}",
         ))
 
     if not any_emitted:
@@ -125,63 +188,28 @@ def plan_pull_nested_rack_chains(
     any_emitted = False
     any_top_level_device = False
 
-    for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] == "master":
+    for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
+        conn, song_id=song_id, session_id=session_id, plan=plan,
+        unlinked_warn=lambda _pk, _row: None,
+    ):
+        any_top_level_device = True
+        if d["kind"] not in RACK_CLASS_NAMES:
             continue
-        track_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=t["id"],
-        )
-        if track_at is None:
-            continue
-        for chain in Q.get_device_chains_for_track(conn, t["id"]):
-            if chain["position"] != 0:
-                continue
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_top_level_device = True
-                if d["kind"] not in RACK_CLASS_NAMES:
-                    continue
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_device_chains",
-                        "track_index": track_at,
-                        "device_index": d["position"],
-                    },
-                    key=f"nested_rack_chains:{d['id']}",
-                    purpose=(
-                        f"pull nested chains for rack {d['kind']!r} "
-                        f"(pos {d['position']}) on track {t['name']!r}"
-                    ),
-                ))
-
-    for r in Q.get_returns_for_song(conn, song_id):
-        return_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="return", db_id=r["id"],
-        )
-        if return_at is None:
-            continue
-        for chain in Q.get_device_chains_for_return(conn, r["id"]):
-            if chain["position"] != 0:
-                continue
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_top_level_device = True
-                if d["kind"] not in RACK_CLASS_NAMES:
-                    continue
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_device_chains",
-                        "return_index": return_at,
-                        "device_index": d["position"],
-                    },
-                    key=f"nested_rack_chains:{d['id']}",
-                    purpose=(
-                        f"pull nested chains for rack {d['kind']!r} "
-                        f"(pos {d['position']}) on return {r['name']!r}"
-                    ),
-                ))
+        any_emitted = True
+        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
+        plan.add(PullCall(
+            tool="ableton_device",
+            args={
+                "action": "get_device_chains",
+                index_kwarg: parent_at,
+                "device_index": d["position"],
+            },
+            key=f"nested_rack_chains:{d['id']}",
+            purpose=(
+                f"pull nested chains for rack {d['kind']!r} "
+                f"(pos {d['position']}) on {parent_kind} {row['name']!r}"
+            ),
+        ))
 
     if not any_top_level_device:
         plan.warn(
@@ -228,67 +256,29 @@ def plan_pull_device_parameters(
     plan = PullPlan()
     any_emitted = False
 
-    for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] == "master":
-            continue
-        track_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=t["id"],
-        )
-        if track_at is None:
-            plan.warn(
-                f"track {t['name']!r} ({t['id']}): not linked; skipping "
-                "device parameters"
-            )
-            continue
-        for chain in Q.get_device_chains_for_track(conn, t["id"]):
-            if chain["position"] != 0:
-                continue  # nested rack chains gated by gap #17b
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_parameters",
-                        "track_index": track_at,
-                        "device_index": d["position"],
-                        "detail": "full",
-                    },
-                    key=f"device_parameters:{d['id']}",
-                    purpose=(
-                        f"pull parameters for device {d['kind']!r} "
-                        f"(pos {d['position']}) on track {t['name']!r}"
-                    ),
-                ))
-
-    for r in Q.get_returns_for_song(conn, song_id):
-        return_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="return", db_id=r["id"],
-        )
-        if return_at is None:
-            plan.warn(
-                f"return {r['name']!r} ({r['id']}): not linked; skipping "
-                "device parameters"
-            )
-            continue
-        for chain in Q.get_device_chains_for_return(conn, r["id"]):
-            if chain["position"] != 0:
-                continue
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_parameters",
-                        "return_index": return_at,
-                        "device_index": d["position"],
-                        "detail": "full",
-                    },
-                    key=f"device_parameters:{d['id']}",
-                    purpose=(
-                        f"pull parameters for device {d['kind']!r} "
-                        f"(pos {d['position']}) on return {r['name']!r}"
-                    ),
-                ))
+    for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
+        conn, song_id=song_id, session_id=session_id, plan=plan,
+        unlinked_warn=lambda pk, row: (
+            f"{pk} {row['name']!r} ({row['id']}): not linked; skipping "
+            "device parameters"
+        ),
+    ):
+        any_emitted = True
+        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
+        plan.add(PullCall(
+            tool="ableton_device",
+            args={
+                "action": "get_parameters",
+                index_kwarg: parent_at,
+                "device_index": d["position"],
+                "detail": "full",
+            },
+            key=f"device_parameters:{d['id']}",
+            purpose=(
+                f"pull parameters for device {d['kind']!r} "
+                f"(pos {d['position']}) on {parent_kind} {row['name']!r}"
+            ),
+        ))
 
     if not any_emitted:
         plan.warn(
@@ -327,65 +317,28 @@ def plan_pull_device_sidechain(
     plan = PullPlan()
     any_emitted = False
 
-    for t in Q.get_tracks_for_song(conn, song_id):
-        if t["kind"] == "master":
-            continue
-        track_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=t["id"],
-        )
-        if track_at is None:
-            plan.warn(
-                f"track {t['name']!r} ({t['id']}): not linked; skipping "
-                "device sidechain sources"
-            )
-            continue
-        for chain in Q.get_device_chains_for_track(conn, t["id"]):
-            if chain["position"] != 0:
-                continue  # nested rack chains gated by gap #17b
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_input_routing",
-                        "track_index": track_at,
-                        "device_index": d["position"],
-                    },
-                    key=f"device_sidechain_source:{d['id']}",
-                    purpose=(
-                        f"pull sidechain source for device {d['kind']!r} "
-                        f"(pos {d['position']}) on track {t['name']!r}"
-                    ),
-                ))
-
-    for r in Q.get_returns_for_song(conn, song_id):
-        return_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="return", db_id=r["id"],
-        )
-        if return_at is None:
-            plan.warn(
-                f"return {r['name']!r} ({r['id']}): not linked; skipping "
-                "device sidechain sources"
-            )
-            continue
-        for chain in Q.get_device_chains_for_return(conn, r["id"]):
-            if chain["position"] != 0:
-                continue
-            for d in Q.get_devices_for_chain(conn, chain["id"]):
-                any_emitted = True
-                plan.add(PullCall(
-                    tool="ableton_device",
-                    args={
-                        "action": "get_input_routing",
-                        "return_index": return_at,
-                        "device_index": d["position"],
-                    },
-                    key=f"device_sidechain_source:{d['id']}",
-                    purpose=(
-                        f"pull sidechain source for device {d['kind']!r} "
-                        f"(pos {d['position']}) on return {r['name']!r}"
-                    ),
-                ))
+    for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
+        conn, song_id=song_id, session_id=session_id, plan=plan,
+        unlinked_warn=lambda pk, row: (
+            f"{pk} {row['name']!r} ({row['id']}): not linked; skipping "
+            "device sidechain sources"
+        ),
+    ):
+        any_emitted = True
+        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
+        plan.add(PullCall(
+            tool="ableton_device",
+            args={
+                "action": "get_input_routing",
+                index_kwarg: parent_at,
+                "device_index": d["position"],
+            },
+            key=f"device_sidechain_source:{d['id']}",
+            purpose=(
+                f"pull sidechain source for device {d['kind']!r} "
+                f"(pos {d['position']}) on {parent_kind} {row['name']!r}"
+            ),
+        ))
 
     if not any_emitted:
         plan.warn(

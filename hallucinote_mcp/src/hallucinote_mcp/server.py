@@ -105,9 +105,15 @@ Resources (read via resources/read, no turn cost):
   ableton://server/info               running server version + package_root (install)
 
 Multi-step workflows live as Claude Code skills (skills/) — not
-MCP prompts — so the agent can invoke them directly. Reach for:
-  /song-new, /song-pick-instruments, /track-new-with-instrument,
-  /return-new, /mix-sidechain, /clip-humanize, /compose-part.
+MCP prompts — so the agent can invoke them directly. For ANY song
+work, read /song-workflow first — it is the lifecycle map. The arc:
+  /song-new -> /song-pick-instruments -> /compose-part ->
+  /compose-review (READ the composition) -> /ableton-push ->
+  ableton_render + ableton_analysis -> /mix-review (READ the mix) ->
+  /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
+  /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
+  The two review checkpoints (/compose-review, /mix-review) are easy to
+  skip and shouldn't be — they apply the framework's ear to your work.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).

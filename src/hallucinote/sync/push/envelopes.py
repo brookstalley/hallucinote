@@ -301,10 +301,13 @@ def classify_envelope_route(
         if chain_row is None:
             return "unroutable"
         if chain_row["parent_rack_device_id"] is not None:
-            # Nested-rack devices have no addressable parameter surface on
-            # either route (MCP gap on session clips; the perform handler
-            # addresses top-level devices only).
-            return "unroutable"
+            # DEEP-RACK-ADDR: a nested-rack device parameter routes to PERFORM —
+            # the perform handler addresses it via the canonical device_path
+            # (get_device_nesting_path). The session-clip route stays
+            # unavailable for nested params (Live 12.4 Clip.create_automation_
+            # envelope can't address them), so a nested ride is always the
+            # continuous performed arc, never a per-clip envelope.
+            return "perform"
         if chain_row["parent_return_id"] is not None:
             return "perform"
         parent_track_id = chain_row["parent_track_id"]
@@ -658,9 +661,6 @@ def _emit_device_parameter_envelope(
     uncovered rides route to the performed-automation phase (ENV-7G4K /
     ENV-9P4T); an audio host covered by a clip is refused pending CLP-AUD2."""
     device_id = envelope["target_device_id"]
-    device_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="device", db_id=device_id,
-    )
     chain_row = Q.get_device_parent_chain(conn, device_id)
     if chain_row is None:
         plan.warn(
@@ -668,22 +668,32 @@ def _emit_device_parameter_envelope(
             f"{device_id} not found; skipping"
         )
         return
-    if chain_row["parent_rack_device_id"] is not None:
-        plan.warn(
-            f"envelope {envelope['id']} (device_parameter): nested-rack "
-            f"device {device_id} — push not yet supported (MCP gap)"
-        )
-        return
-    parent_track_id = chain_row["parent_track_id"]
-    host_kind = _track_kind_for_envelope(conn, parent_track_id)
     route = classify_envelope_route(conn, envelope, song_id=song_id)
     if route != "session_clip":
+        # DEEP-RACK-ADDR: nested-rack params route to 'perform' (the perform
+        # phase rides them via device_path); master/return and uncovered/
+        # covered-audio rides also land here. The session-clip phase owns none
+        # of them, so note the real route and return.
+        if chain_row["parent_rack_device_id"] is not None:
+            host_track_id = None
+            host_kind = "nested-rack device"
+        elif chain_row["parent_return_id"] is not None:
+            host_track_id = None
+            host_kind = "return"
+        else:
+            host_track_id = chain_row["parent_track_id"]
+            host_kind = _track_kind_for_envelope(conn, host_track_id)
         _warn_non_session_route(
             plan, envelope=envelope, route=route,
-            host_track_id=parent_track_id,
-            host_kind=host_kind if parent_track_id is not None else "return",
+            host_track_id=host_track_id, host_kind=host_kind,
         )
         return
+    # session_clip route — a top-level midi-host device (nested params can't
+    # reach here; classify routes them to perform).
+    device_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="device", db_id=device_id,
+    )
+    parent_track_id = chain_row["parent_track_id"]
     parent_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track",
         db_id=parent_track_id,

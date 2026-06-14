@@ -338,6 +338,45 @@ def test_phase_addresses_return_device_sweep(
     assert "master" not in arc and "track_index" not in arc
 
 
+def test_phase_addresses_nested_device_via_device_path(conn, song, session):
+    """DEEP-RACK-ADDR: a device_parameter envelope on a device NESTED inside a
+    rack routes to perform and addresses by the TOP-LEVEL rack's link +
+    device_path. The nested device is never linked itself — push reads its
+    positional path from the DB."""
+    track = M.create_track(conn, song_id=song, track_index=1, name="Gtr")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=4,
+    )
+    top_chain = M.create_device_chain(conn, parent_track_id=track)
+    rack = M.create_device(
+        conn, chain_id=top_chain, position=1, kind="Instrument Rack",
+        display_name="Outer Rack",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=rack, ableton_index=2,
+    )
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack, position=1,
+    )
+    nested = M.create_device(
+        conn, chain_id=nested_chain, position=1, kind="Operator",
+        display_name="Deep Synth",
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=nested, parameter_path="Volume",
+    )
+    _two_point_ramp(conn, eid)
+    _, arcs = _batch_arcs(_plan(conn, song, session))
+    arc = arcs[0]
+    assert arc["target_kind"] == "device_parameter"
+    assert arc["track_index"] == 4
+    # The TOP-LEVEL rack's Live index, not the (unlinked) nested device.
+    assert arc["device_index"] == 2
+    assert arc["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    assert arc["parameter_name"] == "Volume"
+
+
 def test_phase_addresses_group_send_ride(
     conn, song, session, linked_group, linked_return,
 ):
@@ -936,6 +975,7 @@ def test_collision_key_parity_planner_vs_handler():
             return_index=addr.get("return_index"),
             device_index=addr.get("device_index"),
             parameter_name=addr.get("parameter_name"),
+            device_path=addr.get("device_path"),
         ).addressing_key()
 
     # Master device-parameter arc.
@@ -949,3 +989,13 @@ def test_collision_key_parity_planner_vs_handler():
     # Send arc (track + return).
     a3 = {"target_kind": "send_level", "track_index": 3, "return_index": 1}
     assert perform_target_key(a3) == _handler_key(**a3)
+    # DEEP-RACK-ADDR: a NESTED device-parameter arc — device_path is part of the
+    # identity on both sides, in the same hashable normalization.
+    a4 = {"target_kind": "device_parameter", "track_index": 3,
+          "device_index": 2, "parameter_name": "Volume",
+          "device_path": [{"chain_index": 1, "device_position": 2}]}
+    assert perform_target_key(a4) == _handler_key(**a4)
+    # Two arcs sharing device_index but differing by device_path must NOT
+    # collide (the whole point of putting device_path in the key).
+    a5 = {**a4, "device_path": [{"chain_index": 2, "device_position": 1}]}
+    assert perform_target_key(a4) != perform_target_key(a5)

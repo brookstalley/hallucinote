@@ -470,6 +470,50 @@ def test_replay_rejects_param_bad_shape(conn):
         replay_capture(conn, snap, song_name="t")
 
 
+def test_replay_display_string_continuous_param_passes_through(conn, recwarn):
+    """BUG4: a hand-authored continuous param as a DISPLAY STRING (no `normalized`)
+    stores as value_display and is pushed via the display path (the live setter
+    inverts the curve at push time) — no hand-inversion, and no bare-float warning."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "EQ Eight", "class": "EQ Eight",
+                "params_dialed": {"1 Frequency A": {"value": "180 Hz"}},
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    assert not [w for w in recwarn if "bare numeric" in str(w.message)]
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_display"] == "180 Hz"
+    assert param["value_normalized"] is None
+
+
+def test_replay_bare_float_param_no_normalized_warns(conn):
+    """BUG4 trap: a bare numeric value with no `normalized` is the authoring
+    mistake (stored as the display string, mis-dialed at push) — replay warns and
+    points at the two correct forms (explicit `normalized`, or a display string)."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "EQ Eight", "class": "EQ Eight",
+                "params_dialed": {"1 Frequency A": {"value": 0.71}},
+            }],
+        }],
+    }
+    with pytest.warns(UserWarning, match="bare numeric"):
+        sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_display"] == "0.71"
+    assert param["value_normalized"] is None
+
+
 # ---------- W7-B: nested rack chains ----------
 
 
@@ -554,18 +598,47 @@ def test_replay_nested_device_with_dialed_params(conn):
     assert params[0]["value_normalized"] == pytest.approx(0.5)
 
 
-def test_replay_rejects_nested_nested_rack(conn):
-    """One level only: a rack inside a rack chain raises at replay time.
-    Recursive support is deferred per the backlog nested-nested item.
-    """
+def test_replay_persists_nested_nested_rack(conn):
+    """DEEP-RACK-ADDR: a rack inside a rack chain replays to arbitrary depth —
+    the old 'one level only' raise is gone. A depth-2 nested device + its dialed
+    param land in the DB, and get_device_nesting_path reports the positional
+    address push will use (the durability regression, capture side)."""
     snap = _snapshot_with_nested_rack(chains=[
         {"chain_index": 1, "devices": [{
             "index": 1, "name": "Inner Rack", "class": "Instrument Rack",
-            "chains": [{"chain_index": 1, "devices": []}],
+            "chains": [{"chain_index": 1, "devices": [{
+                "index": 1, "name": "Deep Synth", "class": "Operator",
+                "params_dialed": {
+                    "Volume": {"value": "-6 dB", "normalized": 0.5},
+                },
+            }]}],
         }]},
     ])
-    with pytest.raises(ValueError, match="nested-nested"):
-        replay_capture(conn, snap, song_name="t")
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    outer = Q.get_devices_for_track(conn, track["id"])[0]
+    assert outer["kind"] == "Drum Rack"
+    # depth-1: Inner Rack sits in the outer rack's chain 1.
+    inner_chain = Q.get_device_chains_for_rack_device(conn, outer["id"])[0]
+    inner = Q.get_devices_for_chain(conn, inner_chain["id"])[0]
+    assert inner["display_name"] == "Inner Rack"
+    # depth-2: Deep Synth + its dialed param land under the inner rack.
+    deep_chain = Q.get_device_chains_for_rack_device(conn, inner["id"])[0]
+    deep = Q.get_devices_for_chain(conn, deep_chain["id"])[0]
+    assert deep["display_name"] == "Deep Synth"
+    params = Q.get_device_parameters(conn, deep["id"])
+    assert [(p["name"], p["value_display"]) for p in params] == [("Volume", "-6 dB")]
+    # The positional path push addresses it by — depth-2, both steps 1-based.
+    assert Q.get_device_nesting_path(conn, deep["id"]) == [
+        {"chain_index": 1, "device_position": 1},
+        {"chain_index": 1, "device_position": 1},
+    ]
+    # A top-level device has an empty path.
+    assert Q.get_device_nesting_path(conn, outer["id"]) == []
+    # The deep device's top-level ancestor (the linked one) is the outer rack;
+    # a top-level device is its own ancestor.
+    assert Q.get_top_level_device(conn, deep["id"])["id"] == outer["id"]
+    assert Q.get_top_level_device(conn, outer["id"])["id"] == outer["id"]
 
 
 def test_replay_rejects_chains_on_non_rack(conn):
@@ -632,6 +705,8 @@ def test_capture_plan_lists_expected_probes():
     tools = {p["tool"] for p in plan}
     assert tools == {
         "ableton_session(action='info')",
+        # SNP-4K7M: master device-chain probe (attached as song.master.devices)
+        "ableton_device(action='list', target='master')",
         "ableton_return(action='list')",
         "ableton_track(action='info')",
         "ableton_track(action='get_sends')",
@@ -1332,6 +1407,143 @@ def test_migrate_snapshot_clean_stamped_is_noop():
     assert report["version_before"] == SNAPSHOT_SCHEMA_VERSION
     assert cleaned["tracks"][0]["devices"][0]["name"] == "Operator"
     assert not snapshot_needs_migration(clean)
+
+
+# ---------------------------------------------------------------------------
+# SNP-4K7M — master-track device snapshot authorship
+# ---------------------------------------------------------------------------
+
+
+def _master_id(conn, sid):
+    master = next(
+        t for t in Q.get_tracks_for_song(conn, sid) if t["kind"] == "master"
+    )
+    return master["id"]
+
+
+def test_replay_creates_master_device_chain(conn):
+    """SNP-4K7M: a master with a `devices` array materializes a master device
+    chain (parent_track_id = master) — the authorship middle DEV-6M2K's push
+    side was missing."""
+    snap = {
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Glue Compressor", "class": "Glue Compressor"},
+                {"index": 2, "name": "Limiter", "class": "Limiter",
+                 "params_dialed": {"Ceiling": {"value": "-0.3", "normalized": 0.97}}},
+            ],
+        }},
+        "returns": [],
+        "tracks": [],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    chains = conn.execute(
+        "SELECT * FROM device_chains WHERE parent_track_id = ?", (mid,)
+    ).fetchall()
+    assert len(chains) == 1
+    assert chains[0]["position"] == 0
+    devices = Q.get_devices_for_track(conn, mid)
+    assert [d["display_name"] for d in devices] == ["Glue Compressor", "Limiter"]
+    assert [d["kind"] for d in devices] == ["Glue Compressor", "Limiter"]
+
+
+def test_replay_master_without_devices_creates_no_chain(conn):
+    """A {volume, panning}-only master → no master chain (back-compat)."""
+    snap = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [], "tracks": [],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    chains = conn.execute(
+        "SELECT * FROM device_chains WHERE parent_track_id = ?", (mid,)
+    ).fetchall()
+    assert chains == []
+
+
+def test_compile_snapshot_drops_analyzer_on_master_too():
+    """SNP-4K7M: the master joins the analyzer strip (the one parent the
+    SNP-8R4K filter skipped while the master had no device array)."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        returns=[], tracks=[],
+    )
+    devs = snap["song"]["master"]["devices"]
+    assert [d["name"] for d in devs] == ["Limiter"]
+    assert devs[0]["index"] == 1
+
+
+def test_compile_snapshot_master_without_devices_passes_through():
+    """A {volume, panning}-only master is carried through unchanged."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4",
+                      "master": {"volume": 0.85, "panning": 0.0}},
+        returns=[], tracks=[],
+    )
+    assert snap["song"]["master"] == {"volume": 0.85, "panning": 0.0}
+
+
+def test_migrate_snapshot_strips_master_analyzer():
+    """SNP-4K7M: at-rest migration cleans a polluted master too, reporting it."""
+    snapshot = {
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        "tracks": [], "returns": [],
+    }
+    cleaned, report = migrate_snapshot(snapshot)
+    master_devs = cleaned["song"]["master"]["devices"]
+    assert [d["name"] for d in master_devs] == ["Limiter"]
+    assert [d["index"] for d in master_devs] == [1]
+    assert report["total_removed"] == 1
+    by_parent = {(s["kind"], s["parent"]): s["removed"] for s in report["stripped"]}
+    assert by_parent == {("master", "Master"): 1}
+
+
+def test_snapshot_needs_migration_detects_polluted_master():
+    """A version-stamped snapshot whose MASTER still carries an analyzer must
+    still migrate (the pollution trigger now covers the master)."""
+    snapshot = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {"master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [_analyzer_device(1)],
+        }},
+        "tracks": [], "returns": [],
+    }
+    assert snapshot_needs_migration(snapshot)
+
+
+def test_master_device_roundtrip_compile_replay(conn):
+    """Full SNP-4K7M loop: compile a snapshot with a probed master chain (an
+    analyzer present, filtered at compile) → replay → the master chain
+    materializes with only the authored devices."""
+    snap = compile_snapshot(
+        session_info={"tempo": 120.0, "signature": "4/4", "master": {
+            "volume": 0.85, "panning": 0.0,
+            "devices": [
+                {"index": 1, "name": "Limiter", "class": "Limiter"},
+                _analyzer_device(2),
+            ],
+        }},
+        returns=[], tracks=[],
+    )
+    sid = replay_capture(conn, snap, song_name="t")
+    mid = _master_id(conn, sid)
+    devices = Q.get_devices_for_track(conn, mid)
+    assert [d["display_name"] for d in devices] == ["Limiter"]
 
 
 def test_snapshot_needs_migration_true_for_unstamped():

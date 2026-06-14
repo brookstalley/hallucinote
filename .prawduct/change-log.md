@@ -4,6 +4,141 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
+
+<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=shipped | release=v0.9.8 -->
+
+**No re-vendor** — the MCP `server.py` PRIMER string is outside `_FINGERPRINT_PATHS`
+(effective on the next `/mcp` respawn). Fixes the problem that agents don't discover
+`/compose-review` and `/mix-review` exist.
+
+- **New `/song-workflow` skill** — a thin, always-in-context lifecycle map; its
+  description names both review checkpoints so they surface even in a flat skill list.
+  Plus `docs/song-workflow.md`, the depth doc: the full lifecycle, the five expertise
+  layers, and links into the research corpus (link, never summarize).
+- **Layer 0 wiring (always loaded):** the MCP PRIMER's flat 7-skill list — which
+  omitted both review skills *and* `/ableton-push` — is now the lifecycle arc + a
+  pointer to `/song-workflow`; CLAUDE.md's skill-chain names the full arc incl. both
+  checkpoints.
+- **Layer 2 wiring (in-flow handoffs):** `/compose-part` → `/compose-review` (the
+  critical broken link — compose-part tells agents not to stop), `/song-pick-instruments`
+  → compose, `/ableton-push` → `/mix-review`. Index back-references added in
+  `docs/skills.md` (a "Start here" row) and the README "Learn more" table.
+
+## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
+
+<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=shipped | release=v0.9.8 -->
+
+**Re-vendor: not required** — engine-only (no `actions/`/`handlers/` touched). Behavior-preserving
+dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drift-guard).
+
+- **SYN-6T2W — shared linked-parent/device iterators for the `plan_pull_*` family.** The four
+  `plan_pull_*` planners each re-walked linked tracks (master-skipped) + returns → top-level chain
+  → devices. Extracted `_iter_linked_parents` and the layered `_iter_linked_top_level_devices`;
+  per-planner warning text, rack filtering, and `any_emitted`/`any_top_level_device` bookkeeping
+  stay in the callers via an `unlinked_warn` callback. Behavior preserved (225 pull tests unchanged).
+- **ENV-5R2J — single host-kind vocabulary + planner drift-guard.** The host track-kind set
+  `{midi,audio,master,group}` was hardcoded as a literal in `create_envelope`'s eligibility gate
+  while the canonical `TRACK_KINDS` already existed; point the gate at `TRACK_KINDS` (same set) and
+  add a completeness test pinning the planner's `_route_for_host_kind` to it — a new track kind with
+  no route now fails the test, not silently routes to `unroutable` at push. Eligibility and routing
+  stay separate policies; only the vocabulary is shared (no layering inversion — `sync→db` is the
+  existing direction).
+- **DEV-1F9X DEFERRED (not built).** The plugin-discriminator duplication is CROSS-PACKAGE
+  (`hallucinote` ↔ `hallucinote_mcp`); a shared module would either pull the heavy engine into the
+  MCP's stdlib-only-at-startup hot path or needs the W11-A `hallucinote-core` package that doesn't
+  exist yet. A lock-test already pins the two copies, so there's no live drift. Kept on the backlog,
+  gated on W11-A.
+
+## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
+
+<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=shipped | release=v0.9.8 -->
+
+**Re-vendor: REQUIRED** (DEEP-RACK-ADDR chunks 1 & 3 touch `actions/`+`handlers/`, flipping the
+MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). PULL-DRIFT-DETECT and the
+capture/push/queries halves are engine-only (no flip, effective immediately). Live-side checks
+(read/set/automate at depth, durability round-trip, the "Voices" parameter-vs-property probe) are
+queued in `.prawduct/operator-verification.md` (DEEP-RACK-ADDR block).
+
+- **DEEP-RACK-ADDR — rack devices nested 2+ levels deep are now fully addressable** (resolves the
+  Severity-H bug: deep params were unreadable, unsettable, un-automatable, and — the killer —
+  NON-DURABLE, since capture stored them and push silently dropped them, so a `build.py` rebuild
+  reverted any deep fix). One canonical `device_path` (`[{chain_index, device_position}…]`, 1-based,
+  any depth) replaces six reinvented depth ceilings.
+  - **Chunk 1 (wire):** `_resolve_device_path` — the single positional descent every device surface
+    speaks; `set_parameter`/`get_parameters`/`load` (with `chain_index`) gained optional
+    `device_path`; `get_device_chains` recurses the whole tree reporting `is_rack` + `device_path`
+    per device. `set_parameter_in_rack`/`load_in_rack` RETIRED (zero production callers; folded in).
+  - **Chunk 2 (durability — the unblocker):** capture replay recurses to arbitrary depth (the
+    `_depth>0` raise deleted); `Q.get_device_nesting_path` (pure-DB positional path); push emits
+    `set_parameter` + `device_path` for nested dialed params (NOT loaded — they arrive with the rack
+    preset). Pinned by a capture→DB→push depth-2 round-trip (the swell guitar case).
+  - **Chunk 3 (automation):** nested `device_parameter` envelopes route to PERFORM (the gesture
+    surface rides nested params via `device_path`; the session-clip route can't — Live 12.4
+    `Clip.create_automation_envelope` is top-level only, an honest teaching skip).
+  - **Chunk 4 (Voices, ask #4):** the "Voices IS a DeviceParameter" branch is covered by Chunks 1-2;
+    the "is a LOM property" branch is probe-gated (operator-verification), not built speculatively.
+- **PULL-DRIFT-DETECT — `pull device-parameters` is a usable drift detector again** (resolved the
+  Severity-M bug: on an in-sync song the dry-run reported ~2530 false "mutations" — and a real apply
+  WROTE 2452 preset defaults into the DB — while a version-skewed probe silently reported 0).
+  - **Scope to the tracked set:** the apply diffs only DB-tracked (dialed) params; Live-only params
+    are preset defaults the pull can't distinguish from dials, so they're SKIPPED, not added
+    (capturing new dialed params is `/song-snapshot`'s full-recapture job).
+  - **Round-trip-aware comparison:** compare by the param's authoritative form (normalized within
+    `_FLOAT_EPS` for continuous, display string for display-only) — kills the false "updated" on
+    unchanged values.
+  - **Fail loud on unreadable probes:** `ApplyResult.unreadable` counts failed/empty probes;
+    `pull_cli execute`/`apply` exit non-zero when >0; `/snapshot-bake-recent-changes` +
+    `/ableton-pull` check it first so "couldn't read" never reads as "in sync".
+
+## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
+
+<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=shipped | release=v0.9.8 -->
+
+**Re-vendor: REQUIRED** (the `strip` action + status.json heartbeat touch `handlers/`/`actions/`,
+flipping the MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). Bugs 4/1A/3-doc are
+no-flip and effective immediately. Four bugs from the 2026-06-14 swell mix dogfood; Bug 2
+(install `--plugins-dir`) was already fixed by INS-3W8P (v0.9.7) → no code.
+
+- **BUG4 — static device-param authoring (`params_dialed`).** Documented `params_dialed` as the
+  home for static device params in `docs/snapshot-schema.md` — sparse, the per-entry shape, and the
+  display-value workflow: a continuous param authored as a display string (`{"value":"180 Hz"}`)
+  already flows through to the live setter's curve inversion (DPP-7H2K), so authors never hand-invert
+  a log knob. `replay_capture` now warns on the bare-numeric-no-`normalized` trap.
+- **BUG1A — analyzer-aware push device-matching.** `probe_and_link` excludes the trailing
+  HallucinoteAnalyzer before position-matching, so a newly authored device at the analyzer's slot no
+  longer false-drifts + skips its link (which forced manual analyzer deletion before a re-push). Engine-only.
+- **BUG1B — bulk `ableton_render(action='strip')`.** The inverse of `ensure_loaded`: removes the
+  analyzer from every track/return/master in one call (idempotent), for a clean deterministic push /
+  save instead of ~29 hand-deletes.
+- **BUG3 — render/analyze 60 s false-failure.** `render` + `analyze` handlers write a `status.json`
+  heartbeat (`{state: running|done|error}`) so a poller sees a robust completion signal; mix-review
+  documents the expected 60 s wrapper timeout + the poll. Interim toward MCP-4T6Y (full async render),
+  which stays open.
+
+## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
+
+<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=shipped | release=v0.9.8 -->
+
+- **SNP-4K7M — master-track device snapshot authorship.** The push side shipped
+  (DEV-6M2K loads master devices) but the capture/replay middle was missing, so a
+  song author couldn't declare or round-trip a master Limiter — "sound design is
+  authorship" was violated at the master. `replay_capture` now materializes a master
+  device chain (`create_device_chain(parent_track_id=master_id)` — the mutator is
+  kind-agnostic), and `compile_snapshot` / `migrate_snapshot` /
+  `snapshot_needs_migration` / `capture_plan` all join the master to the SNP-8R4K
+  analyzer strip (the code TODO that read "joins when SNP-4K7M lands"). `song.master`
+  carries an optional `devices` array; documented in `docs/snapshot-schema.md`. Master
+  AUTOMATION envelopes remain a separate open surface (MAW-4K7P).
+- **AUD-3T6L — relative reverb RT60 verdict band.** Live's Reverb RT60 is a nonlinear
+  function of Decay Time + Room Size + diffusion, so the realized RT60 legitimately
+  diverges from the nominal knob by an amount that scales with magnitude. The fixed
+  ±0.15 s absolute band false-positived on clean long-decay captures (sun-zone A-Plate
+  3.37 vs 3.0). New `reverb_tolerance_s(declared) = max(floor 0.15 s, 0.20 × declared)`;
+  `REVERB_TOLERANCE_S` → `REVERB_TOLERANCE_FLOOR_S` (still the measurement-accuracy
+  bound). mix-review frames an out-of-band reverb as a producer's note (% longer/shorter
+  than intent), not a pass/fail verdict.
+
 ## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
 
 <!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=shipped | release=v0.9.7 -->

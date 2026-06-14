@@ -186,3 +186,11 @@ Do not retry inside the loop — re-running `execute` is the retry.
 ## Per-call MCP path (interactive iteration only)
 
 For single-element edits (tweak one clip's notes, nudge one parameter), drive the relevant MCP namespace directly. `push_cli` also exposes `phases`, `plan`, `apply` subcommands for debugging.
+
+## Next: read the mix
+
+After a full-song push, capture + analyze (`ableton_render` → `ableton_analysis`
+build the MixReport), then run **`/mix-review`** to interpret it against intent —
+masking, loudness, feel, energy per section. That's the checkpoint after the mix
+materializes (the counterpart to `/compose-review` before it). The full lifecycle
+is `/song-workflow`.

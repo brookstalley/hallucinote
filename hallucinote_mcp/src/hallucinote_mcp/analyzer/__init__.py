@@ -22,7 +22,10 @@ from .setup import (
     ANALYZER_SIGNATURE,
     AnalyzerInstance,
     AnalyzerLayout,
+    StripResult,
+    StrippedAnalyzer,
     ensure_analyzers_loaded,
+    strip_analyzers,
 )
 
 __all__ = [
@@ -30,5 +33,8 @@ __all__ = [
     "ANALYZER_SIGNATURE",
     "AnalyzerInstance",
     "AnalyzerLayout",
+    "StripResult",
+    "StrippedAnalyzer",
     "ensure_analyzers_loaded",
+    "strip_analyzers",
 ]

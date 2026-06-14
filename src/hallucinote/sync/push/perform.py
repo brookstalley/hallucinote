@@ -173,8 +173,20 @@ def _arc_addressing(
 
     if kind == "device_parameter":
         device_id = envelope["target_device_id"]
+        # DEEP-RACK-ADDR: resolve the TOP-LEVEL ancestor — the device that
+        # actually carries the ableton_links binding — and the positional
+        # device_path to the (possibly nested) target param. For a top-level
+        # device, top_level IS the device and device_path is [].
+        top_level = Q.get_top_level_device(conn, device_id)
+        if top_level is None:
+            plan.warn(
+                f"perform {env_id} (device_parameter): device {device_id} "
+                "not found; arc pending"
+            )
+            return None
         device_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="device", db_id=device_id,
+            conn, session_id=session_id, db_kind="device",
+            db_id=top_level["id"],
         )
         if device_at is None:
             plan.warn(
@@ -183,7 +195,10 @@ def _arc_addressing(
                 "manually — run probe-and-link after placing)"
             )
             return None
-        chain_row = Q.get_device_parent_chain(conn, device_id)
+        device_path = Q.get_device_nesting_path(conn, device_id)
+        # The parent SURFACE (track/return/master) is the top-level device's
+        # chain, not the nested device's chain.
+        chain_row = Q.get_device_parent_chain(conn, top_level["id"])
         if chain_row is None:
             plan.warn(
                 f"perform {env_id} (device_parameter): device {device_id} "
@@ -195,6 +210,8 @@ def _arc_addressing(
             "device_index": device_at,
             "parameter_name": envelope["parameter_path"],
         }
+        if device_path:
+            args["device_path"] = device_path
         if chain_row["parent_return_id"] is not None:
             return_at = Q.get_ableton_link(
                 conn, session_id=session_id, db_kind="return",
@@ -248,11 +265,20 @@ def perform_target_key(args: dict[str, Any]) -> tuple:
     the handler's collision guard are two halves of one contract, and if they
     drift the planner silently stops matching and a collision halts the whole
     phase. A cross-package parity test pins them together.
+
+    DEEP-RACK-ADDR: ``device_path`` is part of the identity — two arcs on
+    different nested devices share a top-level ``device_index`` but differ by
+    path, so the path (as a hashable tuple of steps) must be in the key or they
+    would falsely collide.
     """
     return (
         args.get("target_kind"), bool(args.get("master")),
         args.get("track_index"), args.get("return_index"),
         args.get("device_index"), args.get("parameter_name"),
+        tuple(
+            (int(s["chain_index"]), int(s["device_position"]))
+            for s in (args.get("device_path") or ())
+        ),
     )
 
 

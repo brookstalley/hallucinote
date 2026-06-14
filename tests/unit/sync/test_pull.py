@@ -2227,8 +2227,15 @@ def test_plan_pull_device_parameters_args_match_mcp_get_parameters_schema(
         )
 
 
-def test_apply_device_parameters_creates_when_db_empty(conn, song, session):
-    """Diff state: in Live only -> create."""
+def test_apply_device_parameters_does_not_capture_untracked_live_params(
+    conn, song, session,
+):
+    """PULL-DRIFT-DETECT contract change: a Live param the DB does NOT track is
+    a preset DEFAULT the DB deliberately doesn't store — the drift pull SKIPS it
+    (never adds it). (The old `..._creates_when_db_empty` test codified the
+    pollution bug: on an in-sync song that path "added" thousands of preset
+    defaults. Capturing brand-new dialed params is the /song-snapshot
+    full-recapture's job, not this lightweight drift bake.)"""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
@@ -2247,14 +2254,9 @@ def test_apply_device_parameters_creates_when_db_empty(conn, song, session):
         )],
         song_id=song, session_id=session,
     )
-    assert out.mutations == 2
-    rows = Q.get_device_parameters(conn, did)
-    by_name = {r["name"]: r for r in rows}
-    assert by_name["Volume"]["value_display"] == "0.50"
-    assert by_name["Volume"]["value_normalized"] == pytest.approx(0.5)
-    # Enum param: value_normalized=NULL per schema.
-    assert by_name["Filter Type"]["value_display"] == "Lowpass"
-    assert by_name["Filter Type"]["value_normalized"] is None
+    # Nothing tracked -> nothing to diff: zero mutations, zero rows written.
+    assert out.mutations == 0
+    assert Q.get_device_parameters(conn, did) == []
 
 
 def test_apply_device_parameters_no_op_when_identical(conn, song, session):
@@ -2336,6 +2338,102 @@ def test_apply_device_parameters_updates_when_value_differs(conn, song, session)
     assert row["value_normalized"] == pytest.approx(0.75)
 
 
+def test_apply_device_parameters_display_only_unchanged_is_no_op(
+    conn, song, session,
+):
+    """PULL-DRIFT-DETECT regression (the swell 'Transients' case): a DB param
+    stored DISPLAY-ONLY (value_normalized=NULL) whose Live value is UNCHANGED is
+    a no-op. The old `display_same AND norm_same` check forced a false 'updated'
+    here, because the pull always computes a non-NULL normalized from Live's raw
+    value, which never matches the DB's NULL."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Drum Buss", display_name="DB",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Transients",
+        value_display="0.30", value_normalized=None,  # display-only storage
+    )
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            # Live raw 0.296875 -> computed normalized non-NULL; display matches.
+            _params_payload(("Transients", 0.296875, "0.30", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_device_parameters_normalized_display_drift_is_no_op(
+    conn, song, session,
+):
+    """PULL-DRIFT-DETECT regression (the swell 'Boom Amt' case): a continuous
+    param whose normalized value is unchanged within _FLOAT_EPS is a no-op EVEN
+    IF Live's display STRING differs (formatting/units vary). The old check
+    required display_same too, false-flagging a value that didn't change."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Drum Buss", display_name="DB",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Boom Amt",
+        value_display="0.35", value_normalized=0.35,
+    )
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"device_parameters:{did}",
+            # raw 0.3499994 normalizes within eps of 0.35; display differs.
+            _params_payload(("Boom Amt", 0.3499994, "35 %", 0.0, 1.0, False)),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+
+
+def test_apply_pull_results_failed_probe_counts_unreadable(conn, song, session):
+    """PULL-DRIFT-DETECT: a failed probe is UNREADABLE state, not 'no change'.
+    It's counted so 'couldn't read' is never mistaken for 'in sync' (the
+    dangerous twin: a version-skewed probe silently degrading to mutations:0)."""
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": "device_parameters:whatever", "ok": False,
+            "tool": "ableton_device", "result": None,
+            "error": "Live Remote Script version mismatch",
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.unreadable == 1
+    assert out.mutations == 0
+    assert out.no_ops == 0
+    assert any("failed" in w for w in out.warnings)
+
+
+def test_apply_pull_results_ok_but_missing_result_counts_unreadable(
+    conn, song, session,
+):
+    """PULL-DRIFT-DETECT: ok=True with NO result payload is also unreadable
+    state — counted, not silently passed (twin of the ok=False branch)."""
+    out = pull.apply_pull_results(
+        conn,
+        [{"key": "device_parameters:whatever", "ok": True,
+          "tool": "ableton_device"}],
+        song_id=song, session_id=session,
+    )
+    assert out.unreadable == 1
+    assert out.mutations == 0
+    assert any("missing 'result'" in w for w in out.warnings)
+
+
 def test_apply_device_parameters_removes_db_params_absent_from_live(
     conn, song, session,
 ):
@@ -2369,8 +2467,9 @@ def test_apply_device_parameters_removes_db_params_absent_from_live(
 
 
 def test_apply_device_parameters_handles_mixed_diff(conn, song, session):
-    """All four diff states in one apply: in-both-same (no-op),
-    in-both-differ (update), Live-only (create), DB-only (remove)."""
+    """The diff states the drift pull acts on: in-both-same (no-op),
+    in-both-differ (update), DB-only (remove). A Live-only param ("Release")
+    is an untracked default and is SKIPPED (PULL-DRIFT-DETECT), NOT created."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
@@ -2397,18 +2496,18 @@ def test_apply_device_parameters_handles_mixed_diff(conn, song, session):
             _params_payload(
                 ("Volume", 0.5, "0.50", 0.0, 1.0, False),    # no-op
                 ("Attack", 0.5, "0.50", 0.0, 1.0, False),    # update
-                ("Release", 0.3, "0.30", 0.0, 1.0, False),   # create
+                ("Release", 0.3, "0.30", 0.0, 1.0, False),   # untracked -> skip
             ),
         )],
         song_id=song, session_id=session,
     )
-    # 1 update + 1 create + 1 remove = 3 mutations; 1 no-op.
-    assert out.mutations == 3
+    # 1 update (Attack) + 1 remove (Stale) = 2 mutations; 1 no-op (Volume);
+    # Release skipped (untracked default, not created).
+    assert out.mutations == 2
     assert out.no_ops == 1
     by_name = {r["name"]: r for r in Q.get_device_parameters(conn, did)}
-    assert set(by_name) == {"Volume", "Attack", "Release"}
+    assert set(by_name) == {"Volume", "Attack"}
     assert by_name["Attack"]["value_display"] == "0.50"
-    assert by_name["Release"]["value_display"] == "0.30"
 
 
 def test_apply_device_parameters_normalizes_against_min_max(conn, song, session):
@@ -2420,6 +2519,12 @@ def test_apply_device_parameters_normalizes_against_min_max(conn, song, session)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1, kind="Compressor", display_name="Glue",
+    )
+    # The drift pull diffs the TRACKED set, so seed the param (sentinel value)
+    # to exercise the normalization on the update path (PULL-DRIFT-DETECT).
+    M.set_device_parameter(
+        conn, device_id=did, name="Threshold",
+        value_display="(seed)", value_normalized=None,
     )
 
     out = pull.apply_pull_results(
@@ -2450,6 +2555,10 @@ def test_apply_device_parameters_constant_range_stores_null_normalized(
     did = M.create_device(
         conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
     )
+    M.set_device_parameter(  # seed the tracked param (PULL-DRIFT-DETECT)
+        conn, device_id=did, name="Algorithm",
+        value_display="(seed)", value_normalized=None,
+    )
 
     out = pull.apply_pull_results(
         conn,
@@ -2477,6 +2586,10 @@ def test_apply_device_parameters_clamps_normalized_to_valid_range(
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1, kind="Operator", display_name="Init",
+    )
+    M.set_device_parameter(  # seed the tracked param (PULL-DRIFT-DETECT)
+        conn, device_id=did, name="Volume",
+        value_display="(seed)", value_normalized=None,
     )
 
     # value just barely past max — would normalize to ~1.0001
@@ -2506,6 +2619,16 @@ def test_apply_device_parameters_captures_value_items_for_enum(
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
     did = M.create_device(
         conn, chain_id=chain_id, position=1, kind="Amp", display_name="Amp",
+    )
+    # Seed both tracked params (PULL-DRIFT-DETECT) so the value_items capture
+    # runs on the update path.
+    M.set_device_parameter(
+        conn, device_id=did, name="Amp Type",
+        value_display="(seed)", value_normalized=None,
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Bass",
+        value_display="(seed)", value_normalized=None,
     )
     amp_items = ["Clean", "Boost", "Blues", "Heavy", "Smith", "Lead", "Bass"]
     out = pull.apply_pull_results(
@@ -2677,6 +2800,14 @@ def test_apply_device_parameters_property_round_trip(entries):
             conn, chain_id=chain_id, position=1,
             kind="Operator", display_name="Init",
         )
+        # PULL-DRIFT-DETECT: the drift pull diffs the TRACKED set, so seed each
+        # synthesized param (sentinel) — the normalize+diff pipeline then runs on
+        # the update path for every entry.
+        for entry in entries:
+            M.set_device_parameter(
+                conn, device_id=did, name=entry[0],
+                value_display="(seed)", value_normalized=None,
+            )
 
         out = pull.apply_pull_results(
             conn,
@@ -4310,6 +4441,43 @@ def test_pull_cli_plan_and_apply_roundtrip(tmp_path):
     assert summary["mutations"] == 1
 
 
+def test_pull_cli_apply_exits_nonzero_when_results_unreadable(tmp_path):
+    """PULL-DRIFT-DETECT: the two-step `apply` path also exits non-zero when a
+    probe result is unreadable (ok=False) — parity with `execute`, so a wrapper
+    never reads a failed two-step pull as 'in sync'."""
+    import subprocess
+    import sys
+
+    db_path = tmp_path / "applyfail.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="af", key="Dm")
+    M.create_track(conn, song_id=song_id, track_index=0, name="Master",
+                   kind="master")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    conn.close()
+
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({
+        "domain": "mix-state", "song_id": song_id, "session_id": session_id,
+        "calls": [], "notes": [],
+    }))
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps([
+        {"key": "session_info", "ok": False, "tool": "ableton_session",
+         "result": None, "error": "Remote Script version mismatch"},
+    ]))
+
+    p = subprocess.run(
+        [sys.executable, "-m", "hallucinote.sync.pull_cli",
+         "apply", session_id, "--db", str(db_path),
+         "--plan", str(plan_path), "--results", str(results_path)],
+        capture_output=True, text=True,
+    )
+    assert p.returncode == 2, p.stderr
+    summary = json.loads(p.stdout)
+    assert summary["unreadable"] >= 1
+
+
 def test_skill_allowed_tools_cover_every_planner_emitted_tool(
     conn, song, session
 ):
@@ -4649,6 +4817,52 @@ def test_pull_cli_execute_bakes_device_parameter_change(tmp_path, monkeypatch):
     assert row is not None
     assert row["value_display"] == "-6.0 dB"
     assert row["value_normalized"] == pytest.approx(0.55)
+
+
+def test_pull_cli_execute_exits_nonzero_when_probes_unreadable(
+    tmp_path, monkeypatch, capsys,
+):
+    """PULL-DRIFT-DETECT: when probes fail (e.g. version skew), `pull_cli
+    execute` exits NON-ZERO and reports `unreadable` — so a wrapper never
+    mistakes an unreadable run for 'in sync / 0 drift' (the dangerous twin)."""
+    from hallucinote.sync import pull_cli
+
+    db_path = tmp_path / "skew.db"
+    conn = init_db(db_path)
+    song_id = M.create_song(conn, name="sk", key="Dm")
+    track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Drums")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    M.link_db_to_ableton(
+        conn, session_id=session_id, db_kind="track", db_id=track_id,
+        ableton_index=1,
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=track_id)
+    device_id = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="Compressor",
+        display_name="Compressor",
+    )
+    M.set_device_parameter(
+        conn, device_id=device_id, name="Threshold",
+        value_display="-12.0 dB", value_normalized=0.30,
+    )
+    conn.commit()
+    conn.close()
+
+    # The probe fails (string route -> ok=False) — version mismatch.
+    fake_send = _fake_pull_send_factory({
+        ("ableton_device", "get_parameters", 1, None, 1):
+            "Remote Script version mismatch",
+    })
+    monkeypatch.setattr(pull_cli, "_resolve_send_fn", lambda: fake_send)
+
+    rc = pull_cli.main([
+        "execute", "device-parameters", session_id,
+        "--db", str(db_path), "--dry-run",
+    ])
+    assert rc == 2  # non-zero: drift could NOT be determined
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["applied"]["unreadable"] >= 1
+    assert summary["applied"]["mutations"] == 0  # NOT a false "0 drift / in sync"
 
 
 def test_pull_cli_execute_works_for_mix_state_domain(tmp_path, monkeypatch, capsys):

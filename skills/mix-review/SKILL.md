@@ -158,6 +158,12 @@ first — see "Refreshing the analysis"). For each section, you have:
   ring-out — not per send). When `sufficient_tail` is false the capture had no
   usable ring-out: report it as "RT60 unverifiable — re-render with a larger
   `ring_out_beats`", NOT as a measurement (`measured_rt60_s` is NaN).
+  When `sufficient_tail` is true but `within_tolerance` is false, frame it as a
+  producer's note — "the Plate decays ~N% longer/shorter than your 3.0 s intent"
+  (`measured/declared − 1`), not a pass/fail verdict: the band is now RELATIVE
+  to the declared RT60 (AUD-3T6L — Live's Reverb RT60 is nonlinear, so the
+  realized decay legitimately diverges from the nominal knob), so an
+  out-of-band reading is a real, audible divergence worth a question, not noise.
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in
@@ -297,6 +303,37 @@ If there's no recent report (or the mix changed), render + analyze first:
 when the song declares sections. (If `ableton_analysis` returns a report with no
 `masking`/`attribution` keys, the MCP server is running stale code — tell the
 user to run `/mcp` to respawn it.)
+
+**Expect a "timed out after 60 s" error on both — it is NOT a failure.** A render
+or analyze routinely runs several minutes, but the Claude Code MCP tool-call
+*wrapper* caps a single call at 60 s and returns a red timeout WHILE THE JOB
+CONTINUES server-side (the framework already sets an unbounded socket read; the
+60 s cap is the wrapper, a layer the server can't widen). Do not retry or report a
+failure — poll the filesystem for the completion artifact.
+
+**Primary signal — `status.json`.** Both actions now write a sibling
+`status.json` (`{state: running|done|error}`) the instant the work starts,
+refreshed mid-flight and made terminal at the end (carrying the report/manifest
+path on `done`, the message on `error`). Poll that single stable file — no dir
+scan, and a raised job lands a terminal `error` instead of hanging forever. Its
+two locations:
+- **render** — `<captures_dir>/status.json` (`done` also carries `manifest_path`
+  + `render_status`: `ok`/`incomplete`).
+- **analyze** — `songs/<slug>/analysis/status.json` (`done` also carries
+  `report_path`).
+
+**Fallback — artifact poll (for a stale server).** `status.json` only appears
+once the *running* MCP server carries this change, and it appears only after the
+user re-installs: the chunks that ship it flip the server fingerprint, so the
+plugin re-vendors on the next `/ableton-mcp-install` (a server started before
+that still writes no `status.json`). If `status.json` never shows up, fall back
+to watching for the completion artifact directly:
+- **render** — watch `<captures_dir>` for `manifest.json` (written as the render's
+  final act).
+- **analyze** — watch `songs/<slug>/analysis/` for a JSON newer than the newest one
+  from before the call (the MixReport).
+Fire the call, ignore the 60 s error, poll for `status.json` (artifact as
+fallback), then proceed.
 
 **Verifying a mix change (A/B):** after applying a fix, PUSH the change to
 Live before re-rendering (fixes land DB-first through mutators; `db_seq`

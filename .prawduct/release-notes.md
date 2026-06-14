@@ -5,6 +5,40 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v0.9.8
+
+### skills,docs,mcp-primer,claude-md
+
+**Entry:** 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
+
+**Chunks shipped:** discoverability-wiring, song-workflow-spine
+
+### sync-pull,db-mutations,sync-push,tests
+
+**Entry:** 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
+
+**Chunks shipped:** ENV-5R2J, SYN-6T2W
+
+### mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs
+
+**Entry:** 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
+
+**Chunks shipped:** DEEP-RACK-ADDR-1, DEEP-RACK-ADDR-2, DEEP-RACK-ADDR-3, DEEP-RACK-ADDR-4, PULL-DRIFT-DETECT
+
+### capture,sync-push,snapshot,render,analysis,skills
+
+**Entry:** 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
+
+**Chunks shipped:** BUG1A-analyzer-match, BUG1B-strip, BUG3-status-json, BUG3-timeout-doc, BUG4-params-dialed
+
+### sync,snapshot,audio
+
+**Entry:** 2026-06-14 — master device snapshot authorship + relative reverb verdict band
+
+**Chunks shipped:** AUD-3T6L, SNP-4K7M
+
+See `.prawduct/change-log.md` for full details.
+
 ## v0.9.7
 
 ### sync-pull,analysis

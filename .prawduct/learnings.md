@@ -236,3 +236,7 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ## Open an existing song DB through `init_db` (migrate-on-open) — bare `connect()` reads a stale schema and crashes
 
 **The additive-column migration (`_ensure_added_columns`) runs ONLY inside `init_db`. Bare `connect()` opens the DB as-is. So any code path that opens a song DB built by an *earlier* release with bare `connect()` reads it raw — and the first planner/query to touch a column a later schema bump added crashes with sqlite3's `IndexError: No item with that key` (sqlite3.Row's missing-column error). Open existing song DBs via `init_db`, never bare `connect()`.**
+
+## Build-plan chunk headings must be `### Chunk <id>:` (h3 + colon), not `## Chunk X —` (h2 + em-dash)
+
+**`prawduct-hook verify-chunk-refs` resolves the current chunk by anchoring on an h3 heading with a colon (`### Chunk A: …`); a heading authored as `## Chunk A — …` (h2 + em-dash) is invisible to it, so the verifier reports "chunk not found" even when the Status-line title byte-matches the heading. Making the Status line and heading text identical does NOT fix it — the heading LEVEL (`###`) and the `:` delimiter are what the resolver keys on. Write chunk headings as `### Chunk <id>: <name>` from the start.**

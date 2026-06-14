@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.analyzer_staleness import detect_stale_analyzer_surfaces
 from hallucinote.db import mutations as M, queries as Q
 
@@ -642,11 +643,13 @@ def _match_devices_for_linked_parents(
     drift note — push will still load over the wrong device, but the
     note surfaces the situation so the user can rename or rebuild.
 
-    Nested rack chains (Drum Rack / Instrument Rack contents) are not
-    walked here — they're addressed by chain_index + nested device_position
-    and need a separate probe (W22-B's nested-rack push). Top-level
-    device match is the high-frequency case that resolves the punk-fate
-    bug; nested can wait.
+    Nested rack-chain devices are not LINKED here — only top-level devices
+    carry an ableton_link binding. (DEEP-RACK-ADDR: their dialed params ARE
+    pushed, addressed by the top-level device's index + the canonical
+    device_path — see `push/devices.py _emit_nested_param_writes`; they arrive
+    with the rack preset, so they need no separate load/link.) This probe-match
+    walks the top-level chains, the high-frequency case that resolves the
+    punk-fate bug.
     """
     for matched, parent_kind, get_devices_fn in (
         (result.matched_tracks, "track", Q.get_devices_for_track),
@@ -659,8 +662,17 @@ def _match_devices_for_linked_parents(
                 continue
             db_devices = list(get_devices_fn(conn, parent["db_id"]))
             # Devices are 1-based by position in both spaces.
+            # BUG1A: the HallucinoteAnalyzer is measurement infrastructure (a
+            # render leaves it trailing the chain), not authored content — exclude
+            # it before position-matching. Otherwise an authored DB device whose
+            # position lands on the analyzer's slot compared against it, produced a
+            # false "device drift" note, and skipped its link (so a param re-push
+            # over an analyzer-laden set forced manual analyzer-deletion first). The
+            # render keeps the analyzer terminal, so dropping it preserves the
+            # authored devices' real `device_index` for the link.
+            authored_live = [d for d in live_devices if not is_analyzer_device(d)]
             live_by_pos = {
-                d["device_index"]: d for d in live_devices
+                d["device_index"]: d for d in authored_live
             }
             for db_dev in db_devices:
                 pos = db_dev["position"]

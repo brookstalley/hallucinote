@@ -19,7 +19,7 @@ without any error — hence this pin.
 ## Current pin (keep this row honest when versions move)
 
 - Engine `hallucinote`: **0.9.0** (`pyproject.toml`; `uv.lock` pins the same, editable).
-- Plugin: **0.9.7** (`.claude-plugin/plugin.json`).
+- Plugin: **0.9.8** (`.claude-plugin/plugin.json`).
 
 **Plugin version ≠ engine version, and that's fine.** The plugin and the engine
 version independently. The coupling guarantee is *by source*, not by the version

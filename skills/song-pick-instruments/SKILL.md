@@ -132,3 +132,9 @@ If the user supplied a style hint, let it steer tonal choice — `warm vintage a
 ## Snapshot integration
 
 Picks can also land in `captured_session.json` via composer-time `preset_query` selectors (`{root, pattern}`) without Live running — see `docs/snapshot-schema.md`. Built-in Live content is portable across machines via `preset_query`; third-party plugins are per-machine and must be re-resolved consumer-side.
+
+## Next: compose
+
+With chains picked, compose the parts with **`/compose-part`** (author-as-code in
+`build.py`), then read the result with **`/compose-review`** before pushing. The
+full lifecycle is `/song-workflow`.

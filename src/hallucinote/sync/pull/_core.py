@@ -89,10 +89,18 @@ class ApplyResult:
     `details` carries one human-readable line per applied diff so the skill
     can show the user exactly what changed. `warnings` carries non-fatal
     things the user should know (unlinked Ableton rows, missing results, etc.).
+
+    `unreadable` (PULL-DRIFT-DETECT) counts probes that FAILED or returned no
+    payload — i.e. state the pull could not read. It is load-bearing: a run with
+    `unreadable > 0` could NOT determine drift, so "couldn't read" must never be
+    mistaken for "no drift" (the dangerous-twin: a version-skewed probe that
+    silently degrades to `mutations: 0`). `pull_cli execute` exits non-zero when
+    it is > 0.
     """
     mutations: int = 0
     no_ops: int = 0
     skipped_unlinked: int = 0
+    unreadable: int = 0
     warnings: list[str] = field(default_factory=list)
     details: list[str] = field(default_factory=list)
 

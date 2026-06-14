@@ -145,7 +145,14 @@ def resolve_baseline(analysis_dir: Path | str, seq: int) -> Path:
     explicit-path baselines.
     """
     analysis_dir = Path(analysis_dir)
-    candidates = sorted(analysis_dir.glob("*.json")) if analysis_dir.exists() else []
+    # Exclude status.json — the BUG3 completion heartbeat the analyze handler
+    # (hallucinote_mcp.handlers.analysis) writes into this same dir. It carries
+    # no db_seq so the loop below already skips it, but excluding it by name
+    # keeps it out of the candidate set entirely (no stray read, clearer intent).
+    candidates = (
+        sorted(p for p in analysis_dir.glob("*.json") if p.name != "status.json")
+        if analysis_dir.exists() else []
+    )
     if not candidates:
         raise ValueError(
             f"no analysis reports in {analysis_dir} — baselines are the "

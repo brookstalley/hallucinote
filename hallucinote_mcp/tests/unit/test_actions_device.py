@@ -8,6 +8,7 @@ import pytest
 
 from hallucinote_mcp import schema
 from hallucinote_mcp.dispatcher import dispatch
+from hallucinote_mcp.handlers.device import _resolve_device_path
 from hallucinote_mcp.testing import isolated_actions
 from hallucinote_mcp.wire import Request
 
@@ -264,8 +265,10 @@ _EXPECTED_DEVICE_ACTIONS = {
     "capabilities", "set_input_routing", "get_input_routing",
     "set_sidechain", "get_routing",
     "navigate_preset", "pad_info",
-    # W6-I/J nested rack chain actions:
-    "get_device_chains", "load_in_rack", "set_parameter_in_rack",
+    # Nested rack chains: recursive probe. DEEP-RACK-ADDR retired the one-level
+    # load_in_rack / set_parameter_in_rack — folded into load (device_path +
+    # chain_index) and set_parameter (device_path).
+    "get_device_chains",
 }
 
 
@@ -1925,9 +1928,10 @@ def test_set_parameter_value_display_rejected_on_enum(loaded_actions):
     assert "enum" in (resp.error or "")
 
 
-def test_set_parameter_in_rack_value_display_parity(loaded_actions):
-    """value_display resolves identically through the nested-rack handler —
-    the shared resolve_continuous_write keeps the contract in lock-step (B4 lesson)."""
+def test_set_parameter_device_path_value_display_parity(loaded_actions):
+    """value_display resolves identically through device_path — the shared
+    resolve_continuous_write keeps the contract in lock-step (B4 lesson).
+    Migrated from set_parameter_in_rack (DEEP-RACK-ADDR)."""
     threshold = _db_param()
     nested = FakeDevice("Comp", class_name="Compressor2", parameters=[threshold])
     chain = _FakeChain("Lead", devices=[nested])
@@ -1935,10 +1939,10 @@ def test_set_parameter_in_rack_value_display_parity(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_parameter_in_rack",
+            tool="ableton_device", action="set_parameter",
             params={
                 "track_index": 1, "device_index": 1,
-                "chain_index": 1, "nested_device_position": 1,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
                 "parameter_name": "Threshold", "value_display": "-18 dB",
             },
         ),
@@ -1947,10 +1951,13 @@ def test_set_parameter_in_rack_value_display_parity(loaded_actions):
     assert resp.ok is True, resp.error
     assert threshold.value == pytest.approx((-18.0 + 70.0) / 70.0, abs=1e-3)
     assert resp.result["value_display"] == "-18.00 dB"
+    assert resp.result["device_path"] == [
+        {"chain_index": 1, "device_position": 1}
+    ]
 
 
-def test_set_parameter_in_rack_unit_display_attaches_value_real(loaded_actions):
-    """The nested-rack handler shares _attach_real_unit_echo: a recognised-unit
+def test_set_parameter_device_path_unit_display_attaches_value_real(loaded_actions):
+    """device_path writes share _attach_real_unit_echo: a recognised-unit
     value_display write echoes value_real/value_real_unit identically to the
     top-level set_parameter (DPP-7H2K(b) parity across both write sites)."""
     freq = FakeParam("Freq", 0.5, min=0.0, max=1.0, display_fn=_freq_hz_khz)
@@ -1960,10 +1967,10 @@ def test_set_parameter_in_rack_unit_display_attaches_value_real(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_parameter_in_rack",
+            tool="ableton_device", action="set_parameter",
             params={
                 "track_index": 1, "device_index": 1,
-                "chain_index": 1, "nested_device_position": 1,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
                 "parameter_name": "Freq", "value_display": "2 kHz",
             },
         ),
@@ -2594,7 +2601,7 @@ def test_get_device_chains_non_rack_raises_teaching_error(loaded_actions):
     assert "rack" in err.lower()
 
 
-def test_set_parameter_in_rack_writes_continuous_value(loaded_actions):
+def test_set_parameter_device_path_writes_continuous_value(loaded_actions):
     threshold = FakeParam("Threshold", 0.5, min=0.0, max=1.0)
     nested = FakeDevice("Comp", class_name="Compressor2",
                         parameters=[threshold])
@@ -2603,10 +2610,10 @@ def test_set_parameter_in_rack_writes_continuous_value(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_parameter_in_rack",
+            tool="ableton_device", action="set_parameter",
             params={
                 "track_index": 1, "device_index": 1,
-                "chain_index": 1, "nested_device_position": 1,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
                 "parameter_name": "Threshold", "value": "0.75",
             },
         ),
@@ -2616,7 +2623,7 @@ def test_set_parameter_in_rack_writes_continuous_value(loaded_actions):
     assert threshold.value == 0.75
 
 
-def test_set_parameter_in_rack_writes_enum_value(loaded_actions):
+def test_set_parameter_device_path_writes_enum_value(loaded_actions):
     filter_type = FakeParam(
         "Filter Type", 0.0, value_items=("Lowpass", "Highpass", "Bandpass"),
     )
@@ -2626,10 +2633,10 @@ def test_set_parameter_in_rack_writes_enum_value(loaded_actions):
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_parameter_in_rack",
+            tool="ableton_device", action="set_parameter",
             params={
                 "track_index": 1, "device_index": 1,
-                "chain_index": 1, "nested_device_position": 1,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
                 "parameter_name": "Filter Type", "value": "Highpass",
                 "value_type": "enum",
             },
@@ -2639,21 +2646,21 @@ def test_set_parameter_in_rack_writes_enum_value(loaded_actions):
     assert resp.ok is True, resp.error
     assert filter_type.value == 1.0  # index of 'Highpass'
     # Response `value` is the resolved float index, matching set_parameter's
-    # enum response shape (was the raw string before the shared-helper refactor).
+    # top-level enum response shape.
     assert resp.result["value"] == 1.0
 
 
-def test_set_parameter_in_rack_invalid_chain_raises(loaded_actions):
+def test_set_parameter_device_path_invalid_chain_raises(loaded_actions):
     rack = _FakeRackDevice("Rack", chains=[_FakeChain("Only", devices=[
         FakeDevice("X", parameters=[FakeParam("Y", 0.0)]),
     ])])
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[rack])]))
     resp = dispatch(
         Request(
-            tool="ableton_device", action="set_parameter_in_rack",
+            tool="ableton_device", action="set_parameter",
             params={
                 "track_index": 1, "device_index": 1,
-                "chain_index": 99, "nested_device_position": 1,
+                "device_path": [{"chain_index": 99, "device_position": 1}],
                 "parameter_name": "Y", "value": "0.5",
             },
         ),
@@ -2663,9 +2670,10 @@ def test_set_parameter_in_rack_invalid_chain_raises(loaded_actions):
     assert "chain_index" in (resp.error or "")
 
 
-# load_in_rack — focuses on the chain-selection wire-through; full
-# browser-load integration is deferred to W6-K real-Live smoke.
-def test_load_in_rack_selects_chain_and_loads(loaded_actions):
+# load into a rack chain (load + device_index + chain_index, the DEEP-RACK-ADDR
+# replacement for load_in_rack) — focuses on the chain-selection wire-through;
+# full browser-load integration is deferred to W6-K real-Live smoke.
+def test_load_into_chain_selects_chain_and_loads(loaded_actions):
     chain = _FakeChain("Lead", devices=[])
     rack = _FakeRackDevice("Rack", chains=[chain])
     track = FakeTrack("T1", devices=[rack])
@@ -2746,7 +2754,7 @@ def test_load_in_rack_selects_chain_and_loads(loaded_actions):
 
     resp = dispatch(
         Request(
-            tool="ableton_device", action="load_in_rack",
+            tool="ableton_device", action="load",
             params={
                 "track_index": 1, "device_index": 1, "chain_index": 1,
                 "kind": "Compressor2",
@@ -2798,7 +2806,7 @@ def _build_rack_load_ctx(chain, on_load):
     return ctx
 
 
-def test_load_in_rack_replace_in_place_returns_changed_position(loaded_actions):
+def test_load_into_chain_replace_in_place_returns_changed_position(loaded_actions):
     """Symmetric with load_handler's three-shape post-condition (E2).
     Live's browser-load can swap a device at the same chain position
     when an item with the same canonical class is already at the tail —
@@ -2815,7 +2823,7 @@ def test_load_in_rack_replace_in_place_returns_changed_position(loaded_actions):
     ctx = _build_rack_load_ctx(chain, _replace_in_place)
     resp = dispatch(
         Request(
-            tool="ableton_device", action="load_in_rack",
+            tool="ableton_device", action="load",
             params={
                 "track_index": 1, "device_index": 1, "chain_index": 1,
                 "kind": "Compressor2",
@@ -2828,7 +2836,7 @@ def test_load_in_rack_replace_in_place_returns_changed_position(loaded_actions):
     assert resp.result["name"] == "New"
 
 
-def test_load_in_rack_silent_noop_raises_with_existing_chain(loaded_actions):
+def test_load_into_chain_silent_noop_raises_with_existing_chain(loaded_actions):
     """When Live silently no-ops the load (same length, no changes), the
     handler must raise a teaching error that lists the existing chain so
     the caller can diagnose without a follow-up get_device_chains probe.
@@ -2844,7 +2852,7 @@ def test_load_in_rack_silent_noop_raises_with_existing_chain(loaded_actions):
     ctx = _build_rack_load_ctx(chain, _no_op)
     resp = dispatch(
         Request(
-            tool="ableton_device", action="load_in_rack",
+            tool="ableton_device", action="load",
             params={
                 "track_index": 1, "device_index": 1, "chain_index": 1,
                 "kind": "Compressor2",
@@ -2857,6 +2865,327 @@ def test_load_in_rack_silent_noop_raises_with_existing_chain(loaded_actions):
     assert "did not append" in err
     assert "1:Compressor2" in err
     assert "silently no-ops" in err
+
+
+# ---------- DEEP-RACK-ADDR: canonical device_path at arbitrary depth ----------
+
+
+def _deep_rack_ctx():
+    """A 3-level-deep rack tree on track 1, device 1:
+
+      device 1            = Outer Rack
+        chain 1 'Outer'   -> device 1 = Mid Rack
+          chain 1 'Mid'   -> device 1 = Inner Rack
+            chain 1 'Inner' -> device 1 = MultiSampler 'Deep Synth' (param 'Macro')
+
+    Returns (ctx, leaf_param, leaf_device). Positional addresses:
+      depth 0: device_index=1                                  -> Outer Rack
+      depth 1: + [{1,1}]                                       -> Mid Rack
+      depth 2: + [{1,1},{1,1}]                                 -> Inner Rack
+      depth 3: + [{1,1},{1,1},{1,1}]                           -> Deep Synth
+    """
+    leaf_param = FakeParam("Macro", 0.5, min=0.0, max=1.0)
+    leaf = FakeDevice("Deep Synth", class_name="MultiSampler",
+                      parameters=[leaf_param])
+    inner = _FakeRackDevice("Inner Rack",
+                            chains=[_FakeChain("Inner", devices=[leaf])])
+    mid = _FakeRackDevice("Mid Rack",
+                          chains=[_FakeChain("Mid", devices=[inner])])
+    outer = _FakeRackDevice("Outer Rack",
+                            chains=[_FakeChain("Outer", devices=[mid])])
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[outer])]))
+    return ctx, leaf_param, leaf
+
+
+_STEP = {"chain_index": 1, "device_position": 1}
+
+
+def test_resolve_device_path_depth0_is_toplevel():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    assert _resolve_device_path(track, 1, None).name == "Outer Rack"
+    # Empty list is equivalent to None — the depth-0 behavior.
+    assert _resolve_device_path(track, 1, []).name == "Outer Rack"
+
+
+def test_resolve_device_path_depths_1_2_3():
+    ctx, _, leaf = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    assert _resolve_device_path(track, 1, [_STEP]).name == "Mid Rack"
+    assert _resolve_device_path(track, 1, [_STEP, _STEP]).name == "Inner Rack"
+    assert _resolve_device_path(track, 1, [_STEP, _STEP, _STEP]) is leaf
+
+
+def test_resolve_device_path_out_of_range_chain():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    with pytest.raises(IndexError) as exc:
+        _resolve_device_path(track, 1, [{"chain_index": 9, "device_position": 1}])
+    assert "chain_index" in str(exc.value)
+
+
+def test_resolve_device_path_out_of_range_position():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    with pytest.raises(IndexError) as exc:
+        _resolve_device_path(track, 1, [{"chain_index": 1, "device_position": 9}])
+    assert "device_position" in str(exc.value)
+
+
+def test_resolve_device_path_non_rack_descent_raises_teaching_error():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    # Step 4 would descend into the leaf MultiSampler, which is not a rack.
+    with pytest.raises(ValueError) as exc:
+        _resolve_device_path(track, 1, [_STEP, _STEP, _STEP, _STEP])
+    msg = str(exc.value)
+    assert "step 4" in msg
+    assert "not a rack" in msg
+
+
+def test_resolve_device_path_depth_cap_rejects_pathological_input():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    with pytest.raises(ValueError) as exc:
+        _resolve_device_path(track, 1, [_STEP] * 17)
+    assert "exceeds the cap" in str(exc.value)
+
+
+def test_resolve_device_path_malformed_step_raises_teaching_error():
+    ctx, _, _ = _deep_rack_ctx()
+    track = ctx.song.tracks[0]
+    with pytest.raises(ValueError) as exc:
+        _resolve_device_path(track, 1, [{"chain_index": 1}])  # missing position
+    assert "device_position" in str(exc.value)
+
+
+def test_get_parameters_at_depth3_via_device_path(loaded_actions):
+    ctx, _, _ = _deep_rack_ctx()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "track_index": 1, "device_index": 1,
+                "device_path": [_STEP, _STEP, _STEP], "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert [p["name"] for p in resp.result["parameters"]] == ["Macro"]
+    assert resp.result["device_path"] == [_STEP, _STEP, _STEP]
+
+
+def test_set_parameter_at_depth3_via_device_path(loaded_actions):
+    ctx, leaf_param, _ = _deep_rack_ctx()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "device_path": [_STEP, _STEP, _STEP],
+                "parameter_name": "Macro", "value": "0.8",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert leaf_param.value == 0.8
+    assert resp.result["device_path"] == [_STEP, _STEP, _STEP]
+
+
+def test_get_device_chains_recurses_reporting_device_path(loaded_actions):
+    ctx, _, _ = _deep_rack_ctx()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_device_chains",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # Top-level Outer Rack -> chain 'Outer' -> Mid Rack (is_rack, depth-1 path).
+    mid = resp.result["chains"][0]["devices"][0]
+    assert mid["name"] == "Mid Rack"
+    assert mid["is_rack"] is True
+    assert mid["device_path"] == [_STEP]
+    # Recurses: Mid Rack -> 'Mid' -> Inner Rack (depth-2 path).
+    inner = mid["chains"][0]["devices"][0]
+    assert inner["name"] == "Inner Rack"
+    assert inner["is_rack"] is True
+    assert inner["device_path"] == [_STEP, _STEP]
+    # Leaf: Inner Rack -> 'Inner' -> Deep Synth (non-rack, depth-3 path).
+    leaf = inner["chains"][0]["devices"][0]
+    assert leaf["name"] == "Deep Synth"
+    assert leaf["is_rack"] is False
+    assert leaf["device_path"] == [_STEP, _STEP, _STEP]
+
+
+def test_device_path_from_get_device_chains_feeds_set_parameter(loaded_actions):
+    """Read-by-name, address-by-path: the device_path get_device_chains reports
+    for a nested device is exactly what set_parameter accepts — the agent never
+    hand-counts indices. Multi-hop: enumerate, then write via the reported path."""
+    ctx, leaf_param, _ = _deep_rack_ctx()
+    chains = dispatch(
+        Request(
+            tool="ableton_device", action="get_device_chains",
+            params={"track_index": 1, "device_index": 1},
+        ),
+        context=ctx,
+    ).result
+    leaf = (
+        chains["chains"][0]["devices"][0]      # Mid Rack
+        ["chains"][0]["devices"][0]            # Inner Rack
+        ["chains"][0]["devices"][0]            # Deep Synth
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1,
+                "device_path": leaf["device_path"],
+                "parameter_name": "Macro", "value": "0.9",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert leaf_param.value == 0.9
+
+
+def test_load_into_nested_chain_via_device_path(loaded_actions):
+    """load with device_path + chain_index appends into a chain of a DEEPLY
+    nested rack (depth-2 destination). Proves the nested-load path threads the
+    canonical device_path, not just the depth-1 case the migrated tests cover."""
+    inner_chain = _FakeChain("Inner", devices=[])
+    inner_rack = _FakeRackDevice("Inner Rack", chains=[inner_chain])
+    outer_rack = _FakeRackDevice(
+        "Outer Rack", chains=[_FakeChain("Outer", devices=[inner_rack])],
+    )
+    track = FakeTrack("T1", devices=[outer_rack])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+
+    class _FakeItem:
+        def __init__(self, name):
+            self.name = name
+            self.is_loadable = True
+            self.is_folder = False
+            self.uri = ""
+            self.children = ()
+
+    class _FakeBrowser:
+        def __init__(self, item):
+            for root in (
+                "audio_effects", "instruments", "midi_effects", "drums",
+                "plugins", "user_library", "samples", "sounds",
+            ):
+                node = _FakeItem(root)
+                node.is_loadable = False
+                node.is_folder = True
+                node.children = (item,) if root == "audio_effects" else ()
+                setattr(self, root, node)
+
+        def load_item(self, item):
+            # The handler must have selected the INNER chain on the inner
+            # rack's view before loading (depth-2 destination).
+            assert inner_rack.view.selected_chain is inner_chain
+            inner_chain.devices.append(
+                FakeDevice("Compressor", class_name="Compressor2")
+            )
+
+    ctx.application.browser = _FakeBrowser(_FakeItem("Compressor2"))
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "device_index": 1,
+                "device_path": [_STEP], "chain_index": 1,
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["nested_device_position"] == 1
+    assert resp.result["device_path"] == [_STEP]
+    assert len(inner_chain.devices) == 1
+
+
+def test_load_chain_index_without_device_index_is_teaching_error(loaded_actions):
+    ctx, _, _ = _deep_rack_ctx()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"track_index": 1, "chain_index": 1, "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "device_index" in (resp.error or "")
+
+
+def test_load_device_path_without_chain_index_is_teaching_error(loaded_actions):
+    ctx, _, _ = _deep_rack_ctx()
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "track_index": 1, "device_index": 1, "device_path": [_STEP],
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "chain_index" in (resp.error or "")
+
+
+def test_voices_param_on_nested_multisampler_is_covered(loaded_actions):
+    """DEEP-RACK-ADDR ask #4, the 'Voices IS a DeviceParameter' branch: when a
+    sampler exposes its voice count as a DeviceParameter, the depth-N
+    device_path path READS and SETS it with no new mechanism (and Chunk 2's
+    push makes it durable like any nested param — see the capture->push
+    round-trip). This is the swell case: track 4 -> 'Guitar-Dual Amped Heavy'
+    -> nested 'Guitar' rack -> 'Guitar Dead Notes' MultiSampler.
+
+    The 'Voices is a non-parameter LOM property' branch is decided by a LIVE
+    probe (get_parameters on the real pack sampler) — tracked as an
+    operator-verification step + a conditional follow-up, NOT built speculatively
+    here (it would be a durability-incomplete half-feature against an unverified
+    requirement)."""
+    voices = FakeParam("Voices", 1.0, min=1.0, max=32.0)
+    sampler = FakeDevice(
+        "Guitar Dead Notes", class_name="MultiSampler", parameters=[voices],
+    )
+    rack = _FakeRackDevice(
+        "Guitar", chains=[_FakeChain("Guitar", devices=[sampler])],
+    )
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Gtr", devices=[rack])]))
+    path = [{"chain_index": 1, "device_position": 1}]
+    read = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "track_index": 1, "device_index": 1, "device_path": path,
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert read.ok is True, read.error
+    assert "Voices" in [p["name"] for p in read.result["parameters"]]
+    wrote = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1, "device_path": path,
+                "parameter_name": "Voices", "value": "8",
+            },
+        ),
+        context=ctx,
+    )
+    assert wrote.ok is True, wrote.error
+    assert voices.value == 8.0
 
 
 # ---------- run_on_main discipline ----------

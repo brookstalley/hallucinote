@@ -313,10 +313,13 @@ def test_device_parameter_skipped_when_device_unlinked(
     assert any("device not linked" in n for n in plan.notes)
 
 
-def test_device_parameter_skipped_for_nested_rack(
+def test_device_parameter_nested_routes_to_perform(
     conn, song, session, linked_track,
 ):
-    """Nested-rack device envelopes are a gap; planner warns instead of emitting."""
+    """DEEP-RACK-ADDR: a nested-rack device_parameter envelope routes to the
+    PERFORM phase (the perform handler rides it via device_path). The
+    session-clip envelope phase emits nothing and notes the perform route — no
+    longer the old 'nested-rack — push not yet supported (MCP gap)' skip."""
     top_chain = M.create_device_chain(conn, parent_track_id=linked_track)
     rack = M.create_device(conn, chain_id=top_chain, position=1,
                            kind="Drum Rack", display_name="Kit")
@@ -328,9 +331,16 @@ def test_device_parameter_skipped_for_nested_rack(
         target_device_id=inner, parameter_path="Volume",
     )
     _add_one_breakpoint(conn, eid)
+    # classify routes it to perform...
+    row = conn.execute(
+        "SELECT * FROM envelopes WHERE id = ?", (eid,),
+    ).fetchone()
+    assert push.classify_envelope_route(conn, row, song_id=song) == "perform"
+    # ...so the session-clip phase emits nothing and notes the perform route.
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("nested-rack" in n for n in plan.notes)
+    assert any("performed-automation" in n for n in plan.notes), plan.notes
+    assert not any("not yet supported" in n for n in plan.notes), plan.notes
 
 
 def test_device_parameter_routes_to_perform_when_no_arrangement_clip_covers(
@@ -1126,6 +1136,29 @@ def test_planner_routes_return_mixer_envelope_to_perform(
     assert plan.calls == []
     assert any("performed-automation" in n and "return_mixer_volume" in n
                for n in plan.notes), plan.notes
+
+
+def test_route_for_host_kind_covers_every_track_kind():
+    """Drift-guard (ENV-5R2J): the host-kind→route map must assign a concrete
+    route to EVERY canonical track kind, so a new track kind added without a
+    push route fails here instead of silently routing to 'unroutable' at push
+    time. Pins the planner's route policy to the single host-kind vocabulary
+    (db.mutations.TRACK_KINDS) the DB eligibility gate also keys off — the two
+    encodings can no longer drift apart unnoticed. Routing and eligibility stay
+    separate policies; only the vocabulary is shared.
+    """
+    from hallucinote.sync.push.envelopes import _route_for_host_kind
+    from hallucinote.db.mutations import TRACK_KINDS
+
+    unrouted = {k for k in TRACK_KINDS if _route_for_host_kind(k) == "unroutable"}
+    assert not unrouted, (
+        f"track kinds with no push route: {sorted(unrouted)} — add a branch in "
+        "_route_for_host_kind (ENV-5R2J: single host-kind vocabulary)"
+    )
+    # A kind OUTSIDE the vocabulary (and None) still falls through to the
+    # explicit 'unroutable' belt-and-suspenders.
+    assert _route_for_host_kind("synthetic-unknown-kind") == "unroutable"
+    assert _route_for_host_kind(None) == "unroutable"
 
 
 def test_classify_envelope_route_partitions_all_kinds(

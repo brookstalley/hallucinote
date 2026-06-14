@@ -17,7 +17,7 @@ import numpy as np
 
 from hallucinote.audio.alignment import trim_to_common_length
 from hallucinote.audio.io import CaptureSet, Surface
-from hallucinote.audio.reverb import REVERB_TOLERANCE_S, measure_return_rt60
+from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S, measure_return_rt60
 from tests.unit.audio import fixtures
 
 SR = fixtures.SAMPLE_RATE
@@ -152,5 +152,5 @@ def test_reverb_rt60_measured_from_trimmed_return_ringout():
     )
     assert result.sufficient_tail
     assert np.isfinite(result.measured_rt60_s)
-    assert abs(result.measured_rt60_s - 0.6) <= REVERB_TOLERANCE_S
+    assert abs(result.measured_rt60_s - 0.6) <= REVERB_TOLERANCE_FLOOR_S
     assert result.within_tolerance

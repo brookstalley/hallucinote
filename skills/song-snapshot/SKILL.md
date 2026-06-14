@@ -5,7 +5,7 @@ description: Refresh a song's `captured_session.json` against the currently open
 
 # /song-snapshot
 
-You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, top-level device chains, dialed instrument parameters, one level of nested rack chains). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
+You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, and nested rack chains to any depth). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
 
 ## When to run this
 
@@ -52,7 +52,7 @@ Assemble the results into the three buckets `compile_snapshot` wants:
 - `returns` — list of return-track dicts (each with `index`, `name`, `volume`, `panning`, optionally `devices`)
 - `tracks` — list of track dicts (each with `index`, `name`, `type`, `volume`, `panning`, optional `mute`/`solo`/`arm`/`color`, optional `sends` map, optional `devices`)
 
-For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names; see `ableton://guides/conventions`), attach the nested `chains` array as the device's `chains` field. Walk one level only.
+For rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names; see `ableton://guides/conventions`), attach the nested `chains` array as the device's `chains` field. **Recurse to whatever depth Live has** — a nested device may itself be a rack, so attach its `chains` too (DEEP-RACK-ADDR: replay + push handle nested params at any depth; truncating the capture silently drops a deep param). `ableton_device(action='get_device_chains', detail='full')` already returns the full recursive tree.
 
 ## Step 2 — Write the fresh capture to a side-by-side file
 
@@ -106,7 +106,7 @@ Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes
 
 ## What the diff covers (and what it doesn't)
 
-The diff helper (`hallucinote.capture.diff_snapshots`) matches tracks and returns by `index` and devices by their position within a chain. Name drift is reported as a field-change, not as add/remove (Live track names aren't unique enough to use as identity). Per-device dialed-parameter drift is diffed in full; nested rack chains walk one level (matching what `replay_capture` supports). Recursively nested racks (rack-in-rack) are flagged as `nested_chains_subtree_changed: true` without descending — the user can read the JSON if they need more detail.
+The diff helper (`hallucinote.capture.diff_snapshots`) matches tracks and returns by `index` and devices by their position within a chain. Name drift is reported as a field-change, not as add/remove (Live track names aren't unique enough to use as identity). Per-device dialed-parameter drift is diffed in full. The PREVIEW diff itemizes one level of nested rack chains and flags anything deeper as `nested_chains_subtree_changed: true` without descending — a preview simplification only. The full snapshot IS captured + replayed + pushed at any depth (DEEP-RACK-ADDR); the diff just doesn't spell out deep subtrees, so read the JSON if you need the detail.
 
 What the diff does NOT see, because the snapshot doesn't carry it:
 

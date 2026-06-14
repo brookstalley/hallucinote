@@ -520,3 +520,43 @@ hand); run `pull_cli execute device-sidechain <session>`; confirm
 no `.als` reliance. **Then (gates a follow-up):** observe what `get_input_routing`
 returns for an UN-sidechained compressor's default input — this decides whether V1's
 "non-track input → no-op" can tighten to an Ableton-authoritative auto-CLEAR.
+
+## DEEP-RACK-ADDR — depth-N device addressing (read/set/automate/durable)
+
+**Status:** PENDING — attended Live session (Ableton occupied at build time).
+**Visual change:** no. **Re-vendor:** REQUIRED before these checks — Chunks 1 & 3
+flip the MCP fingerprint. Sequence: relaunch dev-mode (`/mcp` respawn so
+running==disk) THEN `/ableton-mcp-install` (Live restart — Control Surface
+modules are cached at startup).
+
+Unit-proven: `_resolve_device_path` depth 0/1/2/3 + cap + non-rack descent;
+`get_device_chains` recursion reporting `device_path`; capture→DB→push
+round-trip of a depth-2 nested param (swell guitar case); nested
+`device_parameter` → perform with `device_path`; the perform addressing parity.
+What units can't cover (needs real Live):
+
+1. **Read/set at depth** — on swell's track 4 → "Guitar-Dual Amped Heavy" →
+   nested "Guitar" rack → "Guitar Dead Notes" MultiSampler:
+   `ableton_device(action='get_device_chains', track_index=4, device_index=1,
+   detail='full')` reports the nested MultiSampler with a `device_path`; pass
+   that path to `set_parameter` and confirm the nested param changes audibly.
+
+2. **Durability** — set a nested param via `device_path`, snapshot
+   (`/song-snapshot`), `build.py --reset`, `push_cli execute` → confirm the deep
+   value SURVIVES the rebuild (the headline bug: deep fix used to revert).
+
+3. **Nested automation** — author a `device_parameter` envelope on a nested
+   device; `push_cli execute` → it routes to `perform_batch` with `device_path`
+   and materializes as arrangement automation on the nested param.
+
+4. **Ask #4 — Voices probe (DECIDES a follow-up):** run
+   `ableton_device(action='get_parameters', ...)` with the MultiSampler's
+   `device_path` and observe whether **"Voices"** appears as a DeviceParameter.
+   - **Appears** → ask #4 is fully covered by this work (read/set/durable via
+     the param path); close it.
+   - **Absent** (voice count is a non-parameter LOM property) → file the
+     conditional follow-up: a capability-probed *settable-property accessor* on
+     the device handler (probe + adapt, never whitelist). NOTE its durability
+     caveat up front: the `device_parameters` table doesn't hold non-parameter
+     properties, so a property accessor needs its own persistence story or it
+     won't survive a rebuild — scope that before building.

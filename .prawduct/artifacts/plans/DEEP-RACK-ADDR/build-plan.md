@@ -84,7 +84,24 @@ song/Live-side. (Design + planning are collision-free; building is not.)
 - [x] Chunk 1: canonical device_path primitive + shared resolver
 - [x] Chunk 2: snapshot durability — capture + push depth-N
 - [x] Chunk 3: nested-rack device_parameter automation
-- [ ] Chunk 4: voices accessor
+- [x] Chunk 4: voices accessor (covered branch shipped; property branch probe-gated)
+
+**Context (Chunk 4 done):** ask #4 ("Voices") is the lowest-priority "(Nice)"
+ask and the bug itself says it needs a live probe. The **"Voices IS a
+DeviceParameter" branch is already fully delivered** by Chunks 1-2 — read+set
+via device_path, durable via push — proven by
+`test_voices_param_on_nested_multisampler_is_covered` (the swell MultiSampler
+case). The **"Voices is a non-parameter LOM property" branch** is NOT built
+speculatively (can't run live Ableton here; it would be a durability-incomplete
+half-feature against an unverified requirement). It's flagged explicitly in
+`.prawduct/operator-verification.md` (DEEP-RACK-ADDR block, check #4): the live
+`get_parameters` probe DECIDES it — if "Voices" is absent, file the
+capability-probed settable-property accessor follow-up (with its persistence
+caveat scoped first). No code change, no re-vendor for this chunk.
+
+ALL CHUNKS COMPLETE. Re-vendor required overall (Chunks 1 & 3 flipped the MCP
+fingerprint). Next: cumulative Critic (base develop), then the pull-dry-run
+drift bug, then PR → develop.
 
 **Context (Chunk 3 done):** Nested device-param automation rides the PERFORM
 surface. Wire: write_envelope + perform_batch accept device_path; perform

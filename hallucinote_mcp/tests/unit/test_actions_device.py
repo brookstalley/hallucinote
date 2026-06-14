@@ -3140,6 +3140,54 @@ def test_load_device_path_without_chain_index_is_teaching_error(loaded_actions):
     assert "chain_index" in (resp.error or "")
 
 
+def test_voices_param_on_nested_multisampler_is_covered(loaded_actions):
+    """DEEP-RACK-ADDR ask #4, the 'Voices IS a DeviceParameter' branch: when a
+    sampler exposes its voice count as a DeviceParameter, the depth-N
+    device_path path READS and SETS it with no new mechanism (and Chunk 2's
+    push makes it durable like any nested param — see the capture->push
+    round-trip). This is the swell case: track 4 -> 'Guitar-Dual Amped Heavy'
+    -> nested 'Guitar' rack -> 'Guitar Dead Notes' MultiSampler.
+
+    The 'Voices is a non-parameter LOM property' branch is decided by a LIVE
+    probe (get_parameters on the real pack sampler) — tracked as an
+    operator-verification step + a conditional follow-up, NOT built speculatively
+    here (it would be a durability-incomplete half-feature against an unverified
+    requirement)."""
+    voices = FakeParam("Voices", 1.0, min=1.0, max=32.0)
+    sampler = FakeDevice(
+        "Guitar Dead Notes", class_name="MultiSampler", parameters=[voices],
+    )
+    rack = _FakeRackDevice(
+        "Guitar", chains=[_FakeChain("Guitar", devices=[sampler])],
+    )
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Gtr", devices=[rack])]))
+    path = [{"chain_index": 1, "device_position": 1}]
+    read = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "track_index": 1, "device_index": 1, "device_path": path,
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert read.ok is True, read.error
+    assert "Voices" in [p["name"] for p in read.result["parameters"]]
+    wrote = dispatch(
+        Request(
+            tool="ableton_device", action="set_parameter",
+            params={
+                "track_index": 1, "device_index": 1, "device_path": path,
+                "parameter_name": "Voices", "value": "8",
+            },
+        ),
+        context=ctx,
+    )
+    assert wrote.ok is True, wrote.error
+    assert voices.value == 8.0
+
+
 # ---------- run_on_main discipline ----------
 
 

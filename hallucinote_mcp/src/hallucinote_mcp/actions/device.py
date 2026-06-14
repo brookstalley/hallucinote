@@ -14,12 +14,17 @@ Actions covering devices on tracks and return tracks:
     third-party devices)
   - **Preset**: navigate_preset
   - **Drum rack**: pad_info
+  - **Nested racks**: get_device_chains (recursive probe). DEEP-RACK-ADDR
+    folded the one-level ``load_in_rack`` / ``set_parameter_in_rack`` actions
+    into ``load`` (``device_path`` + ``chain_index``) and ``set_parameter``
+    (``device_path``) — one canonical address shape at every depth.
   - **Help**: dispatcher-special
 
 Devices live on either a track or a return; the schema accepts exactly one
 of ``track_index`` / ``return_index`` (both optional in the schema; the
-handler validates exactly-one). Nested rack-chain navigation is out of
-M-4 scope — tracked in the backlog.
+handler validates exactly-one). Devices nested inside racks are addressed by
+the canonical ``device_path`` — a list of ``{chain_index, device_position}``
+steps from the top-level ``device_index`` device, to arbitrary depth.
 """
 from __future__ import annotations
 
@@ -52,6 +57,28 @@ register(
 # ---------------------------------------------------------------------------
 # Read: list / info / get_parameters
 # ---------------------------------------------------------------------------
+
+
+def _device_path_spec() -> ParamSpec:
+    """The canonical optional address into a nested rack device (DEEP-RACK-ADDR).
+
+    Shared by ``get_parameters`` / ``set_parameter`` / ``load`` so the nested
+    address shape is identical everywhere.
+    """
+    return ParamSpec(
+        name="device_path",
+        type="list",
+        required=False,
+        description=(
+            "Optional address into a NESTED rack device, to any depth. A list "
+            "of {chain_index, device_position} steps (both 1-based) from the "
+            "top-level device_index device — each step descends one rack "
+            "level: pick chain `chain_index`, then device `device_position` in "
+            "that chain. Omit for a top-level device. Get the exact path from "
+            "ableton_device(action='get_device_chains'), which reports a "
+            "`device_path` for every nested device."
+        ),
+    )
 
 
 def _parent_addressing_specs() -> tuple[ParamSpec, ParamSpec, ParamSpec]:
@@ -135,11 +162,13 @@ register(
         description=(
             "Read a device's parameters with current values. detail='summary' "
             "returns name + value + value_display (cheap). detail='full' adds "
-            "min/max + is_enum + value_items."
+            "min/max + is_enum + value_items. Pass device_path to read a device "
+            "nested inside a rack (any depth)."
         ),
         params=(
             *_parent_addressing_specs(),
             ParamSpec(name="device_index", type="int", minimum=1),
+            _device_path_spec(),
             ParamSpec(
                 name="detail",
                 type="str",
@@ -244,6 +273,31 @@ register(
                     "name plugins from different manufacturers."
                 ),
             ),
+            ParamSpec(
+                name="device_index",
+                type="int",
+                required=False,
+                minimum=1,
+                description=(
+                    "Nested load only: the 1-based top-level rack device to "
+                    "load into. Required when chain_index is given; omit for a "
+                    "top-level load."
+                ),
+            ),
+            _device_path_spec(),
+            ParamSpec(
+                name="chain_index",
+                type="int",
+                required=False,
+                minimum=1,
+                description=(
+                    "Nested load only: the 1-based destination chain INSIDE "
+                    "the rack (at device_index, + optional device_path for a "
+                    "deeper rack). Pass it to load a device into a rack chain "
+                    "(the unified replacement for load_in_rack); omit for a "
+                    "top-level load onto the parent's main chain."
+                ),
+            ),
         ),
         handler=device_handlers.load_handler,
         example=(
@@ -257,6 +311,9 @@ register(
             "{root: 'drums', pattern: 'Late Nite Kit'}.",
             "For an unambiguous per-machine URI, resolve via "
             "ableton_browser(action='at_path', ...) and pass as preset_uri.",
+            "To load INTO a rack chain, pass device_index (the rack) + "
+            "chain_index (the destination chain) — plus device_path to reach a "
+            "deeper rack. Returns nested_device_position.",
         ),
     )
 )
@@ -334,12 +391,15 @@ register(
             "many params, so '0.85' not '-3 dB') — or `value_display`, the "
             "display units as a string ('-18 dB', '3:1', '20 ms'), which the "
             "handler inverts to the raw value for you. value_type='enum' "
-            "requires a string `value` in the parameter's value_items. "
+            "requires a string `value` in the parameter's value_items. Pass "
+            "device_path to write a parameter on a device nested inside a rack "
+            "(any depth) — the unified replacement for set_parameter_in_rack. "
             "Resolves the legacy fork's gap #17b workaround."
         ),
         params=(
             *_parent_addressing_specs(),
             ParamSpec(name="device_index", type="int", minimum=1),
+            _device_path_spec(),
             ParamSpec(name="parameter_name", type="str"),
             ParamSpec(
                 name="value",
@@ -608,7 +668,12 @@ register(
 
 
 # ---------------------------------------------------------------------------
-# Nested rack chains (W6-I / W6-J)
+# Nested rack chains (W6-I / W6-J; DEEP-RACK-ADDR depth-N generalization)
+#
+# `load_in_rack` / `set_parameter_in_rack` retired — folded into `load`
+# (device_path + chain_index) and `set_parameter` (device_path). One canonical
+# address shape (`device_path`) at every depth; `get_device_chains` recurses
+# and reports each nested device's path.
 # ---------------------------------------------------------------------------
 
 register(
@@ -616,13 +681,16 @@ register(
         tool="ableton_device",
         name="get_device_chains",
         description=(
-            "Probe a rack device's nested chains. Works for "
-            "InstrumentGroupDevice, AudioEffectGroupDevice, and "
-            "DrumGroupDevice — each owns chains[] of nested Devices with "
-            "their own parameters and (optionally) mixer state. "
-            "detail='summary' returns identity-only; detail='full' adds "
-            "mixer state per chain and per nested device. Does NOT recurse "
-            "into nested-nested racks (filed as backlog)."
+            "Probe a rack device's nested chains — RECURSIVELY, to any depth. "
+            "Works for InstrumentGroupDevice, AudioEffectGroupDevice, and "
+            "DrumGroupDevice — each owns chains[] of nested Devices with their "
+            "own parameters and (optionally) mixer state. Every device entry "
+            "carries `is_rack` + its full `device_path`; pass that path back "
+            "to set_parameter / get_parameters to read or write the nested "
+            "device. Devices that are themselves racks carry their own nested "
+            "chains, so one call maps the whole tree. detail='summary' returns "
+            "identity-only; detail='full' adds mixer state per chain and "
+            "nested device."
         ),
         params=(
             *_parent_addressing_specs(),
@@ -642,100 +710,10 @@ register(
         ),
         tips=(
             "Pair with `capabilities` (can_have_chains flag) to know "
-            "whether a device is a rack before calling. Use "
-            "`load_in_rack` to add devices into a specific chain.",
-        ),
-    )
-)
-
-register(
-    Action(
-        tool="ableton_device",
-        name="load_in_rack",
-        description=(
-            "Load a device into a specific nested chain of a rack. "
-            "Uses Live's browser-load mechanism via "
-            "`song.view.selected_track` + `rack.view.selected_chain` to "
-            "route the load. The new device appears at the end of the "
-            "chain's device list. Returns the new device's "
-            "nested_device_position for subsequent set_parameter_in_rack "
-            "calls."
-        ),
-        params=(
-            *_parent_addressing_specs(),
-            ParamSpec(name="device_index", type="int", minimum=1,
-                      description="Position of the rack device on its parent's chain (1-based)."),
-            ParamSpec(name="chain_index", type="int", minimum=1,
-                      description="Position of the destination chain inside the rack (1-based)."),
-            ParamSpec(name="kind", type="str",
-                      description="Browser display name of the device (e.g. 'Compressor', 'Operator'). Live's internal class names ('Compressor2', etc.) no longer resolve."),
-            ParamSpec(
-                name="preset_uri",
-                type="str",
-                required=False,
-                description="Optional canonical Live browser URI for a specific preset.",
-            ),
-        ),
-        handler=device_handlers.load_in_rack_handler,
-        example=(
-            "ableton_device(action='load_in_rack', track_index=2, "
-            "device_index=1, chain_index=2, kind='Compressor')"
-        ),
-    )
-)
-
-register(
-    Action(
-        tool="ableton_device",
-        name="set_parameter_in_rack",
-        description=(
-            "Write a parameter on a device inside a rack's nested chain. "
-            "Same continuous/enum value semantics as set_parameter; "
-            "address via (rack device_index, chain_index, "
-            "nested_device_position, parameter_name)."
-        ),
-        params=(
-            *_parent_addressing_specs(),
-            ParamSpec(name="device_index", type="int", minimum=1,
-                      description="Position of the rack device on its parent's chain."),
-            ParamSpec(name="chain_index", type="int", minimum=1),
-            ParamSpec(name="nested_device_position", type="int", minimum=1),
-            ParamSpec(name="parameter_name", type="str"),
-            ParamSpec(
-                name="value",
-                type="str",
-                required=False,
-                description=(
-                    "Schema-permissive string on the wire (enum values "
-                    "round-trip cleanly). For value_type='continuous' it is "
-                    "the RAW value (range-checked) — mirrors set_parameter. "
-                    "Omit when using `value_display`."
-                ),
-            ),
-            ParamSpec(
-                name="value_display",
-                type="str",
-                required=False,
-                description=(
-                    "Continuous-only display-units target ('-18 dB', '3:1'), "
-                    "inverted to the raw value. Mutually exclusive with "
-                    "`value`. Identical semantics to set_parameter's "
-                    "`value_display`."
-                ),
-            ),
-            ParamSpec(
-                name="value_type",
-                type="str",
-                required=False,
-                enum=_VALUE_TYPES,
-                description="'continuous' (default) or 'enum'.",
-            ),
-        ),
-        handler=device_handlers.set_parameter_in_rack_handler,
-        example=(
-            "ableton_device(action='set_parameter_in_rack', track_index=2, "
-            "device_index=1, chain_index=1, nested_device_position=1, "
-            "parameter_name='Threshold', value=0.5)"
+            "whether a device is a rack before calling.",
+            "Copy a nested device's reported `device_path` straight into "
+            "set_parameter / get_parameters / load (chain_index) — never "
+            "hand-count indices.",
         ),
     )
 )

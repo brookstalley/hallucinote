@@ -225,6 +225,15 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # PULL-DRIFT-DETECT: same fail-loud guard as `execute` — unreadable probes
+    # mean drift could not be determined, so don't let exit 0 read as "in sync".
+    if out.unreadable > 0:
+        sys.stderr.write(
+            f"pull_cli apply: {out.unreadable} probe result(s) UNREADABLE "
+            "(ok=False or missing payload) — pulled state is incomplete; do NOT "
+            "treat this as fully in sync.\n"
+        )
+        return 2
     return 0
 
 
@@ -376,6 +385,18 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # PULL-DRIFT-DETECT: probes that couldn't be read mean we could NOT
+    # determine drift — exit non-zero so a wrapper (the
+    # /snapshot-bake-recent-changes skill) never mistakes an unreadable run for
+    # "0 changes / in sync". The JSON report still prints (with `unreadable` and
+    # per-probe warnings) so the caller sees exactly what failed.
+    if applied.unreadable > 0:
+        sys.stderr.write(
+            f"pull_cli execute domain={args.domain}: {applied.unreadable} probe(s) "
+            "UNREADABLE — drift could not be determined (likely a Live/Remote-"
+            "Script version mismatch). Do NOT treat this as 'in sync'.\n"
+        )
+        return 2
     return 0
 
 

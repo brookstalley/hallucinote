@@ -190,6 +190,22 @@ register(
                 ),
             ),
             *_envelope_target_params(),
+            ParamSpec(
+                name="device_path",
+                type="list",
+                required=False,
+                description=(
+                    "DEEP-RACK-ADDR: address a device nested inside a rack — a "
+                    "list of {chain_index, device_position} steps (1-based) "
+                    "from device_index. NOTE: the session-clip route can't "
+                    "automate nested params on Live 12.4 "
+                    "(Clip.create_automation_envelope addresses top-level "
+                    "devices only), so write_envelope REFUSES a nested "
+                    "device_parameter — use action='perform_batch' (it rides "
+                    "nested params via device_path). Only meaningful for "
+                    "target_kind='device_parameter'."
+                ),
+            ),
         ),
         handler=automation_handlers.write_envelope_handler,
         example=(
@@ -267,7 +283,10 @@ register(
                     "curve?}, ...]}, ...]. <addressing> per target_kind: "
                     "mixer_volume / mixer_pan / device_parameter → exactly "
                     "one of master=true / track_index / return_index "
-                    "(+ device_index + parameter_name for device_parameter); "
+                    "(+ device_index + parameter_name for device_parameter; "
+                    "+ optional device_path=[{chain_index, device_position}, "
+                    "...] to ride a NESTED-rack device param at any depth — "
+                    "DEEP-RACK-ADDR); "
                     "send_level → track_index (source) + return_index "
                     "(destination). Each arc's span is [first, last] "
                     "breakpoint time. arc_id is an opaque caller correlation "

@@ -110,6 +110,21 @@ class FakeDevice:
         self.parameters = parameters
 
 
+class _FakeRackChain:
+    def __init__(self, name: str, devices: list[Any]):
+        self.name = name
+        self.devices = devices
+
+
+class _FakeRackDevice:
+    """A rack device — has `chains` so `_resolve_device_path` can descend
+    (DEEP-RACK-ADDR). Carries no parameters of its own."""
+
+    def __init__(self, chains: list[_FakeRackChain]):
+        self.parameters: list[Any] = []
+        self.chains = chains
+
+
 class FakeNamedParam(FakeGestureParam):
     def __init__(self, events: list[tuple], name: str):
         super().__init__(events)
@@ -918,6 +933,29 @@ def test_perform_device_parameter_on_master_chain():
     assert arc["automation_state"] == 1
     assert any(e[0] == "set_value" for e in ctx.events)
     assert arc["parameter_name"] == "Frequency"
+
+
+def test_perform_device_parameter_nested_via_device_path():
+    """DEEP-RACK-ADDR: perform_batch rides a param on a device NESTED inside a
+    rack, addressed by device_index + device_path. The gesture surface reaches
+    nested params directly (unlike the session-clip route, which Live gates)."""
+    ctx = FakeCtx()
+    nested_param = FakeNamedParam(ctx.events, "Volume")
+    rack = _FakeRackDevice([_FakeRackChain("Inner", [FakeDevice([nested_param])])])
+    ctx.song.master_track.devices = [rack]
+    result = _one(
+        ctx, target_kind="device_parameter", master=True,
+        device_index=1,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+        parameter_name="Volume",
+        breakpoints=[_bp(0.0, 0.2), _bp(2.0, 0.9)],
+    )
+    arc = _arc0(result)
+    assert arc["automation_state"] == 1
+    assert arc["parameter_name"] == "Volume"
+    assert arc["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    # The gesture rode the NESTED param (begin/set/end recorded on it).
+    assert nested_param.own and nested_param.own[0] == ("begin",)
 
 
 def test_perform_on_return_track_mixer():

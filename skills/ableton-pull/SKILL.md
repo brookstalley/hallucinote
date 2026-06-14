@@ -99,17 +99,19 @@ python3 -m hallucinote.sync.pull_cli apply <session_id> --song <slug> \
   --results /tmp/ableton-pull-results.json
 ```
 
-Writes JSON summary to stdout: `{mutations, no_ops, skipped_unlinked, warnings, details}`.
+Writes JSON summary to stdout: `{mutations, no_ops, skipped_unlinked, unreadable, warnings, details}`. The command also exits NON-ZERO when `unreadable > 0`.
 
 ### Step 4 — Report
 
-Show the user:
+**FIRST: if the command exited non-zero or `unreadable > 0`** (PULL-DRIFT-DETECT), the pull could NOT read some probes — pulled state is incomplete (usually a Live ↔ Remote-Script version mismatch). Tell the user how many probes were unreadable and that the pull is incomplete, and do NOT say "DB already matches" — "couldn't read" is not "no drift". Suggest relaunching dev-mode + `/ableton-mcp-install`, then retry.
+
+Otherwise show the user:
 
 - Total counts (`<N> mutations applied, <M> no-ops, <K> skipped (unlinked)`).
 - Each line from `details` (human-readable diffs — `track 'Drums' volume: 0.6 -> 0.75`).
 - Warnings. For the `clip-notes` "look moved" warning, add: *"If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. If annotations/events keyed to the prior UUID matter, undo in Ableton and edit DB-side by the original UUID instead."*
 
-If `mutations == 0` with no warnings, say "DB already matches Ableton — no changes needed."
+If `mutations == 0` with no warnings AND `unreadable == 0`, say "DB already matches Ableton — no changes needed."
 
 ## Failure modes
 

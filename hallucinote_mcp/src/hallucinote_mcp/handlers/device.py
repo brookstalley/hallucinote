@@ -102,6 +102,105 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
     return devices[device_index - 1]
 
 
+# Defensive cap on device_path depth. Live racks can't nest cyclically, so
+# this is a backstop against pathological wire input, not a real capability
+# ceiling — real device trees are a handful of levels deep at most.
+_DEVICE_PATH_DEPTH_CAP = 16
+
+
+def _nth_device(chain: Any, device_position: int) -> Any:
+    """Return the 1-based device at ``device_position`` inside a rack chain."""
+    devices = list(getattr(chain, "devices", ()) or ())
+    if device_position < 1 or device_position > len(devices):
+        raise IndexError(
+            f"device_position {device_position} out of range "
+            f"[1, {len(devices)}] in chain {getattr(chain, 'name', '?')!r}"
+        )
+    return devices[device_position - 1]
+
+
+def _validate_device_path(device_path: Any) -> list[dict[str, int]]:
+    """Validate + normalize a wire ``device_path`` to a list of steps.
+
+    Each step is ``{chain_index, device_position}`` with 1-based ints. Returns
+    ``[]`` for None/empty. The dispatcher validates list-ness (``type='list'``);
+    the per-step dict shape is the handler's contract, so a malformed step
+    raises a teaching ValueError here.
+    """
+    if not device_path:
+        return []
+    if not isinstance(device_path, (list, tuple)):
+        raise ValueError(
+            "device_path must be a list of {chain_index, device_position} "
+            f"steps, got {type(device_path).__name__}"
+        )
+    if len(device_path) > _DEVICE_PATH_DEPTH_CAP:
+        raise ValueError(
+            f"device_path depth {len(device_path)} exceeds the cap of "
+            f"{_DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
+            "rebuild the path from ableton_device(action='get_device_chains')."
+        )
+    steps: list[dict[str, int]] = []
+    for i, step in enumerate(device_path, start=1):
+        if not isinstance(step, dict):
+            raise ValueError(
+                f"device_path step {i} must be an object "
+                f"{{chain_index, device_position}}, got {type(step).__name__}"
+            )
+        try:
+            chain_index = int(step["chain_index"])
+            device_position = int(step["device_position"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                f"device_path step {i} must carry integer 'chain_index' and "
+                f"'device_position' (both 1-based), got {step!r}"
+            ) from None
+        if chain_index < 1 or device_position < 1:
+            raise ValueError(
+                f"device_path step {i} indices are 1-based and must be >= 1, "
+                f"got chain_index={chain_index}, device_position={device_position}"
+            )
+        steps.append(
+            {"chain_index": chain_index, "device_position": device_position}
+        )
+    return steps
+
+
+def _resolve_device_path(
+    parent: Any, device_index: int, device_path: Any = None,
+) -> Any:
+    """Resolve ``device_index`` + optional ``device_path`` to one Device at
+    arbitrary rack depth — the single canonical descent every device surface
+    speaks.
+
+    ``device_index`` is the 1-based top-level device on the parent's main
+    chain. ``device_path`` is a list of ``{chain_index, device_position}``
+    steps, each descending one rack level: pick chain ``chain_index`` inside
+    the current rack, then device ``device_position`` in that chain. An
+    empty/absent ``device_path`` resolves to the top-level device — exactly
+    the depth-0 behavior, so existing callers are unchanged.
+
+    A teaching error at each failed step names the level (out-of-range index,
+    or a non-rack device with steps remaining) so the agent can correct the
+    path it got from ``get_device_chains``. Resolution is positional, never
+    by object identity — Live re-wraps API objects on every access.
+    """
+    dev = _resolve_device(parent, device_index)
+    steps = _validate_device_path(device_path)
+    for depth, step in enumerate(steps, start=1):
+        try:
+            chains = _resolve_rack_chains(dev)
+        except NotImplementedError as exc:
+            raise ValueError(
+                f"device_path step {depth} can't descend into chain "
+                f"{step['chain_index']}: the device at this level "
+                f"({getattr(dev, 'class_name', '?')!r}) is not a rack. {exc}"
+            ) from None
+        chain = _resolve_chain_by_index(chains, step["chain_index"])
+        dev = _nth_device(chain, step["device_position"])
+    return dev
+
+
 def _parent_address(kind: str, index: int) -> dict[str, Any]:
     """Build the (kind-specific) key for return values.
 
@@ -195,6 +294,7 @@ def get_parameters_handler(
     track_index: int | None = None,
     return_index: int | None = None,
     master: bool | None = None,
+    device_path: list[dict[str, int]] | None = None,
     detail: str = "summary",
 ) -> dict[str, Any]:
     """Return device parameters with current values.
@@ -202,6 +302,10 @@ def get_parameters_handler(
     ``detail='summary'`` returns name + value + value_display (cheap).
     ``detail='full'`` adds min/max + is_enum + value_items (more expensive
     on devices with many enum params).
+
+    ``device_path`` (optional) addresses a device nested inside a rack at
+    arbitrary depth — a list of ``{chain_index, device_position}`` steps from
+    the top-level ``device_index`` device. Omit it for a top-level device.
     """
     if detail not in ("summary", "full"):
         raise ValueError(
@@ -210,7 +314,7 @@ def get_parameters_handler(
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index, master=master,
     )
-    dev = _resolve_device(parent, device_index)
+    dev = _resolve_device_path(parent, device_index, device_path)
     params_out: list[dict[str, Any]] = []
     for p in getattr(dev, "parameters", ()):
         entry: dict[str, Any] = {
@@ -238,6 +342,8 @@ def get_parameters_handler(
         "parent_kind": kind,
         "parameters": params_out,
     }
+    if device_path:
+        result["device_path"] = _validate_device_path(device_path)
     result.update(_parent_address(kind, idx))
     return result
 
@@ -591,8 +697,18 @@ def load_handler(
     track_index: int | None = None,
     return_index: int | None = None,
     master: bool | None = None,
+    device_index: int | None = None,
+    device_path: list[dict[str, int]] | None = None,
+    chain_index: int | None = None,
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
+
+    **Loading into a nested rack chain** (the unified replacement for the
+    retired ``load_in_rack``): pass ``chain_index`` — the 1-based destination
+    chain INSIDE a rack — together with ``device_index`` (the top-level rack)
+    and optional ``device_path`` (``{chain_index, device_position}`` steps to
+    a deeper rack). The new device appends to that chain. Omit all three for a
+    top-level load onto the parent's main chain (the default below).
 
     ``kind`` is the device's BROWSER DISPLAY NAME (e.g. ``'Compressor'``,
     ``'Operator'``, ``'Drum Rack'``, ``'Phaser-Flanger'``) — what shows up
@@ -660,6 +776,23 @@ def load_handler(
     # raise the silent-noop guard rather than corrupt a regular track).
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
+    # Nested-load addressing: chain_index names the destination chain inside a
+    # rack; device_index (+ optional device_path) locate that rack. The three
+    # are a unit — reject partial/ambiguous combinations with a teaching error.
+    if chain_index is None:
+        if device_index is not None or device_path:
+            raise ValueError(
+                "device_index / device_path on `load` apply only when loading "
+                "INTO a rack chain — pass chain_index too (the 1-based "
+                "destination chain inside the rack). Omit all three for a "
+                "top-level load onto the parent's main chain."
+            )
+    elif device_index is None:
+        raise ValueError(
+            "chain_index requires device_index — it names the destination "
+            "chain inside the rack at device_index (+ optional device_path "
+            "for a deeper rack)."
+        )
     if preset_query is not None and preset_uri is not None:
         raise ValueError(
             "preset_query and preset_uri are mutually exclusive — pass "
@@ -747,6 +880,25 @@ def load_handler(
             f"no loadable browser item found for {criteria}; verify via "
             "ableton_browser(action='tree', ...) or pass preset_uri from "
             "ableton_browser(action='at_path', ...)"
+        )
+
+    if chain_index is not None:
+        # Nested load: the destination is a chain inside a (possibly deeply
+        # nested) rack, not the parent's main chain. Delegate to the shared
+        # rack-chain loader, which descends via the canonical device_path.
+        return _load_into_rack_chain(
+            context,
+            parent=parent,
+            parent_kind=parent_kind,
+            parent_idx=parent_idx,
+            browser=browser,
+            item=item,
+            resolved_path=resolved_path,
+            kind=kind,
+            preset_uri=preset_uri,
+            device_index=device_index,
+            device_path=device_path,
+            chain_index=chain_index,
         )
 
     view = getattr(context.song, "view", None)
@@ -1039,8 +1191,16 @@ def set_parameter_handler(
     track_index: int | None = None,
     return_index: int | None = None,
     master: bool | None = None,
+    device_path: list[dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Write one device parameter.
+
+    ``device_path`` (optional) addresses a parameter on a device nested inside
+    a rack at arbitrary depth — a list of ``{chain_index, device_position}``
+    steps from the top-level ``device_index`` device. Omit it for a top-level
+    device. This is the unified replacement for the retired
+    ``set_parameter_in_rack`` (whose depth-2 triple is just ``device_index`` +
+    a single path step).
 
     ``value_type='continuous'`` (default): supply EXACTLY ONE of —
       * ``value`` — the raw float in [param.min, param.max] (Live's own scale;
@@ -1072,7 +1232,7 @@ def set_parameter_handler(
     parent, kind, idx = _resolve_parent(
         context, track_index=track_index, return_index=return_index, master=master,
     )
-    dev = _resolve_device(parent, device_index)
+    dev = _resolve_device_path(parent, device_index, device_path)
     target_param = None
     for p in getattr(dev, "parameters", ()):
         if p.name == parameter_name:
@@ -1130,6 +1290,8 @@ def set_parameter_handler(
         "value_type": value_type,
         "parent_kind": kind,
     }
+    if device_path:
+        result["device_path"] = _validate_device_path(device_path)
     _attach_achieved_display(result, target_param)
     _attach_real_unit_echo(result, value_display)
     result.update(_parent_address(kind, idx))
@@ -1622,7 +1784,7 @@ def pad_info_handler(
 
 
 # ---------------------------------------------------------------------------
-# Nested rack chains (W6-I/W6-J)
+# Nested rack chains (W6-I/W6-J; DEEP-RACK-ADDR depth-N generalization)
 #
 # Live's rack devices (InstrumentGroupDevice, AudioEffectGroupDevice,
 # DrumGroupDevice) own nested device chains. Each chain has its own
@@ -1635,16 +1797,14 @@ def pad_info_handler(
 #   Chain.name -> str
 #   Chain.mixer_device -> ChainMixerDevice (volume, panning, sends, etc.)
 #
-# W6-I/J expose three actions:
-#   get_device_chains — read-only probe; lists the nested structure
-#   load_in_rack — load a device into a specific nested chain
-#   set_parameter_in_rack — write a parameter on a nested device
-#
-# These do NOT recurse into nested-nested racks. The schema supports it
-# (device_chains.parent_rack_device_id can chain), but the agent surface
-# is one-level-deep for now — recursive racks would require addressing
-# beyond what (chain_index, device_index) supports. Filed as a future
-# backlog item.
+# Addressing is uniform via the canonical `device_path` primitive
+# (`_resolve_device_path`): a list of {chain_index, device_position} steps
+# descends one rack level each, to ARBITRARY depth. `get_device_chains`
+# recurses the whole tree and reports each device's `device_path`; the agent
+# passes that path straight back to `set_parameter` / `get_parameters`. The
+# retired `load_in_rack` / `set_parameter_in_rack` actions (one-level-deep,
+# bespoke triples) folded into `load` (device_path + chain_index) and
+# `set_parameter` (device_path) respectively.
 # ---------------------------------------------------------------------------
 
 
@@ -1663,10 +1823,8 @@ def _resolve_rack_chains(dev: Any) -> tuple[Any, ...]:
         class_name = getattr(dev, "class_name", "<unknown>")
         raise NotImplementedError(
             f"device {class_name!r} is not a rack device — has no `chains` "
-            "collection. Rack-only actions (get_device_chains, "
-            "load_in_rack, set_parameter_in_rack) apply only to "
-            "InstrumentGroupDevice, AudioEffectGroupDevice, and "
-            "DrumGroupDevice."
+            "collection. Rack chains apply only to InstrumentGroupDevice, "
+            "AudioEffectGroupDevice, and DrumGroupDevice."
         )
     return tuple(chains)
 
@@ -1679,6 +1837,78 @@ def _resolve_chain_by_index(chains: tuple[Any, ...], chain_index: int) -> Any:
     return chains[chain_index - 1]
 
 
+def _mixer_state(holder: Any) -> dict[str, Any] | None:
+    """Read {volume, panning} off a Live object's ``mixer_device``, or None."""
+    mixer = getattr(holder, "mixer_device", None)
+    if mixer is None:
+        return None
+    vol = getattr(mixer, "volume", None)
+    pan = getattr(mixer, "panning", None)
+    return {
+        "volume": float(vol.value) if vol is not None else None,
+        "panning": float(pan.value) if pan is not None else None,
+    }
+
+
+def _describe_chain_device(
+    cd: Any, di: int, ci: int, parent_path: list[dict[str, int]], detail: str,
+) -> dict[str, Any]:
+    """Describe one nested device, recursing if it is itself a rack.
+
+    ``device_path`` is the full positional address from the top-level
+    ``device_index`` device down to ``cd`` — the exact list the agent passes
+    back to ``set_parameter`` / ``get_parameters``. ``is_rack`` lets the agent
+    know it can descend further.
+    """
+    device_path = parent_path + [{"chain_index": ci, "device_position": di}]
+    is_rack = getattr(cd, "chains", None) is not None
+    entry: dict[str, Any] = {
+        "position": di,
+        "name": getattr(cd, "name", ""),
+        "class_name": getattr(cd, "class_name", ""),
+        # Arc 4 / D4: browser display name on nested devices — drives
+        # `devices.kind` when pull ingests nested rack-chain probes.
+        "class_display_name": getattr(cd, "class_display_name", None),
+        "parameter_count": len(getattr(cd, "parameters", ())),
+        "is_active": bool(getattr(cd, "is_active", True)),
+        "is_rack": is_rack,
+        "device_path": device_path,
+    }
+    if detail == "full":
+        mixer = _mixer_state(cd)
+        if mixer is not None:
+            entry["mixer"] = mixer
+    if is_rack:
+        entry["chains"] = [
+            _describe_chain(c, cj, device_path, detail)
+            for cj, c in enumerate(_resolve_rack_chains(cd), start=1)
+        ]
+    return entry
+
+
+def _describe_chain(
+    chain: Any, ci: int, parent_path: list[dict[str, int]], detail: str,
+) -> dict[str, Any]:
+    """Describe one rack chain + its devices, recursing into nested racks."""
+    chain_devices = list(getattr(chain, "devices", ()) or ())
+    chain_entry: dict[str, Any] = {
+        "chain_index": ci,
+        "name": getattr(chain, "name", ""),
+        "device_count": len(chain_devices),
+        "devices": [
+            _describe_chain_device(cd, di, ci, parent_path, detail)
+            for di, cd in enumerate(chain_devices, start=1)
+        ],
+        "is_muted": bool(getattr(chain, "mute", False)),
+        "is_soloed": bool(getattr(chain, "solo", False)),
+    }
+    if detail == "full":
+        mixer = _mixer_state(chain)
+        if mixer is not None:
+            chain_entry["mixer"] = mixer
+    return chain_entry
+
+
 def get_device_chains_handler(
     context: LiveContext,
     *,
@@ -1688,14 +1918,20 @@ def get_device_chains_handler(
     master: bool | None = None,
     detail: str = "summary",
 ) -> dict[str, Any]:
-    """Probe a rack device's nested chains.
+    """Probe a rack device's nested chains — recursively, to any depth.
 
     Returns ``{device_index, chains: [{chain_index, name, devices:
-    [{position, name, class_name, ...}]}], ...}``. With
-    ``detail='summary'`` the device entries are identity-only (name +
-    class_name + parameter_count + is_active); with ``detail='full'``
-    each device also gains its mixer state (volume / panning) and
-    chain-mute / chain-solo flags.
+    [{position, name, class_name, is_rack, device_path, ...}]}], ...}``. Every
+    device entry carries its full ``device_path`` (the positional address from
+    the top-level ``device_index`` device); pass it back to ``set_parameter``
+    / ``get_parameters`` to read or write that device. Devices that are
+    themselves racks (``is_rack=True``) carry their own nested ``chains``, so
+    one call maps the entire tree.
+
+    With ``detail='summary'`` the device entries are identity-only (name +
+    class_name + parameter_count + is_active + is_rack + device_path); with
+    ``detail='full'`` each device and chain also gains its mixer state (volume
+    / panning).
 
     Raises a teaching error on non-rack devices via `_resolve_rack_chains`.
     """
@@ -1707,48 +1943,10 @@ def get_device_chains_handler(
     dev = _resolve_device(parent, device_index)
     chains = _resolve_rack_chains(dev)
 
-    chains_out: list[dict[str, Any]] = []
-    for ci, chain in enumerate(chains, start=1):
-        chain_devices = list(getattr(chain, "devices", ()) or ())
-        devices_out: list[dict[str, Any]] = []
-        for di, cd in enumerate(chain_devices, start=1):
-            entry: dict[str, Any] = {
-                "position": di,
-                "name": getattr(cd, "name", ""),
-                "class_name": getattr(cd, "class_name", ""),
-                # Arc 4 / D4: browser display name on nested devices — drives
-                # `devices.kind` when pull ingests nested rack-chain probes.
-                "class_display_name": getattr(cd, "class_display_name", None),
-                "parameter_count": len(getattr(cd, "parameters", ())),
-                "is_active": bool(getattr(cd, "is_active", True)),
-            }
-            if detail == "full":
-                cd_mixer = getattr(cd, "mixer_device", None)
-                if cd_mixer is not None:
-                    vol = getattr(cd_mixer, "volume", None)
-                    pan = getattr(cd_mixer, "panning", None)
-                    entry["mixer"] = {
-                        "volume": float(vol.value) if vol is not None else None,
-                        "panning": float(pan.value) if pan is not None else None,
-                    }
-            devices_out.append(entry)
-        chain_mixer = getattr(chain, "mixer_device", None)
-        chain_entry: dict[str, Any] = {
-            "chain_index": ci,
-            "name": getattr(chain, "name", ""),
-            "device_count": len(chain_devices),
-            "devices": devices_out,
-            "is_muted": bool(getattr(chain, "mute", False)),
-            "is_soloed": bool(getattr(chain, "solo", False)),
-        }
-        if detail == "full" and chain_mixer is not None:
-            vol = getattr(chain_mixer, "volume", None)
-            pan = getattr(chain_mixer, "panning", None)
-            chain_entry["mixer"] = {
-                "volume": float(vol.value) if vol is not None else None,
-                "panning": float(pan.value) if pan is not None else None,
-            }
-        chains_out.append(chain_entry)
+    chains_out = [
+        _describe_chain(chain, ci, [], detail)
+        for ci, chain in enumerate(chains, start=1)
+    ]
     result: dict[str, Any] = {
         "device_index": device_index,
         "class_name": getattr(dev, "class_name", ""),
@@ -1760,64 +1958,35 @@ def get_device_chains_handler(
     return result
 
 
-def load_in_rack_handler(
+def _load_into_rack_chain(
     context: LiveContext,
     *,
-    device_index: int,
-    chain_index: int,
+    parent: Any,
+    parent_kind: str,
+    parent_idx: int,
+    browser: Any,
+    item: Any,
+    resolved_path: list[str] | None,
     kind: str,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    preset_uri: str | None = None,
+    preset_uri: str | None,
+    device_index: int,
+    device_path: list[dict[str, int]] | None,
+    chain_index: int,
 ) -> dict[str, Any]:
-    """Load a device into a specific nested chain of a rack device.
+    """Load an already-resolved browser ``item`` into a nested rack chain.
 
-    Uses the same `application.browser.load_item` mechanism as the
-    top-level load_handler, but selects the destination CHAIN via
-    `song.view.selected_chain = chain` (or, if Live doesn't expose
-    `selected_chain` on the View, the chain's `mixer_device.is_active`
-    path serves the same purpose). The new device appears at the END
-    of the chain's device list — Live exposes no public reorder API
-    for nested chains either.
-
-    Raises a teaching error if the parent device isn't a rack, or if
-    Live can't bind the chain as the load destination.
+    The destination rack is resolved via the canonical ``device_path`` descent
+    (so the rack may be nested to any depth), then the device appends to the
+    rack's ``chain_index`` chain. Selects the destination via
+    ``rack.view.selected_chain`` + ``song.view.selected_track``, then mirrors
+    the top-level loader's three-shape post-condition (append /
+    replace-in-place / silent no-op). The browser item is resolved by the
+    caller (``load_handler``) so this path shares the same selector precedence
+    (preset_query / preset_uri / kind / browser_path fallback).
     """
-    if not isinstance(kind, str) or not kind:
-        raise ValueError("kind must be a non-empty Live device class name")
-    parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
-    )
-    rack = _resolve_device(parent, device_index)
+    rack = _resolve_device_path(parent, device_index, device_path)
     chains = _resolve_rack_chains(rack)
     chain = _resolve_chain_by_index(chains, chain_index)
-
-    application = getattr(context, "application", None)
-    if application is None:
-        raise NotImplementedError(
-            "LiveContext.application is unreachable — browser cannot be "
-            "opened for rack-chain load"
-        )
-    browser = getattr(application, "browser", None)
-    if browser is None:
-        raise NotImplementedError(
-            "application.browser not exposed in this Live version"
-        )
-
-    item, _resolved_path = _find_browser_item(
-        browser, kind=kind, preset_uri=preset_uri,
-    )
-    if item is None:
-        if preset_uri is not None:
-            criteria = f"preset_uri={preset_uri!r}"
-        else:
-            criteria = _format_kind_failure_criteria(kind)
-        raise ValueError(
-            f"no loadable browser item found for {criteria}; verify via "
-            "ableton_browser(action='tree', ...) or pass preset_uri from "
-            "ableton_browser(action='at_path', ...)"
-        )
 
     view = getattr(context.song, "view", None)
     if view is None:
@@ -1827,9 +1996,7 @@ def load_in_rack_handler(
         )
     # Live's chain-selection API: `selected_chain` exists on the view of
     # rack devices (`rack.view.selected_chain`) in Live 10+. Drum racks
-    # also expose `selected_drum_pad`. Set selected_chain directly on the
-    # rack's view if available; fall back to song.view.selected_track for
-    # the parent track + setting selected_chain on the rack's view.
+    # also expose `selected_drum_pad`.
     rack_view = getattr(rack, "view", None)
     if rack_view is None or not hasattr(rack_view, "selected_chain"):
         raise NotImplementedError(
@@ -1849,18 +2016,20 @@ def load_in_rack_handler(
     view.selected_track = parent
     browser.load_item(item)
 
-    fresh_rack = _refresh_parent(
+    # Re-resolve the destination chain from a fresh parent — Live re-wraps API
+    # objects on every access, and the descent is positional (never `is`).
+    fresh_parent = _refresh_parent(
         context, parent_kind=parent_kind, parent_idx=parent_idx
-    ).devices[device_index - 1]
+    )
+    fresh_rack = _resolve_device_path(fresh_parent, device_index, device_path)
     fresh_chains = _resolve_rack_chains(fresh_rack)
     fresh_chain = _resolve_chain_by_index(fresh_chains, chain_index)
     chain_after = list(fresh_chain.devices)
     chain_after_classes = [_canonical_class_name(d) for d in chain_after]
+    where = f"chain {chain_index} of rack {device_index}"
     # Mirror E2's three-shape post-condition from load_handler: append
     # (chain grew), replace-in-place (same length, one position changed
-    # class), silent no-op (same length, no changes — raise teaching
-    # error). Pre-fix this branch checked chain-length-only, which would
-    # misread a replace-in-place as a no-op.
+    # class), silent no-op (same length, no changes — raise teaching error).
     if len(chain_after) > len(chain_before_classes):
         nested_position = len(chain_after)
         new_device = chain_after[-1]
@@ -1882,8 +2051,7 @@ def load_in_rack_handler(
             ]
             existing_str = ", ".join(existing) if existing else "(empty)"
             raise RuntimeError(
-                f"load_in_rack: Live did not append a device on chain "
-                f"{chain_index} of rack {device_index} after "
+                f"load (into {where}): Live did not append a device after "
                 f"browser.load_item. Existing chain: [{existing_str}]. "
                 "Most common cause: a device with matching class is "
                 "already present at the expected position (Live silently "
@@ -1896,8 +2064,7 @@ def load_in_rack_handler(
                 for i, cls in enumerate(chain_after_classes)
             ]
             raise RuntimeError(
-                f"load_in_rack: Live changed multiple devices on chain "
-                f"{chain_index} of rack {device_index} after "
+                f"load (into {where}): Live changed multiple devices after "
                 f"browser.load_item — unexpected shape ({len(changed)} "
                 f"positions changed). Post-load chain: "
                 f"[{', '.join(existing)}]."
@@ -1909,9 +2076,9 @@ def load_in_rack_handler(
         ]
         existing_str = ", ".join(existing) if existing else "(empty)"
         raise RuntimeError(
-            f"load_in_rack: chain {chain_index} of rack {device_index} "
-            f"shrank after browser.load_item (pre={len(chain_before_classes)}, "
-            f"post={len(chain_after)}). Post-load chain: [{existing_str}]."
+            f"load (into {where}): chain shrank after browser.load_item "
+            f"(pre={len(chain_before_classes)}, post={len(chain_after)}). "
+            f"Post-load chain: [{existing_str}]."
         )
     result: dict[str, Any] = {
         "device_index": device_index,
@@ -1920,100 +2087,12 @@ def load_in_rack_handler(
         "kind": kind,
         "name": getattr(new_device, "name", ""),
         "parent_kind": parent_kind,
+        "resolved_path": resolved_path,
     }
+    if device_path:
+        result["device_path"] = _validate_device_path(device_path)
     if preset_uri is not None:
         result["preset_uri"] = preset_uri
-    result.update(_parent_address(parent_kind, parent_idx))
-    return result
-
-
-def set_parameter_in_rack_handler(
-    context: LiveContext,
-    *,
-    device_index: int,
-    chain_index: int,
-    nested_device_position: int,
-    parameter_name: str,
-    value: str | None = None,
-    value_display: str | None = None,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    value_type: str = "continuous",
-) -> dict[str, Any]:
-    """Write a parameter on a device inside a rack's nested chain.
-
-    Addresses the parameter via (rack device_index, chain_index,
-    nested_device_position, parameter_name). Reuses the
-    continuous-vs-enum dispatch logic from set_parameter_handler so
-    the write semantics match exactly — including the ``value_display``
-    display-units path and raw-range validation (via ``resolve_continuous_write``).
-    Value is schema-permissive (str) and coerced per value_type.
-    """
-    if value_type not in ("continuous", "enum"):
-        raise ValueError(
-            f"value_type must be 'continuous' or 'enum', got {value_type!r}"
-        )
-    parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
-    )
-    rack = _resolve_device(parent, device_index)
-    chains = _resolve_rack_chains(rack)
-    chain = _resolve_chain_by_index(chains, chain_index)
-    chain_devices = list(getattr(chain, "devices", ()) or ())
-    if nested_device_position < 1 or nested_device_position > len(chain_devices):
-        raise IndexError(
-            f"nested_device_position {nested_device_position} out of range "
-            f"[1, {len(chain_devices)}] on chain {chain_index}"
-        )
-    nested_device = chain_devices[nested_device_position - 1]
-    param = None
-    for p in getattr(nested_device, "parameters", ()):
-        if p.name == parameter_name:
-            param = p
-            break
-    if param is None:
-        available = [p.name for p in getattr(nested_device, "parameters", ())]
-        raise ValueError(
-            f"parameter {parameter_name!r} not found on nested device "
-            f"{nested_device_position}; available: {available}"
-        )
-
-    if value_type == "enum":
-        if value_display is not None:
-            raise ValueError(
-                "value_display applies only to continuous params; for an enum "
-                "use value_type='enum' with `value` set to a value_items entry"
-            )
-        items = tuple(getattr(param, "value_items", ()) or ())
-        if not items:
-            raise ValueError(
-                f"parameter {parameter_name!r} on nested device "
-                f"{nested_device_position} is not a quantized enum"
-            )
-        try:
-            idx = items.index(value)
-        except ValueError:
-            raise ValueError(
-                f"enum value {value!r} not in {parameter_name!r}'s value_items {list(items)!r}"
-            ) from None
-        param.value = float(idx)
-    else:
-        param.value = resolve_continuous_write(
-            param, value=value, value_display=value_display,
-            parameter_name=parameter_name,
-        )
-    result: dict[str, Any] = {
-        "device_index": device_index,
-        "chain_index": chain_index,
-        "nested_device_position": nested_device_position,
-        "parameter_name": parameter_name,
-        "value_type": value_type,
-        "value": float(param.value),
-        "parent_kind": parent_kind,
-    }
-    _attach_achieved_display(result, param)
-    _attach_real_unit_echo(result, value_display)
     result.update(_parent_address(parent_kind, parent_idx))
     return result
 
@@ -2035,6 +2114,4 @@ __all__ = [
     "navigate_preset_handler",
     "pad_info_handler",
     "get_device_chains_handler",
-    "load_in_rack_handler",
-    "set_parameter_in_rack_handler",
 ]

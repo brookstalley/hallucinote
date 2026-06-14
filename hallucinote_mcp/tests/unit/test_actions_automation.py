@@ -754,6 +754,44 @@ def test_write_envelope_device_parameter_clip_scoped(loaded_actions):
     assert threshold in clip.clear_envelope_calls
 
 
+def test_write_envelope_device_parameter_nested_refuses_pointing_at_perform(
+    loaded_actions,
+):
+    """DEEP-RACK-ADDR honest gap: write_envelope can't automate a NESTED-rack
+    device param (Live 12.4's Clip.create_automation_envelope is top-level
+    only). It refuses with a teaching error pointing at perform_batch rather
+    than silently writing to the wrong (top-level) parameter."""
+    class _Dev:
+        def __init__(self):
+            self.parameters = (FakeParam("Threshold", -12.0),)
+
+    track = FakeTrack()
+    track.devices = [_Dev()]
+    track.clip_slots[0].clip = FakeClip()
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="write_envelope",
+            params={
+                "target_kind": "device_parameter",
+                "track_index": 1, "device_index": 1,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "parameter_name": "Threshold",
+                "location": "session", "clip_index": 1,
+                "breakpoints": [
+                    {"time_beats": 0.0, "value": 0.5},
+                    {"time_beats": 8.0, "value": 0.3},
+                ],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "nested" in err.lower()
+    assert "perform_batch" in err
+
+
 def test_write_envelope_device_parameter_unknown_name(loaded_actions):
     class _Dev:
         def __init__(self):

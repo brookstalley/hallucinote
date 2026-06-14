@@ -43,8 +43,13 @@ def plan_push_devices(
              be pushed; never a silent drop.
          A refused display write is retried once by the executor (as enum, or
          with the DB's normalized value) — see push_execute's set_parameter
-         fallback. Nested rack chains aren't pushed here (snapshot doesn't
-         capture them).
+         fallback.
+      4. DEEP-RACK-ADDR: for each linked top-level RACK device, recurse its
+         nested chains and emit `set_parameter` with the canonical `device_path`
+         for every nested device's dialed params (to arbitrary depth). Nested
+         devices are NOT loaded — they arrive with the rack preset — so push
+         only sets their params. This is what makes a deep by-ear fix survive a
+         `build.py` rebuild.
     """
     plan = PushPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -259,21 +264,66 @@ def _emit_device_calls(
         )
         return
 
+    _emit_param_writes(
+        plan, conn,
+        device=device,
+        parent_kv=parent_kv,
+        device_index=device_at,
+        device_path=None,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+    )
+    # DEEP-RACK-ADDR: a rack device's nested-chain devices are NOT separately
+    # linked or loaded (they arrive with the rack preset, the unit of load) —
+    # but their dialed params must still be pushed, or a deep fix reverts on the
+    # next rebuild. Recurse the nested tree to arbitrary depth, addressing each
+    # nested device by its canonical device_path relative to THIS top-level
+    # device's Live index (device_at). Uses set_parameter + device_path, never
+    # the retired in_rack triple (design §8: that would silently re-cap at 2).
+    _emit_nested_param_writes(
+        plan, conn,
+        rack_device_id=device["id"],
+        parent_kv=parent_kv,
+        top_device_index=device_at,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+    )
+
+
+def _emit_param_writes(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    device: sqlite3.Row,
+    parent_kv: dict[str, object],
+    device_index: int,
+    device_path: list[dict[str, int]] | None,
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Emit `set_parameter` calls for one device's dialed params.
+
+    ``device_index`` is the TOP-LEVEL device's Live index; ``device_path`` (a
+    list of ``{chain_index, device_position}`` steps, or None) addresses a
+    device nested inside it (DEEP-RACK-ADDR). For a top-level device pass
+    ``device_path=None`` — the wire shape is then identical to the pre-nesting
+    behavior.
+
+    SYN-9F2L wire-form selection per param:
+      * captured value_items → a known enum: value_type='enum' with the display
+        string (the handler validates membership);
+      * display string present → value_display (the handler inverts the param's
+        own display curve — exact, and safe for center-zero params where a naive
+        normalized fraction dials the wrong direction);
+      * normalized only → the raw `value` (stringified on the wire);
+      * neither → an operator ALERT, never a silent drop.
+    The executor retries a refused display write once (as enum, or with the DB's
+    normalized value) — see push_execute's set_parameter fallback.
+    """
     params = Q.get_device_parameters(conn, device["id"])
     unwritable: list[str] = []
+    nested_note = f" (nested depth {len(device_path)})" if device_path else ""
     for p in params:
-        # SYN-9F2L: pick the wire form per param.
-        #   * captured value_items → a known enum: value_type='enum' with the
-        #     display string (the handler validates membership);
-        #   * display string present → value_display (the handler inverts the
-        #     param's own display curve — exact, and safe for center-zero
-        #     params where a naive normalized fraction dials the wrong
-        #     direction);
-        #   * normalized only → the raw `value` (stringified on the wire);
-        #   * neither → warn, never drop silently.
-        # The executor retries a refused display write once (as enum, or with
-        # the DB's normalized value) — see push_execute's set_parameter
-        # fallback.
         display = (p["value_display"] or "").strip()
         if p["value_items_json"] is not None:
             if not display:
@@ -295,18 +345,21 @@ def _emit_device_calls(
         else:
             unwritable.append(p["name"])
             continue
+        args: dict[str, object] = {
+            "action": "set_parameter",
+            **parent_kv,
+            "device_index": device_index,
+            "parameter_name": p["name"],
+            **value_kv,
+        }
+        if device_path:
+            args["device_path"] = device_path
         plan.add(ToolCall(
             tool="ableton_device",
-            args={
-                "action": "set_parameter",
-                **parent_kv,
-                "device_index": device_at,
-                "parameter_name": p["name"],
-                **value_kv,
-            },
+            args=args,
             key=f"device_parameter:{device['id']}:{p['name']}",
             purpose=(
-                f"{parent_name} / {device['display_name']} / "
+                f"{parent_name} / {device['display_name']}{nested_note} / "
                 f"{p['name']} = {chosen}"
             ),
         ))
@@ -315,12 +368,60 @@ def _emit_device_calls(
         # can't be pushed — surface it in the push report, not the diagnostic
         # notes channel where it gets discarded.
         plan.alert(
-            f"device {device['display_name']!r} on {parent_kind} {parent_name!r}: "
+            f"device {device['display_name']!r}{nested_note} on {parent_kind} "
+            f"{parent_name!r}: "
             f"{len(unwritable)} param(s) have no writable form "
             f"({', '.join(unwritable[:3])}{'...' if len(unwritable) > 3 else ''}) "
             "— no display value and no normalized value stored; the dialed "
             "intent was NOT pushed"
         )
+
+
+def _emit_nested_param_writes(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    rack_device_id: str,
+    parent_kv: dict[str, object],
+    top_device_index: int,
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Recurse a rack device's nested chains, emitting `set_parameter` (with
+    `device_path`) for each nested device's dialed params — to arbitrary depth.
+
+    Nested devices are NOT loaded (they arrive with the rack preset); push only
+    sets their dialed params. Each device's `device_path` is computed from the
+    DB hierarchy (`get_device_nesting_path`), so it matches the reloaded
+    preset's structure. ``top_device_index`` is the Live index of the top-level
+    rack — every nested device addresses from there.
+    """
+    for chain in Q.get_device_chains_for_rack_device(conn, rack_device_id):
+        for nested in Q.get_devices_for_chain(conn, chain["id"]):
+            # Defensive: a clean DB never nests a placeholder or the analyzer,
+            # but a legacy-polluted one might — skip both (mirrors the
+            # top-level guards) rather than emit an unaddressable write.
+            if nested["kind"] == "placeholder" or is_analyzer_device(nested):
+                continue
+            device_path = Q.get_device_nesting_path(conn, nested["id"])
+            _emit_param_writes(
+                plan, conn,
+                device=nested,
+                parent_kv=parent_kv,
+                device_index=top_device_index,
+                device_path=device_path,
+                parent_kind=parent_kind,
+                parent_name=parent_name,
+            )
+            # Recurse deeper — this nested device may itself be a rack.
+            _emit_nested_param_writes(
+                plan, conn,
+                rack_device_id=nested["id"],
+                parent_kv=parent_kv,
+                top_device_index=top_device_index,
+                parent_kind=parent_kind,
+                parent_name=parent_name,
+            )
 
 
 def plan_push_device_sidechain(

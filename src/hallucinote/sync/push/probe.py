@@ -643,11 +643,13 @@ def _match_devices_for_linked_parents(
     drift note — push will still load over the wrong device, but the
     note surfaces the situation so the user can rename or rebuild.
 
-    Nested rack chains (Drum Rack / Instrument Rack contents) are not
-    walked here — they're addressed by chain_index + nested device_position
-    and need a separate probe (W22-B's nested-rack push). Top-level
-    device match is the high-frequency case that resolves the punk-fate
-    bug; nested can wait.
+    Nested rack-chain devices are not LINKED here — only top-level devices
+    carry an ableton_link binding. (DEEP-RACK-ADDR: their dialed params ARE
+    pushed, addressed by the top-level device's index + the canonical
+    device_path — see `push/devices.py _emit_nested_param_writes`; they arrive
+    with the rack preset, so they need no separate load/link.) This probe-match
+    walks the top-level chains, the high-frequency case that resolves the
+    punk-fate bug.
     """
     for matched, parent_kind, get_devices_fn in (
         (result.matched_tracks, "track", Q.get_devices_for_track),

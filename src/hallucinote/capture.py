@@ -6,15 +6,18 @@ chunk 4a) device chains with dialed parameters. It is the seed mechanism for
 `build.py`: capture once (live Ableton -> snapshot.json), then replay into the
 DB through mutators.
 
-Scope (chunks 3 + 4a + W7-B): tracks + returns + sends + master + mixer state +
-top-level device chains + dialed device parameters + one level of nested rack
-chains. Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
+Scope (chunks 3 + 4a + W7-B + DEEP-RACK-ADDR): tracks + returns + sends + master
++ mixer state + device chains (top-level AND nested) + dialed device parameters.
+Each rack-kind device (Arc 4 / D4 display names: ``Drum Rack``,
 ``Instrument Rack``, ``Audio Effect Rack``; pre-D4 these were the internal
 class names ``DrumGroupDevice``/``InstrumentGroupDevice``/``AudioEffectGroupDevice``)
 may optionally carry a ``chains: [{chain_index, name, devices: [...]}]``
-array; replay walks one level. Recursively nested racks
-(rack-inside-a-rack) are deferred (raises on encounter) — tracked in backlog
-under "nested-nested rack support". Automation envelopes (chunk 4b) are
+array, and a nested device may itself be a rack — replay (`_replay_rack_chains`)
+recurses to ARBITRARY depth (DEEP-RACK-ADDR; the DB's ``device_chains`` /
+``device_parameters`` are depth-agnostic). NOTE: the snapshot-refresh PREVIEW
+(`diff_snapshots` / `merge_snapshots`) itemizes only one level and summarizes
+deeper subtrees opaquely — a preview simplification, NOT a data limit (replay
+ingests the full snapshot regardless). Automation envelopes (chunk 4b) are
 schema-modeled and push-plannable but the capture/replay path doesn't ingest
 them yet — MCP exposes no read surface for the seven envelope target families
 (see `ableton://guides/gaps`).
@@ -138,14 +141,13 @@ def _replay_devices(
     actor: str,
     request_id: str | None,
     reason: str | None,
-    _depth: int = 0,
 ) -> None:
     """Insert each entry of `devices_array` into the given chain, plus any
-    dialed parameters and (at depth 0) one level of nested rack chains.
-
-    `_depth` is private — used to enforce the "one level of recursion only"
-    invariant. A rack device inside a rack chain (nested-nested) raises on
-    encounter; recursive support is deferred (tracked in backlog).
+    dialed parameters and any nested rack chains — recursively, to arbitrary
+    depth (DEEP-RACK-ADDR). A rack device inside a rack chain recurses through
+    `_replay_rack_chains` the same way a top-level rack does; `device_chains`
+    and `device_parameters` are depth-agnostic in the DB, so no per-depth
+    special-casing is needed.
 
     SNP-8R4K — defensive analyzer exclusion: capture filters the analyzer at
     `compile_snapshot`, but a legacy-polluted snapshot on disk may still carry
@@ -257,12 +259,6 @@ def _replay_devices(
             )
         nested = d.get("chains")
         if nested:
-            if _depth > 0:
-                raise ValueError(
-                    f"snapshot device {d.get('name')!r} (class {d['class']!r}): "
-                    "nested-nested rack chains are not supported — replay "
-                    "walks one level only"
-                )
             if d["class"] not in RACK_CLASS_NAMES:
                 raise ValueError(
                     f"snapshot device {d.get('name')!r} carries `chains` but "
@@ -317,8 +313,9 @@ def _replay_rack_chains(
     request_id: str | None,
     reason: str | None,
 ) -> None:
-    """Insert each nested chain under `rack_device_id` and recurse one level
-    into the chain's devices.
+    """Insert each nested chain under `rack_device_id` and recurse into the
+    chain's devices — which may themselves be racks, recursing again to
+    arbitrary depth (DEEP-RACK-ADDR).
 
     Each entry: ``{chain_index: int>=1, name: str (optional), devices: [...]}``.
     The chain row's `position` matches W6-I/J's 1-based `chain_index` on the
@@ -350,7 +347,6 @@ def _replay_rack_chains(
             actor=actor,
             request_id=request_id,
             reason=reason,
-            _depth=1,
         )
 
 
@@ -909,8 +905,9 @@ def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str
 #   The agent records each load's `resolved_path` into a list of records;
 #   this helper writes them into the right device entries on the assembled
 #   snapshot. Top-level devices only (track + return chains); nested rack
-#   chain devices loaded via `load_in_rack` are out of scope for v1 since
-#   no current skill drives that path.
+#   chain devices are out of scope for browser-path injection since no
+#   current skill drives that path (and nested devices arrive with the rack
+#   preset, so they need no per-device browser identity).
 #
 # - `preserve_browser_paths(old, new)` — used by `/song-snapshot` (the
 #   refresh flow). Capture probes don't expose `browser_path` (Live doesn't
@@ -1125,9 +1122,11 @@ def preserve_browser_paths(
 # duplicate track names, so name is not a reliable identity).
 #
 # Per-device dialed-param drift is diffed in full; nested rack chains are
-# walked one level (matching `_replay_devices`). Recursively nested racks
-# are reported as a single "subtree_changed" flag — keeping the depth bounded
-# matches what replay supports anyway.
+# walked one level by this PREVIEW diff, reporting anything deeper as a single
+# "nested_chains_subtree_changed" flag. That is a preview simplification only —
+# replay (`_replay_rack_chains`) and push handle nested params at ARBITRARY
+# depth (DEEP-RACK-ADDR), so a deep change is never lost, just not itemized in
+# the operator-facing diff.
 
 
 _MIXER_FIELDS = ("volume", "panning", "mute", "solo", "arm", "color")
@@ -1224,7 +1223,11 @@ def _devices_diff(
         pd = _params_diff(od.get("params_dialed"), nd.get("params_dialed"))
         if pd:
             entry["params"] = pd
-        # Nested rack chains: walk one level, matching capture/replay depth.
+        # Nested rack chains: the snapshot-refresh PREVIEW itemizes one level
+        # and summarizes anything deeper as an opaque subtree change. This is a
+        # preview simplification only — replay/push (DEEP-RACK-ADDR) materialize
+        # nested params at any depth, so a deep change is never LOST, just not
+        # spelled out field-by-field in the diff the operator sees.
         old_chains = od.get("chains")
         new_chains = nd.get("chains")
         if old_chains or new_chains:
@@ -1254,8 +1257,10 @@ def _chains_diff(
     new_chains: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     """Diff two `chains` arrays (rack-device nested chains). Matches by
-    `chain_index`. Each chain's devices are diffed at `_depth=1` so the
-    'one level only' invariant from replay holds."""
+    `chain_index`. Each chain's devices are diffed at `_depth=1` — the
+    snapshot-refresh preview itemizes one level and summarizes deeper subtrees
+    opaquely (replay/push handle any depth; this is a preview simplification,
+    not a data limit)."""
     old = old_chains or []
     new = new_chains or []
     old_by_idx = {int(c["chain_index"]): c for c in old if "chain_index" in c}
@@ -1392,8 +1397,11 @@ def _merge_devices(
 ) -> list[dict[str, Any]]:
     """Walk two device arrays (matched by `index`), returning `new` with
     sticky fields copied from the matching `old` entry when `new` doesn't
-    carry them. Recurses one level into nested rack `chains` to match the
-    capture / replay / diff depth invariant.
+    carry them. Recurses one level into nested rack `chains` — the only sticky
+    field is `browser_path`, which nested devices don't carry (capture injects
+    it for top-level devices only), so one level covers every device that
+    actually has a sticky field. (Replay/push handle nested params at any depth;
+    this merge is a snapshot-refresh preview helper, not the durability path.)
     """
     new = new_devices or []
     old_by_idx = {

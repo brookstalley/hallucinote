@@ -309,14 +309,31 @@ or analyze routinely runs several minutes, but the Claude Code MCP tool-call
 *wrapper* caps a single call at 60 s and returns a red timeout WHILE THE JOB
 CONTINUES server-side (the framework already sets an unbounded socket read; the
 60 s cap is the wrapper, a layer the server can't widen). Do not retry or report a
-failure — poll the filesystem for the completion artifact:
+failure — poll the filesystem for the completion artifact.
+
+**Primary signal — `status.json`.** Both actions now write a sibling
+`status.json` (`{state: running|done|error}`) the instant the work starts,
+refreshed mid-flight and made terminal at the end (carrying the report/manifest
+path on `done`, the message on `error`). Poll that single stable file — no dir
+scan, and a raised job lands a terminal `error` instead of hanging forever. Its
+two locations:
+- **render** — `<captures_dir>/status.json` (`done` also carries `manifest_path`
+  + `render_status`: `ok`/`incomplete`).
+- **analyze** — `songs/<slug>/analysis/status.json` (`done` also carries
+  `report_path`).
+
+**Fallback — artifact poll (for a stale server).** `status.json` only appears
+once the *running* MCP server carries this change, and it appears only after the
+user re-installs: the chunks that ship it flip the server fingerprint, so the
+plugin re-vendors on the next `/ableton-mcp-install` (a server started before
+that still writes no `status.json`). If `status.json` never shows up, fall back
+to watching for the completion artifact directly:
 - **render** — watch `<captures_dir>` for `manifest.json` (written as the render's
   final act).
 - **analyze** — watch `songs/<slug>/analysis/` for a JSON newer than the newest one
   from before the call (the MixReport).
-- once the server carries the status-write change, a sibling `status.json`
-  (`{state: running|done|error}`) makes the wait robust without a dir scan.
-Fire the call, ignore the 60 s error, poll for the artifact, then proceed.
+Fire the call, ignore the 60 s error, poll for `status.json` (artifact as
+fallback), then proceed.
 
 **Verifying a mix change (A/B):** after applying a fix, PUSH the change to
 Live before re-rendering (fixes land DB-first through mutators; `db_seq`

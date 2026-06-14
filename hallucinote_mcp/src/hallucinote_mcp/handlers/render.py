@@ -741,6 +741,13 @@ def render_handler(
             "status": status,
         }
     except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level render supervisor: write status.json=error then re-raise so a poller sees a terminal state for a render that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
+        # Every catch logs context (project norm) before the terminal heartbeat —
+        # the dispatcher surfaces the re-raised exception to the caller, but the
+        # server log is where a stuck-render postmortem reads what actually blew up.
+        logger.exception(
+            "render: failed for song_slug=%s (captures_dir=%s) — wrote "
+            "status.json=error and re-raising", song_slug, captures_dir,
+        )
         write_status(captures_dir, {"state": "error", "error": str(e)})
         raise
 

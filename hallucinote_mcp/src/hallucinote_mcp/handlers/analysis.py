@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+
+logger = logging.getLogger("hallucinote_mcp.analysis")
 
 # Guarded import: the `hallucinote` package is NOT vendored into Live's
 # User Library, so a module-level import would crash the Remote Script
@@ -562,6 +565,13 @@ def analyze_handler(
             encoding="utf-8",
         )
     except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level analyze supervisor: write status.json=error then re-raise so a poller sees a terminal state for an analysis that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
+        # Every catch logs context (project norm) before the terminal heartbeat —
+        # the dispatcher surfaces the re-raised exception to the caller, but the
+        # server log is where a stuck-analyze postmortem reads what actually blew up.
+        logger.exception(
+            "analyze: failed for song_slug=%s (analysis_dir=%s) — wrote "
+            "status.json=error and re-raising", song_slug, analysis_dir,
+        )
         _write_analysis_status(analysis_dir, {"state": "error", "error": str(e)})
         raise
 

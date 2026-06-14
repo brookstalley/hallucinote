@@ -18,6 +18,7 @@ import soundfile as sf
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
 from hallucinote_mcp.handlers import analysis as analysis_handlers
+from hallucinote_mcp.handlers.analysis import ANALYSIS_STATUS_FILENAME
 
 
 SAMPLE_RATE = 48_000
@@ -338,6 +339,40 @@ def test_get_latest_report_returns_most_recent_json(synthetic_song: Path):
     )
     assert Path(result["report_path"]) == later_path
     assert result["report"]["marker"] == "later"
+
+
+def test_get_latest_report_excludes_status_json(synthetic_song: Path):
+    """BUG3 regression: `_latest_report_path` MUST exclude the status.json
+    completion heartbeat from the report glob. status.json sorts lexically AFTER
+    any timestamped `<digits>.json` report ('s' > '9'), so without the exclusion
+    it wins the `sorted(...)[-1]` and `get_latest_report` returns the heartbeat
+    instead of the real report. (The sibling
+    `test_get_latest_report_returns_most_recent_json` uses a far-future
+    `9999...json` sentinel that ALSO outsorts status.json, so it can't catch this
+    regression — this test pins it directly.)
+    """
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    # A real analyze writes BOTH the timestamped report AND status.json into the
+    # analysis dir — exactly the on-disk shape that triggers the regression.
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures),
+    )
+    report_path = Path(result["report_path"])
+    status_path = synthetic_song / "analysis" / "status.json"
+    # Sanity: both files coexist in the analysis dir, and status.json really does
+    # outsort the timestamped report (so the exclusion is load-bearing, not a
+    # no-op that would pass even if removed).
+    assert status_path.exists()
+    assert report_path.name < status_path.name  # '2...' < 'status.json'
+
+    latest = analysis_handlers.get_latest_report_handler(
+        None, song_slug="test-song",
+    )
+    assert Path(latest["report_path"]) == report_path
+    assert Path(latest["report_path"]).name != ANALYSIS_STATUS_FILENAME
 
 
 def test_get_latest_report_teaches_when_no_reports(synthetic_song: Path):

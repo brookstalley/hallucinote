@@ -4,6 +4,31 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
+
+<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests -->
+
+**Re-vendor: not required** — engine-only (no `actions/`/`handlers/` touched). Behavior-preserving
+dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drift-guard).
+
+- **SYN-6T2W — shared linked-parent/device iterators for the `plan_pull_*` family.** The four
+  `plan_pull_*` planners each re-walked linked tracks (master-skipped) + returns → top-level chain
+  → devices. Extracted `_iter_linked_parents` and the layered `_iter_linked_top_level_devices`;
+  per-planner warning text, rack filtering, and `any_emitted`/`any_top_level_device` bookkeeping
+  stay in the callers via an `unlinked_warn` callback. Behavior preserved (225 pull tests unchanged).
+- **ENV-5R2J — single host-kind vocabulary + planner drift-guard.** The host track-kind set
+  `{midi,audio,master,group}` was hardcoded as a literal in `create_envelope`'s eligibility gate
+  while the canonical `TRACK_KINDS` already existed; point the gate at `TRACK_KINDS` (same set) and
+  add a completeness test pinning the planner's `_route_for_host_kind` to it — a new track kind with
+  no route now fails the test, not silently routes to `unroutable` at push. Eligibility and routing
+  stay separate policies; only the vocabulary is shared (no layering inversion — `sync→db` is the
+  existing direction).
+- **DEV-1F9X DEFERRED (not built).** The plugin-discriminator duplication is CROSS-PACKAGE
+  (`hallucinote` ↔ `hallucinote_mcp`); a shared module would either pull the heavy engine into the
+  MCP's stdlib-only-at-startup hot path or needs the W11-A `hallucinote-core` package that doesn't
+  exist yet. A lock-test already pins the two copies, so there's no live drift. Kept on the backlog,
+  gated on W11-A.
+
 ## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
 
 <!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=merged -->

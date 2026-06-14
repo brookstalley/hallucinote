@@ -74,9 +74,17 @@ Chunks 1/2/3/6 are engine/docs/skill only → **no flip, immediately effective**
   resolved-by-this-cluster. File any deferred residual (full async render) as backlog.
 
 ## Status
-- [ ] Chunk 1: BUG4 params_dialed authoring docs + warn
-- [ ] Chunk 2: BUG1A analyzer-aware push matching
-- [ ] Chunk 3: BUG3 skill doc expected-timeout
-- [ ] Chunk 4: BUG1B bulk strip action
-- [ ] Chunk 5: BUG3 status.json heartbeat
-- [ ] Chunk 6: BUG2 + incoming-bugs close-out
+- [x] Chunk 1: BUG4 params_dialed authoring docs + warn (capture.py warn + snapshot-schema.md
+      + 2 tests; confirmed `{"value":"180 Hz"}` already flows through to the live inversion)
+- [x] Chunk 2: BUG1A analyzer-aware push matching (probe.py excludes trailing analyzer before
+      position-match; +1 regression test; no flip)
+- [x] Chunk 3: BUG3 skill doc expected-timeout (mix-review SKILL; no flip)
+- [x] Chunk 4: BUG1B bulk strip action (ableton_render strip + _strip_action pure helper + 8 tests;
+      MCP flip)
+- [x] Chunk 5: BUG3 status.json heartbeat (render + analyze handlers + glob-exclusion boundary fix
+      + 5 tests; MCP flip). Interim toward MCP-4T6Y (full async render); that item stays open.
+- [ ] Chunk 6: BUG2 + incoming-bugs close-out (no code)
+
+## Re-vendor note (release-time)
+Chunks 4+5 flip the MCP fingerprint → **`Re-vendor: required`** for the release that ships this.
+Chunks 1-3 are no-flip (immediately effective). Per docs/release-process.md step 5.

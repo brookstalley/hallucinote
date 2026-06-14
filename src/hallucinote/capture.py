@@ -27,7 +27,8 @@ Snapshot shape (extends the existing `captured_session.json` prototype):
         "key":       "..." (optional),
         "tempo":     132.0,         # informational; score-chunk tempo_map owns this
         "signature": "4/4",         # informational; score-chunk time_signature_map owns this
-        "master":    {"volume": 0.85, "panning": 0.0}
+        "master":    {"volume": 0.85, "panning": 0.0,
+                      "devices": [...]}  # optional master chain (SNP-4K7M)
       },
       "returns": [
         {"index": 1, "name": "A-Reverb", "volume": 0.85, "panning": 0.0, "color": null}
@@ -47,7 +48,8 @@ Snapshot shape (extends the existing `captured_session.json` prototype):
 Replay creates: returns (1 row per `returns[]`), tracks (1 row per `tracks[]`,
 plus a `kind='master'` row for `song.master`), sends (1 row per non-null entry
 in each track's `sends` map, keyed by return name), top-level device chains
-(1 per track/return that has a `devices: [...]` array — chunk 4a), devices
+(1 per track/return/master that has a `devices: [...]` array — chunk 4a;
+master added by SNP-4K7M), devices
 (1 row per array entry), device parameters (1 row per entry in each device's
 `params_dialed: {...}` map). `clips: [...]` on tracks is still ignored —
 populated by build.py hand-authored sections.
@@ -446,6 +448,28 @@ def replay_capture(
                 reason=reason,
                 **master_mixer,
             )
+        # SNP-4K7M — master device chain. The master is a track row, so its
+        # device chain hangs off `parent_track_id` exactly like a regular
+        # track's (the mutator is kind-agnostic). DEV-6M2K already pushes master
+        # devices; this closes the authorship middle so a master Limiter / EQ
+        # declared in build.py round-trips. Analyzer rows are filtered upstream
+        # (compile_snapshot / migrate) so they never reach here.
+        if master.get("devices"):
+            master_chain_id = M.create_device_chain(
+                conn,
+                parent_track_id=master_id,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
+            _replay_devices(
+                conn,
+                chain_id=master_chain_id,
+                devices_array=master["devices"],
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
 
     return_ids_by_name: dict[str, str] = {}
     stripped_pairs: list[tuple[str, str]] = []
@@ -600,6 +624,12 @@ def capture_plan() -> list[dict[str, str]]:
     return [
         {"tool": "ableton_session(action='info')",
          "purpose": "global state: tempo, signature, master volume/pan, track counts"},
+        {"tool": "ableton_device(action='list', target='master')",
+         "purpose": "SNP-4K7M: the master's top-level device chain (kind + "
+                    "display_name + position), attached as `song.master.devices` "
+                    "— mirrors a track's device chain so a master Limiter/EQ "
+                    "round-trips. Probe get_parameters per master device as for "
+                    "tracks; the HallucinoteAnalyzer is dropped at compile time."},
         {"tool": "ableton_return(action='list')",
          "purpose": "return tracks: name + volume + pan per return; "
                     "chunk 4a: include each return's top-level device chain"},
@@ -678,6 +708,12 @@ def compile_snapshot(
     """
     returns = [_exclude_analyzer_from_parent(r) for r in returns]
     tracks = [_exclude_analyzer_from_parent(t) for t in tracks]
+    # SNP-4K7M — the master carries an optional `devices` array now (probed from
+    # the master chain), so it gets the same analyzer strip + densify as tracks
+    # and returns. None / device-less masters pass through unchanged.
+    master_block = session_info.get("master")
+    if master_block:
+        master_block = _exclude_analyzer_from_parent(master_block)
     snapshot = {
         # SNP-8R4K chunk 2 — every compiled snapshot carries the schema version
         # so a consumer (and the at-rest cleanup) can tell a fresh capture from
@@ -686,7 +722,7 @@ def compile_snapshot(
         "song": {
             "tempo": session_info.get("tempo"),
             "signature": session_info.get("signature"),
-            "master": session_info.get("master"),
+            "master": master_block,
         },
         "returns": returns,
         "tracks": tracks,
@@ -750,6 +786,9 @@ def snapshot_needs_migration(snapshot: dict[str, Any]) -> bool:
     if version is None or version < SNAPSHOT_SCHEMA_VERSION:
         return True
     parents = (snapshot.get("tracks") or []) + (snapshot.get("returns") or [])
+    master = (snapshot.get("song") or {}).get("master")
+    if master:
+        parents = parents + [master]
     return any(_parent_analyzer_count(p) > 0 for p in parents)
 
 
@@ -771,9 +810,9 @@ def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str
 
     Reuses `_exclude_analyzer_from_parent` (the chunk-1 strip+densify helper) so
     the cleanup is identical to capture/replay — single source of truth, no
-    reimplementation. The master path is intentionally untouched: the master
-    has no device array in the snapshot today (SNP-4K7M); the analyzer filter
-    joins the master path when SNP-4K7M lands master-device capture.
+    reimplementation. SNP-4K7M: the master joins the strip too (it can now carry
+    a device chain), so a master Limiter authored after a render is cleaned here
+    exactly like a track/return chain.
     """
     stripped: list[dict[str, Any]] = []
 
@@ -793,13 +832,31 @@ def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     cleaned_tracks = _clean(snapshot.get("tracks") or [], "track")
     cleaned_returns = _clean(snapshot.get("returns") or [], "return")
 
+    # SNP-4K7M — the master can carry a device chain too, so it joins the strip
+    # (was intentionally skipped while the master had no device array).
+    song = snapshot.get("song") or {}
+    master = song.get("master")
+    cleaned_master = master
+    if master:
+        removed = _parent_analyzer_count(master)
+        if removed:
+            stripped.append({
+                "parent": master.get("name") or "Master",
+                "kind": "master",
+                "removed": removed,
+            })
+        cleaned_master = _exclude_analyzer_from_parent(master)
+
     # Shallow-copy the top level; `_exclude_analyzer_from_parent` already returns
-    # fresh parent/device dicts for the device arrays we rewrite, and untouched
-    # sub-trees (song/master) are carried by reference unchanged. The input dict
-    # is never mutated.
+    # fresh parent/device dicts for every array we rewrite (tracks/returns/master),
+    # so the input dict and its sub-trees are never mutated.
     cleaned = dict(snapshot)
     cleaned["tracks"] = cleaned_tracks
     cleaned["returns"] = cleaned_returns
+    if master is not None:
+        cleaned_song = dict(song)
+        cleaned_song["master"] = cleaned_master
+        cleaned["song"] = cleaned_song
     version_before = snapshot.get("snapshot_version")
     cleaned["snapshot_version"] = SNAPSHOT_SCHEMA_VERSION
 

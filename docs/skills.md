@@ -15,6 +15,12 @@ are the same.)
 > `description` in `skills/<name>/SKILL.md`. If something here disagrees
 > with a skill's own description, the skill wins — please open a PR.
 
+## Start here
+
+| Skill | What it does |
+|---|---|
+| `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, and the two review checkpoints (`/compose-review`, `/mix-review`) that are easy to skip. Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
+
 ## Setup
 
 | Skill | What it does |

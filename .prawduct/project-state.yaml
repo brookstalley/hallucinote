@@ -508,6 +508,9 @@ active_build_plan: artifacts/plans/INCOMING-2026-06-14/build-plan.md
 # overwritten on next regen.
 
 scope_rollups:
+  capture,sync-push,snapshot,render,analysis,skills:
+    chunks: ["BUG1A-analyzer-match", "BUG1B-strip", "BUG3-status-json", "BUG3-timeout-doc", "BUG4-params-dialed"]
+    releases: ["v0.9.8"]
   capture,sync-push,sync-pull,render:
     chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
     releases: ["v0.9.7"]
@@ -520,6 +523,9 @@ scope_rollups:
   db,sync-push,audio-analysis,mcp-bridge:
     chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
     releases: ["v0.9.6"]
+  mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs:
+    chunks: ["DEEP-RACK-ADDR-1", "DEEP-RACK-ADDR-2", "DEEP-RACK-ADDR-3", "DEEP-RACK-ADDR-4", "PULL-DRIFT-DETECT"]
+    releases: ["v0.9.8"]
   mcp-bridge,db,sync-push:
     chunks: ["ENV-7G4K-01", "ENV-7G4K-02", "ENV-7G4K-03", "ENV-7G4K-04"]
     releases: ["v0.9.5"]
@@ -541,9 +547,18 @@ scope_rollups:
   plugin-distribution,mcp-bridge:
     chunks: ["INS-3W8P"]
     releases: ["v0.9.7"]
+  skills,docs,mcp-primer,claude-md:
+    chunks: ["discoverability-wiring", "song-workflow-spine"]
+    releases: ["v0.9.8"]
+  sync,snapshot,audio:
+    chunks: ["AUD-3T6L", "SNP-4K7M"]
+    releases: ["v0.9.8"]
   sync-pull,analysis:
     chunks: ["DEV-4X2N", "SDC-7K3M-pull"]
     releases: ["v0.9.7"]
+  sync-pull,db-mutations,sync-push,tests:
+    chunks: ["ENV-5R2J", "SYN-6T2W"]
+    releases: ["v0.9.8"]
   sync-push,cli:
     chunks: ["PSH-2R7K", "PSH-5T9D"]
     releases: ["v0.9.7"]

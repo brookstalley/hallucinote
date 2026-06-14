@@ -6,7 +6,7 @@
 
 ## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
 
-<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=merged -->
+<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=shipped | release=v0.9.8 -->
 
 **No re-vendor** — the MCP `server.py` PRIMER string is outside `_FINGERPRINT_PATHS`
 (effective on the next `/mcp` respawn). Fixes the problem that agents don't discover
@@ -27,7 +27,7 @@
 
 ## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
 
-<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=merged -->
+<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=shipped | release=v0.9.8 -->
 
 **Re-vendor: not required** — engine-only (no `actions/`/`handlers/` touched). Behavior-preserving
 dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drift-guard).
@@ -52,7 +52,7 @@ dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drif
 
 ## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
 
-<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=merged -->
+<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=shipped | release=v0.9.8 -->
 
 **Re-vendor: REQUIRED** (DEEP-RACK-ADDR chunks 1 & 3 touch `actions/`+`handlers/`, flipping the
 MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). PULL-DRIFT-DETECT and the
@@ -93,7 +93,7 @@ queued in `.prawduct/operator-verification.md` (DEEP-RACK-ADDR block).
 
 ## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
 
-<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=merged -->
+<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=shipped | release=v0.9.8 -->
 
 **Re-vendor: REQUIRED** (the `strip` action + status.json heartbeat touch `handlers/`/`actions/`,
 flipping the MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). Bugs 4/1A/3-doc are
@@ -118,7 +118,7 @@ no-flip and effective immediately. Four bugs from the 2026-06-14 swell mix dogfo
 
 ## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
 
-<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=merged -->
+<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=shipped | release=v0.9.8 -->
 
 - **SNP-4K7M — master-track device snapshot authorship.** The push side shipped
   (DEV-6M2K loads master devices) but the capture/replay middle was missing, so a

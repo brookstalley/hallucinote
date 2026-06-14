@@ -82,9 +82,26 @@ song/Live-side. (Design + planning are collision-free; building is not.)
 
 ## Status
 - [x] Chunk 1: canonical device_path primitive + shared resolver
-- [ ] Chunk 2: snapshot durability — capture + push depth-N
+- [x] Chunk 2: snapshot durability — capture + push depth-N
 - [ ] Chunk 3: nested-rack device_parameter automation
 - [ ] Chunk 4: voices accessor
+
+**Context (Chunk 2 done):** THE unblocker shipped. capture.py replay `_depth>0`
+raise DELETED — `_replay_devices`/`_replay_rack_chains` recurse to arbitrary
+depth (DB is depth-agnostic). Added `Q.get_device_nesting_path(conn, device_id)`
+— pure-DB positional path (walk up via chain.parent_rack_device_id), [] for
+top-level, depth-64 cycle guard. push/devices.py: extracted `_emit_param_writes`
+(shared top-level + nested), added `_emit_nested_param_writes` recursion —
+nested devices emit `set_parameter` + `device_path` (NOT loaded; they arrive
+with the rack preset). Executor retry preserves device_path (it's in `base`);
+nested key shape `device_parameter:<id>:<name>` unchanged. The snapshot-refresh
+diff/merge preview (`diff_snapshots`/`merge_snapshots`) deliberately still
+itemizes one level + summarizes deeper subtrees opaquely — DOCUMENTED as a
+preview simplification (no data loss; replay/push handle full depth). Tests:
+capture depth-2 persist + nesting-path, push depth-1/depth-2/round-trip (swell
+guitar case), top-level no-device_path lock. Full suite 3725 passed. No
+re-vendor (engine/sync only). Next: Chunk 3 (nested automation — reuse
+get_device_nesting_path + Chunk 1's _resolve_device_path).
 
 **Context (Chunk 1 done):** `_resolve_device_path` (handlers/device.py) is the
 one canonical descent — `device_index` + `[{chain_index, device_position}…]` to

@@ -431,6 +431,51 @@ def get_device_chains_for_rack_device(
     ).fetchall()
 
 
+def get_device_nesting_path(
+    conn: sqlite3.Connection, device_id: str,
+) -> list[dict[str, int]]:
+    """Positional ``device_path`` from the top-level device down to
+    ``device_id``, computed from the DB hierarchy alone — no Live round-trips
+    (DEEP-RACK-ADDR).
+
+    Returns a list of ``{chain_index, device_position}`` steps (both 1-based) —
+    the exact address shape ``ableton_device(action='set_parameter')`` and the
+    perform handler accept. Empty ``[]`` for a top-level device (one whose chain
+    hangs off a track/return, ``parent_rack_device_id IS NULL``).
+
+    Walks UP: each device sits in a chain; a chain either hangs off a
+    track/return (top-level → stop) or off a rack device (record this step,
+    ascend to that rack). ``device_chains.position`` is the 1-based chain index
+    within its parent rack (matching the LOM chain order push reloads), and
+    ``devices.position`` is the 1-based device position within its chain — so a
+    path push emits matches the reloaded rack preset's structure (design §5).
+    """
+    steps: list[dict[str, int]] = []
+    dev = get_device(conn, device_id)
+    if dev is None:
+        return []
+    # Live racks can't nest cyclically; the bound guards a corrupt DB from
+    # spinning forever rather than imposing a real depth limit.
+    for _ in range(64):
+        chain = get_device_chain(conn, dev["chain_id"])
+        if chain is None or chain["parent_rack_device_id"] is None:
+            break
+        steps.append({
+            "chain_index": int(chain["position"]),
+            "device_position": int(dev["position"]),
+        })
+        dev = get_device(conn, chain["parent_rack_device_id"])
+        if dev is None:
+            break
+    else:
+        raise ValueError(
+            f"device {device_id!r} nesting path exceeds depth 64 — "
+            "cyclic device_chains?"
+        )
+    steps.reverse()
+    return steps
+
+
 def get_devices_for_chain(
     conn: sqlite3.Connection,
     chain_id: str,

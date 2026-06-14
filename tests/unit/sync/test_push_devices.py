@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from hallucinote.capture import SNAPSHOT_SCHEMA_VERSION, replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push
 
@@ -339,6 +340,127 @@ def test_plan_push_devices_emits_params_for_linked_device(
     assert "value" not in freq.args
     assert freq.args["value_type"] == "continuous"
     assert freq.key == f"device_parameter:{did}:Freq"
+
+
+# ---------- DEEP-RACK-ADDR: nested-device param durability ----------
+
+
+def test_plan_push_devices_emits_nested_params_with_device_path(
+    conn, song, session, linked_track,
+):
+    """A dialed param on a device nested ONE level inside a linked rack is
+    re-emitted on push as set_parameter + device_path (relative to the rack's
+    linked Live index). The nested device is NOT loaded — it arrives with the
+    rack preset — so no load call is emitted for it."""
+    top_chain = M.create_device_chain(conn, parent_track_id=linked_track)
+    rack = M.create_device(
+        conn, chain_id=top_chain, position=1, kind="Instrument Rack",
+        display_name="Outer Rack",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=rack, ableton_index=2,
+    )
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack, position=1,
+    )
+    nested = M.create_device(
+        conn, chain_id=nested_chain, position=1, kind="Operator",
+        display_name="Guitar Dead Notes",
+    )
+    M.set_device_parameter(
+        conn, device_id=nested, name="Volume",
+        value_display="-6 dB", value_normalized=0.5,
+    )
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    by_action = _calls_by_action(plan)
+    # Nested device is never loaded — it comes with the rack preset.
+    assert "load" not in by_action
+    calls = by_action["set_parameter"]
+    assert len(calls) == 1  # only the nested Volume (the rack itself has no params)
+    c = calls[0]
+    assert c.args["track_index"] == 5
+    assert c.args["device_index"] == 2  # the TOP-LEVEL rack's Live index
+    assert c.args["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    assert c.args["parameter_name"] == "Volume"
+    assert c.args["value_display"] == "-6 dB"
+    assert c.key == f"device_parameter:{nested}:Volume"
+
+
+def test_plan_push_devices_top_level_param_has_no_device_path(
+    conn, song, session, linked_track,
+):
+    """Lock-test: a top-level device's set_parameter carries NO device_path key
+    (the wire shape is unchanged from before nesting) — only nested params get
+    one."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Freq",
+        value_display="1 kHz", value_normalized=0.5,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert "device_path" not in call.args
+
+
+def test_capture_replay_push_roundtrip_depth2_nested_param(conn):
+    """The durability regression, end to end (the swell guitar case): a depth-2
+    nested dialed param captured into a snapshot replays into the DB and is
+    re-emitted on push as set_parameter + a depth-2 device_path — so a deep
+    by-ear fix survives a build.py rebuild instead of being silently dropped."""
+    snapshot = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "Guitar", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "Guitar-Dual Amped Heavy",
+                "class": "Instrument Rack",
+                "chains": [{"chain_index": 1, "name": "Guitar", "devices": [{
+                    "index": 1, "name": "Guitar Dead Notes",
+                    "class": "Instrument Rack",
+                    "chains": [{"chain_index": 1, "devices": [{
+                        "index": 1, "name": "Deep Synth", "class": "Operator",
+                        "params_dialed": {
+                            "Volume": {"value": "-4 dB", "normalized": 0.6},
+                        },
+                    }]}],
+                }]}],
+            }],
+        }],
+    }
+    song_id = replay_capture(conn, snapshot, song_name="rt")
+    session = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    track = next(
+        t for t in Q.get_tracks_for_song(conn, song_id) if t["name"] == "Guitar"
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track["id"],
+        ableton_index=3,
+    )
+    top_rack = Q.get_devices_for_track(conn, track["id"])[0]
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=top_rack["id"],
+        ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song_id, session_id=session)
+    sets = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
+    assert len(sets) == 1  # only the deep Operator's Volume
+    c = sets[0]
+    assert c.args["track_index"] == 3
+    assert c.args["device_index"] == 1
+    assert c.args["device_path"] == [
+        {"chain_index": 1, "device_position": 1},
+        {"chain_index": 1, "device_position": 1},
+    ]
+    assert c.args["parameter_name"] == "Volume"
+    assert c.args["value_display"] == "-4 dB"
 
 
 def test_plan_push_devices_falls_back_to_normalized_without_display(

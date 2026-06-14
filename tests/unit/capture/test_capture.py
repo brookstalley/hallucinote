@@ -598,18 +598,43 @@ def test_replay_nested_device_with_dialed_params(conn):
     assert params[0]["value_normalized"] == pytest.approx(0.5)
 
 
-def test_replay_rejects_nested_nested_rack(conn):
-    """One level only: a rack inside a rack chain raises at replay time.
-    Recursive support is deferred per the backlog nested-nested item.
-    """
+def test_replay_persists_nested_nested_rack(conn):
+    """DEEP-RACK-ADDR: a rack inside a rack chain replays to arbitrary depth —
+    the old 'one level only' raise is gone. A depth-2 nested device + its dialed
+    param land in the DB, and get_device_nesting_path reports the positional
+    address push will use (the durability regression, capture side)."""
     snap = _snapshot_with_nested_rack(chains=[
         {"chain_index": 1, "devices": [{
             "index": 1, "name": "Inner Rack", "class": "Instrument Rack",
-            "chains": [{"chain_index": 1, "devices": []}],
+            "chains": [{"chain_index": 1, "devices": [{
+                "index": 1, "name": "Deep Synth", "class": "Operator",
+                "params_dialed": {
+                    "Volume": {"value": "-6 dB", "normalized": 0.5},
+                },
+            }]}],
         }]},
     ])
-    with pytest.raises(ValueError, match="nested-nested"):
-        replay_capture(conn, snap, song_name="t")
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Drums")
+    outer = Q.get_devices_for_track(conn, track["id"])[0]
+    assert outer["kind"] == "Drum Rack"
+    # depth-1: Inner Rack sits in the outer rack's chain 1.
+    inner_chain = Q.get_device_chains_for_rack_device(conn, outer["id"])[0]
+    inner = Q.get_devices_for_chain(conn, inner_chain["id"])[0]
+    assert inner["display_name"] == "Inner Rack"
+    # depth-2: Deep Synth + its dialed param land under the inner rack.
+    deep_chain = Q.get_device_chains_for_rack_device(conn, inner["id"])[0]
+    deep = Q.get_devices_for_chain(conn, deep_chain["id"])[0]
+    assert deep["display_name"] == "Deep Synth"
+    params = Q.get_device_parameters(conn, deep["id"])
+    assert [(p["name"], p["value_display"]) for p in params] == [("Volume", "-6 dB")]
+    # The positional path push addresses it by — depth-2, both steps 1-based.
+    assert Q.get_device_nesting_path(conn, deep["id"]) == [
+        {"chain_index": 1, "device_position": 1},
+        {"chain_index": 1, "device_position": 1},
+    ]
+    # A top-level device has an empty path.
+    assert Q.get_device_nesting_path(conn, outer["id"]) == []
 
 
 def test_replay_rejects_chains_on_non_rack(conn):

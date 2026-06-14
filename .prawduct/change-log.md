@@ -4,6 +4,29 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
+
+<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio -->
+
+- **SNP-4K7M — master-track device snapshot authorship.** The push side shipped
+  (DEV-6M2K loads master devices) but the capture/replay middle was missing, so a
+  song author couldn't declare or round-trip a master Limiter — "sound design is
+  authorship" was violated at the master. `replay_capture` now materializes a master
+  device chain (`create_device_chain(parent_track_id=master_id)` — the mutator is
+  kind-agnostic), and `compile_snapshot` / `migrate_snapshot` /
+  `snapshot_needs_migration` / `capture_plan` all join the master to the SNP-8R4K
+  analyzer strip (the code TODO that read "joins when SNP-4K7M lands"). `song.master`
+  carries an optional `devices` array; documented in `docs/snapshot-schema.md`. Master
+  AUTOMATION envelopes remain a separate open surface (MAW-4K7P).
+- **AUD-3T6L — relative reverb RT60 verdict band.** Live's Reverb RT60 is a nonlinear
+  function of Decay Time + Room Size + diffusion, so the realized RT60 legitimately
+  diverges from the nominal knob by an amount that scales with magnitude. The fixed
+  ±0.15 s absolute band false-positived on clean long-decay captures (sun-zone A-Plate
+  3.37 vs 3.0). New `reverb_tolerance_s(declared) = max(floor 0.15 s, 0.20 × declared)`;
+  `REVERB_TOLERANCE_S` → `REVERB_TOLERANCE_FLOOR_S` (still the measurement-accuracy
+  bound). mix-review frames an out-of-band reverb as a producer's note (% longer/shorter
+  than intent), not a pass/fail verdict.
+
 ## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
 
 <!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=shipped | release=v0.9.7 -->
